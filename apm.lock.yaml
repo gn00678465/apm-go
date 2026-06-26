@@ -1,0 +1,29 @@
+lockfile_version: '1'
+generated_at: '2026-06-26T21:43:21.580577+00:00'
+dependencies: []
+local_deployed_files:
+- .claude/agents/research.md
+- .claude/rules/coding-style.md
+- .claude/rules/hooks.md
+- .claude/rules/patterns.md
+- .claude/rules/security.md
+- .claude/rules/testing.md
+- .github/agents/research.agent.md
+- .github/instructions/coding-style.instructions.md
+- .github/instructions/hooks.instructions.md
+- .github/instructions/patterns.instructions.md
+- .github/instructions/security.instructions.md
+- .github/instructions/testing.instructions.md
+local_deployed_file_hashes:
+  .claude/agents/research.md: sha256:631a3733fc8e4f48c02e38b571c2627848b926b420e1111eca68b761335d055e
+  .claude/rules/coding-style.md: sha256:4bf8490217ae52fd4db12d70507fb5388fd82000cb3d61f1b8e1ed12f2325755
+  .claude/rules/hooks.md: sha256:3d89b83f42ec43698245348e8ce8b8c1ffa5ae3ea42f64530638bbb8976052a8
+  .claude/rules/patterns.md: sha256:78f8f724773edda7e713a7f8d4948638202fe1ed54daa933d82e1cd5bffc399e
+  .claude/rules/security.md: sha256:a1d16fa5a6b9092ab5feeaed5f36b6a04843a7e7c787173c21d6d9aa646cb6f9
+  .claude/rules/testing.md: sha256:9af944a994228be19a2a7232d9b71d0e004eb6b9464d2cbaccf046f8520fa2a0
+  .github/agents/research.agent.md: sha256:631a3733fc8e4f48c02e38b571c2627848b926b420e1111eca68b761335d055e
+  .github/instructions/coding-style.instructions.md: sha256:82431f99abf768a6fccd1172e7ae429e13c08fa60fbd502cafe8dc0693f8bd30
+  .github/instructions/hooks.instructions.md: sha256:5fff8316bbd308660fdadee66fa54fa6f2560c84ecc8f8845a6c4521760ed66b
+  .github/instructions/patterns.instructions.md: sha256:67a91835608da74583288c1bc1fa0875688fa2c8e020610673fe6f356dfbb31a
+  .github/instructions/security.instructions.md: sha256:2d41623d8228c099ee32fc55dd57bcec51db308c6d6848bfbfb92a48f0090eaa
+  .github/instructions/testing.instructions.md: sha256:1fe6357873a8c02dc37f57c548510ff1fcd41ba834c01c2397920cd6f2b32379
