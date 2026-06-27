@@ -39,3 +39,7 @@ apm_modules/
 
 # Mise
 .review/*
+
+# Conformance authority (local-only, not pushed to remote)
+conformance/
+.gitmodules

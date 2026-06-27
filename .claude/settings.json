@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -6,8 +9,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/session-start.mjs",
-            "timeout": 10
+            "command": "python .claude/hooks/session-start.py",
+            "timeout": 30
           }
         ]
       },
@@ -16,8 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/session-start.mjs",
-            "timeout": 10
+            "command": "python .claude/hooks/session-start.py",
+            "timeout": 30
           }
         ]
       },
@@ -26,11 +29,49 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/session-start.mjs",
-            "timeout": 10
+            "command": "python .claude/hooks/session-start.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/inject-subagent-context.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/inject-subagent-context.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/inject-workflow-state.py",
+            "timeout": 15
           }
         ]
       }
     ]
+  },
+  "enabledPlugins": {},
+  "statusLine": {
+    "type": "command",
+    "command": "python .claude/hooks/statusline.py"
   }
 }
