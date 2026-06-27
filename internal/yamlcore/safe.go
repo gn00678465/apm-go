@@ -3,6 +3,7 @@ package yamlcore
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -12,13 +13,26 @@ import (
 //   - (b) rejects &anchor / *alias constructs
 //   - (c) rejects custom (non-!!) tags
 //
+// Rejects multi-document YAML streams (only single documents are valid for
+// manifest, lockfile, and policy files).
+//
 // Clauses (a) and (d) are enforced by typed accessor functions in later phases;
 // the Node tree preserves implicit tags for round-trip fidelity.
 func SafeLoad(data []byte) (*yaml.Node, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("YAML parse error: %w", err)
 	}
+
+	var extra yaml.Node
+	if err := dec.Decode(&extra); err == nil {
+		return nil, fmt.Errorf("multi-document YAML streams are not allowed")
+	} else if err != io.EOF {
+		return nil, fmt.Errorf("YAML parse error in trailing content: %w", err)
+	}
+
 	if err := validateNode(&doc); err != nil {
 		return nil, err
 	}

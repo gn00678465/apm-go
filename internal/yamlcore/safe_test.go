@@ -197,6 +197,38 @@ func TestSafeLoad_ImplicitTagProperties(t *testing.T) {
 	}
 }
 
+// ── multi-document rejection ──
+
+func TestSafeLoad_RejectMultiDoc(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		errSS string
+	}{
+		{
+			name:  "two documents",
+			input: "name: p\n---\nname: q\n",
+			errSS: "multi-document",
+		},
+		{
+			name:  "anchor hidden in second doc",
+			input: "name: p\n---\nname: &n q\n",
+			errSS: "multi-document",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := SafeLoad([]byte(tt.input))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.errSS) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.errSS)
+			}
+		})
+	}
+}
+
 // ── req-mf-020: acceptance ──
 
 func TestSafeLoad_AcceptValid(t *testing.T) {
