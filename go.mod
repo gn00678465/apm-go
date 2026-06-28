@@ -3,6 +3,7 @@ module github.com/apm-go/apm
 go 1.26.3
 
 require (
+	deps.dev/util/semver v0.0.0-20260617025149-7d3577045631 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
