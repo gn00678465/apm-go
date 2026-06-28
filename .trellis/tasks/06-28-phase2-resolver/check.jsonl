@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/06-28-phase2-resolver/prd.md", "reason": "Acceptance criteria to verify against"}
+{"file": ".trellis/tasks/06-28-phase2-resolver/design.md", "reason": "Architecture contracts to validate implementation against"}
+{"file": ".trellis/tasks/06-28-phase2-resolver/research/spec-resolution.md", "reason": "Spec requirements for conformance checking"}
+{"file": ".trellis/tasks/06-28-phase2-resolver/research/semver-libs.md", "reason": "Oracle test expectations (24 cases)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Code quality standards to check against"}

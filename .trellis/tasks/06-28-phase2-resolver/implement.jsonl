@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/06-28-phase2-resolver/prd.md", "reason": "Phase 2 requirements and acceptance criteria (14 reqs)"}
+{"file": ".trellis/tasks/06-28-phase2-resolver/design.md", "reason": "Technical design: package layout, types, BFS+fixpoint algorithm, semver wrapper"}
+{"file": ".trellis/tasks/06-28-phase2-resolver/implement.md", "reason": "Step-by-step implementation plan with verify gates"}
+{"file": ".trellis/tasks/06-28-phase2-resolver/research/spec-resolution.md", "reason": "OpenAPM v0.1 spec extraction: BFS, tri-modal diamond, semver dialect, lock replay, update, depth limit"}
+{"file": ".trellis/tasks/06-28-phase2-resolver/research/python-resolver.md", "reason": "Python apm resolver analysis: data structures, algorithms, Go porting notes"}
+{"file": ".trellis/tasks/06-28-phase2-resolver/research/semver-libs.md", "reason": "Go semver library evaluation: deps.dev/util/semver passes 23/23 oracle cases"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling conventions (even if template, establishes expectation)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Code quality standards"}
