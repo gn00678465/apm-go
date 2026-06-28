@@ -13,7 +13,7 @@ import (
 
 func main() {
 	root := &cobra.Command{
-		Use:   "apm",
+		Use:   "apm-go",
 		Short: "Agent Package Manager (Go)",
 	}
 
