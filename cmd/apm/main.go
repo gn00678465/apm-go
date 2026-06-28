@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	yamllib "go.yaml.in/yaml/v4"
 
@@ -96,83 +94,4 @@ func normalizeCmd() *cobra.Command {
 	return cmd
 }
 
-func initCmd() *cobra.Command {
-	var (
-		name    string
-		version string
-		targets []string
-		force   bool
-	)
-
-	cmd := &cobra.Command{
-		Use:          "init",
-		Short:        "Initialize a new apm.yml manifest",
-		SilenceUsage: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" {
-				dir, err := os.Getwd()
-				if err != nil {
-					return fmt.Errorf("cannot determine directory name: %w", err)
-				}
-				name = filepath.Base(dir)
-			}
-			if version == "" {
-				version = "0.1.0"
-			}
-
-			supported := make(map[string]bool)
-			for _, t := range manifest.SupportedTargets {
-				supported[t] = true
-			}
-			for _, t := range targets {
-				if !supported[t] {
-					return fmt.Errorf("target %q is not supported for init; choose from: %s",
-						t, strings.Join(manifest.SupportedTargets, ", "))
-				}
-			}
-
-			if !force {
-				if _, err := os.Stat("apm.yml"); err == nil {
-					return fmt.Errorf("apm.yml already exists; use --force to overwrite")
-				}
-			}
-
-			data := map[string]any{
-				"name":    name,
-				"version": version,
-			}
-			if len(targets) == 1 {
-				data["target"] = targets[0]
-			} else if len(targets) > 1 {
-				data["target"] = targets
-			}
-
-			raw, err := yamllib.Marshal(data)
-			if err != nil {
-				return fmt.Errorf("serialize: %w", err)
-			}
-			node, err := yamlcore.SafeLoad(raw)
-			if err != nil {
-				return fmt.Errorf("generated manifest is invalid: %w", err)
-			}
-			if _, _, err := manifest.ParseManifest(node); err != nil {
-				return fmt.Errorf("generated manifest fails validation: %w", err)
-			}
-
-			out, err := yamlcore.SafeDump(node)
-			if err != nil {
-				return fmt.Errorf("serialize: %w", err)
-			}
-			if err := os.WriteFile("apm.yml", out, 0644); err != nil {
-				return fmt.Errorf("write apm.yml: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Created apm.yml\n")
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&name, "name", "", "Package name (default: directory name)")
-	cmd.Flags().StringVar(&version, "version", "", "Package version (default: 0.1.0)")
-	cmd.Flags().StringSliceVar(&targets, "target", nil, "Target agent(s): claude, codex, copilot, opencode, antigravity")
-	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing apm.yml")
-	return cmd
-}
+// initCmd is defined in init.go
