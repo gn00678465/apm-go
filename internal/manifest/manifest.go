@@ -147,13 +147,7 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 
 	// Target adapter diagnostics (tg-004)
 	for _, t := range m.Target {
-		if !HasAdapter(t) && !isVendorTarget(t) {
-			diags = append(diags, Diagnostic{
-				Level:   LevelWarning,
-				Req:     "req-tg-004",
-				Message: fmt.Sprintf("no registered handler for target %q", t),
-			})
-		} else if isVendorTarget(t) && !HasAdapter(t) {
+		if t != "all" && !HasAdapter(t) {
 			diags = append(diags, Diagnostic{
 				Level:   LevelWarning,
 				Req:     "req-tg-004",
@@ -225,7 +219,7 @@ func parseRegistries(val *yaml.Node) (map[string]Registry, error) {
 			case "url":
 				reg.URL = v.Value
 			case "insecure":
-				reg.Insecure = v.Value == "true"
+				reg.Insecure = strings.EqualFold(v.Value, "true")
 			case "aliases":
 				if v.Kind == yaml.SequenceNode {
 					for _, a := range v.Content {

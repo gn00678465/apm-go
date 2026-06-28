@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,6 +208,51 @@ func TestParseManifest_NonMapping(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mapping") {
 		t.Errorf("error %q should mention mapping", err.Error())
+	}
+}
+
+func TestParseManifest_TargetAllNoWarning(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: all\n")
+	node, _ := yamlcore.SafeLoad(data)
+	_, diags, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("target: all should be accepted: %v", err)
+	}
+	for _, d := range diags {
+		if d.Req == "req-tg-004" {
+			t.Errorf("target: all should not produce tg-004 warning, got: %s", d.Message)
+		}
+	}
+}
+
+func TestParseManifest_GeminiWarning(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: gemini\n")
+	node, _ := yamlcore.SafeLoad(data)
+	_, diags, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("target: gemini should be accepted: %v", err)
+	}
+	found := false
+	for _, d := range diags {
+		if d.Req == "req-tg-004" && strings.Contains(d.Message, "gemini") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected tg-004 warning for gemini (no adapter)")
+	}
+}
+
+func TestParseManifest_InsecureTrueVariants(t *testing.T) {
+	for _, variant := range []string{"true", "True", "TRUE"} {
+		t.Run(variant, func(t *testing.T) {
+			data := []byte(fmt.Sprintf("name: p\nversion: \"1.0.0\"\nregistries:\n  local:\n    url: http://example.com/r\n    insecure: %s\n", variant))
+			node, _ := yamlcore.SafeLoad(data)
+			_, _, err := ParseManifest(node)
+			if err != nil {
+				t.Errorf("insecure: %s should be accepted: %v", variant, err)
+			}
+		})
 	}
 }
 

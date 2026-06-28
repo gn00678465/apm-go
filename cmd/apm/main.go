@@ -1,16 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	yamllib "go.yaml.in/yaml/v4"
+
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v4"
 )
 
 func main() {
@@ -44,12 +44,12 @@ func validateCmd() *cobra.Command {
 				return fmt.Errorf("%s: %w", args[0], err)
 			}
 
-			if node.Kind != yaml.DocumentNode || len(node.Content) == 0 {
+			if node.Kind != yamllib.DocumentNode || len(node.Content) == 0 {
 				return fmt.Errorf("%s: invalid YAML document", args[0])
 			}
 			root := node.Content[0]
 
-			if root.Kind != yaml.MappingNode {
+			if root.Kind != yamllib.MappingNode {
 				return fmt.Errorf("%s: top-level must be a YAML mapping", args[0])
 			}
 
@@ -137,16 +137,21 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			var buf bytes.Buffer
-			buf.WriteString(fmt.Sprintf("name: %s\n", name))
-			buf.WriteString(fmt.Sprintf("version: \"%s\"\n", version))
+			data := map[string]any{
+				"name":    name,
+				"version": version,
+			}
 			if len(targets) == 1 {
-				buf.WriteString(fmt.Sprintf("target: %s\n", targets[0]))
+				data["target"] = targets[0]
 			} else if len(targets) > 1 {
-				buf.WriteString(fmt.Sprintf("target: [%s]\n", strings.Join(targets, ", ")))
+				data["target"] = targets
 			}
 
-			node, err := yamlcore.SafeLoad(buf.Bytes())
+			raw, err := yamllib.Marshal(data)
+			if err != nil {
+				return fmt.Errorf("serialize: %w", err)
+			}
+			node, err := yamlcore.SafeLoad(raw)
 			if err != nil {
 				return fmt.Errorf("generated manifest is invalid: %w", err)
 			}
