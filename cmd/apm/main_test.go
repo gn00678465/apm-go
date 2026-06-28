@@ -258,3 +258,100 @@ func TestBuildManifestData(t *testing.T) {
 		t.Error("dependencies.mcp missing")
 	}
 }
+
+func TestReadExistingTargets(t *testing.T) {
+	t.Run("sequence form", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		os.WriteFile("apm.yml", []byte("name: p\nversion: \"1.0.0\"\ntarget:\n  - claude\n  - copilot\n"), 0644)
+		targets := readExistingTargets()
+		if len(targets) != 2 || targets[0] != "claude" || targets[1] != "copilot" {
+			t.Errorf("got %v, want [claude copilot]", targets)
+		}
+	})
+
+	t.Run("scalar form", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		os.WriteFile("apm.yml", []byte("name: p\nversion: \"1.0.0\"\ntarget: claude\n"), 0644)
+		targets := readExistingTargets()
+		if len(targets) != 1 || targets[0] != "claude" {
+			t.Errorf("got %v, want [claude]", targets)
+		}
+	})
+
+	t.Run("no file", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		targets := readExistingTargets()
+		if targets != nil {
+			t.Errorf("got %v, want nil", targets)
+		}
+	})
+}
+
+func TestInitCmd_NonInitTargetRejected(t *testing.T) {
+	for _, bad := range []string{"gemini", "cursor", "windsurf", "agent-skills"} {
+		t.Run(bad, func(t *testing.T) {
+			dir := t.TempDir()
+			origDir, _ := os.Getwd()
+			os.Chdir(dir)
+			defer os.Chdir(origDir)
+
+			cmd := initCmd()
+			cmd.SetArgs([]string{"--yes", "--target", bad})
+			if err := cmd.Execute(); err == nil {
+				t.Errorf("--target %s should be rejected by init", bad)
+			}
+		})
+	}
+}
+
+func TestInitCmd_ProjectNameWithDotDotRejected(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	cmd := initCmd()
+	cmd.SetArgs([]string{"..", "--yes"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected error for project name '..'")
+	}
+}
+
+func TestInitCmd_ForceOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("existing"), 0644)
+
+	cmd := initCmd()
+	cmd.SetArgs([]string{"--force"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init --force should succeed: %v", err)
+	}
+
+	data, _ := os.ReadFile("apm.yml")
+	if string(data) == "existing" {
+		t.Error("apm.yml should have been overwritten")
+	}
+}
+
+func TestBuildManifestData_NoTargets(t *testing.T) {
+	data := buildManifestData("test", "1.0.0", "desc", "author", nil)
+	if _, ok := data["target"]; ok {
+		t.Error("target should not be present when no targets selected")
+	}
+}

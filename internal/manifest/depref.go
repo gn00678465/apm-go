@@ -43,6 +43,10 @@ func ParseDepString(s string) (*DependencyReference, error) {
 		return nil, fmt.Errorf("empty dependency string")
 	}
 
+	if strings.HasPrefix(s, "/") {
+		return nil, fmt.Errorf("dependency path %q is absolute; only relative paths are allowed", s)
+	}
+
 	if isLocalPath(s) {
 		if containsEscape(s) {
 			return nil, fmt.Errorf("dependency path %q escapes project root", s)

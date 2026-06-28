@@ -55,7 +55,7 @@ Implement the manifest layer: parse `apm.yml` into a typed `Manifest` struct, va
 ### 1F — `apm init` command (user requirement)
 
 - Interactive or flag-driven scaffold of `apm.yml`
-- Prompt for `name` (default: directory name), `version` (default: "0.1.0")
+- Prompt for `name` (default: directory name), `version` (default: "1.0.0", matching Python apm)
 - Target selection: **only** `claude`, `codex`, `copilot`, `opencode`, `antigravity`
 - Output conforming minimal `apm.yml` via `SafeDump`
 

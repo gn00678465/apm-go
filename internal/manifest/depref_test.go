@@ -138,6 +138,9 @@ func TestParseDepString_Rejection(t *testing.T) {
 		{"", "empty"},
 		{"not valid string", "does not match"},
 		{"../../../etc/passwd", "escapes project root"},
+		{"/etc/passwd", "absolute"},
+		{"/absolute/path", "absolute"},
+		{"/tmp/malicious", "absolute"},
 		{"just-one-word", "does not match"},
 		{"https://", "requires host"},
 	}

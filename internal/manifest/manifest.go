@@ -42,7 +42,8 @@ type Manifest struct {
 	Type        string
 	Scripts     map[string]string
 	Registries  map[string]Registry
-	Workspaces  bool
+	Includes   any // "auto" or []string
+	Workspaces bool
 
 	node *yaml.Node
 }
@@ -93,6 +94,16 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 				return nil, nil, err
 			}
 			m.Target = targets
+		case "includes":
+			if val.Kind == yaml.ScalarNode {
+				m.Includes = val.Value
+			} else if val.Kind == yaml.SequenceNode {
+				var paths []string
+				for _, item := range val.Content {
+					paths = append(paths, item.Value)
+				}
+				m.Includes = paths
+			}
 		case "scripts":
 			m.Scripts = parseStringMap(val)
 		case "registries":

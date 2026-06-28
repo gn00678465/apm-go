@@ -91,10 +91,15 @@ func initCmd() *cobra.Command {
 			var selectedTargets []string
 
 			if targetFlag != "" {
+				supported := make(map[string]bool)
+				for _, s := range manifest.SupportedTargets {
+					supported[s] = true
+				}
 				for _, t := range strings.Split(targetFlag, ",") {
 					t = strings.TrimSpace(t)
-					if _, err := manifest.ValidateTarget(t); err != nil {
-						return fmt.Errorf("invalid target %q: %w", t, err)
+					if !supported[t] {
+						return fmt.Errorf("target %q is not supported by init; allowed: %s",
+							t, strings.Join(manifest.SupportedTargets, ", "))
 					}
 					selectedTargets = append(selectedTargets, t)
 				}
