@@ -78,3 +78,42 @@ Implemented Phase 1 manifest layer: ParseManifest with 21 reqs (mf-001~021, tg-0
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Phase 1: Manifest parsing, validation, init, and review fixes
+
+**Date**: 2026-06-28
+**Task**: Phase 1: Manifest parsing, validation, init, and review fixes
+**Branch**: `feat/phase-1-manifest`
+
+### Summary
+
+Implemented Phase 1 manifest layer: ParseManifest with 21 reqs (core fields, target validation, registries, dep ABNF parsing, MCP validation, marketplace, placeholder recognition). Rewrote init with full interactive flow (metadata prompts, target toggle, auto-detection, confirmation). Three review rounds (opus-4.8, gpt-5.4, sonnet-4.6) with all findings fixed. 46/46 A/B tests pass vs Python apm.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b2daad` | (see git log) |
+| `b629604` | (see git log) |
+| `8fc73aa` | (see git log) |
+| `b34b239` | (see git log) |
+| `3a265e1` | (see git log) |
+| `14b9602` | (see git log) |
+| `0d7650e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
