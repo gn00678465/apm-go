@@ -121,6 +121,10 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 			if err := validatePolicyBlock(val); err != nil {
 				return nil, nil, err
 			}
+		case "marketplace":
+			if err := validateMarketplaceBlock(val); err != nil {
+				return nil, nil, err
+			}
 		default:
 			// Unknown keys (including x-*) preserved by Node — no action needed
 		}
@@ -282,53 +286,34 @@ func validateDepBlock(val *yaml.Node) error {
 			}
 			for idx, entry := range list.Content {
 				if entry.Kind == yaml.MappingNode {
-					if err := validateDepEntry(entry, idx); err != nil {
+					if _, err := ParseDepDict(entry, idx); err != nil {
 						return err
 					}
 				} else if entry.Kind == yaml.ScalarNode {
-					// mf-016: string-form local path escape check
-					if isLocalPath(entry.Value) && containsEscape(entry.Value) {
-						return fmt.Errorf("dependency path %q escapes project root", entry.Value)
+					if _, err := ParseDepString(entry.Value); err != nil {
+						return err
 					}
 				}
 			}
-		}
-		// mcp, lsp entries: deferred to Phase 1D
-	}
-	return nil
-}
-
-func validateDepEntry(entry *yaml.Node, idx int) error {
-	keys := make(map[string]bool)
-	for i := 0; i < len(entry.Content)-1; i += 2 {
-		keys[entry.Content[i].Value] = true
-	}
-
-	// mf-011: reject both id and git
-	if keys["id"] && keys["git"] {
-		return fmt.Errorf("dependency entry %d has both 'id' and 'git' keys", idx)
-	}
-
-	// mf-007 (partial): object-form must have a source key
-	hasSource := keys["git"] || keys["id"] || keys["path"] || keys["name"]
-	if !hasSource {
-		return fmt.Errorf("dependency entry %d has no source key (git, id, path, or name)", idx)
-	}
-
-	// mf-016: local path escape check
-	if keys["path"] {
-		for i := 0; i < len(entry.Content)-1; i += 2 {
-			if entry.Content[i].Value == "path" {
-				p := entry.Content[i+1].Value
-				if containsEscape(p) {
-					return fmt.Errorf("dependency path %q escapes project root", p)
+		} else if k == "mcp" {
+			if list.Kind != yaml.SequenceNode {
+				return fmt.Errorf("dependencies.mcp must be a list")
+			}
+			for _, entry := range list.Content {
+				m, err := ParseMCPEntry(entry)
+				if err != nil {
+					return err
+				}
+				if err := ValidateMCP(m); err != nil {
+					return err
 				}
 			}
 		}
 	}
-
 	return nil
 }
+
+// validateDepEntry is replaced by ParseDepDict in depref.go
 
 func isLocalPath(s string) bool {
 	return strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") ||
@@ -369,6 +354,32 @@ func validatePolicyBlock(val *yaml.Node) error {
 			default:
 				// mf-018
 				return fmt.Errorf("policy.hash_algorithm %q is not supported; use sha256, sha384, or sha512", algo)
+			}
+		}
+	}
+	return nil
+}
+
+func validateMarketplaceBlock(val *yaml.Node) error {
+	if val.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(val.Content)-1; i += 2 {
+		k := val.Content[i].Value
+		v := val.Content[i+1]
+		if k == "packages" && v.Kind == yaml.SequenceNode {
+			for _, pkg := range v.Content {
+				if pkg.Kind != yaml.MappingNode {
+					continue
+				}
+				for j := 0; j < len(pkg.Content)-1; j += 2 {
+					if pkg.Content[j].Value == "source" {
+						src := pkg.Content[j+1].Value
+						if err := ValidateMarketplaceSource(src); err != nil {
+							return err
+						}
+					}
+				}
 			}
 		}
 	}

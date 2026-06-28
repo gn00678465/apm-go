@@ -325,6 +325,72 @@ func TestParseManifest_HttpLocalhostAccepted(t *testing.T) {
 	}
 }
 
+func TestParseManifest_MarketplaceSourceValidation(t *testing.T) {
+	t.Run("valid source", func(t *testing.T) {
+		data := []byte("name: p\nversion: \"1.0.0\"\nmarketplace:\n  packages:\n    - source: ./packages/foo\n")
+		node, _ := yamlcore.SafeLoad(data)
+		_, _, err := ParseManifest(node)
+		if err != nil {
+			t.Errorf("valid marketplace source should accept: %v", err)
+		}
+	})
+	t.Run("escape rejected", func(t *testing.T) {
+		data := []byte("name: p\nversion: \"1.0.0\"\nmarketplace:\n  packages:\n    - source: ../escape\n")
+		node, _ := yamlcore.SafeLoad(data)
+		_, _, err := ParseManifest(node)
+		if err == nil {
+			t.Fatal("expected error for marketplace source with ..")
+		}
+	})
+}
+
+func TestParseManifest_MCPValidation(t *testing.T) {
+	t.Run("valid self-defined", func(t *testing.T) {
+		data := []byte("name: p\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - registry: false\n      transport: stdio\n      command: my-server\n      args: []\n")
+		node, _ := yamlcore.SafeLoad(data)
+		_, _, err := ParseManifest(node)
+		if err != nil {
+			t.Errorf("valid MCP should accept: %v", err)
+		}
+	})
+	t.Run("self-defined missing transport", func(t *testing.T) {
+		data := []byte("name: p\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - registry: false\n      command: my-server\n")
+		node, _ := yamlcore.SafeLoad(data)
+		_, _, err := ParseManifest(node)
+		if err == nil {
+			t.Fatal("expected error for self-defined MCP missing transport")
+		}
+	})
+}
+
+func TestParseManifest_DepStringValidation(t *testing.T) {
+	t.Run("valid shorthand", func(t *testing.T) {
+		data := []byte("name: p\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - owner/repo\n")
+		node, _ := yamlcore.SafeLoad(data)
+		_, _, err := ParseManifest(node)
+		if err != nil {
+			t.Errorf("valid shorthand dep should accept: %v", err)
+		}
+	})
+	t.Run("invalid string dep", func(t *testing.T) {
+		data := []byte("name: p\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - \"not valid string\"\n")
+		node, _ := yamlcore.SafeLoad(data)
+		_, _, err := ParseManifest(node)
+		if err == nil {
+			t.Fatal("expected error for invalid dep string")
+		}
+	})
+}
+
+func TestParseManifest_HttpLocalhostTextAccepted(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\nregistries:\n  local:\n    url: http://localhost/r\n")
+	node, _ := yamlcore.SafeLoad(data)
+	_, _, err := ParseManifest(node)
+	if err != nil {
+		t.Errorf("http with localhost should be accepted: %v", err)
+	}
+}
+
 func TestContainsEscape(t *testing.T) {
 	tests := []struct {
 		path string
