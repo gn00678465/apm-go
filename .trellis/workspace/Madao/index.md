@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
-- **Last Active**: 2026-06-27
+- **Total Sessions**: 2
+- **Last Active**: 2026-06-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~43 | Active |
+| `journal-1.md` | ~80 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-06-28 | Phase 1: Manifest parsing, validation, init, and review fixes | `2b2daad`, `b629604`, `8fc73aa`, `b34b239`, `3a265e1` | `feat/phase-1-manifest` |
 | 1 | 2026-06-27 | Phase 0: YAML safe-loader and round-trip core | `0deb4af`, `54df1fa`, `89bdda3`, `010f285` | `feat/phase-0-yaml-core` |
 <!-- @@@/auto:session-history -->
 
