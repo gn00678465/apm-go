@@ -51,20 +51,26 @@ func PlanScopedUpdate(
 		return nil, fmt.Errorf("package %q not found in manifest", packageName)
 	}
 
-	// For scoped update: resolve from scratch but with a lockfile that
-	// excludes the target package (forcing re-resolution of just that subtree).
-	// Other pins are replayed from the lockfile.
+	// Walk ResolvedBy transitively to collect the full subtree rooted at packageName
+	exclude := map[string]bool{packageName: true}
+	changed := true
+	for changed {
+		changed = false
+		for _, dep := range lock.Dependencies {
+			if exclude[dep.ResolvedBy] && !exclude[dep.UniqueKey()] {
+				exclude[dep.UniqueKey()] = true
+				changed = true
+			}
+		}
+	}
+
 	scopedLock := &lockfile.Lockfile{
-		Version:      lock.Version,
-		GeneratedAt:  lock.GeneratedAt,
-		APMVersion:   lock.APMVersion,
+		Version:     lock.Version,
+		GeneratedAt: lock.GeneratedAt,
+		APMVersion:  lock.APMVersion,
 	}
 	for _, dep := range lock.Dependencies {
-		if dep.UniqueKey() == packageName {
-			continue // exclude target from lock → forces re-resolve
-		}
-		// Also exclude children of the target (its subtree)
-		if dep.ResolvedBy == packageName {
+		if exclude[dep.UniqueKey()] {
 			continue
 		}
 		scopedLock.Dependencies = append(scopedLock.Dependencies, dep)

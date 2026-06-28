@@ -10,8 +10,7 @@ internal/
     types.go           — ResolvedDep, ResolutionResult, ConflictChain, WhyPath
     classify.go        — ReferenceKind classification (req-rs-008, req-rs-003)
     classify_test.go
-    diamond.go         — intersection-pick, fail-closed logic
-    diamond_test.go
+    diamond.go         — intersection-pick, fail-closed logic (tested via resolver_test.go)
     why.go             — bottom-up "why" walker (req-rs-005)
     why_test.go
     lock_replay.go     — constraint equality, replay decision (req-rs-004)

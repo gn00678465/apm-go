@@ -46,6 +46,7 @@ type Manifest struct {
 	Workspaces          bool
 	ConflictResolution  string
 	ParsedDeps          []*DependencyReference
+	ParsedDevDeps       []*DependencyReference
 
 	node *yaml.Node
 }
@@ -128,7 +129,7 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 			if err != nil {
 				return nil, nil, err
 			}
-			_ = deps
+			m.ParsedDevDeps = append(m.ParsedDevDeps, deps...)
 		case "workspaces":
 			// mf-021: non-blocking diagnostic
 			m.Workspaces = true

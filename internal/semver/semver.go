@@ -55,9 +55,11 @@ func hasRangeOperator(s string) bool {
 	if strings.Contains(s, " - ") {
 		return true
 	}
-	// Wildcard: 1.2.x, 1.x
-	if strings.ContainsAny(s, "xX") {
-		return true
+	// Wildcard: 1.x, 1.2.x, x.x.x — only when x/X appears as a whole version segment
+	for _, seg := range strings.Split(s, ".") {
+		if seg == "x" || seg == "X" {
+			return true
+		}
 	}
 	return false
 }

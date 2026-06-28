@@ -55,14 +55,12 @@ func pickHighestInIntersection(constraints []ConstraintEntry, tags []semver.TagI
 // checkLiteralConflict checks if all literal constraints for a package agree.
 // For git-literal deps, all refs must be identical strings.
 func checkLiteralConflict(constraints []ConstraintEntry) (string, error) {
-	ref := ""
-	for _, ce := range constraints {
-		if ce.Constraint == "" {
-			continue
-		}
-		if ref == "" {
-			ref = ce.Constraint
-		} else if ref != ce.Constraint {
+	if len(constraints) == 0 {
+		return "", nil
+	}
+	ref := constraints[0].Constraint
+	for _, ce := range constraints[1:] {
+		if ce.Constraint != ref {
 			return "", fmt.Errorf("conflicting literal refs: %q vs %q", ref, ce.Constraint)
 		}
 	}

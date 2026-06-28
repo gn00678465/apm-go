@@ -143,8 +143,11 @@ func Resolve(
 		// Load sub-manifest
 		resolvedRef := currentPin
 		subManifest, err := loader.LoadPackage(entry.ref, resolvedRef)
-		if err != nil || subManifest == nil {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("loading package %s: %w", key, err)
+		}
+		if subManifest == nil {
+			continue // leaf package — no transitive deps
 		}
 
 		// Track and enqueue children
@@ -225,10 +228,12 @@ func invalidateChildren(
 	delete(childrenOf, parentKey)
 
 	for _, childKey := range children {
-		// Only invalidate if this child has no other parent contributing it
-		// (For simplicity in v0.1: invalidate and let re-expansion re-add if needed)
 		delete(processed, childKey)
-		// Recursively invalidate grandchildren
+		delete(constraints, childKey)
+		delete(pins, childKey)
+		delete(pinRefs, childKey)
+		delete(depDepth, childKey)
+		delete(depRefs, childKey)
 		invalidateChildren(childKey, childrenOf, depOrder, kinds, constraints, pins, pinRefs, depDepth, depRefs, processed)
 	}
 }

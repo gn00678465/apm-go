@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -28,6 +29,18 @@ func (m *mockPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 	key := ref.RepoURL + "@" + resolvedRef
 	if pkg, ok := m.packages[key]; ok {
 		return pkg, nil
+	}
+	return nil, nil
+}
+
+// errorLoader returns an error for a specific package key.
+type errorLoader struct {
+	errorKey string
+}
+
+func (e *errorLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
+	if ref.RepoURL == e.errorKey {
+		return nil, fmt.Errorf("simulated load failure for %s", e.errorKey)
 	}
 	return nil, nil
 }
@@ -427,5 +440,42 @@ func TestResolve_ResolvedByIsParentKey(t *testing.T) {
 	// Should resolve to v1.7.4 (highest in intersection of ^1.2.0 AND ~1.7.0)
 	if aDep.ResolvedTag != "v1.7.4" {
 		t.Errorf("ResolvedTag = %q, want v1.7.4", aDep.ResolvedTag)
+	}
+}
+
+func TestResolve_LoaderErrorPropagated(t *testing.T) {
+	// S-003: PackageLoader returning an error should fail the resolve
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/a": makeTags("v1.0.0"),
+	}}
+	loader := &errorLoader{errorKey: "acme/a"}
+
+	root := makeManifest("root", makeDep("acme/a", "^1.0.0"))
+	_, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+	if err == nil {
+		t.Fatal("expected error when PackageLoader fails")
+	}
+	if !strings.Contains(err.Error(), "acme/a") {
+		t.Errorf("error should mention the package: %v", err)
+	}
+}
+
+func TestResolve_LiteralConflict_EmptyVsNonEmpty(t *testing.T) {
+	// S-004: One path has no ref, another has explicit ref — should conflict
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@":       makeManifest("a"),
+		"acme/b@v1.0.0": makeManifest("b", makeDep("acme/a", "v1.2.3")),
+	}}
+
+	root := makeManifest("root",
+		&manifest.DependencyReference{RepoURL: "acme/a", Source: "git"},
+		makeDep("acme/b", "v1.0.0"),
+	)
+	// acme/a reached with "" ref (from root) and "v1.2.3" ref (from B)
+	// These should conflict
+	_, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+	if err == nil {
+		t.Fatal("expected error for empty vs non-empty literal ref conflict")
 	}
 }

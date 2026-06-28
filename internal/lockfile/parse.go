@@ -2,6 +2,7 @@ package lockfile
 
 import (
 	"fmt"
+	"strconv"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -89,11 +90,7 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 		case "version":
 			d.Version = val.Value
 		case "depth":
-			if val.Tag == "!!int" || (val.Value != "" && val.Value[0] >= '0' && val.Value[0] <= '9') {
-				n := 0
-				for _, c := range val.Value {
-					n = n*10 + int(c-'0')
-				}
+			if n, err := strconv.Atoi(val.Value); err == nil && n >= 0 {
 				d.Depth = n
 			}
 		case "tree_sha256":

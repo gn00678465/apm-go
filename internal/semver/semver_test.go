@@ -139,6 +139,11 @@ func TestIsSemverRange(t *testing.T) {
 		{"1.2.3", false},
 		{"0.2.3", false},
 
+		// Branch names containing 'x' must not be misclassified (S-005)
+		{"next", false},
+		{"fix-proxy", false},
+		{"apex", false},
+
 		{"main", false},
 		{"develop", false},
 		{"abc123def", false},

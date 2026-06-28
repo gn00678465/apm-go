@@ -11,7 +11,7 @@ type LockedDep struct {
 	ResolvedRef    string
 	ResolvedURL    string // registry download URL (advisory)
 	ResolvedHash   string // registry archive hash (authoritative)
-	ResolvedBy     string
+	ResolvedBy     string // parent unique key format: "<repo_url>" or "<repo_url>/<virtual_path>"
 	ResolvedAt     string // ISO 8601 UTC
 	Version        string // registry version
 	Depth          int
@@ -34,14 +34,19 @@ type Lockfile struct {
 	GeneratedAt  string
 	APMVersion   string
 	Dependencies []LockedDep
+	index        map[string]int // lazy index: unique key -> slice index
 }
 
-// FindByKey looks up a locked dependency by unique key.
+// FindByKey looks up a locked dependency by unique key. O(1) after first call.
 func (l *Lockfile) FindByKey(key string) *LockedDep {
-	for i := range l.Dependencies {
-		if l.Dependencies[i].UniqueKey() == key {
-			return &l.Dependencies[i]
+	if l.index == nil {
+		l.index = make(map[string]int, len(l.Dependencies))
+		for i := range l.Dependencies {
+			l.index[l.Dependencies[i].UniqueKey()] = i
 		}
+	}
+	if i, ok := l.index[key]; ok {
+		return &l.Dependencies[i]
 	}
 	return nil
 }
