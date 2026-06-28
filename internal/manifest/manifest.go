@@ -32,18 +32,21 @@ type Registry struct {
 }
 
 type Manifest struct {
-	Name        string
-	Version     string
-	Description string
-	Author      string
-	License     string
-	DefaultHost string
-	Target      []string
-	Type        string
-	Scripts     map[string]string
-	Registries  map[string]Registry
-	Includes   any // "auto" or []string
-	Workspaces bool
+	Name                string
+	Version             string
+	Description         string
+	Author              string
+	License             string
+	DefaultHost         string
+	Target              []string
+	Type                string
+	Scripts             map[string]string
+	Registries          map[string]Registry
+	Includes            any // "auto" or []string
+	Workspaces          bool
+	ConflictResolution  string
+	ParsedDeps          []*DependencyReference
+	ParsedDevDeps       []*DependencyReference
 
 	node *yaml.Node
 }
@@ -113,13 +116,20 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 			}
 			m.Registries = regs
 		case "dependencies":
-			if err := validateDepBlock(val); err != nil {
+			deps, cr, err := validateDepBlock(val)
+			if err != nil {
 				return nil, nil, err
+			}
+			m.ParsedDeps = append(m.ParsedDeps, deps...)
+			if cr != "" {
+				m.ConflictResolution = cr
 			}
 		case "devDependencies":
-			if err := validateDepBlock(val); err != nil {
+			deps, _, err := validateDepBlock(val)
+			if err != nil {
 				return nil, nil, err
 			}
+			m.ParsedDevDeps = append(m.ParsedDevDeps, deps...)
 		case "workspaces":
 			// mf-021: non-blocking diagnostic
 			m.Workspaces = true
@@ -283,45 +293,56 @@ func isLoopbackOrPrivate(host string) bool {
 }
 
 // validateDepBlock checks structural validity of a dependencies/devDependencies block.
-func validateDepBlock(val *yaml.Node) error {
+// Returns collected DependencyReferences and conflict_resolution value.
+func validateDepBlock(val *yaml.Node) ([]*DependencyReference, string, error) {
 	if val.Kind != yaml.MappingNode {
-		return fmt.Errorf("dependencies must be a mapping")
+		return nil, "", fmt.Errorf("dependencies must be a mapping")
 	}
+	var deps []*DependencyReference
+	var conflictRes string
 	for i := 0; i < len(val.Content)-1; i += 2 {
 		k := val.Content[i].Value
 		list := val.Content[i+1]
 
-		if k == "apm" {
+		if k == "conflict_resolution" {
+			if list.Kind == yaml.ScalarNode {
+				conflictRes = list.Value
+			}
+		} else if k == "apm" {
 			if list.Kind != yaml.SequenceNode {
-				return fmt.Errorf("dependencies.apm must be a list")
+				return nil, "", fmt.Errorf("dependencies.apm must be a list")
 			}
 			for idx, entry := range list.Content {
 				if entry.Kind == yaml.MappingNode {
-					if _, err := ParseDepDict(entry, idx); err != nil {
-						return err
+					d, err := ParseDepDict(entry, idx)
+					if err != nil {
+						return nil, "", err
 					}
+					deps = append(deps, d)
 				} else if entry.Kind == yaml.ScalarNode {
-					if _, err := ParseDepString(entry.Value); err != nil {
-						return err
+					d, err := ParseDepString(entry.Value)
+					if err != nil {
+						return nil, "", err
 					}
+					deps = append(deps, d)
 				}
 			}
 		} else if k == "mcp" {
 			if list.Kind != yaml.SequenceNode {
-				return fmt.Errorf("dependencies.mcp must be a list")
+				return nil, "", fmt.Errorf("dependencies.mcp must be a list")
 			}
 			for _, entry := range list.Content {
 				m, err := ParseMCPEntry(entry)
 				if err != nil {
-					return err
+					return nil, "", err
 				}
 				if err := ValidateMCP(m); err != nil {
-					return err
+					return nil, "", err
 				}
 			}
 		}
 	}
-	return nil
+	return deps, conflictRes, nil
 }
 
 // validateDepEntry is replaced by ParseDepDict in depref.go

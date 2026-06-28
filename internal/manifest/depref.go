@@ -23,6 +23,7 @@ type DependencyReference struct {
 	IsParent    bool
 	Port        int
 	Scheme      string // "https", "http", "ssh", "git" (SCP)
+	Source      string // "git", "registry", "local", "marketplace", "" (inferred)
 }
 
 var virtualFileExtensions = []string{
@@ -51,7 +52,7 @@ func ParseDepString(s string) (*DependencyReference, error) {
 		if containsEscape(s) {
 			return nil, fmt.Errorf("dependency path %q escapes project root", s)
 		}
-		return &DependencyReference{IsLocal: true, LocalPath: s}, nil
+		return &DependencyReference{IsLocal: true, LocalPath: s, Source: "local"}, nil
 	}
 
 	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
@@ -102,6 +103,7 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 		Repo:    repo,
 		RepoURL: owner + "/" + repo,
 		Scheme:  scheme,
+		Source:  "git",
 	}
 	if ref != "" {
 		if !refRe.MatchString(ref) {
@@ -149,6 +151,7 @@ func parseSSHURL(s string) (*DependencyReference, error) {
 		Repo:    repo,
 		RepoURL: owner + "/" + repo,
 		Scheme:  "ssh",
+		Source:  "git",
 	}
 	if ref != "" {
 		d.Reference = ref
@@ -196,6 +199,7 @@ func parseSCPURL(s string) (*DependencyReference, error) {
 		Repo:    repo,
 		RepoURL: owner + "/" + repo,
 		Scheme:  "git",
+		Source:  "git",
 	}
 	if ref != "" {
 		d.Reference = ref
@@ -253,6 +257,7 @@ func parseShorthand(s string) (*DependencyReference, error) {
 		Owner:   owner,
 		Repo:    repo,
 		RepoURL: owner + "/" + repo,
+		Source:  "git",
 	}
 	if ref != "" {
 		if !refRe.MatchString(ref) {
@@ -295,6 +300,7 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 			IsLocal:   true,
 			LocalPath: p,
 			Alias:     kv["alias"],
+			Source:    "local",
 		}, nil
 	}
 
@@ -336,6 +342,7 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 			RepoURL:   kv["id"],
 			Reference: kv["ref"],
 			Alias:     kv["alias"],
+			Source:    "registry",
 		}, nil
 	}
 
