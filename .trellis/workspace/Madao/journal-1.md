@@ -117,3 +117,40 @@ Implemented Phase 1 manifest layer: ParseManifest with 21 reqs (core fields, tar
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Phase 2: Dependency Resolution Engine
+
+**Date**: 2026-06-29
+**Task**: Phase 2: Dependency Resolution Engine
+**Branch**: `main`
+
+### Summary
+
+實作依賴解析引擎：semver wrapper (deps.dev/util/semver, 24/24 oracle)、BFS+fixpoint resolver、diamond tri-modal 衝突偵測、lock replay、why 診斷、update 邏輯。經 gpt-5.4+opus-4.6 review 後修正 9 項問題。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a9b8311` | (see git log) |
+| `3af3370` | (see git log) |
+| `f38164d` | (see git log) |
+| `c2c944a` | (see git log) |
+| `51dc086` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
