@@ -42,7 +42,7 @@ func TestRunInstall_NoDeps(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, false, false)
+	err := runInstall(deps, false, false, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestRunInstall_WithDeps(t *testing.T) {
 	// tree_sha256 requires a git repo at apm_modules/acme/foo — skip by making it fail gracefully
 	// For unit test: we test that the install pipeline runs; tree_sha256 will error
 	// since there's no real git repo. That's expected — integration tests handle the full flow.
-	err := runInstall(deps, false, true) // --no-provenance to simplify
+	err := runInstall(deps, false, true, "") // --no-provenance to simplify
 	// Expected: tree_sha256 error since there's no git repo in temp dir
 	if err == nil || !strings.Contains(err.Error(), "tree_sha256") {
 		// If it somehow succeeds or has a different error, that's also informative
@@ -88,7 +88,7 @@ func TestRunInstall_FrozenMissingLockfile(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, true, false)
+	err := runInstall(deps, true, false, "")
 	if err == nil {
 		t.Fatal("expected error for frozen install without lockfile")
 	}
@@ -110,7 +110,7 @@ func TestRunInstall_FrozenMissingPin(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, true, false)
+	err := runInstall(deps, true, false, "")
 	if err == nil {
 		t.Fatal("expected error for frozen install with missing pin")
 	}
@@ -131,7 +131,7 @@ func TestRunInstall_NoProvenance(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, false, true)
+	err := runInstall(deps, false, true, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestRunInstall_FrozenMissingTreeSHA256(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, true, false)
+	err := runInstall(deps, true, false, "")
 	if err == nil {
 		t.Fatal("expected error for frozen install with missing tree_sha256")
 	}

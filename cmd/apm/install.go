@@ -9,6 +9,7 @@ import (
 
 	yamllib "go.yaml.in/yaml/v4"
 
+	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
@@ -25,6 +26,7 @@ type installDeps struct {
 func installCmd() *cobra.Command {
 	var frozen bool
 	var noProvenance bool
+	var targetFlag string
 
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -36,17 +38,18 @@ func installCmd() *cobra.Command {
 					ModulesDir: "apm_modules",
 				},
 			}
-			return runInstall(deps, frozen, noProvenance)
+			return runInstall(deps, frozen, noProvenance, targetFlag)
 		},
 	}
 
 	cmd.Flags().BoolVar(&frozen, "frozen", false, "frozen install mode: lockfile must exist and cover all deps")
 	cmd.Flags().BoolVar(&noProvenance, "no-provenance", false, "omit generated_at and apm_version from lockfile")
+	cmd.Flags().StringVar(&targetFlag, "target", "", "explicit target for deployment (overrides auto-detection)")
 
 	return cmd
 }
 
-func runInstall(deps *installDeps, frozen, noProvenance bool) error {
+func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string) error {
 	// 1. Parse apm.yml
 	data, err := os.ReadFile("apm.yml")
 	if err != nil {
@@ -202,13 +205,42 @@ func runInstall(deps *installDeps, frozen, noProvenance bool) error {
 		newLock.Dependencies = append(newLock.Dependencies, ld)
 	}
 
-	// 6. No-op check
+	// 6. Deploy primitives to targets
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
+	for _, d := range targetDiags {
+		fmt.Fprintln(os.Stderr, d)
+	}
+	if len(targets) > 0 {
+		deployResult, err := deploy.Run(targets, ".", m, result, existingLock)
+		if err != nil {
+			return fmt.Errorf("deploy: %w", err)
+		}
+		for _, d := range deployResult.Diags {
+			fmt.Fprintln(os.Stderr, d)
+		}
+		// Populate per-dep DeployedFiles/DeployedHashes in lockfile entries
+		for i := range newLock.Dependencies {
+			dep := &newLock.Dependencies[i]
+			key := dep.UniqueKey()
+			if dr, ok := deployResult.PerDep[key]; ok {
+				dep.DeployedFiles = dr.Files
+				dep.DeployedHashes = dr.Hashes
+			}
+		}
+		// Populate local deployed files
+		if dr, ok := deployResult.PerDep[""]; ok {
+			newLock.LocalDeployedFiles = dr.Files
+			newLock.LocalDeployedHashes = dr.Hashes
+		}
+	}
+
+	// 7. No-op check
 	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) {
 		fmt.Println("Already up to date")
 		return nil
 	}
 
-	// 7. Write lockfile
+	// 8. Write lockfile
 	outBytes, err := lockfile.WriteLockfile(newLock, existingNode)
 	if err != nil {
 		return fmt.Errorf("serialize lockfile: %w", err)
