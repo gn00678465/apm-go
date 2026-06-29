@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/06-29-phase4-target-deploy/research/spec-research.md", "reason": "Normative spec text for req-pr-001~003, req-tg-001~003 — primary authority"}
+{"file": ".trellis/tasks/06-29-phase4-target-deploy/research/python-apm-research.md", "reason": "Python apm reference impl — file placement, detection, convergence"}
+{"file": ".trellis/tasks/06-29-phase4-target-deploy/prd.md", "reason": "Acceptance criteria and target adapter matrix"}
+{"file": "internal/deploy/primitive.go", "reason": "Primitive types, source attribution, collection logic"}
+{"file": "internal/deploy/conflict.go", "reason": "Conflict resolution: local wins (pr-002), declaration order (pr-003)"}
+{"file": "internal/deploy/adapter.go", "reason": "TargetAdapter interface, target resolution priority"}
+{"file": "internal/deploy/deploy.go", "reason": "Orchestrator: collect → resolve → deploy pipeline"}
+{"file": "internal/deploy/deploy_test.go", "reason": "Test coverage for all Phase 4 reqs"}
+{"file": "cmd/apm/install.go", "reason": "Integration: --target flag, deploy phase, lockfile population"}
