@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-29-phase3-lockfile/prd.md", "reason": "Phase 3 requirements and acceptance criteria (18 reqs)"}
+{"file": ".trellis/tasks/06-29-phase3-lockfile/design.md", "reason": "Technical design: serialization, hash ops, frozen install, install CLI"}
+{"file": ".trellis/tasks/06-29-phase3-lockfile/implement.md", "reason": "Step-by-step implementation plan with verify gates"}
+{"file": ".trellis/tasks/06-29-phase3-lockfile/research/spec-lockfile.md", "reason": "OpenAPM v0.1 spec §5 extraction: field schema, tree_sha256, hash envelope, frozen install"}
+{"file": ".trellis/tasks/06-29-phase3-lockfile/research/python-lockfile.md", "reason": "Python apm lockfile analysis: serialization, download, integrity, divergences"}
+{"file": ".trellis/tasks/06-29-phase3-lockfile/research/oracle-fixtures.md", "reason": "Oracle fixture inventory: 4 lockfile + 7 integrity fixtures"}
