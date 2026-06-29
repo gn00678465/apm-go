@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	yamllib "go.yaml.in/yaml/v4"
@@ -87,8 +88,43 @@ func runInstall(deps *installDeps, frozen, noProvenance bool) error {
 			return err
 		}
 
-		// req-lk-017: re-verify deployed_file_hashes against disk bytes
-		// deployed_files are project-relative paths, rooted at project root (not apm_modules)
+		// S-002: frozen install must download locked commits before verifying
+		for _, dep := range existingLock.Dependencies {
+			if dep.Source == "registry" || dep.Source == "local" {
+				continue
+			}
+			installDir := filepath.Join("apm_modules", dep.UniqueKey())
+			if _, statErr := os.Stat(installDir); os.IsNotExist(statErr) {
+				ref := &manifest.DependencyReference{
+					RepoURL: dep.RepoURL,
+					Owner:   ownerFromRepoURL(dep.RepoURL),
+					Repo:    repoFromRepoURL(dep.RepoURL),
+					Source:  "git",
+				}
+				resolvedRef := dep.ResolvedRef
+				if resolvedRef == "" {
+					resolvedRef = dep.ResolvedCommit
+				}
+				if _, loadErr := deps.loader.LoadPackage(ref, resolvedRef); loadErr != nil {
+					return fmt.Errorf("frozen install: download %s: %w", dep.UniqueKey(), loadErr)
+				}
+			}
+		}
+
+		// req-lk-015: fail-closed if git entry lacks tree_sha256 (S-001)
+		for _, dep := range existingLock.Dependencies {
+			if dep.ResolvedCommit != "" && dep.Source != "registry" {
+				if dep.TreeSHA256 == "" {
+					return fmt.Errorf("frozen install: entry %s missing required tree_sha256", dep.UniqueKey())
+				}
+				installDir := filepath.Join("apm_modules", dep.UniqueKey())
+				if err := lockfile.VerifyTreeSHA256(dep.TreeSHA256, installDir, dep.ResolvedCommit); err != nil {
+					return fmt.Errorf("frozen install: entry %s: %w", dep.UniqueKey(), err)
+				}
+			}
+		}
+
+		// req-lk-017: re-verify deployed_file_hashes
 		for _, dep := range existingLock.Dependencies {
 			if len(dep.DeployedHashes) > 0 {
 				if err := lockfile.VerifyDeployedHashes(dep.DeployedHashes, "."); err != nil {
@@ -97,13 +133,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool) error {
 			}
 		}
 
-		// req-lk-015: re-verify tree_sha256 for git-sourced entries
-		for _, dep := range existingLock.Dependencies {
-			if dep.TreeSHA256 != "" && dep.ResolvedCommit != "" && dep.Source != "registry" {
-				installDir := filepath.Join("apm_modules", dep.UniqueKey())
-				if err := lockfile.VerifyTreeSHA256(dep.TreeSHA256, installDir, dep.ResolvedCommit); err != nil {
-					return fmt.Errorf("frozen install: entry %s: %w", dep.UniqueKey(), err)
-				}
+		// S-004: verify local_deployed_file_hashes
+		if len(existingLock.LocalDeployedHashes) > 0 {
+			if err := lockfile.VerifyDeployedHashes(existingLock.LocalDeployedHashes, "."); err != nil {
+				return fmt.Errorf("frozen install: local files: %w", err)
 			}
 		}
 
@@ -214,4 +247,20 @@ func kindToSource(k resolver.ReferenceKind) string {
 	default:
 		return ""
 	}
+}
+
+func ownerFromRepoURL(repoURL string) string {
+	parts := strings.Split(repoURL, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2]
+	}
+	return repoURL
+}
+
+func repoFromRepoURL(repoURL string) string {
+	parts := strings.Split(repoURL, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-1]
+	}
+	return repoURL
 }

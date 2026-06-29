@@ -30,11 +30,13 @@ func (d *LockedDep) UniqueKey() string {
 
 // Lockfile represents the parsed apm.lock.yaml.
 type Lockfile struct {
-	Version      string
-	GeneratedAt  string
-	APMVersion   string
-	Dependencies []LockedDep
-	index        map[string]int // lazy index: unique key -> slice index
+	Version             string
+	GeneratedAt         string
+	APMVersion          string
+	Dependencies        []LockedDep
+	LocalDeployedFiles  []string          // self-entry deployed file paths
+	LocalDeployedHashes map[string]string // self-entry path -> hash
+	index               map[string]int    // lazy index: unique key -> slice index
 }
 
 // FindByKey looks up a locked dependency by unique key. O(1) after first call.

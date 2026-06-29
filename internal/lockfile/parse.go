@@ -2,10 +2,13 @@ package lockfile
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 
 	"go.yaml.in/yaml/v4"
 )
+
+var commitSHARegex = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // ParseLockfile parses a validated yaml.Node into a Lockfile.
 // The node must have been loaded via SafeLoad.
@@ -40,6 +43,19 @@ func ParseLockfile(doc *yaml.Node) (*Lockfile, error) {
 					return nil, err
 				}
 				lf.Dependencies = append(lf.Dependencies, *dep)
+			}
+		case "local_deployed_files":
+			if val.Kind == yaml.SequenceNode {
+				for _, item := range val.Content {
+					lf.LocalDeployedFiles = append(lf.LocalDeployedFiles, item.Value)
+				}
+			}
+		case "local_deployed_file_hashes":
+			if val.Kind == yaml.MappingNode {
+				lf.LocalDeployedHashes = make(map[string]string)
+				for j := 0; j < len(val.Content)-1; j += 2 {
+					lf.LocalDeployedHashes[val.Content[j].Value] = val.Content[j+1].Value
+				}
 			}
 		}
 	}
@@ -76,6 +92,9 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 		case "resolved_tag":
 			d.ResolvedTag = val.Value
 		case "resolved_commit":
+			if val.Value != "" && !commitSHARegex.MatchString(val.Value) {
+				return nil, fmt.Errorf("lockfile: dependency %d has invalid resolved_commit %q (expected 40-char hex)", idx, val.Value)
+			}
 			d.ResolvedCommit = val.Value
 		case "resolved_ref":
 			d.ResolvedRef = val.Value

@@ -143,9 +143,9 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 		}
 	}
 
-	// deployed_files (list) - reuse original if present
+	// deployed_files (list) — reuse original only if unchanged
 	if len(dep.DeployedFiles) > 0 {
-		if pair, exists := origPairs["deployed_files"]; exists {
+		if pair, exists := origPairs["deployed_files"]; exists && deployedFilesMatch(pair.val, dep.DeployedFiles) {
 			node.Content = append(node.Content, pair.key, pair.val)
 		} else {
 			seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
@@ -159,9 +159,9 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 		}
 	}
 
-	// deployed_file_hashes (map) - reuse original if present
+	// deployed_file_hashes (map) — reuse original only if unchanged
 	if len(dep.DeployedHashes) > 0 {
-		if pair, exists := origPairs["deployed_file_hashes"]; exists {
+		if pair, exists := origPairs["deployed_file_hashes"]; exists && deployedHashesMatch(pair.val, dep.DeployedHashes) {
 			node.Content = append(node.Content, pair.key, pair.val)
 		} else {
 			mapNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
@@ -358,18 +358,53 @@ func extractEntryKey(entry *yaml.Node) string {
 	return repoURL
 }
 
+// knownEntryFields lists fields that the serializer explicitly handles.
+// Fields NOT listed here are preserved verbatim from the original node (passthrough).
+// Deliberately excludes: host, port, is_virtual, package_type, skill_subset,
+// is_dev, content_hash, local_path — these are spec-recognized optional fields
+// that the serializer does not yet model but must survive round-trip (req-lk-011).
 var knownEntryFields = map[string]bool{
-	"repo_url": true, "host": true, "port": true, "source": true,
+	"repo_url": true, "source": true,
 	"resolved_commit": true, "resolved_ref": true, "resolved_tag": true,
 	"resolved_url": true, "resolved_hash": true,
 	"constraint": true, "resolved_at": true, "resolved_by": true,
-	"version": true, "virtual_path": true, "is_virtual": true,
-	"tree_sha256": true, "depth": true, "content_hash": true,
-	"package_type": true, "skill_subset": true,
-	"local_path": true, "is_dev": true,
+	"version": true, "virtual_path": true,
+	"tree_sha256": true, "depth": true,
 	"deployed_files": true, "deployed_file_hashes": true,
 }
 
 func isKnownEntryField(key string) bool {
 	return knownEntryFields[key]
+}
+
+func deployedFilesMatch(node *yaml.Node, files []string) bool {
+	if node == nil || node.Kind != yaml.SequenceNode {
+		return false
+	}
+	if len(node.Content) != len(files) {
+		return false
+	}
+	for i, f := range files {
+		if node.Content[i].Value != f {
+			return false
+		}
+	}
+	return true
+}
+
+func deployedHashesMatch(node *yaml.Node, hashes map[string]string) bool {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return false
+	}
+	if len(node.Content)/2 != len(hashes) {
+		return false
+	}
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		k := node.Content[i].Value
+		v := node.Content[i+1].Value
+		if hashes[k] != v {
+			return false
+		}
+	}
+	return true
 }

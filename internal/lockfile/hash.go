@@ -72,14 +72,17 @@ func VerifyDeployedHashes(hashes map[string]string, rootDir string) error {
 		if strings.HasSuffix(path, "/") {
 			continue
 		}
+		algo, expectedHex, err := ParseHashEnvelope(expected)
+		if err != nil {
+			return fmt.Errorf("integrity check failed for %s: invalid expected hash: %w", path, err)
+		}
+		if algo != "sha256" {
+			return fmt.Errorf("integrity check failed for %s: unsupported algorithm %q (only sha256 supported)", path, algo)
+		}
 		full := filepath.Join(rootDir, filepath.FromSlash(path))
 		actual, err := HashFileBytes(full)
 		if err != nil {
 			return fmt.Errorf("integrity check failed for %s: %w", path, err)
-		}
-		_, expectedHex, err := ParseHashEnvelope(expected)
-		if err != nil {
-			return fmt.Errorf("integrity check failed for %s: invalid expected hash: %w", path, err)
 		}
 		_, actualHex, _ := ParseHashEnvelope(actual)
 		if expectedHex != actualHex {
@@ -91,13 +94,16 @@ func VerifyDeployedHashes(hashes map[string]string, rootDir string) error {
 
 // VerifyArchiveHash checks registry archive SHA-256 before extraction (req-lk-013).
 func VerifyArchiveHash(archivePath string, expectedHash string) error {
+	algo, expectedHex, err := ParseHashEnvelope(expectedHash)
+	if err != nil {
+		return fmt.Errorf("archive hash verify: invalid expected hash: %w", err)
+	}
+	if algo != "sha256" {
+		return fmt.Errorf("archive hash verify: unsupported algorithm %q (only sha256 supported)", algo)
+	}
 	actual, err := HashFileBytes(archivePath)
 	if err != nil {
 		return fmt.Errorf("archive hash verify: %w", err)
-	}
-	_, expectedHex, err := ParseHashEnvelope(expectedHash)
-	if err != nil {
-		return fmt.Errorf("archive hash verify: invalid expected hash: %w", err)
 	}
 	_, actualHex, _ := ParseHashEnvelope(actual)
 	if expectedHex != actualHex {

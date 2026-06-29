@@ -13,7 +13,7 @@ import (
 // ComputeTreeSHA256 computes the canonical git tree hash per spec §5.6.4.
 // Uses `git ls-tree` for correct mode bits and tracked-file enumeration.
 func ComputeTreeSHA256(repoDir string, commit string) (string, error) {
-	out, err := runGit(repoDir, "ls-tree", "-r", "--full-tree", commit)
+	out, err := runGit(repoDir, "ls-tree", "-r", "-z", "--full-tree", commit)
 	if err != nil {
 		return "", fmt.Errorf("git ls-tree: %w", err)
 	}
@@ -64,17 +64,19 @@ type treeNode struct {
 
 func parseLsTree(output string) ([]lsTreeEntry, error) {
 	var entries []lsTreeEntry
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		if line == "" {
+	// -z flag: NUL-separated records, unquoted paths
+	for _, record := range strings.Split(output, "\x00") {
+		record = strings.TrimSpace(record)
+		if record == "" {
 			continue
 		}
 		// Format: "<mode> <type> <sha1>\t<path>"
-		tabIdx := strings.IndexByte(line, '\t')
+		tabIdx := strings.IndexByte(record, '\t')
 		if tabIdx < 0 {
-			return nil, fmt.Errorf("malformed ls-tree line: %q", line)
+			return nil, fmt.Errorf("malformed ls-tree record: %q", record)
 		}
-		meta := line[:tabIdx]
-		path := line[tabIdx+1:]
+		meta := record[:tabIdx]
+		path := record[tabIdx+1:]
 
 		parts := strings.Fields(meta)
 		if len(parts) < 3 {
@@ -94,6 +96,10 @@ func buildTreeStructure(entries []lsTreeEntry, repoDir, commit string) (*treeNod
 	root := &treeNode{name: "", children: make(map[string]*treeNode)}
 
 	for _, e := range entries {
+		// ponytail: skip submodules (mode 160000), spec §5.6.4 doesn't define gitlink handling
+		if e.mode == "160000" {
+			continue
+		}
 		blobBytes, err := readGitBlob(repoDir, e.objSHA)
 		if err != nil {
 			return nil, fmt.Errorf("reading blob %s for %s: %w", e.objSHA, e.path, err)
