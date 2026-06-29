@@ -154,3 +154,43 @@ Implemented Phase 1 manifest layer: ParseManifest with 21 reqs (core fields, tar
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Phase 2+3: Resolver Engine + Lockfile Write + Install CLI
+
+**Date**: 2026-06-29
+**Task**: Phase 2+3: Resolver Engine + Lockfile Write + Install CLI
+**Branch**: `main`
+
+### Summary
+
+Phase 2: 依賴解析引擎（semver/resolver/lockfile read）14 reqs + 9 項 review 修正。Phase 3: lockfile 序列化/hash/tree_sha256/frozen install/install CLI 18 reqs + 10 項 review 修正。經 gpt-5.4/opus-4.6/opus-4.8/gemini-3.5 multi-model review。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a9b8311` | (see git log) |
+| `3af3370` | (see git log) |
+| `f38164d` | (see git log) |
+| `c2c944a` | (see git log) |
+| `514df57` | (see git log) |
+| `0a2e3b2` | (see git log) |
+| `021f8c3` | (see git log) |
+| `ffd959a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
