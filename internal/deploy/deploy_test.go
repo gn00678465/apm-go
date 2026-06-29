@@ -208,6 +208,9 @@ func TestDeployCodex_OracleMatch(t *testing.T) {
 		".codex/agents/helper.toml":    true,
 		".agents/skills/demo/SKILL.md": true,
 	}
+	if len(deployed) != len(expected) {
+		t.Fatalf("expected %d files, got %d: %v", len(expected), len(deployed), deployed)
+	}
 	for _, f := range deployed {
 		if !expected[f] {
 			t.Errorf("unexpected: %s", f)
@@ -216,7 +219,7 @@ func TestDeployCodex_OracleMatch(t *testing.T) {
 }
 
 func TestDeployAntigravity_OracleMatch(t *testing.T) {
-	// oracle: .agents/rules/demo.md, .agents/skills/demo/SKILL.md
+	// oracle: .agents/rules/demo.md, .agents/skills/demo/SKILL.md (no agents per oracle)
 	dir := t.TempDir()
 
 	mkFile(t, dir, ".apm/instructions/demo.instructions.md", "# demo")
@@ -240,6 +243,9 @@ func TestDeployAntigravity_OracleMatch(t *testing.T) {
 	expected := map[string]bool{
 		".agents/rules/demo.md":        true,
 		".agents/skills/demo/SKILL.md": true,
+	}
+	if len(deployed) != len(expected) {
+		t.Fatalf("expected %d files, got %d: %v", len(expected), len(deployed), deployed)
 	}
 	for _, f := range deployed {
 		if !expected[f] {
@@ -275,6 +281,9 @@ func TestDeployOpenCode_OracleMatch(t *testing.T) {
 		".opencode/agents/helper.md":   true,
 		".opencode/commands/hello.md":  true,
 		".agents/skills/demo/SKILL.md": true,
+	}
+	if len(deployed) != len(expected) {
+		t.Fatalf("expected %d files, got %d: %v", len(expected), len(deployed), deployed)
 	}
 	for _, f := range deployed {
 		if !expected[f] {
@@ -669,4 +678,142 @@ func findByType(prims []Primitive, pt PrimitiveType) *Primitive {
 		}
 	}
 	return nil
+}
+
+// --- Phase 4-T: not_deployed negative tests ---
+
+func TestNotDeployed_PerTarget(t *testing.T) {
+	dir := t.TempDir()
+	// Create ALL primitive types
+	mkFile(t, dir, ".apm/instructions/demo.instructions.md", "inst")
+	mkFile(t, dir, ".apm/agents/helper.agent.md", "agent")
+	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill")
+	mkFile(t, dir, ".apm/commands/hello.md", "cmd")
+	mkFile(t, dir, ".apm/hooks/pre.json", `{"event":"pre"}`)
+	mkFile(t, dir, ".apm/prompts/ask.prompt.md", "prompt")
+
+	prims := CollectLocalPrimitives(dir)
+
+	tests := []struct {
+		adapter     TargetAdapter
+		mustDeploy  []PrimitiveType
+		mustNotDeploy []PrimitiveType
+	}{
+		{&claudeAdapter{}, []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands}, []PrimitiveType{TypePrompts}},
+		{&codexAdapter{}, []PrimitiveType{TypeAgents, TypeSkills}, []PrimitiveType{TypeInstructions, TypePrompts, TypeCommands}},
+		{&copilotAdapter{}, []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeSkills}, []PrimitiveType{TypeCommands}},
+		{&antigravityAdapter{}, []PrimitiveType{TypeInstructions, TypeSkills, TypeHooks}, []PrimitiveType{TypeCommands, TypePrompts, TypeAgents}},
+		{&opencodeAdapter{}, []PrimitiveType{TypeAgents, TypeCommands, TypeSkills}, []PrimitiveType{TypeInstructions, TypeHooks, TypePrompts}},
+		{&agentSkillsAdapter{}, []PrimitiveType{TypeSkills}, []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeCommands, TypeHooks}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.adapter.Name(), func(t *testing.T) {
+			tdir := t.TempDir()
+			var deployed []string
+			for _, p := range prims {
+				if !adapterSupports(tt.adapter, p.Type) {
+					continue
+				}
+				files, err := tt.adapter.DeployPrimitive(p, tdir)
+				if err != nil {
+					t.Fatalf("deploy %s: %v", p.Name, err)
+				}
+				deployed = append(deployed, files...)
+			}
+
+			// Verify must-deploy types produced files
+			for _, pt := range tt.mustDeploy {
+				found := false
+				for _, p := range prims {
+					if p.Type == pt && adapterSupports(tt.adapter, pt) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("%s should support %s", tt.adapter.Name(), pt)
+				}
+			}
+
+			// Verify must-not-deploy types are NOT supported
+			for _, pt := range tt.mustNotDeploy {
+				if adapterSupports(tt.adapter, pt) {
+					t.Errorf("%s should NOT support %s", tt.adapter.Name(), pt)
+				}
+			}
+		})
+	}
+}
+
+func TestUnsupportedTarget_CursorWindsurf(t *testing.T) {
+	dir := t.TempDir()
+	for _, target := range []string{"cursor", "windsurf"} {
+		t.Run(target, func(t *testing.T) {
+			_, diags := ResolveTargets(target, nil, dir)
+			found := false
+			for _, d := range diags {
+				if strings.Contains(d, "no registered handler") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("--%s should emit 'no registered handler' diagnostic, got %v", target, diags)
+			}
+		})
+	}
+}
+
+func TestCopilotPrompts(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/prompts/ask.prompt.md", "# ask prompt")
+
+	prims := CollectLocalPrimitives(dir)
+	adapter := &copilotAdapter{}
+
+	var deployed []string
+	for _, p := range prims {
+		if !adapterSupports(adapter, p.Type) {
+			continue
+		}
+		files, err := adapter.DeployPrimitive(p, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployed = append(deployed, files...)
+	}
+
+	if len(deployed) != 1 || deployed[0] != ".github/prompts/ask.prompt.md" {
+		t.Errorf("expected [.github/prompts/ask.prompt.md], got %v", deployed)
+	}
+}
+
+func TestAntigravityHooksDeploy(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/hooks/pre.json", `{"event":"PreToolUse"}`)
+
+	prims := CollectLocalPrimitives(dir)
+	adapter := &antigravityAdapter{}
+
+	var deployed []string
+	for _, p := range prims {
+		if !adapterSupports(adapter, p.Type) {
+			continue
+		}
+		files, err := adapter.DeployPrimitive(p, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployed = append(deployed, files...)
+	}
+
+	found := false
+	for _, f := range deployed {
+		if f == ".agents/hooks.json" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected .agents/hooks.json in deployed, got %v", deployed)
+	}
 }
