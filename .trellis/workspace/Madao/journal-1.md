@@ -194,3 +194,40 @@ Phase 2: 依賴解析引擎（semver/resolver/lockfile read）14 reqs + 9 項 re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Phase 4: Primitive Sourcing + Target Deploy
+
+**Date**: 2026-06-30
+**Task**: Phase 4: Primitive Sourcing + Target Deploy
+**Branch**: `feat/phase-4-target-deploy`
+
+### Summary
+
+實作 Phase 4 deploy 層：6 個 target adapter、primitive 衝突解決、--skill 子集安裝、positional arg 支援。Codex (gpt-5.5) 外部驗證 Phase 2-4 共 11 項全部 PASS。Review Forge 發現 9 項問題修正 8 項。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4458d41` | (see git log) |
+| `2aea588` | (see git log) |
+| `d414d4d` | (see git log) |
+| `ff1a53f` | (see git log) |
+| `c22d535` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

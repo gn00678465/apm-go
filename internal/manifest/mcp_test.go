@@ -26,8 +26,8 @@ func TestValidateMCP_SelfDefined(t *testing.T) {
 			wantErr: "requires 'command'",
 		},
 		{
-			name: "stdio command with spaces no args",
-			mcp:  MCPDependency{Registry: false, Transport: "stdio", Command: "npx -y @some/server"},
+			name:    "stdio command with spaces no args",
+			mcp:     MCPDependency{Registry: false, Transport: "stdio", Command: "npx -y @some/server"},
 			wantErr: "whitespace",
 		},
 		{
@@ -217,10 +217,10 @@ func TestParseMCPEntry_SelfDefined(t *testing.T) {
 
 func TestRecognizePlaceholders(t *testing.T) {
 	tests := []struct {
-		input    string
-		wantEnv  int
-		wantIn   int
-		wantAct  int
+		input   string
+		wantEnv int
+		wantIn  int
+		wantAct int
 	}{
 		{"${TOKEN}", 1, 0, 0},
 		{"${env:TOKEN}", 1, 0, 0},

@@ -88,4 +88,3 @@ func formatConflictDiagnostic(key string, constraints []ConstraintEntry) string 
 	}
 	return sb.String()
 }
-

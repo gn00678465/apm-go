@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/06-29-phase4-target-deploy/prd.md", "reason": "Phase 4 requirements and acceptance criteria"}
+{"file": ".trellis/tasks/06-29-phase4-target-deploy/design.md", "reason": "Architecture, data flow, adapter interface, file placement rules"}
+{"file": ".trellis/tasks/06-29-phase4-target-deploy/implement.md", "reason": "Step-by-step execution plan"}
+{"file": ".trellis/tasks/06-29-phase4-target-deploy/research/spec-research.md", "reason": "OpenAPM spec §8.2-8.5 normative text for req-pr and req-tg"}
+{"file": ".trellis/tasks/06-29-phase4-target-deploy/research/python-apm-research.md", "reason": "Python apm target profiles, detection signals, file placement"}
+{"file": "internal/manifest/target.go", "reason": "Existing target validation, canonical set, adapter registry"}
+{"file": "internal/manifest/detect.go", "reason": "Existing target detection signals"}
+{"file": "cmd/apm/install.go", "reason": "Integration point for deploy phase"}
+{"file": "internal/lockfile/types.go", "reason": "DeployedFiles/DeployedHashes fields"}

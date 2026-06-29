@@ -32,6 +32,9 @@ func (r *RealTagLister) resolveCloneURL(repoURL string) string {
 	if strings.Contains(repoURL, "://") || strings.HasPrefix(repoURL, "git@") {
 		return repoURL
 	}
+	if strings.HasPrefix(repoURL, "./") || strings.HasPrefix(repoURL, "../") || strings.HasPrefix(repoURL, "/") {
+		return repoURL
+	}
 	host := r.DefaultHost
 	if host == "" {
 		host = "github.com"

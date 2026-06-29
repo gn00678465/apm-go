@@ -58,7 +58,7 @@ type lsTreeEntry struct {
 type treeNode struct {
 	name     string
 	mode     string
-	blobHash string            // sha256 hex of content (for files/symlinks)
+	blobHash string               // sha256 hex of content (for files/symlinks)
 	children map[string]*treeNode // for directories
 }
 

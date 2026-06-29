@@ -46,6 +46,10 @@ func (r *RealPackageLoader) installPath(ref *manifest.DependencyReference) strin
 }
 
 func (r *RealPackageLoader) resolveCloneURL(ref *manifest.DependencyReference) string {
+	// Local filesystem git repo (git: ./path or git: ../path)
+	if ref.Owner == "" && ref.Repo == "" && ref.RepoURL != "" {
+		return ref.RepoURL
+	}
 	if ref.Scheme != "" {
 		switch ref.Scheme {
 		case "https", "http":
@@ -95,6 +99,17 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
 		return fmt.Errorf("%s\n%s", err, string(out))
 	}
 	return nil
+}
+
+// ResolveCommit returns the HEAD commit SHA of a cloned repo.
+func ResolveCommit(repoDir string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("rev-parse HEAD in %s: %w", repoDir, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (r *RealPackageLoader) loadLocalPackage(path string) (*manifest.Manifest, error) {
