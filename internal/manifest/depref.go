@@ -324,6 +324,13 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 		if err != nil {
 			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
 		}
+		// git: key forces source=git even for local filesystem paths
+		if d.IsLocal {
+			d.IsLocal = false
+			d.RepoURL = d.LocalPath
+			d.LocalPath = ""
+			d.Source = "git"
+		}
 		if kv["ref"] != "" {
 			d.Reference = kv["ref"]
 		}
@@ -364,6 +371,11 @@ func (d *DependencyReference) ToCanonical(defaultHost string) string {
 	}
 	if d.IsParent {
 		return "parent"
+	}
+
+	// Local git repo (git: ./path) — Owner/Repo empty, RepoURL is the path
+	if d.Owner == "" && d.Repo == "" && d.RepoURL != "" {
+		return d.RepoURL
 	}
 
 	var sb strings.Builder

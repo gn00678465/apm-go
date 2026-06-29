@@ -114,6 +114,12 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 			}
 		case "tree_sha256":
 			d.TreeSHA256 = val.Value
+		case "skill_subset":
+			if val.Kind == yaml.SequenceNode {
+				for _, s := range val.Content {
+					d.SkillSubset = append(d.SkillSubset, s.Value)
+				}
+			}
 		case "deployed_files":
 			if val.Kind == yaml.SequenceNode {
 				for _, f := range val.Content {

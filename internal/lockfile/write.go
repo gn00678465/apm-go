@@ -143,6 +143,22 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 		}
 	}
 
+	// skill_subset (list)
+	if len(dep.SkillSubset) > 0 {
+		if pair, exists := origPairs["skill_subset"]; exists && deployedFilesMatch(pair.val, dep.SkillSubset) {
+			node.Content = append(node.Content, pair.key, pair.val)
+		} else {
+			seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			for _, s := range dep.SkillSubset {
+				seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: s, Tag: "!!str"})
+			}
+			node.Content = append(node.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "skill_subset", Tag: "!!str"},
+				seq,
+			)
+		}
+	}
+
 	// deployed_files (list) — reuse original only if unchanged
 	if len(dep.DeployedFiles) > 0 {
 		if pair, exists := origPairs["deployed_files"]; exists && deployedFilesMatch(pair.val, dep.DeployedFiles) {
@@ -396,6 +412,7 @@ var knownEntryFields = map[string]bool{
 	"constraint": true, "resolved_at": true, "resolved_by": true,
 	"version": true, "virtual_path": true,
 	"tree_sha256": true, "depth": true,
+	"skill_subset": true,
 	"deployed_files": true, "deployed_file_hashes": true,
 }
 

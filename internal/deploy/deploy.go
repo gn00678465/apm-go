@@ -21,7 +21,14 @@ type DeployResult struct {
 }
 
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
-func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult) (*DeployResult, error) {
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, skillSubset ...[]string) (*DeployResult, error) {
+	var skillFilter map[string]bool
+	if len(skillSubset) > 0 && len(skillSubset[0]) > 0 {
+		skillFilter = make(map[string]bool)
+		for _, s := range skillSubset[0] {
+			skillFilter[s] = true
+		}
+	}
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
 
@@ -29,11 +36,11 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	locals := CollectLocalPrimitives(projectDir)
 	ordered = append(ordered, locals...)
 
-	// Direct deps in manifest declaration order (req-pr-003)
+	// Direct deps in manifest declaration order (req-pr-003), deduplicated
 	directKeys := make(map[string]bool)
 	for _, dep := range m.ParsedDeps {
 		key := depRefKey(dep)
-		if key == "" {
+		if key == "" || directKeys[key] {
 			continue
 		}
 		directKeys[key] = true
@@ -52,16 +59,27 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 	}
 
-	// 2. Resolve conflicts
+	// 2. Apply --skill filter before conflict resolution
+	if skillFilter != nil {
+		var filtered []Primitive
+		for _, p := range ordered {
+			if p.Type == TypeSkills && !skillFilter[p.Name] {
+				continue
+			}
+			filtered = append(filtered, p)
+		}
+		ordered = filtered
+	}
+
+	// 3. Resolve conflicts
 	winners, conflictDiags := ResolvePrimitives(ordered)
 
-	// 3. Deploy to each target
+	// 4. Deploy to each target
 	result := &DeployResult{
 		PerDep: make(map[string]*DepDeployResult),
 		Diags:  conflictDiags,
 	}
 
-	// Track already-deployed skills to avoid duplicate writes across targets
 	deployedSkills := make(map[string]bool)
 
 	for _, target := range targets {

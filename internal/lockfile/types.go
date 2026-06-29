@@ -16,6 +16,7 @@ type LockedDep struct {
 	Version        string // registry version
 	Depth          int
 	TreeSHA256     string
+	SkillSubset    []string
 	DeployedFiles  []string
 	DeployedHashes map[string]string // path -> hash
 }
