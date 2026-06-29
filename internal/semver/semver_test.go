@@ -9,8 +9,8 @@ import (
 
 type oracleFile struct {
 	RangeMatch       []rangeMatchCase       `json:"range_match"`
-	TagSelection     []tagSelectionCase      `json:"tag_selection"`
-	BuildMetadataTie []buildMetadataTieCase  `json:"build_metadata_tie"`
+	TagSelection     []tagSelectionCase     `json:"tag_selection"`
+	BuildMetadataTie []buildMetadataTieCase `json:"build_metadata_tie"`
 }
 
 type rangeMatchCase struct {

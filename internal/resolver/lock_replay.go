@@ -8,9 +8,9 @@ import (
 type ReplayAction int
 
 const (
-	ReplayLocked  ReplayAction = iota // use locked pin
-	ReResolve                         // re-resolve against remote
-	NewDep                            // no lock entry, fresh resolve
+	ReplayLocked ReplayAction = iota // use locked pin
+	ReResolve                        // re-resolve against remote
+	NewDep                           // no lock entry, fresh resolve
 )
 
 // ShouldReplay returns true if the manifest constraint is character-equal

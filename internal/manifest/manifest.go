@@ -32,21 +32,21 @@ type Registry struct {
 }
 
 type Manifest struct {
-	Name                string
-	Version             string
-	Description         string
-	Author              string
-	License             string
-	DefaultHost         string
-	Target              []string
-	Type                string
-	Scripts             map[string]string
-	Registries          map[string]Registry
-	Includes            any // "auto" or []string
-	Workspaces          bool
-	ConflictResolution  string
-	ParsedDeps          []*DependencyReference
-	ParsedDevDeps       []*DependencyReference
+	Name               string
+	Version            string
+	Description        string
+	Author             string
+	License            string
+	DefaultHost        string
+	Target             []string
+	Type               string
+	Scripts            map[string]string
+	Registries         map[string]Registry
+	Includes           any // "auto" or []string
+	Workspaces         bool
+	ConflictResolution string
+	ParsedDeps         []*DependencyReference
+	ParsedDevDeps      []*DependencyReference
 
 	node *yaml.Node
 }
