@@ -20,6 +20,7 @@ func main() {
 	root.AddCommand(validateCmd())
 	root.AddCommand(normalizeCmd())
 	root.AddCommand(initCmd())
+	root.AddCommand(installCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
