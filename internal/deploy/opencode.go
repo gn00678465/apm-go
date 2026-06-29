@@ -6,7 +6,7 @@ type opencodeAdapter struct{}
 
 func (a *opencodeAdapter) Name() string { return "opencode" }
 
-func (a *opencodeAdapter) DeployRoots() []string { return []string{".opencode/"} }
+func (a *opencodeAdapter) DeployRoots() []string { return []string{".opencode/", ".agents/"} }
 
 func (a *opencodeAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeAgents, TypeCommands, TypeSkills}

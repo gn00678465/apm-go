@@ -21,7 +21,7 @@ type DeployResult struct {
 }
 
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
-func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, lock *lockfile.Lockfile) (*DeployResult, error) {
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult) (*DeployResult, error) {
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
 
@@ -85,7 +85,9 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 
 			files, err := adapter.DeployPrimitive(p, projectDir)
 			if err != nil {
-				return nil, fmt.Errorf("deploy %s to %s: %w", p.Name, target, err)
+				result.Diags = append(result.Diags,
+					fmt.Sprintf("deploy %s to %s failed: %v", p.Name, target, err))
+				continue
 			}
 
 			if len(files) > 0 {
@@ -98,13 +100,13 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				}
 				depResult.Files = append(depResult.Files, files...)
 
-				// Compute hashes for deployed files
 				for _, f := range files {
 					absPath := filepath.Join(projectDir, f)
 					hash, err := lockfile.HashFileBytes(absPath)
-					if err == nil {
-						depResult.Hashes[f] = hash
+					if err != nil {
+						return nil, fmt.Errorf("hash deployed file %s: %w", f, err)
 					}
+					depResult.Hashes[f] = hash
 				}
 			}
 		}

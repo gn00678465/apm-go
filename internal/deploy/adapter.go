@@ -3,6 +3,8 @@ package deploy
 import (
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 
 	"github.com/apm-go/apm/internal/manifest"
 )
@@ -103,21 +105,47 @@ func filterSupported(targets []string) []string {
 	return result
 }
 
-// deploySkill deploys a skill directory to .agents/skills/<name>/SKILL.md (req-tg-003).
+// deploySkill recursively copies a skill directory to .agents/skills/<name>/ (req-tg-003).
 // Shared by all adapters.
 func deploySkill(p Primitive, projectDir string) ([]string, error) {
-	destDir := fmt.Sprintf(".agents/skills/%s", p.Name)
-	destPath := destDir + "/SKILL.md"
-	absDestDir := joinPath(projectDir, destDir)
+	destDir := path.Join(".agents/skills", p.Name)
+	absDestDir := filepath.Join(projectDir, filepath.FromSlash(destDir))
 	if err := os.MkdirAll(absDestDir, 0755); err != nil {
 		return nil, fmt.Errorf("create skill dir: %w", err)
 	}
 
-	srcSkillMD := joinPath(p.SrcPath, "SKILL.md")
-	if err := copyFile(srcSkillMD, joinPath(projectDir, destPath)); err != nil {
+	var deployed []string
+	err := copyDirRecursive(p.SrcPath, absDestDir, destDir, &deployed)
+	if err != nil {
 		return nil, fmt.Errorf("deploy skill %s: %w", p.Name, err)
 	}
-	return []string{destPath}, nil
+	return deployed, nil
+}
+
+func copyDirRecursive(srcDir, dstDir, relPrefix string, deployed *[]string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(srcDir, e.Name())
+		dstPath := filepath.Join(dstDir, e.Name())
+		relPath := path.Join(relPrefix, e.Name())
+		if e.IsDir() {
+			if err := os.MkdirAll(dstPath, 0755); err != nil {
+				return err
+			}
+			if err := copyDirRecursive(srcPath, dstPath, relPath, deployed); err != nil {
+				return err
+			}
+		} else {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
+			*deployed = append(*deployed, relPath)
+		}
+	}
+	return nil
 }
 
 func copyFile(src, dst string) error {
@@ -129,25 +157,12 @@ func copyFile(src, dst string) error {
 }
 
 func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error) {
-	absDest := joinPath(projectDir, destPath)
-	if err := os.MkdirAll(joinDir(absDest), 0755); err != nil {
+	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
+	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
 		return nil, err
 	}
 	if err := copyFile(p.SrcPath, absDest); err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
 	return []string{destPath}, nil
-}
-
-func joinPath(base, rel string) string {
-	return base + "/" + rel
-}
-
-func joinDir(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' || path[i] == '\\' {
-			return path[:i]
-		}
-	}
-	return "."
 }

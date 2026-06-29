@@ -333,8 +333,6 @@ func TestDeployRootConstraint(t *testing.T) {
 
 	for name, adapter := range adapters {
 		roots := adapter.DeployRoots()
-		// .agents/ is an implicit root for skill convergence
-		allRoots := append(roots, ".agents/")
 
 		for _, p := range prims {
 			if !adapterSupports(adapter, p.Type) {
@@ -346,7 +344,7 @@ func TestDeployRootConstraint(t *testing.T) {
 			}
 			for _, f := range files {
 				validRoot := false
-				for _, root := range allRoots {
+				for _, root := range roots {
 					if strings.HasPrefix(f, root) {
 						validRoot = true
 						break
@@ -395,6 +393,38 @@ func TestSkillConvergence(t *testing.T) {
 	}
 }
 
+func TestDeploySkill_BundleWithSiblings(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body")
+	mkFile(t, dir, ".apm/skills/demo/scripts/run.sh", "#!/bin/sh\necho hi")
+	mkFile(t, dir, ".apm/skills/demo/references/guide.md", "# guide")
+
+	prims := CollectLocalPrimitives(dir)
+	skillPrim := findByType(prims, TypeSkills)
+	if skillPrim == nil {
+		t.Fatal("no skill primitive")
+	}
+
+	files, err := deploySkill(*skillPrim, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := map[string]bool{
+		".agents/skills/demo/SKILL.md":            true,
+		".agents/skills/demo/scripts/run.sh":      true,
+		".agents/skills/demo/references/guide.md": true,
+	}
+	if len(files) != len(expected) {
+		t.Fatalf("expected %d files, got %d: %v", len(expected), len(files), files)
+	}
+	for _, f := range files {
+		if !expected[f] {
+			t.Errorf("unexpected: %s", f)
+		}
+	}
+}
+
 func TestRun_FullPipeline(t *testing.T) {
 	dir := t.TempDir()
 
@@ -422,7 +452,7 @@ func TestRun_FullPipeline(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
+	result, err := Run([]string{"claude"}, dir, m, resolved)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -488,7 +518,7 @@ func TestRun_ConflictResolution(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
+	result, err := Run([]string{"claude"}, dir, m, resolved)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -513,7 +543,7 @@ func TestRun_SkillDeduplication(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"claude", "codex", "copilot"}, dir, m, nil, nil)
+	result, err := Run([]string{"claude", "codex", "copilot"}, dir, m, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -540,7 +570,7 @@ func TestRun_NoTargets(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run(nil, dir, m, nil, nil)
+	result, err := Run(nil, dir, m, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -587,7 +617,7 @@ func TestRun_DeployedFilesKeyMatch(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
+	result, err := Run([]string{"claude"}, dir, m, resolved)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

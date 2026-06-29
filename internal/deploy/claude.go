@@ -6,7 +6,7 @@ type claudeAdapter struct{}
 
 func (a *claudeAdapter) Name() string { return "claude" }
 
-func (a *claudeAdapter) DeployRoots() []string { return []string{".claude/"} }
+func (a *claudeAdapter) DeployRoots() []string { return []string{".claude/", ".agents/"} }
 
 func (a *claudeAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands}

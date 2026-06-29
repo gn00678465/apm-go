@@ -6,7 +6,7 @@ type copilotAdapter struct{}
 
 func (a *copilotAdapter) Name() string { return "copilot" }
 
-func (a *copilotAdapter) DeployRoots() []string { return []string{".github/"} }
+func (a *copilotAdapter) DeployRoots() []string { return []string{".github/", ".agents/"} }
 
 func (a *copilotAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeSkills}

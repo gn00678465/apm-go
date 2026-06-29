@@ -12,6 +12,7 @@ type conflictKey struct {
 // then transitive in lockfile sorted order (repo_url, virtual_path).
 func ResolvePrimitives(primitives []Primitive) ([]Primitive, []string) {
 	winners := make(map[conflictKey]Primitive)
+	var order []conflictKey
 	var diags []string
 
 	for _, p := range primitives {
@@ -19,6 +20,7 @@ func ResolvePrimitives(primitives []Primitive) ([]Primitive, []string) {
 		existing, exists := winners[key]
 		if !exists {
 			winners[key] = p
+			order = append(order, key)
 			continue
 		}
 
@@ -42,9 +44,9 @@ func ResolvePrimitives(primitives []Primitive) ([]Primitive, []string) {
 		}
 	}
 
-	var result []Primitive
-	for _, p := range winners {
-		result = append(result, p)
+	result := make([]Primitive, 0, len(order))
+	for _, key := range order {
+		result = append(result, winners[key])
 	}
 	return result, diags
 }

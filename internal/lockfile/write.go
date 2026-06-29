@@ -249,7 +249,33 @@ func depSemanticEqual(a, b *LockedDep) bool {
 		a.ResolvedBy == b.ResolvedBy &&
 		a.Version == b.Version &&
 		a.Depth == b.Depth &&
-		a.TreeSHA256 == b.TreeSHA256
+		a.TreeSHA256 == b.TreeSHA256 &&
+		slicesEqual(a.DeployedFiles, b.DeployedFiles) &&
+		mapsEqual(a.DeployedHashes, b.DeployedHashes)
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func mapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // DetermineVersion returns the lockfile version based on entries and monotonicity (req-lk-002).

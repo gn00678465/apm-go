@@ -211,7 +211,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string)
 		fmt.Fprintln(os.Stderr, d)
 	}
 	if len(targets) > 0 {
-		deployResult, err := deploy.Run(targets, ".", m, result, existingLock)
+		deployResult, err := deploy.Run(targets, ".", m, result)
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}
