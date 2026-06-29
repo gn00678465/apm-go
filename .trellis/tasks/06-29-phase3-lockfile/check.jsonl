@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-29-phase3-lockfile/prd.md", "reason": "Acceptance criteria to verify against"}
+{"file": ".trellis/tasks/06-29-phase3-lockfile/design.md", "reason": "Architecture contracts to validate"}
+{"file": ".trellis/tasks/06-29-phase3-lockfile/research/spec-lockfile.md", "reason": "Spec requirements for conformance checking"}
+{"file": ".trellis/tasks/06-29-phase3-lockfile/research/oracle-fixtures.md", "reason": "Oracle fixtures to test against"}
