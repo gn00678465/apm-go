@@ -10,7 +10,7 @@ Close all gaps between the 4-T acceptance-checklist matrix and the current imple
 |---|-----|--------|
 | 1 | Antigravity auto-detect | **Keep explicit-only** (user decision). Document as known deviation |
 | 2 | DetectTargets() untested (10/11 signals) | Add `detect_test.go` |
-| 3 | Hooks not deployed by any adapter | Implement antigravity hooks (`.agents/hooks.json` file copy). Claude/codex/copilot hooks merge remains deferred |
+| 3 | Hooks not deployed by any adapter | Implement file-copy hooks: antigravity→`.agents/hooks.json`, codex→`.codex/hooks.json`, copilot→`.github/hooks/<n>.json`. claude hooks = settings.json compile-merge (deferred, user decision) |
 | 4 | `not_deployed` negative tests absent | Add per-target negative tests |
 | 5 | cursor/windsurf negative tests missing | Add alongside existing gemini test |
 | 6 | Copilot prompts untested | Add test |
