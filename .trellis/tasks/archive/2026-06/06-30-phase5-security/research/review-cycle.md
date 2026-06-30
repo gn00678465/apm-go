@@ -34,7 +34,32 @@ Repro now fails closed: `Error: validate apm.lock.yaml: lockfile: dependency rep
 project**. Black-box driver 7/7; full `go test ./...` green; archive 83.9%, credsec 90.9%,
 lockfile 80.2%; `go vet` clean.
 
-## Round 2 — independent opus re-verification of the fix: in flight.
+## Round 2 — independent re-verification of the fix: COMPLETE — sound
+
+### opus (fresh-context, re-ran the escape repro + bypass variants)
+- Defect #1 (HIGH) **CLOSED**: all variants fail closed at parse —
+  `repo_url: ../../escape`, `..\..\escape` (backslash), clean `repo_url` +
+  `virtual_path: ../../x`, `/tmp/evil` (unix abs), `C:/evil` (Win volume). No escape.
+- Sole-chokepoint premise **verified by grep**: `ParseLockfile` is the only parser of
+  lockfile bytes (install.go + audit.go both route through it); no bypass reader.
+- Defect #2 (LOW) CLOSED; all 4 new tests GENUINE; no oracle fixture regressed; 10/10
+  packages ok. Verdict: **Phase 5 sound**.
+
+### codex exec (gpt-5.5, black-box binary) — 7/7 PASS
+Working invocation: `codex exec --dangerously-bypass-approvals-and-sandbox -o <file>`
+(plain `-s danger-full-access` hung on per-command approval prompts in non-interactive mode).
+
+| case | req | result |
+|---|---|---|
+| zip-slip | sc-002 | fail-closed `..`, no `evil.txt` |
+| symlink-escape | sc-002 | fail-closed `link` |
+| four-entry | sc-004 | `--max-entries 3` blocks; default extracts |
+| hash-mismatch | lk-013 | fail-closed `expected`/`actual`, no extraction |
+| deployed-file-mismatch | sc-001 | install + audit both name the path |
+| good | accept | exit 0, `SKILL.md` extracted |
+| path-traversal escape | regression | 3 variants fail-closed, no escape |
+
+Both external verifiers (opus + codex) agree: **Phase 5 is sound**.
 
 ## Note: python runner unusable
 `conformance/conformance-kit/runner/run_conformance.py` crashes parsing the oracle's own
