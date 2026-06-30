@@ -267,3 +267,37 @@ Phase 2: 依賴解析引擎（semver/resolver/lockfile read）14 reqs + 9 項 re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Phase 5 Security Hardening
+
+**Date**: 2026-06-30
+**Task**: Phase 5 Security Hardening
+**Branch**: `feat/phase-5-security`
+
+### Summary
+
+實作 OpenAPM v0.1 Phase 5 安全強化 (req-sc-001~008)：internal/archive 安全 tar.gz 解壓 (路徑逃逸/symlink/容器/大小/entry 上限)、internal/credsec 憑證與 host-class 防護 (PSL eTLD+1、跨 class redirect 丟憑證、非https 拒附、secret 遮罩)、apm audit 與 frozen install 重構 (磁碟完整性優先、registry archive 驗 hash 後安全解壓)。獨立 opus 審查發現並修補 repo_url 解壓逃逸高風險缺陷，再次獨立驗證確認 sound。原生 oracle 測試 + 黑箱二進位驗證全綠。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c76f58` | (see git log) |
+| `534c174` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

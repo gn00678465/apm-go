@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
+- **Total Sessions**: 8
 - **Last Active**: 2026-06-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~269 | Active |
+| `journal-1.md` | ~303 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-06-30 | Phase 5 Security Hardening | `0c76f58`, `534c174` | `feat/phase-5-security` |
 | 7 | 2026-06-30 | Phase 4-T: Per-Target Deploy Matrix + Review Fixes | `e27262f`, `f82f021`, `5d700f2`, `ad699f4` | `feat/phase-4t-target-matrix` |
 | 6 | 2026-06-30 | Phase 4: Primitive Sourcing + Target Deploy | `4458d41`, `2aea588`, `d414d4d`, `ff1a53f`, `c22d535` | `feat/phase-4-target-deploy` |
 | 5 | 2026-06-29 | Phase 2+3: Resolver Engine + Lockfile Write + Install CLI | `a9b8311`, `3af3370`, `f38164d`, `c2c944a`, `514df57`, `0a2e3b2`, `021f8c3`, `ffd959a` | `main` |
