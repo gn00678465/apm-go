@@ -9,7 +9,7 @@ func (a *codexAdapter) Name() string { return "codex" }
 func (a *codexAdapter) DeployRoots() []string { return []string{".codex/", ".agents/"} }
 
 func (a *codexAdapter) SupportedTypes() []PrimitiveType {
-	return []PrimitiveType{TypeAgents, TypeSkills}
+	return []PrimitiveType{TypeAgents, TypeSkills, TypeHooks}
 }
 
 func (a *codexAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
@@ -18,6 +18,8 @@ func (a *codexAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string
 		return deploySkill(p, projectDir)
 	case TypeAgents:
 		return deployFileToPath(p, fmt.Sprintf(".codex/agents/%s.toml", p.Name), projectDir)
+	case TypeHooks:
+		return deployFileToPath(p, ".codex/hooks.json", projectDir)
 	default:
 		return nil, nil
 	}

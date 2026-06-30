@@ -231,3 +231,39 @@ Phase 2: 依賴解析引擎（semver/resolver/lockfile read）14 reqs + 9 項 re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Phase 4-T: Per-Target Deploy Matrix + Review Fixes
+
+**Date**: 2026-06-30
+**Task**: Phase 4-T: Per-Target Deploy Matrix + Review Fixes
+**Branch**: `feat/phase-4t-target-matrix`
+
+### Summary
+
+完成 4-T 逐 target 部署矩陣測試（detect_test 11 訊號、not_deployed 負向、cursor/windsurf 診斷、copilot prompts）。修正 antigravity adapter（移除 agents、新增 hooks）。Review Forge 三模型 review 6 項全修並由 opus 獨立驗證。補齊 codex/copilot hooks 部署、claude hooks 維持 settings.json deferred。Codex 黑箱驗證 4-T 矩陣 9/9 + hooks 5/5 全 PASS。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e27262f` | (see git log) |
+| `f82f021` | (see git log) |
+| `5d700f2` | (see git log) |
+| `ad699f4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

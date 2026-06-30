@@ -81,6 +81,9 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 
 	deployedSkills := make(map[string]bool)
+	// Track which primitive first wrote each destination path, to warn on
+	// fixed-path overwrites (e.g. multiple hook files -> .agents/hooks.json).
+	writtenBy := make(map[string]string)
 
 	for _, target := range targets {
 		adapter, ok := Adapters[target]
@@ -106,6 +109,16 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				result.Diags = append(result.Diags,
 					fmt.Sprintf("deploy %s to %s failed: %v", p.Name, target, err))
 				continue
+			}
+
+			// Warn when a different primitive overwrites a path already written.
+			for _, f := range files {
+				if prev, ok := writtenBy[f]; ok && prev != p.Name {
+					result.Diags = append(result.Diags, fmt.Sprintf(
+						"%s %q overwrites %s already written by %q (single-file target)",
+						p.Type, p.Name, f, prev))
+				}
+				writtenBy[f] = p.Name
 			}
 
 			if len(files) > 0 {

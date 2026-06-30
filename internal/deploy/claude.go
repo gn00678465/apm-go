@@ -8,6 +8,8 @@ func (a *claudeAdapter) Name() string { return "claude" }
 
 func (a *claudeAdapter) DeployRoots() []string { return []string{".claude/", ".agents/"} }
 
+// SupportedTypes omits hooks: claude hooks are merged into .claude/settings.json
+// at compile time (deferred, alongside CLAUDE.md), not deployed as standalone files.
 func (a *claudeAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands}
 }
