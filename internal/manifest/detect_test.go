@@ -3,7 +3,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -54,17 +54,13 @@ func TestDetectTargets_AllSignals(t *testing.T) {
 			dir := t.TempDir()
 			tt.setup(dir)
 			got := DetectTargets(dir)
-			sort.Strings(got)
-			expected := tt.expected
-			sort.Strings(expected)
-			if len(got) != len(expected) {
-				t.Fatalf("expected %v, got %v", expected, got)
-			}
-			for i := range got {
-				if got[i] != expected[i] {
-					t.Errorf("expected %v, got %v", expected, got)
-					break
-				}
+			// Copy before sorting to avoid mutating the test table (S-006).
+			gotSorted := slices.Clone(got)
+			expSorted := slices.Clone(tt.expected)
+			slices.Sort(gotSorted)
+			slices.Sort(expSorted)
+			if !slices.Equal(gotSorted, expSorted) {
+				t.Errorf("expected %v, got %v", tt.expected, got)
 			}
 		})
 	}
