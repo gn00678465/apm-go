@@ -132,6 +132,32 @@ func TestParseLockfile_UnknownVersion(t *testing.T) {
 	}
 }
 
+func TestParseLockfile_RejectsPathTraversal(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{"repo_url dotdot", "lockfile_version: \"2\"\ndependencies:\n  - repo_url: ../../escape\n    source: registry\n"},
+		{"repo_url absolute", "lockfile_version: \"2\"\ndependencies:\n  - repo_url: /etc/evil\n    source: registry\n"},
+		{"virtual_path dotdot", "lockfile_version: \"1\"\ndependencies:\n  - repo_url: github.com/o/r\n    virtual_path: ../../x\n"},
+		{"deployed_file dotdot", "lockfile_version: \"1\"\ndependencies:\n  - repo_url: github.com/o/r\n    deployed_files:\n      - ../../outside.md\n"},
+		{"local deployed hash dotdot", "lockfile_version: \"1\"\ndependencies: []\nlocal_deployed_file_hashes:\n  ../../x.md: \"sha256:abc\"\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			node, err := yamlcore.SafeLoad([]byte(tc.yaml))
+			if err != nil {
+				t.Fatalf("SafeLoad: %v", err)
+			}
+			if _, err := ParseLockfile(node); err == nil {
+				t.Fatal("expected path-traversal rejection, got nil")
+			} else if !strings.Contains(err.Error(), "..") && !strings.Contains(err.Error(), "absolute") {
+				t.Errorf("error should flag traversal/absolute, got %v", err)
+			}
+		})
+	}
+}
+
 func TestParseLockfile_FindByKey(t *testing.T) {
 	lf := loadFixture(t, filepath.Join("lockfile", "v1-git-only.yml"))
 	dep := lf.FindByKey("github.com/octocat/example")

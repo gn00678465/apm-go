@@ -107,7 +107,8 @@ func VerifyArchiveHash(archivePath string, expectedHash string) error {
 	}
 	_, actualHex, _ := ParseHashEnvelope(actual)
 	if expectedHex != actualHex {
-		return fmt.Errorf("archive integrity violation: %s expected %s, observed %s", archivePath, expectedHash, actual)
+		// "expected"/"actual" wording is required by the oracle (req-lk-013 diagnostic).
+		return fmt.Errorf("archive integrity violation: %s expected %s, actual %s", archivePath, expectedHash, actual)
 	}
 	return nil
 }

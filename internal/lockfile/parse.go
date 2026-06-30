@@ -2,13 +2,38 @@ package lockfile
 
 import (
 	"fmt"
+	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"go.yaml.in/yaml/v4"
 )
 
 var commitSHARegex = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// validatePathComponent rejects lockfile-sourced path components that would
+// escape their on-disk root. repo_url / virtual_path drive apm_modules/<key>
+// (extraction + git materialization); deployed_file paths are joined onto the
+// project root for hashing. A tampered ".." / absolute / Windows-volume value
+// MUST fail closed (req-sc-002 / §10.4 lockfile tampering) rather than let a
+// later filepath.Join write or read outside the intended root.
+func validatePathComponent(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	norm := strings.ReplaceAll(value, "\\", "/")
+	if path.IsAbs(norm) || filepath.IsAbs(value) || filepath.VolumeName(filepath.FromSlash(value)) != "" {
+		return fmt.Errorf("lockfile: %s %q must be a relative path (absolute path rejected)", field, value)
+	}
+	for _, seg := range strings.Split(norm, "/") {
+		if seg == ".." {
+			return fmt.Errorf("lockfile: %s %q must not contain \"..\" path segments", field, value)
+		}
+	}
+	return nil
+}
 
 // ParseLockfile parses a validated yaml.Node into a Lockfile.
 // The node must have been loaded via SafeLoad.
@@ -47,6 +72,9 @@ func ParseLockfile(doc *yaml.Node) (*Lockfile, error) {
 		case "local_deployed_files":
 			if val.Kind == yaml.SequenceNode {
 				for _, item := range val.Content {
+					if err := validatePathComponent("local_deployed_files entry", item.Value); err != nil {
+						return nil, err
+					}
 					lf.LocalDeployedFiles = append(lf.LocalDeployedFiles, item.Value)
 				}
 			}
@@ -54,6 +82,9 @@ func ParseLockfile(doc *yaml.Node) (*Lockfile, error) {
 			if val.Kind == yaml.MappingNode {
 				lf.LocalDeployedHashes = make(map[string]string)
 				for j := 0; j < len(val.Content)-1; j += 2 {
+					if err := validatePathComponent("local_deployed_file_hashes path", val.Content[j].Value); err != nil {
+						return nil, err
+					}
 					lf.LocalDeployedHashes[val.Content[j].Value] = val.Content[j+1].Value
 				}
 			}
@@ -82,8 +113,14 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 
 		switch key {
 		case "repo_url":
+			if err := validatePathComponent("dependency repo_url", val.Value); err != nil {
+				return nil, err
+			}
 			d.RepoURL = val.Value
 		case "virtual_path":
+			if err := validatePathComponent("dependency virtual_path", val.Value); err != nil {
+				return nil, err
+			}
 			d.VirtualPath = val.Value
 		case "source":
 			d.Source = val.Value
@@ -123,6 +160,9 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 		case "deployed_files":
 			if val.Kind == yaml.SequenceNode {
 				for _, f := range val.Content {
+					if err := validatePathComponent("deployed_files entry", f.Value); err != nil {
+						return nil, err
+					}
 					d.DeployedFiles = append(d.DeployedFiles, f.Value)
 				}
 			}
@@ -130,6 +170,9 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 			if val.Kind == yaml.MappingNode {
 				d.DeployedHashes = make(map[string]string)
 				for j := 0; j < len(val.Content)-1; j += 2 {
+					if err := validatePathComponent("deployed_file_hashes path", val.Content[j].Value); err != nil {
+						return nil, err
+					}
 					d.DeployedHashes[val.Content[j].Value] = val.Content[j+1].Value
 				}
 			}

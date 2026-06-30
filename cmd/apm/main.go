@@ -21,6 +21,7 @@ func main() {
 	root.AddCommand(normalizeCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(installCmd())
+	root.AddCommand(auditCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

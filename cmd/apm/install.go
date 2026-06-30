@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	yamllib "go.yaml.in/yaml/v4"
 
+	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
@@ -21,6 +23,10 @@ import (
 type installDeps struct {
 	tags   resolver.TagLister
 	loader resolver.PackageLoader
+	// Archive extraction caps (req-sc-004). Zero values normalize to the spec
+	// defaults (100 MB / 10,000) inside internal/archive.
+	maxEntries      int
+	maxArchiveBytes int64
 }
 
 func installCmd() *cobra.Command {
@@ -28,6 +34,8 @@ func installCmd() *cobra.Command {
 	var noProvenance bool
 	var targetFlag string
 	var skillFlags []string
+	var maxEntries int
+	var maxArchiveBytes int64
 
 	cmd := &cobra.Command{
 		Use:   "install [packages...]",
@@ -38,6 +46,8 @@ func installCmd() *cobra.Command {
 				loader: &gitops.RealPackageLoader{
 					ModulesDir: "apm_modules",
 				},
+				maxEntries:      maxEntries,
+				maxArchiveBytes: maxArchiveBytes,
 			}
 			return runInstall(deps, frozen, noProvenance, targetFlag, skillFlags, args)
 		},
@@ -47,26 +57,42 @@ func installCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noProvenance, "no-provenance", false, "omit generated_at and apm_version from lockfile")
 	cmd.Flags().StringVar(&targetFlag, "target", "", "explicit target for deployment (overrides auto-detection)")
 	cmd.Flags().StringArrayVar(&skillFlags, "skill", nil, "install only named skills from the package (repeatable)")
+	cmd.Flags().IntVar(&maxEntries, "max-entries", archive.DefaultMaxEntries, "max archive entries before fail-closed (req-sc-004)")
+	cmd.Flags().Int64Var(&maxArchiveBytes, "max-archive-bytes", archive.DefaultMaxBytes, "max uncompressed archive bytes before fail-closed (req-sc-004)")
 
 	return cmd
 }
 
 func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string, skillSubset []string, packages []string) error {
-	// 1. Parse apm.yml
+	// Determine frozen mode up front (explicit flag or CI default) so apm.yml can
+	// be optional in frozen verify-only mode (integrity is checked from lockfile+disk).
+	if !frozen && lockfile.IsCIEnvironment() {
+		frozen = true
+		fmt.Fprintln(os.Stderr, "CI environment detected, defaulting to frozen install")
+	}
+
+	// 1. Parse apm.yml — optional in frozen mode.
+	var m *manifest.Manifest
+	var node *yamllib.Node
 	data, err := os.ReadFile("apm.yml")
 	if err != nil {
-		if len(packages) > 0 && os.IsNotExist(err) {
+		switch {
+		case frozen && os.IsNotExist(err):
+			m = &manifest.Manifest{} // frozen verifies from lockfile + disk alone
+		case len(packages) > 0 && os.IsNotExist(err):
 			return fmt.Errorf("apm.yml not found; run 'apm-go init' first, then 'apm-go install <package>'")
+		default:
+			return fmt.Errorf("read apm.yml: %w", err)
 		}
-		return fmt.Errorf("read apm.yml: %w", err)
-	}
-	node, err := yamlcore.SafeLoad(data)
-	if err != nil {
-		return fmt.Errorf("parse apm.yml: %w", err)
-	}
-	m, _, err := manifest.ParseManifest(node)
-	if err != nil {
-		return fmt.Errorf("validate apm.yml: %w", err)
+	} else {
+		node, err = yamlcore.SafeLoad(data)
+		if err != nil {
+			return fmt.Errorf("parse apm.yml: %w", err)
+		}
+		m, _, err = manifest.ParseManifest(node)
+		if err != nil {
+			return fmt.Errorf("validate apm.yml: %w", err)
+		}
 	}
 
 	// 1b. Add positional packages to deps (skip if already in manifest)
@@ -109,66 +135,101 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		}
 	}
 
-	// 3. Check frozen mode
-	if !frozen && lockfile.IsCIEnvironment() {
-		frozen = true
-		fmt.Fprintln(os.Stderr, "CI environment detected, defaulting to frozen install")
-	}
-
+	// 3. Frozen install (frozen mode was resolved up front, incl. CI default).
 	if frozen {
+		if existingLock == nil {
+			return fmt.Errorf("frozen install requires a lockfile but none was found")
+		}
 		if err := lockfile.CheckFrozenInstall(m, existingLock); err != nil {
 			return err
 		}
 
-		// S-002: frozen install must download locked commits before verifying
-		for _, dep := range existingLock.Dependencies {
-			if dep.Source == "registry" || dep.Source == "local" {
+		// (A) Disk-only integrity — verified from lockfile + disk, before any
+		// network fetch or source materialization, without requiring apm.yml.
+
+		// (A1) Re-verify deployed-file hashes (req-lk-017 / req-sc-001). MUST run
+		// before any git download so a tampered deployed file is reported by path.
+		if viol := lockfile.VerifyDeployedState(existingLock, "."); len(viol) > 0 {
+			v := viol[0]
+			observed := v.Observed
+			if observed == "" {
+				observed = "<missing>"
+			}
+			return fmt.Errorf("frozen install: content-integrity violation: %s expected %s, observed %s",
+				v.Path, v.Expected, observed)
+		}
+
+		// (A2) Registry archives: verify bytes' SHA-256 before extraction
+		// (req-lk-013), then safe-extract enforcing path/link/size/entry guards
+		// (req-sc-002/004). Offline archive located in CWD by repo basename.
+		for i := range existingLock.Dependencies {
+			dep := &existingLock.Dependencies[i]
+			if dep.Source != "registry" || dep.ResolvedHash == "" {
 				continue
 			}
-			installDir := filepath.Join("apm_modules", dep.UniqueKey())
-			if _, statErr := os.Stat(installDir); os.IsNotExist(statErr) {
-				ref := &manifest.DependencyReference{
-					RepoURL: dep.RepoURL,
-					Owner:   ownerFromRepoURL(dep.RepoURL),
-					Repo:    repoFromRepoURL(dep.RepoURL),
-					Source:  "git",
-				}
-				resolvedRef := dep.ResolvedRef
-				if resolvedRef == "" {
-					resolvedRef = dep.ResolvedCommit
-				}
-				if _, loadErr := deps.loader.LoadPackage(ref, resolvedRef); loadErr != nil {
-					return fmt.Errorf("frozen install: download %s: %w", dep.UniqueKey(), loadErr)
-				}
+			archivePath := path.Base(dep.RepoURL) + ".tar.gz"
+			if _, statErr := os.Stat(archivePath); statErr != nil {
+				continue // no local archive offline; nothing to verify/extract here
+			}
+			if err := lockfile.VerifyArchiveHash(archivePath, dep.ResolvedHash); err != nil {
+				return fmt.Errorf("frozen install: %w", err) // names expected/actual; no extraction
+			}
+			// Defense in depth: the extraction root is derived from lockfile
+			// repo_url (validated at parse time). Refuse to extract outside
+			// apm_modules even if that validation is ever bypassed (req-sc-002).
+			destDir := filepath.Join("apm_modules", dep.UniqueKey())
+			if !archive.Contained("apm_modules", destDir) {
+				return fmt.Errorf("frozen install: refusing to extract %q outside apm_modules", dep.RepoURL)
+			}
+			f, openErr := os.Open(archivePath)
+			if openErr != nil {
+				return fmt.Errorf("frozen install: open archive %s: %w", archivePath, openErr)
+			}
+			_, exErr := archive.SafeExtract(f, destDir, archive.Limits{
+				MaxBytes:   deps.maxArchiveBytes,
+				MaxEntries: deps.maxEntries,
+			})
+			f.Close()
+			if exErr != nil {
+				return fmt.Errorf("frozen install: %w", exErr)
 			}
 		}
 
-		// req-lk-015: fail-closed if git entry lacks tree_sha256 (S-001)
-		for _, dep := range existingLock.Dependencies {
-			if dep.ResolvedCommit != "" && dep.Source != "registry" {
-				if dep.TreeSHA256 == "" {
-					return fmt.Errorf("frozen install: entry %s missing required tree_sha256", dep.UniqueKey())
+		// (B) Source materialization (git download + tree_sha256, req-lk-015) — only
+		// when the manifest declares deps. In verify-only mode (no apm.yml) there is
+		// nothing to materialize; (A) is the operative integrity gate.
+		if len(m.ParsedDeps) > 0 {
+			for _, dep := range existingLock.Dependencies {
+				if dep.Source == "registry" || dep.Source == "local" {
+					continue
 				}
 				installDir := filepath.Join("apm_modules", dep.UniqueKey())
-				if err := lockfile.VerifyTreeSHA256(dep.TreeSHA256, installDir, dep.ResolvedCommit); err != nil {
-					return fmt.Errorf("frozen install: entry %s: %w", dep.UniqueKey(), err)
+				if _, statErr := os.Stat(installDir); os.IsNotExist(statErr) {
+					ref := &manifest.DependencyReference{
+						RepoURL: dep.RepoURL,
+						Owner:   ownerFromRepoURL(dep.RepoURL),
+						Repo:    repoFromRepoURL(dep.RepoURL),
+						Source:  "git",
+					}
+					resolvedRef := dep.ResolvedRef
+					if resolvedRef == "" {
+						resolvedRef = dep.ResolvedCommit
+					}
+					if _, loadErr := deps.loader.LoadPackage(ref, resolvedRef); loadErr != nil {
+						return fmt.Errorf("frozen install: download %s: %w", dep.UniqueKey(), loadErr)
+					}
 				}
 			}
-		}
-
-		// req-lk-017: re-verify deployed_file_hashes
-		for _, dep := range existingLock.Dependencies {
-			if len(dep.DeployedHashes) > 0 {
-				if err := lockfile.VerifyDeployedHashes(dep.DeployedHashes, "."); err != nil {
-					return fmt.Errorf("frozen install: entry %s: %w", dep.UniqueKey(), err)
+			for _, dep := range existingLock.Dependencies {
+				if dep.ResolvedCommit != "" && dep.Source != "registry" {
+					if dep.TreeSHA256 == "" {
+						return fmt.Errorf("frozen install: entry %s missing required tree_sha256", dep.UniqueKey())
+					}
+					installDir := filepath.Join("apm_modules", dep.UniqueKey())
+					if err := lockfile.VerifyTreeSHA256(dep.TreeSHA256, installDir, dep.ResolvedCommit); err != nil {
+						return fmt.Errorf("frozen install: entry %s: %w", dep.UniqueKey(), err)
+					}
 				}
-			}
-		}
-
-		// S-004: verify local_deployed_file_hashes
-		if len(existingLock.LocalDeployedHashes) > 0 {
-			if err := lockfile.VerifyDeployedHashes(existingLock.LocalDeployedHashes, "."); err != nil {
-				return fmt.Errorf("frozen install: local files: %w", err)
 			}
 		}
 

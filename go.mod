@@ -6,6 +6,7 @@ require (
 	deps.dev/util/semver v0.0.0-20260617025149-7d3577045631
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
+	golang.org/x/net v0.56.0
 )
 
 require (
