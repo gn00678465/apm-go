@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/07-01-registry-consumer/research/p1-substrate-gate.md", "reason": "Verify ACs against the proven substrate: server-side header assertions (AC1/AC2), resolved_hash byte-parity method (AC3), anonymous-first-then-Bearer expectation"}
+{"file": "D:/Projects/apm-dev/apm/docs/src/content/docs/reference/registry-http-api.md", "reason": "Conformance oracle for the test server + client behavior: §5 required endpoints, §2 auth semantics, §3.2 hash-verify-before-extract, §9 fixtures (round-trip/format/auth/error)"}
