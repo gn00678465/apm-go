@@ -301,3 +301,37 @@ Phase 2: 依賴解析引擎（semver/resolver/lockfile read）14 reqs + 9 項 re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Phase 5 Review Forge (code review + fix + verify)
+
+**Date**: 2026-07-01
+**Task**: Phase 5 Review Forge (code review + fix + verify)
+**Branch**: `feat/phase-5-security`
+
+### Summary
+
+Review Forge 三模型審查 (opus-4.6/gemini-3.5/codex-gpt-5.5) synthesize 出 9 項，核准修 S1-S4：S1 stripPort 未加括號 IPv6 截斷 (host-class 誤合併)、S2 VerifyDeployedState 非 sha256 envelope fail-open、S3 NewAuthDropRedirect stdlib 剝憑證 doc、S4 MatchesSecretPattern 大小寫繞過。codex exec 獨立 verify 4/4 VERIFIED、無回歸。S5/S6 未核准、S7-S9 設計/追蹤保留。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `63cd195` | (see git log) |
+| `545f6ed` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
