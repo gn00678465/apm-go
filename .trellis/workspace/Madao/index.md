@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-07-01
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~337 | Active |
+| `journal-1.md` | ~370 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-07-01 | Registry HTTP Consumer + credsec wiring + experimental gate | `304fb86` | `feat/phase-5-security` |
 | 9 | 2026-07-01 | Phase 5 Review Forge (code review + fix + verify) | `63cd195`, `545f6ed` | `feat/phase-5-security` |
 | 8 | 2026-06-30 | Phase 5 Security Hardening | `0c76f58`, `534c174` | `feat/phase-5-security` |
 | 7 | 2026-06-30 | Phase 4-T: Per-Target Deploy Matrix + Review Fixes | `e27262f`, `f82f021`, `5d700f2`, `ad699f4` | `feat/phase-4t-target-matrix` |

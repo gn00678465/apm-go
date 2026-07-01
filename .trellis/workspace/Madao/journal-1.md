@@ -335,3 +335,36 @@ Review Forge 三模型審查 (opus-4.6/gemini-3.5/codex-gpt-5.5) synthesize 出 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Registry HTTP Consumer + credsec wiring + experimental gate
+
+**Date**: 2026-07-01
+**Task**: Registry HTTP Consumer + credsec wiring + experimental gate
+**Branch**: `feat/phase-5-security`
+
+### Summary
+
+新增 internal/registry HTTP 下載 consumer 接線 credsec (sc-003/005/007/008) 與 lk-013；install 寫入 lockfile v2 並支援 frozen 離線+網路 replay (fail-closed)；新增 internal/experimental 旗標子系統與 apm experimental 指令，將 registry 存取 gate 於實驗性旗標 (僅 gate 網路、維持 oracle 相容)。codex 多輪外部驗證 + 對原版 apm-cli 0.21.0 live A/B (resolved_hash 位元一致)。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `304fb86` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
