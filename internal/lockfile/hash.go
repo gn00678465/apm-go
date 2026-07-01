@@ -92,6 +92,27 @@ func VerifyDeployedHashes(hashes map[string]string, rootDir string) error {
 	return nil
 }
 
+// VerifyArchiveBytes checks in-memory archive bytes against an expected sha256
+// envelope before extraction (req-lk-013). Used by the registry HTTP consumer,
+// which holds the archive in memory rather than on disk. Non-sha256 algorithms
+// fail closed (matches VerifyArchiveHash / Phase-5 S2).
+func VerifyArchiveBytes(b []byte, expectedHash string) error {
+	algo, expectedHex, err := ParseHashEnvelope(expectedHash)
+	if err != nil {
+		return fmt.Errorf("archive hash verify: invalid expected hash: %w", err)
+	}
+	if algo != "sha256" {
+		return fmt.Errorf("archive hash verify: unsupported algorithm %q (only sha256 supported)", algo)
+	}
+	sum := sha256.Sum256(b)
+	actualHex := hex.EncodeToString(sum[:])
+	if expectedHex != actualHex {
+		return fmt.Errorf("archive integrity violation: bytes expected %s, actual %s",
+			expectedHash, HashEnvelope("sha256", actualHex))
+	}
+	return nil
+}
+
 // VerifyArchiveHash checks registry archive SHA-256 before extraction (req-lk-013).
 func VerifyArchiveHash(archivePath string, expectedHash string) error {
 	algo, expectedHex, err := ParseHashEnvelope(expectedHash)

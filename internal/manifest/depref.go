@@ -10,20 +10,21 @@ import (
 )
 
 type DependencyReference struct {
-	RepoURL     string
-	Host        string
-	Owner       string
-	Repo        string
-	Reference   string
-	VirtualPath string
-	VirtualType string // "file" or "subdirectory"
-	Alias       string
-	IsLocal     bool
-	LocalPath   string
-	IsParent    bool
-	Port        int
-	Scheme      string // "https", "http", "ssh", "git" (SCP)
-	Source      string // "git", "registry", "local", "marketplace", "" (inferred)
+	RepoURL      string
+	Host         string
+	Owner        string
+	Repo         string
+	Reference    string
+	VirtualPath  string
+	VirtualType  string // "file" or "subdirectory"
+	Alias        string
+	IsLocal      bool
+	LocalPath    string
+	IsParent     bool
+	Port         int
+	Scheme       string // "https", "http", "ssh", "git" (SCP)
+	Source       string // "git", "registry", "local", "marketplace", "" (inferred)
+	RegistryName string // registry name for source=="registry" (empty = use default)
 }
 
 var virtualFileExtensions = []string{
@@ -345,11 +346,17 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	if keys["id"] {
+		// Registry object form uses `version:` (docs); accept `ref:` as an alias.
+		reference := kv["version"]
+		if reference == "" {
+			reference = kv["ref"]
+		}
 		return &DependencyReference{
-			RepoURL:   kv["id"],
-			Reference: kv["ref"],
-			Alias:     kv["alias"],
-			Source:    "registry",
+			RepoURL:      kv["id"],
+			Reference:    reference,
+			RegistryName: kv["registry"],
+			Alias:        kv["alias"],
+			Source:       "registry",
 		}, nil
 	}
 

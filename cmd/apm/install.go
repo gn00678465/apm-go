@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path"
@@ -12,9 +13,11 @@ import (
 
 	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/deploy"
+	"github.com/apm-go/apm/internal/experimental"
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
@@ -164,15 +167,14 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		// (req-sc-002/004). Offline archive located in CWD by repo basename.
 		for i := range existingLock.Dependencies {
 			dep := &existingLock.Dependencies[i]
-			if dep.Source != "registry" || dep.ResolvedHash == "" {
+			if dep.Source != "registry" {
 				continue
 			}
-			archivePath := path.Base(dep.RepoURL) + ".tar.gz"
-			if _, statErr := os.Stat(archivePath); statErr != nil {
-				continue // no local archive offline; nothing to verify/extract here
-			}
-			if err := lockfile.VerifyArchiveHash(archivePath, dep.ResolvedHash); err != nil {
-				return fmt.Errorf("frozen install: %w", err) // names expected/actual; no extraction
+			// A registry lock entry MUST carry a resolved_hash; a missing one is a
+			// malformed or tampered lockfile — fail closed rather than skip the
+			// integrity gate (req-lk-013).
+			if dep.ResolvedHash == "" {
+				return fmt.Errorf("frozen install: registry dependency %q has no resolved_hash", dep.UniqueKey())
 			}
 			// Defense in depth: the extraction root is derived from lockfile
 			// repo_url (validated at parse time). Refuse to extract outside
@@ -181,16 +183,77 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			if !archive.Contained("apm_modules", destDir) {
 				return fmt.Errorf("frozen install: refusing to extract %q outside apm_modules", dep.RepoURL)
 			}
-			f, openErr := os.Open(archivePath)
-			if openErr != nil {
-				return fmt.Errorf("frozen install: open archive %s: %w", archivePath, openErr)
+
+			archivePath := path.Base(dep.RepoURL) + ".tar.gz"
+			_, localErr := os.Stat(archivePath)
+			hasLocal := localErr == nil
+			info, destErr := os.Stat(destDir)
+			materialized := destErr == nil && info.IsDir()
+
+			// Without a trust anchor (local archive or resolved_url) the archive
+			// cannot be re-verified. If already materialized, (A1) already verified
+			// the deployed files and apm_modules is a rebuilt cache (not deployed in
+			// frozen mode) — consistent with the git frozen path's skip-if-present.
+			// Otherwise the lockfile is malformed — fail closed.
+			if !hasLocal && dep.ResolvedURL == "" {
+				if materialized {
+					continue
+				}
+				return fmt.Errorf("frozen install: cannot materialize registry dependency %q (no local archive and no resolved_url)", dep.UniqueKey())
 			}
-			_, exErr := archive.SafeExtract(f, destDir, archive.Limits{
+
+			// A trust anchor exists: (re)materialize from verified bytes so the
+			// cache provably matches resolved_hash, replacing any pre-existing tree.
+			// Hash is verified BEFORE any extraction (req-lk-013).
+			if materialized {
+				if err := os.RemoveAll(destDir); err != nil {
+					return fmt.Errorf("frozen install: reset %s: %w", destDir, err)
+				}
+			}
+
+			if hasLocal {
+				// Read once, then verify and extract the SAME in-memory bytes so a
+				// concurrent swap of the on-disk archive between hash and extract
+				// cannot slip unverified bytes through (no reopen -> no TOCTOU).
+				data, rErr := os.ReadFile(archivePath)
+				if rErr != nil {
+					return fmt.Errorf("frozen install: read archive %s: %w", archivePath, rErr)
+				}
+				if err := lockfile.VerifyArchiveBytes(data, dep.ResolvedHash); err != nil {
+					return fmt.Errorf("frozen install: %s: %w", dep.UniqueKey(), err) // entry/expected/actual; no extraction
+				}
+				if _, exErr := archive.SafeExtract(bytes.NewReader(data), destDir, archive.Limits{
+					MaxBytes:   deps.maxArchiveBytes,
+					MaxEntries: deps.maxEntries,
+				}); exErr != nil {
+					return fmt.Errorf("frozen install: %w", exErr)
+				}
+				continue
+			}
+
+			// Network replay from resolved_url (trust anchor). resolved_url is the
+			// trust anchor; re-verify bytes against the lockfile hash before extract.
+			// Live registry access is experimental (offline-archive extraction above
+			// is not gated — it needs no network).
+			if err := experimental.RequireEnabled("registries"); err != nil {
+				return fmt.Errorf("frozen install: %w", err)
+			}
+			client, cErr := registry.ClientForURL(dep.ResolvedURL, m.Registries)
+			if cErr != nil {
+				return fmt.Errorf("frozen install: %w", cErr)
+			}
+			body, _, dErr := client.FetchURL(dep.ResolvedURL)
+			if dErr != nil {
+				return fmt.Errorf("frozen install: fetch %s: %w", dep.UniqueKey(),
+					registry.RemediateFetchAuth(dErr, dep.ResolvedURL, m.Registries))
+			}
+			if err := lockfile.VerifyArchiveBytes(body, dep.ResolvedHash); err != nil {
+				return fmt.Errorf("frozen install: %s: %w", dep.UniqueKey(), err)
+			}
+			if _, exErr := archive.SafeExtract(bytes.NewReader(body), destDir, archive.Limits{
 				MaxBytes:   deps.maxArchiveBytes,
 				MaxEntries: deps.maxEntries,
-			})
-			f.Close()
-			if exErr != nil {
+			}); exErr != nil {
 				return fmt.Errorf("frozen install: %w", exErr)
 			}
 		}
@@ -253,7 +316,30 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		}
 	}
 
-	result, err := resolver.Resolve(m, existingLock, deps.tags, deps.loader, resolver.ResolverConfig{})
+	// Registry access is experimental (API may change); require the opt-in flag
+	// before any live registry resolution. Gates network use only — apm.yml
+	// registries parsing and lockfile schema stay unconditional.
+	for _, d := range m.ParsedDeps {
+		if d.Source == "registry" {
+			if err := experimental.RequireEnabled("registries"); err != nil {
+				return err
+			}
+			break
+		}
+	}
+
+	// Composite loader: registry-sourced deps go through the HTTP consumer
+	// (wiring credsec sc-003/005/007/008 + lk-013), everything else via git.
+	regLoader := &registry.Loader{
+		Registries:      m.Registries,
+		DefaultRegistry: m.DefaultRegistry,
+		ModulesDir:      "apm_modules",
+		Next:            deps.loader,
+		MaxBytes:        deps.maxArchiveBytes,
+		MaxEntries:      deps.maxEntries,
+	}
+
+	result, err := resolver.Resolve(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{})
 	if err != nil {
 		return fmt.Errorf("resolve: %w", err)
 	}
@@ -283,6 +369,16 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			Constraint:     dep.Constraint,
 			ResolvedBy:     dep.ResolvedBy,
 			Depth:          dep.Depth,
+		}
+
+		// req-lk-002/003: registry deps carry resolved_url + resolved_hash +
+		// version, collected out-of-band by the registry loader.
+		if dep.Kind == resolver.KindRegistry {
+			if r, ok := regLoader.Resolutions()[dep.Key]; ok {
+				ld.ResolvedURL = r.ResolvedURL
+				ld.ResolvedHash = r.ResolvedHash
+				ld.Version = r.Version
+			}
 		}
 
 		// Record skill_subset for positional installs with --skill

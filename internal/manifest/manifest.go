@@ -45,6 +45,7 @@ type Manifest struct {
 	Includes           any // "auto" or []string
 	Workspaces         bool
 	ConflictResolution string
+	DefaultRegistry    string // registries.default (empty = none)
 	ParsedDeps         []*DependencyReference
 	ParsedDevDeps      []*DependencyReference
 
@@ -110,11 +111,12 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 		case "scripts":
 			m.Scripts = parseStringMap(val)
 		case "registries":
-			regs, err := parseRegistries(val)
+			regs, def, err := parseRegistries(val)
 			if err != nil {
 				return nil, nil, err
 			}
 			m.Registries = regs
+			m.DefaultRegistry = def
 		case "dependencies":
 			deps, cr, err := validateDepBlock(val)
 			if err != nil {
@@ -218,22 +220,26 @@ func parseStringMap(val *yaml.Node) map[string]string {
 	return m
 }
 
-func parseRegistries(val *yaml.Node) (map[string]Registry, error) {
+func parseRegistries(val *yaml.Node) (map[string]Registry, string, error) {
 	if val.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("registries must be a mapping")
+		return nil, "", fmt.Errorf("registries must be a mapping")
 	}
 	regs := make(map[string]Registry)
+	var defaultName string
 	for i := 0; i < len(val.Content)-1; i += 2 {
 		name := val.Content[i].Value
 
-		// "default" key is a string, not a registry entry
+		// "default" key is a scalar registry name, not a registry entry.
 		if name == "default" {
+			if val.Content[i+1].Kind == yaml.ScalarNode {
+				defaultName = val.Content[i+1].Value
+			}
 			continue
 		}
 
 		entry := val.Content[i+1]
 		if entry.Kind != yaml.MappingNode {
-			return nil, fmt.Errorf("registries.%s must be a mapping", name)
+			return nil, "", fmt.Errorf("registries.%s must be a mapping", name)
 		}
 
 		var reg Registry
@@ -254,30 +260,49 @@ func parseRegistries(val *yaml.Node) (map[string]Registry, error) {
 			default:
 				if !yamlcore.IsVendorExtKey(k) {
 					// mf-015: reject unknown keys (typo guard)
-					return nil, fmt.Errorf("unknown key %q in registries.%s", k, name)
+					return nil, "", fmt.Errorf("unknown key %q in registries.%s", k, name)
 				}
 			}
 		}
 
 		// mf-014: URL must be https or http
 		if reg.URL == "" {
-			return nil, fmt.Errorf("registries.%s.url is required", name)
+			return nil, "", fmt.Errorf("registries.%s.url is required", name)
 		}
 		if !strings.HasPrefix(reg.URL, "https://") && !strings.HasPrefix(reg.URL, "http://") {
-			return nil, fmt.Errorf("registries.%s.url must use https:// or http:// scheme", name)
+			return nil, "", fmt.Errorf("registries.%s.url must use https:// or http:// scheme", name)
+		}
+		// sc-007/008: reject embedded credentials — they would leak into
+		// resolved_url in the lockfile and bypass the credential attach gate.
+		if u, perr := url.Parse(reg.URL); perr == nil && u.User != nil {
+			return nil, "", fmt.Errorf("registries.%s.url must not contain embedded credentials (userinfo)", name)
 		}
 
 		// sc-006: http:// requires insecure or loopback/private
 		if strings.HasPrefix(reg.URL, "http://") && !reg.Insecure {
 			u, err := url.Parse(reg.URL)
 			if err != nil || !isLoopbackOrPrivate(u.Hostname()) {
-				return nil, fmt.Errorf("registries.%s.url uses http:// without insecure:true or loopback/private host", name)
+				return nil, "", fmt.Errorf("registries.%s.url uses http:// without insecure:true or loopback/private host", name)
 			}
 		}
 
 		regs[name] = reg
 	}
-	return regs, nil
+	return regs, defaultName, nil
+}
+
+// EffectiveRegistry resolves which registry a source=="registry" dependency uses:
+// the dependency's own registry name, else the manifest default. Empty on both is
+// an error (unconfigured default registry).
+func (m *Manifest) EffectiveRegistry(ref *DependencyReference) (string, error) {
+	name := ref.RegistryName
+	if name == "" {
+		name = m.DefaultRegistry
+	}
+	if name == "" {
+		return "", fmt.Errorf("registry dependency %q has no registry and no default registry is configured", ref.RepoURL)
+	}
+	return name, nil
 }
 
 func isLoopbackOrPrivate(host string) bool {
