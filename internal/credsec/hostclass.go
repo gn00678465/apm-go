@@ -69,7 +69,14 @@ func stripPort(host string) string {
 			return host[1:i]
 		}
 	}
-	if i := strings.LastIndex(host, ":"); i >= 0 && !strings.Contains(host[i+1:], ":") {
+	// An unbracketed host with more than one colon is a raw IPv6 literal
+	// (e.g. "::1", "2001:db8::1"); it has no port to strip. Stripping the last
+	// colon here would collapse distinct literals onto the same prefix and let
+	// SameHostClass merge unrelated hosts (req-sc-005 fail-safe).
+	if strings.Count(host, ":") > 1 {
+		return host
+	}
+	if i := strings.LastIndex(host, ":"); i >= 0 {
 		return host[:i]
 	}
 	return host

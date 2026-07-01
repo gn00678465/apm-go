@@ -18,7 +18,9 @@ func TestRedactor(t *testing.T) {
 }
 
 func TestMatchesSecretPattern(t *testing.T) {
-	match := []string{".env", ".env.local", "deploy/.env.production", "key.pem", "server.key", "id_rsa", "id_ed25519", "/home/u/.ssh/id_rsa"}
+	match := []string{".env", ".env.local", "deploy/.env.production", "key.pem", "server.key", "id_rsa", "id_ed25519", "/home/u/.ssh/id_rsa",
+		// S4: case-insensitive — uppercase / mixed-case must also match.
+		"KEY.PEM", "server.KEY", ".ENV", ".ENV.Prod", "ID_RSA", "id_ED25519"}
 	for _, p := range match {
 		if !MatchesSecretPattern(p) {
 			t.Errorf("expected %q to match secret pattern", p)

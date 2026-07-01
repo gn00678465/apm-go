@@ -41,7 +41,9 @@ func (r *Redactor) Redact(s string) string {
 // id_ed25519. The Producer toolchain (apm pack, Phase 7) refuses to pack such
 // files; the set MAY be extended via policy.
 func MatchesSecretPattern(p string) bool {
-	base := filepath.Base(filepath.FromSlash(p))
+	// Case-insensitive: KEY.PEM / .ENV / ID_RSA must match too (esp. on
+	// case-insensitive filesystems).
+	base := strings.ToLower(filepath.Base(filepath.FromSlash(p)))
 	switch base {
 	case ".env", "id_rsa", "id_ed25519":
 		return true

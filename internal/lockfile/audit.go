@@ -32,9 +32,12 @@ func VerifyDeployedState(lock *Lockfile, root string) []Violation {
 				viol = append(viol, Violation{Path: path, Expected: expected, Observed: ""})
 				continue
 			}
-			_, expHex, perr := ParseHashEnvelope(expected)
+			expAlgo, expHex, perr := ParseHashEnvelope(expected)
 			_, actHex, _ := ParseHashEnvelope(actual)
-			if perr != nil || expHex != actHex {
+			// Deployed-file hashes are computed as SHA-256; a non-sha256 expected
+			// envelope cannot be validated and MUST fail closed (matches the strict
+			// check in VerifyDeployedHashes), not fall through to a hex-only compare.
+			if perr != nil || expAlgo != "sha256" || expHex != actHex {
 				viol = append(viol, Violation{Path: path, Expected: expected, Observed: actual})
 			}
 		}

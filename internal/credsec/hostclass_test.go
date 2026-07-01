@@ -20,6 +20,10 @@ func TestSameHostClass(t *testing.T) {
 		{"alias not transitive to others", "mirror.elsewhere.net", "github.com", false},
 		{"localhost singleton vs ip", "localhost", "127.0.0.1", false},
 		{"identical degenerate", "localhost", "localhost", true},
+		// S1: unbracketed IPv6 literals must not collapse onto the same prefix.
+		{"unbracketed ipv6 distinct", "::1", "::2", false},
+		{"unbracketed ipv6 longer distinct", "2001:db8::1", "2001:db8::2", false},
+		{"bracketed vs unbracketed same ipv6", "[::1]:443", "::1", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

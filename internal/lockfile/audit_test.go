@@ -37,3 +37,22 @@ func TestVerifyDeployedState(t *testing.T) {
 		t.Errorf("ok.txt should not be a violation")
 	}
 }
+
+// S2: a non-sha256 envelope whose hex happens to equal the file's SHA-256 must
+// still fail closed — the algorithm claim is unvalidated, so it is a violation.
+func TestVerifyDeployedState_RejectsUnsupportedHashAlgorithm(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("test"), 0644)
+	const sha256Hex = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+	lock := &Lockfile{
+		Dependencies: []LockedDep{{
+			RepoURL:        "github.com/demo/pkg",
+			DeployedHashes: map[string]string{"f.txt": "sha512:" + sha256Hex},
+		}},
+	}
+	viol := VerifyDeployedState(lock, dir)
+	if len(viol) != 1 || viol[0].Path != "f.txt" {
+		t.Fatalf("expected 1 violation for non-sha256 envelope, got %+v", viol)
+	}
+}
