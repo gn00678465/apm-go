@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-07-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~543 | Active |
+| `journal-1.md` | ~577 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-07-03 | 修正 --mcp 寫入格式破壞與 registry-backed 一般安裝落差 | `45dc394`, `79c26fe` | `feat/mcp-resolve-deploy` |
 | 15 | 2026-07-03 | apm install --mcp CLI 旗標 | `e2848f6`, `8e19324` | `feat/mcp-resolve-deploy` |
 | 14 | 2026-07-02 | 修正 --skill 子集部署的全域過濾範圍錯誤 | `2774ebc` | `feat/mcp-resolve-deploy` |
 | 13 | 2026-07-02 | codex 複核揪出 apm_modules 路徑跳脫防護的其餘缺口並修復 | `dec6d55` | `feat/mcp-resolve-deploy` |
