@@ -267,21 +267,30 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 				if dep.Source == "registry" || dep.Source == "local" {
 					continue
 				}
-				installDir := filepath.Join("apm_modules", dep.UniqueKey())
-				if _, statErr := os.Stat(installDir); os.IsNotExist(statErr) {
-					ref := &manifest.DependencyReference{
-						RepoURL: dep.RepoURL,
-						Owner:   ownerFromRepoURL(dep.RepoURL),
-						Repo:    repoFromRepoURL(dep.RepoURL),
-						Source:  "git",
-					}
-					resolvedRef := dep.ResolvedRef
-					if resolvedRef == "" {
-						resolvedRef = dep.ResolvedCommit
-					}
-					if _, loadErr := deps.loader.LoadPackage(ref, resolvedRef); loadErr != nil {
-						return fmt.Errorf("frozen install: download %s: %w", dep.UniqueKey(), loadErr)
-					}
+				// req-lk-007: always call LoadPackage rather than short-
+				// circuiting on directory existence here -- LoadPackage
+				// itself verifies an existing checkout's HEAD against the
+				// locked ref before deciding whether to skip re-cloning, so
+				// a stale/tampered checkout is replaced rather than
+				// silently trusted.
+				ref := &manifest.DependencyReference{
+					RepoURL:     dep.RepoURL,
+					VirtualPath: dep.VirtualPath,
+					Owner:       ownerFromRepoURL(dep.RepoURL),
+					Repo:        repoFromRepoURL(dep.RepoURL),
+					Source:      "git",
+				}
+				// Frozen mode already has the authoritative locked commit;
+				// prefer it over resolved_ref (which may name a mutable
+				// branch, e.g. "main") so the req-lk-007 skip check verifies
+				// against the actual pin rather than a ref that could point
+				// somewhere else than what was locked.
+				resolvedRef := dep.ResolvedCommit
+				if resolvedRef == "" {
+					resolvedRef = dep.ResolvedRef
+				}
+				if _, loadErr := deps.loader.LoadPackage(ref, resolvedRef); loadErr != nil {
+					return fmt.Errorf("frozen install: download %s: %w", dep.UniqueKey(), loadErr)
 				}
 			}
 			for _, dep := range existingLock.Dependencies {

@@ -156,6 +156,77 @@ func TestRunInstall_FrozenMissingPin(t *testing.T) {
 	}
 }
 
+// spyLoader records the resolvedRef and ref each LoadPackage call receives,
+// to lock in which lockfile fields a caller prefers without depending on
+// real git.
+type spyLoader struct {
+	calls []string
+	refs  []*manifest.DependencyReference
+}
+
+func (s *spyLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
+	s.calls = append(s.calls, resolvedRef)
+	s.refs = append(s.refs, ref)
+	return nil, nil
+}
+
+// TestRunInstall_Frozen_PrefersResolvedCommitOverResolvedRef guards
+// req-lk-007's frozen-path fix: resolved_ref may name a mutable branch (e.g.
+// "main"), so the skip-vs-reclone check must be verified against
+// resolved_commit (the authoritative lockfile pin), not resolved_ref.
+func TestRunInstall_Frozen_PrefersResolvedCommitOverResolvedRef(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo#^1.0.0\n"), 0644)
+	lockContent := "lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/foo\n    resolved_ref: main\n    resolved_commit: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n    tree_sha256: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n    depth: 1\n"
+	os.WriteFile("apm.lock.yaml", []byte(lockContent), 0644)
+
+	spy := &spyLoader{}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
+	// Expected to fail later at tree_sha256 verification (mock does not
+	// materialize a real checkout) -- this test only cares about what was
+	// passed to LoadPackage before that point.
+	runInstall(deps, true, false, "", nil, nil)
+
+	if len(spy.calls) != 1 {
+		t.Fatalf("expected exactly 1 LoadPackage call, got %d: %v", len(spy.calls), spy.calls)
+	}
+	if spy.calls[0] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Errorf("LoadPackage called with resolvedRef = %q, want resolved_commit (not resolved_ref %q)", spy.calls[0], "main")
+	}
+}
+
+// TestRunInstall_Frozen_PreservesVirtualPath guards a gap codex review found
+// alongside the resolved_commit fix: the frozen path's reconstructed
+// DependencyReference dropped VirtualPath, so RealPackageLoader.installPath
+// (which appends VirtualPath) and lockfile's dep.UniqueKey() (which also
+// appends VirtualPath, e.g. for VerifyTreeSHA256) would disagree on which
+// directory this dependency lives in whenever virtual_path is set.
+func TestRunInstall_Frozen_PreservesVirtualPath(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo/sub/pkg#^1.0.0\n"), 0644)
+	lockContent := "lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/foo\n    virtual_path: sub/pkg\n    resolved_ref: v1.0.0\n    resolved_commit: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n    tree_sha256: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n    depth: 1\n"
+	os.WriteFile("apm.lock.yaml", []byte(lockContent), 0644)
+
+	spy := &spyLoader{}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
+	runInstall(deps, true, false, "", nil, nil)
+
+	if len(spy.refs) != 1 {
+		t.Fatalf("expected exactly 1 LoadPackage call, got %d", len(spy.refs))
+	}
+	if spy.refs[0].VirtualPath != "sub/pkg" {
+		t.Errorf("LoadPackage called with ref.VirtualPath = %q, want %q", spy.refs[0].VirtualPath, "sub/pkg")
+	}
+}
+
 func TestRunInstall_NoProvenance(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
