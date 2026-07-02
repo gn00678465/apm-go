@@ -15,9 +15,20 @@ type DepDeployResult struct {
 	Hashes map[string]string
 }
 
+// MCPProv records where one deployed MCP server entry came from (pr-001
+// source attribution), for a merged config file that multiple deps -- or
+// local -- may jointly contribute servers to.
+type MCPProv struct {
+	Server string
+	Source string // "local" or "dependency:<key>"
+	File   string
+}
+
 type DeployResult struct {
-	PerDep map[string]*DepDeployResult // key="" for local
-	Diags  []string
+	PerDep        map[string]*DepDeployResult // key="" for local
+	Diags         []string
+	MCPFiles      map[string]string // relative path -> sha256 hash, for merged (multi-source) MCP config files
+	MCPProvenance []MCPProv
 }
 
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
@@ -31,10 +42,15 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
+	var mcpDiags []string
 
 	// Local primitives first (req-pr-002: always win)
 	locals := CollectLocalPrimitives(projectDir)
 	ordered = append(ordered, locals...)
+
+	localMCP, localMCPDiags := collectMCPPrimitives(m.MCPServers, "local", "")
+	ordered = append(ordered, localMCP...)
+	mcpDiags = append(mcpDiags, localMCPDiags...)
 
 	// Direct deps in manifest declaration order (req-pr-003), deduplicated
 	directKeys := make(map[string]bool)
@@ -47,6 +63,13 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		modulePath := filepath.Join(projectDir, "apm_modules", key)
 		prims := CollectDependencyPrimitives(key, modulePath)
 		ordered = append(ordered, prims...)
+
+		// direct (depth==1) self-defined MCP servers are auto-trusted.
+		depServers, loadDiags := loadDependencyMCP(key, modulePath)
+		depMCP, depMCPDiags := collectMCPPrimitives(depServers, "dependency:"+key, key)
+		ordered = append(ordered, depMCP...)
+		mcpDiags = append(mcpDiags, loadDiags...)
+		mcpDiags = append(mcpDiags, depMCPDiags...)
 	}
 
 	// Transitive deps in lockfile sorted order (repo_url, virtual_path)
@@ -56,6 +79,11 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
 			prims := CollectDependencyPrimitives(dep.Key, modulePath)
 			ordered = append(ordered, prims...)
+
+			// transitive (depth>1) MCP servers are never auto-trusted (design §4).
+			transitiveServers, loadDiags := loadDependencyMCP(dep.Key, modulePath)
+			mcpDiags = append(mcpDiags, loadDiags...)
+			mcpDiags = append(mcpDiags, collectTransitiveMCPDiagnostics(transitiveServers, dep.Key)...)
 		}
 	}
 
@@ -77,7 +105,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// 4. Deploy to each target
 	result := &DeployResult{
 		PerDep: make(map[string]*DepDeployResult),
-		Diags:  conflictDiags,
+		Diags:  append(mcpDiags, conflictDiags...),
 	}
 
 	deployedSkills := make(map[string]bool)
@@ -138,6 +166,52 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 						return nil, fmt.Errorf("hash deployed file %s: %w", f, err)
 					}
 					depResult.Hashes[f] = hash
+				}
+			}
+		}
+	}
+
+	// 5. Write merged MCP config files, one shot per target (design.md §4) --
+	// N servers merge into a single file, unlike the per-primitive copy above.
+	var mcpWinners []Primitive
+	mcpSourceByName := map[string]string{}
+	for _, p := range winners {
+		if p.Type == TypeMCP {
+			mcpWinners = append(mcpWinners, p)
+			mcpSourceByName[p.Name] = p.Source
+		}
+	}
+	if len(mcpWinners) > 0 {
+		for _, target := range targets {
+			adapter, ok := Adapters[target]
+			if !ok {
+				continue
+			}
+			mcpAdapter, ok := adapter.(MCPTarget)
+			if !ok {
+				continue
+			}
+			files, written, mcpWriteDiags, err := mcpAdapter.WriteMCP(mcpWinners, projectDir)
+			if err != nil {
+				result.Diags = append(result.Diags, fmt.Sprintf("write mcp config for %s failed: %v", target, err))
+				continue
+			}
+			result.Diags = append(result.Diags, mcpWriteDiags...)
+			for _, f := range files {
+				hash, err := lockfile.HashFileBytes(filepath.Join(projectDir, f))
+				if err != nil {
+					return nil, fmt.Errorf("hash mcp file %s: %w", f, err)
+				}
+				if result.MCPFiles == nil {
+					result.MCPFiles = map[string]string{}
+				}
+				result.MCPFiles[f] = hash
+				for _, name := range written {
+					result.MCPProvenance = append(result.MCPProvenance, MCPProv{
+						Server: name,
+						Source: mcpSourceByName[name],
+						File:   f,
+					})
 				}
 			}
 		}

@@ -16,6 +16,18 @@ type TargetAdapter interface {
 	DeployPrimitive(p Primitive, projectDir string) ([]string, error)
 }
 
+// MCPTarget is implemented by adapters that can write a merged MCP config
+// file. Unlike DeployPrimitive (one file-copy per primitive), WriteMCP is
+// called once per target with every TypeMCP winner, because N MCP servers
+// merge into a single config file. written names the servers that actually
+// landed in files (a server can be dropped from prims for this target
+// without erroring, e.g. refused or a non-https/unsupported transport), so
+// the caller can build accurate per-server source provenance (pr-001).
+type MCPTarget interface {
+	MCPResolveMode() manifest.ResolveMode
+	WriteMCP(prims []Primitive, projectDir string) (files []string, written []string, diags []string, err error)
+}
+
 var Adapters = map[string]TargetAdapter{
 	"claude":       &claudeAdapter{},
 	"codex":        &codexAdapter{},

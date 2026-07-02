@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 type PrimitiveType string
@@ -15,14 +17,16 @@ const (
 	TypeCommands     PrimitiveType = "commands"
 	TypeHooks        PrimitiveType = "hooks"
 	TypePrompts      PrimitiveType = "prompts"
+	TypeMCP          PrimitiveType = "mcp"
 )
 
 type Primitive struct {
 	Name    string
 	Type    PrimitiveType
-	Source  string // "local" or "dependency:<key>"
-	DepKey  string // dependency unique key ("" for local)
-	SrcPath string // absolute path to source file or dir (for skills)
+	Source  string                  // "local" or "dependency:<key>"
+	DepKey  string                  // dependency unique key ("" for local)
+	SrcPath string                  // absolute path to source file or dir (for skills)
+	MCP     *manifest.MCPDependency // set only when Type == TypeMCP
 }
 
 func CollectLocalPrimitives(projectDir string) []Primitive {

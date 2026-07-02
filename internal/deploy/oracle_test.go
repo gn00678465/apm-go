@@ -10,10 +10,18 @@ import (
 
 // oracleExpected mirrors the relevant fields of
 // conformance/conformance-kit/oracle/targets/expected/<target>.yaml.
+type oracleMCP struct {
+	File             string `yaml:"file"`
+	Key              string `yaml:"key"`
+	HTTPField        string `yaml:"http_field"`
+	VarInterpolation bool   `yaml:"var_interpolation"`
+}
+
 type oracleExpected struct {
-	Target        string   `yaml:"target"`
-	DeployedFiles []string `yaml:"deployed_files"`
-	NotDeployed   []string `yaml:"not_deployed"`
+	Target        string     `yaml:"target"`
+	DeployedFiles []string   `yaml:"deployed_files"`
+	NotDeployed   []string   `yaml:"not_deployed"`
+	MCP           *oracleMCP `yaml:"mcp"`
 }
 
 // oracleRoot is the repo-relative path to the generated oracle.
