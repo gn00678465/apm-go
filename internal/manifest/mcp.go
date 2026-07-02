@@ -17,7 +17,8 @@ type MCPDependency struct {
 	URL       string
 	Env       map[string]string
 	Headers   map[string]string
-	Registry  any // nil=default, false=self-defined, string=custom URL
+	Registry  any    // nil=default, false=self-defined, string=custom URL
+	Version   string // pinned registry entry version; only meaningful when Registry is not false
 }
 
 func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
@@ -41,6 +42,8 @@ func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
 			m.Command = v.Value
 		case "url":
 			m.URL = v.Value
+		case "version":
+			m.Version = v.Value
 		case "registry":
 			if v.Tag == "!!bool" || v.Value == "false" || v.Value == "true" {
 				if strings.EqualFold(v.Value, "false") {
@@ -94,17 +97,101 @@ func ValidateMCP(m *MCPDependency) error {
 			return fmt.Errorf("MCP transport 'stdio' requires 'command'")
 		}
 		if strings.ContainsAny(m.Command, " \t") && m.Args == nil {
-			return fmt.Errorf("MCP command %q contains whitespace but no 'args' key is present", m.Command)
+			// Never echo m.Command: a user who mistakenly passes a whole
+			// shell command line as a single --mcp -- "..." argument
+			// (instead of separate argv tokens) could have a secret
+			// embedded in it (found by codex review).
+			return fmt.Errorf("MCP command for %q contains whitespace but no 'args' key is present; put arguments in 'args', not 'command'", m.Name)
 		}
 	case "http", "sse", "streamable-http":
 		if m.URL == "" {
 			return fmt.Errorf("MCP transport %q requires 'url'", m.Transport)
+		}
+		// Reject URL-embedded credentials (userinfo): they would otherwise
+		// be persisted verbatim into apm.yml (typically git-committed) and
+		// written into the deployed target config file in plaintext
+		// (found by codex review of the --mcp CLI feature; enforced here
+		// so every self-defined MCP entry is covered, not just --mcp's).
+		// A coarse "@" check runs first and fails closed on its own: a
+		// malformed URL that still embeds a literal "@" (credentials) must
+		// not slip through just because url.Parse errors on it -- the
+		// original version only checked u.User on a successful parse,
+		// silently skipping the guard on a parse error (found in a
+		// follow-up codex review round). None of these error messages echo
+		// m.URL: a malformed-but-tokened URL (e.g. an invalid percent-escape
+		// alongside a "?token=..." query) must not leak through the error
+		// text either (found in a further follow-up round).
+		if strings.Contains(m.URL, "@") {
+			return fmt.Errorf("MCP server %q: url must not contain embedded credentials", m.Name)
+		}
+		// mf-013 placeholders (${VAR}, ${env:VAR}, ${input:...}, ${{ ... }})
+		// are resolved by plain, position-agnostic substring substitution
+		// (manifest.ResolvePlaceholders never parses the surrounding URL
+		// grammar), so a placeholder can legitimately land anywhere --
+		// including the port ("https://host:${PORT}/x") or an IPv6 host
+		// ("https://[${HOST}]/x"). An earlier version of this check
+		// substituted every placeholder with a fixed "x" token and fully
+		// re-parsed the result as a structured URL, but that rejected
+		// exactly these legitimate positions ("x" is not a valid port or
+		// IPv6 literal) (found in a further follow-up round). Checking for
+		// a malformed percent-escape directly on the raw value instead
+		// (the specific defect class this was trying to catch, e.g.
+		// "https://example.com/%zz/${TOKEN}") is independent of URL
+		// grammar position, so it needs no placeholder-aware substitution.
+		if hasMalformedPercentEscape(m.URL) {
+			return fmt.Errorf("MCP server %q: url is not a valid URL", m.Name)
+		}
+		// The remaining checks (full parse, credential-on-parse-success,
+		// absolute-URL) only make sense for a fully literal value -- a
+		// placeholder-containing URL is not real yet at declaration time,
+		// it's resolved later per target (bake) or preserved verbatim for
+		// runtime resolution (translate, e.g. Copilot's
+		// "${input:mcp-url}").
+		if !HasPlaceholder(m.URL) {
+			u, err := url.Parse(m.URL)
+			if err != nil {
+				return fmt.Errorf("MCP server %q: url is not a valid URL", m.Name)
+			}
+			if u.User != nil {
+				return fmt.Errorf("MCP server %q: url must not contain embedded credentials", m.Name)
+			}
+			// Require an absolute URL (scheme + host): url.Parse accepts a
+			// bare relative string like "example.com/mcp" without error
+			// (Go treats it as a relative reference with an empty
+			// Scheme/Host), which would otherwise pass validation, get
+			// persisted to apm.yml, and only fail silently at deploy time
+			// against the writer's own https-prefix guard (found by codex
+			// review).
+			if u.Scheme == "" || u.Host == "" {
+				return fmt.Errorf("MCP server %q: url must be absolute (scheme://host/...)", m.Name)
+			}
 		}
 	default:
 		return fmt.Errorf("unknown MCP transport %q", m.Transport)
 	}
 
 	return nil
+}
+
+// hasMalformedPercentEscape reports whether s contains a "%" not followed by
+// two hex digits -- url.Parse rejects this as "invalid URL escape", but
+// checking it directly (rather than via url.Parse on a placeholder-
+// substituted skeleton) works regardless of where an mf-013 placeholder
+// appears in the string.
+func hasMalformedPercentEscape(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			continue
+		}
+		if i+2 >= len(s) || !isHexDigit(s[i+1]) || !isHexDigit(s[i+2]) {
+			return true
+		}
+	}
+	return false
+}
+
+func isHexDigit(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
 // ── Placeholder recognition (mf-013) — recognition only, no parse-time rejection ──

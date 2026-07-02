@@ -17,6 +17,33 @@ func mcpPrim(source string, s *manifest.MCPDependency) Primitive {
 	return Primitive{Name: s.Name, Type: TypeMCP, Source: source, MCP: s}
 }
 
+// TestResolveMCPServer_RefusesPostResolutionEmbeddedCredentials is a
+// regression test (eleventh codex review round): manifest.ValidateMCP's
+// embedded-credential guard only ever sees the AUTHORED value (e.g.
+// "${MCP_URL}", which has no literal "@"). If the actual environment has
+// MCP_URL=https://user:pass@host/mcp, bake-mode resolution substitutes that
+// credential in at deploy time, and nothing re-checked the RESOLVED value
+// before writing it to a target's config file. resolveMCPServer must refuse
+// (not silently deploy) a server whose resolved url contains credentials.
+func TestResolveMCPServer_RefusesPostResolutionEmbeddedCredentials(t *testing.T) {
+	t.Setenv("MCP_URL", "https://user:pass@evil.example.com/mcp")
+	s := &manifest.MCPDependency{Name: "leaky", Registry: false, Transport: "http", URL: "${MCP_URL}"}
+
+	r := resolveMCPServer(s, manifest.ResolveBake)
+	if !r.Refused {
+		t.Fatalf("expected the server to be refused after resolving to a credentialed url, got URL=%q Refused=%v", r.URL, r.Refused)
+	}
+	found := false
+	for _, d := range r.Diags {
+		if strings.Contains(d, "embedded credentials") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a diagnostic naming embedded credentials, got %v", r.Diags)
+	}
+}
+
 func readJSON(t *testing.T, path string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(path)

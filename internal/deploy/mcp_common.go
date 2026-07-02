@@ -93,6 +93,19 @@ func resolveMCPServer(s *manifest.MCPDependency, mode manifest.ResolveMode) *Res
 		if refuse {
 			r.Refused = true
 		}
+		// manifest.ValidateMCP's embedded-credential guard only ever sees
+		// the AUTHORED value (e.g. "${MCP_URL}", which has no literal "@"),
+		// not what a placeholder resolves to at deploy time. If the actual
+		// environment has MCP_URL=https://user:pass@host/mcp, bake-mode
+		// resolution just substituted that credential in here -- refuse to
+		// deploy it rather than let it reach a target's config file in
+		// plaintext (found by codex review: this is the same
+		// embedded-credential policy as ValidateMCP, applied at the point
+		// a placeholder actually becomes a literal value).
+		if strings.Contains(out, "@") {
+			r.Refused = true
+			r.Diags = append(r.Diags, fmt.Sprintf("mcp %q: resolved url contains embedded credentials; refusing to deploy", s.Name))
+		}
 		r.URL = out
 	}
 

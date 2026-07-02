@@ -40,11 +40,80 @@ func installCmd() *cobra.Command {
 	var skillFlags []string
 	var maxEntries int
 	var maxArchiveBytes int64
+	var mcpName string
+	var mcpTransport string
+	var mcpURL string
+	var mcpEnvPairs []string
+	var mcpHeaderPairs []string
+	var mcpVersion string
+	var mcpRegistry string
+	var mcpForce bool
 
 	cmd := &cobra.Command{
 		Use:   "install [packages...]",
 		Short: "Install dependencies from apm.yml or by URL/shorthand",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dashAt := cmd.ArgsLenAtDash()
+			var prePackages, stdioCommand []string
+			if dashAt >= 0 {
+				prePackages = args[:dashAt]
+				stdioCommand = args[dashAt:]
+			} else {
+				prePackages = args
+			}
+
+			// cmd.Flags().Changed, not a value/length check, for every
+			// MCP-only flag: a value-based check (e.g. mcpTransport != "")
+			// misses an explicitly-passed empty value like `--transport ""`
+			// or `--registry ""`, which would otherwise silently fall
+			// through to a normal package install instead of reporting
+			// "requires --mcp" (found by codex review; a first pass only
+			// fixed this for --mcp itself, missing the other MCP-only flags
+			// and --force entirely).
+			mcpGiven := cmd.Flags().Changed("mcp")
+			mcpFlagsGiven := cmd.Flags().Changed("transport") || cmd.Flags().Changed("url") ||
+				cmd.Flags().Changed("env") || cmd.Flags().Changed("header") ||
+				cmd.Flags().Changed("mcp-version") || cmd.Flags().Changed("registry") ||
+				cmd.Flags().Changed("force") || dashAt >= 0
+			if !mcpGiven && mcpFlagsGiven {
+				return fmt.Errorf("--transport, --url, --env, --header, --mcp-version, --registry, --force, and a stdio '--' command all require --mcp")
+			}
+
+			// An explicitly-passed EMPTY value (e.g. --url "") is
+			// indistinguishable from "not given" once it reaches opts as a
+			// plain string, so downstream code (buildPersistEntry etc.)
+			// would silently treat it as absent and fall through to a
+			// different branch (e.g. --mcp foo --url "" silently becomes a
+			// registry lookup for "foo" instead of erroring) -- reject it
+			// here, where Changed() is still available (found by codex
+			// review: round 5 only fixed the outer requires---mcp gate,
+			// missing this same class of gap one level in).
+			if cmd.Flags().Changed("url") && mcpURL == "" {
+				return fmt.Errorf("--url cannot be empty")
+			}
+			if cmd.Flags().Changed("transport") && mcpTransport == "" {
+				return fmt.Errorf("--transport cannot be empty")
+			}
+			if cmd.Flags().Changed("registry") && mcpRegistry == "" {
+				return fmt.Errorf("--registry cannot be empty")
+			}
+			if cmd.Flags().Changed("mcp-version") && mcpVersion == "" {
+				return fmt.Errorf("--mcp-version cannot be empty")
+			}
+			if dashAt >= 0 && len(stdioCommand) == 0 {
+				return fmt.Errorf("'--' must be followed by a stdio command")
+			}
+
+			if mcpGiven {
+				return runMCPInstall(mcpInstallOpts{
+					Name: mcpName, Transport: mcpTransport, URL: mcpURL,
+					EnvPairs: mcpEnvPairs, HeaderPairs: mcpHeaderPairs,
+					Version: mcpVersion, Registry: mcpRegistry, Force: mcpForce,
+					Command: stdioCommand, PrePackages: prePackages,
+					SkillSubset: skillFlags, TargetFlag: targetFlag,
+				})
+			}
+
 			deps := &installDeps{
 				tags: &gitops.RealTagLister{},
 				loader: &gitops.RealPackageLoader{
@@ -63,6 +132,14 @@ func installCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&skillFlags, "skill", nil, "install only named skills from the package (repeatable)")
 	cmd.Flags().IntVar(&maxEntries, "max-entries", archive.DefaultMaxEntries, "max archive entries before fail-closed (req-sc-004)")
 	cmd.Flags().Int64Var(&maxArchiveBytes, "max-archive-bytes", archive.DefaultMaxBytes, "max uncompressed archive bytes before fail-closed (req-sc-004)")
+	cmd.Flags().StringVar(&mcpName, "mcp", "", "add an MCP server entry to apm.yml and deploy it (mutually exclusive with positional packages and --skill)")
+	cmd.Flags().StringVar(&mcpTransport, "transport", "", "MCP transport: stdio, http, sse, streamable-http (requires --mcp)")
+	cmd.Flags().StringVar(&mcpURL, "url", "", "MCP server URL for http/sse/streamable-http transports (requires --mcp)")
+	cmd.Flags().StringArrayVar(&mcpEnvPairs, "env", nil, "environment variable KEY=VALUE for a stdio MCP server, repeatable (requires --mcp)")
+	cmd.Flags().StringArrayVar(&mcpHeaderPairs, "header", nil, "HTTP header KEY=VALUE for a remote MCP server, repeatable (requires --mcp and --url)")
+	cmd.Flags().StringVar(&mcpVersion, "mcp-version", "", "pin the MCP registry entry to a specific version (requires --mcp)")
+	cmd.Flags().StringVar(&mcpRegistry, "registry", "", "MCP registry URL for resolving --mcp NAME (requires --mcp; not valid with --url or a stdio command)")
+	cmd.Flags().BoolVar(&mcpForce, "force", false, "overwrite a conflicting existing --mcp entry non-interactively")
 
 	return cmd
 }

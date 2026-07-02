@@ -52,6 +52,38 @@ func TestValidateMCP_SelfDefined(t *testing.T) {
 			mcp:     MCPDependency{Registry: false, Transport: "grpc"},
 			wantErr: "unknown MCP transport",
 		},
+		{
+			name:    "http url with embedded credentials",
+			mcp:     MCPDependency{Name: "leaky", Registry: false, Transport: "http", URL: "https://user:pass@example.com/mcp"},
+			wantErr: "embedded credentials",
+		},
+		{
+			// A malformed URL that still embeds credentials must not slip
+			// through just because it fails to parse -- fail closed, not
+			// silently skip the guard (found in a follow-up codex review
+			// round after the first credential check only fired on a
+			// successful url.Parse).
+			name:    "malformed url with embedded credentials",
+			mcp:     MCPDependency{Name: "leaky-malformed", Registry: false, Transport: "http", URL: "https://user:pass@%zz"},
+			wantErr: "embedded credentials",
+		},
+		{
+			// No "@" present, so the coarse credential pre-check doesn't
+			// fire here -- this exercises url.Parse's own error path
+			// (invalid percent-encoding), confirming it fails closed too.
+			name:    "malformed url without credentials",
+			mcp:     MCPDependency{Name: "malformed", Registry: false, Transport: "http", URL: "https://%zz"},
+			wantErr: "not a valid URL",
+		},
+		{
+			// url.Parse accepts a bare relative string without error --
+			// this must still be rejected as not a usable remote endpoint,
+			// not silently persisted only to fail later at deploy time
+			// (found by codex review).
+			name:    "relative url (missing scheme/host)",
+			mcp:     MCPDependency{Name: "relative", Registry: false, Transport: "http", URL: "example.com/mcp"},
+			wantErr: "must be absolute",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -63,6 +95,86 @@ func TestValidateMCP_SelfDefined(t *testing.T) {
 				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestValidateMCP_NeverEchoesRawSecretishValues is a regression test
+// (eighth codex review round): none of ValidateMCP's error messages may
+// echo m.Command or m.URL verbatim -- a user could pass a shell command
+// line or a query-embedded token there by mistake, and several error
+// branches used to interpolate the raw value straight into the message.
+func TestValidateMCP_NeverEchoesRawSecretishValues(t *testing.T) {
+	cases := []struct {
+		name string
+		mcp  MCPDependency
+	}{
+		{
+			name: "stdio command with whitespace",
+			mcp:  MCPDependency{Name: "x", Registry: false, Transport: "stdio", Command: "run --token=super-secret-value"},
+		},
+		{
+			name: "malformed url with query token",
+			mcp:  MCPDependency{Name: "x", Registry: false, Transport: "http", URL: "https://example/%zz?token=super-secret-value"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateMCP(&tc.mcp)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if strings.Contains(err.Error(), "super-secret-value") {
+				t.Errorf("error message leaked the raw value: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateMCP_AllowsPlaceholderURLs is a regression test (ninth codex
+// review round): the round-8 absolute-URL requirement was too broad -- it
+// rejected legitimate mf-013 placeholder URLs that are resolved later, per
+// target, not literal URLs at declaration time. translate-mode targets
+// (e.g. Copilot) intentionally preserve a bare "${input:...}" value
+// verbatim for runtime resolution; bake-mode targets resolve "${VAR}"/
+// "${env:VAR}" via ResolvePlaceholders before ever reaching a target
+// writer. Neither should be rejected by ValidateMCP's own absolute-URL
+// check, which only makes sense once a value is a literal URL.
+func TestValidateMCP_AllowsPlaceholderURLs(t *testing.T) {
+	cases := []string{
+		"${input:mcp-url}",
+		"${MCP_URL}",
+		"${env:MCP_URL}",
+		"https://${input:host}/mcp",
+		// mf-013 placeholders are resolved by plain, position-agnostic
+		// substring substitution (manifest.ResolvePlaceholders), so they
+		// can legitimately appear in the port or an IPv6-bracket host too
+		// -- a round-10 fix that substituted every placeholder with a
+		// fixed "x" token before re-parsing wrongly rejected exactly these
+		// positions ("x" is not a valid port or IPv6 literal), found in a
+		// further follow-up round.
+		"https://example.com:${MCP_PORT}/mcp",
+		"https://[${MCP_HOST}]/mcp",
+	}
+	for _, u := range cases {
+		t.Run(u, func(t *testing.T) {
+			m := &MCPDependency{Name: "x", Registry: false, Transport: "http", URL: u}
+			if err := ValidateMCP(m); err != nil {
+				t.Errorf("ValidateMCP rejected a legitimate placeholder URL %q: %v", u, err)
+			}
+		})
+	}
+}
+
+// TestValidateMCP_RejectsMalformedLiteralPortionEvenWithPlaceholder is a
+// regression test (tenth codex review round): round 9's fix blanket-skipped
+// ALL URL parsing whenever any placeholder was present, so a malformed
+// LITERAL portion unrelated to the placeholder -- e.g. a bad percent-escape
+// in the path -- could slip through too. The exemption must validate a
+// placeholder-substituted skeleton, not skip parsing entirely.
+func TestValidateMCP_RejectsMalformedLiteralPortionEvenWithPlaceholder(t *testing.T) {
+	m := &MCPDependency{Name: "x", Registry: false, Transport: "http", URL: "https://example.com/%zz/${TOKEN}"}
+	if err := ValidateMCP(m); err == nil {
+		t.Fatal("expected ValidateMCP to reject a malformed literal portion even alongside a legitimate placeholder")
 	}
 }
 
@@ -172,6 +284,20 @@ func TestParseMCPEntry_RegistryURL(t *testing.T) {
 	}
 	if m.Registry != "https://registry.example.com" {
 		t.Errorf("Registry = %v", m.Registry)
+	}
+}
+
+func TestParseMCPEntry_Version(t *testing.T) {
+	entry := buildMappingNode(map[string]string{
+		"name":    "my-server",
+		"version": "1.2.3",
+	})
+	m, err := ParseMCPEntry(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Version != "1.2.3" {
+		t.Errorf("Version = %q, want %q", m.Version, "1.2.3")
 	}
 }
 
