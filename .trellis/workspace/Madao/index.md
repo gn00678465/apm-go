@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
-- **Last Active**: 2026-07-01
+- **Total Sessions**: 11
+- **Last Active**: 2026-07-02
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~370 | Active |
+| `journal-1.md` | ~407 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-07-02 | MCP install 解析與 target 部署 (req-mf-013 + mcp deploy) | `87a736b`, `8a8cb8c`, `c9d9d80`, `6739ea1`, `c125cd9` | `feat/mcp-resolve-deploy` |
 | 10 | 2026-07-01 | Registry HTTP Consumer + credsec wiring + experimental gate | `304fb86` | `feat/phase-5-security` |
 | 9 | 2026-07-01 | Phase 5 Review Forge (code review + fix + verify) | `63cd195`, `545f6ed` | `feat/phase-5-security` |
 | 8 | 2026-06-30 | Phase 5 Security Hardening | `0c76f58`, `534c174` | `feat/phase-5-security` |

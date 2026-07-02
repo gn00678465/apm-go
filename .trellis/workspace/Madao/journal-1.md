@@ -368,3 +368,40 @@ Review Forge 三模型審查 (opus-4.6/gemini-3.5/codex-gpt-5.5) synthesize 出 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: MCP install 解析與 target 部署 (req-mf-013 + mcp deploy)
+
+**Date**: 2026-07-02
+**Task**: MCP install 解析與 target 部署 (req-mf-013 + mcp deploy)
+**Branch**: `feat/mcp-resolve-deploy`
+
+### Summary
+
+實作 mf-013 placeholder 解析矩陣（bake/translate x 5 FieldPos）與 4 個 target 的 MCP config writer（antigravity/claude/codex/copilot），含 primitive 收集/override、lockfile provenance 歸屬、權限強制。全程經 codex exec 多輪外部審查（每步驟 review gate）修正 HIGH/MEDIUM 發現；額外修正兩個由本任務 AC 曝露的既有缺口：lockfile 頂層 local_deployed_* 欄位序列化/no-op 比對遺漏、零依賴專案永遠無法部署。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `87a736b` | (see git log) |
+| `8a8cb8c` | (see git log) |
+| `c9d9d80` | (see git log) |
+| `6739ea1` | (see git log) |
+| `c125cd9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
