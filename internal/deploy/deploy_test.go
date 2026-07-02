@@ -22,6 +22,26 @@ func TestResolveTargets_FlagOverrides(t *testing.T) {
 	}
 }
 
+func TestResolveTargets_FlagAllIncludesAntigravity(t *testing.T) {
+	// antigravity auto-detects like any other non-explicit-only target (see
+	// TestResolveTargets_AntigravityAutoDetected), so --target all must
+	// include it too -- agent-skills remains the only true exclusion.
+	dir := t.TempDir()
+	targets, _ := ResolveTargets("all", nil, dir)
+	found := false
+	for _, tgt := range targets {
+		if tgt == "antigravity" {
+			found = true
+		}
+		if tgt == "agent-skills" {
+			t.Error("agent-skills must not be included by --target all")
+		}
+	}
+	if !found {
+		t.Errorf("expected antigravity in --target all expansion, got %v", targets)
+	}
+}
+
 func TestResolveTargets_ManifestTargets(t *testing.T) {
 	dir := t.TempDir()
 
@@ -64,19 +84,40 @@ func TestResolveTargets_AgentSkillsNotAutoDetected(t *testing.T) {
 	}
 }
 
-func TestResolveTargets_AntigravityNotAutoDetected(t *testing.T) {
-	// req-tg-001: antigravity must NEVER be auto-detected.
-	// SignalWhitelist maps GEMINI.md and AGENTS.md to antigravity,
-	// but ResolveTargets must filter it out of auto-detection results.
+func TestResolveTargets_AntigravityAutoDetected(t *testing.T) {
+	// req-tg-001 (research-corrected, see acceptance-checklist.md): antigravity
+	// DOES auto-detect via GEMINI.md or AGENTS.md at the project root -- it is
+	// NOT explicit-only (that was an incorrect companion assumption). Only
+	// agent-skills is genuinely explicit-only.
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# agents"), 0644)
 	os.WriteFile(filepath.Join(dir, "GEMINI.md"), []byte("# gemini"), 0644)
 
 	targets, _ := ResolveTargets("", nil, dir)
+	found := false
 	for _, tgt := range targets {
 		if tgt == "antigravity" {
-			t.Error("antigravity should never be auto-detected (req-tg-001)")
+			found = true
 		}
+	}
+	if !found {
+		t.Errorf("expected antigravity to be auto-detected from GEMINI.md/AGENTS.md, got %v", targets)
+	}
+}
+
+func TestResolveTargets_AntigravityAutoDetectedFromAgentsMDAlone(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# agents"), 0644)
+
+	targets, _ := ResolveTargets("", nil, dir)
+	found := false
+	for _, tgt := range targets {
+		if tgt == "antigravity" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected antigravity to be auto-detected from AGENTS.md alone, got %v", targets)
 	}
 }
 

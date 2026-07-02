@@ -498,8 +498,8 @@ func TestWriteMCP_MalformedExistingFileErrors(t *testing.T) {
 // ── registry-backed servers never reach a writer (belt-and-suspenders on
 // the collection-layer filter from Step 3; writers assume self-defined-only) ──
 
-// ── end-to-end through Run(): antigravity is explicit-only (req-tg-001), so
-// this must pass --target antigravity rather than relying on auto-detection.
+// ── end-to-end through Run(): pass --target antigravity explicitly so this
+// test doesn't depend on the tempdir's auto-detection state.
 
 func TestRun_MCP_AntigravityExplicitTargetEndToEnd(t *testing.T) {
 	dir := t.TempDir()

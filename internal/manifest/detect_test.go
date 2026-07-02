@@ -21,18 +21,24 @@ func TestDetectTargets_AllSignals(t *testing.T) {
 			os.MkdirAll(filepath.Join(d, ".github"), 0755)
 			os.WriteFile(filepath.Join(d, ".github", "copilot-instructions.md"), []byte(""), 0644)
 		}, []string{"copilot"}},
-		{"copilot instructions dir", func(d string) {
+		// req-tg-001: the 4-T detection matrix lists only
+		// .github/copilot-instructions.md as copilot's signal. These
+		// directories are legitimate copilot DEPLOY destinations but must
+		// NOT double as auto-detection signals on their own (a project with
+		// only one of these, and no copilot-instructions.md, is not
+		// necessarily a copilot project).
+		{"copilot instructions dir alone does NOT trigger copilot", func(d string) {
 			os.MkdirAll(filepath.Join(d, ".github", "instructions"), 0755)
-		}, []string{"copilot"}},
-		{"copilot agents dir", func(d string) {
+		}, nil},
+		{"copilot agents dir alone does NOT trigger copilot", func(d string) {
 			os.MkdirAll(filepath.Join(d, ".github", "agents"), 0755)
-		}, []string{"copilot"}},
-		{"copilot prompts dir", func(d string) {
+		}, nil},
+		{"copilot prompts dir alone does NOT trigger copilot", func(d string) {
 			os.MkdirAll(filepath.Join(d, ".github", "prompts"), 0755)
-		}, []string{"copilot"}},
-		{"copilot hooks dir", func(d string) {
+		}, nil},
+		{"copilot hooks dir alone does NOT trigger copilot", func(d string) {
 			os.MkdirAll(filepath.Join(d, ".github", "hooks"), 0755)
-		}, []string{"copilot"}},
+		}, nil},
 		{"antigravity GEMINI.md", func(d string) {
 			os.WriteFile(filepath.Join(d, "GEMINI.md"), []byte(""), 0644)
 		}, []string{"antigravity"}},

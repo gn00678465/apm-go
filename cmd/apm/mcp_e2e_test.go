@@ -101,11 +101,11 @@ func yamlMarshalNode(n *yaml.Node) ([]byte, error) {
 }
 
 // TestRunInstall_MCP_AntigravityExplicitTarget is the step-6 E2E check for
-// AC10: antigravity is an explicit-only target (req-tg-001), so `apm install`
-// only deploys to it via --target. This exercises the full CLI runInstall()
-// pipeline (manifest parse -> resolve -> deploy -> lockfile write), unlike
-// deploy_test.go's TestRun_MCP_AntigravityExplicitTargetEndToEnd which calls
-// deploy.Run() directly.
+// AC10, using --target antigravity explicitly so the test doesn't depend on
+// the tempdir's auto-detection state. This exercises the full CLI
+// runInstall() pipeline (manifest parse -> resolve -> deploy -> lockfile
+// write), unlike deploy_test.go's TestRun_MCP_AntigravityExplicitTargetEndToEnd
+// which calls deploy.Run() directly.
 func TestRunInstall_MCP_AntigravityExplicitTarget(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	dir := t.TempDir()

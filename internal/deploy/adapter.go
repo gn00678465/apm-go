@@ -77,13 +77,16 @@ func ResolveTargets(flagTarget string, manifestTargets []string, projectDir stri
 }
 
 // explicitOnlyTargets must never be activated by auto-detection (req-tg-001).
+// agent-skills is the only target the spec designates explicit-only;
+// antigravity DOES auto-detect via GEMINI.md/AGENTS.md (see
+// acceptance-checklist.md's research note -- an earlier companion-doc
+// assumption that it was explicit-only was incorrect).
 var explicitOnlyTargets = map[string]bool{
 	"agent-skills": true,
-	"antigravity":  true,
 }
 
 func allAutoDetectableTargets() []string {
-	return []string{"claude", "codex", "copilot", "opencode"}
+	return []string{"claude", "codex", "copilot", "opencode", "antigravity"}
 }
 
 // filterExplicitOnly removes targets that require explicit --target selection.
