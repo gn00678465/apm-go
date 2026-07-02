@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-07-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~476 | Active |
+| `journal-1.md` | ~509 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-07-02 | 修正 --skill 子集部署的全域過濾範圍錯誤 | `2774ebc` | `feat/mcp-resolve-deploy` |
 | 13 | 2026-07-02 | codex 複核揪出 apm_modules 路徑跳脫防護的其餘缺口並修復 | `dec6d55` | `feat/mcp-resolve-deploy` |
 | 12 | 2026-07-02 | 修復 Phase 0-5 驗證確認的 FAIL/MISSING 缺口（B/C.1/C.2/A） | `ffcd034`, `e59780b`, `d8c94eb`, `6cc825c` | `feat/mcp-resolve-deploy` |
 | 11 | 2026-07-02 | MCP install 解析與 target 部署 (req-mf-013 + mcp deploy) | `87a736b`, `8a8cb8c`, `c9d9d80`, `6739ea1`, `c125cd9` | `feat/mcp-resolve-deploy` |

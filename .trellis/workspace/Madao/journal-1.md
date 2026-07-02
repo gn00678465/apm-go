@@ -474,3 +474,36 @@ Review Forge 三模型審查 (opus-4.6/gemini-3.5/codex-gpt-5.5) synthesize 出 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: 修正 --skill 子集部署的全域過濾範圍錯誤
+
+**Date**: 2026-07-02
+**Task**: 修正 --skill 子集部署的全域過濾範圍錯誤
+**Branch**: `feat/mcp-resolve-deploy`
+
+### Summary
+
+req-pr-001/req-tg-003 驗證時發現 apm install --skill 的過濾範圍是整個依賴圖而非目標套件,會誤傷 local skills 與其他已裝依賴;修正為以 dep key 限定範圍(deploy.SkillFilter),並新增 fail-loud 防護(--frozen 併用、未給套件、套件因判重未解析進圖時皆明確報錯而非靜默無效)。三輪 codex exec 審查各發現一批殘留問題並修正,最終確認乾淨。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2774ebc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
