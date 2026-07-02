@@ -44,12 +44,20 @@ func SafeLoad(data []byte) (*yaml.Node, error) {
 // (req-ext-001, req-mf-006, req-cf-001).
 func SafeDump(doc *yaml.Node) ([]byte, error) {
 	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(doc); err != nil {
+	// yaml.NewEncoder applies WithV3Defaults(), which sets an 80-column
+	// WithLineWidth: re-encoding an existing document then wraps any flow
+	// content wider than 80 columns, corrupting hand-formatted multi-line
+	// flow sequences/mappings that were never touched by the caller's edit.
+	// Disable wrapping (WithLineWidth(-1)) so only the caller's actual
+	// mutation changes the byte output.
+	dumper, err := yaml.NewDumper(&buf, yaml.WithV3Defaults(), yaml.WithLineWidth(-1), yaml.WithIndent(2))
+	if err != nil {
+		return nil, fmt.Errorf("YAML encoder init error: %w", err)
+	}
+	if err := dumper.Dump(doc); err != nil {
 		return nil, fmt.Errorf("YAML encode error: %w", err)
 	}
-	if err := enc.Close(); err != nil {
+	if err := dumper.Close(); err != nil {
 		return nil, fmt.Errorf("YAML encoder close error: %w", err)
 	}
 	return buf.Bytes(), nil

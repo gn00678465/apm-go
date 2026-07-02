@@ -97,9 +97,20 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		fmt.Fprintf(os.Stderr, "[!] %s\n", d)
 	}
 
-	manifestBytes, err := yamlcore.SafeDump(node)
+	// This edit only ever touches dependencies.mcp: prefer a surgical patch
+	// that preserves every other byte of the original apm.yml (including
+	// hand-formatted multi-line flow content a full SafeDump re-encode
+	// cannot reproduce). Fall back to a full re-encode if the document's
+	// shape doesn't fit the patcher's assumptions.
+	manifestBytes, patched, err := yamlcore.PatchMappingPath(data, node, []string{"dependencies", "mcp"})
 	if err != nil {
 		return fmt.Errorf("serialize apm.yml: %w", err)
+	}
+	if !patched {
+		manifestBytes, err = yamlcore.SafeDump(node)
+		if err != nil {
+			return fmt.Errorf("serialize apm.yml: %w", err)
+		}
 	}
 	if err := os.WriteFile("apm.yml", manifestBytes, 0644); err != nil {
 		return fmt.Errorf("write apm.yml: %w", err)
@@ -324,69 +335,14 @@ func resolveFromRegistry(opts mcpInstallOpts) (deployDep *manifest.MCPDependency
 	if cerr != nil {
 		return nil, nil, fmt.Errorf("--registry: %w", cerr)
 	}
-	info, ferr := client.FindServerByReference(context.Background(), opts.Name, opts.Version)
-	if ferr != nil {
-		return nil, nil, fmt.Errorf("mcp registry: %w", ferr)
+	dep, requiredHeaders, rerr := mcpregistry.ResolveDeployable(context.Background(), client, opts.Name, opts.Version, opts.Transport)
+	if rerr != nil {
+		return nil, nil, rerr
 	}
-	if info == nil {
-		return nil, nil, fmt.Errorf("MCP server %q not found in registry", opts.Name)
-	}
-	if len(info.Remotes) == 0 {
-		if info.HasPackages {
-			return nil, nil, fmt.Errorf(
-				"MCP server %q only provides package-based (stdio) installation, which apm-go does not yet support; declare it manually with a stdio command after --", opts.Name)
-		}
-		return nil, nil, fmt.Errorf("MCP server %q has no deployable remote endpoint", opts.Name)
-	}
-
-	remote := info.Remotes[0]
-	transport := remote.TransportType
-	if transport == "" {
-		transport = "http"
-	}
-	if !isRemoteTransport(transport) {
-		return nil, nil, fmt.Errorf("MCP server %q: unsupported remote transport %q", opts.Name, transport)
-	}
-	if opts.Transport != "" {
-		// Defense in depth: validateMCPConflicts already rejects
-		// Transport=="stdio" with neither --url nor a stdio command (the
-		// only way to reach this registry branch), but resolveFromRegistry
-		// is also called directly by tests -- an override to a non-remote
-		// transport here would silently build a stdio dep with a URL and
-		// no command, which writers would deploy as broken (codex review).
-		if !isRemoteTransport(opts.Transport) {
-			return nil, nil, fmt.Errorf("--transport %q is not valid for a registry-resolved server; only http, sse, or streamable-http apply", opts.Transport)
-		}
-		transport = opts.Transport
-	}
-
-	// The deployed server's Name (used both as the target config's server
-	// key and as the identity upsertMCPEntry checked for conflicts) must be
-	// opts.Name, not a shortened slug of the registry's canonical name
-	// (e.g. "io.github.github/github-mcp-server" -> "github-mcp-server").
-	// A derived short name is a DIFFERENT identity than what upsertMCPEntry
-	// just checked apm.yml for -- it could silently overwrite an unrelated
-	// existing target config entry that happens to slug-collide, bypassing
-	// --force entirely (found by codex review). Using opts.Name verbatim
-	// keeps persist-identity and deploy-identity the same value.
-	dep := &manifest.MCPDependency{Name: opts.Name, Registry: false, Transport: transport, URL: remote.URL}
-
-	// Registry-supplied URLs are not trusted input any more than a
-	// self-defined --url: a compromised or malicious registry entry could
-	// return a URL with embedded credentials, which would otherwise be
-	// deployed straight into the target's MCP config file. ValidateMCP's
-	// self-defined checks (Registry==false, which dep already has) run
-	// unconditionally here, reusing the same credential guard instead of
-	// duplicating it (found by codex review -- this path bypassed the
-	// self-defined --url guard entirely).
-	if verr := manifest.ValidateMCP(dep); verr != nil {
-		return nil, nil, fmt.Errorf("MCP server %q: registry returned an invalid entry: %w", opts.Name, verr)
-	}
-
-	if len(remote.RequiredHeaders) > 0 {
+	if len(requiredHeaders) > 0 {
 		diags = append(diags, fmt.Sprintf(
 			"mcp %q requires header(s) %s which apm-go does not resolve automatically; add --header KEY=VALUE if the server needs authentication",
-			opts.Name, strings.Join(remote.RequiredHeaders, ", ")))
+			opts.Name, strings.Join(requiredHeaders, ", ")))
 	}
 
 	return dep, diags, nil

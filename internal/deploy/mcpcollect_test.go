@@ -1,6 +1,9 @@
 package deploy
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -8,6 +11,27 @@ import (
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/resolver"
 )
+
+// mockMCPRegistryServer is a minimal MCP Registry v0.1 stand-in, mirroring
+// cmd/apm's mcpRegistryServer test helper (kept as a separate copy since Go
+// doesn't share unexported test helpers across packages).
+func mockMCPRegistryServer(t *testing.T, name string, remotes []map[string]any) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v0.1/servers", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"servers": []map[string]any{
+			{"server": map[string]any{"name": name, "remotes": remotes}},
+		}})
+	})
+	mux.HandleFunc("/v0.1/servers/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"server": map[string]any{"name": name, "remotes": remotes}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
 
 func writeDepManifestWithMCP(t *testing.T, modDir string, mcpYAML string) {
 	t.Helper()
@@ -116,28 +140,67 @@ func TestRun_MCPCollection_TransitiveSelfDefinedSkippedWithWarning(t *testing.T)
 	}
 }
 
-func TestRun_MCPCollection_RegistryBackedDiagnosedAndSkipped(t *testing.T) {
-	dir := t.TempDir()
-	m := &manifest.Manifest{
-		Name:    "test",
-		Version: "1.0.0",
-		MCPServers: []*manifest.MCPDependency{
-			{Name: "from-registry", Registry: nil}, // default registry -- not self-defined
-		},
+func TestCollectMCPPrimitives_RegistryBackedResolvedLive(t *testing.T) {
+	srv := mockMCPRegistryServer(t, "from-registry", []map[string]any{
+		{"type": "http", "url": "https://resolved.example.com/mcp"},
+	})
+	servers := []*manifest.MCPDependency{
+		{Name: "from-registry", Registry: srv.URL, Transport: "http"},
 	}
 
-	result, err := Run(nil, dir, m, nil, nil)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
+	prims, diags := collectMCPPrimitives(servers, "local", "")
+	if len(diags) != 0 {
+		t.Errorf("unexpected diagnostics: %v", diags)
+	}
+	if len(prims) != 1 || prims[0].Name != "from-registry" || prims[0].Type != TypeMCP {
+		t.Fatalf("expected one resolved TypeMCP primitive, got %+v", prims)
+	}
+	if prims[0].MCP == nil || prims[0].MCP.URL != "https://resolved.example.com/mcp" {
+		t.Errorf("expected resolved dep URL from registry, got %+v", prims[0].MCP)
+	}
+}
+
+func TestCollectMCPPrimitives_RegistryBackedNotFound_DiagnosedNotFatal(t *testing.T) {
+	srv := mockMCPRegistryServer(t, "other-server", nil)
+	servers := []*manifest.MCPDependency{
+		{Name: "missing-server", Registry: srv.URL},
+	}
+
+	prims, diags := collectMCPPrimitives(servers, "local", "")
+	if len(prims) != 0 {
+		t.Errorf("expected no primitives for an unresolvable entry, got %+v", prims)
 	}
 	found := false
-	for _, d := range result.Diags {
-		if strings.Contains(d, `mcp "from-registry"`) && strings.Contains(d, "registry-backed") {
+	for _, d := range diags {
+		if strings.Contains(d, `mcp "missing-server"`) && strings.Contains(d, "not found in registry") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected registry-backed diagnostic, got diags: %v", result.Diags)
+		t.Errorf("expected a not-found diagnostic, got diags: %v", diags)
+	}
+}
+
+func TestCollectMCPPrimitives_RegistryBackedRequiredHeaders_Diagnosed(t *testing.T) {
+	srv := mockMCPRegistryServer(t, "needs-auth", []map[string]any{
+		{"type": "http", "url": "https://auth.example.com/mcp", "headers": []map[string]any{{"name": "Authorization"}}},
+	})
+	servers := []*manifest.MCPDependency{
+		{Name: "needs-auth", Registry: srv.URL},
+	}
+
+	prims, diags := collectMCPPrimitives(servers, "local", "")
+	if len(prims) != 1 {
+		t.Fatalf("expected the server to still resolve and deploy, got %+v", prims)
+	}
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d, `mcp "needs-auth"`) && strings.Contains(d, "Authorization") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a required-headers diagnostic, got diags: %v", diags)
 	}
 }
 

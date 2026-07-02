@@ -304,6 +304,40 @@ func TestRoundTrip_ByteExact(t *testing.T) {
 	}
 }
 
+// TestSafeDump_DoesNotWrapLongFlowContent guards against a real bug found
+// against a hand-formatted apm.yml: yaml.NewEncoder applies WithV3Defaults(),
+// which sets an 80-column line width, so re-dumping an untouched document
+// containing flow-style entries wider than 80 columns split scalar values
+// mid-token (e.g. a quoted string broken across two lines), corrupting
+// content that was never touched by the caller's edit.
+func TestSafeDump_DoesNotWrapLongFlowContent(t *testing.T) {
+	src := []byte("dependencies:\n" +
+		"  apm: [{git: \"https://github.com/getsentry/skills\", skills: [skill-writer]}, " +
+		"{git: \"https://github.com/getsentry/skills\", skills: [skill-writer]}]\n")
+	node, err := SafeLoad(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := SafeDump(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "\n      ") || strings.Contains(string(out), "\n        ") {
+		t.Errorf("SafeDump wrapped long flow content onto a continuation line:\n%s", out)
+	}
+	roundTripped, err := SafeLoad(out)
+	if err != nil {
+		t.Fatalf("SafeDump output failed to re-parse: %v", err)
+	}
+	out2, err := SafeDump(roundTripped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(out2) {
+		t.Errorf("SafeDump is not idempotent on its own output")
+	}
+}
+
 // Round-trip determinism: parse+dump twice must produce identical output.
 func TestRoundTrip_Deterministic(t *testing.T) {
 	src := readOracle(t, filepath.Join("manifest", "x-extension-roundtrip.yml"))
