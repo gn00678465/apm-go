@@ -441,3 +441,36 @@ Review Forge 三模型審查 (opus-4.6/gemini-3.5/codex-gpt-5.5) synthesize 出 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: codex 複核揪出 apm_modules 路徑跳脫防護的其餘缺口並修復
+
+**Date**: 2026-07-02
+**Task**: codex 複核揪出 apm_modules 路徑跳脫防護的其餘缺口並修復
+**Branch**: `feat/mcp-resolve-deploy`
+
+### Summary
+
+使用者要求對已完成並封存的 07-02-conformance-fail-fixes 工作再送一輪 codex exec 複核，發現先前只在 cmd/apm/update.go 修的路徑跳脫防護（manifest 的 RepoURL/VirtualPath 未過濾 .. 導致刪除範圍跳脫或誤中 sibling 套件目錄），其實源頭在更底層、觸及範圍更廣的 internal/gitops/clone.go（LoadPackage 的 req-lk-007 stale checkout 修復，一般 install 就會走到）與 internal/registry/loader.go（registry 套件解壓）兩處完全沒有防護。抽出共用的 archive.ContainedKey 取代三處各自為政的防護邏輯，經第 2 輪 codex 複核確認修正正確、全專案無其他遺漏。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dec6d55` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
