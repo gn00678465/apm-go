@@ -468,3 +468,70 @@ if err != nil {
     return fmt.Errorf("could not reach the MCP registry (network error)")
 }
 ```
+
+---
+
+## Scenario: Format-Preserving YAML Writes + Shared Registry-Resolution Logic
+
+### 1. Scope / Trigger
+- Trigger: any write path that decodes `apm.yml` into a `*yaml.Node` tree, mutates one small part of it, and re-serializes — a full re-encode does not reproduce the original document's formatting for the parts it never touched. Applies to `internal/yamlcore/safe.go` (`SafeDump`), `internal/yamlcore/patch.go` (new), and `cmd/apm/mcpinstall.go`'s apm.yml write path. Also applies to the general lesson of sharing an external-API-resolution function across two call sites: `internal/mcpregistry/resolve.go`, used by both `apm install --mcp NAME` (`cmd/apm/mcpinstall.go`) and the general `apm install` MCP deploy path (`internal/deploy/mcpcollect.go`).
+
+### 2. Signatures
+- `yamlcore.SafeDump(doc *yaml.Node) ([]byte, error)` — full re-encode, now via `yaml.NewDumper(w, yaml.WithV3Defaults(), yaml.WithLineWidth(-1), yaml.WithIndent(2))`.
+- `yamlcore.PatchMappingPath(src []byte, doc *yaml.Node, path []string) (out []byte, ok bool, err error)` — byte-level surgical splice for one mapping key path.
+- `mcpregistry.ResolveDeployable(ctx context.Context, client *Client, name, version, transportOverride string) (dep *manifest.MCPDependency, requiredHeaders []string, err error)`.
+
+### 3. Contracts
+- **A full decode→mutate→re-encode round trip through a `yaml.Node` tree does not preserve untouched sibling formatting.** Root cause: `yaml.NewEncoder` applies `WithV3Defaults()`, which sets an 80-column `WithLineWidth`. Re-encoding an apm.yml containing a hand-formatted, one-entry-per-line flow-style list re-wraps ALL flow content in the document at the 80-column boundary — including sections nowhere near the actual edit — sometimes splitting a scalar value mid-token. `SafeDump` disabling the wrap (`WithLineWidth(-1)`) stops the corruption but still collapses untouched multi-line flow content onto one line; it is not sufficient on its own for a write path that must not reformat content it didn't touch.
+- **`PatchMappingPath` locates the exact byte span of only the mutated mapping-key path** using `yaml.Node.Line`/`.Column` (converted to byte offsets by counting `\n`), and replaces only that span in the ORIGINAL bytes — every other byte of `src` is untouched, including sibling keys' exact original line-wrapping. It falls back (`ok=false`) to a full `SafeDump` when the document's shape doesn't match its block-mapping assumptions (any mapping in `path` except the last segment must be block-style); callers must always check `ok` and fall back, never assume success.
+- **Detect "newly created node" via `Node.Line == 0`.** `SafeLoad`-parsed nodes always have `Line >= 1`; a node built via a Go struct literal (e.g. a find-or-create helper appending a new key/sequence) never sets `Line`, so it defaults to Go's zero value. This is a free, reliable "was this loaded from source or just constructed" signal — no extra bookkeeping needed to decide "replace an existing span" vs. "insert a new one."
+- **A surgical byte-splice patcher needs its own edge-case sweep beyond the happy path.** Two real bugs surfaced only in review, after the append/insert-only happy-path tests already passed: (a) the underlying yaml dumper always emits bare `\n`; naively splicing that into a CRLF-authored `apm.yml` (plausible on Windows) leaves a document with mixed line endings — fixed by detecting the source's line-ending style and normalizing the rendered fragment to match before splicing. (b) A comment on the patched key's own line, or a trailing comment before the next sibling key, both attach to the KEY node (not the value node) in the yaml parser's model; a patcher that only renders a synthetic key+value pair with no comment fields silently drops them. Also found: the yaml dumper itself drops a key's `LineComment` when the value renders in flow style on the same line, so it must be appended to the rendered fragment manually rather than left to the dumper. `HeadComment` needs no special handling — it lives on lines strictly before the replaced span, already preserved verbatim in the untouched prefix.
+- **Extract shared resolution logic to a common package when the same external-API-calling logic is needed from two call sites**, rather than letting it drift as two inline copies. `ResolveDeployable` factors out what was previously duplicated inline in `cmd/apm/mcpinstall.go`'s `resolveFromRegistry`; both the `--mcp` CLI path and the general `apm install` deploy path now share the same credential-safety check (reject a registry-returned URL with embedded credentials) and transport-validation rule. A shared function should return raw structured data (`requiredHeaders []string`), not a pre-formatted diagnostic string, when the right user-facing wording legitimately differs per call site (the CLI path mentions `--header`; the general install path has no such flag) — let each caller format its own message.
+- **A per-item network call inside a collection loop degrades to a diagnostic, not a hard failure**, when the surrounding pipeline already treats other per-item errors that way. `collectMCPPrimitives` already treated self-defined MCP entries as independently-fallible-but-not-fatal; a registry-backed entry's resolution failure (not found, network error, invalid entry) follows the same rule — one bad entry does not fail the whole `apm install`.
+
+### 4. Validation & Error Matrix
+- `PatchMappingPath` walk hits a mapping segment (other than the final one) that isn't `Kind == MappingNode` → `ok=false`, caller falls back to full `SafeDump`.
+- Target key already exists (`Line >= 1`) → replace `[lineStart(key.Line), spanEnd)` with the freshly rendered fragment; `spanEnd` is the next sibling key's line start at the same level, or (recursing up through ancestor frames) the next sibling of an ancestor, or `len(src)`.
+- Target key doesn't exist yet, but the caller already created it in-memory (find-or-create helper) → insert a new `"key: value\n"` block at the end of the parent's span, indented 2 spaces deeper than the parent key.
+- Target key doesn't exist AND wasn't pre-created in-memory → `ok=false` (the caller was supposed to have created it first).
+- Source document uses CRLF (`bytes.Contains(src, "\r\n")`) → the rendered fragment's line endings are normalized to CRLF before splicing, so the result doesn't mix conventions.
+- Registry-backed MCP entry resolves successfully but has `RequiredHeaders` → diagnostic only, still deployed (apm-go does not auto-inject auth headers).
+- Registry-backed MCP entry fails to resolve (not found, network error, invalid/credentialed entry) → diagnostic naming the entry, primitive skipped, rest of `apm install` proceeds.
+
+### 5. Good/Base/Bad Cases
+- Good: appending one entry to an existing flow-style `dependencies.mcp` sequence in a hand-formatted `apm.yml` → only the `mcp:` line changes; `dependencies.apm` and every other top-level key survive byte-for-byte, including original one-entry-per-line wrapping.
+- Base: `dependencies.mcp` doesn't exist yet but `dependencies` does (e.g. only `apm:` was declared) → a new `mcp:` block is inserted after the last existing key inside `dependencies`, matching its indentation; `dependencies.apm` is untouched.
+- Bad: relying on `SafeDump`'s `WithLineWidth(-1)` fix alone as "the fix" for format preservation — it stops mid-token corruption but still collapses every untouched multi-line flow list in the document onto one line, which still fails a byte-exact-preservation requirement.
+
+### 6. Tests Required
+- `internal/yamlcore/patch_test.go`: append-to-existing-flow-seq leaves the rest of the document byte-exact; create-missing-mcp-key; create-missing-dependencies-key; CRLF document keeps CRLF throughout; comments near the patched key survive (key-line comment, trailing/foot comment).
+- `internal/yamlcore/safe_test.go`: `TestSafeDump_DoesNotWrapLongFlowContent` (a full-document re-encode of long flow content must not introduce a line-width wrap).
+- `internal/mcpregistry/resolve_test.go`: `ResolveDeployable` success, transport override (including rejecting a non-remote override), not-found, packages-only (stdio gap), credentialed-remote-URL rejection — tested directly at the `internal/mcpregistry` package boundary, not only indirectly through its two callers.
+- `internal/deploy/mcpcollect_test.go`: registry-backed entry resolved live via a mock registry server; not-found is a diagnostic, not fatal; required-headers diagnostic still deploys the entry.
+
+### 7. Wrong vs Correct
+#### Wrong
+```go
+// Full re-encode "fix": stops mid-token corruption but still reformats
+// every untouched flow collection in the document.
+func SafeDump(doc *yaml.Node) ([]byte, error) {
+    enc, _ := yaml.NewDumper(&buf, yaml.WithV3Defaults(), yaml.WithLineWidth(-1))
+    return enc.Dump(doc) // whole document re-serialized, sibling formatting lost
+}
+```
+
+#### Correct
+```go
+// Only touch the byte span that actually changed; fall back if the
+// document shape doesn't fit the patcher's assumptions.
+manifestBytes, patched, err := yamlcore.PatchMappingPath(data, node, []string{"dependencies", "mcp"})
+if err != nil {
+    return fmt.Errorf("serialize apm.yml: %w", err)
+}
+if !patched {
+    manifestBytes, err = yamlcore.SafeDump(node)
+    if err != nil {
+        return fmt.Errorf("serialize apm.yml: %w", err)
+    }
+}
+```
