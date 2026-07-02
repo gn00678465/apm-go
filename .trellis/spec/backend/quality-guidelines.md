@@ -394,3 +394,77 @@ if len(skillSubset) > 0 {
     }
 }
 ```
+
+---
+
+## Scenario: MCP Registry v0.1 Client + Credential-Handling Discipline (`--mcp`)
+
+### 1. Scope / Trigger
+- Trigger: `internal/mcpregistry` (new package, external HTTP API client) + `apm install --mcp` writing a resolved/self-defined MCP server into `apm.yml` (git-committed) and a deployed target config file. Any future feature resolving a user- or environment-controlled URL/header/env/command value into a persisted or logged sink should follow this pattern.
+
+### 2. Signatures
+- `mcpregistry.NewClient(baseURL string) (*Client, error)`, `Client.FindServerByReference(ctx, reference, version string) (*ServerInfo, error)`
+- `cmd/apm/mcpinstall.go`: `buildPersistEntry(opts) (*yaml.Node, error)` (pure, no network) vs `buildDeployDep(opts) (*manifest.MCPDependency, []string, error)` (network-bound for a registry lookup) — kept as two separate functions, not one.
+- `manifest.ValidateMCP(m *MCPDependency) error`, `internal/deploy/mcp_common.go`'s `resolveMCPServer(s, mode) *ResolvedMCPServer`
+
+### 3. Contracts
+- **Verify third-party API shape empirically before committing to it.** This client's field types were first drafted from reading the Python original's source code — thorough, but still wrong against the real API: the registry uses `remotes[].type`, not `transport_type` (an internal field name the Python client renames to on ingestion); and `remotes[].headers[]` are requirement descriptors (`{name, description, isSecret}`), never literal key/value pairs — there is no `value` to copy into a deployed config. A live `curl` against the real endpoint during implementation caught both; a regression test (`TestFindServerByReference_RealRegistryResponseShape`) locks the corrected shape in using a captured real response body, not a hand-built mock.
+- **Deploy-identity must equal persist-identity.** `resolveFromRegistry`'s resolved `MCPDependency.Name` is `opts.Name` verbatim — never a derived/shortened form of the registry's canonical name (e.g. `io.github.github/github-mcp-server` → `github-mcp-server`). A derived identity is a *different* key than what `upsertMCPEntry` already conflict-checked `apm.yml` for, and can silently overwrite an unrelated target-config entry that happens to collide, bypassing `--force` entirely.
+- **Cheap identity check before any network call.** `runMCPInstall` calls `buildPersistEntry` (pure) → `upsertMCPEntry` (checks "unchanged") → only if something actually changed, `buildDeployDep` (network-bound). An "unchanged" declaration is therefore a pure local no-op: it never touches the registry, and can't fail on a registry outage that has nothing to do with what the user asked for.
+
+### 4. Validation & Error Matrix
+- Explicit MCP-only flag given with an empty value (e.g. `--url ""`) without `--mcp` → reject at the CLI dispatch gate using `cmd.Flags().Changed(name)`, **not** `flagVar != ""`. A value-based check can't distinguish "flag not given" from "flag explicitly given the zero value," and this gap can reappear one layer in (inside the opts struct's own field checks) even after the outer CLI gate is fixed — check both layers.
+- Any URL field (registry base URL, self-defined `--url`, registry-resolved remote URL) containing a literal `"@"` → reject unconditionally, **before** any `url.Parse` attempt. A malformed URL can make the structured parse itself error out before a post-parse `u.User` check ever runs, so the coarse substring check must run first and standalone.
+- `url.Parse` (or the equivalent request-building step) failing entirely → reject with a **generic** message that echoes neither the raw input nor any parsed sub-field (scheme, host) taken from it. Go's `http.Client` wraps a failed request in a `*url.Error` whose own `Error()` embeds the full request URL — `%w`-wrapping that error leaks the URL even when the wrapping code never explicitly interpolates it; build a fresh, non-wrapping error message instead.
+- A URL containing an mf-013 placeholder (`${VAR}`, `${input:...}`, `${{ ... }}`) → do **not** run the literal-URL checks (absolute scheme/host, `u.User`) against it structurally. Placeholders are resolved by plain, position-agnostic substring substitution (`manifest.ResolvePlaceholders`), so they can legitimately sit in a port or IPv6-bracket-host position where a generic substitution token breaks re-parsing (`"x"` is not a valid port or IPv6 literal). Instead, check only for the specific defect class that matters regardless of position — malformed percent-encoding — directly on the raw string.
+- A placeholder-bearing value that gets resolved to a literal at a *later* stage (e.g. `${MCP_URL}` substituted with the real environment value inside `resolveMCPServer` at deploy time) → re-run the credential check on the **resolved** value before it reaches a writer. Validating only the authored (pre-resolution) form misses whatever the placeholder actually resolves to at runtime.
+
+### 5. Good/Base/Bad Cases
+- Good: `--mcp io.github.github/github-mcp-server --transport http` (bare registry lookup) → registry queried once, resolved `MCPDependency.Name == "io.github.github/github-mcp-server"` (not a shortened slug), deployed and persisted under that same key.
+- Base: `--mcp existing-name --url https://new.example.com/mcp` where `existing-name` is already declared differently → rejected without `--force`; re-running the exact same command a second time (nothing changed) is a pure local no-op, no network call.
+- Bad: `url: ${MCP_URL}` declared with `MCP_URL=https://user:pass@evil.example.com/mcp` in the environment — the authored value has no literal `@`, so a check that only inspects the authored string at declare time misses it; the *resolved* value must be checked too.
+
+### 6. Tests Required
+- `internal/mcpregistry/client_test.go`: `TestFindServerByReference_RealRegistryResponseShape` (locks the verified real API shape), `TestNewClient_NeverEchoesRawURLOnError` / `TestNewClient_NeverEchoesScheme` (every rejection path, checked by grepping the error string for the raw input).
+- `internal/manifest/mcp_test.go`: `TestValidateMCP_AllowsPlaceholderURLs` (placeholder in port/IPv6-host position must still be accepted), `TestValidateMCP_RejectsMalformedLiteralPortionEvenWithPlaceholder` (a placeholder elsewhere in the string must not exempt an unrelated malformed literal segment).
+- `internal/deploy/mcp_writers_test.go`: `TestResolveMCPServer_RefusesPostResolutionEmbeddedCredentials` (`t.Setenv` a credentialed value, assert the resolved server is `Refused`, not silently deployed).
+- `cmd/apm/mcpinstall_test.go`: `TestRunMCPInstall_UnchangedRegistryEntry_NeverContactsRegistry` (point `opts.Registry` at an unreachable address and assert an unchanged entry still succeeds).
+
+### 7. Wrong vs Correct
+#### Wrong
+```go
+// Blanket-skip ALL validation whenever any placeholder is present
+if !manifest.HasPlaceholder(m.URL) {
+    u, err := url.Parse(m.URL)
+    // ...
+}
+// "https://example.com/%zz/${TOKEN}" now sails through unchecked --
+// the bad %zz escape has nothing to do with the placeholder.
+```
+```go
+// Echoes the raw request URL indirectly via %w
+resp, err := c.HTTP.Do(req)
+if err != nil {
+    return fmt.Errorf("could not reach MCP registry at %s: %w", c.BaseURL, err)
+    // err is a *url.Error whose own Error() already contains the full URL
+}
+```
+
+#### Correct
+```go
+// Position-agnostic check for the specific defect, not a parse-or-skip binary
+if hasMalformedPercentEscape(m.URL) {
+    return fmt.Errorf("MCP server %q: url is not a valid URL", m.Name)
+}
+if !manifest.HasPlaceholder(m.URL) {
+    u, err := url.Parse(m.URL)
+    // absolute-URL / u.User checks only apply to a fully literal value
+}
+```
+```go
+// Never echoes the request URL, even indirectly
+resp, err := c.HTTP.Do(req)
+if err != nil {
+    return fmt.Errorf("could not reach the MCP registry (network error)")
+}
+```
