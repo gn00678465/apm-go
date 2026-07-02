@@ -160,3 +160,34 @@ func TestLoader_401_RemediationHintNoToken(t *testing.T) {
 		t.Errorf("token leaked in 401 error: %q", msg)
 	}
 }
+
+// TestLoader_RefusesVirtualPathEscapingModulesDir guards sc-002 defense in
+// depth for registry extraction: RepoURL/VirtualPath are only charset
+// validated at manifest-parse time and do not reject ".." segments, so a
+// crafted VirtualPath could otherwise resolve destDir onto an unrelated
+// sibling directory still technically inside ModulesDir (e.g. "acme/sample"
+// + VirtualPath ".." resolves to ModulesDir/acme, wiping out anything there
+// on the pre-extraction cleanup a real archive.SafeExtract would perform).
+func TestLoader_RefusesVirtualPathEscapingModulesDir(t *testing.T) {
+	fx := buildFixture(t)
+	srv := fixtureServer(t, fx, sha256Envelope(fx))
+	l := newLoader(t, srv.URL)
+
+	sibling := filepath.Join(l.ModulesDir, "acme", "other-package", "marker.txt")
+	if err := os.MkdirAll(filepath.Dir(sibling), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sibling, []byte("unrelated package, must survive"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := regRef()
+	ref.VirtualPath = ".."
+
+	if _, err := l.LoadPackage(ref, "1.0.0"); err == nil {
+		t.Fatal("expected LoadPackage to refuse a VirtualPath containing \"..\"")
+	}
+	if _, statErr := os.Stat(sibling); statErr != nil {
+		t.Errorf("sibling package under ModulesDir must survive: %v", statErr)
+	}
+}

@@ -108,11 +108,16 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 	if ref.VirtualPath != "" {
 		key += "/" + ref.VirtualPath
 	}
-	destDir := filepath.Join(l.ModulesDir, filepath.FromSlash(key))
-	// sc-002 defense in depth: never extract outside the modules dir.
-	if !archive.Contained(l.ModulesDir, destDir) {
-		return nil, fmt.Errorf("refusing to extract %q outside %s", ref.RepoURL, l.ModulesDir)
+	// sc-002 defense in depth: RepoURL/VirtualPath are only charset-validated
+	// at manifest-parse time and do not reject ".." segments, so a plain
+	// Contained check after the join alone would miss a ".." that resolves
+	// to an unrelated directory still technically inside ModulesDir (e.g. a
+	// sibling package) -- ContainedKey rejects any ".." segment outright
+	// before the join happens.
+	if !archive.ContainedKey(l.ModulesDir, key) {
+		return nil, fmt.Errorf("refusing to extract %q outside %s", key, l.ModulesDir)
 	}
+	destDir := filepath.Join(l.ModulesDir, filepath.FromSlash(key))
 	if _, err := archive.SafeExtract(bytes.NewReader(body), destDir, archive.Limits{
 		MaxBytes:   l.MaxBytes,
 		MaxEntries: l.MaxEntries,

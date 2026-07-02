@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/experimental"
@@ -115,17 +114,13 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 		// not checked for ".." traversal (unlike local-path deps) -- a ".."
 		// segment can resolve to somewhere else entirely under apm_modules
 		// (e.g. a sibling package's directory, or apm_modules itself), which
-		// archive.Contained alone would not catch since that still counts as
-		// "inside" apm_modules. Reject any ".." segment outright before
-		// joining/cleaning the path, then keep the outside-root check as a
-		// second layer for anything that still manages to escape.
-		if keyHasParentSegment(key) {
-			return fmt.Errorf("refusing to clear %q outside apm_modules: contains \"..\" path segment", key)
-		}
-		installDir := filepath.Join("apm_modules", key)
-		if !archive.Contained("apm_modules", installDir) {
+		// a plain Contained check after the join would not catch since that
+		// still counts as "inside" apm_modules. ContainedKey rejects any ".."
+		// segment outright before joining/cleaning the path.
+		if !archive.ContainedKey("apm_modules", key) {
 			return fmt.Errorf("refusing to clear %q outside apm_modules", key)
 		}
+		installDir := filepath.Join("apm_modules", key)
 		if err := os.RemoveAll(installDir); err != nil {
 			return fmt.Errorf("clear %s before update: %w", key, err)
 		}
@@ -149,21 +144,6 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 	printUpdateSummary(existingLock, newLock)
 
 	return deployAndFinalize(m, "", nil, nil, result, newLock, existingLock, existingNode, node)
-}
-
-// keyHasParentSegment reports whether key contains a ".." path segment.
-// filepath.Join silently resolves ".." against apm_modules, which can land
-// on an unrelated directory that is still technically "inside" apm_modules
-// (e.g. a sibling package, or apm_modules itself) -- archive.Contained alone
-// does not catch that, since it only rejects paths that end up outside the
-// root entirely.
-func keyHasParentSegment(key string) bool {
-	for _, seg := range strings.Split(strings.ReplaceAll(key, "\\", "/"), "/") {
-		if seg == ".." {
-			return true
-		}
-	}
-	return false
 }
 
 // directGitSemverUpdateScope returns the apm_modules/<key> keys that must be

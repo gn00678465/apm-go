@@ -209,3 +209,26 @@ func Contained(root, target string) bool {
 	}
 	return withinRoot(absRoot, absTarget)
 }
+
+// ContainedKey reports whether joining root and key produces a path safely
+// inside root, for a key built from untrusted manifest-derived fields (e.g.
+// DependencyReference.RepoURL/VirtualPath, which are only charset-validated
+// at parse time and do not reject ".." segments the way local-path deps or
+// lockfile fields do).
+//
+// A plain Contained(root, filepath.Join(root, key)) check is NOT sufficient
+// on its own: a ".." segment in key can resolve to a location that is still
+// technically "inside" root but is the wrong directory entirely -- e.g.
+// key = "acme/a/.." cleans to "acme", a sibling package's directory, which
+// Contained would report as fine since it's still under root. ContainedKey
+// rejects any ".." segment in key outright before the join/clean happens,
+// then keeps Contained as a second-layer catch-all for anything else (e.g.
+// an absolute path string) that still manages to resolve outside root.
+func ContainedKey(root, key string) bool {
+	for _, seg := range strings.Split(strings.ReplaceAll(key, "\\", "/"), "/") {
+		if seg == ".." {
+			return false
+		}
+	}
+	return Contained(root, filepath.Join(root, key))
+}

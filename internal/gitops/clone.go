@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -24,7 +25,10 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 		return r.loadLocalPackage(ref.LocalPath)
 	}
 
-	installDir := r.installPath(ref)
+	installDir, err := r.installPath(ref)
+	if err != nil {
+		return nil, err
+	}
 
 	if info, statErr := os.Stat(installDir); statErr == nil && info.IsDir() {
 		if checkoutMatchesRef(installDir, resolvedRef) {
@@ -100,13 +104,21 @@ func worktreeClean(repoDir string) bool {
 	return len(strings.TrimSpace(string(out))) == 0
 }
 
-func (r *RealPackageLoader) installPath(ref *manifest.DependencyReference) string {
+func (r *RealPackageLoader) installPath(ref *manifest.DependencyReference) (string, error) {
 	key := ref.RepoURL
 	if ref.VirtualPath != "" {
 		key += "/" + ref.VirtualPath
 	}
+	// RepoURL/VirtualPath are only charset-validated at manifest-parse time
+	// and do not reject ".." segments -- guard against a crafted dependency
+	// resolving outside ModulesDir, or landing on an unrelated sibling
+	// directory still technically inside it, before this path is used for a
+	// destructive os.RemoveAll (req-lk-007's stale-checkout repair).
+	if !archive.ContainedKey(r.ModulesDir, key) {
+		return "", fmt.Errorf("refusing to resolve install path for %q outside %s", key, r.ModulesDir)
+	}
 	safe := strings.ReplaceAll(key, "/", string(filepath.Separator))
-	return filepath.Join(r.ModulesDir, safe)
+	return filepath.Join(r.ModulesDir, safe), nil
 }
 
 func (r *RealPackageLoader) resolveCloneURL(ref *manifest.DependencyReference) string {

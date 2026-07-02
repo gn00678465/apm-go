@@ -161,7 +161,10 @@ func TestLoadPackage_SkipsCloneWhenCheckoutMatchesRef(t *testing.T) {
 	r := &RealPackageLoader{ModulesDir: modulesDir}
 	ref := &manifest.DependencyReference{RepoURL: "acme/pkg", Owner: "acme", Repo: "pkg", Scheme: "https", Host: "does-not-exist.invalid"}
 
-	installDir := r.installPath(ref)
+	installDir, pathErr := r.installPath(ref)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +209,10 @@ func TestLoadPackage_ReClonesWhenCheckoutStale(t *testing.T) {
 	modulesDir := t.TempDir()
 	r := &RealPackageLoader{ModulesDir: modulesDir}
 
-	installDir := r.installPath(ref)
+	installDir, pathErr := r.installPath(ref)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +245,10 @@ func TestLoadPackage_ClonesWhenDirMissing(t *testing.T) {
 		t.Fatalf("LoadPackage: %v", err)
 	}
 
-	installDir := r.installPath(ref)
+	installDir, pathErr := r.installPath(ref)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
 	if _, err := os.Stat(filepath.Join(installDir, "file.txt")); err != nil {
 		t.Errorf("expected file.txt to be cloned: %v", err)
 	}
@@ -263,7 +272,10 @@ func TestLoadPackage_ClonesByRawCommitSHA(t *testing.T) {
 		t.Fatalf("LoadPackage: %v", err)
 	}
 
-	installDir := r.installPath(ref)
+	installDir, pathErr := r.installPath(ref)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
 	if _, err := os.Stat(filepath.Join(installDir, "file.txt")); err != nil {
 		t.Errorf("expected file.txt to be cloned: %v", err)
 	}
@@ -287,5 +299,37 @@ func TestIsCommitSHA(t *testing.T) {
 		if got := isCommitSHA(ref); got != want {
 			t.Errorf("isCommitSHA(%q) = %v, want %v", ref, got, want)
 		}
+	}
+}
+
+// TestLoadPackage_RefusesVirtualPathEscapingModulesDir guards installPath:
+// RepoURL/VirtualPath are only charset-validated at manifest-parse time and
+// do not reject ".." segments, so a crafted VirtualPath could otherwise
+// resolve installDir outside ModulesDir (or onto an unrelated sibling
+// directory still technically inside it) before LoadPackage's req-lk-007
+// stale-checkout repair does an os.RemoveAll on it. A found-in-review
+// regression: this was fixed in cmd/apm/update.go's purge path first, then
+// found to also be missing here in the actual shared LoadPackage, which is
+// reachable from every install (not just apm update).
+func TestLoadPackage_RefusesVirtualPathEscapingModulesDir(t *testing.T) {
+	modulesDir := t.TempDir()
+	r := &RealPackageLoader{ModulesDir: modulesDir}
+
+	// A sibling package that must survive: RepoURL "acme/a" + VirtualPath
+	// ".." resolves to modulesDir/acme, wiping out anything there.
+	siblingMarker := filepath.Join(modulesDir, "acme", "other-package", "marker.txt")
+	if err := os.MkdirAll(filepath.Dir(siblingMarker), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(siblingMarker, []byte("unrelated package, must survive"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := &manifest.DependencyReference{RepoURL: "acme/a", VirtualPath: "..", Owner: "acme", Repo: "a"}
+	if _, err := r.LoadPackage(ref, "v1.0.0"); err == nil {
+		t.Fatal("expected LoadPackage to refuse a VirtualPath containing \"..\"")
+	}
+	if _, statErr := os.Stat(siblingMarker); statErr != nil {
+		t.Errorf("sibling package under ModulesDir must survive: %v", statErr)
 	}
 }

@@ -210,6 +210,28 @@ func TestContained(t *testing.T) {
 	}
 }
 
+func TestContainedKey(t *testing.T) {
+	root := "apm_modules"
+	cases := []struct {
+		key  string
+		want bool
+	}{
+		{"acme/foo", true},
+		{"acme/foo/sub/pkg", true},
+		{"../../../evil", false},                // escapes root entirely
+		{"..", false},                           // resolves to root itself
+		{"acme/..", false},                      // resolves to root itself
+		{"acme/../other", false},                // resolves to a sibling, still "inside" root but wrong
+		{"acme/foo/../../../etc/passwd", false}, // deep escape
+		{"acme\\..\\other", false},              // backslash-separated ".." must also be caught
+	}
+	for _, tc := range cases {
+		if got := ContainedKey(root, tc.key); got != tc.want {
+			t.Errorf("ContainedKey(%q, %q) = %v, want %v", root, tc.key, got, tc.want)
+		}
+	}
+}
+
 func TestSafeExtract_GzipMagicButInvalid(t *testing.T) {
 	// gzip magic 1f 8b but not a valid gzip stream -> gzip.NewReader errors.
 	data := []byte{0x1f, 0x8b, 0x00, 0x00, 0x00}
