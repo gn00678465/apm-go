@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 // ── MCP validation tests (mf-012) ──
@@ -210,6 +212,60 @@ func TestParseMCPEntry_SelfDefined(t *testing.T) {
 	}
 	if err := ValidateMCP(m); err != nil {
 		t.Errorf("valid self-defined MCP should pass: %v", err)
+	}
+}
+
+// ── MCP retention on Manifest (AC1) ──
+
+func TestParseManifest_RetainsMCPServersProdAndDev(t *testing.T) {
+	data := []byte(`
+name: my-project
+version: 1.0.0
+dependencies:
+  mcp:
+    - name: prod-server
+      registry: false
+      transport: stdio
+      command: my-mcp-server
+devDependencies:
+  mcp:
+    - name: dev-server
+      registry: false
+      transport: http
+      url: https://example.com/mcp
+`)
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(m.MCPServers) != 1 || m.MCPServers[0].Name != "prod-server" {
+		t.Errorf("MCPServers = %+v, want 1 entry named prod-server", m.MCPServers)
+	}
+	if len(m.MCPDevServers) != 1 || m.MCPDevServers[0].Name != "dev-server" {
+		t.Errorf("MCPDevServers = %+v, want 1 entry named dev-server", m.MCPDevServers)
+	}
+}
+
+func TestParseManifest_NoMCPBlockLeavesNilServers(t *testing.T) {
+	data := []byte("name: my-project\nversion: 1.0.0\n")
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.MCPServers) != 0 {
+		t.Errorf("MCPServers = %+v, want empty", m.MCPServers)
+	}
+	if len(m.MCPDevServers) != 0 {
+		t.Errorf("MCPDevServers = %+v, want empty", m.MCPDevServers)
 	}
 }
 

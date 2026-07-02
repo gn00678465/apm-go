@@ -48,6 +48,8 @@ type Manifest struct {
 	DefaultRegistry    string // registries.default (empty = none)
 	ParsedDeps         []*DependencyReference
 	ParsedDevDeps      []*DependencyReference
+	MCPServers         []*MCPDependency
+	MCPDevServers      []*MCPDependency
 
 	node *yaml.Node
 }
@@ -118,20 +120,22 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 			m.Registries = regs
 			m.DefaultRegistry = def
 		case "dependencies":
-			deps, cr, err := validateDepBlock(val)
+			deps, mcpServers, cr, err := validateDepBlock(val)
 			if err != nil {
 				return nil, nil, err
 			}
 			m.ParsedDeps = append(m.ParsedDeps, deps...)
+			m.MCPServers = append(m.MCPServers, mcpServers...)
 			if cr != "" {
 				m.ConflictResolution = cr
 			}
 		case "devDependencies":
-			deps, _, err := validateDepBlock(val)
+			deps, mcpServers, _, err := validateDepBlock(val)
 			if err != nil {
 				return nil, nil, err
 			}
 			m.ParsedDevDeps = append(m.ParsedDevDeps, deps...)
+			m.MCPDevServers = append(m.MCPDevServers, mcpServers...)
 		case "workspaces":
 			// mf-021: non-blocking diagnostic
 			m.Workspaces = true
@@ -319,11 +323,12 @@ func isLoopbackOrPrivate(host string) bool {
 
 // validateDepBlock checks structural validity of a dependencies/devDependencies block.
 // Returns collected DependencyReferences and conflict_resolution value.
-func validateDepBlock(val *yaml.Node) ([]*DependencyReference, string, error) {
+func validateDepBlock(val *yaml.Node) ([]*DependencyReference, []*MCPDependency, string, error) {
 	if val.Kind != yaml.MappingNode {
-		return nil, "", fmt.Errorf("dependencies must be a mapping")
+		return nil, nil, "", fmt.Errorf("dependencies must be a mapping")
 	}
 	var deps []*DependencyReference
+	var mcpServers []*MCPDependency
 	var conflictRes string
 	for i := 0; i < len(val.Content)-1; i += 2 {
 		k := val.Content[i].Value
@@ -335,39 +340,40 @@ func validateDepBlock(val *yaml.Node) ([]*DependencyReference, string, error) {
 			}
 		} else if k == "apm" {
 			if list.Kind != yaml.SequenceNode {
-				return nil, "", fmt.Errorf("dependencies.apm must be a list")
+				return nil, nil, "", fmt.Errorf("dependencies.apm must be a list")
 			}
 			for idx, entry := range list.Content {
 				if entry.Kind == yaml.MappingNode {
 					d, err := ParseDepDict(entry, idx)
 					if err != nil {
-						return nil, "", err
+						return nil, nil, "", err
 					}
 					deps = append(deps, d)
 				} else if entry.Kind == yaml.ScalarNode {
 					d, err := ParseDepString(entry.Value)
 					if err != nil {
-						return nil, "", err
+						return nil, nil, "", err
 					}
 					deps = append(deps, d)
 				}
 			}
 		} else if k == "mcp" {
 			if list.Kind != yaml.SequenceNode {
-				return nil, "", fmt.Errorf("dependencies.mcp must be a list")
+				return nil, nil, "", fmt.Errorf("dependencies.mcp must be a list")
 			}
 			for _, entry := range list.Content {
 				m, err := ParseMCPEntry(entry)
 				if err != nil {
-					return nil, "", err
+					return nil, nil, "", err
 				}
 				if err := ValidateMCP(m); err != nil {
-					return nil, "", err
+					return nil, nil, "", err
 				}
+				mcpServers = append(mcpServers, m)
 			}
 		}
 	}
-	return deps, conflictRes, nil
+	return deps, mcpServers, conflictRes, nil
 }
 
 // validateDepEntry is replaced by ParseDepDict in depref.go
