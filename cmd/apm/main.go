@@ -21,6 +21,7 @@ func main() {
 	root.AddCommand(normalizeCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(installCmd())
+	root.AddCommand(updateCmd())
 	root.AddCommand(auditCmd())
 	root.AddCommand(experimentalCmd())
 

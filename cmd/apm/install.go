@@ -367,6 +367,19 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 5. Build lockfile
+	newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, packages, noProvenance)
+	if err != nil {
+		return err
+	}
+
+	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
+	return deployAndFinalize(m, targetFlag, skillSubset, packages, result, newLock, existingLock, existingNode, node)
+}
+
+// buildLockfile converts a resolution result into the lockfile that would be
+// written for it, without touching disk (steps 5). Shared by runInstall and
+// runUpdate so both build the same lockfile shape from a resolution result.
+func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset, packages []string, noProvenance bool) (*lockfile.Lockfile, error) {
 	existingVersion := ""
 	if existingLock != nil {
 		existingVersion = existingLock.Version
@@ -428,7 +441,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			if commit != "" {
 				treeHash, hashErr := lockfile.ComputeTreeSHA256(installDir, commit)
 				if hashErr != nil {
-					return fmt.Errorf("tree_sha256 for %s: %w", dep.Key, hashErr)
+					return nil, fmt.Errorf("tree_sha256 for %s: %w", dep.Key, hashErr)
 				}
 				ld.TreeSHA256 = treeHash
 			}
@@ -436,6 +449,15 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 
 		newLock.Dependencies = append(newLock.Dependencies, ld)
 	}
+
+	return newLock, nil
+}
+
+// deployAndFinalize runs deploy.Run, prints the deploy summary, checks for a
+// no-op (steps 6-7), then writes apm.lock.yaml and (for positional package
+// installs) apm.yml (steps 8-9). Shared by runInstall and runUpdate.
+func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
