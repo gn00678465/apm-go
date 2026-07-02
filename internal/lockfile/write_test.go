@@ -167,6 +167,33 @@ func TestIsSemanticEqual_ContentDiffers(t *testing.T) {
 	}
 }
 
+// req-lk-005: local_deployed_files/local_deployed_file_hashes are content,
+// not advisory -- a hash change here (e.g. a merged MCP config file was
+// rewritten) must trigger a lockfile rewrite, not be skipped as a no-op.
+func TestIsSemanticEqual_LocalDeployedHashDiffers(t *testing.T) {
+	a := &Lockfile{
+		Version:             "1",
+		LocalDeployedFiles:  []string{".mcp.json"},
+		LocalDeployedHashes: map[string]string{".mcp.json": "sha256:aaa"},
+	}
+	b := &Lockfile{
+		Version:             "1",
+		LocalDeployedFiles:  []string{".mcp.json"},
+		LocalDeployedHashes: map[string]string{".mcp.json": "sha256:bbb"},
+	}
+	if IsSemanticEqual(a, b) {
+		t.Error("lockfiles with different local_deployed_file_hashes should not be equal")
+	}
+}
+
+func TestIsSemanticEqual_LocalDeployedFilesDiffer(t *testing.T) {
+	a := &Lockfile{Version: "1", LocalDeployedFiles: []string{".mcp.json"}}
+	b := &Lockfile{Version: "1", LocalDeployedFiles: []string{".mcp.json", ".codex/config.toml"}}
+	if IsSemanticEqual(a, b) {
+		t.Error("lockfiles with different local_deployed_files should not be equal")
+	}
+}
+
 func TestWriteLockfile_RoundTrip_ByteEqual(t *testing.T) {
 	p := oraclePath(t, filepath.Join("lockfile", "round-trip-unknown-fields.yml"))
 	data, err := os.ReadFile(p)

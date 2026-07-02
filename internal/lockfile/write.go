@@ -48,12 +48,47 @@ func SerializeLockfile(lf *Lockfile, original *yaml.Node) (*yaml.Node, error) {
 		addScalarPreserve(root, "apm_version", lf.APMVersion, origTopPairs)
 	}
 
+	// local_deployed_files (list) — reuse original only if unchanged
+	if len(lf.LocalDeployedFiles) > 0 {
+		if pair, exists := origTopPairs["local_deployed_files"]; exists && deployedFilesMatch(pair.val, lf.LocalDeployedFiles) {
+			root.Content = append(root.Content, pair.key, pair.val)
+		} else {
+			seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			for _, f := range lf.LocalDeployedFiles {
+				seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: f, Tag: "!!str"})
+			}
+			root.Content = append(root.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "local_deployed_files", Tag: "!!str"},
+				seq,
+			)
+		}
+	}
+
+	// local_deployed_file_hashes (map) — reuse original only if unchanged
+	if len(lf.LocalDeployedHashes) > 0 {
+		if pair, exists := origTopPairs["local_deployed_file_hashes"]; exists && deployedHashesMatch(pair.val, lf.LocalDeployedHashes) {
+			root.Content = append(root.Content, pair.key, pair.val)
+		} else {
+			mapNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			keys := make([]string, 0, len(lf.LocalDeployedHashes))
+			for k := range lf.LocalDeployedHashes {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				addScalar(mapNode, k, lf.LocalDeployedHashes[k])
+			}
+			root.Content = append(root.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "local_deployed_file_hashes", Tag: "!!str"},
+				mapNode,
+			)
+		}
+	}
+
 	// Preserve top-level x-* and unknown keys from original.
-	// Note: local_deployed_files and local_deployed_file_hashes are NOT in this set
-	// because they are not parsed into Lockfile struct fields; treating them as unknown
-	// keys ensures they are preserved on round-trip.
 	knownTopKeys := map[string]bool{
 		"lockfile_version": true, "generated_at": true, "apm_version": true,
+		"local_deployed_files": true, "local_deployed_file_hashes": true,
 		"dependencies": true,
 	}
 	if original != nil {
@@ -231,6 +266,12 @@ func buildOriginalPairs(original *yaml.Node) map[string]nodePair {
 // Order-insensitive: dependencies are matched by unique key, not by position.
 func IsSemanticEqual(a, b *Lockfile) bool {
 	if a.Version != b.Version {
+		return false
+	}
+	if !slicesEqual(a.LocalDeployedFiles, b.LocalDeployedFiles) {
+		return false
+	}
+	if !mapsEqual(a.LocalDeployedHashes, b.LocalDeployedHashes) {
 		return false
 	}
 	if len(a.Dependencies) != len(b.Dependencies) {
@@ -412,7 +453,7 @@ var knownEntryFields = map[string]bool{
 	"constraint": true, "resolved_at": true, "resolved_by": true,
 	"version": true, "virtual_path": true,
 	"tree_sha256": true, "depth": true,
-	"skill_subset": true,
+	"skill_subset":   true,
 	"deployed_files": true, "deployed_file_hashes": true,
 }
 
