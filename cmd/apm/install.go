@@ -75,6 +75,19 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		fmt.Fprintln(os.Stderr, "CI environment detected, defaulting to frozen install")
 	}
 
+	// --skill requires an actual package to scope to. Reject up front rather
+	// than silently no-op-ing: frozen installs skip resolution/deploy
+	// filtering entirely (nothing for --skill to scope), and with no
+	// positional package, requestedKeys below would stay empty.
+	if len(skillSubset) > 0 {
+		if frozen {
+			return fmt.Errorf("--skill is not supported with a frozen install (frozen installs pin exactly what's locked, with no per-package skill selection)")
+		}
+		if len(packages) == 0 {
+			return fmt.Errorf("--skill requires at least one positional package to install")
+		}
+	}
+
 	// 1. Parse apm.yml — optional in frozen mode.
 	var m *manifest.Manifest
 	var node *yamllib.Node
@@ -99,7 +112,11 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		}
 	}
 
-	// 1b. Add positional packages to deps (skip if already in manifest)
+	// 1b. Add positional packages to deps (skip if already in manifest).
+	// requestedKeys tracks every positional package's dep key for THIS call
+	// (whether newly added or already declared), so --skill can later be
+	// scoped to only these dependencies instead of the whole resolved graph.
+	requestedKeys := make(map[string]bool)
 	if len(packages) > 0 {
 		existing := make(map[string]bool)
 		for _, d := range m.ParsedDeps {
@@ -116,6 +133,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 				ref.LocalPath = ""
 				ref.Source = "git"
 			}
+			requestedKeys[deploy.DepRefKey(ref)] = true
 			if existing[ref.RepoURL] {
 				continue
 			}
@@ -367,19 +385,19 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 5. Build lockfile
-	newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, packages, noProvenance)
+	newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, requestedKeys, noProvenance)
 	if err != nil {
 		return err
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, skillSubset, packages, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, packages, result, newLock, existingLock, existingNode, node)
 }
 
 // buildLockfile converts a resolution result into the lockfile that would be
 // written for it, without touching disk (steps 5). Shared by runInstall and
 // runUpdate so both build the same lockfile shape from a resolution result.
-func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset, packages []string, noProvenance bool) (*lockfile.Lockfile, error) {
+func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset []string, requestedKeys map[string]bool, noProvenance bool) (*lockfile.Lockfile, error) {
 	existingVersion := ""
 	if existingLock != nil {
 		existingVersion = existingLock.Version
@@ -393,6 +411,7 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 		newLock.APMVersion = "0.1.0"
 	}
 
+	matchedKeys := make(map[string]bool, len(requestedKeys))
 	for _, dep := range result.Deps {
 		ld := lockfile.LockedDep{
 			RepoURL:        dep.RepoURL,
@@ -416,9 +435,13 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			}
 		}
 
-		// Record skill_subset for positional installs with --skill
-		if len(skillSubset) > 0 && len(packages) > 0 {
+		// Record skill_subset only on the dependency this --skill flag was
+		// scoped to this call -- not every dep in the resolved graph (bug
+		// fix: previously stamped every already-declared, unrelated
+		// dependency with the same subset).
+		if len(skillSubset) > 0 && requestedKeys[dep.Key] {
 			ld.SkillSubset = skillSubset
+			matchedKeys[dep.Key] = true
 		}
 
 		// req-lk-008: record resolved_at for git-semver entries
@@ -450,13 +473,35 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 		newLock.Dependencies = append(newLock.Dependencies, ld)
 	}
 
+	// Every requested package must have actually resolved into the graph --
+	// fail loud instead of silently doing nothing for it (e.g. it collided
+	// with an already-declared dependency during positional-package dedup
+	// and was never added to m.ParsedDeps). Checking "at least one matched"
+	// is not enough: with multiple positional packages, one valid match
+	// would mask another that silently never resolved.
+	if len(skillSubset) > 0 {
+		if len(requestedKeys) == 0 {
+			return nil, fmt.Errorf("--skill %s requires at least one resolved package to scope to", strings.Join(skillSubset, ", "))
+		}
+		var unmatched []string
+		for key := range requestedKeys {
+			if !matchedKeys[key] {
+				unmatched = append(unmatched, key)
+			}
+		}
+		if len(unmatched) > 0 {
+			sort.Strings(unmatched)
+			return nil, fmt.Errorf("--skill %s: package(s) %s did not resolve into the dependency graph", strings.Join(skillSubset, ", "), strings.Join(unmatched, ", "))
+		}
+	}
+
 	return newLock, nil
 }
 
 // deployAndFinalize runs deploy.Run, prints the deploy summary, checks for a
 // no-op (steps 6-7), then writes apm.lock.yaml and (for positional package
 // installs) apm.yml (steps 8-9). Shared by runInstall and runUpdate.
-func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []string, requestedKeys map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 
 	// 6. Deploy primitives to targets
@@ -472,11 +517,17 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset, pac
 		}
 		fmt.Printf("[i] Targets: %s  (source: %s)\n", strings.Join(targets, ", "), targetSource)
 
+		var skillFilter *deploy.SkillFilter
 		if len(skillSubset) > 0 {
 			fmt.Printf("[i] Skill subset: %s\n", strings.Join(skillSubset, ", "))
+			depKeys := make([]string, 0, len(requestedKeys))
+			for k := range requestedKeys {
+				depKeys = append(depKeys, k)
+			}
+			skillFilter = &deploy.SkillFilter{Names: skillSubset, DepKeys: depKeys}
 		}
 
-		deployResult, err := deploy.Run(targets, ".", m, result, skillSubset)
+		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter)
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}

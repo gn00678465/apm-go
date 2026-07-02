@@ -302,19 +302,95 @@ os.RemoveAll(installDir)
 
 ### Solution
 `cmd/apm/install.go` exposes two shared functions that any command with this shape can call after its own resolution step:
-- `buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset, packages []string, noProvenance bool) (*lockfile.Lockfile, error)` — pure, no disk I/O; returns a fully-formed lockfile (header + per-dep fields, including tree_sha256/resolved_commit computation against `apm_modules`).
-- `deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yaml.Node) error` — does all disk-touching steps: `deploy.Run`, no-op comparison (`lockfile.IsSemanticEqual`), `apm.lock.yaml` write, `apm.yml` persist (if `packages` non-empty), final summary print.
+- `buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset []string, requestedKeys map[string]bool, noProvenance bool) (*lockfile.Lockfile, error)` — pure, no disk I/O; returns a fully-formed lockfile (header + per-dep fields, including tree_sha256/resolved_commit computation against `apm_modules`). `requestedKeys` scopes `skillSubset` to only the dependency key(s) this call's positional packages resolved to (req-pr-001/req-tg-003 fix: `skill_subset` must not be stamped onto unrelated, already-declared dependencies) — pass `nil` when there is no `--skill` filter for this call (e.g. `runUpdate`).
+- `deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []string, requestedKeys map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yaml.Node) error` — does all disk-touching steps: `deploy.Run` (built with a `*deploy.SkillFilter{Names: skillSubset, DepKeys: requestedKeys}` when `skillSubset` is non-empty, `nil` otherwise), no-op comparison (`lockfile.IsSemanticEqual`), `apm.lock.yaml` write, `apm.yml` persist (if `packages` non-empty), final summary print.
 
-`cmd/apm/update.go`'s `runUpdate` calls `resolver.PlanFullUpdate`/`PlanScopedUpdate` instead of `resolver.Resolve` for its resolution step, then calls the exact same `buildLockfile`/`deployAndFinalize` pair — no duplicated lockfile-building or deploy logic.
+`cmd/apm/update.go`'s `runUpdate` calls `resolver.PlanFullUpdate`/`PlanScopedUpdate` instead of `resolver.Resolve` for its resolution step, then calls the exact same `buildLockfile`/`deployAndFinalize` pair (passing `nil` for both `skillSubset` and `requestedKeys` — `apm update` has no `--skill` flag) — no duplicated lockfile-building or deploy logic.
 
 ```go
 // Any future command with a "resolve -> lockfile -> deploy" shape follows this:
 result, err := resolver.SomeNewResolutionFn(...)  // command-specific resolution
 if err != nil { return err }
-newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, packages, noProvenance)
+newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, requestedKeys, noProvenance)
 if err != nil { return err }
-return deployAndFinalize(m, targetFlag, skillSubset, packages, result, newLock, existingLock, existingNode, node)
+return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, packages, result, newLock, existingLock, existingNode, node)
 ```
 
 ### Why
 Both functions re-derive `deploy.ResolveTargets(targetFlag, m.Target, ".")` internally rather than taking it as a parameter from the caller — one extra cheap filesystem-signal read per call, traded for a function boundary that doesn't leak an extra parameter through every caller. Keeping the boundary at "resolution in, disk-touching tail shared" means a future command only needs to write its own resolution step, not re-derive or copy-paste the lockfile/deploy/write sequence.
+
+---
+
+## Scenario: Dependency-Key-Scoped Filter + Fail-Loud Partial-Application Guard (`--skill`)
+
+### 1. Scope / Trigger
+- Trigger: any CLI flag that names a subset of things to keep (a name whitelist, e.g. `--skill <name>`, repeatable) but is semantically meant to apply **only to a specific target of this call** (here, the positional package(s) given in the same invocation) — not to everything in scope that happens to share a name.
+- Applies today to `apm install <pkg> --skill <name>` (`cmd/apm/install.go`, `internal/deploy/deploy.go`). Applies to any future flag with the same "scope a name-selection to only this call's target" shape.
+
+### 2. Signatures
+- `deploy.SkillFilter{Names []string, DepKeys []string}` (`internal/deploy/deploy.go`)
+- `deploy.Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter) (*DeployResult, error)`
+- `deploy.DepRefKey(ref *manifest.DependencyReference) string` (exported; must produce the same key format as `resolver.ResolvedDep.Key` / `Primitive.DepKey`)
+- `buildLockfile(..., skillSubset []string, requestedKeys map[string]bool, ...)` (`cmd/apm/install.go`) — see the shared-tail pattern above for the rest of the signature.
+
+### 3. Contracts
+- A bare name-whitelist (`map[string]bool` of allowed names, checked against `Primitive.Name` alone) cannot distinguish "this primitive belongs to the package `--skill` targeted" from "this primitive belongs to something else that happens to not share that name." The original bug: `deploy.Run`'s filter checked only `p.Name`, so it silently suppressed **local** primitives (`DepKey == ""`) and every **other already-declared dependency's** skills whenever `--skill` was used at all, not just the unselected skills within the targeted package.
+- The fix scopes by key, not just by name: `SkillFilter.DepKeys` is the set of dependency keys (`repo_url` or `repo_url/virtual_path`) the flag was requested for, computed once in the CLI layer via `deploy.DepRefKey(ref)` for each positional package argument. The filter (`deploy.go`'s step-2 collect-then-filter) only drops a `TypeSkills` primitive when **both** `depKeySet[p.DepKey]` and `!nameSet[p.Name]` hold — anything whose `DepKey` isn't in the target set passes through untouched regardless of its name.
+- A scoped filter that matches **nothing** must fail loud, not silently no-op and report success. Three ways "nothing matched" happens in practice: (a) the flag was given with zero positional packages; (b) the flag was combined with a mode that skips resolution entirely (`--frozen` — no `buildLockfile` call happens at all on that path); (c) the targeted package string never made it into the resolved dependency graph (e.g. it collided with an already-declared dependency during positional-arg dedup, which is keyed by bare `repo_url` and blind to a `virtual_path` suffix — a separate, pre-existing, out-of-scope limitation this guard does not fix but does fail loudly against).
+- `buildLockfile` tracks `matchedKeys[dep.Key] = true` for every resolved dep whose key is in `requestedKeys`. After the loop, it requires **every** key in `requestedKeys` to be in `matchedKeys` — not just "at least one." Checking only "any matched" is insufficient: with multiple positional packages, one valid match masks another that silently never resolved (found in a second codex review round, after a first "any matched" version of this guard had already passed a first review round). Unmatched keys are named in the error, sorted for determinism.
+- The CLI entry point (`runInstall`) additionally validates **before any file I/O** — right after CI-environment auto-frozen detection, before `apm.yml` is even read — that the flag requires at least one positional package and rejects the flag combined with `--frozen`.
+
+### 4. Validation & Error Matrix
+- `--skill` given, `--frozen` (explicit or CI-auto-detected) also active -> reject immediately: `"--skill is not supported with a frozen install"`.
+- `--skill` given, zero positional packages -> reject immediately: `"--skill requires at least one positional package to install"`.
+- `--skill` given, packages given, but `requestedKeys` ends up empty at `buildLockfile` time (defense in depth for any caller that reaches `buildLockfile` without going through `runInstall`'s upfront check) -> reject: `"--skill ... requires at least one resolved package to scope to"`.
+- `--skill` given, some but not all requested keys matched a resolved dependency -> reject, naming the unmatched key(s): `"--skill ...: package(s) ... did not resolve into the dependency graph"`.
+- `--skill` given, every requested key matched -> proceed; `skill_subset` is written only on the matched dependency's lock entry, and the deploy-time filter only touches that dependency's skill primitives.
+
+### 5. Good/Base/Bad Cases
+- Good: `apm install acme/skills --skill deploy` where `acme/skills` has skills `deploy` and `preview` -> `deploy` deploys, `preview` does not, local skills and any other already-declared dependency are untouched.
+- Base: `apm install good/pkg collided/pkg/sub --skill x` where `collided/pkg/sub` collides with an already-declared bare `collided/pkg` during dedup and is silently never added to the resolved graph -> rejected, naming `collided/pkg/sub` as unmatched, instead of quietly locking/deploying only `good/pkg`'s subset while pretending `collided/pkg/sub` was handled too.
+- Bad: checking only `len(skillSubset) > 0 && !skillSubsetApplied` (at least one match) instead of per-key matching — passes the good case, silently hides the base case.
+
+### 6. Tests Required
+- `internal/deploy/deploy_test.go`: `TestRun_SkillFilterScopedToDepKey` — local skill and another dependency's skill both survive a `--skill` scoped to a third dependency; the targeted dependency's unselected skill still does not deploy.
+- `cmd/apm/install_test.go`: `TestBuildLockfile_SkillSubsetScopedToRequestedDep` (only the targeted dep's lock entry gets `skill_subset`), `TestBuildLockfile_SkillSubsetNoMatch_Errors` (empty `requestedKeys`), `TestBuildLockfile_SkillSubsetPartialMatch_Errors` (two requested keys, only one resolves), `TestRunInstall_SkillWithoutPackages_Errors`, `TestRunInstall_SkillWithFrozen_Errors`.
+
+### 7. Wrong vs Correct
+#### Wrong
+```go
+// deploy.go: name-only filter, no key scoping
+var skillFilter map[string]bool
+for _, s := range skillSubset {
+    skillFilter[s] = true
+}
+if p.Type == TypeSkills && !skillFilter[p.Name] {
+    continue // drops ANY skill anywhere in the project not in the whitelist
+}
+```
+
+#### Correct
+```go
+// deploy.go: scoped by both name and dep key
+if p.Type == TypeSkills && skillDepKeys[p.DepKey] && !skillNames[p.Name] {
+    continue // only drops unselected skills belonging to the targeted dependency
+}
+```
+```go
+// install.go buildLockfile: fail loud instead of silent partial/zero application
+if len(skillSubset) > 0 {
+    if len(requestedKeys) == 0 {
+        return nil, fmt.Errorf("--skill %s requires at least one resolved package to scope to", strings.Join(skillSubset, ", "))
+    }
+    var unmatched []string
+    for key := range requestedKeys {
+        if !matchedKeys[key] {
+            unmatched = append(unmatched, key)
+        }
+    }
+    if len(unmatched) > 0 {
+        sort.Strings(unmatched)
+        return nil, fmt.Errorf("--skill %s: package(s) %s did not resolve into the dependency graph", strings.Join(skillSubset, ", "), strings.Join(unmatched, ", "))
+    }
+}
+```

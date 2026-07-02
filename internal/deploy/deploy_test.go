@@ -483,7 +483,7 @@ func TestRun_FullPipeline(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestRun_ConflictResolution(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -567,6 +567,61 @@ func TestRun_ConflictResolution(t *testing.T) {
 	}
 }
 
+// TestRun_SkillFilterScopedToDepKey is a regression test: --skill used to be
+// applied to every TypeSkills primitive project-wide regardless of source
+// (bug), silently suppressing deployment of local skills and other
+// already-declared dependencies' skills whenever any --skill filter was
+// active. The filter must only affect the dependency (or dependencies) it
+// was requested for.
+func TestRun_SkillFilterScopedToDepKey(t *testing.T) {
+	dir := t.TempDir()
+
+	// Local skill, unrelated to the --skill flag below.
+	mkFile(t, dir, ".apm/skills/loc/SKILL.md", "local\n")
+
+	// depA is the --skill target: has two skills, only one selected.
+	depA := "acme/foo"
+	mkFile(t, filepath.Join(dir, "apm_modules", depA), ".apm/skills/a1/SKILL.md", "a1\n")
+	mkFile(t, filepath.Join(dir, "apm_modules", depA), ".apm/skills/a2/SKILL.md", "a2\n")
+
+	// depB is NOT the --skill target: its skill must be unaffected.
+	depB := "acme/bar"
+	mkFile(t, filepath.Join(dir, "apm_modules", depB), ".apm/skills/b1/SKILL.md", "b1\n")
+
+	m := &manifest.Manifest{
+		Name:    "test",
+		Version: "1.0.0",
+		ParsedDeps: []*manifest.DependencyReference{
+			{RepoURL: depA, Owner: "acme", Repo: "foo", Source: "git"},
+			{RepoURL: depB, Owner: "acme", Repo: "bar", Source: "git"},
+		},
+	}
+	resolved := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{
+			{Key: depA, RepoURL: depA, Kind: resolver.KindGitSemver, Depth: 1},
+			{Key: depB, RepoURL: depB, Kind: resolver.KindGitSemver, Depth: 1},
+		},
+	}
+
+	_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Names: []string{"a1"}, DepKeys: []string{depA}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".agents/skills/loc/SKILL.md")); err != nil {
+		t.Errorf("local skill must be unaffected by --skill scoped to %s: %v", depA, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents/skills/b1/SKILL.md")); err != nil {
+		t.Errorf("unrelated dependency %s's skill must be unaffected by --skill scoped to %s: %v", depB, depA, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a1/SKILL.md")); err != nil {
+		t.Errorf("selected skill a1 (in %s) should deploy: %v", depA, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a2/SKILL.md")); err == nil {
+		t.Errorf("unselected skill a2 (in %s, the --skill target) should not deploy", depA)
+	}
+}
+
 func TestRun_SkillDeduplication(t *testing.T) {
 	// When multiple targets active, same skill should only be deployed once
 	dir := t.TempDir()
@@ -574,7 +629,7 @@ func TestRun_SkillDeduplication(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"claude", "codex", "copilot"}, dir, m, nil)
+	result, err := Run([]string{"claude", "codex", "copilot"}, dir, m, nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -601,7 +656,7 @@ func TestRun_NoTargets(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run(nil, dir, m, nil)
+	result, err := Run(nil, dir, m, nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -648,7 +703,7 @@ func TestRun_DeployedFilesKeyMatch(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -712,7 +767,7 @@ func TestRun_MultipleHooksOverwriteDiagnostic(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

@@ -31,13 +31,28 @@ type DeployResult struct {
 	MCPProvenance []MCPProv
 }
 
+// SkillFilter scopes a --skill name whitelist to the specific dependency
+// key(s) it was requested for (install.go's positional package args). Only
+// primitives whose DepKey is in DepKeys are subject to the Names whitelist;
+// everything else -- local primitives, or any other already-declared
+// dependency -- passes through untouched, regardless of whether its skill
+// names happen to appear in Names.
+type SkillFilter struct {
+	Names   []string
+	DepKeys []string
+}
+
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
-func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, skillSubset ...[]string) (*DeployResult, error) {
-	var skillFilter map[string]bool
-	if len(skillSubset) > 0 && len(skillSubset[0]) > 0 {
-		skillFilter = make(map[string]bool)
-		for _, s := range skillSubset[0] {
-			skillFilter[s] = true
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter) (*DeployResult, error) {
+	var skillNames, skillDepKeys map[string]bool
+	if filter != nil && len(filter.Names) > 0 {
+		skillNames = make(map[string]bool, len(filter.Names))
+		for _, s := range filter.Names {
+			skillNames[s] = true
+		}
+		skillDepKeys = make(map[string]bool, len(filter.DepKeys))
+		for _, k := range filter.DepKeys {
+			skillDepKeys[k] = true
 		}
 	}
 	// 1. Collect primitives in priority order
@@ -55,7 +70,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// Direct deps in manifest declaration order (req-pr-003), deduplicated
 	directKeys := make(map[string]bool)
 	for _, dep := range m.ParsedDeps {
-		key := depRefKey(dep)
+		key := DepRefKey(dep)
 		if key == "" || directKeys[key] {
 			continue
 		}
@@ -87,11 +102,15 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 	}
 
-	// 2. Apply --skill filter before conflict resolution
-	if skillFilter != nil {
+	// 2. Apply --skill filter before conflict resolution. Scoped to
+	// skillDepKeys so it only suppresses unselected skills belonging to the
+	// dependency (or dependencies) --skill was requested for -- local
+	// primitives (DepKey == "") and any other already-declared dependency
+	// are never affected.
+	if skillNames != nil {
 		var filtered []Primitive
 		for _, p := range ordered {
-			if p.Type == TypeSkills && !skillFilter[p.Name] {
+			if p.Type == TypeSkills && skillDepKeys[p.DepKey] && !skillNames[p.Name] {
 				continue
 			}
 			filtered = append(filtered, p)
@@ -225,7 +244,11 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	return result, nil
 }
 
-func depRefKey(ref *manifest.DependencyReference) string {
+// DepRefKey returns the unique dependency key (repo_url, or
+// repo_url/virtual_path) for a manifest dependency reference, matching
+// resolver.ResolvedDep.Key and Primitive.DepKey. Local/parent references
+// have no dep key ("").
+func DepRefKey(ref *manifest.DependencyReference) string {
 	if ref.IsLocal || ref.IsParent {
 		return ""
 	}

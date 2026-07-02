@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/registry"
+	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/semver"
 )
 
@@ -110,6 +112,127 @@ func TestRunInstall_WithDeps(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "tree_sha256") {
 		// If it somehow succeeds or has a different error, that's also informative
 		t.Logf("install result: %v", err)
+	}
+}
+
+// TestBuildLockfile_SkillSubsetScopedToRequestedDep is a regression test: the
+// skill_subset field used to be stamped onto every dependency in the
+// resolved graph whenever any --skill flag was combined with any positional
+// package (bug), regardless of whether that dependency was the one --skill
+// actually targeted. Only the requested dependency's lock entry may carry
+// skill_subset; an unrelated, already-declared dependency must not.
+func TestBuildLockfile_SkillSubsetScopedToRequestedDep(t *testing.T) {
+	result := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{
+			{Key: "acme/foo", RepoURL: "acme/foo", Kind: resolver.KindRegistry},
+			{Key: "acme/bar", RepoURL: "acme/bar", Kind: resolver.KindRegistry},
+		},
+	}
+	requestedKeys := map[string]bool{"acme/foo": true}
+
+	lock, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, requestedKeys, true)
+	if err != nil {
+		t.Fatalf("buildLockfile: %v", err)
+	}
+
+	byRepo := make(map[string][]string)
+	for _, d := range lock.Dependencies {
+		byRepo[d.RepoURL] = d.SkillSubset
+	}
+	if got := byRepo["acme/foo"]; len(got) != 1 || got[0] != "x" {
+		t.Errorf("acme/foo (the --skill target) should have skill_subset [x], got %v", got)
+	}
+	if got := byRepo["acme/bar"]; len(got) != 0 {
+		t.Errorf("acme/bar (unrelated, already-declared dependency) must not have skill_subset, got %v", got)
+	}
+}
+
+// TestBuildLockfile_SkillSubsetNoMatch_Errors is a regression test (found by
+// codex review of the scoping fix above): a --skill flag whose requestedKeys
+// never matches any dependency in the resolved graph used to silently do
+// nothing -- e.g. `apm install --skill x` with no positional package
+// (requestedKeys empty), or a positional package string that never made it
+// into the resolved graph (e.g. it collided with an already-declared
+// dependency during positional-package dedup, keyed by bare repo_url and
+// blind to a virtual_path suffix). Either way, the CLI printed "Skill
+// subset: x" and reported success while deploying/locking nothing scoped by
+// it. --skill must fail loudly instead.
+func TestBuildLockfile_SkillSubsetNoMatch_Errors(t *testing.T) {
+	result := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{
+			{Key: "acme/foo", RepoURL: "acme/foo", Kind: resolver.KindRegistry},
+		},
+	}
+
+	_, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, map[string]bool{}, true)
+	if err == nil {
+		t.Fatal("expected an error when --skill's requestedKeys match no resolved dependency")
+	}
+	if !strings.Contains(err.Error(), "--skill") {
+		t.Errorf("error should name --skill, got %q", err.Error())
+	}
+}
+
+// TestBuildLockfile_SkillSubsetPartialMatch_Errors is a regression test
+// (second codex review round): the first fail-loud guard only checked
+// whether AT LEAST ONE requested key matched, so with multiple positional
+// packages a valid match on one could mask another that silently never
+// resolved into the graph (e.g. `apm install good/pkg collided/pkg/sub
+// --skill x` where collided/pkg/sub lost the pre-existing bare-repo_url
+// dedup). Every requested key must match, not just one.
+func TestBuildLockfile_SkillSubsetPartialMatch_Errors(t *testing.T) {
+	result := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{
+			{Key: "acme/good", RepoURL: "acme/good", Kind: resolver.KindRegistry},
+		},
+	}
+	requestedKeys := map[string]bool{"acme/good": true, "acme/collided/sub": true}
+
+	_, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, requestedKeys, true)
+	if err == nil {
+		t.Fatal("expected an error when one of two requested keys never resolved into the graph")
+	}
+	if !strings.Contains(err.Error(), "acme/collided/sub") {
+		t.Errorf("error should name the unmatched key acme/collided/sub, got %q", err.Error())
+	}
+}
+
+// TestRunInstall_SkillWithoutPackages_Errors is a regression test (second
+// codex review round): --skill with no positional package used to silently
+// print "Skill subset: x" and deploy everything unfiltered, since
+// requestedKeys stayed empty. Reject up front instead.
+func TestRunInstall_SkillWithoutPackages_Errors(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	err := runInstall(deps, false, true, "", []string{"x"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "--skill") {
+		t.Fatalf("expected a --skill error, got %v", err)
+	}
+}
+
+// TestRunInstall_SkillWithFrozen_Errors is a regression test (second codex
+// review round): frozen installs skip resolution/deploy filtering entirely
+// via a separate early-return code path, so --skill combined with --frozen
+// used to silently do nothing instead of being rejected as unsupported.
+func TestRunInstall_SkillWithFrozen_Errors(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+	os.WriteFile("apm.lock.yaml", []byte("version: \"1\"\ndependencies: []\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	err := runInstall(deps, true, true, "", []string{"x"}, []string{"acme/foo"})
+	if err == nil || !strings.Contains(err.Error(), "--skill") || !strings.Contains(err.Error(), "frozen") {
+		t.Fatalf("expected a --skill+frozen error, got %v", err)
 	}
 }
 

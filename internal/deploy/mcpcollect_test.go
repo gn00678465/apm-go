@@ -34,7 +34,7 @@ func TestRun_MCPCollection_LocalOverridesDependency(t *testing.T) {
 		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
 	}
 
-	result, err := Run(nil, dir, m, resolved)
+	result, err := Run(nil, dir, m, resolved, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestRun_MCPCollection_FirstDeclaredDepWins(t *testing.T) {
 		},
 	}
 
-	result, err := Run(nil, dir, m, resolved)
+	result, err := Run(nil, dir, m, resolved, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRun_MCPCollection_TransitiveSelfDefinedSkippedWithWarning(t *testing.T)
 		},
 	}
 
-	result, err := Run(nil, dir, m, resolved)
+	result, err := Run(nil, dir, m, resolved, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestRun_MCPCollection_RegistryBackedDiagnosedAndSkipped(t *testing.T) {
 		},
 	}
 
-	result, err := Run(nil, dir, m, nil)
+	result, err := Run(nil, dir, m, nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRun_MCPCollection_DirectDepAutoTrusted(t *testing.T) {
 		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
 	}
 
-	result, err := Run(nil, dir, m, resolved)
+	result, err := Run(nil, dir, m, resolved, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

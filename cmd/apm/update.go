@@ -143,7 +143,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 
 	printUpdateSummary(existingLock, newLock)
 
-	return deployAndFinalize(m, "", nil, nil, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, "", nil, nil, nil, result, newLock, existingLock, existingNode, node)
 }
 
 // directGitSemverUpdateScope returns the apm_modules/<key> keys that must be
