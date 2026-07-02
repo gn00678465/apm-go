@@ -173,3 +173,148 @@ func IsSemanticEqual(a, b *Lockfile) bool {
 // and SerializeLockfile emits local_deployed_files/local_deployed_file_hashes
 // (preserve-if-unchanged pattern) + lists both in knownTopKeys.
 ```
+
+---
+
+## Scenario: Git Checkout Skip-Download Safety (req-lk-007)
+
+### 1. Scope / Trigger
+- Trigger: deciding whether an existing `apm_modules/<key>` checkout can be trusted as-is instead of re-cloning. Applies to `internal/gitops/clone.go` (`RealPackageLoader.LoadPackage`, `checkoutMatchesRef`, `cloneRepo`).
+- Any caller of `LoadPackage(ref, resolvedRef)` (install, update, or future commands) inherits this behavior automatically — the safety check lives inside `LoadPackage` itself, not in each caller.
+
+### 2. Signatures
+- `checkoutMatchesRef(installDir, resolvedRef string) bool`
+- `resolveRefLocally(repoDir, ref string) (string, error)` — `git rev-parse <ref>^{commit}`
+- `worktreeClean(repoDir string) bool` — `git status --porcelain --ignored`
+- `isCommitSHA(ref string) bool` — 40-hex check
+- `(r *RealPackageLoader) cloneRepoAtCommit(url, dir, commit string) error`
+
+### 3. Contracts
+- `resolvedRef` passed into `LoadPackage` may be a tag, a branch name, or a raw 40-hex commit SHA — callers must not assume any single shape. For git-semver deps it is usually a tag name (`currentPin`); for git-literal deps it can be any of the three; frozen install intentionally passes `dep.ResolvedCommit` (a SHA) when available, preferring the authoritative pin over `dep.ResolvedRef`.
+- Skipping a re-clone requires ALL of: checkout exists, `resolveRefLocally` succeeds and equals current HEAD, and `worktreeClean` is true (no uncommitted, untracked, OR ignored changes — a fresh clone never contains an ignored file, so one being present means this checkout already diverges from what a fresh clone would produce).
+- `resolveRefLocally` uses `^{commit}` peeling — an annotated tag's bare `rev-parse` resolves to the tag OBJECT's own SHA, not the commit it points at, which would otherwise make every annotated-tag checkout report a false mismatch (safe but defeats the optimization, not a correctness bug on its own).
+- Any local git command failure (ref not found, not a git repo, etc.) is treated as a mismatch — fail-safe, not fail-open.
+- `cloneRepo` MUST NOT pass a raw commit SHA as `git clone --branch <ref>` — standard shallow clone only accepts branch/tag names for `--branch`; a raw SHA fails with `fatal: Remote branch <sha> not found in upstream origin` (exit 128), confirmed via direct reproduction. `isCommitSHA(ref)` routes SHA-shaped refs to `cloneRepoAtCommit` (full clone + explicit `git checkout <sha>`) instead.
+
+### 4. Validation & Error Matrix
+- Checkout HEAD == locally-resolved `resolvedRef`, worktree clean -> skip clone.
+- Checkout HEAD mismatch, or `resolvedRef` not resolvable locally, or dirty/untracked/ignored files present -> `os.RemoveAll` the checkout, re-clone.
+- `resolvedRef` is a raw 40-hex SHA and no existing checkout -> `cloneRepoAtCommit` (full clone, then `git checkout <sha>`), never `--branch <sha>`.
+- `resolvedRef` is a tag/branch name and no existing checkout -> normal `git clone --depth 1 --branch <ref>`.
+
+### 5. Good/Base/Bad Cases
+- Good: frozen install re-downloads a git-semver dep whose `resolved_commit` is a SHA, from an empty `apm_modules` — routes through `cloneRepoAtCommit`, succeeds.
+- Base: a clean checkout already at the pinned tag with no local changes skips the clone entirely.
+- Bad: passing a raw SHA straight to `git clone --branch <sha>` (the original bug) — fails outright for any first-time/from-scratch frozen install of a dependency resolved to a SHA.
+
+### 6. Tests Required
+- `internal/gitops/clone_test.go`: `checkoutMatchesRef` true/false cases (tag, annotated tag, dirty worktree, untracked file, ignored file, ref not found, non-repo, empty ref); `LoadPackage` skip/re-clone/from-scratch cases; `TestLoadPackage_ClonesByRawCommitSHA` (the specific regression — a from-scratch clone with a SHA-shaped `resolvedRef` must succeed, not attempt `--branch <sha>`); `TestIsCommitSHA` boundary cases.
+- Any new caller of `LoadPackage` with a SHA-shaped `resolvedRef` and an empty `apm_modules` should get equivalent coverage — this exact combination is what the original bug needed to be caught.
+
+### 7. Wrong vs Correct
+#### Wrong
+```go
+func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
+    args := []string{"clone", "--depth", "1"}
+    if ref != "" {
+        args = append(args, "--branch", ref) // fails if ref is a raw commit SHA
+    }
+    ...
+}
+```
+
+#### Correct
+```go
+func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
+    if isCommitSHA(ref) {
+        return r.cloneRepoAtCommit(url, dir, ref) // full clone + git checkout <sha>
+    }
+    args := []string{"clone", "--depth", "1"}
+    if ref != "" {
+        args = append(args, "--branch", ref)
+    }
+    ...
+}
+```
+
+**Known limitation (documented, not a bug to fix reflexively)**: `checkoutMatchesRef` resolves refs locally with no network call, so a git-literal dependency pinned to a MUTABLE branch name (not a tag/SHA) can report a false "match" if the remote branch has moved since the last fetch. This is the inherent tradeoff of an offline-only optimization for req-lk-007 (a SHOULD, not a MUST) — closing it would require a network round-trip on every skip decision, which defeats the point of skipping. Don't "fix" this without discussing the tradeoff first.
+
+---
+
+## Scenario: Path-Traversal Guard for `apm_modules`-Relative Filesystem Operations
+
+### 1. Scope / Trigger
+- Trigger: any code that joins a manifest-derived field (`DependencyReference.RepoURL`, `.VirtualPath`) into a filesystem path used for a destructive operation (`os.RemoveAll`, extraction, etc.) under `apm_modules`.
+- Applies today to `cmd/apm/update.go` (`directGitSemverUpdateScope` + the req-lk-010 purge loop in `runUpdate`); applies to any future call site that does the same kind of join.
+
+### 2. Signatures
+- `keyHasParentSegment(key string) bool` (`cmd/apm/update.go`)
+- `archive.Contained(root, target string) bool` (`internal/archive/extract.go`, pre-existing, reused)
+
+### 3. Contracts
+- `manifest.DependencyReference.RepoURL`/`.VirtualPath` are only charset-validated at parse time (`^[A-Za-z0-9._-]+$`), which does **not** reject a `".."` segment — the charset itself allows `.`. This is unlike local-path deps (`containsEscape` explicitly rejects `..`) and unlike `lockfile.LockedDep.VirtualPath` (`internal/lockfile/parse.go`'s `validatePathComponent` explicitly rejects `..`). Any code consuming the manifest-side fields for a filesystem path cannot assume they're traversal-safe.
+- A single `archive.Contained(root, target)` check performed AFTER `filepath.Join` is **not sufficient by itself**: `..` can resolve to a location that is still technically "inside" `root` but is the wrong directory entirely (e.g. `path: ".."` on a 2-segment `RepoURL` like `acme/a` cleans to `apm_modules/acme` — a sibling owner namespace, not the intended dependency's own directory). `Contained` only rejects paths that end up OUTSIDE the root; it cannot detect "inside the root but not the intended entry."
+- The correct guard is two layers, in this order: (1) `keyHasParentSegment` rejects any key containing a literal `".."` path segment BEFORE `filepath.Join`/`Clean` gets to resolve it away, closing the in-root-wrong-location case; (2) `archive.Contained` as a second-layer catch-all for anything else that still manages to land outside the root (e.g. an absolute path string).
+
+### 4. Validation & Error Matrix
+- Key contains a `..` segment (regardless of where it resolves to) -> reject before any path join, error mentions `apm_modules` and the `..` segment.
+- Key resolves (after join) to outside `apm_modules` -> reject via `archive.Contained`, error mentions `apm_modules`.
+- Key is a normal `owner/repo` or `owner/repo/virtual/path` with no `..` -> proceed with `os.RemoveAll`.
+
+### 5. Good/Base/Bad Cases
+- Good: `path: "../../../evil"` on `acme/a` (escapes `apm_modules` entirely) -> rejected by `keyHasParentSegment` before `Contained` is even reached.
+- Base: `path: ".."` on `acme/a` (resolves to `apm_modules/acme`, still nominally "inside" `apm_modules`) -> rejected by `keyHasParentSegment`; `Contained` alone would have wrongly allowed this one through.
+- Bad: relying on `archive.Contained` alone after `filepath.Join` — catches the outside-root escape but misses the in-root-wrong-directory case entirely (found in a second codex review round, after the first round's `Contained`-only fix was already merged).
+
+### 6. Tests Required
+- `cmd/apm/update_test.go`: `TestRunUpdate_RefusesVirtualPathEscapingApmModules` (outside-root case, with a canary file outside `apm_modules` that must survive) and `TestRunUpdate_RefusesParentSegmentStayingInsideApmModules` (in-root-wrong-location case, with a sibling package's marker file that must survive an over-broad `RemoveAll`).
+- Any new call site doing the same join needs both test shapes, not just the outside-root one.
+
+### 7. Wrong vs Correct
+#### Wrong
+```go
+installDir := filepath.Join("apm_modules", key)
+if !archive.Contained("apm_modules", installDir) {
+    return fmt.Errorf("refusing to clear %q outside apm_modules", key)
+}
+os.RemoveAll(installDir) // "path: .." on "acme/a" still gets through: cleans to
+                          // apm_modules/acme, which Contained reports as "inside"
+```
+
+#### Correct
+```go
+if keyHasParentSegment(key) {
+    return fmt.Errorf("refusing to clear %q outside apm_modules: contains \"..\" path segment", key)
+}
+installDir := filepath.Join("apm_modules", key)
+if !archive.Contained("apm_modules", installDir) {
+    return fmt.Errorf("refusing to clear %q outside apm_modules", key)
+}
+os.RemoveAll(installDir)
+```
+
+---
+
+## Pattern: Shared `buildLockfile` / `deployAndFinalize` Tail for CLI Commands
+
+### Problem
+`apm install` and `apm update` both need the same sequence after dependency resolution produces a `*resolver.ResolutionResult`: turn it into a `*lockfile.Lockfile`, deploy primitives to targets, check for a no-op, write `apm.lock.yaml`, and (for `install`) persist positional packages to `apm.yml`. Duplicating this ~180-line sequence per command would drift out of sync (e.g. a fix to tree_sha256 computation in one copy but not the other).
+
+### Solution
+`cmd/apm/install.go` exposes two shared functions that any command with this shape can call after its own resolution step:
+- `buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset, packages []string, noProvenance bool) (*lockfile.Lockfile, error)` — pure, no disk I/O; returns a fully-formed lockfile (header + per-dep fields, including tree_sha256/resolved_commit computation against `apm_modules`).
+- `deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yaml.Node) error` — does all disk-touching steps: `deploy.Run`, no-op comparison (`lockfile.IsSemanticEqual`), `apm.lock.yaml` write, `apm.yml` persist (if `packages` non-empty), final summary print.
+
+`cmd/apm/update.go`'s `runUpdate` calls `resolver.PlanFullUpdate`/`PlanScopedUpdate` instead of `resolver.Resolve` for its resolution step, then calls the exact same `buildLockfile`/`deployAndFinalize` pair — no duplicated lockfile-building or deploy logic.
+
+```go
+// Any future command with a "resolve -> lockfile -> deploy" shape follows this:
+result, err := resolver.SomeNewResolutionFn(...)  // command-specific resolution
+if err != nil { return err }
+newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, packages, noProvenance)
+if err != nil { return err }
+return deployAndFinalize(m, targetFlag, skillSubset, packages, result, newLock, existingLock, existingNode, node)
+```
+
+### Why
+Both functions re-derive `deploy.ResolveTargets(targetFlag, m.Target, ".")` internally rather than taking it as a parameter from the caller — one extra cheap filesystem-signal read per call, traded for a function boundary that doesn't leak an extra parameter through every caller. Keeping the boundary at "resolution in, disk-touching tail shared" means a future command only needs to write its own resolution step, not re-derive or copy-paste the lockfile/deploy/write sequence.
