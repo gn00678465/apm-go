@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -300,48 +301,60 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		return nil
 	}
 
-	// 4. Resolve
+	// 4. Resolve dependency graph, unless this is a local-only deploy.
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	if len(m.ParsedDeps) == 0 {
 		fmt.Println("No dependencies to install")
-		return nil
-	}
-
-	fmt.Println("[>] Installing dependencies from apm.yml...")
-	seen := make(map[string]bool)
-	for _, dep := range m.ParsedDeps {
-		canon := dep.ToCanonical(m.DefaultHost)
-		if !seen[canon] {
-			seen[canon] = true
-			fmt.Printf("[>] Resolving %s...\n", canon)
-		}
-	}
-
-	// Registry access is experimental (API may change); require the opt-in flag
-	// before any live registry resolution. Gates network use only — apm.yml
-	// registries parsing and lockfile schema stay unconditional.
-	for _, d := range m.ParsedDeps {
-		if d.Source == "registry" {
-			if err := experimental.RequireEnabled("registries"); err != nil {
-				return err
+		if len(targets) == 0 {
+			for _, d := range targetDiags {
+				fmt.Fprintln(os.Stderr, d)
 			}
-			break
+			return nil
 		}
 	}
 
-	// Composite loader: registry-sourced deps go through the HTTP consumer
-	// (wiring credsec sc-003/005/007/008 + lk-013), everything else via git.
-	regLoader := &registry.Loader{
-		Registries:      m.Registries,
-		DefaultRegistry: m.DefaultRegistry,
-		ModulesDir:      "apm_modules",
-		Next:            deps.loader,
-		MaxBytes:        deps.maxArchiveBytes,
-		MaxEntries:      deps.maxEntries,
-	}
+	var result *resolver.ResolutionResult
+	var regLoader *registry.Loader
+	if len(m.ParsedDeps) == 0 {
+		result = &resolver.ResolutionResult{}
+	} else {
+		fmt.Println("[>] Installing dependencies from apm.yml...")
+		seen := make(map[string]bool)
+		for _, dep := range m.ParsedDeps {
+			canon := dep.ToCanonical(m.DefaultHost)
+			if !seen[canon] {
+				seen[canon] = true
+				fmt.Printf("[>] Resolving %s...\n", canon)
+			}
+		}
 
-	result, err := resolver.Resolve(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{})
-	if err != nil {
-		return fmt.Errorf("resolve: %w", err)
+		// Registry access is experimental (API may change); require the opt-in flag
+		// before any live registry resolution. Gates network use only — apm.yml
+		// registries parsing and lockfile schema stay unconditional.
+		for _, d := range m.ParsedDeps {
+			if d.Source == "registry" {
+				if err := experimental.RequireEnabled("registries"); err != nil {
+					return err
+				}
+				break
+			}
+		}
+
+		// Composite loader: registry-sourced deps go through the HTTP consumer
+		// (wiring credsec sc-003/005/007/008 + lk-013), everything else via git.
+		regLoader = &registry.Loader{
+			Registries:      m.Registries,
+			DefaultRegistry: m.DefaultRegistry,
+			ModulesDir:      "apm_modules",
+			Next:            deps.loader,
+			MaxBytes:        deps.maxArchiveBytes,
+			MaxEntries:      deps.maxEntries,
+		}
+
+		result, err = resolver.Resolve(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{})
+		if err != nil {
+			return fmt.Errorf("resolve: %w", err)
+		}
 	}
 
 	// 5. Build lockfile
@@ -416,7 +429,6 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 6. Deploy primitives to targets
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	for _, d := range targetDiags {
 		fmt.Fprintln(os.Stderr, d)
 	}
@@ -464,6 +476,21 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		if dr, ok := deployResult.PerDep[""]; ok {
 			newLock.LocalDeployedFiles = dr.Files
 			newLock.LocalDeployedHashes = dr.Hashes
+		}
+
+		// Merged MCP config files (e.g. .mcp.json) are multi-source -- no
+		// single dep or "local" bucket owns them -- so their hashes are
+		// recorded alongside local deployed files (pr-001 source attribution
+		// is served by deployResult.MCPProvenance in-memory, not persisted).
+		if len(deployResult.MCPFiles) > 0 {
+			if newLock.LocalDeployedHashes == nil {
+				newLock.LocalDeployedHashes = map[string]string{}
+			}
+			for f, hash := range deployResult.MCPFiles {
+				newLock.LocalDeployedFiles = append(newLock.LocalDeployedFiles, f)
+				newLock.LocalDeployedHashes[f] = hash
+			}
+			sort.Strings(newLock.LocalDeployedFiles)
 		}
 	}
 

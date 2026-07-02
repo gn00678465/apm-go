@@ -48,6 +48,43 @@ func TestRunInstall_NoDeps(t *testing.T) {
 	}
 }
 
+// TestRunInstall_NoDeps_LocalOnlyWithTargetStillDeploys is a general (non-MCP)
+// regression for a fix made while building the MCP feature: a manifest with
+// zero dependencies.apm entries used to hit an early "No dependencies to
+// install" return before target resolution ever ran, so a project with only
+// local .apm/ primitives (or, per mcp_e2e_test.go, only dependencies.mcp)
+// could never deploy via `apm install` at all. Once a target is resolvable
+// (here, explicit --target), install must still deploy local primitives and
+// write a lockfile.
+func TestRunInstall_NoDeps_LocalOnlyWithTargetStillDeploys(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	if err := os.MkdirAll(".apm/instructions", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".apm", "instructions", "demo.instructions.md"), []byte("# demo instructions"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "demo.md")); err != nil {
+		t.Errorf("expected local instructions to deploy to .claude/rules/demo.md: %v", err)
+	}
+	if _, err := os.Stat("apm.lock.yaml"); err != nil {
+		t.Errorf("expected apm.lock.yaml to be written: %v", err)
+	}
+}
+
 func TestRunInstall_WithDeps(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
