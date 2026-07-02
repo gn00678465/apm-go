@@ -405,3 +405,39 @@ Review Forge 三模型審查 (opus-4.6/gemini-3.5/codex-gpt-5.5) synthesize 出 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: 修復 Phase 0-5 驗證確認的 FAIL/MISSING 缺口（B/C.1/C.2/A）
+
+**Date**: 2026-07-02
+**Task**: 修復 Phase 0-5 驗證確認的 FAIL/MISSING 缺口（B/C.1/C.2/A）
+**Branch**: `feat/mcp-resolve-deploy`
+
+### Summary
+
+修復 req-lk-007 checkout 驗證缺口（含 raw commit SHA 無法傳給 git clone --branch 的關鍵缺陷，由 advisor 於 codex exec 額度用盡時發現並經實測重現確認）；修正 antigravity 自動偵測被誤排除、copilot 偵測訊號過寬兩項 target 偵測缺陷；新增 apm update 指令（req-rs-011/012、req-lk-010），過程中 codex review 額外揪出 frozen 拒絕副作用順序、CI 自動 frozen 缺少 override、apm_modules 清除路徑跳脫等 3 項安全性缺陷並修正。C.3（minimal fallback）因屬新增行為而非修 bug、且兩次使用者確認皆逾時無回應，依慣例採用 Recommended 選項 descoped 至後續獨立任務。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ffcd034` | (see git log) |
+| `e59780b` | (see git log) |
+| `d8c94eb` | (see git log) |
+| `6cc825c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
