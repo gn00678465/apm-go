@@ -9,8 +9,9 @@ Golang 相關指令（於專案根目錄執行）：
 |---|---|
 | `go mod tidy` | 整理 `go.mod` / `go.sum` 相依 |
 | `go build ./...` | 編譯整個專案（當前平台） |
-| `GOOS=windows GOARCH=amd64 go build -o bin/apm.exe ./cmd/apm` | 交叉編譯 Windows 二進位（PowerShell：`$env:GOOS='windows'; $env:GOARCH='amd64'; go build -o bin/apm.exe ./cmd/apm`） |
-| `GOOS=linux GOARCH=amd64 go build -o bin/apm ./cmd/apm` | 交叉編譯 Linux 二進位（PowerShell：`$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/apm ./cmd/apm`） |
+| `go build -o bin/apm-go.exe ./cmd/apm`（Windows）/ `go build -o bin/apm-go ./cmd/apm`（其他平台） | 編譯二進位，輸出檔名永遠固定為 `apm-go`（不可用 `apm`/`apm.exe`） |
+| `GOOS=windows GOARCH=amd64 go build -o bin/apm-go.exe ./cmd/apm` | 交叉編譯 Windows 二進位（PowerShell：`$env:GOOS='windows'; $env:GOARCH='amd64'; go build -o bin/apm-go.exe ./cmd/apm`） |
+| `GOOS=linux GOARCH=amd64 go build -o bin/apm-go ./cmd/apm` | 交叉編譯 Linux 二進位（PowerShell：`$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/apm-go ./cmd/apm`） |
 | `go run ./cmd/apm <args>` | 執行 apm-go CLI |
 | `go test ./...` | 執行所有測試 |
 | `go test ./... -cover` | 執行測試並顯示覆蓋率（目標 ≥ 80%） |
