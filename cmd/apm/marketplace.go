@@ -261,9 +261,9 @@ func marketplaceListCmd() *cobra.Command {
 
 // marketplaceBrowseCmd implements mkt-013: force-refresh a single registered
 // marketplace (there is no cache to skip in this MVP -- see design.md
-// "快取策略" -- so every browse is already a fresh Fetch) and render its
-// Plugin/Description/Version/Install table, followed by a generic
-// `apm install <plugin-name>@{name}` usage tip.
+// "快取策略" -- so every browse is already a fresh Fetch) and render the
+// original's rich-style Plugin/Description/Version/Install box table,
+// followed by a generic `apm-go install <plugin-name>@{name}` usage tip.
 func marketplaceBrowseCmd() *cobra.Command {
 	var verbose bool
 	cmd := &cobra.Command{
@@ -280,20 +280,34 @@ func marketplaceBrowseCmd() *cobra.Command {
 			if src == nil {
 				return fmt.Errorf("marketplace %q is not registered", name)
 			}
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "[>] Fetching plugins from '%s'...\n", name)
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
+			if len(m.Plugins) == 0 {
+				fmt.Fprintf(w, "[!] Marketplace '%s' has no plugins\n", name)
+				return nil
+			}
 
-			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "%-24s %-40s %-10s %s\n", "PLUGIN", "DESCRIPTION", "VERSION", "INSTALL")
+			rows := make([][4]string, 0, len(m.Plugins))
 			for _, p := range m.Plugins {
-				fmt.Fprintf(w, "%-24s %-40s %-10s apm install %s@%s\n", p.Name, p.Description, p.Version, p.Name, name)
+				desc, ver := p.Description, p.Version
+				if desc == "" {
+					desc = "--"
+				}
+				if ver == "" {
+					ver = "--"
+				}
+				rows = append(rows, [4]string{p.Name, desc, ver, p.Name + "@" + name})
 			}
+			fmt.Fprintln(w)
+			renderBrowseTable(w, fmt.Sprintf("Plugins in '%s'", name), rows)
 			if verbose {
-				fmt.Fprintf(w, "\n%d plugin(s) in %q\n", len(m.Plugins), name)
+				fmt.Fprintf(w, "%d plugin(s) in %q\n", len(m.Plugins), name)
 			}
-			fmt.Fprintf(w, "\n[i] apm install <plugin-name>@%s\n", name)
+			fmt.Fprintf(w, "[i] Install a plugin: apm-go install <plugin-name>@%s\n", name)
 			return nil
 		},
 	}

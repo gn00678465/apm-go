@@ -559,10 +559,21 @@ func TestMarketplaceList_TableIncludesEveryRegisteredSource(t *testing.T) {
 
 // ── `browse` (mkt-013) ───────────────────────────────────────────────────
 
-func TestMarketplaceBrowse_ForceRefreshesAndPrintsInstallHint(t *testing.T) {
-	// Arrange
+// TestMarketplaceBrowse_RendersPluginTable locks the mkt-013 表格呈現 shape:
+// the Python original renders a rich HEAVY_HEAD box table titled
+// "Plugins in '<name>'" (Plugin/Description/Version/Install columns, `--`
+// placeholders, Install cell = `<plugin>@<mkt>` with NO command prefix)
+// after a "[>] Fetching..." line, then an [i] footer naming this binary
+// (apm-go, not the Python original's `apm`).
+func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
+	// Arrange -- one fully-described plugin whose description is long enough
+	// that it must word-wrap inside the box, plus one bare plugin exercising
+	// the `--` placeholders.
 	isolatedMarketplaceRegistry(t)
-	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [{"name": "cool-plugin", "description": "does things", "version": "1.0.0", "source": "./p"}]}`)
+	longDesc := strings.TrimSpace(strings.Repeat("behavioral guidelines ", 8))
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [`+
+		`{"name": "cool-plugin", "description": "`+longDesc+`", "version": "1.0.0", "source": "./p"},`+
+		`{"name": "bare-plugin", "source": "./q"}]}`)
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
 		t.Fatal(err)
 	}
@@ -574,14 +585,55 @@ func TestMarketplaceBrowse_ForceRefreshesAndPrintsInstallHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace browse returned error: %v", err)
 	}
-	if !strings.Contains(out, "cool-plugin") {
-		t.Errorf("output = %q, want it to list cool-plugin", out)
+	for _, want := range []string{
+		"[>] Fetching plugins from 'acme'...",
+		"Plugins in 'acme'",
+		"┃ Plugin",
+		"│ cool-plugin",
+		"cool-plugin@acme",
+		"bare-plugin@acme",
+		"--",
+		"[i] Install a plugin: apm-go install <plugin-name>@acme",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q", out, want)
+		}
 	}
-	if !strings.Contains(out, "apm install cool-plugin@acme") {
-		t.Errorf("output = %q, want a per-plugin install hint", out)
+	// The Install CELL is bare `<plugin>@<mkt>`; only the footer carries a
+	// command prefix (matching the original's rich table).
+	if strings.Contains(out, "install cool-plugin@acme") {
+		t.Errorf("output = %q, want the Install cell without a command prefix", out)
 	}
-	if !strings.Contains(out, "apm install <plugin-name>@acme") {
-		t.Errorf("output = %q, want the generic install tip (mkt-013)", out)
+	// The long description wraps instead of blowing the table width.
+	for _, line := range strings.Split(out, "\n") {
+		if n := len([]rune(line)); n > 120 {
+			t.Errorf("line %q is %d runes wide, want <= 120 (description should wrap)", line, n)
+		}
+	}
+}
+
+// The original warns and exits 0 without rendering a table when the
+// marketplace has no plugins.
+func TestMarketplaceBrowse_EmptyMarketplaceWarnsWithoutTable(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": []}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "browse", "acme")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace browse returned error: %v", err)
+	}
+	if !strings.Contains(out, "Marketplace 'acme' has no plugins") {
+		t.Errorf("output = %q, want a no-plugins warning", out)
+	}
+	if strings.Contains(out, "┏") {
+		t.Errorf("output = %q, want no table for an empty marketplace", out)
 	}
 }
 
