@@ -75,7 +75,7 @@ func Migrate(dir string, opts MigrateOptions) (diff string, err error) {
 		return "", err
 	}
 	if !apmExists {
-		return "", fmt.Errorf("apm.yml not found; run 'apm init' first")
+		return "", fmt.Errorf("apm.yml not found; run 'apm-go init' first")
 	}
 
 	// Validate the legacy file parses and passes schema validation before

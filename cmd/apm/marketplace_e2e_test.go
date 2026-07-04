@@ -861,8 +861,8 @@ func TestMarketplaceBuild_Tombstone(t *testing.T) {
 	if err == nil {
 		t.Fatal("marketplace build returned no error, want the mkt-019 tombstone rejection")
 	}
-	if !strings.Contains(err.Error(), "apm pack") {
-		t.Errorf("error = %v, want it to point at 'apm pack'", err)
+	if !strings.Contains(err.Error(), "apm-go pack") {
+		t.Errorf("error = %v, want it to point at 'apm-go pack'", err)
 	}
 }
 

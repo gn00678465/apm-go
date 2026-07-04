@@ -37,7 +37,7 @@ func RenderMinimalApmYMLShell(name string) string {
 // "ref: main" would walk every new user straight into a pack failure the
 // moment they uncomment that example.
 const initBlockTemplate = `# Marketplace authoring config (APM-only).
-# Run 'apm pack' to compile this block to .claude-plugin/marketplace.json.
+# Run 'apm-go pack' to compile this block to .claude-plugin/marketplace.json.
 # Optionally enable Codex output below to also write .agents/plugins/marketplace.json.
 #
 # Top-level 'name', 'description', and 'version' are inherited from
@@ -68,7 +68,7 @@ marketplace:
     # 'category:' (e.g. category: Productivity).
 
   # CI tip: build one or all formats with a machine-readable manifest:
-  #   apm pack --marketplace=claude,codex --json | jq -r '.marketplace.outputs[].path'
+  #   apm-go pack --marketplace=claude,codex --json | jq -r '.marketplace.outputs[].path'
 
   packages:
     - name: example-package

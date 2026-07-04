@@ -184,7 +184,7 @@ func TestRegistryInstall_RequiresExperimentalFlag(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 	err := runInstall(deps, false, true, "claude", nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "apm experimental enable registries") {
+	if err == nil || !strings.Contains(err.Error(), "apm-go experimental enable registries") {
 		t.Fatalf("want experimental-flag refusal, got %v", err)
 	}
 }
@@ -208,7 +208,7 @@ func TestFrozen_RegistryNetwork_RequiresExperimentalFlag(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 	err := runInstall(deps, true, false, "", nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "apm experimental enable registries") {
+	if err == nil || !strings.Contains(err.Error(), "apm-go experimental enable registries") {
 		t.Fatalf("want experimental-flag refusal on frozen network replay, got %v", err)
 	}
 }

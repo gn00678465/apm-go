@@ -72,7 +72,7 @@ func ResolvePlugin(ctx context.Context, pluginName, mktName string, opts Resolve
 	}
 	if src == nil {
 		return nil, fmt.Errorf(
-			"%w: %q; run `apm marketplace add OWNER/REPO` to register it, or `apm marketplace list` to see registered marketplaces",
+			"%w: %q; run `apm-go marketplace add OWNER/REPO` to register it, or `apm-go marketplace list` to see registered marketplaces",
 			ErrMarketplaceNotFound, mktName,
 		)
 	}
@@ -86,7 +86,7 @@ func ResolvePlugin(ctx context.Context, pluginName, mktName string, opts Resolve
 	plugin := findPluginCaseInsensitive(manifestDoc.Plugins, pluginName)
 	if plugin == nil {
 		return nil, fmt.Errorf(
-			"%w: %q in marketplace %q; run `apm marketplace browse %s` to see available plugins",
+			"%w: %q in marketplace %q; run `apm-go marketplace browse %s` to see available plugins",
 			ErrPluginNotFound, pluginName, mktName, mktName,
 		)
 	}

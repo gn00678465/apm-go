@@ -107,7 +107,7 @@ func marketplaceInitCmd() *cobra.Command {
 
 			fmt.Fprintln(w, "\nNext steps:")
 			fmt.Fprintln(w, "  1. Edit the 'marketplace:' block in apm.yml to add your packages")
-			fmt.Fprintln(w, "  2. Run 'apm pack' to generate .claude-plugin/marketplace.json")
+			fmt.Fprintln(w, "  2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json")
 			fmt.Fprintln(w, "  3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json")
 			fmt.Fprintln(w, "  4. Commit apm.yml and the generated marketplace file(s)")
 			return nil
@@ -255,7 +255,7 @@ func marketplaceCheckCmd() *cobra.Command {
 				return err
 			}
 			if src == authoring.ConfigSourceLegacy {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm marketplace migrate' to fold it into apm.yml")
+				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
 			results := authoring.CheckPackages(cfg, authoring.DefaultRefLister, offline)
@@ -312,7 +312,7 @@ func marketplaceOutdatedCmd() *cobra.Command {
 				return err
 			}
 			if src == authoring.ConfigSourceLegacy {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm marketplace migrate' to fold it into apm.yml")
+				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
 			rows := authoring.OutdatedPackages(cfg, authoring.DefaultRefLister, offline, includePrerelease, nil)

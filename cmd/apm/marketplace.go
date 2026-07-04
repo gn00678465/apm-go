@@ -237,7 +237,7 @@ func marketplaceListCmd() *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			if len(sources) == 0 {
-				fmt.Fprintln(w, "No marketplaces registered. Add one with: apm marketplace add SOURCE")
+				fmt.Fprintln(w, "No marketplaces registered. Add one with: apm-go marketplace add SOURCE")
 				return nil
 			}
 			if verbose {
@@ -475,11 +475,11 @@ func summarizeFindings(m *marketplace.MarketplaceManifest, findings []marketplac
 func marketplaceBuildCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:          "build",
-		Short:        "Removed: use 'apm pack' instead",
+		Short:        "Removed: use 'apm-go pack' instead",
 		Args:         cobra.ArbitraryArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("'marketplace build' has been removed; use 'apm pack' instead")
+			return fmt.Errorf("'marketplace build' has been removed; use 'apm-go pack' instead")
 		},
 	}
 }

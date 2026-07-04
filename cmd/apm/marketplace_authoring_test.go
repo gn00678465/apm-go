@@ -509,8 +509,8 @@ func TestMarketplaceCheck_NoAuthoringConfig_PropagatesLoadError(t *testing.T) {
 	if err == nil {
 		t.Fatal("marketplace check with no apm.yml/marketplace.yml returned no error")
 	}
-	if !strings.Contains(err.Error(), "apm marketplace init") {
-		t.Errorf("error = %v, want the same 'apm marketplace init' pointer LoadAuthoringConfig returns", err)
+	if !strings.Contains(err.Error(), "apm-go marketplace init") {
+		t.Errorf("error = %v, want the same 'apm-go marketplace init' pointer LoadAuthoringConfig returns", err)
 	}
 }
 
@@ -660,8 +660,8 @@ func TestMarketplaceCheck_LegacyConfig_PrintsDeprecationWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace check returned error for a legacy-only config: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "apm marketplace migrate") {
-		t.Errorf("output = %q, want a deprecation warning pointing at 'apm marketplace migrate'", out)
+	if !strings.Contains(out, "apm-go marketplace migrate") {
+		t.Errorf("output = %q, want a deprecation warning pointing at 'apm-go marketplace migrate'", out)
 	}
 }
 
@@ -715,8 +715,8 @@ func TestMarketplaceOutdated_NoAuthoringConfig_PropagatesLoadError(t *testing.T)
 	if err == nil {
 		t.Fatal("marketplace outdated with no apm.yml/marketplace.yml returned no error")
 	}
-	if !strings.Contains(err.Error(), "apm marketplace init") {
-		t.Errorf("error = %v, want the same 'apm marketplace init' pointer LoadAuthoringConfig returns", err)
+	if !strings.Contains(err.Error(), "apm-go marketplace init") {
+		t.Errorf("error = %v, want the same 'apm-go marketplace init' pointer LoadAuthoringConfig returns", err)
 	}
 }
 
@@ -850,7 +850,7 @@ func TestMarketplaceOutdated_LegacyConfig_PrintsDeprecationWarning(t *testing.T)
 	if err != nil {
 		t.Fatalf("marketplace outdated returned error for a legacy-only config: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "apm marketplace migrate") {
-		t.Errorf("output = %q, want a deprecation warning pointing at 'apm marketplace migrate'", out)
+	if !strings.Contains(out, "apm-go marketplace migrate") {
+		t.Errorf("output = %q, want a deprecation warning pointing at 'apm-go marketplace migrate'", out)
 	}
 }

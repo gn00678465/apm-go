@@ -93,7 +93,7 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 		return err
 	}
 	if src == authoring.ConfigSourceLegacy {
-		fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm marketplace migrate' to fold it into apm.yml")
+		fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 	}
 
 	cliOverrides, err := parseMarketplacePathOverrides(opts.pathOverrideArgs)

@@ -506,8 +506,8 @@ func TestAddPackage_NoConfigAtAll_PointsAtInit(t *testing.T) {
 	_, _, err := AddPackage(dir, "./pkgs/foo", AddOptions{}, panicLister{})
 
 	// Assert
-	if err == nil || !strings.Contains(err.Error(), "apm marketplace init") {
-		t.Errorf("error = %v, want it to point at 'apm marketplace init'", err)
+	if err == nil || !strings.Contains(err.Error(), "apm-go marketplace init") {
+		t.Errorf("error = %v, want it to point at 'apm-go marketplace init'", err)
 	}
 }
 

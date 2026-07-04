@@ -47,12 +47,12 @@ const (
 var (
 	errMarketplaceConfigsMutuallyExclusive = errors.New(
 		"apm.yml's marketplace: block and legacy marketplace.yml both exist; " +
-			"these are mutually exclusive — remove one, or run 'apm marketplace migrate' " +
+			"these are mutually exclusive — remove one, or run 'apm-go marketplace migrate' " +
 			"to fold marketplace.yml into apm.yml",
 	)
 	errNoMarketplaceConfig = errors.New(
 		"no marketplace authoring config found (neither apm.yml's marketplace: block " +
-			"nor a legacy marketplace.yml exist); run 'apm marketplace init' to scaffold one",
+			"nor a legacy marketplace.yml exist); run 'apm-go marketplace init' to scaffold one",
 	)
 )
 

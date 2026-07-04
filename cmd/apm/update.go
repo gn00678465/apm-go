@@ -73,7 +73,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 
 	lockData, err := os.ReadFile("apm.lock.yaml")
 	if err != nil {
-		return fmt.Errorf("apm update requires an existing apm.lock.yaml: %w", err)
+		return fmt.Errorf("apm-go update requires an existing apm.lock.yaml: %w", err)
 	}
 	lockNode, err := yamlcore.SafeLoad(lockData)
 	if err != nil {

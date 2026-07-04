@@ -14,7 +14,7 @@ func TestEnableDisableRoundtrip(t *testing.T) {
 		t.Fatal("registries should default to disabled")
 	}
 	if err := RequireEnabled("registries"); err == nil ||
-		!strings.Contains(err.Error(), "apm experimental enable registries") {
+		!strings.Contains(err.Error(), "apm-go experimental enable registries") {
 		t.Fatalf("RequireEnabled off: want hint, got %v", err)
 	}
 

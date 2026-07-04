@@ -208,8 +208,8 @@ version: 1.0.0
 	if err == nil {
 		t.Fatal("expected explicit error when neither source exists, got nil")
 	}
-	if !strings.Contains(err.Error(), "apm marketplace init") {
-		t.Errorf("error %q should point at 'apm marketplace init'", err.Error())
+	if !strings.Contains(err.Error(), "apm-go marketplace init") {
+		t.Errorf("error %q should point at 'apm-go marketplace init'", err.Error())
 	}
 	if cfg != nil {
 		t.Errorf("expected nil config on error, got %+v", cfg)

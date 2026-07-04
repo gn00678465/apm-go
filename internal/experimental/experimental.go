@@ -129,7 +129,7 @@ func RequireEnabled(name string) error {
 	if IsEnabled(name) {
 		return nil
 	}
-	return fmt.Errorf("experimental feature %q is not enabled; enable it with: apm experimental enable %s", name, name)
+	return fmt.Errorf("experimental feature %q is not enabled; enable it with: apm-go experimental enable %s", name, name)
 }
 
 func unknownFlag(name string) error {
