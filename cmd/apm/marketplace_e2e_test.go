@@ -685,6 +685,118 @@ func TestMarketplaceUpdate_NamedNotRegisteredErrors(t *testing.T) {
 	}
 }
 
+// TestMarketplaceUpdate_NotRegistered_SuggestsAliasFromOwnerRepo covers the
+// UX bug fix: `marketplace add DietrichGebert/ponytail` registers under the
+// derived alias "ponytail" (fallbackMarketplaceAlias), never the raw
+// "OWNER/REPO" string, so querying update/browse/validate/remove/audit with
+// that same raw string must not just fail silently -- it should suggest the
+// alias it actually registered under and list what is registered.
+func TestMarketplaceUpdate_NotRegistered_SuggestsAliasFromOwnerRepo(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "ponytail", URL: "/abs/ponytail", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "foo", URL: "/abs/foo", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "bar", URL: "/abs/bar", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "update", "DietrichGebert/ponytail")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace update DietrichGebert/ponytail returned no error, want a not-registered error")
+	}
+	for _, want := range []string{
+		`is not registered`,
+		`Did you mean "ponytail"`,
+		`Registered: bar, foo, ponytail`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to contain %q", err.Error(), want)
+		}
+	}
+}
+
+// TestMarketplaceUpdate_NotRegistered_NoSlashSkipsFuzzyMatch covers the
+// negative case: a NAME with no "/" never gets a "Did you mean" hint (there
+// is no OWNER/REPO shape to derive a candidate alias from), but the
+// registered-names list is still appended.
+func TestMarketplaceUpdate_NotRegistered_NoSlashSkipsFuzzyMatch(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "ponytail", URL: "/abs/ponytail", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "update", "nope")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace update nope returned no error, want a not-registered error")
+	}
+	if !strings.Contains(err.Error(), "is not registered") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "is not registered")
+	}
+	if !strings.Contains(err.Error(), "Registered: ponytail") {
+		t.Errorf("error = %q, want it to contain the registered-names list", err.Error())
+	}
+	if strings.Contains(err.Error(), "Did you mean") {
+		t.Errorf("error = %q, want no \"Did you mean\" hint for a NAME without a slash", err.Error())
+	}
+}
+
+// TestMarketplaceUpdate_NotRegistered_EmptyRegistryHintsAddCommand covers the
+// case where nothing at all is registered: the error should point the user
+// at `marketplace add` instead of an empty "Registered:" list.
+func TestMarketplaceUpdate_NotRegistered_EmptyRegistryHintsAddCommand(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+
+	// Act
+	_, err := runMarketplaceCmd(t, "update", "whatever")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace update whatever returned no error, want a not-registered error")
+	}
+	if !strings.Contains(err.Error(), "is not registered") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "is not registered")
+	}
+	if !strings.Contains(err.Error(), "apm-go marketplace add") {
+		t.Errorf("error = %q, want it to point at 'apm-go marketplace add' when nothing is registered", err.Error())
+	}
+}
+
+// TestMarketplaceUpdate_RegisteredAliasStillWorks is the regression guard
+// for the fix above: querying by the alias it actually registered under
+// (not the raw OWNER/REPO string) must still refresh normally, unaffected by
+// the new not-registered error path.
+func TestMarketplaceUpdate_RegisteredAliasStillWorks(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "ponytail", "plugins": [{"name": "p", "source": "./p"}]}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "ponytail", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "update", "ponytail")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace update ponytail returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, `Refreshed marketplace "ponytail"`) {
+		t.Errorf("output = %q, want confirmation that ponytail was refreshed", out)
+	}
+}
+
 // TestMarketplaceUpdate_AllContinuesPastOneFailure covers design.md's "任何
 // 一個失敗記診斷、不中斷其餘": refreshing every registered marketplace must
 // not abort just because one entry's source has since gone missing.
@@ -769,6 +881,33 @@ func TestMarketplaceRemove_NotRegisteredErrors(t *testing.T) {
 	// Assert
 	if err == nil {
 		t.Fatal("marketplace remove for an unregistered name returned no error")
+	}
+}
+
+// TestMarketplaceRemove_NotRegistered_SuggestsAliasAndDoesNotRemove covers
+// the UX bug fix's remove case: `remove OWNER/REPO` where only the derived
+// alias is registered must suggest that alias -- and, critically, must not
+// remove the alias entry it merely *matched* by suggestion (the raw
+// OWNER/REPO string itself was never found).
+func TestMarketplaceRemove_NotRegistered_SuggestsAliasAndDoesNotRemove(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "ponytail", URL: "/abs/ponytail", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "remove", "DietrichGebert/ponytail", "-y")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace remove DietrichGebert/ponytail returned no error, want a not-registered error")
+	}
+	if !strings.Contains(err.Error(), `Did you mean "ponytail"`) {
+		t.Errorf("error = %q, want it to suggest the registered alias %q", err.Error(), "ponytail")
+	}
+	if src, _ := marketplace.FindByName("ponytail"); src == nil {
+		t.Error("ponytail was removed despite the raw OWNER/REPO string never matching a registered name")
 	}
 }
 

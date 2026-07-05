@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/apm-go/apm/internal/marketplace"
@@ -23,6 +24,57 @@ var marketplaceAliasPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 func isValidMarketplaceAlias(name string) bool {
 	return name != "" && marketplaceAliasPattern.MatchString(name)
+}
+
+// marketplaceNotRegisteredErr builds the "not registered" error shared by
+// browse/update/validate/remove/audit's NAME lookup miss (mkt-013/014/015/
+// 016, plus mkt-043 修訂版's audit). It keeps the original callers' exact
+// "is not registered" substring (existing tests assert on it verbatim with
+// strings.Contains), then layers on two best-effort UX aids the bare message
+// never had: `marketplace add OWNER/REPO` registers under a *derived* alias
+// (resolveMarketplaceAlias/fallbackMarketplaceAlias), never the raw
+// OWNER/REPO string itself, so a user who later queries with that same raw
+// string gets an unhelpful "not registered" with no hint of what name it
+// actually registered under.
+//   - if name looks like a copy-pasted "OWNER/REPO" (it contains a "/"),
+//     the part after the last "/" is compared case-insensitively against
+//     every registered name; a match appends a "Did you mean" hint.
+//   - the full, sorted list of registered names is appended, or -- when
+//     nothing is registered at all -- a pointer at `marketplace add` instead.
+//
+// Both aids are best-effort: a LoadRegistry failure here must not replace an
+// already-correct "not registered" error with a different, confusing one, so
+// it silently falls back to the plain message instead of propagating.
+func marketplaceNotRegisteredErr(name string) error {
+	msg := fmt.Sprintf("marketplace %q is not registered", name)
+
+	sources, err := marketplace.LoadRegistry()
+	if err != nil {
+		return fmt.Errorf("%s", msg)
+	}
+
+	names := make([]string, 0, len(sources))
+	for _, s := range sources {
+		names = append(names, s.Name)
+	}
+	sort.Strings(names)
+
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		candidate := name[idx+1:]
+		for _, n := range names {
+			if strings.EqualFold(n, candidate) {
+				msg += fmt.Sprintf(". Did you mean %q?", n)
+				break
+			}
+		}
+	}
+
+	if len(names) == 0 {
+		msg += " (no marketplaces registered; add one with: apm-go marketplace add SOURCE)"
+	} else {
+		msg += "\nRegistered: " + strings.Join(names, ", ")
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 // marketplaceCmd wires internal/marketplace's data model, registry and fetch
@@ -278,7 +330,7 @@ func marketplaceBrowseCmd() *cobra.Command {
 				return err
 			}
 			if src == nil {
-				return fmt.Errorf("marketplace %q is not registered", name)
+				return marketplaceNotRegisteredErr(name)
 			}
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "[>] Fetching plugins from '%s'...\n", name)
@@ -337,7 +389,7 @@ func marketplaceUpdateCmd() *cobra.Command {
 					return err
 				}
 				if src == nil {
-					return fmt.Errorf("marketplace %q is not registered", name)
+					return marketplaceNotRegisteredErr(name)
 				}
 				m, err := marketplace.Fetch(context.Background(), src)
 				if err != nil {
@@ -380,6 +432,13 @@ func marketplaceRemoveCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			src, err := marketplace.FindByName(name)
+			if err != nil {
+				return err
+			}
+			if src == nil {
+				return marketplaceNotRegisteredErr(name)
+			}
 			if !yes {
 				if !isInteractive() {
 					return fmt.Errorf("marketplace remove requires -y/--yes in a non-interactive environment")
@@ -418,7 +477,7 @@ func marketplaceValidateCmd() *cobra.Command {
 				return err
 			}
 			if src == nil {
-				return fmt.Errorf("marketplace %q is not registered", name)
+				return marketplaceNotRegisteredErr(name)
 			}
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {

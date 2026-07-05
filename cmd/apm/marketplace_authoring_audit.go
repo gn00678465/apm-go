@@ -37,7 +37,7 @@ func marketplaceAuditCmd() *cobra.Command {
 				return err
 			}
 			if src == nil {
-				return fmt.Errorf("marketplace %q is not registered", name)
+				return marketplaceNotRegisteredErr(name)
 			}
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
