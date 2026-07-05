@@ -39,10 +39,18 @@
   - sse `url` vs `serverUrl`:確認官方現況,決定是否修 mcp_antigravity.go(若修→小型 fix)。
 - 產出 apm-go 缺口清單,標示各項屬「本輪修」「另開 task」「不做」。
 
+## 決策（使用者 2026-07-05 拍板）
+
+- **explicit-only vs auto-detect → 對齊 Python,改回 explicit-only**。移除 apm-go
+  `adapter.go` 對 antigravity 的 auto-detect,改為僅 `--target antigravity`(或 alias
+  `agy`)顯式選取;antigravity 移出 `allAutoDetectableTargets`、加入 `explicitOnlyTargets`。
+  需回歸測試:偵測階段不因 GEMINI.md/AGENTS.md 存在而選中 antigravity。
+- sse `url` vs `serverUrl`:仍待中樞比對官方文件後定案(見下)。
+
 ## Acceptance Criteria
 
 - [ ] 研究報告完成且結論可執行(已完成,待中樞複核)
-- [ ] explicit-only vs auto-detect 有明確定案(對齊 Python / 保留 deviation 二擇一 + 理由)
+- [ ] explicit-only 對齊已實作(移除 auto-detect + 回歸測試);此項可獨立小 fix
 - [ ] sse url/serverUrl 有明確定案(修 or 不修 + 依據);若修,附最小 fix + 回歸測試
 - [ ] AGENTS.md 生成缺口有明確處置決定(本 parent 不做則記錄為後續 task)
 - [ ] 缺口清單交付,供 parent 決定是否再開實作 child
