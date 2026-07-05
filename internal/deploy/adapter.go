@@ -123,7 +123,15 @@ func filterSupported(targets []string) []string {
 // deploySkill recursively copies a skill directory to .agents/skills/<name>/ (req-tg-003).
 // Shared by all adapters.
 func deploySkill(p Primitive, projectDir string) ([]string, error) {
-	destDir := path.Join(".agents/skills", p.Name)
+	return deploySkillTo(p, projectDir, ".agents/skills")
+}
+
+// deploySkillTo recursively copies a skill directory to <root>/<name>/.
+// Extracted from deploySkill so the claude adapter can additionally deploy
+// to .claude/skills/ (Claude Code does not discover skills from the
+// cross-tool .agents/skills/ canonical path -- see claude.go).
+func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
+	destDir := path.Join(root, p.Name)
 	absDestDir := filepath.Join(projectDir, filepath.FromSlash(destDir))
 	if err := os.MkdirAll(absDestDir, 0755); err != nil {
 		return nil, fmt.Errorf("create skill dir: %w", err)

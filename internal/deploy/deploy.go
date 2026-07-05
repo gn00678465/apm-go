@@ -142,20 +142,31 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				continue
 			}
 
-			// Deduplicate skill deployments across targets (same path)
-			if p.Type == TypeSkills {
-				skillPath := fmt.Sprintf(".agents/skills/%s/SKILL.md", p.Name)
-				if deployedSkills[skillPath] {
-					continue
-				}
-				deployedSkills[skillPath] = true
-			}
-
 			files, err := adapter.DeployPrimitive(p, projectDir)
 			if err != nil {
 				result.Diags = append(result.Diags,
 					fmt.Sprintf("deploy %s to %s failed: %v", p.Name, target, err))
 				continue
+			}
+
+			// Deduplicate skill file writes across targets: most targets
+			// converge on the same canonical .agents/skills/<name>/... path
+			// (req-tg-003), so only count/hash each distinct path once per
+			// primitive. This is file-level rather than "skip the whole
+			// primitive" because claude also writes a target-specific extra
+			// copy under .claude/skills/ that no other target produces --
+			// skipping the call entirely (as before) would drop that extra
+			// copy whenever another skill-supporting target ran first.
+			if p.Type == TypeSkills {
+				var deduped []string
+				for _, f := range files {
+					if deployedSkills[f] {
+						continue
+					}
+					deployedSkills[f] = true
+					deduped = append(deduped, f)
+				}
+				files = deduped
 			}
 
 			// Warn when a different primitive overwrites a path already written.

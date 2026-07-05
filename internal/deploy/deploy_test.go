@@ -136,6 +136,9 @@ func TestDeployClaude_OracleMatch(t *testing.T) {
 	//   .claude/agents/helper.md
 	//   .claude/commands/hello.md
 	//   .agents/skills/demo/SKILL.md
+	// Plus a Go-specific addition beyond the Python oracle: claude also
+	// copies skills to .claude/skills/<name>/ because Claude Code does not
+	// discover skills from the cross-tool .agents/skills/ canonical path.
 	dir := t.TempDir()
 
 	// Create .apm/ structure matching oracle _input
@@ -160,6 +163,8 @@ func TestDeployClaude_OracleMatch(t *testing.T) {
 	}
 
 	expected := oracleFileSet(loadOracle(t, "claude"))
+	const extraSkillCopy = ".claude/skills/demo/SKILL.md"
+	expected[extraSkillCopy] = true
 
 	if len(deployed) != len(expected) {
 		t.Fatalf("expected %d files, got %d: %v", len(expected), len(deployed), deployed)
@@ -390,7 +395,10 @@ func TestDeployRootConstraint(t *testing.T) {
 }
 
 func TestSkillConvergence(t *testing.T) {
-	// req-tg-003: all targets deploy skills to .agents/skills/<name>/SKILL.md
+	// req-tg-003: all targets deploy skills to .agents/skills/<name>/SKILL.md.
+	// claude additionally deploys to .claude/skills/<name>/SKILL.md because
+	// Claude Code only discovers skills from .claude/skills, not
+	// .agents/skills -- the canonical path alone is invisible to it.
 	dir := t.TempDir()
 	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body")
 
@@ -417,6 +425,23 @@ func TestSkillConvergence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", adapter.Name(), err)
 		}
+
+		if adapter.Name() == "claude" {
+			want := map[string]bool{
+				".agents/skills/demo/SKILL.md": true,
+				".claude/skills/demo/SKILL.md": true,
+			}
+			if len(files) != len(want) {
+				t.Errorf("claude should deploy %d files (canonical + Claude Code compat copy), got %v", len(want), files)
+			}
+			for _, f := range files {
+				if !want[f] {
+					t.Errorf("claude: unexpected deployed file %s", f)
+				}
+			}
+			continue
+		}
+
 		if len(files) != 1 || files[0] != ".agents/skills/demo/SKILL.md" {
 			t.Errorf("req-tg-003: %s should deploy to .agents/skills/demo/SKILL.md, got %v",
 				adapter.Name(), files)
@@ -498,6 +523,7 @@ func TestRun_FullPipeline(t *testing.T) {
 		".claude/agents/helper.md":     true,
 		".claude/commands/hello.md":    true,
 		".agents/skills/demo/SKILL.md": true,
+		".claude/skills/demo/SKILL.md": true, // Claude Code compat copy (req-tg-003 note)
 	}
 	for _, f := range localResult.Files {
 		if !localExpected[f] {
@@ -513,8 +539,17 @@ func TestRun_FullPipeline(t *testing.T) {
 	if depResult == nil {
 		t.Fatal("expected dep deploy result")
 	}
-	if len(depResult.Files) != 1 || depResult.Files[0] != ".agents/skills/extra/SKILL.md" {
-		t.Errorf("expected [.agents/skills/extra/SKILL.md], got %v", depResult.Files)
+	depExpected := map[string]bool{
+		".agents/skills/extra/SKILL.md": true,
+		".claude/skills/extra/SKILL.md": true, // Claude Code compat copy (req-tg-003 note)
+	}
+	if len(depResult.Files) != len(depExpected) {
+		t.Errorf("expected %d dep files, got %d: %v", len(depExpected), len(depResult.Files), depResult.Files)
+	}
+	for _, f := range depResult.Files {
+		if !depExpected[f] {
+			t.Errorf("unexpected dep file: %s", f)
+		}
 	}
 
 	// Hashes should be computed
@@ -647,6 +682,99 @@ func TestRun_SkillDeduplication(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("skill should be deployed once, found %d times", count)
+	}
+}
+
+// TestRun_SkillDeduplication_ClaudeExtraCopySurvivesTargetOrder is a
+// regression test for a bug where the cross-target skill dedup in Run
+// skipped calling claudeAdapter.DeployPrimitive entirely whenever another
+// skill-supporting target (e.g. codex) had already deployed the canonical
+// .agents/skills/<name>/ path first. That `continue` meant claude's
+// target-specific .claude/skills/<name>/ copy (needed because Claude Code
+// does not discover skills from .agents/skills) was silently dropped
+// whenever claude wasn't the first skill-supporting target to run.
+func TestRun_SkillDeduplication_ClaudeExtraCopySurvivesTargetOrder(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill\n")
+
+	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
+
+	// codex runs before claude -- this ordering used to trigger the bug.
+	result, err := Run([]string{"codex", "claude"}, dir, m, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	localResult := result.PerDep[""]
+	if localResult == nil {
+		t.Fatal("expected local result")
+	}
+
+	counts := map[string]int{}
+	for _, f := range localResult.Files {
+		counts[f]++
+	}
+
+	if counts[".agents/skills/demo/SKILL.md"] != 1 {
+		t.Errorf(".agents/skills/demo/SKILL.md should appear exactly once, got %d (files: %v)",
+			counts[".agents/skills/demo/SKILL.md"], localResult.Files)
+	}
+	if counts[".claude/skills/demo/SKILL.md"] != 1 {
+		t.Errorf(".claude/skills/demo/SKILL.md should appear exactly once even when codex "+
+			"deploys first, got %d (files: %v)", counts[".claude/skills/demo/SKILL.md"], localResult.Files)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/demo/SKILL.md")); err != nil {
+		t.Errorf("expected .claude/skills/demo/SKILL.md on disk: %v", err)
+	}
+}
+
+// TestDeploySkillClaude_BundleWithSiblings verifies the .claude/skills/ extra
+// copy carries the whole skill bundle (not just SKILL.md) -- a skill with
+// scripts/ or references/ siblings must not be truncated in the Claude Code
+// compat copy.
+func TestDeploySkillClaude_BundleWithSiblings(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body")
+	mkFile(t, dir, ".apm/skills/demo/scripts/run.sh", "#!/bin/sh\necho hi")
+	mkFile(t, dir, ".apm/skills/demo/references/guide.md", "# guide")
+
+	prims := CollectLocalPrimitives(dir)
+	skillPrim := findByType(prims, TypeSkills)
+	if skillPrim == nil {
+		t.Fatal("no skill primitive")
+	}
+
+	adapter := &claudeAdapter{}
+	files, err := adapter.DeployPrimitive(*skillPrim, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := map[string]bool{
+		".agents/skills/demo/SKILL.md":            true,
+		".agents/skills/demo/scripts/run.sh":      true,
+		".agents/skills/demo/references/guide.md": true,
+		".claude/skills/demo/SKILL.md":            true,
+		".claude/skills/demo/scripts/run.sh":      true,
+		".claude/skills/demo/references/guide.md": true,
+	}
+	if len(files) != len(expected) {
+		t.Fatalf("expected %d files, got %d: %v", len(expected), len(files), files)
+	}
+	for _, f := range files {
+		if !expected[f] {
+			t.Errorf("unexpected: %s", f)
+		}
+		abs := filepath.Join(dir, filepath.FromSlash(f))
+		content, err := os.ReadFile(abs)
+		if err != nil {
+			t.Errorf("deployed file does not exist: %s: %v", abs, err)
+			continue
+		}
+		if len(content) == 0 {
+			t.Errorf("deployed file is empty: %s", abs)
+		}
 	}
 }
 
