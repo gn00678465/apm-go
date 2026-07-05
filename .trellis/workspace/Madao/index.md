@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-07-05
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~613 | Active |
+| `journal-1.md` | ~648 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-07-05 | runtime parity 缺口:建父/子 task + 完成 opencode-mcp(1/3) | `a645e64`, `93e4b29`, `665743c` | `feat/marketplace-install` |
 | 17 | 2026-07-05 | marketplace 生態系收尾:4 個實測 bug 修正 + 歷史整併(19→9) | `93c08b4`, `3c47e91`, `bdbe9b2`, `4d3305d` | `feat/marketplace-install` |
 | 16 | 2026-07-03 | 修正 --mcp 寫入格式破壞與 registry-backed 一般安裝落差 | `45dc394`, `79c26fe` | `feat/mcp-resolve-deploy` |
 | 15 | 2026-07-03 | apm install --mcp CLI 旗標 | `e2848f6`, `8e19324` | `feat/mcp-resolve-deploy` |

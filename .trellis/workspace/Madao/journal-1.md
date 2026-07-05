@@ -611,3 +611,38 @@ Sonnet subagent 實作/Fable 查核模式修 4 個實測 bug:(1)browse 改用 Py
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: runtime parity 缺口:建父/子 task + 完成 opencode-mcp(1/3)
+
+**Date**: 2026-07-05
+**Task**: runtime parity 缺口:建父/子 task + 完成 opencode-mcp(1/3)
+**Branch**: `feat/marketplace-install`
+
+### Summary
+
+確認 apm-go 相對 Python 原版三個 runtime 缺口(uninstall/opencode-mcp/antigravity),建父 task 07-05-runtime-parity-gaps + 三 child,派三個 Sonnet research 子代理蒐證(反向清理可行性靠 LockedDep.DeployedFiles、opencode MCP 格式、antigravity 分歧)。完成第一個 child opencode-mcp:新增 mcp_opencode.go 讓 opencodeAdapter 寫 opencode.json 的 mcp key(對照 Python _to_opencode_format:stdio command 單陣列+environment、remote 統一 url、enabled),補 managedMCPKeys。真機 smoke + A/B 對照真實 Python 8/0 逐欄 key+值 parity。antigravity 使用者拍板對齊 Python 改 explicit-only(待做)。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a645e64` | (see git log) |
+| `93e4b29` | (see git log) |
+| `665743c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
