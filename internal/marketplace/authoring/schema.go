@@ -7,9 +7,18 @@
 // This file (schema.go) only covers the data model and its loading
 // (mkt-047, req-mf-017): AuthoringConfig and LoadAuthoringConfig. Field
 // scope deliberately follows design.md, not Python apm's full
-// yml_schema.py -- fields that only matter to a later sub-task (e.g. the
-// codex-output `category` required-field gate, mkt-053) are intentionally
-// left unvalidated here; see the task's implement.md "已知延後項目".
+// yml_schema.py.
+//
+// mkt-053's codex-output `category` required-field gate deliberately does
+// NOT live here (F3 fix): LoadAuthoringConfig is shared by `apm pack`'s
+// config loading, `apm marketplace package add/remove/set`'s pre-edit load
+// (editor.go), and `apm marketplace migrate` -- none of which should be
+// blocked by a rule that only matters once a codex build is actually
+// composed (e.g. `apm pack -m claude` with a codex-missing-category package
+// must succeed). That gate is enforced compose-time-only, in
+// internal/marketplace/build/codexmapper.go's CodexMapper.Compose, mirroring
+// the Python original's own compose-time-only BuildError
+// (output_mappers.py, not yml_schema.py).
 package authoring
 
 import (
@@ -62,8 +71,9 @@ const (
 
 // Owner is the marketplace.owner block: who publishes this marketplace.
 type Owner struct {
-	Name string
-	URL  string
+	Name  string
+	Email string
+	URL   string
 }
 
 // Build is the marketplace.build block: APM-only build-time configuration.
@@ -89,14 +99,44 @@ type PackageEntry struct {
 	Tags              []string
 	IncludePrerelease bool
 	Category          string
+	// Homepage, Author, License, Repository are Anthropic pass-through
+	// fields (mkt-050/052 修訂版's plugin-level table): Homepage is only
+	// ever emitted for a *local* package (design.md); Author is
+	// normalized to a Claude-Code-compliant {name, email?, url?} object
+	// whether the YAML `author:` key was authored as a bare string
+	// (treated as name) or a mapping.
+	Homepage   string
+	Author     map[string]string
+	License    string
+	Repository string
 }
 
 // AuthoringConfig is the parsed marketplace: authoring block, regardless of
 // whether it came from apm.yml or a legacy marketplace.yml.
+//
+// Name/Description/Version mirror Python apm's MarketplaceConfig
+// inheritance rule: each is read from the marketplace: block's own
+// same-named key when present and non-null (an "override"), otherwise
+// inherited from apm.yml's own top-level scalar of the same name (or, for a
+// legacy standalone marketplace.yml, read directly -- DescriptionOverridden
+// and VersionOverridden are always true for a legacy config, since there is
+// no separate top level to inherit from). ClaudeMapper (mkt-050/052 修訂版)
+// only ever emits Description/Version at the marketplace.json top level
+// when the corresponding Overridden flag is true; Name is unconditional.
 type AuthoringConfig struct {
-	Owner    Owner
-	Build    Build
-	Outputs  []string
+	Name                  string
+	Description           string
+	Version               string
+	DescriptionOverridden bool
+	VersionOverridden     bool
+	Owner                 Owner
+	Build                 Build
+	Outputs               []string
+	// Metadata is the marketplace.metadata block, preserved verbatim
+	// (arbitrary caller-defined keys, including "pluginRoot") for
+	// ClaudeMapper to pass through to marketplace.json's top-level
+	// "metadata" key.
+	Metadata map[string]any
 	Packages []PackageEntry
 }
 
@@ -120,7 +160,7 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 		return nil, 0, err
 	}
 
-	apmBlock, err := loadApmMarketplaceBlock(apmPath)
+	apmRoot, apmBlock, err := loadApmMarketplaceBlock(apmPath)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -129,7 +169,12 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 	case apmBlock != nil && legacyExists:
 		return nil, 0, errMarketplaceConfigsMutuallyExclusive
 	case apmBlock != nil:
-		cfg, err := parseAuthoringNode(apmBlock)
+		inherited := topLevelFields{
+			name:        scalarString(apmRoot, "name"),
+			description: scalarString(apmRoot, "description"),
+			version:     scalarString(apmRoot, "version"),
+		}
+		cfg, err := parseAuthoringNode(apmBlock, inherited, false)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -139,7 +184,7 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 		if err != nil {
 			return nil, 0, err
 		}
-		cfg, err := parseAuthoringNode(root)
+		cfg, err := parseAuthoringNode(root, topLevelFields{}, true)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -163,40 +208,46 @@ func fileExists(path string) (bool, error) {
 	return false, fmt.Errorf("stat %s: %w", path, err)
 }
 
-// loadApmMarketplaceBlock returns apm.yml's top-level `marketplace:` value
-// node, or nil if apm.yml does not exist, has no `marketplace:` key, or the
-// key's value is explicit YAML null (`marketplace:` with nothing after it) --
-// the "_has_marketplace_block" semantics mkt-047 requires.
-func loadApmMarketplaceBlock(apmPath string) (*yaml.Node, error) {
+// loadApmMarketplaceBlock returns apm.yml's own top-level mapping node
+// (root) plus its top-level `marketplace:` value node (block) -- root is
+// needed so LoadAuthoringConfig can read the sibling top-level name/
+// description/version scalars an unoverridden marketplace: block inherits
+// (AuthoringConfig's doc comment). block is nil if apm.yml does not exist,
+// has no `marketplace:` key, or the key's value is explicit YAML null
+// (`marketplace:` with nothing after it) -- the "_has_marketplace_block"
+// semantics mkt-047 requires; root is nil under those same first two
+// conditions (apm.yml missing) but still populated when the key is merely
+// absent/null, since the file itself was read successfully.
+func loadApmMarketplaceBlock(apmPath string) (root, block *yaml.Node, err error) {
 	exists, err := fileExists(apmPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !exists {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	data, err := os.ReadFile(apmPath)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", apmPath, err)
+		return nil, nil, fmt.Errorf("read %s: %w", apmPath, err)
 	}
 	doc, err := yamlcore.SafeLoad(data)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", apmPath, err)
+		return nil, nil, fmt.Errorf("parse %s: %w", apmPath, err)
 	}
 	if len(doc.Content) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	root := doc.Content[0]
+	root = doc.Content[0]
 	if root.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("%s: top-level must be a YAML mapping", apmPath)
+		return nil, nil, fmt.Errorf("%s: top-level must be a YAML mapping", apmPath)
 	}
 
 	val := mappingValue(root, "marketplace")
 	if val == nil || isNullNode(val) {
-		return nil, nil
+		return root, nil, nil
 	}
-	return val, nil
+	return root, val, nil
 }
 
 // loadYAMLRoot reads and parses a standalone marketplace.yml (legacy),
@@ -227,10 +278,25 @@ func isNullNode(v *yaml.Node) bool {
 	return v.Kind == yaml.ScalarNode && v.Tag == "!!null"
 }
 
+// topLevelFields carries apm.yml's own top-level name/description/version
+// scalars -- the inheritance fallback an unoverridden marketplace: block's
+// same-named key falls back to (AuthoringConfig's doc comment). Zero value
+// for a legacy standalone marketplace.yml, which has no separate top level
+// to inherit from (its own name/description/version are read directly from
+// the block node itself).
+type topLevelFields struct {
+	name, description, version string
+}
+
 // parseAuthoringNode builds an AuthoringConfig from a marketplace block
 // mapping node -- either apm.yml's `marketplace:` value, or a legacy
 // marketplace.yml's document root, which share the same field shape.
-func parseAuthoringNode(node *yaml.Node) (*AuthoringConfig, error) {
+// inherited supplies apm.yml's own top-level name/description/version for
+// the non-legacy case (ignored, pass the zero value, when isLegacy is
+// true -- node itself already holds those keys directly, and a legacy
+// config's description/version are always considered "overridden" since
+// there is no separate top level for them to inherit from).
+func parseAuthoringNode(node *yaml.Node, inherited topLevelFields, isLegacy bool) (*AuthoringConfig, error) {
 	if node.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("marketplace config must be a YAML mapping")
 	}
@@ -238,20 +304,121 @@ func parseAuthoringNode(node *yaml.Node) (*AuthoringConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	metadata, err := parseMetadata(node)
+	if err != nil {
+		return nil, err
+	}
+
+	name, nameOverridden := overridableString(node, "name")
+	if !nameOverridden {
+		name = inherited.name
+	}
+	description, descriptionOverridden := overridableString(node, "description")
+	if !descriptionOverridden {
+		description = inherited.description
+	}
+	version, versionOverridden := overridableString(node, "version")
+	if !versionOverridden {
+		version = inherited.version
+	}
+	if isLegacy {
+		descriptionOverridden = true
+		versionOverridden = true
+	}
+
+	outputs := parseOutputs(node)
+
 	return &AuthoringConfig{
-		Owner:    parseOwner(node),
-		Build:    parseBuild(node),
-		Outputs:  parseOutputs(node),
-		Packages: packages,
+		Name:                  name,
+		Description:           description,
+		Version:               version,
+		DescriptionOverridden: descriptionOverridden,
+		VersionOverridden:     versionOverridden,
+		Owner:                 parseOwner(node),
+		Build:                 parseBuild(node),
+		Outputs:               outputs,
+		Metadata:              metadata,
+		Packages:              packages,
 	}, nil
+}
+
+// overridableString returns key's scalar value on node and whether key was
+// present with an explicit, non-null value -- distinct from the returned
+// value simply being the empty-string zero value -- mirroring Python's
+// "key in raw_block and raw_block[key] is not None" override-detection
+// semantics used for marketplace.name/description/version.
+func overridableString(node *yaml.Node, key string) (value string, overridden bool) {
+	v := mappingValue(node, key)
+	if v == nil || isNullNode(v) {
+		return "", false
+	}
+	if v.Kind == yaml.ScalarNode {
+		return v.Value, true
+	}
+	return "", true
 }
 
 func parseOwner(node *yaml.Node) Owner {
 	v := mappingValue(node, "owner")
 	return Owner{
-		Name: scalarString(v, "name"),
-		URL:  scalarString(v, "url"),
+		Name:  scalarString(v, "name"),
+		Email: scalarString(v, "email"),
+		URL:   scalarString(v, "url"),
 	}
+}
+
+// parseMetadata returns the marketplace.metadata block decoded to a plain
+// map[string]any, preserving arbitrary caller-defined keys (including
+// "pluginRoot") verbatim for ClaudeMapper's pass-through "metadata" output
+// field -- nil when the key is absent or explicit YAML null.
+func parseMetadata(node *yaml.Node) (map[string]any, error) {
+	v := mappingValue(node, "metadata")
+	if v == nil || isNullNode(v) {
+		return nil, nil
+	}
+	if v.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("marketplace.metadata must be a mapping")
+	}
+	var out map[string]any
+	if err := v.Decode(&out); err != nil {
+		return nil, fmt.Errorf("marketplace.metadata: %w", err)
+	}
+	return out, nil
+}
+
+// parseAuthor normalizes a packages[].author value to a Claude-Code-
+// compliant {name, email?, url?} object: a bare string is treated as name;
+// a mapping's name/email/url scalar keys are copied over. Returns nil when
+// the key is absent, explicit YAML null, or -- defensively -- an author
+// mapping with no usable string values at all.
+func parseAuthor(item *yaml.Node) map[string]string {
+	v := mappingValue(item, "author")
+	if v == nil || isNullNode(v) {
+		return nil
+	}
+	if v.Kind == yaml.ScalarNode {
+		if v.Value == "" {
+			return nil
+		}
+		return map[string]string{"name": v.Value}
+	}
+	if v.Kind != yaml.MappingNode {
+		return nil
+	}
+	out := make(map[string]string, 3)
+	if name := scalarString(v, "name"); name != "" {
+		out["name"] = name
+	}
+	if email := scalarString(v, "email"); email != "" {
+		out["email"] = email
+	}
+	if url := scalarString(v, "url"); url != "" {
+		out["url"] = url
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func parseBuild(node *yaml.Node) Build {
@@ -338,6 +505,10 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 			Tags:              mergeTagsKeywords(item),
 			IncludePrerelease: boolValue(item, "include_prerelease"),
 			Category:          scalarString(item, "category"),
+			Homepage:          scalarString(item, "homepage"),
+			Author:            parseAuthor(item),
+			License:           scalarString(item, "license"),
+			Repository:        scalarString(item, "repository"),
 		})
 	}
 	return entries, nil

@@ -37,12 +37,12 @@
 
 | ✓ | id | 權威 | 驗證內容 | 對照 |
 |---|----|----|----------|------|
-| [ ] | `mkt-001` | 源碼+實測 | `MarketplaceSource` 資料模型:`name/url/ref/path/owner/repo/host/branch`;`.kind` 屬性依 URL 形狀分類為 `local\|url\|github\|gitlab\|git` | `marketplace/models.py` |
-| [ ] | `mkt-002` | 實測 | `~/.apm/marketplaces.json` 登錄檔:atomic write(temp+rename)、目錄建立時嘗試 `0700`(Windows 上該權限位會被忽略,Go 版本比照,不視為缺陷) | 實測登錄檔內容(見研究報告 Part A) |
-| [ ] | `mkt-003` | 源碼 | 探測 marketplace manifest 的路徑順序(依序嘗試,第一個存在即用):`marketplace.json` → `.github/plugin/marketplace.json` → `.claude-plugin/marketplace.json` | `client.py::_MARKETPLACE_PATHS`/`_auto_detect_path` |
-| [ ] | `mkt-004` | 源碼 | Marketplace 別名/名稱格式限制:`^[a-zA-Z0-9._-]+$`(因為要出現在 `plugin@marketplace` 語法的 `@` 右側) | `_ALIAS_PATTERN` |
-| [ ] | `mkt-005` | 源碼 | `MarketplacePlugin` 資料模型:`name/source/description/version/tags/source_marketplace`;`registry` 欄位**路由不移植但解析需容忍**(見範圍表:manifest 含 `registry` 鍵不得報錯,欄位值忽略即可) | `marketplace/models.py` |
-| [ ] | `mkt-006` | 源碼 | 登錄檔查詢與寫入語意:marketplace 名稱查詢**不分大小寫**(`registry.py:95-98`);`add` 對同名(不分大小寫)marketplace **靜默取代**既有登錄項(`registry.py:104-108`),不報錯不確認 | `marketplace/registry.py` |
+| [x] | `mkt-001` | 源碼+實測 | `MarketplaceSource` 資料模型:`name/url/ref/path/owner/repo/host/branch`;`.kind` 屬性依 URL 形狀分類為 `local\|url\|github\|gitlab\|git` | `marketplace/models.py` |
+| [x] | `mkt-002` | 實測 | `~/.apm/marketplaces.json` 登錄檔:atomic write(temp+rename)、目錄建立時嘗試 `0700`(Windows 上該權限位會被忽略,Go 版本比照,不視為缺陷) | 實測登錄檔內容(見研究報告 Part A) |
+| [x] | `mkt-003` | 源碼 | 探測 marketplace manifest 的路徑順序(依序嘗試,第一個存在即用):`marketplace.json` → `.github/plugin/marketplace.json` → `.claude-plugin/marketplace.json` | `client.py::_MARKETPLACE_PATHS`/`_auto_detect_path` |
+| [x] | `mkt-004` | 源碼 | Marketplace 別名/名稱格式限制:`^[a-zA-Z0-9._-]+$`(因為要出現在 `plugin@marketplace` 語法的 `@` 右側) | `_ALIAS_PATTERN` |
+| [x] | `mkt-005` | 源碼 | `MarketplacePlugin` 資料模型:`name/source/description/version/tags/source_marketplace`;`registry` 欄位**路由不移植但解析需容忍**(見範圍表:manifest 含 `registry` 鍵不得報錯,欄位值忽略即可) | `marketplace/models.py` |
+| [x] | `mkt-006` | 源碼 | 登錄檔查詢與寫入語意:marketplace 名稱查詢**不分大小寫**(`registry.py:95-98`);`add` 對同名(不分大小寫)marketplace **靜默取代**既有登錄項(`registry.py:104-108`),不報錯不確認 | `marketplace/registry.py` |
 
 ---
 
@@ -50,16 +50,16 @@
 
 | ✓ | id | 權威 | 驗證內容 | 對照 |
 |---|----|----|----------|------|
-| [ ] | `mkt-010` | 源碼+實測 | `marketplace add SOURCE [-n/--name] [-r/--ref] [--host] [-v]`(另有隱藏棄用別名 `--branch/-b`,與 `--ref` 同給時硬錯誤):SOURCE 自動判別順序 —— 本地路徑形式(`/`、`./`、`../`、`~/`、`.\`、`..\`、`~\`、裸 `~`、`file://`、Windows 磁碟機代號)→ 拒絕裸 `http://` → SCP 式 SSH(`git@host:path`)→ 完整 `https://` URL(含指向 hosted `marketplace.json` 的直連 URL,登錄為 kind=url、ref/path 置空)→ `OWNER/REPO`/`HOST/OWNER/REPO` 簡寫 | `commands/marketplace/__init__.py::_parse_marketplace_source` |
-| [ ] | `mkt-011` | 源碼 | `--host` 行為分三種(先前「一律忽略並警告」的說法不準):與完整 HTTPS URL(含 marketplace.json URL)的 host **衝突**時是**硬錯誤 exit 1**(`__init__.py:331-338,372-379`);與 URL host 相符、SOURCE 是本地路徑、或 SCP-SSH host 不符時,忽略並發警告(`:577-596`);僅 github/gitlab 家族 host 會被信任轉發 `GITHUB_APM_PAT`/`GITLAB_APM_PAT`,其餘 host 純走 `git` subprocess、不帶 token | `AuthResolver.classify_host` |
-| [ ] | `mkt-012` | 源碼 | `marketplace list [-v]`:無引數,列出所有已註冊 marketplace(Name/Source/Ref/Path) | — |
-| [ ] | `mkt-013` | 源碼+實測 | `marketplace browse NAME [-v]`:強制重新抓取(force-refresh)、渲染 Plugin/Description/Version/Install 表、印出 `apm install <plugin-name>@{name}` 提示 | — |
-| [ ] | `mkt-014` | 源碼 | `marketplace update [NAME]`:給定名稱只刷新該 marketplace 快取,省略時刷新全部已註冊項目 | — |
-| [ ] | `mkt-015` | 源碼 | `marketplace remove NAME [-y/--yes]`:無 `-y` 需互動確認;非互動/CI 環境無 `-y` 時 exit 1(不可靜默略過確認) | — |
-| [ ] | `mkt-016` | 源碼 | `marketplace validate NAME`:對**已註冊**的 marketplace(不是本地 authoring config)驗證,印 `Summary: N passed, N warnings, N errors`,任何 error 時 exit 1 | `marketplace.validator::validate_marketplace` |
-| [ ] | `mkt-017` | 實測 | **明確不移植**:原版 `--check-refs` 隱藏旗標(`hidden=True`)目前只印「尚未實作」的佔位訊息,不做任何檢查;Go 版本要嘛做出真正的 ref 可達性檢查,要嘛完全不出現這個旗標,不可移植一個誤導使用者的空殼旗標 | 實測(見研究報告 Part A) |
-| [ ] | `mkt-018` | 源碼 | `marketplace add` 的 ref/alias 補充行為:HTTPS SOURCE 支援 `#ref` fragment(與 `--ref`/`--branch` 同給時硬錯誤,`__init__.py:536-551,741-750`);https git URL 未 pin ref 時發「Pin this git marketplace with a #ref」警告(`:764-774`);`--name` 未給時 alias 依序回退 manifest.name(需通過 alias 格式檢查,不合法時警告並退回 repo 名,`:677-699`) | `commands/marketplace/__init__.py::add` |
-| [ ] | `mkt-019` | 源碼 | `apm marketplace build` 墓碑:已移除的子指令,呼叫時硬性 UsageError 並指向 `apm pack`(`__init__.py:94-99`);Go 版需決定是否保留此遷移提示(建議保留,防止舊文件/腳本靜默失敗) | `MarketplaceGroup.get_command` |
+| [x] | `mkt-010` | 源碼+實測 | `marketplace add SOURCE [-n/--name] [-r/--ref] [--host] [-v]`(另有隱藏棄用別名 `--branch/-b`,與 `--ref` 同給時硬錯誤):SOURCE 自動判別順序 —— 本地路徑形式(`/`、`./`、`../`、`~/`、`.\`、`..\`、`~\`、裸 `~`、`file://`、Windows 磁碟機代號)→ 拒絕裸 `http://` → SCP 式 SSH(`git@host:path`)→ 完整 `https://` URL(含指向 hosted `marketplace.json` 的直連 URL,登錄為 kind=url、ref/path 置空)→ `OWNER/REPO`/`HOST/OWNER/REPO` 簡寫 | `commands/marketplace/__init__.py::_parse_marketplace_source` |
+| [x] | `mkt-011` | 源碼 | `--host` 行為分三種(先前「一律忽略並警告」的說法不準):與完整 HTTPS URL(含 marketplace.json URL)的 host **衝突**時是**硬錯誤 exit 1**(`__init__.py:331-338,372-379`);與 URL host 相符、SOURCE 是本地路徑、或 SCP-SSH host 不符時,忽略並發警告(`:577-596`);僅 github/gitlab 家族 host 會被信任轉發 `GITHUB_APM_PAT`/`GITLAB_APM_PAT`,其餘 host 純走 `git` subprocess、不帶 token | `AuthResolver.classify_host` |
+| [x] | `mkt-012` | 源碼 | `marketplace list [-v]`:無引數,列出所有已註冊 marketplace(Name/Source/Ref/Path) | — |
+| [x] | `mkt-013` | 源碼+實測 | `marketplace browse NAME [-v]`:強制重新抓取(force-refresh)、渲染 Plugin/Description/Version/Install 表、印出 `apm install <plugin-name>@{name}` 提示 | — |
+| [x] | `mkt-014` | 源碼 | `marketplace update [NAME]`:給定名稱只刷新該 marketplace 快取,省略時刷新全部已註冊項目 | — |
+| [x] | `mkt-015` | 源碼 | `marketplace remove NAME [-y/--yes]`:無 `-y` 需互動確認;非互動/CI 環境無 `-y` 時 exit 1(不可靜默略過確認) | — |
+| [x] | `mkt-016` | 源碼 | `marketplace validate NAME`:對**已註冊**的 marketplace(不是本地 authoring config)驗證,印 `Summary: N passed, N warnings, N errors`,任何 error 時 exit 1 | `marketplace.validator::validate_marketplace` |
+| [x] | `mkt-017` | 實測 | **明確不移植**:原版 `--check-refs` 隱藏旗標(`hidden=True`)目前只印「尚未實作」的佔位訊息,不做任何檢查;Go 版本要嘛做出真正的 ref 可達性檢查,要嘛完全不出現這個旗標,不可移植一個誤導使用者的空殼旗標 | 實測(見研究報告 Part A) |
+| [x] | `mkt-018` | 源碼 | `marketplace add` 的 ref/alias 補充行為:HTTPS SOURCE 支援 `#ref` fragment(與 `--ref`/`--branch` 同給時硬錯誤,`__init__.py:536-551,741-750`);https git URL 未 pin ref 時發「Pin this git marketplace with a #ref」警告(`:764-774`);`--name` 未給時 alias 依序回退 manifest.name(需通過 alias 格式檢查,不合法時警告並退回 repo 名,`:677-699`) | `commands/marketplace/__init__.py::add` |
+| [x] | `mkt-019` | 源碼 | `apm marketplace build` 墓碑:已移除的子指令,呼叫時硬性 UsageError 並指向 `apm pack`(`__init__.py:94-99`);Go 版需決定是否保留此遷移提示(建議保留,防止舊文件/腳本靜默失敗) | `MarketplaceGroup.get_command` |
 
 ---
 
@@ -107,12 +107,12 @@
 
 | ✓ | id | 權威 | 驗證內容 | 對照 |
 |---|----|----|----------|------|
-| [ ] | `mkt-050` | 源碼+實測 | **改寫(原「packages→plugins 唯一轉換」敘述錯誤)**:builder/mapper 做多項欄位級轉換 —— (a) `packages:`→`plugins:` 改名;(b) 遠端套件的 `source` 字串**合成為結構化 dict**(`{source: github, repo}` / `{source: url, url}` / `{source: git-subdir, url, path}`)並附解析後 `ref` 與 40 字元 `sha`(`output_mappers.py:185-201`),`subdir`→`source.path`;(c) `version` 重寫:semver range 不原樣輸出,僅「顯示版本」保留,否則取遠端 apm.yml metadata(`:115-137`,curator 條目值優先);(d) 剝除 APM 專用欄位(build/tagPattern/include_prerelease 等);(e) 本地 source 做 pluginRoot 剝除(`:150-178`) | `marketplace/builder.py` + `output_mappers.py::ClaudeMarketplaceMapper.compose` |
-| [ ] | `mkt-051` | 源碼 | 本地套件略過 git 驗證;遠端套件依 semver range 或明確 ref,對照真實 git tag(`git ls-remote`)解析出實際版本/commit | `ResolvedPackage` |
-| [ ] | `mkt-052` | 實測+源碼 | **改寫(原欄位清單錯誤)**:Claude 輸出頂層為 `name`、`owner` + 條件式 `description`/`version`/`metadata`(`output_mappers.py:63-77`);plugin 級為 `name`、`source` + 條件式 `description`/`version`/`author`/`license`/`repository`/`tags`/`homepage`(`:89-201`)。**`category` 不出現在 Claude 輸出**——只存在於 Codex mapper(`:261`)。schema 本身(`tests/fixtures/schemas/claude-code-marketplace.schema.json`)是 **informational**、非 OpenAPM 規範性文件,Go 版本只需相容輸出子集,不必完整實作整份上游 schema(hooks/mcpServers/lspServers/channels/userConfig/monitors 等 Claude-Code 原生欄位不在 apm 範圍) | `output_mappers.py` |
-| [ ] | `mkt-053` | 源碼 | `outputs` 含 `codex` 時,每個 package 的 `category` 為必填(scaffold 註解已提示);雙層把關:config 載入時 `yml_schema.py:1293-1302` 硬錯誤 + Codex mapper compose 時 BuildError(`output_mappers.py:257-261`);Claude profile 無此要求,確為 codex 條件式 | `output_profiles.py:82` |
-| [ ] | `mkt-054` | 源碼 | 輸出位置**不是 repo 根目錄**:claude → `.claude-plugin/marketplace.json`、codex → `.agents/plugins/marketplace.json`(`output_profiles.py:70,79`);outputs 含兩者時**兩份都寫**(`build_orchestrator.py:190-228`);路徑可用 apm.yml `marketplace.<fmt>.output` 或 `apm pack --marketplace-path FORMAT=PATH` 覆寫 | `output_profiles.py` |
-| [ ] | `mkt-055` | 源碼 | `apm pack` 的 marketplace 相關閘門與 exit code:0 成功、1 build 錯誤、2 schema 驗證、3 `--check-versions` 版本對齊失敗、4 `--check-clean` 產物 drift(`pack.py:55-61,539-541`);`--offline` 只用快取 refs;branch ref/`HEAD` 觸發 `HeadNotAllowedError` 且 pack **未暴露** allow-head 旗標(呼應 mkt-040 的範本陷阱);`-m/--marketplace` 可過濾輸出格式(`claude,codex`/`all`/`none`) | `commands/pack.py` |
+| [x] | `mkt-050` | 源碼+實測 | **改寫(原「packages→plugins 唯一轉換」敘述錯誤)**:builder/mapper 做多項欄位級轉換 —— (a) `packages:`→`plugins:` 改名;(b) 遠端套件的 `source` 字串**合成為結構化 dict**(`{source: github, repo}` / `{source: url, url}` / `{source: git-subdir, url, path}`)並附解析後 `ref` 與 40 字元 `sha`(`output_mappers.py:185-201`),`subdir`→`source.path`;(c) `version` 重寫:semver range 不原樣輸出,僅「顯示版本」保留,否則取遠端 apm.yml metadata(`:115-137`,curator 條目值優先);(d) 剝除 APM 專用欄位(build/tagPattern/include_prerelease 等);(e) 本地 source 做 pluginRoot 剝除(`:150-178`) | `marketplace/builder.py` + `output_mappers.py::ClaudeMarketplaceMapper.compose` |
+| [x] | `mkt-051` | 源碼 | 本地套件略過 git 驗證;遠端套件依 semver range 或明確 ref,對照真實 git tag(`git ls-remote`)解析出實際版本/commit | `ResolvedPackage` |
+| [x] | `mkt-052` | 實測+源碼 | **改寫(原欄位清單錯誤)**:Claude 輸出頂層為 `name`、`owner` + 條件式 `description`/`version`/`metadata`(`output_mappers.py:63-77`);plugin 級為 `name`、`source` + 條件式 `description`/`version`/`author`/`license`/`repository`/`tags`/`homepage`(`:89-201`)。**`category` 不出現在 Claude 輸出**——只存在於 Codex mapper(`:261`)。schema 本身(`tests/fixtures/schemas/claude-code-marketplace.schema.json`)是 **informational**、非 OpenAPM 規範性文件,Go 版本只需相容輸出子集,不必完整實作整份上游 schema(hooks/mcpServers/lspServers/channels/userConfig/monitors 等 Claude-Code 原生欄位不在 apm 範圍) | `output_mappers.py` |
+| [x] | `mkt-053` | 源碼 | `outputs` 含 `codex` 時,每個 package 的 `category` 為必填(scaffold 註解已提示);雙層把關:config 載入時 `yml_schema.py:1293-1302` 硬錯誤 + Codex mapper compose 時 BuildError(`output_mappers.py:257-261`);Claude profile 無此要求,確為 codex 條件式 | `output_profiles.py:82` |
+| [x] | `mkt-054` | 源碼 | 輸出位置**不是 repo 根目錄**:claude → `.claude-plugin/marketplace.json`、codex → `.agents/plugins/marketplace.json`(`output_profiles.py:70,79`);outputs 含兩者時**兩份都寫**(`build_orchestrator.py:190-228`);路徑可用 apm.yml `marketplace.<fmt>.output` 或 `apm pack --marketplace-path FORMAT=PATH` 覆寫 | `output_profiles.py` |
+| [x] | `mkt-055` | 源碼 | `apm pack` 的 marketplace 相關閘門與 exit code:0 成功、1 build 錯誤、2 schema 驗證、3 `--check-versions` 版本對齊失敗、4 `--check-clean` 產物 drift(`pack.py:55-61,539-541`);`--offline` 只用快取 refs;branch ref/`HEAD` 觸發 `HeadNotAllowedError` 且 pack **未暴露** allow-head 旗標(呼應 mkt-040 的範本陷阱);`-m/--marketplace` 可過濾輸出格式(`claude,codex`/`all`/`none`) | `commands/pack.py` |
 
 ---
 
@@ -122,11 +122,11 @@
 
 | ✓ | id | 驗證內容 |
 |---|----|----------|
-| [ ] | `mkt-060` | `apm marketplace search` **不存在**;真正指令是頂層 `apm search QUERY@MARKETPLACE`(`cli.py:192` 把它掛在根層,不是 `marketplace` 子群組)。**歸類修正:這不是文件錯誤**——`marketplace.md:314` 與 `search.md:13` 都正確指向頂層指令;錯的是原始碼內殘留的 docstring/錯誤訊息字串(`commands/marketplace/__init__.py:1351,1361` 仍寫 `apm marketplace search`)。Go 版本實作成頂層 `apm search`,且 help/錯誤訊息字串**不可照抄**原版殘留 |
-| [ ] | `mkt-061` | `apm marketplace doctor` **不存在**(`marketplace.md:29` synopsis 誤列了它——這條才是真的文件錯誤);真正指令是頂層 `apm doctor`。**路徑修正**:helper 在 `commands/marketplace/doctor.py::run_doctor`,被 `commands/doctor.py` 包裝成頂層指令;`src/apm_cli/marketplace/doctor.py` 不存在 |
-| [ ] | `mkt-062` | `apm marketplace publish` **完全不存在**,任何形式都沒有(文件裡兩段互相矛盾的旗標清單都是假的:synopsis `marketplace.md:31` 列 `--targets/--dry-run/--no-pr`,範例 `:304-309` 卻用 `--draft`);不要實作這個指令。注意頂層 `apm publish` 是**另一個真實存在**的 registry 上傳指令(`cli.py:169`),勿混淆 |
-| [ ] | `mkt-063` | `marketplace browse --json` **不存在**(browse 只收 NAME + `--verbose`);e2e script 裡用到它(`scripts/e2e/marketplace_local_e2e.sh:48`)但那支 script 本身已標記「Not wired into CI」,不是可信來源 |
-| [ ] | `mkt-064` | `search.md:70` 的「Related」段落寫了不存在的 `marketplace refresh` 子指令,真名是 `update`(`__init__.py:955`);Go 版文件不可照抄 |
+| [x] | `mkt-060` | `apm marketplace search` **不存在**;真正指令是頂層 `apm search QUERY@MARKETPLACE`(`cli.py:192` 把它掛在根層,不是 `marketplace` 子群組)。**歸類修正:這不是文件錯誤**——`marketplace.md:314` 與 `search.md:13` 都正確指向頂層指令;錯的是原始碼內殘留的 docstring/錯誤訊息字串(`commands/marketplace/__init__.py:1351,1361` 仍寫 `apm marketplace search`)。Go 版本實作成頂層 `apm search`,且 help/錯誤訊息字串**不可照抄**原版殘留 |
+| [x] | `mkt-061` | `apm marketplace doctor` **不存在**(`marketplace.md:29` synopsis 誤列了它——這條才是真的文件錯誤);真正指令是頂層 `apm doctor`。**路徑修正**:helper 在 `commands/marketplace/doctor.py::run_doctor`,被 `commands/doctor.py` 包裝成頂層指令;`src/apm_cli/marketplace/doctor.py` 不存在 |
+| [x] | `mkt-062` | `apm marketplace publish` **完全不存在**,任何形式都沒有(文件裡兩段互相矛盾的旗標清單都是假的:synopsis `marketplace.md:31` 列 `--targets/--dry-run/--no-pr`,範例 `:304-309` 卻用 `--draft`);不要實作這個指令。注意頂層 `apm publish` 是**另一個真實存在**的 registry 上傳指令(`cli.py:169`),勿混淆 |
+| [x] | `mkt-063` | `marketplace browse --json` **不存在**(browse 只收 NAME + `--verbose`);e2e script 裡用到它(`scripts/e2e/marketplace_local_e2e.sh:48`)但那支 script 本身已標記「Not wired into CI」,不是可信來源 |
+| [x] | `mkt-064` | `search.md:70` 的「Related」段落寫了不存在的 `marketplace refresh` 子指令,真名是 `update`(`__init__.py:955`);Go 版文件不可照抄 |
 
 ---
 

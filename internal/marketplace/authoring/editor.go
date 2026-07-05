@@ -53,7 +53,7 @@ func locateEditableConfig(dir string) (path string, prefix []string, err error) 
 	if err != nil {
 		return "", nil, err
 	}
-	apmBlock, err := loadApmMarketplaceBlock(apmPath)
+	_, apmBlock, err := loadApmMarketplaceBlock(apmPath)
 	if err != nil {
 		return "", nil, err
 	}
@@ -100,7 +100,7 @@ func validateEditedPackageBytes(out []byte, prefix []string) error {
 			return fmt.Errorf("edited config is missing the expected %q key", key)
 		}
 	}
-	if _, err := parseAuthoringNode(node); err != nil {
+	if _, err := parseAuthoringNode(node, topLevelFields{}, len(prefix) == 0); err != nil {
 		return fmt.Errorf("edited config failed validation: %w", err)
 	}
 	return nil

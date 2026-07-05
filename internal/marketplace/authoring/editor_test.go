@@ -291,6 +291,37 @@ func TestRemovePackage_NotFound_Errors(t *testing.T) {
 	}
 }
 
+// TestRemovePackage_OutputsIncludeCodex_MissingCategoryDoesNotBlockEdit is
+// F3's regression test: mkt-053's codex-category-required gate is
+// compose-time-only (internal/marketplace/build/codexmapper.go's
+// CategoryRequiredError) and must never block `apm marketplace package
+// remove` -- even when removing the very package whose missing category
+// would otherwise break a codex build. Before the fix, LoadAuthoringConfig
+// itself (called by RemovePackage to locate the package) rejected this
+// config before removal was ever attempted.
+func TestRemovePackage_OutputsIncludeCodex_MissingCategoryDoesNotBlockEdit(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  outputs:\n    codex: {}\n  packages:\n"+
+		"    - name: bad-pkg\n      source: owner/repo\n      version: \">=1.0.0\"\n")
+
+	// Act
+	_, err := RemovePackage(dir, "bad-pkg")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("RemovePackage returned error (F3: codex category gate must be compose-time only): %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(cfg.Packages) != 0 {
+		t.Errorf("Packages = %+v, want empty after removing bad-pkg", cfg.Packages)
+	}
+}
+
 func TestSetPackage_NotFound_Errors(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()

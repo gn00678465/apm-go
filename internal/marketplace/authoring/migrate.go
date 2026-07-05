@@ -86,7 +86,7 @@ func Migrate(dir string, opts MigrateOptions) (diff string, err error) {
 	if err != nil {
 		return "", err
 	}
-	if _, verr := parseAuthoringNode(legacyRoot); verr != nil {
+	if _, verr := parseAuthoringNode(legacyRoot, topLevelFields{}, true); verr != nil {
 		return "", fmt.Errorf("marketplace.yml is invalid: %w", verr)
 	}
 
