@@ -24,8 +24,8 @@
 |---|---|
 | 核心(必做,不可縮) | CLI 介面、目標解析與比對、apm.yml 移除、apm_modules 實體刪除、transitive orphan 清理、**target 反向同步(依 lockfile `deployed_files` 只刪自己部署的檔案 + 兩階段從剩餘套件重新整合)**、lockfile 更新、`--dry-run`、輸出/exit code |
 | 前置缺口(核心的必要基礎) | apm-go 的 `internal/deploy` **目前完全沒有刪檔能力**(只有 additive copy);lockfile 已有 `DeployedFiles`/`DeployedHashes` provenance(install.go:705-717)可精準反向清理。核心的反向同步**建立在新增「依 provenance 刪檔」能力之上**,此為本 task 最大工作量 |
-| **待使用者定案 A:`-g/--global`** | Python 有(user scope `~/.apm/`)。apm-go **完全無 InstallScope/user-scope 概念**(install/update 都寫死 cwd),自成一個子系統大工程。**建議本輪不做**,`-g` 旗標不出現或明確報「未支援」,標為 documented deviation;另開 task |
-| **待使用者定案 B:MCP stale 清理** | Python 有(`_cleanup_stale_mcp` + `MCPIntegrator.remove_stale`,對各 runtime 設定檔清 stale server)。apm-go lockfile **無 `mcp_servers` 欄位**、`mcp_common.go:222-224` 註解明文把 stale 清理排除。要做需先給 lockfile 加 `mcp_servers` provenance + 各 target 反向移除 MCP entry。**建議納入**(否則 uninstall 會留下孤兒 MCP 設定,是真實正確性缺口),但屬額外工作量,需確認 |
+| **定案 A:`-g/--global` → 本輪不做**(使用者 2026-07-05) | Python 有(user scope `~/.apm/`)。apm-go **完全無 InstallScope/user-scope 概念**(install/update 都寫死 cwd),自成一個子系統大工程。**本輪不做**:`-g` 旗標明確報「未支援」(或不出現),標為 documented deviation;另開 task。→ un-090/091 標延後 |
+| **定案 B:MCP stale 清理 → 本輪納入**(使用者 2026-07-05) | Python 有(`_cleanup_stale_mcp` + `MCPIntegrator.remove_stale`)。apm-go 前置:給 lockfile 加 `mcp_servers` provenance 欄位 + 各 target(claude/codex/copilot/antigravity/opencode)反向移除單一 MCP entry。**納入本輪**(否則留孤兒 MCP 設定=真實正確性缺口)。→ un-060~063 為必做 |
 | marketplace 記法 uninstall(`name@marketplace`) | Python 接受(lockfile 離線優先 → registry fallback → supply-chain guard)。`#ref` 片段被忽略。**建議納入**(已有 `ParseRef`/`ResolvePlugin` 可重用),但「lockfile 離線優先 + supply-chain guard」比對邏輯需新寫 |
 | `apm prune` | 文件 Related 提到的姊妹指令(不指名移除孤兒)。**本輪不做**,獨立指令 |
 | 明確不移植 | 無(uninstall.md 未發現原版文件錯誤或真實 bug 需排除);若實作中發現,於對應條目標註 |
