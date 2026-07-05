@@ -6,6 +6,8 @@
 指定套件,反向清理該套件部署到各 target 的檔案,並更新 lockfile。
 
 研究:`research/uninstall-parity.md`（Python 行為逐項 + apm-go 可重用點 + 難點）。
+**驗收清單(權威):`uninstall-checklist.md`**（un-001~un-V08,完整呈現指令全部功能;
+對照 Python 源碼 + uninstall.md 文件 + live CLI 實測）。
 
 ## 關鍵發現（來自研究,影響範圍界定）
 
