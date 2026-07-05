@@ -86,10 +86,27 @@ func SerializeLockfile(lf *Lockfile, original *yaml.Node) (*yaml.Node, error) {
 		}
 	}
 
+	// mcp_servers (list) — reuse original only if unchanged
+	if len(lf.MCPServers) > 0 {
+		if pair, exists := origTopPairs["mcp_servers"]; exists && deployedFilesMatch(pair.val, lf.MCPServers) {
+			root.Content = append(root.Content, pair.key, pair.val)
+		} else {
+			seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			for _, s := range lf.MCPServers {
+				seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: s, Tag: "!!str"})
+			}
+			root.Content = append(root.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "mcp_servers", Tag: "!!str"},
+				seq,
+			)
+		}
+	}
+
 	// Preserve top-level x-* and unknown keys from original.
 	knownTopKeys := map[string]bool{
 		"lockfile_version": true, "generated_at": true, "apm_version": true,
 		"local_deployed_files": true, "local_deployed_file_hashes": true,
+		"mcp_servers":  true,
 		"dependencies": true,
 	}
 	if original != nil {
@@ -277,6 +294,9 @@ func IsSemanticEqual(a, b *Lockfile) bool {
 		return false
 	}
 	if !mapsEqual(a.LocalDeployedHashes, b.LocalDeployedHashes) {
+		return false
+	}
+	if !slicesEqual(a.MCPServers, b.MCPServers) {
 		return false
 	}
 	if len(a.Dependencies) != len(b.Dependencies) {

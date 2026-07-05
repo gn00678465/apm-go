@@ -227,3 +227,58 @@ dependencies:
 			doc.LocalDeployedFileHashes[".mcp.json"], secondHash)
 	}
 }
+
+// TestRunInstall_MCP_RecordsMCPServersInLockfile is the un-060 prerequisite
+// E2E check: installing a manifest with a self-defined MCP server records
+// that server's name in the lockfile's mcp_servers list, so a later
+// uninstall has an "old" name list to diff against (design.md N3).
+func TestRunInstall_MCP_RecordsMCPServersInLockfile(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	manifestYAML := `
+name: test
+version: "1.0.0"
+target: [claude]
+dependencies:
+  mcp:
+    - name: e2e-server
+      registry: false
+      transport: stdio
+      command: my-mcp-server
+`
+	if err := os.WriteFile("apm.yml", []byte(manifestYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	lockData, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatalf("read apm.lock.yaml: %v", err)
+	}
+	node, err := yamlcore.SafeLoad(lockData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf, err := lockfile.ParseLockfile(node)
+	if err != nil {
+		t.Fatalf("ParseLockfile: %v", err)
+	}
+
+	found := false
+	for _, s := range lf.MCPServers {
+		if s == "e2e-server" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("lockfile MCPServers = %v, want to contain e2e-server", lf.MCPServers)
+	}
+}

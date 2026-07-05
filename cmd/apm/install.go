@@ -719,8 +719,9 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 
 		// Merged MCP config files (e.g. .mcp.json) are multi-source -- no
 		// single dep or "local" bucket owns them -- so their hashes are
-		// recorded alongside local deployed files (pr-001 source attribution
-		// is served by deployResult.MCPProvenance in-memory, not persisted).
+		// recorded alongside local deployed files (pr-001 per-file source
+		// attribution is served by deployResult.MCPProvenance in-memory,
+		// not persisted; only the server name list is, via MCPServers below).
 		if len(deployResult.MCPFiles) > 0 {
 			if newLock.LocalDeployedHashes == nil {
 				newLock.LocalDeployedHashes = map[string]string{}
@@ -730,6 +731,23 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 				newLock.LocalDeployedHashes[f] = hash
 			}
 			sort.Strings(newLock.LocalDeployedFiles)
+		}
+
+		// Record the full current set of MCP server names deployed this run
+		// (un-060 prerequisite: uninstall's transitive-stale MCP cleanup
+		// needs an "old" name list to diff against). deploy.Run recomputes
+		// the merged bake from scratch every call, so MCPProvenance already
+		// reflects the complete current state, not just a delta -- dedup by
+		// name since the same server can appear once per target file.
+		if len(deployResult.MCPProvenance) > 0 {
+			seen := make(map[string]bool, len(deployResult.MCPProvenance))
+			for _, p := range deployResult.MCPProvenance {
+				if !seen[p.Server] {
+					seen[p.Server] = true
+					newLock.MCPServers = append(newLock.MCPServers, p.Server)
+				}
+			}
+			sort.Strings(newLock.MCPServers)
 		}
 	}
 

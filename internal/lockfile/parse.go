@@ -88,6 +88,12 @@ func ParseLockfile(doc *yaml.Node) (*Lockfile, error) {
 					lf.LocalDeployedHashes[val.Content[j].Value] = val.Content[j+1].Value
 				}
 			}
+		case "mcp_servers":
+			if val.Kind == yaml.SequenceNode {
+				for _, item := range val.Content {
+					lf.MCPServers = append(lf.MCPServers, item.Value)
+				}
+			}
 		}
 	}
 

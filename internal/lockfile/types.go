@@ -47,7 +47,19 @@ type Lockfile struct {
 	Dependencies        []LockedDep
 	LocalDeployedFiles  []string          // self-entry deployed file paths
 	LocalDeployedHashes map[string]string // self-entry path -> hash
-	index               map[string]int    // lazy index: unique key -> slice index
+
+	// MCPServers is the full current set of MCP server names deployed
+	// across all targets (local + all resolved deps), refreshed in full on
+	// every install/update (deploy.Run always recomputes the merged bake,
+	// not just a delta). Mirrors the Python original's LockFile.mcp_servers
+	// (YAML key mcp_servers): uninstall's transitive-stale MCP cleanup
+	// diffs this "old" list against the recomputed "new" one. Absent on
+	// lockfiles written before this field existed -- callers must treat a
+	// nil/empty slice as "unknown, assume none" (fail-open), never as
+	// "explicitly no MCP servers were ever deployed".
+	MCPServers []string
+
+	index map[string]int // lazy index: unique key -> slice index
 }
 
 // FindByKey looks up a locked dependency by unique key. O(1) after first call.
@@ -62,4 +74,32 @@ func (l *Lockfile) FindByKey(key string) *LockedDep {
 		return &l.Dependencies[i]
 	}
 	return nil
+}
+
+// RemoveKeys removes the locked dependencies matching any of the given
+// unique keys (same key space as FindByKey/UniqueKey -- un-072: this
+// deliberately reuses the existing key logic rather than introducing a
+// second comparison scheme) and rebuilds the lookup index so FindByKey
+// stays correct afterward. Keys not present are ignored.
+func (l *Lockfile) RemoveKeys(keys []string) {
+	if len(keys) == 0 {
+		return
+	}
+	toRemove := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		toRemove[k] = true
+	}
+
+	kept := l.Dependencies[:0]
+	for i := range l.Dependencies {
+		if !toRemove[l.Dependencies[i].UniqueKey()] {
+			kept = append(kept, l.Dependencies[i])
+		}
+	}
+	l.Dependencies = kept
+
+	l.index = make(map[string]int, len(l.Dependencies))
+	for i := range l.Dependencies {
+		l.index[l.Dependencies[i].UniqueKey()] = i
+	}
 }
