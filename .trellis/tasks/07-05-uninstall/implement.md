@@ -35,16 +35,18 @@ scope:核心 + MCP stale(定案 B);`-g` 報未支援(定案 A)。
 - [ ] 測試:A→B 鏈,uninstall A 且 B 無他人依賴→B 入孤兒;B 另有 parent→保留;多層鏈
 - 驗證:PASS
 
-### 步驟 6 — 目標解析與比對(N6, un-010~018)
+### 步驟 6 — 目標解析與比對(N6, un-010~019)
 - [ ] owner/repo·URL·SSH·FQDN 正規化 + 忽略 ref/alias 的 identity 比對
 - [ ] marketplace 記法:重用 `ParseRef`;新寫 lockfile 離線優先 → registry fallback(--dry-run 跳過)→ supply-chain guard(canonical 不在 lockfile 拒絕);`#ref` 忽略
-- [ ] 測試:五種輸入形狀解析到同 canonical;marketplace 命中 lockfile;supply-chain guard 用會 panic 的 fake registry 證明拒絕先於任何移除;#ref 被忽略;not-found 警告續行;全 not-found 不變更退出
+- [ ] **standalone MCP(un-019,增強)**:apm 套件找不到 → 比對 `dependencies.mcp` server 名稱;命中歸類 MCP-removal 目標
+- [ ] 測試:五種輸入形狀解析到同 canonical;marketplace 命中 lockfile;supply-chain guard 用會 panic 的 fake registry 證明拒絕先於任何移除;#ref 被忽略;not-found 警告續行;全 not-found 不變更退出;`uninstall <mcp-name>` 命中 dependencies.mcp
 - 驗證:PASS(Review Gate A:supply-chain guard 先於移除)
 
-### 步驟 7 — MCP stale 清理(N7, un-060~063, 定案 B)
-- [ ] `stale = old_mcp_servers - new`;各 target 反向移除單一 server(claude/codex/copilot/antigravity/opencode 各自 read→del key→write,擴充既有 merge/write helper 加「移除單一 key」)
-- [ ] 更新 `lockfile.MCPServers = new`
-- [ ] 測試:裝 2 個 MCP server 於多 target,uninstall 貢獻其一的套件→該 server 從各 target 設定檔消失、另一保留;lockfile.MCPServers 更新
+### 步驟 7 — MCP 清理(N7, un-060~065, 定案 B:transitive + standalone)
+- [ ] **共用底層**:各 target(claude/codex/copilot/antigravity/opencode)擴充「read→del 指定 server key→write」路徑
+- [ ] (a) transitive:`stale = old_mcp_servers - new`;走共用底層;`lockfile.MCPServers = new`
+- [ ] (b) standalone(增強):命中 dependencies.mcp 的 server → 從 apm.yml dependencies.mcp 刪條目(對稱 upsertMCPEntry,yamlcore node 級) + 走共用底層 + 從 lockfile.MCPServers 移除
+- [ ] 測試:裝 2 個 MCP server 於多 target,uninstall 貢獻其一的套件→該 server 從各 target 消失、另一保留(transitive);`install --mcp foo`→`uninstall foo`→ apm.yml dependencies.mcp 無 foo、各 target 無 foo、lockfile 更新(standalone);lockfile 舊版無欄位 fail-open
 - 驗證:PASS
 
 ### 步驟 8 — CLI orchestration + dry-run + -g 未支援(N8/N9, un-001~004, un-080~081, un-090/091, un-100~103)

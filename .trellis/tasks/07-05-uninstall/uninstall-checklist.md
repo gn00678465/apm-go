@@ -25,7 +25,8 @@
 | 核心(必做,不可縮) | CLI 介面、目標解析與比對、apm.yml 移除、apm_modules 實體刪除、transitive orphan 清理、**target 反向同步(依 lockfile `deployed_files` 只刪自己部署的檔案 + 兩階段從剩餘套件重新整合)**、lockfile 更新、`--dry-run`、輸出/exit code |
 | 前置缺口(核心的必要基礎) | apm-go 的 `internal/deploy` **目前完全沒有刪檔能力**(只有 additive copy);lockfile 已有 `DeployedFiles`/`DeployedHashes` provenance(install.go:705-717)可精準反向清理。核心的反向同步**建立在新增「依 provenance 刪檔」能力之上**,此為本 task 最大工作量 |
 | **定案 A:`-g/--global` → 本輪不做**(使用者 2026-07-05) | Python 有(user scope `~/.apm/`)。apm-go **完全無 InstallScope/user-scope 概念**(install/update 都寫死 cwd),自成一個子系統大工程。**本輪不做**:`-g` 旗標明確報「未支援」(或不出現),標為 documented deviation;另開 task。→ un-090/091 標延後 |
-| **定案 B:MCP stale 清理 → 本輪納入**(使用者 2026-07-05) | Python 有(`_cleanup_stale_mcp` + `MCPIntegrator.remove_stale`)。apm-go 前置:給 lockfile 加 `mcp_servers` provenance 欄位 + 各 target(claude/codex/copilot/antigravity/opencode)反向移除單一 MCP entry。**納入本輪**(否則留孤兒 MCP 設定=真實正確性缺口)。→ un-060~063 為必做 |
+| **定案 B:MCP 清理 → 本輪納入**(使用者 2026-07-05) | 兩層都做:(1)**transitive stale**(對齊 Python `_cleanup_stale_mcp`,移除套件連帶清其貢獻的 MCP,un-060~063);(2)**standalone MCP 直接移除**(**apm-go 增強,Python 無**):`uninstall <mcp-name>` 移除 `install --mcp` 裝於 `dependencies.mcp` 的 server(un-019/064/065),與 install --mcp 對稱。前置:lockfile 加 `mcp_servers` 欄位 + 各 target 反向移除單一 MCP entry(兩層共用同一底層)。理由:使用者明確要求 uninstall 能移除 install 裝的 mcp;Python 缺此能力(uninstall 只掃 dependencies.apm、mcp 指令組無 remove) |
+| standalone MCP 增強 vs Python | Python `apm uninstall <mcp-name>` 會回「not found」(mcp server 在 dependencies.mcp,uninstall 不掃);apm-go 刻意增強。A/B 對照時此案標為 **documented deviation(apm-go 提供 Python 缺的能力)**,非 parity 失敗 |
 | marketplace 記法 uninstall(`name@marketplace`) | Python 接受(lockfile 離線優先 → registry fallback → supply-chain guard)。`#ref` 片段被忽略。**建議納入**(已有 `ParseRef`/`ResolvePlugin` 可重用),但「lockfile 離線優先 + supply-chain guard」比對邏輯需新寫 |
 | `apm prune` | 文件 Related 提到的姊妹指令(不指名移除孤兒)。**本輪不做**,獨立指令 |
 | 明確不移植 | 無(uninstall.md 未發現原版文件錯誤或真實 bug 需排除);若實作中發現,於對應條目標註 |
@@ -62,6 +63,7 @@
 | [ ] | `un-016` | 文件 | marketplace 記法的 `#ref` 片段**被忽略**(uninstall 只用 canonical name 識別) | `uninstall.md:95-97` |
 | [ ] | `un-017` | 文件 | marketplace ref 完全無法解析(lockfile 與 registry 皆無) → log error + 跳過該套件(不中斷其餘) | `uninstall.md:89` |
 | [ ] | `un-018` | 文件 | **no-lockfile 行為**:無 `apm.lock.yaml` 時 marketplace 記法無離線錨點,supply-chain guard 無法交叉檢查;仍嘗試 registry 解析,canonical 命中 apm.yml 才續行(完整性較弱) | `uninstall.md:99-101` |
+| [ ] | `un-019` | **apm-go 增強** | **standalone MCP 目標解析**:PACKAGE 若在 `dependencies.apm`/`devDependencies.apm` 找不到,再比對 `dependencies.mcp` 的 server `name`(`install --mcp NAME` 寫入處);命中則走 standalone MCP 移除路徑(U6 un-064/065)。解析順序:apm 套件識別優先 → 再 mcp server 名稱。**Python 無此能力**(uninstall 只掃 dependencies.apm、mcp 指令組無 remove),為對稱 `install --mcp` 的刻意增強,A/B 標 documented deviation | apm-go `mcpinstall.go:105,414`(`dependencies.mcp` 寫入);Python 缺 |
 
 ## U2 — apm.yml 移除(源碼)
 
@@ -99,8 +101,9 @@
 | [ ] | `un-054` | 源碼+文件 | **Phase 2(重新整合)**:對 apm.yml 剩餘每個依賴重新 walk primitives 並重新整合——修復「移除套件同時清掉了其他套件也貢獻的共用資源」情境;單一套件重整失敗只 warn 不中斷 | `engine.py:475-690`;`uninstall.md`(隱含) |
 | [ ] | `un-055` | 源碼+文件 | Hooks 反向同步:移除套件貢獻的 hook 條目(`.claude/settings.json`、`.cursor/hooks.json`、`.gemini/settings.json`、`.kiro/hooks/` 等) | `engine.py`;`uninstall.md:82` |
 | [ ] | `un-056` | 源碼 | claude 的 `.claude/skills` 額外複本(見 opencode-mcp session 前的 skills 修正)也要一併反向清理——deployed_files 應已涵蓋兩處 | `deploy/claude.go`(skills 雙寫) |
+| [ ] | `un-057` | 源碼 | **明確覆蓋 install 可部署的全部 primitive 型別**:反向同步必須移除 skills(`.agents/skills/` + claude `.claude/skills/`)、agents、commands、instructions/rules、hooks——凡 install 曾部署、記錄於 `deployed_files` 的,uninstall 皆須反向。測試矩陣須逐型別各含一案(不可只測 skills 就當全覆蓋) | `internal/deploy/*.go`(各 primitive DeployPrimitive) |
 
-## U6 — MCP stale 清理(待定案 B,源碼+文件)
+## U6 — MCP 清理(transitive stale + standalone 直接移除,源碼+文件+**apm-go 增強**)
 
 | ✓ | id | 權威 | 驗證內容 | 對照 |
 |---|----|----|----------|------|
@@ -108,6 +111,8 @@
 | [ ] | `un-061` | 源碼+文件 | 重算 `new_mcp_servers`(剩餘 transitive + root MCP deps),`stale = old - new`,對各 target 設定檔清掉 stale server 條目 | `engine.py:693-724`;`uninstall.md:83` |
 | [ ] | `un-062` | 源碼 | 各 MCP target 反向移除單一 server:claude(`.mcp.json`)、codex(`.codex/config.toml`)、copilot、antigravity(`.agents/mcp_config.json`)、opencode(`opencode.json`)各自讀寫清除 | `mcp_integrator.py:538+`;apm-go `mcp_*.go` |
 | [ ] | `un-063` | 源碼 | 更新 `lockfile.mcp_servers` 為新名單 | `cli.py:261-275`;`mcp_integrator update_lockfile` |
+| [ ] | `un-064` | **apm-go 增強** | **standalone MCP 直接移除(un-019 命中時)**:從 apm.yml 的 `dependencies.mcp` sequence 刪除該 server 條目(對稱 `upsertMCPEntry` 的插入);保留其他 mcp 條目與排版(yamlcore node 級,舊坑 1) | apm-go `mcpinstall.go:414 upsertMCPEntry`;Python 缺 |
+| [ ] | `un-065` | **apm-go 增強** | 反向移除該 server 在各 target 設定檔的 entry(claude/codex/copilot/antigravity/opencode,同 un-062 的 per-target 反向移除路徑);更新 `lockfile.mcp_servers`。與 transitive stale 清理共用同一「per-target 移除單一 server」底層 | apm-go `mcp_*.go`;Python 缺 |
 
 ## U7 — lockfile 更新(源碼+文件)
 
@@ -150,7 +155,9 @@
 | [ ] | `un-V04` | — | **transitive orphan**:A 依賴 B,uninstall A → B 若無他人依賴則刪、有則留 | `un-040/041` |
 | [ ] | `un-V05` | — | **共用資源 Phase 2**:兩套件貢獻同名 skill,uninstall 其一後另一的 skill 仍在(Phase 2 重整還原) | `un-054` |
 | [ ] | `un-V06` | — | **lockfile 清空刪檔**:移除最後一個依賴 → `apm.lock.yaml` 被刪 | `un-071` |
-| [ ] | `un-V07` | — | **A/B 對照** `uv run apm uninstall`:apm.yml/lockfile/apm_modules/各 target 檔案的最終狀態逐項比對;deviation(`-g` 不做、MCP 若延後)明確記錄,非掩蓋 | marketplace A/B 慣例 |
+| [ ] | `un-V09` | — | **skill/agent/command/instruction/hook 各型別往返**:install 一個各型別齊全的套件到多 target,uninstall 後逐型別斷言部署檔案全消(un-057) | `un-057` |
+| [ ] | `un-V10` | — | **standalone MCP 往返(apm-go 增強)**:`install --mcp foo`(寫 dependencies.mcp)→ `uninstall foo` → apm.yml dependencies.mcp 無 foo、各 target MCP 設定檔無 foo、lockfile.mcp_servers 更新;transitive MCP(套件貢獻)另測一案 | `un-019/064/065` |
+| [ ] | `un-V07` | — | **A/B 對照** `uv run apm uninstall`:apm.yml/lockfile/apm_modules/各 target 檔案的最終狀態逐項比對;deviation(`-g` 不做、standalone MCP 移除為 apm-go 增強)明確記錄,非掩蓋 | marketplace A/B 慣例 |
 | [ ] | `un-V08` | — | `go build/vet/test ./...` 全綠,新功能覆蓋 ≥ 80%;每個刪檔路徑有 path-containment 負向測試 | — |
 
 ## 每個 Phase 完成時的自我聲明範本

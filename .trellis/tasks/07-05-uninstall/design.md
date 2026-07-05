@@ -58,15 +58,17 @@ uninstall(packages, --dry-run, -v):
   - `remaining = 剩餘 apm.yml keys ∪ lockfile 中非孤兒非移除的 key`;`actualOrphans = orphans - remaining`。
 - orphan 一併走 N1 刪 apm_modules + deployed_files。
 
-### N6. 目標解析與比對(un-010~018)
+### N6. 目標解析與比對(un-010~019)
 - owner/repo·URL·SSH·FQDN → 既有 `manifest`/`install.go` 的正規化;比對用**忽略 ref/alias 的 identity**(需確認 apm-go 既有 canonical key 是否已忽略 ref;`lockfile` unique key 對照 identity.py)。
 - marketplace 記法 `name@marketplace`:重用 `marketplace.ParseRef`;**新寫**「lockfile 離線優先 → registry fallback(--dry-run 跳過) → supply-chain guard(registry canonical 不在 lockfile 則拒絕)」(對照 engine.py:49-183);`#ref` 忽略(un-016)。
+- **standalone MCP(un-019,apm-go 增強)**:apm 套件識別找不到時,再比對 `dependencies.mcp` 的 server `name`;命中則歸類為 MCP-removal 目標(走 N7 standalone 分支)。解析順序:apm 套件優先 → mcp server 名稱。
 - not-found → 警告續行;全部 not-found → 不變更退出(un-013)。
 
-### N7. MCP stale 清理(un-060~063,定案 B)
-- 新檔/擴充:`old = lockfile.MCPServers`;`new = 剩餘依賴的 MCP deps 名單`;`stale = old - new`。
-- 各 MCP target 反向移除單一 server:對 claude(`.mcp.json`)/codex(`.codex/config.toml`)/copilot/antigravity(`.agents/mcp_config.json`)/opencode(`opencode.json`),讀既有設定 → 刪 stale server key → 寫回(重用各自的 merge/write helper,新增「移除單一 key」路徑)。
-- 更新 `lockfile.MCPServers = new`。
+### N7. MCP 清理(un-060~065,定案 B)——兩層共用「per-target 移除單一 server」底層
+- **共用底層**:各 MCP target(claude `.mcp.json`/codex `.codex/config.toml`/copilot/antigravity `.agents/mcp_config.json`/opencode `opencode.json`)新增「讀既有設定 → 刪指定 server key → 寫回」路徑(擴充各自 merge/write helper)。
+- **(a) transitive stale(un-060~063)**:`old = lockfile.MCPServers`;`new = 剩餘依賴的 MCP deps 名單`;`stale = old - new`;對 stale 走共用底層移除;`lockfile.MCPServers = new`。
+- **(b) standalone 直接移除(un-064~065,apm-go 增強)**:N6 命中 `dependencies.mcp` 的 server 名稱時,從 apm.yml `dependencies.mcp` sequence 刪該條目(對稱 `upsertMCPEntry`,yamlcore node 級保留排版),走共用底層從各 target 移除該 server,並從 `lockfile.MCPServers` 移除。
+- 前置:lockfile 舊版無 `mcp_servers` 欄位時 fail-open(當空集,不誤刪)。
 
 ### N8. dry-run(un-080~081)
 - `dryRunPlan`:步驟 1-3 記憶體版,印將刪 apm.yml 條目 / apm_modules 路徑存否 / orphan BFS 結果;marketplace ref 跳過 registry fallback(un-081)。
