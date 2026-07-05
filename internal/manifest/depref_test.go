@@ -143,6 +143,10 @@ func TestParseDepString_Rejection(t *testing.T) {
 		{"/tmp/malicious", "absolute"},
 		{"just-one-word", "does not match"},
 		{"https://", "requires host"},
+		// mkt-033 negative test (a): apm.yml never accepts the CLI's
+		// PLUGIN@MARKETPLACE shorthand as a dependencies.apm string -- only
+		// the dict form ({name, marketplace, version}) is supported there.
+		{"pkg@mkt", "does not match"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

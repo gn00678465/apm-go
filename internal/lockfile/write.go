@@ -13,6 +13,7 @@ var entryFieldOrder = []string{
 	"repo_url", "host", "port", "source",
 	"resolved_commit", "resolved_ref", "resolved_tag",
 	"resolved_url", "resolved_hash",
+	"discovered_via", "marketplace_plugin_name", "source_url", "source_digest",
 	"constraint", "resolved_at", "resolved_by",
 	"version", "virtual_path", "is_virtual",
 	"tree_sha256", "depth", "content_hash",
@@ -132,21 +133,25 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 
 	// Write fields in canonical order, omitting empty values
 	fields := map[string]string{
-		"repo_url":        dep.RepoURL,
-		"source":          dep.Source,
-		"resolved_commit": dep.ResolvedCommit,
-		"resolved_ref":    dep.ResolvedRef,
-		"resolved_tag":    dep.ResolvedTag,
-		"resolved_url":    dep.ResolvedURL,
-		"resolved_hash":   dep.ResolvedHash,
-		"constraint":      dep.Constraint,
-		"resolved_at":     dep.ResolvedAt,
-		"resolved_by":     dep.ResolvedBy,
-		"version":         dep.Version,
-		"virtual_path":    dep.VirtualPath,
-		"tree_sha256":     dep.TreeSHA256,
-		"content_hash":    "",
-		"local_path":      "",
+		"repo_url":                dep.RepoURL,
+		"source":                  dep.Source,
+		"resolved_commit":         dep.ResolvedCommit,
+		"resolved_ref":            dep.ResolvedRef,
+		"resolved_tag":            dep.ResolvedTag,
+		"resolved_url":            dep.ResolvedURL,
+		"resolved_hash":           dep.ResolvedHash,
+		"discovered_via":          dep.DiscoveredVia,
+		"marketplace_plugin_name": dep.MarketplacePluginName,
+		"source_url":              dep.SourceURL,
+		"source_digest":           dep.SourceDigest,
+		"constraint":              dep.Constraint,
+		"resolved_at":             dep.ResolvedAt,
+		"resolved_by":             dep.ResolvedBy,
+		"version":                 dep.Version,
+		"virtual_path":            dep.VirtualPath,
+		"tree_sha256":             dep.TreeSHA256,
+		"content_hash":            "",
+		"local_path":              "",
 	}
 
 	for _, key := range entryFieldOrder {
@@ -307,6 +312,19 @@ func depSemanticEqual(a, b *LockedDep) bool {
 		a.Version == b.Version &&
 		a.Depth == b.Depth &&
 		a.TreeSHA256 == b.TreeSHA256 &&
+		// Marketplace provenance (mkt-031) participates in semantic equality
+		// (mirrors the Python original's is_semantically_equivalent): a
+		// no-provenance rebuild is NOT a no-op against a provenance-bearing
+		// existing entry, so the no-op check (IsSemanticEqual, called from
+		// deployAndFinalize before writing apm.lock.yaml) doesn't mask a
+		// provenance loss as "Already up to date". mkt-032's carry-forward
+		// (a later step) is what keeps a legitimate rebuild's provenance
+		// identical to what was already locked, so this participation
+		// causes no spurious rewrites in practice.
+		a.DiscoveredVia == b.DiscoveredVia &&
+		a.MarketplacePluginName == b.MarketplacePluginName &&
+		a.SourceURL == b.SourceURL &&
+		a.SourceDigest == b.SourceDigest &&
 		slicesEqual(a.DeployedFiles, b.DeployedFiles) &&
 		mapsEqual(a.DeployedHashes, b.DeployedHashes)
 }
@@ -450,6 +468,8 @@ var knownEntryFields = map[string]bool{
 	"repo_url": true, "source": true,
 	"resolved_commit": true, "resolved_ref": true, "resolved_tag": true,
 	"resolved_url": true, "resolved_hash": true,
+	"discovered_via": true, "marketplace_plugin_name": true,
+	"source_url": true, "source_digest": true,
 	"constraint": true, "resolved_at": true, "resolved_by": true,
 	"version": true, "virtual_path": true,
 	"tree_sha256": true, "depth": true,

@@ -163,22 +163,32 @@ func isGitHubEnterpriseServerHost(host string) bool {
 	return strings.ToLower(host) == ghesHost
 }
 
-// classifySourceHost maps a hostname to KindGitHub/KindGitLab/KindGit.
-// GitHub-family hosts (aligned with Python's is_github_hostname,
-// utils/github_host.py:170-198): github.com, any "*.ghe.com" host (GitHub
-// Enterprise Cloud with data residency), or a host matching GITHUB_HOST (a
-// self-hosted GitHub Enterprise Server) -- all resolve to KindGitHub rather
-// than falling through to the generic KindGit clone path, so they get
-// GitHub's Contents API + PAT auth (client_github.go).
-func classifySourceHost(host string) SourceKind {
+// isGitHubHostname reports whether host should be treated as GitHub (cloud
+// or enterprise): github.com, any "*.ghe.com" host (GitHub Enterprise Cloud
+// with data residency), or a host matching GITHUB_HOST (a self-hosted
+// GitHub Enterprise Server) -- mirrors the Python original's
+// is_github_hostname (utils/github_host.py:170-202). Shared by
+// classifySourceHost (SourceKind derivation) and by the install-ref
+// resolver's non-GitHub-family routing checks (mkt-027/028), so this
+// security-relevant host classification has a single source of truth
+// instead of drifting across call sites.
+func isGitHubHostname(host string) bool {
 	h := strings.ToLower(host)
 	if h == "github.com" || strings.HasSuffix(h, ".ghe.com") {
+		return true
+	}
+	return isGitHubEnterpriseServerHost(host)
+}
+
+// classifySourceHost maps a hostname to KindGitHub/KindGitLab/KindGit.
+// GitHub-family hosts (isGitHubHostname) resolve to KindGitHub rather than
+// falling through to the generic KindGit clone path, so they get GitHub's
+// Contents API + PAT auth (client_github.go).
+func classifySourceHost(host string) SourceKind {
+	if isGitHubHostname(host) {
 		return KindGitHub
 	}
-	if isGitHubEnterpriseServerHost(host) {
-		return KindGitHub
-	}
-	if isGitLabFamilyHost(h) {
+	if isGitLabFamilyHost(strings.ToLower(host)) {
 		return KindGitLab
 	}
 	return KindGit

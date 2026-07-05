@@ -62,6 +62,29 @@ func Resolve(
 				maxDepth, strings.Join(entry.chain, " -> "))
 		}
 
+		// mkt-029/033: a Source=="marketplace" dependency (an apm.yml dict
+		// entry {name, marketplace, version}, root or transitive alike) is
+		// collapsed into an ordinary git/local dependency BEFORE any of the
+		// BFS's own key-based bookkeeping below runs -- its placeholder
+		// RepoURL ("_marketplace/<mkt>/<name>") has no real repository
+		// identity to dedupe/pin against. Once collapsed, entry.ref is an
+		// ordinary dependency for the rest of this loop iteration (and any
+		// re-enqueue) -- ClassifyReference below will never again see
+		// KindMarketplace for it.
+		if entry.ref.Source == "marketplace" {
+			resolved, provenance, err := resolveMarketplaceEntry(cfg.MarketplaceResolve, entry.ref)
+			if err != nil {
+				return nil, err
+			}
+			entry.ref = resolved
+			if provenance != nil {
+				if result.MarketplaceProvenance == nil {
+					result.MarketplaceProvenance = map[string]*MarketplaceProvenance{}
+				}
+				result.MarketplaceProvenance[depKey(resolved)] = provenance
+			}
+		}
+
 		key := depKey(entry.ref)
 		kind := ClassifyReference(entry.ref)
 
@@ -236,6 +259,43 @@ func invalidateChildren(
 		delete(depRefs, childKey)
 		invalidateChildren(childKey, childrenOf, depOrder, kinds, constraints, pins, pinRefs, depDepth, depRefs, processed)
 	}
+}
+
+// resolveMarketplaceEntry collapses a single Source=="marketplace" dep via
+// resolveFn (mkt-029/033). A nil resolveFn (an existing caller that hasn't
+// been updated to wire ResolverConfig.MarketplaceResolve) is a hard error --
+// fail loud rather than silently falling through to the old, wrong
+// default-case handling (a bogus "_marketplace/..." RepoURL reaching
+// PackageLoader/TagLister). resolveFn itself returning an unresolved
+// marketplace dep back (Source still "marketplace") is likewise treated as
+// an error rather than looping forever or being silently accepted.
+func resolveMarketplaceEntry(resolveFn MarketplaceResolveFunc, dep *manifest.DependencyReference) (*manifest.DependencyReference, *MarketplaceProvenance, error) {
+	if resolveFn == nil {
+		return nil, nil, fmt.Errorf(
+			"cannot resolve marketplace dependency %q (marketplace %q): no marketplace resolver configured",
+			dep.MarketplacePluginName, dep.MarketplaceName,
+		)
+	}
+	resolved, provenance, err := resolveFn(dep)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"resolve marketplace dependency %q (marketplace %q): %w",
+			dep.MarketplacePluginName, dep.MarketplaceName, err,
+		)
+	}
+	if resolved == nil {
+		return nil, nil, fmt.Errorf(
+			"marketplace resolver returned no dependency for %q (marketplace %q)",
+			dep.MarketplacePluginName, dep.MarketplaceName,
+		)
+	}
+	if resolved.Source == "marketplace" {
+		return nil, nil, fmt.Errorf(
+			"marketplace resolver returned an unresolved marketplace dependency for %q (marketplace %q)",
+			dep.MarketplacePluginName, dep.MarketplaceName,
+		)
+	}
+	return resolved, provenance, nil
 }
 
 func checkNestRejection(m *manifest.Manifest) error {

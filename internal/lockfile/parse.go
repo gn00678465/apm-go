@@ -176,6 +176,14 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 					d.DeployedHashes[val.Content[j].Value] = val.Content[j+1].Value
 				}
 			}
+		case "discovered_via":
+			d.DiscoveredVia = val.Value
+		case "marketplace_plugin_name":
+			d.MarketplacePluginName = val.Value
+		case "source_url":
+			d.SourceURL = val.Value
+		case "source_digest":
+			d.SourceDigest = val.Value
 		}
 	}
 

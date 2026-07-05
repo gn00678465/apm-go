@@ -130,7 +130,7 @@ func TestBuildLockfile_SkillSubsetScopedToRequestedDep(t *testing.T) {
 	}
 	requestedKeys := map[string]bool{"acme/foo": true}
 
-	lock, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, requestedKeys, true)
+	lock, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, requestedKeys, true, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestBuildLockfile_SkillSubsetNoMatch_Errors(t *testing.T) {
 		},
 	}
 
-	_, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, map[string]bool{}, true)
+	_, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, map[string]bool{}, true, nil)
 	if err == nil {
 		t.Fatal("expected an error when --skill's requestedKeys match no resolved dependency")
 	}
@@ -188,7 +188,7 @@ func TestBuildLockfile_SkillSubsetPartialMatch_Errors(t *testing.T) {
 	}
 	requestedKeys := map[string]bool{"acme/good": true, "acme/collided/sub": true}
 
-	_, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, requestedKeys, true)
+	_, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, requestedKeys, true, nil)
 	if err == nil {
 		t.Fatal("expected an error when one of two requested keys never resolved into the graph")
 	}

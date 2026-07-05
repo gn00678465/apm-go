@@ -86,6 +86,13 @@ type Resolution struct {
 10. shadow 偵測(mkt-034b):逐一走訪**其他**已註冊 marketplace(排除當前者,名稱比對不分大小寫),`fetch_or_cache` 語意找同名 plugin → 警告;任何錯誤吞掉(不得中斷安裝)。
     **注意(gaps A7)**:原版靠 manifest 快取讓這一步「通常零額外網路」;Go 版 consumer MVP 沒有快取層,shadow 偵測會對每個其他登錄項做一次 live fetch——行為正確但變慢。設計決定:仍照做(語意優先),每個 fetch 沿用既有 timeout,失敗靜默;若之後補快取層自然改善。不因效能砍掉這個安全警告。
 
+## 已知刻意行為(2026-07 adversarial 複審發現,對齊 Python,非 bug)
+
+複審過程中發現兩個 mkt-027 鄰近行為,乍看像 bug,實為刻意的 Python parity——記錄於此避免日後被誤判成缺陷而重工:
+
+- **B-A:pluginRoot backfill 只在其中一個 canonical builder 生效**:`resolve_plugin.go::extractInRepoPathAndRef` 的 `pluginRoot`(`metadata.pluginRoot`)回填邏輯只出現在 `case string:` 分支(plugin 用相對路徑字串宣告 source 時,`rel = root + "/" + rel`);`case map[string]any:`(dict source,`github`/`git-subdir`/`gitlab` 型別)完全不套用 `pluginRoot`。這不是漏寫——dict source 的 `path`/`subdir` 欄位語意上已經是相對 repo root 的顯式路徑,`pluginRoot` 這個「裸名稱 plugin 放在哪個子目錄下」的概念只對「裸相對路徑字串」形式的 source 有意義,對齊原版 `_extract_in_repo_path_and_ref`(resolver.py:406-460)同樣的不對稱行為。**不要**讓兩個分支對 pluginRoot 的處理「看起來一致」而改動 dict 分支。
+- **B-B:`version_spec` 對已產生結構化 DepRef 的路徑會被整段略過**:`ResolvePlugin` 內 `if opts.VersionSpec != "" && depRef == nil { ... applyVersionSpec ... }`——一旦 mkt-027 已經算出結構化 `DepRef`(非 GitHub 家族 host 的 in-marketplace 子目錄 plugin),CLI 的 `#REF` 後綴或 apm.yml dict 的 `version:` 欄位會被**靜默忽略**,不報錯也不警告。這對齊原版 `if version_spec and dep_ref is None`(resolver.py 同區塊)的行為,不是遺漏。使用者對這類 plugin 指定 version_spec 目前沒有效果——是已知、刻意的行為落差,非本任務範圍,不要在這個子任務裡「順手修掉」。
+
 ## apm.yml dict 形式(mkt-033)
 
 **接線點(gaps B1)**:`internal/manifest/depref.go::ParseDepDict`(280 行起)——仿照既有 `keys["id"]`/`keys["git"]`/`keys["path"]` 分支模式(`git: parent` 分支約 320 行可當範本)加一個 `if keys["marketplace"]` 分支,**不另寫平行解析器**。`DependencyReference` 沿用既有 `Source: "marketplace"` 分類欄位(`depref.go:26` 註解已預留),新增 `MarketplaceName`/`MarketplacePluginName`/`MarketplaceVersionSpec` 三個欄位。

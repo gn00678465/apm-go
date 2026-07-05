@@ -25,6 +25,16 @@ type DependencyReference struct {
 	Scheme       string // "https", "http", "ssh", "git" (SCP)
 	Source       string // "git", "registry", "local", "marketplace", "" (inferred)
 	RegistryName string // registry name for source=="registry" (empty = use default)
+
+	// Marketplace* fields (mkt-033) are only ever set for Source=="marketplace"
+	// -- an apm.yml dependencies.apm dict entry of the form {name, marketplace,
+	// version} straight out of ParseDepDict, still unresolved. RepoURL for
+	// such an entry is the "_marketplace/<marketplace>/<name>" placeholder
+	// (mirrors the Python original's DependencyReference.to_apm_yml_entry
+	// dedup key), not a real repository coordinate.
+	MarketplaceName        string // registered marketplace name (dict "marketplace:" key), case preserved
+	MarketplacePluginName  string // plugin name within that marketplace (dict "name:" key), case preserved
+	MarketplaceVersionSpec string // dict "version:" key verbatim; "" if absent. Parse time performs no semver/format validation (mkt-033)
 }
 
 var virtualFileExtensions = []string{
@@ -288,6 +298,61 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 		}
 	}
 
+	// mkt-033: the marketplace branch MUST be checked before every other
+	// branch below, including "name" -- a marketplace dict entry
+	// ({name, marketplace, version}) always carries a "name" key, and the
+	// existing `keys["name"]` branch a few lines down would otherwise
+	// silently swallow it as a plain git-literal RepoURL (see depref.go's
+	// git-literal "name" branch); that shadowing is exactly what the
+	// mkt-033 branch-order regression test below locks down.
+	if keys["marketplace"] {
+		if keys["git"] || keys["path"] || keys["registry"] || keys["id"] {
+			return nil, fmt.Errorf("dependency entry %d: Ambiguous dependency - 'marketplace' cannot be combined with 'git', 'path', 'registry', or 'id'", idx)
+		}
+		for k := range keys {
+			switch k {
+			case "name", "marketplace", "version":
+				// allowed
+			default:
+				return nil, fmt.Errorf("dependency entry %d: unknown key %q for a marketplace dependency (allowed: name, marketplace, version)", idx, k)
+			}
+		}
+
+		// name is required, checked before the regex validation below, with
+		// its own dedicated error message (mirrors reference.py:763-766).
+		name := strings.TrimSpace(kv["name"])
+		if name == "" {
+			return nil, fmt.Errorf("dependency entry %d: Marketplace dependency must have a non-empty 'name' field", idx)
+		}
+		mkt := strings.TrimSpace(kv["marketplace"])
+
+		// name/marketplace are only stripped, never lowercased -- case
+		// insensitivity happens later at plugin-lookup time, not at parse
+		// time (mkt-033: "大小寫保留").
+		if !segmentRe.MatchString(name) {
+			return nil, fmt.Errorf("dependency entry %d: invalid marketplace plugin name %q", idx, name)
+		}
+		if !segmentRe.MatchString(mkt) {
+			return nil, fmt.Errorf("dependency entry %d: invalid marketplace name %q", idx, mkt)
+		}
+
+		// version is optional; when present it must be non-empty, but parse
+		// time performs no format/semver validation at all (range legality
+		// is deferred to resolve time, mirrors reference.py:781-785).
+		version := kv["version"]
+		if keys["version"] && strings.TrimSpace(version) == "" {
+			return nil, fmt.Errorf("dependency entry %d: marketplace dependency 'version' must be a non-empty string when present", idx)
+		}
+
+		return &DependencyReference{
+			RepoURL:                "_marketplace/" + mkt + "/" + name,
+			Source:                 "marketplace",
+			MarketplaceName:        mkt,
+			MarketplacePluginName:  name,
+			MarketplaceVersionSpec: version,
+		}, nil
+	}
+
 	if keys["id"] && keys["git"] {
 		return nil, fmt.Errorf("dependency entry %d has both 'id' and 'git' keys", idx)
 	}
@@ -367,7 +432,23 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("dependency entry %d has no source key (git, id, path, or name)", idx)
+	return nil, fmt.Errorf("dependency entry %d has no source key (git, id, path, name, or marketplace)", idx)
+}
+
+// ValidateResolved returns an error if d is still an unresolved marketplace
+// dependency (Source=="marketplace") -- mkt-030's "resolve before persist"
+// invariant. A dependencies.apm dict entry ({name, marketplace, version})
+// only ever comes out of ParseDepDict in this state; before any code path
+// writes a DependencyReference back into apm.yml it must first be collapsed
+// into an ordinary git/local reference via marketplace.ResolvePlugin
+// (mkt-029). Mirrors the Python original's raise ValueError guard in
+// to_apm_yml_entry() -- an unresolved marketplace ref must never be
+// serialized.
+func (d *DependencyReference) ValidateResolved() error {
+	if d.Source == "marketplace" {
+		return fmt.Errorf("cannot write unresolved marketplace dependency %q (marketplace %q) to apm.yml; resolve it via ResolvePlugin first", d.MarketplacePluginName, d.MarketplaceName)
+	}
+	return nil
 }
 
 // ToCanonical returns the canonical form of a dependency reference.

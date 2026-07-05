@@ -19,6 +19,16 @@ type LockedDep struct {
 	SkillSubset    []string
 	DeployedFiles  []string
 	DeployedHashes map[string]string // path -> hash
+
+	// Marketplace provenance (mkt-031): purely additive metadata recording
+	// that this dependency was discovered via `apm install
+	// PLUGIN@MARKETPLACE[#REF]` (or the apm.yml dict form). Deliberately NOT
+	// consulted by UniqueKey() -- dependency identity stays RepoURL/
+	// VirtualPath only, matching the Python original's get_unique_key().
+	DiscoveredVia         string // registered marketplace name
+	MarketplacePluginName string // plugin name within that marketplace (manifest casing preserved)
+	SourceURL             string // only set when the marketplace is kind=url
+	SourceDigest          string // only set when the marketplace is kind=url
 }
 
 // UniqueKey returns the dedup/lookup key for a locked dependency.

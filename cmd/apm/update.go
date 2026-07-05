@@ -10,6 +10,7 @@ import (
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/marketplace"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -126,17 +127,26 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 		}
 	}
 
+	// mkt-029/033/F1: same BFS-level marketplace-dict resolution as
+	// runInstall -- an apm.yml dependencies.apm dict entry
+	// ({name, marketplace, version}) must resolve identically whether
+	// reached via `apm install` or `apm update`.
+	resolverCfg := resolver.ResolverConfig{MarketplaceResolve: newMarketplaceResolveFunc()}
+
 	var result *resolver.ResolutionResult
 	if pkg == "" {
-		result, err = resolver.PlanFullUpdate(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{})
+		result, err = resolver.PlanFullUpdate(m, existingLock, deps.tags, regLoader, resolverCfg)
 	} else {
-		result, err = resolver.PlanScopedUpdate(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{}, pkg, frozen)
+		result, err = resolver.PlanScopedUpdate(m, existingLock, deps.tags, regLoader, resolverCfg, pkg, frozen)
 	}
 	if err != nil {
 		return fmt.Errorf("update: %w", err)
 	}
 
-	newLock, err := buildLockfile(result, existingLock, regLoader, nil, nil, false)
+	marketplaceProvenance := make(map[string]*marketplace.Provenance)
+	mergeMarketplaceProvenance(marketplaceProvenance, result.MarketplaceProvenance)
+
+	newLock, err := buildLockfile(result, existingLock, regLoader, nil, nil, false, marketplaceProvenance)
 	if err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -18,6 +19,7 @@ import (
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/marketplace"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -194,15 +196,28 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// (whether newly added or already declared), so --skill can later be
 	// scoped to only these dependencies instead of the whole resolved graph.
 	requestedKeys := make(map[string]bool)
+	marketplaceProvenance := make(map[string]*marketplace.Provenance)
+	// persistPackages mirrors packages 1:1 for the persistPackagesToManifest
+	// call in deployAndFinalize below, substituting each marketplace
+	// reference's RESOLVED canonical for the raw CLI string (mkt-030): the
+	// raw "PLUGIN@MARKETPLACE[#REF]" string isn't even re-parseable by
+	// manifest.ParseDepString (it has no "/", so it can't fall through as a
+	// git shorthand either) -- persisting it verbatim would leave apm.yml
+	// broken for the very next `apm install`. Non-marketplace packages are
+	// carried through unchanged, preserving today's exact persisted form.
+	persistPackages := make([]string, 0, len(packages))
 	if len(packages) > 0 {
 		existing := make(map[string]bool)
 		for _, d := range m.ParsedDeps {
 			existing[d.RepoURL] = true
 		}
 		for _, pkg := range packages {
-			ref, err := manifest.ParseDepString(pkg)
+			ref, provenance, err := resolvePositionalPackage(pkg)
 			if err != nil {
 				return fmt.Errorf("parse package %q: %w", pkg, err)
+			}
+			if err := validatePersistableRef(pkg, ref); err != nil {
+				return err
 			}
 			if ref.IsLocal {
 				ref.IsLocal = false
@@ -210,7 +225,23 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 				ref.LocalPath = ""
 				ref.Source = "git"
 			}
-			requestedKeys[deploy.DepRefKey(ref)] = true
+			key := deploy.DepRefKey(ref)
+			requestedKeys[key] = true
+			persistPkg := pkg
+			if provenance != nil {
+				marketplaceProvenance[key] = provenance
+				canonical := ref.ToCanonical(m.DefaultHost)
+				if filepath.IsAbs(canonical) {
+					// mkt-025's local-marketplace fast path resolves to an
+					// absolute filesystem path, which (like any absolute
+					// path) has no apm.yml dependency-string representation
+					// in this schema -- fail closed rather than write a
+					// string apm.yml can never parse back.
+					return fmt.Errorf("cannot add package %q to apm.yml: it resolved to a local filesystem path (%s), which has no apm.yml dependency-string form", pkg, canonical)
+				}
+				persistPkg = canonical
+			}
+			persistPackages = append(persistPackages, persistPkg)
 			if existing[ref.RepoURL] {
 				continue
 			}
@@ -455,26 +486,42 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			MaxEntries:      deps.maxEntries,
 		}
 
-		result, err = resolver.Resolve(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{})
+		result, err = resolver.Resolve(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{
+			MarketplaceResolve: newMarketplaceResolveFunc(),
+		})
 		if err != nil {
 			return fmt.Errorf("resolve: %w", err)
 		}
+		// mkt-029/033/F1: apm.yml dict-form marketplace dependencies
+		// (dependencies.apm entries {name, marketplace, version}) are
+		// resolved by the BFS itself now (root and transitive alike), not
+		// just the CLI PLUGIN@MARKETPLACE positional-argument path above --
+		// merge their provenance into the same map buildLockfile consults.
+		mergeMarketplaceProvenance(marketplaceProvenance, result.MarketplaceProvenance)
 	}
 
 	// 5. Build lockfile
-	newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, requestedKeys, noProvenance)
+	newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, requestedKeys, noProvenance, marketplaceProvenance)
 	if err != nil {
 		return err
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, packages, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, persistPackages, result, newLock, existingLock, existingNode, node)
+}
+
+// hasMarketplaceProvenance reports whether any of the four mkt-031
+// marketplace provenance fields are populated on a locked dependency, used by
+// buildLockfile's mkt-032 carry-forward to decide whether an existing
+// lockfile entry has anything worth copying forward.
+func hasMarketplaceProvenance(d *lockfile.LockedDep) bool {
+	return d.DiscoveredVia != "" || d.MarketplacePluginName != "" || d.SourceURL != "" || d.SourceDigest != ""
 }
 
 // buildLockfile converts a resolution result into the lockfile that would be
 // written for it, without touching disk (steps 5). Shared by runInstall and
 // runUpdate so both build the same lockfile shape from a resolution result.
-func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset []string, requestedKeys map[string]bool, noProvenance bool) (*lockfile.Lockfile, error) {
+func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset []string, requestedKeys map[string]bool, noProvenance bool, marketplaceProvenance map[string]*marketplace.Provenance) (*lockfile.Lockfile, error) {
 	existingVersion := ""
 	if existingLock != nil {
 		existingVersion = existingLock.Version
@@ -509,6 +556,39 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 				ld.ResolvedURL = r.ResolvedURL
 				ld.ResolvedHash = r.ResolvedHash
 				ld.Version = r.Version
+			}
+		}
+
+		// mkt-031: marketplace provenance is purely additive metadata,
+		// attached only to the dependency a CLI `PLUGIN@MARKETPLACE[#REF]`
+		// argument actually resolved to (keyed the same way requestedKeys
+		// is, via deploy.DepRefKey/resolver's own depKey). source_url/
+		// source_digest stay "" unless that marketplace was kind=url --
+		// Provenance already only ever carries them in that case.
+		//
+		// mkt-032 (Go variant, see design.md's "mkt-032 修正" section):
+		// buildLockfile rebuilds every LockedDep from scratch on EVERY call,
+		// including a bare `apm install` that never re-supplies a
+		// marketplace CLI ref. Without a fallback, a dependency discovered
+		// via `PLUGIN@MARKETPLACE` on a prior call would silently lose its
+		// provenance the instant it's rebuilt without that CLI arg present
+		// again -- the from-scratch-rebuild-shaped equivalent of the Python
+		// original's known data-loss bug. When this call's own resolution
+		// carried no fresh provenance for the dep, carry the four fields
+		// forward from the existing lockfile entry sharing the same
+		// identity (UniqueKey() -- RepoURL/VirtualPath -- NOT
+		// marketplaceProvenance's dep.Key, which is call-scoped).
+		if p := marketplaceProvenance[dep.Key]; p != nil {
+			ld.DiscoveredVia = p.DiscoveredVia
+			ld.MarketplacePluginName = p.MarketplacePluginName
+			ld.SourceURL = p.SourceURL
+			ld.SourceDigest = p.SourceDigest
+		} else if existingLock != nil {
+			if existing := existingLock.FindByKey(ld.UniqueKey()); existing != nil && hasMarketplaceProvenance(existing) {
+				ld.DiscoveredVia = existing.DiscoveredVia
+				ld.MarketplacePluginName = existing.MarketplacePluginName
+				ld.SourceURL = existing.SourceURL
+				ld.SourceDigest = existing.SourceDigest
 			}
 		}
 
@@ -819,6 +899,76 @@ func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string
 	}
 
 	return nil
+}
+
+// resolvePositionalPackage parses a single `apm install` positional package
+// argument, recognizing the mkt-020/021 CLI syntax
+// "PLUGIN@MARKETPLACE[#REF]" via marketplace.ParseRef before falling back to
+// the ordinary dependency-string parser (manifest.ParseDepString) --
+// design.md's "interception layer decision": marketplace.ParseRef is the
+// ONLY place CLI package-argument parsing may decide something is a
+// marketplace reference (mkt-029); this function must never grow its own
+// parallel "/" or ":" pre-check.
+//
+// The returned Provenance is non-nil only when pkg was recognized as a
+// marketplace reference; callers attach it to the resulting dependency's
+// lockfile entry (mkt-031), keyed the same way as requestedKeys.
+func resolvePositionalPackage(pkg string) (*manifest.DependencyReference, *marketplace.Provenance, error) {
+	plugin, mkt, ref, ok, err := marketplace.ParseRef(pkg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		d, err := manifest.ParseDepString(pkg)
+		return d, nil, err
+	}
+
+	res, err := marketplace.ResolvePlugin(context.Background(), plugin, mkt, marketplace.ResolveOptions{VersionSpec: ref})
+	if err != nil {
+		return nil, nil, err
+	}
+	// mkt-034: ref-swap-pin/shadow advisories are never blocking -- surface
+	// them and keep going.
+	for _, w := range res.Warnings {
+		fmt.Fprintf(os.Stderr, "[!] %s\n", w)
+	}
+
+	// mkt-027: a structured DepRef (a non-GitHub-family host's
+	// in-marketplace subdirectory plugin) always wins over parsing
+	// Canonical -- it already carries the decisions Canonical alone
+	// couldn't represent unambiguously.
+	if res.DepRef != nil {
+		return res.DepRef, res.Provenance, nil
+	}
+
+	d, err := depRefFromMarketplaceCanonical(res.Canonical)
+	if err != nil {
+		return nil, nil, err
+	}
+	return d, res.Provenance, nil
+}
+
+// depRefFromMarketplaceCanonical parses a marketplace.Resolution's Canonical
+// string through the SAME pipeline an ordinary positional package argument
+// already goes through (manifest.ParseDepString), with one necessary
+// extension: mkt-025's local-marketplace fast path produces an ABSOLUTE
+// local filesystem path (marketplace `add`'s SOURCE parser always
+// canonicalizes via filepath.Abs), which ParseDepString itself rejects
+// outright ("dependency path %q is absolute; only relative paths are
+// allowed") -- a restriction aimed at hand-written apm.yml/CLI strings, not
+// at an internally-computed marketplace canonical. Handled the same way
+// runInstall already normalizes an ordinary local positional package
+// (resolvePositionalPackage's caller): forced straight into a "git" source
+// pointing at that path, never ParseDepString's own "local" dependency kind.
+func depRefFromMarketplaceCanonical(canonical string) (*manifest.DependencyReference, error) {
+	if filepath.IsAbs(canonical) {
+		return &manifest.DependencyReference{RepoURL: canonical, Source: "git"}, nil
+	}
+	d, err := manifest.ParseDepString(canonical)
+	if err != nil {
+		return nil, fmt.Errorf("marketplace canonical %q: %w", canonical, err)
+	}
+	return d, nil
 }
 
 func kindToSource(k resolver.ReferenceKind) string {
