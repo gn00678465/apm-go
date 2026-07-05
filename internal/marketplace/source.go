@@ -62,6 +62,9 @@ func ParseMarketplaceSource(raw, host string) (*MarketplaceSource, error) {
 	if raw == "" {
 		return nil, fmt.Errorf("marketplace source must not be empty")
 	}
+	if err := rejectControlCharacters(raw); err != nil {
+		return nil, err
+	}
 
 	if looksLikeLocalPath(raw) {
 		return parseLocalSource(raw, host)
@@ -73,12 +76,25 @@ func ParseMarketplaceSource(raw, host string) (*MarketplaceSource, error) {
 		return nil, fmt.Errorf("marketplace source does not support http://; use https:// or a schemeless OWNER/REPO form")
 	}
 	if m := scpLikeSourceRe.FindStringSubmatch(raw); m != nil {
-		return parseSCPSource(raw, m[1], host), nil
+		return parseSCPSource(raw, m[1], host)
 	}
 	if strings.HasPrefix(strings.ToLower(raw), "https://") {
 		return parseHTTPSSource(raw, host)
 	}
 	return parseShorthandSource(raw, host)
+}
+
+// rejectControlCharacters mirrors the Python original's control-character
+// guard (__init__.py:280-281): any rune below 0x20 (space) anywhere in the
+// raw SOURCE string is rejected outright, before any shape-specific
+// parsing runs.
+func rejectControlCharacters(raw string) error {
+	for _, r := range raw {
+		if r < 0x20 {
+			return fmt.Errorf("marketplace source contains invalid control characters")
+		}
+	}
+	return nil
 }
 
 // parseLocalSource implements design.md rule 1. --host is meaningless for a
@@ -137,8 +153,13 @@ func resolveLocalPath(raw string) (string, error) {
 }
 
 // parseSCPSource implements design.md rule 3. sshHost is the host segment
-// scpLikeSourceRe already extracted from raw.
-func parseSCPSource(raw, sshHost, hostOverride string) *MarketplaceSource {
+// scpLikeSourceRe already extracted from raw. mkt B3 parity: the path
+// segment(s) after "user@host:" are validated for traversal markers the
+// same way an https:// URL's path segments are (__init__.py:303-304).
+func parseSCPSource(raw, sshHost, hostOverride string) (*MarketplaceSource, error) {
+	if err := validateSCPPathSegments(raw, "marketplace SSH path"); err != nil {
+		return nil, err
+	}
 	src := &MarketplaceSource{
 		URL:  raw,
 		Ref:  defaultSourceRef,
@@ -152,7 +173,25 @@ func parseSCPSource(raw, sshHost, hostOverride string) *MarketplaceSource {
 	if hostOverride != "" && !strings.EqualFold(hostOverride, sshHost) {
 		warnHostIgnored(hostOverride, fmt.Sprintf("does not match the SSH remote host %q", sshHost))
 	}
-	return src
+	return src, nil
+}
+
+// validateSCPPathSegments validates every "/"-separated segment of the path
+// portion of an SCP-style remote (the part after the first ":") for
+// traversal markers. Unlike splitOwnerRepoFromSCPPath, this validates the
+// raw segments verbatim (no ".git" suffix stripping), matching Python's
+// validation-before-parsing order.
+func validateSCPPathSegments(raw, context string) error {
+	idx := strings.Index(raw, ":")
+	if idx < 0 {
+		return nil
+	}
+	for _, seg := range nonEmptySegments(raw[idx+1:]) {
+		if err := validateSourcePathSegment(seg, context); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // splitOwnerRepoFromSCPPath extracts owner/repo from the path segment of an

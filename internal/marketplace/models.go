@@ -273,53 +273,136 @@ type MarketplaceManifest struct {
 //
 //   - "owner" may be a plain string or an object; the object form's "name"
 //     key is the owner name (Claude Code manifests use the object form).
+//   - "plugins" that is not a JSON array (an object/string/number) is
+//     tolerated as an empty plugin list rather than a hard error, mirroring
+//     Python's warn-and-treat-as-empty fallback (:491-497); a non-object
+//     element inside a valid "plugins" array is skipped, not fatal (:501-502).
 //   - Plugins may use the Copilot CLI shape ("repository": "owner/repo"
 //     [+ "ref"]) instead of "source"; a github-typed source map is
-//     synthesized. Entries with neither, or without a name, are dropped.
+//     synthesized. Entries with neither, or without a name, are dropped. A
+//     "source" present but neither a string nor an object (e.g. a number or
+//     array) drops the entry, mirroring the "unrecognized source format"
+//     branch (:387-389).
 //   - A plugin whose source map declares type/source == "npm" is dropped at
 //     parse time (mkt-026 dual-layer: the "kind: npm" variant is NOT
 //     dropped here -- it is rejected later at source-resolution time).
-//   - metadata.pluginRoot is captured into PluginRoot.
+//   - A non-array "tags" value is coerced to empty rather than rejected
+//     (:367); a non-string "version" is ignored rather than rejected.
+//   - metadata.pluginRoot is captured into PluginRoot; a non-object
+//     "metadata" or a non-string "pluginRoot" is tolerated as "" rather
+//     than rejected.
 func (m *MarketplaceManifest) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Name     string          `json:"name"`
 		Owner    json.RawMessage `json:"owner"`
-		Plugins  []rawPlugin     `json:"plugins"`
-		Metadata struct {
-			PluginRoot string `json:"pluginRoot"`
-		} `json:"metadata"`
+		Plugins  json.RawMessage `json:"plugins"`
+		Metadata json.RawMessage `json:"metadata"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	m.Name = raw.Name
-	m.PluginRoot = strings.TrimSpace(raw.Metadata.PluginRoot)
+	m.PluginRoot = parseManifestPluginRoot(raw.Metadata)
 	m.Owner = parseManifestOwner(raw.Owner)
-	m.Plugins = nil
-	for _, rp := range raw.Plugins {
-		if p, ok := rp.normalize(); ok {
-			m.Plugins = append(m.Plugins, p)
-		}
-	}
+	m.Plugins = parseManifestPlugins(raw.Plugins)
 	return nil
 }
 
+// parseManifestPluginRoot extracts metadata.pluginRoot tolerantly: a
+// "metadata" that is not a JSON object, or a "pluginRoot" that is not a
+// JSON string, both downgrade to "" rather than failing the parse --
+// mirrors Python's isinstance(metadata, dict) / isinstance(raw_root, str)
+// guards (models.py:486-489).
+func parseManifestPluginRoot(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var obj struct {
+		PluginRoot json.RawMessage `json:"pluginRoot"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(rawStringField(obj.PluginRoot))
+}
+
+// parseManifestPlugins extracts the "plugins" array tolerantly: a value
+// that is not a JSON array (object/string/number) is treated as an empty
+// list rather than a hard error, mirroring Python's warn-and-treat-as-empty
+// fallback (models.py:491-497). Each array element that is not a JSON
+// object -- or whose fields don't decode into rawPlugin at all -- is
+// skipped rather than failing the whole document (:501-502).
+func parseManifestPlugins(raw json.RawMessage) []MarketplacePlugin {
+	if len(raw) == 0 {
+		return nil
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil
+	}
+	var plugins []MarketplacePlugin
+	for _, entry := range entries {
+		var rp rawPlugin
+		if err := json.Unmarshal(entry, &rp); err != nil {
+			continue
+		}
+		if p, ok := rp.normalize(); ok {
+			plugins = append(plugins, p)
+		}
+	}
+	return plugins
+}
+
 // rawPlugin is a plugin entry as found on disk, before Copilot-shape
-// synthesis and npm-source dropping.
+// synthesis and npm-source dropping. Version and Tags are decoded as raw
+// JSON (rather than string / []string directly) so a wrong-shaped value
+// (e.g. a numeric "version" or a string "tags") downgrades to "ignored"
+// instead of failing this entry's decode -- mirrors Python's tolerant
+// entry.get(...)/isinstance(...) field access (models.py:365-367).
 type rawPlugin struct {
-	Name        string   `json:"name"`
-	Source      any      `json:"source"`
-	Repository  string   `json:"repository"`
-	Ref         string   `json:"ref"`
-	Description string   `json:"description"`
-	Version     string   `json:"version"`
-	Tags        []string `json:"tags"`
-	Registry    string   `json:"registry"`
+	Name        string          `json:"name"`
+	Source      any             `json:"source"`
+	Repository  string          `json:"repository"`
+	Ref         string          `json:"ref"`
+	Description string          `json:"description"`
+	Version     json.RawMessage `json:"version"`
+	Tags        json.RawMessage `json:"tags"`
+	Registry    string          `json:"registry"`
+}
+
+// rawStringField extracts a JSON string field tolerantly: any other JSON
+// type (number, object, array, bool, or an absent field) downgrades to ""
+// rather than an error.
+func rawStringField(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
+}
+
+// rawStringSliceField extracts a JSON string-array field tolerantly: any
+// other JSON type (or an absent field) is coerced to an empty slice --
+// mirrors Python's `tuple(raw_tags) if isinstance(raw_tags, list) else ()`
+// (models.py:367).
+func rawStringSliceField(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var s []string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil
+	}
+	return s
 }
 
 // normalize applies the Python parser's per-entry rules; ok=false means the
 // entry is silently dropped (matching parse_marketplace_json's debug-log
-// skips: nameless entries, sourceless entries, npm-typed sources).
+// skips: nameless entries, sourceless entries, npm-typed sources, and
+// sources whose shape is neither a string nor an object).
 func (rp rawPlugin) normalize() (MarketplacePlugin, bool) {
 	name := strings.TrimSpace(rp.Name)
 	if name == "" {
@@ -338,23 +421,31 @@ func (rp rawPlugin) normalize() (MarketplacePlugin, bool) {
 			return MarketplacePlugin{}, false
 		}
 	}
-	if srcMap, isMap := source.(map[string]any); isMap {
+	switch srcVal := source.(type) {
+	case string:
+		// Relative path source -- kept as-is.
+	case map[string]any:
 		// The parse-layer npm drop reads only "type"/"source" (NOT "kind"),
 		// mirroring Python _parse_plugin_entry's discriminator keys.
-		t, _ := srcMap["type"].(string)
+		t, _ := srcVal["type"].(string)
 		if t == "" {
-			t, _ = srcMap["source"].(string)
+			t, _ = srcVal["source"].(string)
 		}
 		if strings.EqualFold(strings.TrimSpace(t), "npm") {
 			return MarketplacePlugin{}, false
 		}
+	default:
+		// Neither a string nor an object (e.g. a number, array, or bool):
+		// Python drops these entries outright ("unrecognized source
+		// format", models.py:387-389).
+		return MarketplacePlugin{}, false
 	}
 	return MarketplacePlugin{
 		Name:        name,
 		Source:      source,
 		Description: rp.Description,
-		Version:     rp.Version,
-		Tags:        rp.Tags,
+		Version:     rawStringField(rp.Version),
+		Tags:        rawStringSliceField(rp.Tags),
 		Registry:    rp.Registry,
 	}, true
 }

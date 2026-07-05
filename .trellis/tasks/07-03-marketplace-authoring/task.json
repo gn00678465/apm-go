@@ -3,7 +3,7 @@
   "name": "marketplace-authoring",
   "title": "marketplace 發布端指令(init/check/outdated/audit/migrate/package)",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

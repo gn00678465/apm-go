@@ -27,7 +27,7 @@ func main() {
 	root.AddCommand(marketplaceCmd())
 
 	if err := root.Execute(); err != nil {
-		os.Exit(1)
+		os.Exit(exitCodeOf(err))
 	}
 }
 

@@ -51,9 +51,9 @@ TDD:每步先寫測試(RED)→ 實作(GREEN)→ `go build ./... && go vet ./... 
 - 驗證:`go build/vet/gofmt/test ./... -cover` 全綠
 
 ### 步驟 9 — A/B 測試(AC4,PRD 最低驗收門檻)
-- [ ] `D:\Projects\apm-dev\evals\ab_marketplace_consumer.py`,對齊既有 `ab_phase0.py`/`ab_mcp_install.py` 慣例
-- [ ] 涵蓋:add 各種 SOURCE 形狀、list、remove(至少 5 情境)
-- 驗證:對照真實 `uv run apm` 全數通過
+- [x] `D:\Projects\apm-dev\evals\ab_marketplace_consumer.py`,對齊既有 `ab_phase0.py`/`ab_mcp_install.py` 慣例
+- [x] 涵蓋:add 各種 SOURCE 形狀、list、remove(至少 5 情境)——實際 23 斷言:add 本地/3 種負向形狀、list、silent replace、browse、remove、與 Python CLI 的雙向登錄檔互通;2026-07-04 全過。A/B 首輪即抓到 manifest owner 物件形解析 bug(commit 55a6064 修正)
+- 驗證:對照真實 `uv run apm` 全數通過 ✅
 
 ### 步驟 10 — 全域驗證
 - [ ] `go build/vet/gofmt/test ./... -cover` 全綠

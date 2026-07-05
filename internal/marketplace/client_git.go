@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+
+	"github.com/apm-go/apm/internal/gitops"
 )
 
 // gitCloneTempDirPrefix names the os.MkdirTemp pattern fetchGit clones into,
@@ -56,6 +58,32 @@ func fetchGit(ctx context.Context, s *MarketplaceSource) (*MarketplaceManifest, 
 // mkt-010's --ref/#ref parsing does allow a SOURCE to pin to a commit SHA.
 var commitSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
+// safeRefRe validates a git ref (branch, tag, or commit SHA) shape before it
+// is interpolated into a `git clone --branch <ref>` or `git checkout <ref>`
+// subprocess argument, mirroring the Python original's client.py
+// _SAFE_REF_RE/_validate_ref: letters, digits, dot, slash, hyphen,
+// underscore, and never starting with "-" (which git would otherwise parse
+// as an option, e.g. an injected "--upload-pack=...").
+var safeRefRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+
+// validateRef returns an error if ref does not match safeRefRe.
+func validateRef(ref string) error {
+	if !safeRefRe.MatchString(ref) {
+		return fmt.Errorf("invalid git ref %q: refs must match %s", ref, safeRefRe.String())
+	}
+	return nil
+}
+
+// newGitCmd builds a git subprocess command hardened against interactive
+// credential prompts via gitops.ApplySecureGitEnv -- shared wiring for
+// every clone/checkout site in this file. Split out so tests can assert on
+// a constructed command without spawning a subprocess.
+func newGitCmd(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	gitops.ApplySecureGitEnv(cmd)
+	return cmd
+}
+
 // shallowCloneGit clones remote into dir at ref. For a branch/tag ref (the
 // common case), this runs `git clone --depth 1 --branch <ref> <remote>
 // <dir>`, mirroring internal/gitops.RealPackageLoader.cloneRepo's shape (a
@@ -63,14 +91,16 @@ var commitSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // cannot resolve it at all, so this instead runs a full clone (no --depth,
 // no --branch) followed by `git checkout <ref>`.
 func shallowCloneGit(ctx context.Context, remote, ref, dir string) error {
+	if err := validateRef(ref); err != nil {
+		return err
+	}
 	if commitSHARe.MatchString(strings.ToLower(ref)) {
 		return cloneAndCheckoutSHA(ctx, remote, ref, dir)
 	}
-	args := []string{"clone", "--depth", "1", "--branch", ref, remote, dir}
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := newGitCmd(ctx, "clone", "--depth", "1", "--branch", ref, remote, dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s\n%s", err, string(out))
+		return fmt.Errorf("%s\n%s", err, gitops.SanitizeGitOutput(string(out)))
 	}
 	return nil
 }
@@ -80,15 +110,15 @@ func shallowCloneGit(ctx context.Context, remote, ref, dir string) error {
 // arbitrary commit SHA that may not be reachable via --depth 1's shallow
 // history from the remote's current branch tip.
 func cloneAndCheckoutSHA(ctx context.Context, remote, ref, dir string) error {
-	cloneCmd := exec.CommandContext(ctx, "git", "clone", remote, dir)
+	cloneCmd := newGitCmd(ctx, "clone", remote, dir)
 	out, err := cloneCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s\n%s", err, string(out))
+		return fmt.Errorf("%s\n%s", err, gitops.SanitizeGitOutput(string(out)))
 	}
-	checkoutCmd := exec.CommandContext(ctx, "git", "-C", dir, "checkout", ref)
+	checkoutCmd := newGitCmd(ctx, "-C", dir, "checkout", ref)
 	out, err = checkoutCmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s\n%s", err, string(out))
+		return fmt.Errorf("%s\n%s", err, gitops.SanitizeGitOutput(string(out)))
 	}
 	return nil
 }

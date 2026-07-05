@@ -27,10 +27,14 @@ func isValidMarketplaceAlias(name string) bool {
 
 // marketplaceCmd wires internal/marketplace's data model, registry and fetch
 // clients (built in earlier steps) into the six `apm marketplace` consumer
-// subcommands (mkt-010..mkt-016) plus the `build` tombstone (mkt-019).
-// Deliberately absent, per Phase M5 of marketplace-checklist.md: search
-// (mkt-060, a top-level command, not a marketplace subcommand), doctor
-// (mkt-061), publish (mkt-062), a browse --json flag (mkt-063), a validate
+// subcommands (mkt-010..mkt-016) plus the `build` tombstone (mkt-019), and
+// (from internal/marketplace/authoring) the producer-side `init`, `check`,
+// `outdated`, `package add/remove/set`, `audit`, and `migrate` subcommands
+// (mkt-040, mkt-041, mkt-042 修訂版, mkt-045/046, mkt-043 修訂版, mkt-044 --
+// Phase M3's full producer-side command set). Deliberately absent, per
+// Phase M5 of marketplace-checklist.md:
+// search (mkt-060, a top-level command, not a marketplace subcommand),
+// doctor (mkt-061), publish (mkt-062), a browse --json flag (mkt-063), a validate
 // --check-refs flag (mkt-017: an upstream placeholder that never did
 // anything), and an "update" alias named "refresh" (mkt-064).
 func marketplaceCmd() *cobra.Command {
@@ -45,6 +49,12 @@ func marketplaceCmd() *cobra.Command {
 	cmd.AddCommand(marketplaceRemoveCmd())
 	cmd.AddCommand(marketplaceValidateCmd())
 	cmd.AddCommand(marketplaceBuildCmd())
+	cmd.AddCommand(marketplaceInitCmd())
+	cmd.AddCommand(marketplaceCheckCmd())
+	cmd.AddCommand(marketplaceOutdatedCmd())
+	cmd.AddCommand(marketplacePackageCmd())
+	cmd.AddCommand(marketplaceAuditCmd())
+	cmd.AddCommand(marketplaceMigrateCmd())
 	return cmd
 }
 

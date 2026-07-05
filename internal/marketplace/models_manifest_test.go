@@ -103,3 +103,120 @@ func TestMarketplaceManifest_PluginNormalization(t *testing.T) {
 		}
 	}
 }
+
+// TestMarketplaceManifest_TolerantShapes covers the real-world shapes
+// Python's parse_marketplace_json (models.py:454-515) tolerates that a
+// naive strictly-typed decode would hard-fail the whole document on:
+// "plugins" not being an array (warned, treated as empty per :491-497), a
+// non-object element inside "plugins" (skipped per :501-502), "tags" not
+// being an array (coerced to empty per :367), and non-string
+// "version"/"metadata"/pluginRoot values (ignored via Python's tolerant
+// .get/isinstance checks).
+func TestMarketplaceManifest_TolerantShapes(t *testing.T) {
+	tests := []struct {
+		name        string
+		doc         string
+		wantPlugins int
+		check       func(t *testing.T, m MarketplaceManifest)
+	}{
+		{
+			name: "plugins is an object, not an array -> treated as empty",
+			doc:  `{"name":"m","plugins":{"a":1}}`,
+		},
+		{
+			name: "plugins is a string, not an array -> treated as empty",
+			doc:  `{"name":"m","plugins":"oops"}`,
+		},
+		{
+			name: "plugins is a number, not an array -> treated as empty",
+			doc:  `{"name":"m","plugins":42}`,
+		},
+		{
+			name:        "a non-object plugin element is skipped, siblings kept",
+			doc:         `{"name":"m","plugins":[{"name":"a","source":"./a"},"not-an-object",42,{"name":"b","source":"./b"}]}`,
+			wantPlugins: 2,
+		},
+		{
+			name:        "tags is a string, not an array -> coerced to empty",
+			doc:         `{"name":"m","plugins":[{"name":"a","source":"./a","tags":"foo"}]}`,
+			wantPlugins: 1,
+			check: func(t *testing.T, m MarketplaceManifest) {
+				if len(m.Plugins[0].Tags) != 0 {
+					t.Errorf("Tags = %#v, want empty", m.Plugins[0].Tags)
+				}
+			},
+		},
+		{
+			name:        "version is a number -> ignored, plugin still kept",
+			doc:         `{"name":"m","plugins":[{"name":"a","source":"./a","version":1.0}]}`,
+			wantPlugins: 1,
+			check: func(t *testing.T, m MarketplaceManifest) {
+				if m.Plugins[0].Version != "" {
+					t.Errorf("Version = %q, want empty (non-string value ignored)", m.Plugins[0].Version)
+				}
+			},
+		},
+		{
+			name: "metadata is a string, not an object -> pluginRoot stays empty",
+			doc:  `{"name":"m","metadata":"x"}`,
+			check: func(t *testing.T, m MarketplaceManifest) {
+				if m.PluginRoot != "" {
+					t.Errorf("PluginRoot = %q, want empty", m.PluginRoot)
+				}
+			},
+		},
+		{
+			name: "metadata.pluginRoot is a number -> ignored",
+			doc:  `{"name":"m","metadata":{"pluginRoot":5}}`,
+			check: func(t *testing.T, m MarketplaceManifest) {
+				if m.PluginRoot != "" {
+					t.Errorf("PluginRoot = %q, want empty", m.PluginRoot)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m MarketplaceManifest
+			if err := json.Unmarshal([]byte(tt.doc), &m); err != nil {
+				t.Fatalf("unmarshal returned an error for a tolerated shape: %v", err)
+			}
+			if len(m.Plugins) != tt.wantPlugins {
+				names := make([]string, 0, len(m.Plugins))
+				for _, p := range m.Plugins {
+					names = append(names, p.Name)
+				}
+				t.Fatalf("len(Plugins) = %d %v, want %d", len(m.Plugins), names, tt.wantPlugins)
+			}
+			if tt.check != nil {
+				tt.check(t, m)
+			}
+		})
+	}
+}
+
+// TestMarketplaceManifest_PluginSourceWrongType_Dropped covers the reverse
+// over-tolerance bug: a plugin whose "source" is present but neither a
+// string nor an object (a number, array, or bool) must be dropped at parse
+// time, mirroring Python's _parse_plugin_entry "unrecognized source
+// format" branch (models.py:387-389) -- previously Go kept these entries
+// alive with a non-string/non-map Source value.
+func TestMarketplaceManifest_PluginSourceWrongType_Dropped(t *testing.T) {
+	doc := `{"name":"m","plugins":[
+		{"name":"bad-number-source","source":42},
+		{"name":"bad-array-source","source":[1,2,3]},
+		{"name":"bad-bool-source","source":true},
+		{"name":"good","source":"./good"}
+	]}`
+	var m MarketplaceManifest
+	if err := json.Unmarshal([]byte(doc), &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(m.Plugins) != 1 || m.Plugins[0].Name != "good" {
+		names := make([]string, 0, len(m.Plugins))
+		for _, p := range m.Plugins {
+			names = append(names, p.Name)
+		}
+		t.Fatalf("kept plugins %v, want only [good]", names)
+	}
+}

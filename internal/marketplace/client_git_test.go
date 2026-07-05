@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -371,5 +372,130 @@ func TestFetchGit_CloneFailureNotAGitRepo(t *testing.T) {
 	}
 	if after := countGitCloneTempDirs(t); after != before {
 		t.Errorf("leftover apm-marketplace-git-* temp dirs after clone failure: before=%d after=%d", before, after)
+	}
+}
+
+// ── credential-prompt hardening (修正組 G) ────────────────────────────────
+
+// buildFakeGit compiles internal/gitops/testdata/fakegit into a fresh temp
+// dir under the platform's expected "git" executable name, returning that
+// dir so the caller can prepend it to PATH. The fake binary's behavior is
+// controlled via FAKEGIT_SLEEP_MS/FAKEGIT_FAIL_STDERR env vars (see that
+// package's doc comment).
+func buildFakeGit(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	name := "git"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	out := filepath.Join(dir, name)
+	cmd := exec.Command("go", "build", "-o", out, "../gitops/testdata/fakegit/main.go")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build fakegit: %v\n%s", err, output)
+	}
+	return dir
+}
+
+// TestNewGitCmd_AppliesSecureGitEnv proves every clone/checkout site in
+// this file (shallowCloneGit, cloneAndCheckoutSHA) is wired through
+// gitops.SecureGitEnv by construction, without spawning a subprocess.
+func TestNewGitCmd_AppliesSecureGitEnv(t *testing.T) {
+	// Act
+	cmd := newGitCmd(context.Background(), "status")
+
+	// Assert
+	for _, want := range []string{"GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "GCM_INTERACTIVE=never"} {
+		found := false
+		for _, e := range cmd.Env {
+			if e == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("newGitCmd().Env missing %q; got %v", want, cmd.Env)
+		}
+	}
+}
+
+func TestValidateRef_AcceptsSafeRefShapes(t *testing.T) {
+	for _, ref := range []string{"main", "v1.0.0", "feature/foo", "release-1.2.3", strings.Repeat("a", 40)} {
+		if err := validateRef(ref); err != nil {
+			t.Errorf("validateRef(%q) = %v, want nil", ref, err)
+		}
+	}
+}
+
+func TestValidateRef_RejectsUnsafeRefShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{"empty ref", ""},
+		{"upload-pack option injection", "--upload-pack=touch pwned"},
+		{"leading hyphen", "-oProxyCommand=evil"},
+		{"contains whitespace", "main; rm -rf /"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateRef(tt.ref); err == nil {
+				t.Errorf("validateRef(%q) returned nil, want an error", tt.ref)
+			}
+		})
+	}
+}
+
+// TestShallowCloneGit_RejectsUnsafeRef proves an unsafe ref is rejected
+// *before* any git subprocess runs: dir must never come into existence.
+func TestShallowCloneGit_RejectsUnsafeRef(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{"upload-pack option injection", "--upload-pack=touch pwned"},
+		{"leading hyphen", "-oProxyCommand=evil"},
+		{"contains whitespace", "main; rm -rf /"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			dir := filepath.Join(t.TempDir(), "clone")
+
+			// Act
+			err := shallowCloneGit(context.Background(), "https://example.invalid/owner/repo.git", tt.ref, dir)
+
+			// Assert
+			if err == nil {
+				t.Fatalf("shallowCloneGit(ref=%q) returned no error, want rejection", tt.ref)
+			}
+			if _, statErr := os.Stat(dir); statErr == nil {
+				t.Errorf("shallowCloneGit(ref=%q) must not invoke git at all for an unsafe ref", tt.ref)
+			}
+		})
+	}
+}
+
+// TestShallowCloneGit_SanitizesCredentialsInErrorOutput proves a failing
+// git subprocess's stderr (which can echo the clone URL, credentials and
+// all) never leaks a token into shallowCloneGit's returned error.
+func TestShallowCloneGit_SanitizesCredentialsInErrorOutput(t *testing.T) {
+	// Arrange
+	fakeGitDir := buildFakeGit(t)
+	t.Setenv("PATH", fakeGitDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKEGIT_FAIL_STDERR", "fatal: unable to access 'https://x-access-token:ghp_supersecret@example.com/owner/repo.git/': The requested URL returned error: 403")
+
+	// Act
+	err := shallowCloneGit(context.Background(), "https://x-access-token:ghp_supersecret@example.com/owner/repo.git", "main", filepath.Join(t.TempDir(), "clone"))
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected shallowCloneGit to fail")
+	}
+	if strings.Contains(err.Error(), "ghp_supersecret") {
+		t.Errorf("shallowCloneGit error leaked a credential: %v", err)
+	}
+	if !strings.Contains(err.Error(), "example.com") {
+		t.Errorf("shallowCloneGit error lost the host entirely: %v", err)
 	}
 }

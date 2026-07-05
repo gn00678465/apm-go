@@ -666,3 +666,70 @@ func TestParseMarketplaceSource_RejectsEmpty(t *testing.T) {
 		t.Errorf("src = %#v, want nil on error", src)
 	}
 }
+
+// TestParseMarketplaceSource_RejectsControlCharacters mirrors the Python
+// original's control-character guard (__init__.py:280-281): any raw SOURCE
+// string containing a byte with ord(c) < 32 is rejected outright, before
+// any shape-specific parsing.
+func TestParseMarketplaceSource_RejectsControlCharacters(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"embedded null byte", "owner/rep\x00o"},
+		{"embedded newline", "owner/re\npo"},
+		{"embedded tab", "owner\t/repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			raw := tt.raw
+
+			// Act
+			src, err := ParseMarketplaceSource(raw, "")
+
+			// Assert
+			if err == nil {
+				t.Fatalf("ParseMarketplaceSource(%q) returned no error, want a rejection", raw)
+			}
+			if src != nil {
+				t.Errorf("src = %#v, want nil on error", src)
+			}
+		})
+	}
+}
+
+// TestParseMarketplaceSource_SCPStyleSSH_RejectsTraversalSegments mirrors
+// the Python original's SCP path validation (__init__.py:303-304): the
+// path segment(s) after "user@host:" are checked for traversal markers the
+// same way an https:// URL's path segments are.
+func TestParseMarketplaceSource_SCPStyleSSH_RejectsTraversalSegments(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"literal dotdot segment", "git@github.com:owner/../repo"},
+		{"literal dot segment", "git@github.com:owner/./repo"},
+		{"literal tilde segment", "git@github.com:owner/~"},
+		{"percent-encoded dotdot segment", "git@github.com:owner/%2E%2E"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			raw := tt.raw
+
+			// Act
+			src, err := ParseMarketplaceSource(raw, "")
+
+			// Assert
+			if err == nil {
+				t.Fatalf("ParseMarketplaceSource(%q) returned no error, want a rejection", raw)
+			}
+			if src != nil {
+				t.Errorf("src = %#v, want nil on error", src)
+			}
+		})
+	}
+}
