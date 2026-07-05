@@ -297,6 +297,199 @@ func TestWriteMCP_Claude_InputRefusesServerInBakeMode(t *testing.T) {
 	}
 }
 
+// ── opencode: bake mode, "mcp" key (not mcpServers), unified remote shape
+// (no transport branch, no SSE skip) ──
+
+var _ MCPTarget = (*opencodeAdapter)(nil)
+
+func TestWriteMCP_Opencode_StdioShape(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OPENCODE_TEST_TOKEN", "secret123")
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{
+			Name: "stdio-server", Registry: false, Transport: "stdio",
+			Command: "my-server", Args: &[]string{"--flag"},
+			Env: map[string]string{"TOKEN": "${OPENCODE_TEST_TOKEN}"},
+		}),
+	}
+	files, written, diags, err := (&opencodeAdapter{}).WriteMCP(prims, dir)
+	if err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+	if len(files) != 1 || files[0] != "opencode.json" {
+		t.Fatalf("files = %v, want [opencode.json]", files)
+	}
+	if len(written) != 1 || written[0] != "stdio-server" {
+		t.Errorf("written = %v", written)
+	}
+
+	root := readJSON(t, filepath.Join(dir, "opencode.json"))
+	servers, ok := root["mcp"].(map[string]any)
+	if !ok {
+		t.Fatalf(`root["mcp"] missing or not a map: %v`, root)
+	}
+	entry, ok := servers["stdio-server"].(map[string]any)
+	if !ok {
+		t.Fatalf("stdio-server entry missing: %v", servers)
+	}
+	if entry["type"] != "local" {
+		t.Errorf("type = %v, want local", entry["type"])
+	}
+	if entry["enabled"] != true {
+		t.Errorf("enabled = %v, want true", entry["enabled"])
+	}
+	cmd, ok := entry["command"].([]any)
+	if !ok || len(cmd) != 2 || cmd[0] != "my-server" || cmd[1] != "--flag" {
+		t.Errorf("command = %v, want a single array [my-server --flag]", entry["command"])
+	}
+	if _, hasArgs := entry["args"]; hasArgs {
+		t.Errorf("entry must not have a separate args field (cmd+args merge into one array): %v", entry)
+	}
+	env, ok := entry["environment"].(map[string]any)
+	if !ok || env["TOKEN"] != "secret123" {
+		t.Errorf("environment.TOKEN = %v, want resolved secret123", entry["environment"])
+	}
+	if _, hasEnv := entry["env"]; hasEnv {
+		t.Errorf("entry must use the 'environment' key, not 'env': %v", entry)
+	}
+}
+
+func TestWriteMCP_Opencode_RemoteUnifiedAcrossTransports(t *testing.T) {
+	dir := t.TempDir()
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{
+			Name: "http-server", Registry: false, Transport: "http",
+			URL: "https://api.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer tok"},
+		}),
+		mcpPrim("local", &manifest.MCPDependency{
+			Name: "sse-server", Registry: false, Transport: "sse",
+			URL: "https://api.example.com/sse",
+		}),
+	}
+	_, _, diags, err := (&opencodeAdapter{}).WriteMCP(prims, dir)
+	if err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+	root := readJSON(t, filepath.Join(dir, "opencode.json"))
+	servers := root["mcp"].(map[string]any)
+
+	http, ok := servers["http-server"].(map[string]any)
+	if !ok {
+		t.Fatalf("http-server entry missing: %v", servers)
+	}
+	if http["type"] != "remote" || http["url"] != "https://api.example.com/mcp" || http["enabled"] != true {
+		t.Errorf("http-server = %v", http)
+	}
+	headers, ok := http["headers"].(map[string]any)
+	if !ok || headers["Authorization"] != "Bearer tok" {
+		t.Errorf("http-server headers = %v", http["headers"])
+	}
+	if _, hasServerURL := http["serverUrl"]; hasServerURL {
+		t.Errorf("opencode must not switch to serverUrl (that is antigravity's shape): %v", http)
+	}
+
+	sse, ok := servers["sse-server"].(map[string]any)
+	if !ok {
+		t.Fatalf("sse-server entry missing: %v", servers)
+	}
+	if sse["type"] != "remote" || sse["url"] != "https://api.example.com/sse" || sse["enabled"] != true {
+		t.Errorf("sse-server = %v, want the same type:remote+url shape as http (no transport branch)", sse)
+	}
+	if _, hasHeaders := sse["headers"]; hasHeaders {
+		t.Errorf("sse-server should have no headers key when none supplied: %v", sse)
+	}
+}
+
+func TestWriteMCP_Opencode_MergePreservesUserSettingsAndForeignKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	preexisting := `{"mcp":{"untouched":{"type":"local","command":["kept"]}},"theme":"dark"}`
+	if err := os.WriteFile(path, []byte(preexisting), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "new-server", Registry: false, Transport: "stdio", Command: "new"}),
+	}
+	if _, _, diags, err := (&opencodeAdapter{}).WriteMCP(prims, dir); err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+
+	root := readJSON(t, path)
+	if root["theme"] != "dark" {
+		t.Errorf("user's other opencode.json settings lost: %v", root)
+	}
+	servers := root["mcp"].(map[string]any)
+	if _, ok := servers["untouched"]; !ok {
+		t.Errorf("preexisting server lost: %v", servers)
+	}
+	if _, ok := servers["new-server"]; !ok {
+		t.Errorf("new server not written: %v", servers)
+	}
+}
+
+func TestWriteMCP_Opencode_ManagedKeysExpansionDropsStaleEnvironmentAndEnabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a stale entry: an "environment" key left over from a prior run
+	// and a hand-toggled "enabled": false. Neither must survive a redeploy
+	// now that both keys are in managedMCPKeys (mcp_common.go).
+	preexisting := `{"mcp":{"s1":{"type":"local","command":["cmd"],"environment":{"STALE":"leftover"},"enabled":false}}}`
+	if err := os.WriteFile(path, []byte(preexisting), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "s1", Registry: false, Transport: "stdio", Command: "cmd"}),
+	}
+	if _, _, diags, err := (&opencodeAdapter{}).WriteMCP(prims, dir); err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+
+	root := readJSON(t, path)
+	servers := root["mcp"].(map[string]any)
+	s1 := servers["s1"].(map[string]any)
+	if s1["enabled"] != true {
+		t.Errorf("enabled must be overwritten to true (managed key), got %v", s1["enabled"])
+	}
+	if _, hasEnv := s1["environment"]; hasEnv {
+		t.Errorf("stale environment from a prior run must be dropped when this run has no env vars, got %v", s1["environment"])
+	}
+}
+
+func TestWriteMCP_Opencode_RedeployDoesNotStackDuplicateEntries(t *testing.T) {
+	dir := t.TempDir()
+	first := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "s1", Registry: false, Transport: "stdio", Command: "cmd", Args: &[]string{"-a"}}),
+	}
+	if _, _, diags, err := (&opencodeAdapter{}).WriteMCP(first, dir); err != nil {
+		t.Fatalf("first WriteMCP: %v (diags=%v)", err, diags)
+	}
+	second := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "s1", Registry: false, Transport: "stdio", Command: "cmd", Args: &[]string{"-b"}}),
+	}
+	if _, _, diags, err := (&opencodeAdapter{}).WriteMCP(second, dir); err != nil {
+		t.Fatalf("second WriteMCP: %v (diags=%v)", err, diags)
+	}
+
+	root := readJSON(t, filepath.Join(dir, "opencode.json"))
+	servers := root["mcp"].(map[string]any)
+	if len(servers) != 1 {
+		t.Fatalf("servers = %v, want exactly 1 entry for s1 (no duplicate stacking)", servers)
+	}
+	s1 := servers["s1"].(map[string]any)
+	cmd := s1["command"].([]any)
+	if len(cmd) != 2 || cmd[1] != "-b" {
+		t.Errorf("command = %v, want the latest run's args [cmd -b], not stacked from both runs", cmd)
+	}
+}
+
 // ── shared: non-https skip ──
 
 func TestWriteMCP_NonHTTPSRemoteSkipped(t *testing.T) {

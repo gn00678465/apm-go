@@ -213,6 +213,7 @@ func placeholderAtStart(s string) bool {
 var managedMCPKeys = map[string]bool{
 	"command": true, "args": true, "env": true, "headers": true,
 	"url": true, "serverUrl": true, "type": true, "id": true, "http_headers": true,
+	"environment": true, "enabled": true,
 }
 
 // mergeMCPServers folds this run's entries into the existing servers map.
