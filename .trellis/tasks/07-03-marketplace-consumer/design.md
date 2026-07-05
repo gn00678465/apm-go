@@ -71,7 +71,8 @@ type MarketplaceManifest struct {
 1. 本地路徑形式:以 `/`、`./`、`../`、`~/`、`file://` 開頭,或符合 Windows 磁碟機代號(`^[A-Za-z]:[\\/]`)→ `KindLocal`,`URL` 存絕對路徑
 2. 裸 `http://` → 明確拒絕,錯誤訊息指名「不支援 http://,請用 https:// 或省略 scheme」
 3. SCP 式 SSH(`^[^/]+@[^:]+:.+`)→ `KindGit`(或依 host 判斷 github/gitlab 家族細分為對應 Kind,細節見 client 分派)
-4. 完整 `https://` URL → 若路徑(去尾斜線後)以 `/marketplace.json` 結尾視為直接指向 manifest 檔(`KindURL`;對齊原版 `url_names_remote_manifest`,**不是**任何 `.json` 都算);否則依 host 判斷 github.com→`KindGitHub`、gitlab.com 或含 "gitlab"→`KindGitLab`、其餘→`KindGit`
+4. 完整 `https://` URL → 若路徑(去尾斜線後)以 `/marketplace.json` 結尾視為直接指向 manifest 檔(`KindURL`;對齊原版 `url_names_remote_manifest`,**不是**任何 `.json` 都算);否則依 host 判斷 github.com/`*.ghe.com`/`GITHUB_HOST`→`KindGitHub`、gitlab.com/`GITLAB_HOST`/`APM_GITLAB_HOSTS` 允許清單(**精確比對 + FQDN 驗證,絕不用 substring**)→`KindGitLab`、其餘→`KindGit`
+   > ⚠️ **安全修正(2026-07-04,adversarial 審查 CRITICAL)**:先前這裡寫「含 gitlab→KindGitLab」是危險的偷懶簡化——substring 會把 `gitlab.evil.com`/`notgitlab.io` 判為 GitLab 並轉發 `GITLAB_APM_PAT` 到攻擊者 host(憑證外洩)。必須對齊 Python `is_gitlab_hostname`(`utils/github_host.py:44-85`)的**精確 allowlist**:`gitlab.com` 或 `GITLAB_HOST`/`APM_GITLAB_HOSTS` 環境變數列出且通過 FQDN 驗證的 host。
 5. `OWNER/REPO` 或 `HOST/OWNER/REPO` 簡寫 → 依 `--host`(預設 `github.com`)或路徑中的 HOST 判斷 Kind
 
 `--host` 行為分三種(mkt-011 修訂版):與規則 4 完整 URL 的 host **衝突** → **硬錯誤 exit 1**(含 marketplace.json 直連 URL);與 URL host 相符、或規則 1(本地)、或規則 3 SCP host 不符 → 忽略並印警告;其餘(簡寫)→ 生效。
@@ -107,7 +108,7 @@ func Fetch(ctx context.Context, s *MarketplaceSource) (*MarketplaceManifest, err
 
 探測路徑順序(mkt-003):`s.Path` 若使用者未指定,依序嘗試 `marketplace.json` → `.github/plugin/marketplace.json` → `.claude-plugin/marketplace.json`,第一個存在的用。
 
-信任 host 判斷(mkt-011):只有 `github.com`/`*.github.com`/`gitlab.com`/自架 GitLab(host 含 "gitlab")才轉發 `GITHUB_APM_PAT`/`GITLAB_APM_PAT`(讀環境變數),其餘 host 純用 subprocess `git`、不帶 token。
+信任 host 判斷(mkt-011):只有 github 家族(`github.com`/`*.ghe.com`/`GITHUB_HOST`)與 gitlab 家族(`gitlab.com`/`GITLAB_HOST`/`APM_GITLAB_HOSTS` **精確 allowlist**,見上方安全修正)才轉發 `GITHUB_APM_PAT`/`GITLAB_APM_PAT`(讀環境變數),其餘 host 純用 subprocess `git`、不帶 token。**絕不用 substring 判斷家族**(憑證外洩向量)。
 
 API 細節(已對照原版源碼 + live curl 驗證,2026-07-03):
 - GitHub:`GET {api_base}/repos/{owner}/{repo}/contents/{path}?ref={urlenc(ref)}`,header `Accept: application/vnd.github.v3.raw` + `Authorization: token <PAT>`——**raw 媒體型別回應就是檔案原始內容**(live 驗證:無此 header 才是 base64 JSON envelope),直接 `json.Unmarshal`,不做 base64 解碼;raw 型別同時避開 Contents API 對 >1MB 檔案的 base64 限制

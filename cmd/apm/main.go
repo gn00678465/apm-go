@@ -24,6 +24,7 @@ func main() {
 	root.AddCommand(updateCmd())
 	root.AddCommand(auditCmd())
 	root.AddCommand(experimentalCmd())
+	root.AddCommand(marketplaceCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
