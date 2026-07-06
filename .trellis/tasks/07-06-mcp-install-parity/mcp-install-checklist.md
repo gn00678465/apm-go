@@ -57,7 +57,10 @@
 - **M8（憑證佔位 per-target，claude/opencode/codex）✅ 完成並驗證**：DEC-1=B、DEC-2/3=只改 header。
   `resolveMCPServer` 拆 header/env mode；claude 保留 `${VAR}`、opencode `{env:VAR}`、codex
   `bearer_token_env_var`/`env_http_headers`。單元測試 5 個 + **live 4-target E2E** 皆綠；`go test ./...` 全綠。
-- **待辦**：mi-V09 A/B 對照腳本（`D:\Projects\apm-dev\evals`，AC7）尚未產出。
+- **mi-V09 A/B 對照 ✅**：`evals/ab_mcp_install_parity.py` 14/15 PASS、0 fail、3 documented deviations。
+  過程**發現並修正一個真 bug**（mi-V11）：`canPromptCreds` 原本只檢查 stdin，補上 stdout TTY 檢查
+  （對齊原版 `is_tty=stdin&&stdout`），避免 stdout 被導向時亂 prompt。此修正在既有 commit 之後，
+  **待追加一個 follow-up commit**（`cmd/apm/mcp_prompt.go`）。
 - 過程中曾誤把 `install --mcp` 跑在專案根目錄污染 `apm.yml`/`.codex/config.toml` 等，
   已 `git checkout` + 刪除還原乾淨（`git status` 僅剩本任務合法變更）。
 
@@ -233,7 +236,8 @@
 | [x] | `mi-V10` | 修 D2 | **conflict 三態**：stub confirm →（a）accept→replaced+寫檔；（b）decline→skipped、apm.yml 不動、不 deploy；（c）confirm=nil(非TTY)→error "non-interactive"；（d）force→replaced 不問 | `TestUpsertMCPEntry_ConflictConfirm`(4 子測試) |
 | [x] | `mi-V07` | 回 | **既有回歸**：M1 衝突矩陣、M2 三分支建構、M3 registry(success/notfound/pinned/env/credentialed)、M4 upsert(added/unchanged/conflict/replace)、M5 deploy、E2E(SelfDefinedURL/TargetSource/FilteredByWriter) 全部既有測試維持綠 | `go test ./... 全綠`(cmd/apm 15.2s) |
 | [~] | `mi-V08` | — | `go build ./…`、`go vet ./…`、`go test ./…` 全綠；覆蓋率 **83.0%** (≥80%✓)。**`-race` 因本機無 gcc/cgo 無法跑**（環境限制，非程式問題）→ 須於有 gcc 的環境補跑 | build/vet/test 綠;`cover 83.0%` |
-| [ ] | `mi-V09` | — | **A/B vs `uv run apm`**（`D:\Projects\apm-dev\evals`）：apm.yml 輸出(block) + 互動 prompt 流程比對；Deviation 總表 D1–D8 明列，非掩蓋 | **待做**(AC7) |
+| [x] | `mi-V09` | — | **A/B vs `uv run apm`**：`evals/ab_mcp_install_parity.py` — #1 block/#3 header-url/D2 非互動 parity + M8 per-target 正確性 + deviation 記錄。**14/15 PASS, 0 fail, 3 deviations**。findings：claude header 與原版 parity；codex apm-go(`bearer_token_env_var`) 較原版(`http_headers` 塞 `${VAR}`,codex 不解析)正確；opencode `{env:VAR}` | `evals/ab_mcp_install_parity.py` |
+| [ ] | `mi-V11` | 修（A/B 發現） | **canPromptCreds 補 stdout TTY 檢查**（原版 `is_tty=stdin.isatty()&&stdout.isatty()`）：stdout 被導向/捕捉時視為非互動，不亂 prompt/confirm。A/B scenario 1/3 揭露、修正後轉綠 | `mcp_prompt.go` `stdoutIsTTY`;`writer.py` is_tty |
 | [x] | `mp-V01` | 修 M8 | **claude**：`--header 'Authorization=Bearer ${MY_TOKEN}'` 部署後 `.mcp.json` = `Bearer ${MY_TOKEN}`（佔位保留、無警告、無 omit）。**live 實測✓** | `mp-001` |
 | [x] | `mp-V02` | 修 M8 | **opencode**：`opencode.json` = `Bearer {env:MY_TOKEN}`（語法轉換正確）。**live 實測✓** | `mp-002,004` |
 | [x] | `mp-V03` | 修 M8 | **codex**（DEC-1=B）：`.codex/config.toml` `bearer_token_env_var = 'MY_TOKEN'`。**live 實測✓** | `mp-003` |
