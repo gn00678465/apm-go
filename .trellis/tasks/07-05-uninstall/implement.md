@@ -7,32 +7,32 @@ scope:核心 + MCP stale(定案 B);`-g` 報未支援(定案 A)。
 ## 執行順序(分階段,可分次 Sonnet 派工;每階段獨立 commit)
 
 ### 步驟 1 — 前置:lockfile MCPServers 欄位 + install 寫入(un-060, N3)
-- [ ] `lockfile/types.go`:`Lockfile` 加 `MCPServers []string`;parse/write/序列化/knownKeys 五處清單同步(比照 provenance 欄位慣例)
-- [ ] `install.go` `deployAndFinalize`:記錄本次部署的 MCP server 名單寫入 `MCPServers`
-- [ ] 測試:round-trip 保留 MCPServers;既有 install 測試不破;舊 lockfile(無此欄位)讀取 fail-open(空集)
+- [x] `lockfile/types.go`:`Lockfile` 加 `MCPServers []string`;parse/write/序列化/knownKeys 五處清單同步(比照 provenance 欄位慣例)
+- [x] `install.go` `deployAndFinalize`:記錄本次部署的 MCP server 名單寫入 `MCPServers`
+- [x] 測試:round-trip 保留 MCPServers;既有 install 測試不破;舊 lockfile(無此欄位)讀取 fail-open(空集)
 - 驗證:`go test ./internal/lockfile/... ./cmd/apm/... -count=1`
 
 ### 步驟 2 — lockfile Delete API(un-070~072, N3)
-- [ ] `Lockfile.RemoveKeys(keys []string)`:從 slice 移除 + 重建 index;`FindByKey` 仍正確
-- [ ] key 比對用既有 unique key(對照 identity.py:非 github.com 才加 host 前綴——確認 apm-go 既有行為一致,不一致則補齊)
-- [ ] 測試:刪單/多 key、刪後查找、清空判定
+- [x] `Lockfile.RemoveKeys(keys []string)`:從 slice 移除 + 重建 index;`FindByKey` 仍正確
+- [x] key 比對用既有 unique key(對照 identity.py:非 github.com 才加 host 前綴——確認 apm-go 既有行為一致,不一致則補齊)
+- [x] 測試:刪單/多 key、刪後查找、清空判定
 
 ### 步驟 3 — deploy 反向刪檔能力(N1, un-050~053)⚠️安全紅線
-- [ ] 新檔 `internal/deploy/uninstall.go`:`RemoveDeployedFiles(projectDir, files, hashes)`
+- [x] 新檔 `internal/deploy/uninstall.go`:`RemoveDeployedFiles(projectDir, files, hashes)`
   - path-containment(重用 `archive/extract.go` `Contained`)→ 逃逸拒絕
   - **hash 保護**:現檔 hash ≠ `hashes[path]` → 保留 + 警告(不刪)
   - 相符 → 刪;`cleanupEmptyParents` 清空母資料夾
-- [ ] **測試(舊坑 1 必含)**:正常刪除、hash 不符保留+警告、path 逃逸拒絕、使用者手寫檔(不在 files 清單)不動、空母資料夾清理
+- [x] **測試(舊坑 1 必含)**:正常刪除、hash 不符保留+警告、path 逃逸拒絕、使用者手寫檔(不在 files 清單)不動、空母資料夾清理
 - 驗證:`go test ./internal/deploy/... -run Remove -count=1`
 
 ### 步驟 4 — apm.yml 移除(N4, un-020~022)
-- [ ] `removePackagesFromManifest`:yamlcore node 級刪除 `dependencies.apm`/`devDependencies.apm` 命中條目(忽略 ref/alias 比對);dev 空殼清理(cli.py:151-156);保留其他條目與排版
-- [ ] **測試(舊坑 1)**:fixture 含「已存在、手動排版、多依賴」;刪 prod、刪 dev、dev 清空刪 key、devDependencies 合成殼整段刪、其他依賴與排版保留
+- [x] `removePackagesFromManifest`:yamlcore node 級刪除 `dependencies.apm`/`devDependencies.apm` 命中條目(忽略 ref/alias 比對);dev 空殼清理(cli.py:151-156);保留其他條目與排版
+- [x] **測試(舊坑 1)**:fixture 含「已存在、手動排版、多依賴」;刪 prod、刪 dev、dev 清空刪 key、devDependencies 合成殼整段刪、其他依賴與排版保留
 - 驗證:PASS
 
 ### 步驟 5 — transitive orphan BFS(N5, un-040~043)
-- [ ] 抽出/重用 `resolver/update.go:54-65` ResolvedBy BFS 於「移除後找孤兒」;`actualOrphans = orphans - remaining`
-- [ ] 測試:A→B 鏈,uninstall A 且 B 無他人依賴→B 入孤兒;B 另有 parent→保留;多層鏈
+- [x] 抽出/重用 `resolver/update.go:54-65` ResolvedBy BFS 於「移除後找孤兒」;`actualOrphans = orphans - remaining`
+- [x] 測試:A→B 鏈,uninstall A 且 B 無他人依賴→B 入孤兒;B 另有 parent→保留;多層鏈
 - 驗證:PASS
 
 ### 步驟 6 — 目標解析與比對(N6, un-010~019)

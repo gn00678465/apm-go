@@ -485,6 +485,25 @@ func (d *DependencyReference) ToCanonical(defaultHost string) string {
 	return sb.String()
 }
 
+// IdentityKey returns the identity used to compare a dependency reference
+// against a lockfile entry (LockedDep.UniqueKey()) or another reference,
+// deliberately ignoring Reference (git ref/tag) and Alias -- un-011: two
+// references to the same repo_url[/virtual_path] that only differ by ref or
+// alias are the same uninstall target. Mirrors deploy.DepRefKey exactly
+// (kept as a separate copy rather than an internal/manifest -> internal/deploy
+// import to avoid a package cycle: internal/deploy already imports
+// internal/manifest). Local and parent references have no stable identity
+// (matching deploy.DepRefKey's "" for IsLocal/IsParent) and always return "".
+func (d *DependencyReference) IdentityKey() string {
+	if d.IsLocal || d.IsParent {
+		return ""
+	}
+	if d.VirtualPath != "" {
+		return d.RepoURL + "/" + d.VirtualPath
+	}
+	return d.RepoURL
+}
+
 func classifyVirtualPath(vp string) string {
 	for _, ext := range virtualFileExtensions {
 		if strings.HasSuffix(vp, ext) {
