@@ -85,7 +85,7 @@ func runUninstall(args []string, opts uninstallOptions) error {
 		return nil
 	}
 
-	return applyUninstallPlan(plan, data, node, lock, lockNode, opts.Verbose)
+	return applyUninstallPlan(plan, data, node, m, lock, lockNode, opts.Verbose)
 }
 
 // uninstallPlan is prepareUninstallPlan's pure-computation result: everything
@@ -147,10 +147,20 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 
 // applyUninstallPlan performs every actual write for a non-dry-run uninstall:
 // apm.yml splice, apm_modules deletion, target deployed-file reversal,
-// standalone-MCP reversal, and the lockfile update -- in that order (un-050's
-// "collect deployed_files before mutating anything" already happened inside
-// prepareUninstallPlan).
-func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, lock *lockfile.Lockfile, lockNode *yamllib.Node, verbose bool) error {
+// standalone-MCP reversal, transitive MCP stale-diff, and the lockfile
+// update -- in that order (un-050's "collect deployed_files before mutating
+// anything" already happened inside prepareUninstallPlan).
+func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m *manifest.Manifest, lock *lockfile.Lockfile, lockNode *yamllib.Node, verbose bool) error {
+	// un-061: capture the pre-uninstall MCP server name set before anything
+	// below mutates it (removeUninstallStandaloneMCP re-slices
+	// lock.MCPServers in place further down, so this must be a real copy
+	// taken before that call, not just a reference to the same backing
+	// array).
+	var oldMCP []string
+	if lock != nil {
+		oldMCP = append([]string(nil), lock.MCPServers...)
+	}
+
 	if err := writeUninstallManifest(data, node, plan.removedIdentities, plan.mcpNames); err != nil {
 		return err
 	}
@@ -171,28 +181,50 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, lo
 	}
 
 	removeUninstallStandaloneMCP(plan.mcpNames, lock)
-	// TODO(8b, un-054): Phase 2 re-integration. RemoveDeployedFiles above only
-	// looks at the REMOVED/orphaned deps' own deployed_files -- a path also
-	// contributed by a still-installed dependency (e.g. two packages
-	// declaring the same skill name, sharing the same target file) is
-	// deleted here with no attempt to restore it. Python's engine.py
-	// re-walks every surviving dependency's primitives and re-deploys them
-	// after Phase 1; the apm-go equivalent is re-running deploy.Run(targets,
-	// ".", m, <resolution of the remaining graph>, nil) at this point, with a
-	// single package's re-integration failure only warning (not aborting).
-	// Deferred: building that remaining-graph ResolutionResult is a bigger
-	// unit of work than fits this orchestration pass, and every other piece
-	// of this pipeline is already safe on its own (RemoveDeployedFiles's hash
-	// check keeps a hand-edited shared file even without Phase 2).
-	// TODO(8b, un-061): transitive MCP stale-diff. removeUninstallStandaloneMCP
-	// only reverse-removes MCP servers the user named directly on the command
-	// line (un-064/065). Python's _cleanup_stale_mcp additionally recomputes
-	// the FULL "new" MCP server set from every dependency that remains after
-	// this uninstall and reverse-removes whatever dropped out of
-	// lock.MCPServers as a side effect of removing an unrelated package.
-	// Deferred alongside Phase 2 above: computing "what MCP servers the
-	// remaining graph still declares" needs the same remaining-graph
-	// resolution work.
+
+	// un-061: transitive MCP stale-diff. removeUninstallStandaloneMCP above
+	// only reverse-removes MCP servers the user named directly on the
+	// command line (un-064/065). This additionally recomputes the full "new"
+	// MCP server set the remaining apm.yml + apm_modules tree still
+	// declares, and reverse-removes whatever dropped out of oldMCP as a side
+	// effect of removing an unrelated package (mirrors Python's
+	// _cleanup_stale_mcp). oldMCP empty (nil lockfile, or a pre-mcp_servers
+	// lockfile) fails open here -- nothing to diff against, so nothing is
+	// touched.
+	if len(oldMCP) > 0 {
+		newMCP := computeUninstallStaleMCP(m, lock, plan.mcpNames, plan.allRemovalKeys)
+		var stale []string
+		for _, name := range oldMCP {
+			if !newMCP[name] {
+				stale = append(stale, name)
+			}
+		}
+		if len(stale) > 0 {
+			sort.Strings(stale)
+			for _, d := range deploy.RemoveMCPServersFromTargets(".", stale) {
+				fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+			}
+		}
+		lock.MCPServers = sortedStringSet(newMCP)
+	}
+
+	// KNOWN LIMITATION (un-054, documented deviation): Phase 2 re-integration
+	// is not implemented. RemoveDeployedFiles above only looks at the
+	// REMOVED/orphaned deps' own deployed_files -- a path also contributed by
+	// a still-installed dependency (e.g. two packages declaring the same
+	// skill name, sharing the same target file) is deleted here with no
+	// attempt to restore it. Python's engine.py re-walks every surviving
+	// dependency's primitives and re-deploys them after Phase 1; the apm-go
+	// equivalent would be re-running deploy.Run(targets, ".", m, <resolution
+	// of the remaining graph>, nil) at this point, with a single package's
+	// re-integration failure only warning (not aborting). Not implemented in
+	// this pass: building that remaining-graph ResolutionResult faithfully
+	// requires re-running dependency resolution, a bigger unit of work than
+	// fits this orchestration pass. Every other piece of this pipeline is
+	// still safe on its own (RemoveDeployedFiles's hash check keeps a
+	// hand-edited shared file even without Phase 2); the residual risk is
+	// narrowly scoped to a shared, unedited deployed file getting dropped
+	// when it should have been restored.
 
 	if err := writeUninstallLockfile(lock, lockNode, plan.allRemovalKeys); err != nil {
 		return err

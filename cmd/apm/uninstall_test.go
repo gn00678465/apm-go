@@ -523,6 +523,158 @@ dependencies:
 	}
 }
 
+// TestRunUninstall_TransitiveMCPStaleDiff_RemovesOnlyDroppedServer is
+// un-060/061/062/063's transitive half: two dependencies each contribute
+// their own self-defined MCP server (recorded in lock.MCPServers, already
+// deployed to a target config file); uninstalling the package that
+// contributed one of them removes only that server from the target and from
+// lock.MCPServers, leaving the other package's server (and the other package
+// itself) untouched.
+func TestRunUninstall_TransitiveMCPStaleDiff_RemovesOnlyDroppedServer(t *testing.T) {
+	dir := chdirTemp(t)
+
+	manifestYAML := "name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo\n    - acme/bar\n"
+	if err := os.WriteFile("apm.yml", []byte(manifestYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	fooModDir := filepath.Join(dir, "apm_modules", "acme", "foo")
+	if err := os.MkdirAll(fooModDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fooManifest := "name: foo\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - name: srvA\n      registry: false\n      transport: stdio\n      command: srvA-server\n"
+	if err := os.WriteFile(filepath.Join(fooModDir, "apm.yml"), []byte(fooManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	barModDir := filepath.Join(dir, "apm_modules", "acme", "bar")
+	if err := os.MkdirAll(barModDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	barManifest := "name: bar\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - name: srvB\n      registry: false\n      transport: stdio\n      command: srvB-server\n"
+	if err := os.WriteFile(filepath.Join(barModDir, "apm.yml"), []byte(barManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mcpJSON := `{"mcpServers":{"srvA":{"type":"stdio","command":"srvA-server"},"srvB":{"type":"stdio","command":"srvB-server"}}}`
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(mcpJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{
+			{RepoURL: "acme/foo", Source: "git"},
+			{RepoURL: "acme/bar", Source: "git"},
+		},
+		MCPServers: []string{"srvA", "srvB"},
+	}
+	writeUninstallLockfileFixture(t, lock)
+
+	if err := runUninstall([]string{"acme/foo"}, uninstallOptions{}); err != nil {
+		t.Fatalf("runUninstall: %v", err)
+	}
+
+	mcpData, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mcpRoot map[string]any
+	if err := json.Unmarshal(mcpData, &mcpRoot); err != nil {
+		t.Fatal(err)
+	}
+	servers := mcpRoot["mcpServers"].(map[string]any)
+	if _, ok := servers["srvA"]; ok {
+		t.Errorf("expected srvA (dropped along with acme/foo) removed from .mcp.json, got %v", servers)
+	}
+	if _, ok := servers["srvB"]; !ok {
+		t.Errorf("expected srvB (still contributed by acme/bar) to remain in .mcp.json, got %v", servers)
+	}
+
+	lockData, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatalf("expected apm.lock.yaml to survive (acme/bar still locked): %v", err)
+	}
+	lockNode, _ := yamlcore.SafeLoad(lockData)
+	newLock, _ := lockfile.ParseLockfile(lockNode)
+	if len(newLock.MCPServers) != 1 || newLock.MCPServers[0] != "srvB" {
+		t.Errorf("expected lock.MCPServers to be [srvB], got %v", newLock.MCPServers)
+	}
+	if newLock.FindByKey("acme/bar") == nil {
+		t.Error("expected acme/bar to remain locked")
+	}
+}
+
+// TestRunUninstall_TransitiveMCPStaleDiff_RootMCPUntouchedAndPersisted is
+// un-061's negative-and-persistence half: a root-declared (dependencies.mcp)
+// MCP server not named on the command line is never treated as stale just
+// because an unrelated apm package was uninstalled, and lock.MCPServers is
+// re-serialized correctly across the write/re-read round trip.
+func TestRunUninstall_TransitiveMCPStaleDiff_RootMCPUntouchedAndPersisted(t *testing.T) {
+	dir := chdirTemp(t)
+
+	manifestYAML := `name: test
+version: "1.0.0"
+dependencies:
+  apm:
+    - acme/foo
+    - acme/keep
+  mcp:
+    - name: srvC
+      registry: false
+      transport: stdio
+      command: srvC-server
+`
+	if err := os.WriteFile("apm.yml", []byte(manifestYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mcpJSON := `{"mcpServers":{"srvC":{"type":"stdio","command":"srvC-server"}}}`
+	if err := os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(mcpJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{
+			{RepoURL: "acme/foo", Source: "git"},
+			{RepoURL: "acme/keep", Source: "git"},
+		},
+		MCPServers: []string{"srvC"},
+	}
+	writeUninstallLockfileFixture(t, lock)
+
+	if err := runUninstall([]string{"acme/foo"}, uninstallOptions{}); err != nil {
+		t.Fatalf("runUninstall: %v", err)
+	}
+
+	mcpData, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mcpRoot map[string]any
+	if err := json.Unmarshal(mcpData, &mcpRoot); err != nil {
+		t.Fatal(err)
+	}
+	servers := mcpRoot["mcpServers"].(map[string]any)
+	if _, ok := servers["srvC"]; !ok {
+		t.Errorf("expected root-declared srvC to remain untouched in .mcp.json, got %v", servers)
+	}
+
+	lockData, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatalf("expected apm.lock.yaml to survive (acme/keep still locked): %v", err)
+	}
+	lockNode, _ := yamlcore.SafeLoad(lockData)
+	newLock, err := lockfile.ParseLockfile(lockNode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newLock.MCPServers) != 1 || newLock.MCPServers[0] != "srvC" {
+		t.Errorf("expected lock.MCPServers to remain [srvC] across the write/re-read round trip, got %v", newLock.MCPServers)
+	}
+	if newLock.FindByKey("acme/keep") == nil {
+		t.Error("expected acme/keep to remain locked")
+	}
+}
+
 // TestRunUninstall_MixedApmAndMcpTargetsInOneCall proves
 // writeUninstallManifest's reparse-between-structural-edits correctness: a
 // single `uninstall` call naming BOTH an apm package (dependencies.apm,

@@ -127,3 +127,11 @@ func loadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []
 	}
 	return m.MCPServers, nil
 }
+
+// LoadDependencyMCP is an exported wrapper around loadDependencyMCP for
+// callers outside this package (cmd/apm's uninstall un-061 transitive MCP
+// stale-diff needs the same "read a dependency's own apm.yml prod MCP
+// servers" lenience rules) without duplicating its logic.
+func LoadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []string) {
+	return loadDependencyMCP(depKey, modulePath)
+}
