@@ -36,11 +36,11 @@ scope:核心 + MCP stale(定案 B);`-g` 報未支援(定案 A)。
 - 驗證:PASS
 
 ### 步驟 6 — 目標解析與比對(N6, un-010~019)
-- [ ] owner/repo·URL·SSH·FQDN 正規化 + 忽略 ref/alias 的 identity 比對
-- [ ] marketplace 記法:重用 `ParseRef`;新寫 lockfile 離線優先 → registry fallback(--dry-run 跳過)→ supply-chain guard(canonical 不在 lockfile 拒絕);`#ref` 忽略
-- [ ] **standalone MCP(un-019,增強)**:apm 套件找不到 → 比對 `dependencies.mcp` server 名稱;命中歸類 MCP-removal 目標
-- [ ] 測試:五種輸入形狀解析到同 canonical;marketplace 命中 lockfile;supply-chain guard 用會 panic 的 fake registry 證明拒絕先於任何移除;#ref 被忽略;not-found 警告續行;全 not-found 不變更退出;`uninstall <mcp-name>` 命中 dependencies.mcp
-- 驗證:PASS(Review Gate A:supply-chain guard 先於移除)
+- [x] owner/repo·URL·SSH·FQDN 正規化 + 忽略 ref/alias 的 identity 比對(`cmd/apm/uninstall_resolve.go`,重用既有 `DependencyReference.IdentityKey()`,未修改 install/parse 既有行為)
+- [x] marketplace 記法:重用 `ParseRef`;新寫 lockfile 離線優先(`DiscoveredVia`/`MarketplacePluginName` provenance) → registry fallback(--dry-run 跳過,注入 `marketplaceRegistryResolver`)→ supply-chain guard(canonical 不在 lockfile 拒絕,`SupplyChainRejected` bucket);`#ref` 忽略(從不參與比對,只轉發給 registry fallback 的 VersionSpec);no-lockfile(un-018)fail-open 改比對 apm.yml
+- [x] **standalone MCP(un-019,增強)**:apm 套件找不到(parse 失敗或無 identity match) → 比對 `dependencies.mcp`/`devDependencies.mcp` server 名稱;命中歸類 MCP-removal 目標;apm 識別優先於 MCP fallback
+- [x] 測試(20 個,`cmd/apm/uninstall_resolve_test.go`):五種輸入形狀解析到同 canonical;marketplace 命中 lockfile(offline-first,panicResolver 證明零網路呼叫);supply-chain guard 用會 panic/回傳未鎖定 canonical 的 fake registry 證明拒絕先於任何移除(rejected 從不進 APMTargets);#ref 被忽略(兩個不同 ref 命中同一 lockfile provenance);not-found 警告續行;全 not-found 不變更退出;`uninstall <mcp-name>` 命中 dependencies.mcp;apm 識別優先於同名 MCP;marketplace ref parse error(semver range in #ref)fold 進 NotFound 續行其餘;no-lockfile 的 un-018 guard(通過/失敗兩案);dict-form marketplace 直接命中 apm.yml(不觸網);local path 識別;defensive 分支(空 RepoURL、DepRef 無 identity、canonical 不可解析)
+- 驗證:PASS(build/vet/gofmt 全綠;新檔 94.5% 陳述式覆蓋率;Review Gate A:supply-chain guard 先於移除,已用測試證明 rejected 目標不會出現在 APMTargets)
 
 ### 步驟 7 — MCP 清理(N7, un-060~065, 定案 B:transitive + standalone)
 - [ ] **共用底層**:各 target(claude/codex/copilot/antigravity/opencode)擴充「read→del 指定 server key→write」路徑
