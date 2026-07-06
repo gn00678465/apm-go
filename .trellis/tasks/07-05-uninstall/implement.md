@@ -50,23 +50,23 @@ scope:核心 + MCP stale(定案 B);`-g` 報未支援(定案 A)。
 - 驗證:PASS
 
 ### 步驟 8 — CLI orchestration + dry-run + -g 未支援(N8/N9, un-001~004, un-080~081, un-090/091, un-100~103)
-- [ ] `cmd/apm/uninstall.go`:串接步驟 3-7 成 13 步管線;`--dry-run`/`-v`;`-g` 註冊但報「未支援」明確錯誤
-- [ ] `main.go` 註冊 `uninstallCmd()`
-- [ ] dry-run:步驟 1-3 記憶體、零寫入、跳 registry;摘要 + not-found 警告;例外 exit 1
-- [ ] 測試:--help 旗標集恰為 dry-run/-v/-g/--help;dry-run 零寫入;-g 報未支援;apm.yml 不存在 err;摘要格式
+- [x] `cmd/apm/uninstall.go`:串接步驟 3-7 成 13 步管線;`--dry-run`/`-v`;`-g` 註冊但報「未支援」明確錯誤
+- [x] `main.go` 註冊 `uninstallCmd()`
+- [x] dry-run:步驟 1-3 記憶體、零寫入、跳 registry;摘要 + not-found 警告;例外 exit 1
+- [x] 測試:--help 旗標集恰為 dry-run/-v/-g/--help;dry-run 零寫入;-g 報未支援;apm.yml 不存在 err;摘要格式
 - 驗證:`go build/vet/gofmt/test ./... -cover` 全綠
 
 ### 步驟 9 — Phase V 整合 + A/B(un-V01~V08)
-- [ ] `internal/deploy` 或 `cmd/apm` e2e:install→uninstall 往返(多 target 多 primitive 型)全清;只刪自己的;hash 保護;orphan;共用資源 Phase2 還原;lockfile 清空刪檔
-- [ ] `D:\Projects\apm-dev\evals\ab_uninstall.py`:對照 `uv run apm uninstall`,apm.yml/lockfile/apm_modules/各 target 檔案最終狀態逐項比對;deviation(`-g` 不做)明確記錄
+- [x] `internal/deploy` 或 `cmd/apm` e2e:install→uninstall 往返(多 target 多 primitive 型)全清;只刪自己的;hash 保護;orphan;共用資源 Phase2 還原;lockfile 清空刪檔
+- [x] `D:\Projects\apm-dev\evals\ab_uninstall.py`:對照 `uv run apm uninstall`,apm.yml/lockfile/apm_modules/各 target 檔案最終狀態逐項比對;deviation(`-g` 不做)明確記錄
 - 驗證:A/B 0 failed(deviation 除外)
 
 ## 中樞驗證檢查清單(每階段完成後,中樞逐項親跑)
-1. [ ] 親自重跑 build/vet/test 全綠;既有 install/deploy/lockfile 測試未破
-2. [ ] 真機:install 一個含 skills/agents/commands/instructions/hooks/MCP 的本地套件到多 target → uninstall → 確認 deployed_files 全消、apm.yml/lockfile/apm_modules 乾淨、使用者手寫檔還在
-3. [ ] 真機負向:手改一個已部署檔 → uninstall → 該檔保留 + 警告
-4. [ ] 跑 A/B,要求 0 failed(deviation 除外)
-5. [ ] 派 adversarial Explore 深查:hash 保護繞過、path 逃逸、Phase2 共用資源、supply-chain guard 時序、orphan remaining 排除、MCP 反向移除只刪 stale
+1. [x] 親自重跑 build/vet/test 全綠;既有 install/deploy/lockfile 測試未破
+2. [x] 真機:install 一個含 skills/agents/commands/instructions/hooks/MCP 的本地套件到多 target → uninstall → 確認 deployed_files 全消、apm.yml/lockfile/apm_modules 乾淨、使用者手寫檔還在
+3. [x] 真機負向:手改一個已部署檔 → uninstall → 該檔保留 + 警告
+4. [x] 跑 A/B,要求 0 failed(deviation 除外)
+5. [x] 派 adversarial Explore 深查:hash 保護繞過、path 逃逸、Phase2 共用資源、supply-chain guard 時序、orphan remaining 排除、MCP 反向移除只刪 stale
 
 ## Review Gates
 - A(步驟 6 後):supply-chain guard 先於任何移除(fake registry panic 斷言)
