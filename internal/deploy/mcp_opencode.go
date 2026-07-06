@@ -14,7 +14,10 @@ func (a *opencodeAdapter) MCPResolveMode() manifest.ResolveMode { return manifes
 // shape, unlike codex (which skips SSE) or antigravity (which switches the
 // URL field name per transport).
 func (a *opencodeAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string, []string, []string, error) {
-	entries, diags := buildMCPEntries(prims, manifest.ResolveBake, opencodeMCPEntry)
+	// Headers keep ${VAR} verbatim (envMode bakes env dict as before); the
+	// entry builder rewrites header placeholders to OpenCode's {env:VAR}
+	// runtime-substitution syntax (M8).
+	entries, diags := buildMCPEntries(prims, manifest.ResolveBake, manifest.ResolveTranslate, opencodeMCPEntry)
 	if len(prims) == 0 {
 		return nil, nil, diags, nil
 	}
@@ -38,7 +41,19 @@ func opencodeMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 	e["type"] = "remote"
 	e["url"] = r.URL
 	if len(r.Headers) > 0 {
-		e["headers"] = r.Headers
+		e["headers"] = translateOpencodeHeaders(r.Headers)
 	}
 	return e, true, ""
+}
+
+// translateOpencodeHeaders rewrites ${VAR} / ${env:VAR} placeholders to
+// OpenCode's own {env:VAR} runtime-substitution syntax (opencode.json), so a
+// credential stays a runtime reference instead of being baked to disk.
+// Non-placeholder (static) header values pass through unchanged.
+func translateOpencodeHeaders(headers map[string]string) map[string]string {
+	out := make(map[string]string, len(headers))
+	for k, v := range headers {
+		out[k] = manifest.EnvVarRe.ReplaceAllString(v, "{env:$1}")
+	}
+	return out
 }

@@ -11,7 +11,7 @@ func (a *antigravityAdapter) MCPResolveMode() manifest.ResolveMode { return mani
 // WriteMCP writes .agents/mcp_config.json per the oracle descriptor
 // (targets/expected/antigravity.yaml): key mcpServers, HTTP field serverUrl.
 func (a *antigravityAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string, []string, []string, error) {
-	entries, diags := buildMCPEntries(prims, manifest.ResolveBake, antigravityMCPEntry)
+	entries, diags := buildMCPEntries(prims, manifest.ResolveBake, manifest.ResolveBake, antigravityMCPEntry)
 	if len(prims) == 0 {
 		return nil, nil, diags, nil
 	}

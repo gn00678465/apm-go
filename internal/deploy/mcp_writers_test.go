@@ -29,7 +29,7 @@ func TestResolveMCPServer_RefusesPostResolutionEmbeddedCredentials(t *testing.T)
 	t.Setenv("MCP_URL", "https://user:pass@evil.example.com/mcp")
 	s := &manifest.MCPDependency{Name: "leaky", Registry: false, Transport: "http", URL: "${MCP_URL}"}
 
-	r := resolveMCPServer(s, manifest.ResolveBake)
+	r := resolveMCPServer(s, manifest.ResolveBake, manifest.ResolveBake)
 	if !r.Refused {
 		t.Fatalf("expected the server to be refused after resolving to a credentialed url, got URL=%q Refused=%v", r.URL, r.Refused)
 	}
@@ -881,5 +881,103 @@ func TestWriteMCP_Copilot_TranslateLiteralHTTPWithPlaceholderPathStillSkipped(t 
 	}
 	if !found {
 		t.Errorf("expected non-https diagnostic, got: %v", diags)
+	}
+}
+
+// ── M8: per-target header credential placeholder encoding ──
+
+func TestTranslateOpencodeHeaders(t *testing.T) {
+	got := translateOpencodeHeaders(map[string]string{
+		"Authorization": "Bearer ${MY_TOKEN}",
+		"X-Env":         "${env:FOO}",
+		"X-Static":      "literal",
+	})
+	if got["Authorization"] != "Bearer {env:MY_TOKEN}" {
+		t.Errorf("Authorization = %q, want Bearer {env:MY_TOKEN}", got["Authorization"])
+	}
+	if got["X-Env"] != "{env:FOO}" {
+		t.Errorf("X-Env = %q, want {env:FOO}", got["X-Env"])
+	}
+	if got["X-Static"] != "literal" {
+		t.Errorf("X-Static = %q, want literal (unchanged)", got["X-Static"])
+	}
+}
+
+func TestSoleEnvVar(t *testing.T) {
+	for v, want := range map[string]string{"${VAR}": "VAR", "${env:TOK}": "TOK"} {
+		if name, ok := soleEnvVar(v); !ok || name != want {
+			t.Errorf("soleEnvVar(%q) = %q,%v; want %q,true", v, name, ok, want)
+		}
+	}
+	for _, v := range []string{"Bearer ${VAR}", "literal", "${VAR}x", "x${VAR}", ""} {
+		if name, ok := soleEnvVar(v); ok {
+			t.Errorf("soleEnvVar(%q) = %q,true; want false", v, name)
+		}
+	}
+}
+
+func TestBearerEnvVar(t *testing.T) {
+	if name, ok := bearerEnvVar("Bearer ${MY_TOKEN}"); !ok || name != "MY_TOKEN" {
+		t.Errorf("bearerEnvVar(Bearer ${MY_TOKEN}) = %q,%v; want MY_TOKEN,true", name, ok)
+	}
+	for _, v := range []string{"Bearer tok", "${MY_TOKEN}", "Basic ${X}", "Bearer ${A}${B}"} {
+		if name, ok := bearerEnvVar(v); ok {
+			t.Errorf("bearerEnvVar(%q) = %q,true; want false", v, name)
+		}
+	}
+}
+
+func TestEncodeCodexHeaders(t *testing.T) {
+	e := map[string]any{}
+	encodeCodexHeaders(e, map[string]string{
+		"Authorization": "Bearer ${MY_TOKEN}",
+		"X-Env":         "${FOO}",
+		"X-Static":      "us-east-1",
+	})
+	if e["bearer_token_env_var"] != "MY_TOKEN" {
+		t.Errorf("bearer_token_env_var = %v, want MY_TOKEN", e["bearer_token_env_var"])
+	}
+	envH, _ := e["env_http_headers"].(map[string]string)
+	if envH["X-Env"] != "FOO" {
+		t.Errorf("env_http_headers = %v, want X-Env->FOO", e["env_http_headers"])
+	}
+	staticH, _ := e["http_headers"].(map[string]string)
+	if staticH["X-Static"] != "us-east-1" {
+		t.Errorf("http_headers = %v, want X-Static->us-east-1", e["http_headers"])
+	}
+	// The bearer token must not also leak into the plaintext buckets.
+	if _, ok := staticH["Authorization"]; ok {
+		t.Errorf("Authorization must not appear in http_headers: %v", staticH)
+	}
+	if _, ok := envH["Authorization"]; ok {
+		t.Errorf("Authorization must not appear in env_http_headers: %v", envH)
+	}
+}
+
+// TestMCPEntry_HeaderPlaceholderPerTarget covers M8 end-to-end at the entry
+// builder: a resolved header carrying ${MY_TOKEN} is encoded per each target's
+// native runtime-substitution syntax, never baked.
+func TestMCPEntry_HeaderPlaceholderPerTarget(t *testing.T) {
+	r := &ResolvedMCPServer{
+		Name: "github", Transport: "streamable-http", URL: "https://x/mcp",
+		Headers: map[string]string{"Authorization": "Bearer ${MY_TOKEN}"},
+	}
+
+	claude, _, _ := claudeMCPEntry(r)
+	if h := claude["headers"].(map[string]string); h["Authorization"] != "Bearer ${MY_TOKEN}" {
+		t.Errorf("claude header = %v, want Bearer ${MY_TOKEN}", claude["headers"])
+	}
+
+	oc, _, _ := opencodeMCPEntry(r)
+	if h := oc["headers"].(map[string]string); h["Authorization"] != "Bearer {env:MY_TOKEN}" {
+		t.Errorf("opencode header = %v, want Bearer {env:MY_TOKEN}", oc["headers"])
+	}
+
+	cx, _, _ := codexMCPEntry(r)
+	if cx["bearer_token_env_var"] != "MY_TOKEN" {
+		t.Errorf("codex bearer_token_env_var = %v, want MY_TOKEN", cx["bearer_token_env_var"])
+	}
+	if _, ok := cx["http_headers"]; ok {
+		t.Errorf("codex must not bake Authorization into http_headers: %v", cx)
 	}
 }
