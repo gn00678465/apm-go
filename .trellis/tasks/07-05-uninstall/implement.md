@@ -43,10 +43,10 @@ scope:核心 + MCP stale(定案 B);`-g` 報未支援(定案 A)。
 - 驗證:PASS(build/vet/gofmt 全綠;新檔 94.5% 陳述式覆蓋率;Review Gate A:supply-chain guard 先於移除,已用測試證明 rejected 目標不會出現在 APMTargets)
 
 ### 步驟 7 — MCP 清理(N7, un-060~065, 定案 B:transitive + standalone)
-- [ ] **共用底層**:各 target(claude/codex/copilot/antigravity/opencode)擴充「read→del 指定 server key→write」路徑
-- [ ] (a) transitive:`stale = old_mcp_servers - new`;走共用底層;`lockfile.MCPServers = new`
-- [ ] (b) standalone(增強):命中 dependencies.mcp 的 server → 從 apm.yml dependencies.mcp 刪條目(對稱 upsertMCPEntry,yamlcore node 級) + 走共用底層 + 從 lockfile.MCPServers 移除
-- [ ] 測試:裝 2 個 MCP server 於多 target,uninstall 貢獻其一的套件→該 server 從各 target 消失、另一保留(transitive);`install --mcp foo`→`uninstall foo`→ apm.yml dependencies.mcp 無 foo、各 target 無 foo、lockfile 更新(standalone);lockfile 舊版無欄位 fail-open
+- [x] **共用底層**:各 target(claude/codex/copilot/antigravity/opencode)擴充「read→del 指定 server key→write」路徑
+- [x] (a) transitive:`stale = old_mcp_servers - new`;走共用底層;`lockfile.MCPServers = new`
+- [x] (b) standalone(增強):命中 dependencies.mcp 的 server → 從 apm.yml dependencies.mcp 刪條目(對稱 upsertMCPEntry,yamlcore node 級) + 走共用底層 + 從 lockfile.MCPServers 移除
+- [x] 測試:裝 2 個 MCP server 於多 target,uninstall 貢獻其一的套件→該 server 從各 target 消失、另一保留(transitive);`install --mcp foo`→`uninstall foo`→ apm.yml dependencies.mcp 無 foo、各 target 無 foo、lockfile 更新(standalone);lockfile 舊版無欄位 fail-open
 - 驗證:PASS
 
 ### 步驟 8 — CLI orchestration + dry-run + -g 未支援(N8/N9, un-001~004, un-080~081, un-090/091, un-100~103)
