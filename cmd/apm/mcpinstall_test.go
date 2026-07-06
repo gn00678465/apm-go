@@ -198,6 +198,12 @@ func mcpRegistryServer(t *testing.T, servers map[string]mockMCPServer) *httptest
 }
 
 func TestBuildMCPEntry_RegistryLookup_Success(t *testing.T) {
+	// Non-interactive: the registry remote declares a required Authorization
+	// header, so an interactive run would prompt for a token. Pin
+	// non-interactive so this test deterministically exercises the fallback
+	// guidance diagnostic (the interactive inject path is covered by the
+	// collectHeaderValues unit tests).
+	withNonInteractiveStdin(t)
 	srv := mcpRegistryServer(t, map[string]mockMCPServer{
 		"io.github.github/github-mcp-server": {
 			Name: "io.github.github/github-mcp-server",
@@ -450,7 +456,7 @@ func parseYAML(t *testing.T, src string) *yamllib.Node {
 
 func TestUpsertMCPEntry_Added(t *testing.T) {
 	doc := parseYAML(t, "name: test\nversion: \"1.0.0\"\n")
-	status, err := upsertMCPEntry(doc, "fetch", strNode("fetch"), false)
+	status, err := upsertMCPEntry(doc, "fetch", strNode("fetch"), false, nil)
 	if err != nil {
 		t.Fatalf("upsertMCPEntry: %v", err)
 	}
@@ -461,7 +467,7 @@ func TestUpsertMCPEntry_Added(t *testing.T) {
 
 func TestUpsertMCPEntry_UnchangedDoesNotError(t *testing.T) {
 	doc := parseYAML(t, "name: test\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - fetch\n")
-	status, err := upsertMCPEntry(doc, "fetch", strNode("fetch"), false)
+	status, err := upsertMCPEntry(doc, "fetch", strNode("fetch"), false, nil)
 	if err != nil {
 		t.Fatalf("upsertMCPEntry: %v", err)
 	}
@@ -473,7 +479,7 @@ func TestUpsertMCPEntry_UnchangedDoesNotError(t *testing.T) {
 func TestUpsertMCPEntry_DifferentWithoutForce_Errors(t *testing.T) {
 	doc := parseYAML(t, "name: test\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - name: fetch\n      transport: stdio\n")
 	newEntry := mapNode([][2]*yamllib.Node{{strNode("name"), strNode("fetch")}, {strNode("transport"), strNode("http")}})
-	_, err := upsertMCPEntry(doc, "fetch", newEntry, false)
+	_, err := upsertMCPEntry(doc, "fetch", newEntry, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Errorf("expected a --force-required error, got %v", err)
 	}
@@ -482,12 +488,142 @@ func TestUpsertMCPEntry_DifferentWithoutForce_Errors(t *testing.T) {
 func TestUpsertMCPEntry_DifferentWithForce_Replaces(t *testing.T) {
 	doc := parseYAML(t, "name: test\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - name: fetch\n      transport: stdio\n")
 	newEntry := mapNode([][2]*yamllib.Node{{strNode("name"), strNode("fetch")}, {strNode("transport"), strNode("http")}})
-	status, err := upsertMCPEntry(doc, "fetch", newEntry, true)
+	status, err := upsertMCPEntry(doc, "fetch", newEntry, true, nil)
 	if err != nil {
 		t.Fatalf("upsertMCPEntry: %v", err)
 	}
 	if status != "replaced" {
 		t.Errorf("status = %q, want replaced", status)
+	}
+}
+
+// TestUpsertMCPEntry_WritesBlockStyleNotInheritedFlow covers #1: `apm-go
+// init` writes `mcp: []`, which go-yaml renders in flow style; the parsed
+// SequenceNode carries FlowStyle, so a naive append + re-dump emits
+// `mcp: [foo]`. upsertMCPEntry must clear that flow style on mutation so the
+// serialized output matches the Python original's block style, while leaving
+// the sibling `apm: []` (also flow) untouched.
+func TestUpsertMCPEntry_WritesBlockStyleNotInheritedFlow(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry *yamllib.Node
+		want  string // block-form substring that must appear
+	}{
+		{"bare string", strNode("io.github.github/github-mcp-server"), "- io.github.github/github-mcp-server"},
+		{"mapping", mapNode([][2]*yamllib.Node{{strNode("name"), strNode("api")}, {strNode("transport"), strNode("http")}}), "- name: api"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte("name: test\ndependencies:\n  apm: []\n  mcp: []\n")
+			node := parseYAML(t, string(src))
+			status, err := upsertMCPEntry(node, mcpEntryName(tc.entry), tc.entry, false, nil)
+			if err != nil || status != "added" {
+				t.Fatalf("upsertMCPEntry status=%q err=%v", status, err)
+			}
+			out, patched, err := yamlcore.PatchMappingPath(src, node, []string{"dependencies", "mcp"})
+			if err != nil || !patched {
+				t.Fatalf("PatchMappingPath patched=%v err=%v", patched, err)
+			}
+			got := string(out)
+			if strings.Contains(got, "mcp: [") {
+				t.Errorf("mcp written in flow style, want block:\n%s", got)
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("missing block entry %q in:\n%s", tc.want, got)
+			}
+			if !strings.Contains(got, "apm: []") {
+				t.Errorf("sibling apm list must be left untouched, got:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestUpsertMCPEntry_ConflictConfirm covers D2: a differing existing entry
+// without --force is resolved by the injected confirm callback (interactive
+// TTY), mirroring the Python original's writer.py three-way. nil confirm
+// (non-interactive) is a hard error; accept -> replaced; decline -> skipped
+// (doc untouched); --force -> replaced without consulting confirm.
+func TestUpsertMCPEntry_ConflictConfirm(t *testing.T) {
+	const src = "name: test\ndependencies:\n  mcp:\n    - name: fetch\n      transport: stdio\n"
+	base := func() *yamllib.Node { return parseYAML(t, src) }
+	newEntry := func() *yamllib.Node {
+		return mapNode([][2]*yamllib.Node{{strNode("name"), strNode("fetch")}, {strNode("transport"), strNode("http")}})
+	}
+
+	t.Run("accept -> replaced", func(t *testing.T) {
+		doc := base()
+		var gotDiff []string
+		confirm := func(name string, diff []string) (bool, error) { gotDiff = diff; return true, nil }
+		status, err := upsertMCPEntry(doc, "fetch", newEntry(), false, confirm)
+		if err != nil || status != "replaced" {
+			t.Fatalf("status=%q err=%v", status, err)
+		}
+		if len(gotDiff) == 0 {
+			t.Errorf("confirm must receive a non-empty diff")
+		}
+		out, _ := yamlcore.SafeDump(doc)
+		if !strings.Contains(string(out), "http") {
+			t.Errorf("accepted replace must apply the new entry:\n%s", out)
+		}
+	})
+
+	t.Run("decline -> skipped, doc untouched", func(t *testing.T) {
+		doc := base()
+		confirm := func(name string, diff []string) (bool, error) { return false, nil }
+		status, err := upsertMCPEntry(doc, "fetch", newEntry(), false, confirm)
+		if err != nil || status != "skipped" {
+			t.Fatalf("status=%q err=%v", status, err)
+		}
+		out, _ := yamlcore.SafeDump(doc)
+		if !strings.Contains(string(out), "stdio") || strings.Contains(string(out), "http") {
+			t.Errorf("declined replace must leave the entry unchanged:\n%s", out)
+		}
+	})
+
+	t.Run("nil confirm (non-interactive) -> error", func(t *testing.T) {
+		doc := base()
+		_, err := upsertMCPEntry(doc, "fetch", newEntry(), false, nil)
+		if err == nil || !strings.Contains(err.Error(), "non-interactive") {
+			t.Errorf("expected a non-interactive --force error, got %v", err)
+		}
+	})
+
+	t.Run("force -> replaced without consulting confirm", func(t *testing.T) {
+		doc := base()
+		called := false
+		confirm := func(name string, diff []string) (bool, error) { called = true; return false, nil }
+		status, err := upsertMCPEntry(doc, "fetch", newEntry(), true, confirm)
+		if err != nil || status != "replaced" {
+			t.Fatalf("status=%q err=%v", status, err)
+		}
+		if called {
+			t.Errorf("--force must not consult confirm")
+		}
+	})
+}
+
+// TestDiffEntry covers the diffEntry port of the Python original's
+// _diff_entry: bare-string vs bare-string, mapping key changes, and an added
+// key shown as "<absent> -> value".
+func TestDiffEntry(t *testing.T) {
+	if got := diffEntry(strNode("a"), strNode("b")); len(got) != 1 || got[0] != "  a -> b" {
+		t.Errorf("bare diff = %v, want [  a -> b]", got)
+	}
+	if got := diffEntry(strNode("a"), strNode("a")); got != nil {
+		t.Errorf("identical bare strings should have no diff, got %v", got)
+	}
+
+	old := mapNode([][2]*yamllib.Node{{strNode("name"), strNode("fetch")}, {strNode("transport"), strNode("stdio")}})
+	newN := mapNode([][2]*yamllib.Node{{strNode("name"), strNode("fetch")}, {strNode("transport"), strNode("http")}, {strNode("url"), strNode("https://x")}})
+	joined := strings.Join(diffEntry(old, newN), "\n")
+	if !strings.Contains(joined, "transport: stdio -> http") {
+		t.Errorf("missing transport change in %q", joined)
+	}
+	if !strings.Contains(joined, "url: <absent> -> https://x") {
+		t.Errorf("missing added-url line in %q", joined)
+	}
+	if strings.Contains(joined, "name:") {
+		t.Errorf("unchanged name must not appear in %q", joined)
 	}
 }
 
@@ -644,6 +780,14 @@ func TestRunMCPInstall_SkillCombined_Errors(t *testing.T) {
 }
 
 func TestRunMCPInstall_ExistingConflictWithoutForce_ApmYmlUntouched(t *testing.T) {
+	// This pins the NON-interactive conflict path: without --force and with
+	// no way to prompt, a differing existing entry is a hard error and
+	// apm.yml is left untouched. withNonInteractiveStdin forces
+	// canPromptCreds() false so the result is deterministic regardless of
+	// whether the test harness's stdin happens to look like a TTY (the
+	// interactive decline->skipped path is covered by the upsertMCPEntry
+	// confirm tests).
+	withNonInteractiveStdin(t)
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(dir)

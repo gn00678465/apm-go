@@ -71,13 +71,23 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		return err
 	}
 
-	status, err := upsertMCPEntry(node, opts.Name, entryNode, opts.Force)
+	// On an interactive TTY a conflicting entry is resolved by prompting
+	// (show the diff, default No) instead of hard-failing; non-interactively
+	// confirm stays nil so upsertMCPEntry demands --force. Mirrors the Python
+	// original's writer.py three-way.
+	var confirm confirmReplaceFunc
+	if canPromptCreds() {
+		confirm = promptReplaceMCP
+	}
+	status, err := upsertMCPEntry(node, opts.Name, entryNode, opts.Force, confirm)
 	if err != nil {
 		return err
 	}
-	if status == "unchanged" {
-		// A stale or missing deployed target file for an unchanged entry is
-		// a pre-existing limitation of --mcp itself (present in the Python
+	if status == "unchanged" || status == "skipped" {
+		// unchanged: identical entry. skipped: the user declined the replace
+		// prompt -- both leave apm.yml untouched and deploy nothing. A stale
+		// or missing deployed target file for an unchanged entry is a
+		// pre-existing limitation of --mcp itself (present in the Python
 		// original too, per source reading during design): re-run `apm
 		// install` (the full pipeline) or delete+re-add the entry to force
 		// redeployment.
@@ -340,9 +350,19 @@ func resolveFromRegistry(opts mcpInstallOpts) (deployDep *manifest.MCPDependency
 		return nil, nil, rerr
 	}
 	if len(requiredHeaders) > 0 {
-		diags = append(diags, fmt.Sprintf(
-			"mcp %q requires header(s) %s which apm-go does not resolve automatically; add --header KEY=VALUE if the server needs authentication",
-			opts.Name, strings.Join(requiredHeaders, ", ")))
+		// Interactively collect the required credentials (TTY only). Entered
+		// values are injected into the deploy dep so the server is
+		// authenticated, but are NOT persisted to apm.yml -- the entry stays
+		// a bare registry reference, keeping secrets out of a committed file.
+		// Only when nothing was collected (non-interactive, or left blank) do
+		// we fall back to the guidance diagnostic.
+		if hdrs := promptRegistryHeaders(requiredHeaders); len(hdrs) > 0 {
+			dep.Headers = hdrs
+		} else {
+			diags = append(diags, fmt.Sprintf(
+				"mcp %q requires header(s) %s which apm-go does not resolve automatically; add --header KEY=VALUE if the server needs authentication",
+				opts.Name, strings.Join(requiredHeaders, ", ")))
+		}
 	}
 
 	return dep, diags, nil
@@ -410,12 +430,27 @@ func mcpEntryNode(dep *manifest.MCPDependency) *yamllib.Node {
 	return mapNode(pairs)
 }
 
+// confirmReplaceFunc decides whether to replace an existing MCP entry whose
+// value differs from the new one. A nil func means non-interactive: the
+// conflict is a hard error telling the user to pass --force. This mirrors the
+// Python original's force / interactive-TTY / non-TTY three-way (writer.py
+// add_mcp_to_apm_yml): callers inject a TTY-backed prompt only when stdin is
+// interactive.
+type confirmReplaceFunc func(name string, diff []string) (bool, error)
+
 // upsertMCPEntry inserts or replaces entryNode by name in apm.yml's
 // dependencies.mcp sequence (design.md §6): unmatched name -> append
 // ("added"); matched name, semantically identical -> no-op ("unchanged");
-// matched name, different, force=false -> error, doc untouched; matched
-// name, different, force=true -> replace in place ("replaced").
-func upsertMCPEntry(doc *yamllib.Node, name string, entryNode *yamllib.Node, force bool) (status string, err error) {
+// matched name, different, force=true -> replace in place ("replaced");
+// matched name, different, force=false -> confirm==nil errors (doc
+// untouched), else the confirm callback decides: accept -> "replaced",
+// decline -> "skipped" (doc untouched, same terminal outcome as unchanged).
+//
+// On every mutation the sequence's flow style is cleared so an entry appended
+// to the empty `mcp: []` that `apm-go init` writes (which go-yaml renders in
+// flow style, and whose parsed node inherits FlowStyle) serializes as a
+// block-style list, matching the Python original's dump.
+func upsertMCPEntry(doc *yamllib.Node, name string, entryNode *yamllib.Node, force bool, confirm confirmReplaceFunc) (status string, err error) {
 	root := doc
 	if root.Kind == yamllib.DocumentNode && len(root.Content) > 0 {
 		root = root.Content[0]
@@ -435,14 +470,90 @@ func upsertMCPEntry(doc *yamllib.Node, name string, entryNode *yamllib.Node, for
 			return "unchanged", nil
 		}
 		if !force {
-			return "", fmt.Errorf("MCP server %q already exists in apm.yml. Use --force to replace.", name)
+			if confirm == nil {
+				return "", fmt.Errorf("MCP server %q already exists in apm.yml. Use --force to replace (non-interactive).", name)
+			}
+			ok, cerr := confirm(name, diffEntry(existing, entryNode))
+			if cerr != nil {
+				return "", cerr
+			}
+			if !ok {
+				return "skipped", nil
+			}
 		}
 		mcpSeq.Content[i] = entryNode
+		mcpSeq.Style &^= yamllib.FlowStyle
 		return "replaced", nil
 	}
 
 	mcpSeq.Content = append(mcpSeq.Content, entryNode)
+	mcpSeq.Style &^= yamllib.FlowStyle
 	return "added", nil
+}
+
+// diffEntry renders a short "key: old -> new" list for two differing MCP
+// entries (human display for the replace-confirm prompt), mirroring the
+// Python original's _diff_entry (writer.py): a bare-string entry is treated
+// as {name: value}; two differing bare strings render as a single
+// "old -> new" line; a key absent on one side shows "<absent>".
+func diffEntry(old, new *yamllib.Node) []string {
+	oldStr, oldIsStr := scalarString(old)
+	newStr, newIsStr := scalarString(new)
+	if oldIsStr && newIsStr {
+		if oldStr == newStr {
+			return nil
+		}
+		return []string{fmt.Sprintf("  %s -> %s", oldStr, newStr)}
+	}
+
+	oldKeys, oldVals := entryFields(old)
+	newKeys, newVals := entryFields(new)
+	keys := append([]string{}, oldKeys...)
+	for _, k := range newKeys {
+		if _, seen := oldVals[k]; !seen {
+			keys = append(keys, k)
+		}
+	}
+
+	var diff []string
+	for _, k := range keys {
+		ov, ok := oldVals[k]
+		if !ok {
+			ov = "<absent>"
+		}
+		nv, ok := newVals[k]
+		if !ok {
+			nv = "<absent>"
+		}
+		if ov != nv {
+			diff = append(diff, fmt.Sprintf("  %s: %s -> %s", k, ov, nv))
+		}
+	}
+	return diff
+}
+
+func scalarString(n *yamllib.Node) (string, bool) {
+	if n != nil && n.Kind == yamllib.ScalarNode {
+		return n.Value, true
+	}
+	return "", false
+}
+
+// entryFields returns the ordered keys and key->string-repr of a mapping MCP
+// entry; a bare scalar entry is treated as {name: value}.
+func entryFields(n *yamllib.Node) (keys []string, vals map[string]string) {
+	vals = map[string]string{}
+	if s, ok := scalarString(n); ok {
+		return []string{"name"}, map[string]string{"name": s}
+	}
+	if n != nil && n.Kind == yamllib.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i].Value
+			keys = append(keys, k)
+			vals[k] = fmt.Sprintf("%v", nodeToValue(n.Content[i+1]))
+		}
+	}
+	return keys, vals
 }
 
 func mcpEntryName(n *yamllib.Node) string {
