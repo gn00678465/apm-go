@@ -646,3 +646,40 @@ Sonnet subagent 實作/Fable 查核模式修 4 個實測 bug:(1)browse 改用 Py
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: install --mcp parity: #1 block style / #2 憑證互動 / D2 confirm / M8 per-target header + A/B
+
+**Date**: 2026-07-07
+**Task**: install --mcp parity: #1 block style / #2 憑證互動 / D2 confirm / M8 per-target header + A/B
+**Branch**: `feat/marketplace-install`
+
+### Summary
+
+補齊 install --mcp 對 Python 原版的缺口：#1 apm.yml block style、#2 registry 憑證互動詢問、D2 衝突 confirm 三態、M8 各 target header 憑證改保留變數(claude ${VAR} / opencode {env:VAR} / codex bearer_token_env_var，不烘明碼 secret)。A/B(ab_mcp_install_parity.py) 14/15 PASS 並揪出 canPromptCreds 少檢查 stdout TTY 的 bug(已修)。全庫 build/vet/test 綠、覆蓋率 83%。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `706faf6` | (see git log) |
+| `a907697` | (see git log) |
+| `0f34fb2` | (see git log) |
+| `f20dcc2` | (see git log) |
+| `0daddd1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
