@@ -45,6 +45,7 @@
 | 07-05-uninstall | `apm-go uninstall <pkg...>` + `--dry-run`/`-v`/`-g` + 反向清理 | 實作(複雜) |
 | 07-05-opencode-mcp | `opencodeAdapter` 加 `WriteMCP`,寫 `opencode.json` mcp | 實作(中小) |
 | 07-05-antigravity-research | 研究報告:設定面 + explicit-only 分歧定案 + 缺口清單 | 研究先行 |
+| 07-06-mcp-install-parity | `install --mcp` apm.yml block style + registry 憑證互動詢問 | 實作(中) |
 
 排序建議：antigravity-research（研究，釐清分歧）可先行或平行；opencode-mcp 最單純可快速補齊；uninstall 最複雜（反向清理）最後。實際排序見各 child implement.md。
 
@@ -53,6 +54,7 @@
 - [ ] `apm-go uninstall` 存在且對照 Python 行為 parity（A/B 通過，deviation 記錄）
 - [ ] `install --mcp` 在 opencode target 產生 `opencode.json` mcp 區塊（格式對照 Python）
 - [ ] antigravity 研究報告產出：設定面完整清單、explicit-only 分歧定案、apm-go 缺口與修正建議
+- [ ] `install --mcp` apm.yml `mcp:` 為 block style 且 registry 憑證於互動 TTY 會 prompt（A/B 對照,deviation 記錄）
 - [ ] 全 repo `go build/vet/test ./...` 全綠;新功能測試覆蓋 ≥ 80%
 - [ ] 三個 child 各自可獨立驗收、archive
 

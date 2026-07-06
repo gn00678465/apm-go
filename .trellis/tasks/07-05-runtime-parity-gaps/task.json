@@ -21,7 +21,8 @@
   "children": [
     "07-05-uninstall",
     "07-05-opencode-mcp",
-    "07-05-antigravity-research"
+    "07-05-antigravity-research",
+    "07-06-mcp-install-parity"
   ],
   "parent": null,
   "relatedFiles": [],
