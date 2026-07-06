@@ -81,6 +81,55 @@ func RemoveDeployedFiles(projectDir string, files []string, hashes map[string]st
 	return removed, kept, diags
 }
 
+// SafeRemoveModuleDir deletes a single dependency's vendored directory under
+// projectDir/apm_modules (un-030~032) -- the whole-tree counterpart to
+// RemoveDeployedFiles's per-file deletion above, for the OTHER thing
+// uninstall must delete: the package's own extracted/cloned copy, not
+// anything it deployed to a target.
+//
+// identityKey is the same key space as manifest.DependencyReference.
+// IdentityKey() / lockfile.LockedDep.UniqueKey() (RepoURL[/VirtualPath]),
+// used verbatim as apm_modules's relative subpath -- exactly how install.go
+// and gitops.RealPackageLoader already lay out apm_modules/<key>.
+//
+// Uses archive.ContainedKey rather than a plain archive.Contained(root,
+// filepath.Join(root, identityKey)) check: identityKey is only
+// charset-validated at manifest-parse time (its VirtualPath segment grammar
+// does not reject a ".." segment, see manifest.validateVirtualPath), so a
+// crafted or corrupted identity could otherwise resolve to a path that is
+// still technically "inside" apm_modules but is the wrong directory
+// entirely -- the same threat model update.go's directGitSemverUpdateScope
+// already guards against for this identical key space, kept consistent here
+// (checklist's "path 防護全庫一致" caution).
+//
+// A missing target directory is a no-op (removed=false, err=nil) -- already
+// gone, or never materialized (e.g. a local-path dependency, which
+// gitops.RealPackageLoader never vendors under apm_modules at all). On
+// success, any now-empty ancestor directories up to (but excluding)
+// projectDir are cleaned up too, reusing cleanupEmptyParents exactly as
+// RemoveDeployedFiles does.
+func SafeRemoveModuleDir(projectDir, identityKey string) (removed bool, err error) {
+	if identityKey == "" {
+		return false, nil
+	}
+	modulesRoot := filepath.Join(projectDir, "apm_modules")
+	target := filepath.Join(modulesRoot, filepath.FromSlash(identityKey))
+	if !archive.ContainedKey(modulesRoot, identityKey) {
+		return false, fmt.Errorf("refusing to remove apm_modules entry %q: path escapes apm_modules", identityKey)
+	}
+	if _, statErr := os.Stat(target); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return false, nil
+		}
+		return false, statErr
+	}
+	if err := os.RemoveAll(target); err != nil {
+		return false, err
+	}
+	cleanupEmptyParents(projectDir, filepath.Dir(target))
+	return true, nil
+}
+
 // cleanupEmptyParents removes dir and, walking upward, each ancestor that has
 // become empty, stopping at (and never removing) projectDir itself.
 func cleanupEmptyParents(projectDir, dir string) {

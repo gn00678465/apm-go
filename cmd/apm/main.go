@@ -22,6 +22,7 @@ func main() {
 	root.AddCommand(initCmd())
 	root.AddCommand(installCmd())
 	root.AddCommand(updateCmd())
+	root.AddCommand(uninstallCmd())
 	root.AddCommand(auditCmd())
 	root.AddCommand(experimentalCmd())
 	root.AddCommand(marketplaceCmd())

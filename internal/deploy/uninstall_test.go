@@ -246,6 +246,115 @@ func TestRemoveDeployedFiles_TargetIsDirectoryIsKept(t *testing.T) {
 	}
 }
 
+func TestSafeRemoveModuleDir_NormalRemoval(t *testing.T) {
+	dir := t.TempDir()
+	pkgDir := filepath.Join(dir, "apm_modules", "acme", "foo")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "apm.yml"), []byte("name: foo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := SafeRemoveModuleDir(dir, "acme/foo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !removed {
+		t.Fatal("expected removed=true")
+	}
+	if _, err := os.Stat(pkgDir); !os.IsNotExist(err) {
+		t.Fatalf("expected package dir gone, stat err=%v", err)
+	}
+	// The now-empty "apm_modules/acme" and "apm_modules" chain must also be
+	// cleaned up (same convention as RemoveDeployedFiles's cleanup).
+	if _, err := os.Stat(filepath.Join(dir, "apm_modules")); !os.IsNotExist(err) {
+		t.Fatalf("expected apm_modules to be cleaned up, stat err=%v", err)
+	}
+}
+
+func TestSafeRemoveModuleDir_SiblingPackageSurvives(t *testing.T) {
+	dir := t.TempDir()
+	fooDir := filepath.Join(dir, "apm_modules", "acme", "foo")
+	barDir := filepath.Join(dir, "apm_modules", "acme", "bar")
+	if err := os.MkdirAll(fooDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(barDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := SafeRemoveModuleDir(dir, "acme/foo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !removed {
+		t.Fatal("expected removed=true")
+	}
+	if _, err := os.Stat(fooDir); !os.IsNotExist(err) {
+		t.Fatalf("expected acme/foo gone, stat err=%v", err)
+	}
+	if _, err := os.Stat(barDir); err != nil {
+		t.Fatalf("expected acme/bar (sibling) to survive, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "acme")); err != nil {
+		t.Fatalf("expected apm_modules/acme to survive (still has bar), stat err=%v", err)
+	}
+}
+
+func TestSafeRemoveModuleDir_NonexistentIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	removed, err := SafeRemoveModuleDir(dir, "acme/never-installed")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if removed {
+		t.Fatal("expected removed=false for a directory that never existed")
+	}
+}
+
+func TestSafeRemoveModuleDir_PathEscapeIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	// A sibling directory outside apm_modules that a crafted ".." identityKey
+	// would otherwise be able to reach.
+	victim := filepath.Join(dir, "victim")
+	if err := os.MkdirAll(filepath.Join(victim, "keepme"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "apm_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := SafeRemoveModuleDir(dir, "../victim")
+	if err == nil {
+		t.Fatal("expected an error for a path-escaping identityKey")
+	}
+	if removed {
+		t.Fatal("expected removed=false when the path escapes apm_modules")
+	}
+	if _, statErr := os.Stat(filepath.Join(victim, "keepme")); statErr != nil {
+		t.Fatalf("expected victim directory to survive untouched, stat err=%v", statErr)
+	}
+}
+
+func TestSafeRemoveModuleDir_EmptyIdentityKeyIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "apm_modules", "something"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := SafeRemoveModuleDir(dir, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if removed {
+		t.Fatal("expected removed=false for an empty identityKey")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "something")); err != nil {
+		t.Fatalf("expected apm_modules to survive untouched, stat err=%v", err)
+	}
+}
+
 func TestRemoveDeployedFiles_MultipleFilesMixedOutcomes(t *testing.T) {
 	dir := t.TempDir()
 	okRel := ".agents/commands/ok.md"
