@@ -135,3 +135,37 @@ func loadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []
 func LoadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []string) {
 	return loadDependencyMCP(depKey, modulePath)
 }
+
+// LoadDependencyDeps reads a dependency's own apm.yml and returns the
+// identity keys (DependencyReference.IdentityKey(), the same key space as
+// LockedDep.UniqueKey()) of its own PROD dependencies.apm entries -- never
+// devDependencies, matching deploy.Run's own depth split, which never
+// follows a transitive dependency's devDependencies either. Mirrors
+// loadDependencyMCP's lenience exactly: a missing apm.yml is "no
+// dependencies" (nil, nil), and one that exists but fails to parse is a
+// diagnostic, not an error. Used by cmd/apm's uninstall orchestration
+// (reachableFromRemainingRoots) to walk the actual dependency graph declared
+// on disk, rather than trusting LockedDep.ResolvedBy -- which only records a
+// single parent and can't represent a diamond dependency shared by two root
+// packages.
+func LoadDependencyDeps(depKey, modulePath string) ([]string, []string) {
+	data, err := os.ReadFile(filepath.Join(modulePath, "apm.yml"))
+	if err != nil {
+		return nil, nil
+	}
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("deps: dependency %s has an unparseable apm.yml, skipping its dependencies: %v", depKey, err)}
+	}
+	m, _, err := manifest.ParseManifest(node)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("deps: dependency %s has an invalid apm.yml, skipping its dependencies: %v", depKey, err)}
+	}
+	var keys []string
+	for _, d := range m.ParsedDeps {
+		if k := d.IdentityKey(); k != "" {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}

@@ -225,6 +225,51 @@ func TestLoadDependencyMCP_MalformedFileDiagnosed(t *testing.T) {
 	}
 }
 
+// TestLoadDependencyDeps_MissingFileIsSilent mirrors
+// TestLoadDependencyMCP_MissingFileIsSilent's lenience contract for
+// LoadDependencyDeps: no apm.yml means "no dependencies", not an error.
+func TestLoadDependencyDeps_MissingFileIsSilent(t *testing.T) {
+	dir := t.TempDir()
+	keys, diags := LoadDependencyDeps("acme/none", filepath.Join(dir, "apm_modules", "acme/none"))
+	if keys != nil || diags != nil {
+		t.Errorf("missing apm.yml should be silent, got keys=%v diags=%v", keys, diags)
+	}
+}
+
+// TestLoadDependencyDeps_MalformedFileDiagnosed mirrors
+// TestLoadDependencyMCP_MalformedFileDiagnosed.
+func TestLoadDependencyDeps_MalformedFileDiagnosed(t *testing.T) {
+	dir := t.TempDir()
+	modDir := filepath.Join(dir, "apm_modules", "acme/broken")
+	mkFile(t, modDir, "apm.yml", "not: [valid, yaml, manifest\n")
+	keys, diags := LoadDependencyDeps("acme/broken", modDir)
+	if keys != nil {
+		t.Errorf("expected nil keys for malformed apm.yml, got %v", keys)
+	}
+	if len(diags) != 1 || !strings.Contains(diags[0], "acme/broken") {
+		t.Errorf("expected one diagnostic naming the dep, got %v", diags)
+	}
+}
+
+// TestLoadDependencyDeps_ReturnsProdIdentityKeysIgnoringRefAndDev locks down
+// CRITICAL #1's fix prerequisite: LoadDependencyDeps returns identity keys
+// (ignoring git ref, matching DependencyReference.IdentityKey()) for a
+// dependency's own PROD dependencies.apm entries only -- devDependencies.apm
+// is never followed, matching deploy.Run's own transitive depth split.
+func TestLoadDependencyDeps_ReturnsProdIdentityKeysIgnoringRefAndDev(t *testing.T) {
+	dir := t.TempDir()
+	modDir := filepath.Join(dir, "apm_modules", "acme/parent")
+	mkFile(t, modDir, "apm.yml", "name: parent\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/child#v1.2.3\ndevDependencies:\n  apm:\n    - acme/dev-only\n")
+
+	keys, diags := LoadDependencyDeps("acme/parent", modDir)
+	if len(diags) != 0 {
+		t.Errorf("expected no diagnostics, got %v", diags)
+	}
+	if len(keys) != 1 || keys[0] != "acme/child" {
+		t.Errorf("expected exactly [acme/child] (ref stripped, dev dep excluded), got %v", keys)
+	}
+}
+
 func TestRun_MCPCollection_DirectDepAutoTrusted(t *testing.T) {
 	dir := t.TempDir()
 	depKey := "acme/direct"

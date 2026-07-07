@@ -779,6 +779,160 @@ func TestCollectUninstallDeployedProvenance_DeterministicHashMergeAcrossKeys(t *
 	}
 }
 
+// TestRunUninstall_DiamondSharedDependencyNotOrphaned is CRITICAL #1: a
+// transitive dependency shared by two ROOT packages (a diamond) must not be
+// deleted as an "orphan" just because LockedDep.ResolvedBy -- which only
+// records a single parent per dependency -- happens to point at the package
+// being removed. acme/a and acme/b are both root apm.yml dependencies;
+// acme/x is a transitive dependency of BOTH (apm_modules/acme/b/apm.yml
+// declares it too), but the lockfile's ResolvedBy for acme/x only recorded
+// acme/a (the last writer). Uninstalling acme/a must NOT delete acme/x --
+// acme/b still depends on it.
+func TestRunUninstall_DiamondSharedDependencyNotOrphaned(t *testing.T) {
+	dir := chdirTemp(t)
+
+	manifestYAML := "name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/a\n    - acme/b\n"
+	if err := os.WriteFile("apm.yml", []byte(manifestYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, "apm_modules", "acme", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// acme/b's own apm.yml declares a dependency on acme/x -- the fact that
+	// makes this a diamond: acme/x is actually reachable through acme/b too,
+	// not just through the ResolvedBy value recorded for acme/a.
+	bModDir := filepath.Join(dir, "apm_modules", "acme", "b")
+	if err := os.MkdirAll(bModDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bManifest := "name: b\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/x\n"
+	if err := os.WriteFile(filepath.Join(bModDir, "apm.yml"), []byte(bManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	xHash := writeUninstallDeployedFile(t, dir, ".claude/rules/x.md", "x rule")
+	if err := os.MkdirAll(filepath.Join(dir, "apm_modules", "acme", "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{
+			{RepoURL: "acme/a", Source: "git"},
+			{RepoURL: "acme/b", Source: "git"},
+			// ResolvedBy only records acme/a -- the diamond's other parent
+			// (acme/b) is lost, exactly like the real ResolvedBy field.
+			{RepoURL: "acme/x", Source: "git", ResolvedBy: "acme/a", DeployedFiles: []string{".claude/rules/x.md"}, DeployedHashes: map[string]string{".claude/rules/x.md": xHash}},
+		},
+	}
+	writeUninstallLockfileFixture(t, lock)
+
+	if err := runUninstall([]string{"acme/a"}, uninstallOptions{}); err != nil {
+		t.Fatalf("runUninstall: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "acme", "x")); err != nil {
+		t.Errorf("expected apm_modules/acme/x to survive (acme/b still depends on it), stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "x.md")); err != nil {
+		t.Errorf("expected acme/x's deployed file to survive, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "acme", "a")); !os.IsNotExist(err) {
+		t.Errorf("expected apm_modules/acme/a to be removed, stat err=%v", err)
+	}
+
+	lockData, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatalf("expected apm.lock.yaml to survive (acme/b, acme/x still locked): %v", err)
+	}
+	lockNode, _ := yamlcore.SafeLoad(lockData)
+	newLock, _ := lockfile.ParseLockfile(lockNode)
+	if newLock.FindByKey("acme/x") == nil {
+		t.Error("expected acme/x to remain locked (still reachable via acme/b)")
+	}
+	if newLock.FindByKey("acme/a") != nil {
+		t.Error("expected acme/a to be gone from the lockfile")
+	}
+
+	fx := readManifestParsed(t)
+	if len(fx.ParsedDeps) != 1 || fx.ParsedDeps[0].RepoURL != "acme/b" {
+		t.Errorf("expected only acme/b to remain in apm.yml, got %+v", fx.ParsedDeps)
+	}
+}
+
+// TestReachableFromRemainingRoots_MultiLevelChain proves the BFS walks
+// transitively, not just one hop: root -> mid -> leaf, where only root is a
+// remaining root key.
+func TestReachableFromRemainingRoots_MultiLevelChain(t *testing.T) {
+	dir := chdirTemp(t)
+
+	rootDir := filepath.Join(dir, "apm_modules", "acme", "root")
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootDir, "apm.yml"), []byte("name: root\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/mid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	midDir := filepath.Join(dir, "apm_modules", "acme", "mid")
+	if err := os.MkdirAll(midDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(midDir, "apm.yml"), []byte("name: mid\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/leaf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{
+			{RepoURL: "acme/root", Source: "git"},
+			{RepoURL: "acme/mid", Source: "git", ResolvedBy: "acme/root"},
+			{RepoURL: "acme/leaf", Source: "git", ResolvedBy: "acme/mid"},
+		},
+	}
+
+	reachable := reachableFromRemainingRoots(map[string]bool{"acme/root": true}, lock, dir)
+	for _, want := range []string{"acme/root", "acme/mid", "acme/leaf"} {
+		if !reachable[want] {
+			t.Errorf("expected %s to be reachable, got %v", want, reachable)
+		}
+	}
+}
+
+// TestReachableFromRemainingRoots_NilLockfile proves the function fails
+// open (returns just the roots themselves, no panic) when there is no
+// lockfile to cross-reference against.
+func TestReachableFromRemainingRoots_NilLockfile(t *testing.T) {
+	reachable := reachableFromRemainingRoots(map[string]bool{"acme/root": true}, nil, ".")
+	if len(reachable) != 1 || !reachable["acme/root"] {
+		t.Errorf("expected only the root itself, got %v", reachable)
+	}
+}
+
+// TestReachableFromRemainingRoots_DepNotInLockfileIsSkipped proves a
+// dependency declared on disk but absent from the lockfile is never added to
+// reachable (and never enqueued), since it has no deployed state to protect.
+func TestReachableFromRemainingRoots_DepNotInLockfileIsSkipped(t *testing.T) {
+	dir := chdirTemp(t)
+
+	rootDir := filepath.Join(dir, "apm_modules", "acme", "root")
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootDir, "apm.yml"), []byte("name: root\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/unlocked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{{RepoURL: "acme/root", Source: "git"}},
+	}
+
+	reachable := reachableFromRemainingRoots(map[string]bool{"acme/root": true}, lock, dir)
+	if reachable["acme/unlocked"] {
+		t.Error("expected acme/unlocked (not in lockfile) to not be marked reachable")
+	}
+	if len(reachable) != 1 {
+		t.Errorf("expected only acme/root to be reachable, got %v", reachable)
+	}
+}
+
 // TestUninstallCmd_RequiresAtLeastOnePackage is un-002: zero PACKAGE
 // arguments is a usage error (cobra.MinimumNArgs(1)), not a silent no-op.
 func TestUninstallCmd_RequiresAtLeastOnePackage(t *testing.T) {

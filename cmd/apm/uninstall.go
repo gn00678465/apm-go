@@ -99,17 +99,19 @@ type uninstallPlan struct {
 	mcpNames          map[string]bool
 	orphans           map[string]bool
 	allRemovalKeys    map[string]bool
-	deployedFiles     []string
-	deployedHashes    map[string]string
 }
 
 // prepareUninstallPlan resolves args against m/lock and computes everything
-// downstream of that resolution: the removal identity sets, transitive
+// downstream of that resolution: the removal identity sets and transitive
 // orphans (un-041's remainingRootKeys is computed directly from the
 // already-parsed in-memory manifest, filtering out what's being removed,
 // rather than by physically splicing apm.yml first and re-reading it back --
-// both produce the identical key set), and the deployed-file provenance to
-// reverse (un-050: must be gathered before anything is mutated).
+// both produce the identical key set). plan.orphans/allRemovalKeys are already
+// corrected for CRITICAL #1's diamond-dependency false positive here (via
+// reachableFromRemainingRoots), so --dry-run's preview and the real run's
+// deletions operate on the identical, corrected orphan set. applyUninstallPlan
+// re-applies the same reachability veto (idempotent) as a defence-in-depth
+// guard immediately before deletion.
 func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lockfile, dryRun bool) *uninstallPlan {
 	resolution := resolveUninstallTargets(args, m, lock, defaultMarketplaceRegistryResolver, dryRun)
 
@@ -125,6 +127,20 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	remainingRootKeys := uninstallRemainingRootKeys(m, removedIdentities)
 	orphans := resolver.ActualOrphans(lock, removedIdentities, remainingRootKeys)
 
+	// CRITICAL #1 fix (applied here so --dry-run's preview matches the real
+	// run): resolver.ActualOrphans walks LockedDep.ResolvedBy, a single-parent
+	// field that can't represent a diamond dependency shared by two roots.
+	// Re-verify every orphan candidate against the ACTUAL dependency graph
+	// declared on disk by every surviving root (transitively) and veto any
+	// still reachable. applyUninstallPlan re-applies this (idempotent) as a
+	// defence-in-depth guard immediately before deletion.
+	reachable := reachableFromRemainingRoots(remainingRootKeys, lock, ".")
+	for k := range orphans {
+		if reachable[k] {
+			delete(orphans, k)
+		}
+	}
+
 	allRemovalKeys := make(map[string]bool, len(removedIdentities)+len(orphans))
 	for k := range removedIdentities {
 		allRemovalKeys[k] = true
@@ -132,7 +148,6 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	for k := range orphans {
 		allRemovalKeys[k] = true
 	}
-	deployedFiles, deployedHashes := collectUninstallDeployedProvenance(lock, allRemovalKeys)
 
 	return &uninstallPlan{
 		resolution:        resolution,
@@ -140,8 +155,6 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 		mcpNames:          mcpNames,
 		orphans:           orphans,
 		allRemovalKeys:    allRemovalKeys,
-		deployedFiles:     deployedFiles,
-		deployedHashes:    deployedHashes,
 	}
 }
 
@@ -165,12 +178,39 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		return err
 	}
 
-	removedModuleDirs, err := removeUninstallModuleDirs(plan.allRemovalKeys, verbose)
+	// CRITICAL #1 fix: resolver.ActualOrphans (via TransitiveOrphans) only
+	// walks LockedDep.ResolvedBy, which records a single parent per
+	// dependency -- it can't represent a diamond dependency shared by two
+	// root packages, so a transitive dep whose ResolvedBy happens to record
+	// the package being removed gets misclassified as an orphan even though
+	// another surviving root still depends on it. Re-verify every orphan
+	// candidate against the ACTUAL dependency graph declared on disk by
+	// every surviving root (transitively), and veto any candidate that's
+	// still reachable before anything is deleted.
+	remainingRootKeys := uninstallRemainingRootKeys(m, plan.removedIdentities)
+	reachable := reachableFromRemainingRoots(remainingRootKeys, lock, ".")
+	orphans := plan.orphans
+	for k := range orphans {
+		if reachable[k] {
+			delete(orphans, k)
+		}
+	}
+
+	allRemovalKeys := make(map[string]bool, len(plan.removedIdentities)+len(orphans))
+	for k := range plan.removedIdentities {
+		allRemovalKeys[k] = true
+	}
+	for k := range orphans {
+		allRemovalKeys[k] = true
+	}
+	deployedFiles, deployedHashes := collectUninstallDeployedProvenance(lock, allRemovalKeys)
+
+	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys, verbose)
 	if err != nil {
 		return err
 	}
 
-	removedFiles, _, diags := deploy.RemoveDeployedFiles(".", plan.deployedFiles, plan.deployedHashes)
+	removedFiles, _, diags := deploy.RemoveDeployedFiles(".", deployedFiles, deployedHashes)
 	for _, d := range diags {
 		fmt.Fprintf(os.Stderr, "[!] %s\n", d)
 	}
@@ -192,8 +232,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	// lockfile) fails open here -- nothing to diff against, so nothing is
 	// touched.
 	if len(oldMCP) > 0 {
-		remainingRootKeys := uninstallRemainingRootKeys(m, plan.removedIdentities)
-		newMCP := computeUninstallStaleMCP(m, lock, plan.mcpNames, plan.allRemovalKeys, remainingRootKeys)
+		newMCP := computeUninstallStaleMCP(m, lock, plan.mcpNames, allRemovalKeys, remainingRootKeys)
 		var stale []string
 		for _, name := range oldMCP {
 			if !newMCP[name] {
@@ -227,12 +266,53 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	// narrowly scoped to a shared, unedited deployed file getting dropped
 	// when it should have been restored.
 
-	if err := writeUninstallLockfile(lock, lockNode, plan.allRemovalKeys); err != nil {
+	if err := writeUninstallLockfile(lock, lockNode, allRemovalKeys); err != nil {
 		return err
 	}
 
-	printUninstallSummary(plan.resolution, plan.orphans, removedModuleDirs)
+	printUninstallSummary(plan.resolution, orphans, removedModuleDirs)
 	return nil
+}
+
+// reachableFromRemainingRoots is CRITICAL #1's fix: computes every lockfile
+// dependency key still reachable from remainingRootKeys by walking the
+// ACTUAL dependency graph declared on disk (each key's own apm_modules/<key>/
+// apm.yml, recursively), rather than trusting LockedDep.ResolvedBy -- which
+// only records a single parent and silently loses a diamond dependency's
+// other parent(s) whenever a later install/update overwrites it. Every key
+// in remainingRootKeys is trivially reachable (they're the roots themselves,
+// still directly declared in apm.yml); the BFS then follows each reachable
+// key's own prod dependencies.apm entries, but only ever descends into a
+// dependency that's actually present in the lockfile (an apm.yml entry with
+// no matching lockfile entry has no deployed state to protect and isn't
+// itself a valid BFS node). Used by applyUninstallPlan to veto any orphan
+// candidate resolver.ActualOrphans proposed removing that is, in fact, still
+// reachable this way.
+func reachableFromRemainingRoots(remainingRootKeys map[string]bool, lock *lockfile.Lockfile, projectDir string) map[string]bool {
+	reachable := make(map[string]bool, len(remainingRootKeys))
+	queue := make([]string, 0, len(remainingRootKeys))
+	for k := range remainingRootKeys {
+		reachable[k] = true
+		queue = append(queue, k)
+	}
+	if lock == nil {
+		return reachable
+	}
+	for len(queue) > 0 {
+		key := queue[0]
+		queue = queue[1:]
+		deps, _ := deploy.LoadDependencyDeps(key, filepath.Join(projectDir, "apm_modules", key))
+		for _, depKey := range deps {
+			if lock.FindByKey(depKey) == nil {
+				continue
+			}
+			if !reachable[depKey] {
+				reachable[depKey] = true
+				queue = append(queue, depKey)
+			}
+		}
+	}
+	return reachable
 }
 
 // readUninstallManifest reads and parses apm.yml (un-100: missing apm.yml is
