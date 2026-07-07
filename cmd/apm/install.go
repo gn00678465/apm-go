@@ -897,6 +897,7 @@ func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string
 		}
 	}
 
+	appended := false
 	for _, pkg := range packages {
 		if existingPkgs[pkg] {
 			continue
@@ -925,6 +926,16 @@ func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string
 				&yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"},
 			)
 		}
+		appended = true
+	}
+
+	// mi-fix (#2): a reused pre-existing dependencies.apm sequence node
+	// (e.g. a scaffolded `apm: []`) retains its parsed FlowStyle bit, so
+	// SafeDump re-renders it flow after appending. Normalize to block
+	// (matching dependencies.mcp and the Python original) whenever we
+	// actually appended an entry -- leave untouched if nothing changed.
+	if appended {
+		apmSeq.Style &^= yamllib.FlowStyle
 	}
 
 	return nil
