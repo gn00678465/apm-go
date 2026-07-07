@@ -155,6 +155,16 @@ func applyProdMCPRemoval(src []byte, doc *yaml.Node, plan *seqRemovalPlan) ([]by
 		if err != nil {
 			return nil, fmt.Errorf("empty dependencies.mcp: %w", err)
 		}
+		if ok {
+			return out, nil
+		}
+		// mi-fix (flow): ReplaceSequenceWithEmptyFlow intentionally rejects
+		// flow-style sequences ("mcp: [a, b]"); fall back to a whole-value
+		// rebuild via RebuildSequenceValueDropping (see its own doc comment).
+		out, ok, err = yamlcore.RebuildSequenceValueDropping(src, doc, path, plan.indices)
+		if err != nil {
+			return nil, fmt.Errorf("empty dependencies.mcp (flow fallback): %w", err)
+		}
 		if !ok {
 			return nil, fmt.Errorf("dependencies.mcp: unexpected document shape while emptying")
 		}

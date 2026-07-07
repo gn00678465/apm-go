@@ -205,6 +205,16 @@ func applyProdRemoval(src []byte, doc *yaml.Node, plan *seqRemovalPlan) ([]byte,
 		if err != nil {
 			return nil, fmt.Errorf("empty dependencies.apm: %w", err)
 		}
+		if ok {
+			return out, nil
+		}
+		// mi-fix (flow): ReplaceSequenceWithEmptyFlow intentionally rejects
+		// flow-style sequences ("apm: [a, b]"); fall back to a whole-value
+		// rebuild via RebuildSequenceValueDropping (see its own doc comment).
+		out, ok, err = yamlcore.RebuildSequenceValueDropping(src, doc, path, plan.indices)
+		if err != nil {
+			return nil, fmt.Errorf("empty dependencies.apm (flow fallback): %w", err)
+		}
 		if !ok {
 			return nil, fmt.Errorf("dependencies.apm: unexpected document shape while emptying")
 		}
@@ -235,17 +245,43 @@ func applyDevRemoval(src []byte, doc *yaml.Node, plan *seqRemovalPlan, deleteWho
 // time via SpliceSequenceElement, feeding each op's output into the next --
 // safe because descending order always operates on content still located
 // further down the file than anything already removed.
+//
+// Shared by apm-partial, dev-partial, and (mcp_remove.go) mcp-partial
+// removal. When SpliceSequenceElement returns ok=false for the sequence --
+// notably a flow-style sequence ("apm: [a, b]"), which it intentionally
+// rejects -- this falls back to a SINGLE RebuildSequenceValueDropping call
+// for the whole index set, rather than looping Splice (which would keep
+// failing the same way for every index).
 func removeSeqIndices(src []byte, doc *yaml.Node, path []string, indices []int) ([]byte, error) {
 	cur := src
-	for _, idx := range indices {
+	for i, idx := range indices {
 		out, ok, err := yamlcore.SpliceSequenceElement(cur, doc, path, yamlcore.SeqRemove, idx, nil)
 		if err != nil {
 			return nil, fmt.Errorf("remove %v[%d]: %w", path, idx, err)
 		}
+		if ok {
+			cur = out
+			continue
+		}
+		if i > 0 {
+			// The block path already spliced some indices above before
+			// hitting a non-block sequence -- that shouldn't happen (style
+			// doesn't change mid-removal), but bail out clearly rather than
+			// silently mixing partial splice output with a full rebuild.
+			return nil, fmt.Errorf("%v[%d]: unexpected document shape while removing", path, idx)
+		}
+		// mi-fix (flow): SpliceSequenceElement intentionally rejects
+		// flow-style sequences; fall back to a whole-value rebuild dropping
+		// every index in one pass via RebuildSequenceValueDropping. i==0
+		// here (see the i>0 guard above), so cur is still == src.
+		out, ok, err = yamlcore.RebuildSequenceValueDropping(cur, doc, path, indices)
+		if err != nil {
+			return nil, fmt.Errorf("remove %v (flow fallback): %w", path, err)
+		}
 		if !ok {
 			return nil, fmt.Errorf("%v[%d]: unexpected document shape while removing", path, idx)
 		}
-		cur = out
+		return out, nil
 	}
 	return cur, nil
 }
