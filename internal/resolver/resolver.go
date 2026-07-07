@@ -99,6 +99,13 @@ func Resolve(
 			depOrder = append(depOrder, key)
 			kinds[key] = kind
 			depRefs[key] = entry.ref
+		} else if _, ok := depRefs[key]; !ok {
+			// mi-fix (MI6): depRefs is per-resolution state cleared by
+			// invalidateChildren, but its re-population was gated behind the
+			// first-seen kinds check, so a child shared by two independent
+			// parents (one re-pinning) never got depRefs re-filled -> result
+			// lost VirtualPath / left RepoURL untrimmed. Re-fill it here.
+			depRefs[key] = entry.ref
 		}
 
 		if d, ok := depDepth[key]; !ok || entry.depth < d {
@@ -176,6 +183,29 @@ func Resolve(
 		// Track and enqueue children
 		var newChildKeys []string
 		for _, subDep := range collectRootDeps(subManifest) {
+			// mi-fix (MI1): a transitive marketplace dict dependency must be
+			// collapsed to its real ref HERE, before childKey is computed,
+			// not left for dequeue-time collapse. Otherwise childKey is the
+			// unresolved placeholder "_marketplace/<mkt>/<name>" while the
+			// dequeued entry's `processed`/constraints/etc. end up keyed by
+			// the RESOLVED key (e.g. "acme/x") -- invalidateChildren then
+			// deletes only the placeholder, and the real key survives a
+			// parent re-pin. Resolving here keeps childrenOf/dequeue-time
+			// keys identical, so invalidation actually reaches the child.
+			if subDep.Source == "marketplace" {
+				resolved, provenance, err := resolveMarketplaceEntry(cfg.MarketplaceResolve, subDep)
+				if err != nil {
+					return nil, err
+				}
+				subDep = resolved
+				if provenance != nil {
+					if result.MarketplaceProvenance == nil {
+						result.MarketplaceProvenance = map[string]*MarketplaceProvenance{}
+					}
+					result.MarketplaceProvenance[depKey(resolved)] = provenance
+				}
+			}
+
 			childKey := depKey(subDep)
 			newChildKeys = append(newChildKeys, childKey)
 

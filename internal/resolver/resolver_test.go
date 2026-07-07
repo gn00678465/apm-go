@@ -73,6 +73,13 @@ func makeTags(names ...string) []semver.TagInfo {
 	return tags
 }
 
+// makeVPDep is makeDep plus a VirtualPath (monorepo subpath dep).
+func makeVPDep(repo, virtualPath, ref string) *manifest.DependencyReference {
+	d := makeDep(repo, ref)
+	d.VirtualPath = virtualPath
+	return d
+}
+
 // ── Tests ──
 
 func TestResolve_LinearThreeLevel(t *testing.T) {
@@ -257,6 +264,58 @@ func TestResolve_FixpointReExpansion(t *testing.T) {
 	}
 	if hasX {
 		t.Error("acme/x should NOT be in graph (stale child of A@v1.9.0)")
+	}
+}
+
+func TestResolve_SharedChildAcrossIndependentParents_KeepsVirtualPath(t *testing.T) {
+	// MI6 repro: a virtual-path child ("acme/c/sub") is declared by TWO
+	// independent parents -- A (a semver dep that later re-pins via a
+	// diamond with B) and P (an unrelated direct dep that never re-pins).
+	//
+	// A's first pin (v1.9.0) is dequeued first and adds "acme/c/sub" as its
+	// child. The B diamond then narrows A's constraint (^1.0.0 ∩ ~1.3.0),
+	// forcing A to re-pin to v1.3.0; invalidateChildren wipes the
+	// per-resolution state it recorded for "acme/c/sub" (including
+	// depRefs) -- but does NOT clear `kinds`. When P's own, still-pending,
+	// independent edge to "acme/c/sub" is dequeued afterward, the
+	// first-seen `kinds` gate is already true, so depRefs never gets
+	// re-filled: the surviving dep silently loses its VirtualPath and
+	// keeps an un-trimmed RepoURL.
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/a": makeTags("v1.0.0", "v1.3.0", "v1.9.0"),
+		"acme/b": makeTags("v1.0.0"),
+	}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.9.0": makeManifest("a-1.9", makeVPDep("acme/c", "sub", "")),
+		"acme/a@v1.3.0": makeManifest("a-1.3"),
+		"acme/b@v1.0.0": makeManifest("b", makeDep("acme/a", "~1.3.0")),
+		"acme/p@":       makeManifest("p", makeVPDep("acme/c", "sub", "")),
+	}}
+
+	root := makeManifest("root",
+		makeDep("acme/a", "^1.0.0"),
+		makeDep("acme/b", "^1.0.0"),
+		makeDep("acme/p", ""),
+	)
+	result, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var childDep *ResolvedDep
+	for i := range result.Deps {
+		if result.Deps[i].Key == "acme/c/sub" {
+			childDep = &result.Deps[i]
+		}
+	}
+	if childDep == nil {
+		t.Fatal("acme/c/sub not found in result")
+	}
+	if childDep.RepoURL != "acme/c" {
+		t.Errorf("RepoURL = %q, want %q (VirtualPath must be trimmed off RepoURL)", childDep.RepoURL, "acme/c")
+	}
+	if childDep.VirtualPath != "sub" {
+		t.Errorf("VirtualPath = %q, want %q", childDep.VirtualPath, "sub")
 	}
 }
 

@@ -168,3 +168,92 @@ func TestResolve_MarketplaceDep_ResolverReturnsUnresolved_Errors(t *testing.T) {
 		t.Fatal("expected error when MarketplaceResolve returns a still-unresolved dep")
 	}
 }
+
+// TestResolve_FixpointReExpansion_MarketplaceChild is MI1's regression: a
+// marketplace transitive child must be invalidated on parent re-pin just
+// like an ordinary git child is (TestResolve_FixpointReExpansion's scenario,
+// but A's sub-manifests declare a marketplace dict dependency instead of an
+// ordinary git one).
+//
+// root -> A@^1.0.0 -> first-seen resolves A to v1.9.0, whose sub-manifest
+// declares marketplace dep mkt1/x, collapsing to acme/x.
+// root -> B@^1.0.0 -> B has child A@~1.3.0, narrowing the intersection so A
+// re-pins to v1.3.0, whose sub-manifest declares marketplace dep mkt2/y,
+// collapsing to acme/y.
+// Final graph must contain acme/y and must NOT contain acme/x.
+//
+// Root cause: the child-tracking loop (collectRootDeps loop building
+// childrenOf) computes childKey := depKey(subDep) BEFORE the marketplace
+// subDep is resolved, so childrenOf[parent] stores the placeholder key
+// "_marketplace/<mkt>/<name>". When that queued entry is later dequeued it
+// is collapsed to its real ref and processed/constraints/etc. are keyed by
+// the RESOLVED key (e.g. "acme/x"). invalidateChildren then only deletes
+// the placeholder key from processed -- the real resolved key is never
+// removed, so a re-pinned parent's stale marketplace child survives into
+// the final result.
+func TestResolve_FixpointReExpansion_MarketplaceChild(t *testing.T) {
+	resolveFn := func(dep *manifest.DependencyReference) (*manifest.DependencyReference, *MarketplaceProvenance, error) {
+		switch dep.MarketplacePluginName {
+		case "x":
+			return makeDep("acme/x", "main"),
+				&MarketplaceProvenance{DiscoveredVia: dep.MarketplaceName, MarketplacePluginName: "x"}, nil
+		case "y":
+			return makeDep("acme/y", "main"),
+				&MarketplaceProvenance{DiscoveredVia: dep.MarketplaceName, MarketplacePluginName: "y"}, nil
+		default:
+			return nil, nil, fmt.Errorf("unexpected marketplace plugin %q", dep.MarketplacePluginName)
+		}
+	}
+
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/a": makeTags("v1.0.0", "v1.3.0", "v1.9.0"),
+		"acme/b": makeTags("v1.0.0"),
+	}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.9.0": makeManifest("a-1.9", marketplaceDep("mkt1", "x")),
+		"acme/a@v1.3.0": makeManifest("a-1.3", marketplaceDep("mkt2", "y")),
+		"acme/b@v1.0.0": makeManifest("b", makeDep("acme/a", "~1.3.0")),
+		"acme/x@main":   makeManifest("x"),
+		"acme/y@main":   makeManifest("y"),
+	}}
+
+	root := makeManifest("root",
+		makeDep("acme/a", "^1.0.0"),
+		makeDep("acme/b", "^1.0.0"),
+	)
+	result, err := Resolve(root, nil, tags, loader, ResolverConfig{MarketplaceResolve: resolveFn})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// A should be re-pinned to v1.3.0 (same fixpoint as TestResolve_FixpointReExpansion).
+	var aDep *ResolvedDep
+	for i := range result.Deps {
+		if result.Deps[i].Key == "acme/a" {
+			aDep = &result.Deps[i]
+		}
+	}
+	if aDep == nil {
+		t.Fatal("acme/a not found")
+	}
+	if aDep.ResolvedTag != "v1.3.0" {
+		t.Errorf("A resolved to %q, want v1.3.0 (re-pinned by intersection)", aDep.ResolvedTag)
+	}
+
+	hasY := false
+	hasX := false
+	for _, dep := range result.Deps {
+		if dep.Key == "acme/y" {
+			hasY = true
+		}
+		if dep.Key == "acme/x" {
+			hasX = true
+		}
+	}
+	if !hasY {
+		t.Error("acme/y should be in graph (marketplace child of A@v1.3.0)")
+	}
+	if hasX {
+		t.Error("acme/x should NOT be in graph (stale marketplace child of A@v1.9.0 -- MI1)")
+	}
+}
