@@ -744,6 +744,41 @@ func TestRunUninstall_MarketplaceRefDryRunSkipped(t *testing.T) {
 	}
 }
 
+// TestCollectUninstallDeployedProvenance_DeterministicHashMergeAcrossKeys is
+// Bug B: collectUninstallDeployedProvenance used to range directly over the
+// removalKeys map (unordered iteration) while merging every removed
+// dependency's DeployedHashes into a single map, so a path recorded by more
+// than one removal key with two different hash values would resolve to
+// whichever key Go's runtime happened to visit last -- a different, random
+// answer on every call. Iterating a sorted key order makes the merge
+// deterministic (last-sorted-key-wins), matching collectUninstallDeployedProvenance's
+// own contract that removalKeys is just an unordered set.
+func TestCollectUninstallDeployedProvenance_DeterministicHashMergeAcrossKeys(t *testing.T) {
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{
+			{RepoURL: "acme/aaa", DeployedFiles: []string{"shared.md"}, DeployedHashes: map[string]string{"shared.md": "hash-from-aaa"}},
+			{RepoURL: "acme/zzz", DeployedFiles: []string{"shared.md"}, DeployedHashes: map[string]string{"shared.md": "hash-from-zzz"}},
+		},
+	}
+	removalKeys := map[string]bool{"acme/aaa": true, "acme/zzz": true}
+
+	var want string
+	for i := 0; i < 200; i++ {
+		_, hashes := collectUninstallDeployedProvenance(lock, removalKeys)
+		got := hashes["shared.md"]
+		if i == 0 {
+			want = got
+			continue
+		}
+		if got != want {
+			t.Fatalf("collectUninstallDeployedProvenance merged shared.md's hash non-deterministically across repeated calls with identical input: call 0 got %q, call %d got %q", want, i, got)
+		}
+	}
+	if want != "hash-from-zzz" {
+		t.Errorf("expected sorted-key-order merge to settle on acme/zzz's hash (last in ascending sort order), got %q", want)
+	}
+}
+
 // TestUninstallCmd_RequiresAtLeastOnePackage is un-002: zero PACKAGE
 // arguments is a usage error (cobra.MinimumNArgs(1)), not a silent no-op.
 func TestUninstallCmd_RequiresAtLeastOnePackage(t *testing.T) {

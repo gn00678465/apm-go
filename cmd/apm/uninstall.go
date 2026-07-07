@@ -192,7 +192,8 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	// lockfile) fails open here -- nothing to diff against, so nothing is
 	// touched.
 	if len(oldMCP) > 0 {
-		newMCP := computeUninstallStaleMCP(m, lock, plan.mcpNames, plan.allRemovalKeys)
+		remainingRootKeys := uninstallRemainingRootKeys(m, plan.removedIdentities)
+		newMCP := computeUninstallStaleMCP(m, lock, plan.mcpNames, plan.allRemovalKeys, remainingRootKeys)
 		var stale []string
 		for _, name := range oldMCP {
 			if !newMCP[name] {
@@ -301,13 +302,18 @@ func uninstallRemainingRootKeys(m *manifest.Manifest, removedIdentities map[stri
 // deployed_file_hashes for every key in removalKeys (un-050: this must
 // happen BEFORE apm.yml/lockfile are mutated, and is the only place this
 // data comes from -- a nil lock or an unmatched key simply contributes
-// nothing, never an error).
+// nothing, never an error). Iterates removalKeys in sorted order (rather
+// than raw map range, whose iteration order Go deliberately randomizes)
+// so that merging DeployedHashes across multiple removal keys -- if two of
+// them recorded a hash for the same target-relative path -- resolves
+// deterministically instead of picking a different, random winner on every
+// call.
 func collectUninstallDeployedProvenance(lock *lockfile.Lockfile, removalKeys map[string]bool) (files []string, hashes map[string]string) {
 	hashes = map[string]string{}
 	if lock == nil {
 		return nil, hashes
 	}
-	for key := range removalKeys {
+	for _, key := range sortedStringSet(removalKeys) {
 		dep := lock.FindByKey(key)
 		if dep == nil {
 			continue

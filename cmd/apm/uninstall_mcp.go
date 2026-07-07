@@ -20,7 +20,8 @@ import (
 // that would require re-resolving the remaining dependency graph, which is
 // un-054's deferred Phase 2 (see the KNOWN LIMITATION note in
 // applyUninstallPlan). Instead it approximates the same question directly
-// from what's already on disk/in the manifest:
+// from what's already on disk/in the manifest, mirroring deploy.Run's own
+// depth split (internal/deploy/deploy.go:82-102) exactly:
 //
 //   - root: every dependencies.mcp/devDependencies.mcp entry in the
 //     ORIGINAL parsed manifest m, minus the standalone names this uninstall
@@ -28,15 +29,22 @@ import (
 //     every root-declared MCP entry regardless of Registry (collectMCPPrimitives
 //     resolves registry-backed local entries too), so nothing here is
 //     filtered by Registry.
-//   - transitive: every lockfile dependency NOT in removalKeys, read via
-//     deploy.LoadDependencyMCP against its own apm_modules/<key>/apm.yml,
-//     counting only self-defined (Registry==false) servers -- the only MCP
-//     servers deploy.Run ever auto-trusts for a dependency without a live
-//     registry round-trip (collectMCPPrimitives/collectTransitiveMCPDiagnostics
-//     in internal/deploy/mcpcollect.go). A dependency with a missing or
-//     unparseable apm.yml simply contributes nothing, matching
-//     loadDependencyMCP's own lenience -- it never aborts the rest.
-func computeUninstallStaleMCP(m *manifest.Manifest, lock *lockfile.Lockfile, mcpNames, removalKeys map[string]bool) map[string]bool {
+//   - direct (depth==1, remainingRootKeys): every lockfile dependency that
+//     is ALSO still a root apm.yml/devDependencies.apm entry after this
+//     uninstall contributes ALL the MCP servers its own apm.yml declares --
+//     self-defined AND registry-backed alike (deploy.go:82-88 calls
+//     collectMCPPrimitives unconditionally on a direct dep's own servers,
+//     resolving registry-backed entries too; nothing here is filtered by
+//     Registry).
+//   - transitive (depth>1): every OTHER lockfile dependency NOT in
+//     removalKeys -- i.e. surviving but not a root key -- contributes
+//     NOTHING. deploy.Run never auto-trusts a transitive dependency's own
+//     MCP servers, self-defined or registry-backed (deploy.go:98-101 calls
+//     collectTransitiveMCPDiagnostics instead, which never emits a
+//     Primitive). A dependency with a missing or unparseable apm.yml simply
+//     contributes nothing either way, matching loadDependencyMCP's own
+//     lenience -- it never aborts the rest.
+func computeUninstallStaleMCP(m *manifest.Manifest, lock *lockfile.Lockfile, mcpNames, removalKeys, remainingRootKeys map[string]bool) map[string]bool {
 	newMCP := map[string]bool{}
 	addRoot := func(servers []*manifest.MCPDependency) {
 		for _, s := range servers {
@@ -54,14 +62,15 @@ func computeUninstallStaleMCP(m *manifest.Manifest, lock *lockfile.Lockfile, mcp
 	for i := range lock.Dependencies {
 		dep := &lock.Dependencies[i]
 		key := dep.UniqueKey()
-		if removalKeys[key] {
+		if removalKeys[key] || !remainingRootKeys[key] {
+			// Removed outright, or surviving only as a transitive (depth>1)
+			// dependency -- deploy.Run never deploys either shape's own MCP
+			// servers on its behalf.
 			continue
 		}
 		servers, _ := deploy.LoadDependencyMCP(key, filepath.Join("apm_modules", key))
 		for _, s := range servers {
-			if s.Registry == false {
-				newMCP[s.Name] = true
-			}
+			newMCP[s.Name] = true
 		}
 	}
 	return newMCP
