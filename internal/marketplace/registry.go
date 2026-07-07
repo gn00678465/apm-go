@@ -184,7 +184,7 @@ func SaveRegistry(sources []MarketplaceSource) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("close temp marketplace registry file: %w", err)
 	}
-	if err := os.Rename(tmpPath, p); err != nil {
+	if err := renameWithRetry(tmpPath, p); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("commit marketplace registry: %w", err)
 	}

@@ -111,7 +111,7 @@ func saveRefPins(pins map[string]string) {
 		os.Remove(tmpPath)
 		return
 	}
-	if err := os.Rename(tmpPath, p); err != nil {
+	if err := renameWithRetry(tmpPath, p); err != nil {
 		os.Remove(tmpPath)
 	}
 }
