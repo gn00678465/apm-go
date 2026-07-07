@@ -160,6 +160,33 @@
 | [x] | `un-V07` | — | **A/B 對照** `uv run apm uninstall`:apm.yml/lockfile/apm_modules/各 target 檔案的最終狀態逐項比對;deviation(`-g` 不做、standalone MCP 移除為 apm-go 增強)明確記錄,非掩蓋 | marketplace A/B 慣例 |
 | [x] | `un-V08` | — | `go build/vet/test ./...` 全綠,新功能覆蓋 ≥ 80%;每個刪檔路徑有 path-containment 負向測試 | — |
 
+## 對抗性審查結果與限制(2026-07-07)
+
+派 adversarial Explore 深查刪檔安全(唯讀)。**核心單套件安全紅線經實機證實紮實**:
+hash 保護(無記錄/格式錯/大小寫→保留不刪)、path 逃逸(三層防線+Go filepath.Join
+語意+OS 路徑拒絕)、dry-run 零寫入、使用者手寫檔不動、apm.yml byte-splice 降序、
+lockfile index 重建——皆確認安全。
+
+**已修復(commit)**:
+- CRITICAL:`computeUninstallStaleMCP` 無 depth 概念→誤刪存活直接依賴的 registry-backed
+  MCP、誤納 transitive self-defined。改 depth-aware(直接依賴貢獻全部、transitive 零),
+  對齊 deploy.Run。(`2a58aa3`)
+- CRITICAL #1:diamond 共用依賴 orphan 誤刪(單一 ResolvedBy 限制,與 Python 同源)。
+  使用者核准加**安全防護(偏離 Python)**:從剩餘 root 依實際宣告依賴重建可達性,
+  仍可達者不刪。(`f507e62`)→ un-041 為 apm-go 較 Python 安全的 documented deviation
+- 非確定性 hash 合併→排序後迭代。
+
+**記錄限制(parity/縱深,未改)**:
+- **un-054 Phase 2 重整**:跨套件同名共用「部署檔」不還原(KNOWN LIMITATION,與 Python 同)。
+- **無交易保護**:一次移除多套件時某步失敗,apm.yml 已改而 apm_modules/lockfile 未同步→
+  留不一致狀態(與 Python 同順序;robustness 缺口,後續可補 rollback)。
+- **無 lockfile 時 supply-chain guard 弱化**:un-018 已文件化,與 Python 同(需 registry 解出
+  的 canonical 剛好命中既有 apm.yml 條目才成立)。
+- **diamond 安全防護的殘留邊界**:若某存活 root 的 apm_modules apm.yml 讀不到/parse 失敗,
+  該分支不提供保護(退回 ResolvedBy 基準,不比修前差)。
+- **symlink 縱深**:containment 為字串層;apm-go 自身流程無法製造(tar 解壓拒 symlink、
+  deploy 不建 symlink),僅「檔案系統已被他法竄改」才成立。
+
 ## 每個 Phase 完成時的自我聲明範本
 
 > 「已完成 U<n>(un-0xx~un-0yy),親自重跑 build/vet/test 全綠;對照 `uv run apm uninstall`
