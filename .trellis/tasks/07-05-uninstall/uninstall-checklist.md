@@ -178,6 +178,12 @@ lockfile index 重建——皆確認安全。
 
 **記錄限制(parity/縱深,未改)**:
 - **un-054 Phase 2 重整**:跨套件同名共用「部署檔」不還原(KNOWN LIMITATION,與 Python 同)。
+  - review-forge 多模型審查獨立重新確認此缺口真實(gemini 提報 MI3、codex 交叉票 confirm),
+    但 codex 註明「已文件化 un-054,是否本輪修屬 scope decision,非未發現的 regression」。
+  - **本輪決策(使用者核准):接受此限制,不補實作**。理由:(1)與 Python 原版同 parity;
+    (2)觸發窄(需兩套件宣告同名 skill 共用同一 target 檔);(3)Phase 2 重整(對剩餘依賴
+    重跑 `deploy.Run` + 部分失敗只 warn + 測試)為一塊獨立功能,值得專屬 task 規劃,不宜掛進
+    review 修復輪。如需完整正確性,另開 follow-up task 依 design.md N2 實作(un-054/un-V05)。
 - **無交易保護**:一次移除多套件時某步失敗,apm.yml 已改而 apm_modules/lockfile 未同步→
   留不一致狀態(與 Python 同順序;robustness 缺口,後續可補 rollback)。
 - **無 lockfile 時 supply-chain guard 弱化**:un-018 已文件化,與 Python 同(需 registry 解出

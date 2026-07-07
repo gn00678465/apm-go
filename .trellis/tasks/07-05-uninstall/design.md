@@ -66,6 +66,10 @@ uninstall(packages, --dry-run, -v):
 
 ### N7. MCP 清理(un-060~065,定案 B)——兩層共用「per-target 移除單一 server」底層
 - **共用底層**:各 MCP target(claude `.mcp.json`/codex `.codex/config.toml`/copilot/antigravity `.agents/mcp_config.json`/opencode `opencode.json`)新增「讀既有設定 → 刪指定 server key → 寫回」路徑(擴充各自 merge/write helper)。
+- **設計不變式(review MI5,勿合併)**:上層有兩條**刻意分離**的路徑,共用上述底層但語意不同,後續 refactor **不可**把它們合併:
+  - `removeUninstallStandaloneMCP`(un-064/065):使用者 `uninstall <mcp-name>` 明確命中 `dependencies.mcp` 的 standalone server → 直接移除該 server(apm.yml 條目 + 各 target + `lockfile.mcp_servers`)。
+  - `computeUninstallStaleMCP`(un-061):移除**套件**的副作用——重算 old−new 的 transitive stale MCP,且必須 depth-aware(存活直接依賴貢獻全部、transitive 零;見已修 CRITICAL `2a58aa3`)。
+  - 兩者觸發條件、輸入集合、depth 語意皆不同;合併會讓 standalone 直接移除誤帶 stale-diff 的 depth 邏輯(或反之)。review-forge 交叉票 confirm 為準確設計說明,無需改 code。
 - **(a) transitive stale(un-060~063)**:`old = lockfile.MCPServers`;`new = 剩餘依賴的 MCP deps 名單`;`stale = old - new`;對 stale 走共用底層移除;`lockfile.MCPServers = new`。
 - **(b) standalone 直接移除(un-064~065,apm-go 增強)**:N6 命中 `dependencies.mcp` 的 server 名稱時,從 apm.yml `dependencies.mcp` sequence 刪該條目(對稱 `upsertMCPEntry`,yamlcore node 級保留排版),走共用底層從各 target 移除該 server,並從 `lockfile.MCPServers` 移除。
 - 前置:lockfile 舊版無 `mcp_servers` 欄位時 fail-open(當空集,不誤刪)。
