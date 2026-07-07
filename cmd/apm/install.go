@@ -713,6 +713,16 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 			printDeploySummary(dr.Files, targets)
 		}
 
+		// Warn about resolved dependencies that deployed zero files to any
+		// target -- otherwise "Installed N dependencies" reads as success
+		// even when a dependency's primitives went entirely undiscovered
+		// (e.g. an unrecognized manifest format).
+		for _, dep := range result.Deps {
+			if _, ok := deployResult.PerDep[dep.Key]; !ok {
+				fmt.Fprintf(os.Stderr, "[!] warning: %s deployed 0 files to any target\n", dep.Key)
+			}
+		}
+
 		// Populate per-dep DeployedFiles/DeployedHashes in lockfile entries
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
