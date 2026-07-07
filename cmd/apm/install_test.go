@@ -6,10 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/semver"
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 type mockInstallTagLister struct {
@@ -112,6 +114,98 @@ func TestRunInstall_WithDeps(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "tree_sha256") {
 		// If it somehow succeeds or has a different error, that's also informative
 		t.Logf("install result: %v", err)
+	}
+}
+
+// readLockfile is a small test helper: reads and parses apm.lock.yaml from
+// the current directory.
+func readLockfile(t *testing.T) *lockfile.Lockfile {
+	t.Helper()
+	lockData, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatalf("read apm.lock.yaml: %v", err)
+	}
+	node, err := yamlcore.SafeLoad(lockData)
+	if err != nil {
+		t.Fatalf("parse apm.lock.yaml: %v", err)
+	}
+	lock, err := lockfile.ParseLockfile(node)
+	if err != nil {
+		t.Fatalf("validate apm.lock.yaml: %v", err)
+	}
+	return lock
+}
+
+// TestRunInstall_PositionalDedup_KeysByVirtualPath is a regression test for
+// MI2 (marketplace-install review finding): the positional-package dedup map
+// (existing) used to be keyed by bare RepoURL (ignoring VirtualPath), while
+// the identity used everywhere else (requestedKeys, marketplaceProvenance)
+// was deploy.DepRefKey (RepoURL, or RepoURL/VirtualPath). A monorepo dep
+// already declared in apm.yml (e.g. org/monorepo/skills/a) shares its bare
+// RepoURL with a second virtual-path package from the same repo
+// (org/monorepo/skills/b) requested positionally -- the second one was
+// silently matched against "already declared" and never appended to
+// m.ParsedDeps, so it never reached the resolved graph or apm.lock.yaml.
+func TestRunInstall_PositionalDedup_KeysByVirtualPath(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - org/monorepo/skills/a\n"), 0644)
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &mockInstallLoader{},
+	}
+	err := runInstall(deps, false, true, "", nil, []string{"org/monorepo/skills/b"})
+	if err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	lock := readLockfile(t)
+	got := make(map[string]bool, len(lock.Dependencies))
+	for _, d := range lock.Dependencies {
+		got[d.UniqueKey()] = true
+	}
+	if !got["org/monorepo/skills/a"] {
+		t.Errorf("expected org/monorepo/skills/a (already declared) in apm.lock.yaml, got keys: %v", got)
+	}
+	if !got["org/monorepo/skills/b"] {
+		t.Errorf("expected org/monorepo/skills/b (newly requested positional package) in apm.lock.yaml, got keys: %v", got)
+	}
+}
+
+// TestRunInstall_PositionalDedup_TrueDuplicateStillSkipped guards against a
+// regression in the MI2 fix above: an ordinary repeat install of an
+// already-declared, non-virtual-path dependency must still be recognized as
+// a duplicate and not produce a second entry.
+func TestRunInstall_PositionalDedup_TrueDuplicateStillSkipped(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo\n"), 0644)
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &mockInstallLoader{},
+	}
+	err := runInstall(deps, false, true, "", nil, []string{"acme/foo"})
+	if err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	lock := readLockfile(t)
+	count := 0
+	for _, d := range lock.Dependencies {
+		if d.UniqueKey() == "acme/foo" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 acme/foo entry in apm.lock.yaml (duplicate repeat install must be deduped), got %d", count)
 	}
 }
 

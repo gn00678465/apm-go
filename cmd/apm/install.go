@@ -207,9 +207,18 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// carried through unchanged, preserving today's exact persisted form.
 	persistPackages := make([]string, 0, len(packages))
 	if len(packages) > 0 {
+		// mi-fix (MI2): key by deploy.DepRefKey (RepoURL, or
+		// RepoURL/VirtualPath) instead of bare RepoURL, matching the identity
+		// used everywhere else below (requestedKeys, marketplaceProvenance).
+		// A bare-RepoURL key wrongly matched a second virtual-path package
+		// from the same monorepo against an already-declared dep sharing
+		// only the RepoURL, silently dropping it. Local/parent refs have no
+		// dep key ("") and are skipped so they don't pollute the map.
 		existing := make(map[string]bool)
 		for _, d := range m.ParsedDeps {
-			existing[d.RepoURL] = true
+			if k := deploy.DepRefKey(d); k != "" {
+				existing[k] = true
+			}
 		}
 		for _, pkg := range packages {
 			ref, provenance, err := resolvePositionalPackage(pkg)
@@ -242,7 +251,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 				persistPkg = canonical
 			}
 			persistPackages = append(persistPackages, persistPkg)
-			if existing[ref.RepoURL] {
+			// mi-fix (MI2): compare against the same key computed above
+			// (deploy.DepRefKey), not the bare ref.RepoURL.
+			if existing[key] {
 				continue
 			}
 			m.ParsedDeps = append(m.ParsedDeps, ref)
