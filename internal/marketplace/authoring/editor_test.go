@@ -906,6 +906,39 @@ func TestSetPackage_UnresolvableRef_Errors(t *testing.T) {
 	}
 }
 
+// TestAddPackage_RefHEAD_ResolvesToConcreteSHA is the F4/marketplace.md
+// regression: `--ref HEAD` is documented ("Pin to a git ref (SHA, tag, or
+// HEAD)") to auto-resolve to a concrete SHA, but resolveRef's lookup went
+// through the production gitRefLister's `--tags --heads`-filtered ref list,
+// which can never contain a "HEAD" entry -- so `--ref HEAD` always failed
+// with "ref \"HEAD\" not found", contradicting the documented contract.
+// Proven end to end (AddPackage -> real gitRefLister -> real local git repo
+// fixture, no network) rather than against a hand-built fake ref list, so a
+// regression in the actual git ls-remote invocation is caught too.
+func TestAddPackage_RefHEAD_ResolvesToConcreteSHA(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	wantSHA := gitCmd(t, repoDir, "rev-parse", "HEAD")
+
+	// Act
+	_, _, err := AddPackage(dir, repoDir, AddOptions{Ref: "HEAD"}, gitRefLister{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("AddPackage returned error resolving --ref HEAD: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(cfg.Packages) != 1 || cfg.Packages[0].Ref != wantSHA {
+		t.Errorf("Packages = %+v, want a single entry pinned to HEAD's actual SHA %q", cfg.Packages, wantSHA)
+	}
+}
+
 // ── test doubles ──────────────────────────────────────────────────────────
 
 // stubLister is a RefLister test double that records whether it was called

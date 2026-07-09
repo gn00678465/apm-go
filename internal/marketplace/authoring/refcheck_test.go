@@ -151,6 +151,53 @@ func TestCheckPackages_RemoteRef_FoundOnRealGitRepo(t *testing.T) {
 	}
 }
 
+// TestGitRefLister_ListRefs_IncludesHEAD is the F4 regression: `newListRefsCmd`
+// used to run `git ls-remote --tags --heads`, whose refs/tags/ and
+// refs/heads/ namespace filters can never surface a "HEAD" line -- so
+// editor.go's resolveRef, searching this same list for an exact `r.Name ==
+// "HEAD"` match, could never resolve `package add/set --ref HEAD` (silently
+// always failing with "ref \"HEAD\" not found", contradicting
+// marketplace.md's documented "Mutable refs (HEAD, branches) are
+// auto-resolved to a concrete SHA at write time" promise). Proven here
+// against a real local git repo fixture (no network).
+func TestGitRefLister_ListRefs_IncludesHEAD(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	initGitRepoWithTags(t, dir, "v1.0.0")
+	wantSHA := gitCmd(t, dir, "rev-parse", "HEAD")
+
+	// Act
+	refs, err := gitRefLister{}.ListRefs(dir)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("ListRefs returned error: %v", err)
+	}
+	var headSHA string
+	for _, r := range refs {
+		if r.Name == "HEAD" {
+			headSHA = r.Commit
+		}
+	}
+	if headSHA == "" {
+		t.Fatalf("ListRefs = %+v, want a \"HEAD\" entry", refs)
+	}
+	if headSHA != wantSHA {
+		t.Errorf("HEAD entry commit = %q, want %q (the repo's actual HEAD SHA)", headSHA, wantSHA)
+	}
+	// The tag must still be present and correctly named -- proving the
+	// explicit refspec patterns didn't regress ordinary tag/branch listing.
+	foundTag := false
+	for _, r := range refs {
+		if r.Name == "v1.0.0" {
+			foundTag = true
+		}
+	}
+	if !foundTag {
+		t.Errorf("ListRefs = %+v, want tag \"v1.0.0\" still present", refs)
+	}
+}
+
 func TestCheckPackages_RemoteRef_MissingFailsCheck(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()

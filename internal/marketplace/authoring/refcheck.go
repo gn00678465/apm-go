@@ -28,7 +28,8 @@ import (
 // design.md's "需要 heads 時擴充" -- so this lists both.
 type RefLister interface {
 	// ListRefs returns every tag and branch head advertised by source
-	// (a marketplace.packages[].source string).
+	// (a marketplace.packages[].source string), plus a synthetic entry
+	// named "HEAD" pointing at the remote's current default-branch tip.
 	ListRefs(source string) ([]semver.TagInfo, error)
 }
 
@@ -68,12 +69,22 @@ func (gitRefLister) ListRefs(source string) ([]semver.TagInfo, error) {
 	return parseRefsOutput(string(out)), nil
 }
 
-// newListRefsCmd builds the `git ls-remote --tags --heads <cloneURL>`
-// subprocess command, hardened against interactive credential prompts via
-// gitops.ApplySecureGitEnv. Split out from ListRefs so tests can assert on
-// the constructed command without spawning a subprocess.
+// newListRefsCmd builds the `git ls-remote <cloneURL> HEAD refs/tags/*
+// refs/heads/*` subprocess command, hardened against interactive credential
+// prompts via gitops.ApplySecureGitEnv. Split out from ListRefs so tests can
+// assert on the constructed command without spawning a subprocess.
+//
+// Explicit refspec patterns are used instead of the `--tags --heads` flags
+// so a literal "HEAD" line is included in the output alongside every tag and
+// branch (verified to return an identical tag/branch set to `--tags
+// --heads` otherwise) -- required for F4's mutable-ref resolution
+// (editor.go's resolveRef) to ever successfully resolve `--ref HEAD` to a
+// concrete SHA, matching marketplace.md's documented "Mutable refs (HEAD,
+// branches) are auto-resolved to a concrete SHA at write time" promise.
+// `--tags --heads` alone can never produce a HEAD line: HEAD lives in
+// neither the refs/tags/ nor refs/heads/ namespace those flags filter to.
 func newListRefsCmd(ctx context.Context, cloneURL string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--tags", "--heads", cloneURL)
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", cloneURL, "HEAD", "refs/tags/*", "refs/heads/*")
 	gitops.ApplySecureGitEnv(cmd)
 	return cmd
 }
