@@ -35,6 +35,28 @@ func marketplacePackageCmd() *cobra.Command {
 // one catches it.
 var errVersionRefMutuallyExclusive = fmt.Errorf("--version and --ref are mutually exclusive; use --version for a semver range or --ref for a git ref")
 
+// errNoSetFieldsSpecified is C2's fix: `package set NAME` with none of its
+// field flags given used to silently no-op-rewrite the entry and exit 0;
+// Python (set.py:98-103) treats this as a user error. This is the exact
+// message text Python uses. Exit code 1 (not mkt-045's usual 2 for an edit
+// failure) matches Python's sys.exit(1) here -- this is the cmd layer's own
+// guard, not an authoring.SetPackage failure that would otherwise be
+// wrapped via withExitCode(2).
+var errNoSetFieldsSpecified = fmt.Errorf("No fields specified. Pass at least one option (e.g. --version, --ref, --subdir).")
+
+// setFieldFlags is `package set`'s complete set of field-editing flags
+// (mkt-045); C2's guard requires at least one of these to have been given.
+var setFieldFlags = []string{"version", "ref", "subdir", "tag-pattern", "tags", "include-prerelease"}
+
+func anySetFieldFlagChanged(cmd *cobra.Command) bool {
+	for _, name := range setFieldFlags {
+		if cmd.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
+}
+
 // parseTagsFlag splits a comma-separated --tags value into a trimmed,
 // non-empty slice, or nil when raw is empty -- mirrors Python's
 // _parse_tags. Used by `add`, where an omitted --tags must leave
@@ -71,7 +93,7 @@ func parseTagsFlagGiven(raw string) []string {
 func marketplacePackageAddCmd() *cobra.Command {
 	var (
 		name, version, ref, subdir, tagPattern, tags string
-		includePrerelease, noVerify                  bool
+		includePrerelease, noVerify, verbose         bool
 	)
 
 	cmd := &cobra.Command{
@@ -113,6 +135,12 @@ func marketplacePackageAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tags, "tags", "", "Comma-separated tags")
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "Include prerelease versions")
 	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "Skip the remote reachability check")
+	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
+	// subcommand; `package add` was missing it entirely (an unknown-flag
+	// hard error). Python's own add.py accepts it with no observable
+	// effect on the success path (only feeds an internal logger's verbosity
+	// level, never actually consulted there) -- mirrored here as-is.
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output")
 	return cmd
 }
 
@@ -125,7 +153,7 @@ func marketplacePackageAddCmd() *cobra.Command {
 func marketplacePackageSetCmd() *cobra.Command {
 	var (
 		version, ref, subdir, tagPattern, tags string
-		includePrerelease                      bool
+		includePrerelease, verbose             bool
 	)
 
 	cmd := &cobra.Command{
@@ -136,6 +164,12 @@ func marketplacePackageSetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("version") && cmd.Flags().Changed("ref") {
 				return withExitCode(2, errVersionRefMutuallyExclusive)
+			}
+			// C2: zero field flags used to silently no-op-rewrite the entry
+			// and exit 0; Python (set.py:98-103) exits 1 instead. Checked
+			// before any I/O, same as the mutual-exclusion guard above.
+			if !anySetFieldFlagChanged(cmd) {
+				return errNoSetFieldsSpecified
 			}
 			var opts authoring.SetOptions
 			if cmd.Flags().Changed("version") {
@@ -175,6 +209,11 @@ func marketplacePackageSetCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tagPattern, "tag-pattern", "", "Tag pattern (e.g. 'v{version}')")
 	cmd.Flags().StringVar(&tags, "tags", "", "Comma-separated tags")
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "Include prerelease versions")
+	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
+	// subcommand; `package set` was missing it entirely (an unknown-flag
+	// hard error). Python's own set.py accepts it with no observable effect
+	// on the success path -- mirrored here as-is.
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output")
 	return cmd
 }
 
@@ -186,7 +225,7 @@ func marketplacePackageSetCmd() *cobra.Command {
 // 1, mkt-045's one exit-code exception, not the 2 every other package
 // edit failure uses.
 func marketplacePackageRemoveCmd() *cobra.Command {
-	var yes bool
+	var yes, verbose bool
 
 	cmd := &cobra.Command{
 		Use:          "remove NAME",
@@ -196,10 +235,20 @@ func marketplacePackageRemoveCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if !yes {
-				if !isInteractive() {
-					return fmt.Errorf("marketplace package remove requires -y/--yes in a non-interactive environment")
+				// C10: confirmOrRequireYes (marketplace.go, shared with
+				// mkt-015's own `marketplace remove`) ensures a failed
+				// confirmation read (EOF, or any other scanner error) is
+				// never conflated with "user declined" -- it requires
+				// -y/--yes instead, the same as an outright non-interactive
+				// session.
+				proceed, err := confirmOrRequireYes(
+					fmt.Sprintf("Remove package %q from the marketplace authoring config?", name),
+					"marketplace package remove requires -y/--yes in a non-interactive environment",
+				)
+				if err != nil {
+					return err
 				}
-				if !confirmPrompt(fmt.Sprintf("Remove package %q from the marketplace authoring config?", name), false) {
+				if !proceed {
 					fmt.Fprintln(cmd.ErrOrStderr(), "Aborted.")
 					return nil
 				}
@@ -213,5 +262,10 @@ func marketplacePackageRemoveCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the interactive confirmation prompt")
+	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
+	// subcommand; `package remove` was missing it entirely (an
+	// unknown-flag hard error). Python's own remove.py accepts it with no
+	// observable effect on the success path -- mirrored here as-is.
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output")
 	return cmd
 }

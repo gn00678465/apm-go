@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -517,6 +519,403 @@ func TestMarketplaceAdd_PreservesUnrelatedRegistryEntries(t *testing.T) {
 		if sources[i] != want {
 			t.Errorf("unrelated entry %d = %+v, want unchanged %+v", i, sources[i], want)
 		}
+	}
+}
+
+// ── C5: `add --name`/`--host` validation ────────────────────────────────
+
+// TestMarketplaceAdd_InvalidNameRejected covers C5's first half: an
+// explicit --name that fails mkt-004's alias format (marketplaceAliasPattern,
+// reused from resolveMarketplaceAlias's fallback path) must be rejected
+// outright -- Python (__init__.py:621-628) exits 1 rather than storing a
+// name that would break the "plugin@marketplace" install syntax.
+func TestMarketplaceAdd_InvalidNameRejected(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme-tools"}`)
+
+	// Act
+	_, err := runMarketplaceCmd(t, "add", dir, "--name", "bad name!")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace add --name 'bad name!' returned no error, want a rejection (C5)")
+	}
+	if !strings.Contains(err.Error(), `"bad name!"`) {
+		t.Errorf("error = %q, want it to name the invalid value", err.Error())
+	}
+	sources, lerr := marketplace.LoadRegistry()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(sources) != 0 {
+		t.Errorf("LoadRegistry() = %+v, want nothing registered after an invalid --name rejection", sources)
+	}
+}
+
+// TestMarketplaceAdd_ValidNameStillSucceeds is C5's regression guard: a
+// --name that does pass the alias format must still register normally.
+func TestMarketplaceAdd_ValidNameStillSucceeds(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme-tools"}`)
+
+	// Act
+	_, err := runMarketplaceCmd(t, "add", dir, "--name", "valid-name.2")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace add with a valid --name returned error: %v", err)
+	}
+	if src, _ := marketplace.FindByName("valid-name.2"); src == nil {
+		t.Fatal("FindByName(valid-name.2) = nil, want the source registered under the valid --name")
+	}
+}
+
+// TestMarketplaceAdd_InvalidHostRejected covers C5's second half: a
+// malformed --host FQDN must be rejected before ever reaching the network,
+// mirroring Python's is_valid_fqdn pre-check (__init__.py:565-570). Applies
+// even to a local-path SOURCE (where --host is otherwise ignored) since
+// Python's check runs unconditionally, before the "ignored" warnings.
+func TestMarketplaceAdd_InvalidHostRejected(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme-tools"}`)
+
+	// Act
+	_, err := runMarketplaceCmd(t, "add", dir, "--host", "not a valid host!!")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace add --host 'not a valid host!!' returned no error, want a rejection (C5)")
+	}
+	if !strings.Contains(err.Error(), `"not a valid host!!"`) {
+		t.Errorf("error = %q, want it to name the invalid value", err.Error())
+	}
+	sources, lerr := marketplace.LoadRegistry()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(sources) != 0 {
+		t.Errorf("LoadRegistry() = %+v, want nothing registered after an invalid --host rejection", sources)
+	}
+}
+
+// TestMarketplaceAdd_ValidHostStillSucceeds is C5's regression guard for a
+// local-path SOURCE: a well-formed --host FQDN must not be rejected (it is
+// merely ignored-with-warning for a local source, never a hard error).
+func TestMarketplaceAdd_ValidHostStillSucceeds(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme-tools"}`)
+
+	// Act
+	_, err := runMarketplaceCmd(t, "add", dir, "--host", "example.com")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace add with a valid --host returned error: %v", err)
+	}
+	if src, _ := marketplace.FindByName("acme-tools"); src == nil {
+		t.Fatal("FindByName(acme-tools) = nil, want the source registered despite the (ignored) valid --host")
+	}
+}
+
+// ── C1: --verbose/-v on update/remove/validate ──────────────────────────
+
+func TestMarketplaceUpdateCmd_HasVerboseFlag(t *testing.T) {
+	cmd := marketplaceUpdateCmd()
+	if cmd.Flags().Lookup("verbose") == nil {
+		t.Error("marketplace update is missing --verbose (C1)")
+	}
+	if cmd.Flags().ShorthandLookup("v") == nil {
+		t.Error("marketplace update is missing the -v shorthand for --verbose (C1)")
+	}
+}
+
+func TestMarketplaceRemoveCmd_HasVerboseFlag(t *testing.T) {
+	cmd := marketplaceRemoveCmd()
+	if cmd.Flags().Lookup("verbose") == nil {
+		t.Error("marketplace remove is missing --verbose (C1)")
+	}
+	if cmd.Flags().ShorthandLookup("v") == nil {
+		t.Error("marketplace remove is missing the -v shorthand for --verbose (C1)")
+	}
+}
+
+func TestMarketplaceValidateCmd_HasVerboseFlag(t *testing.T) {
+	cmd := marketplaceValidateCmd()
+	if cmd.Flags().Lookup("verbose") == nil {
+		t.Error("marketplace validate is missing --verbose (C1)")
+	}
+	if cmd.Flags().ShorthandLookup("v") == nil {
+		t.Error("marketplace validate is missing the -v shorthand for --verbose (C1)")
+	}
+}
+
+// TestMarketplaceUpdate_VerboseFlagAccepted proves update's -v/--verbose
+// parses without the "unknown flag" error C1 found, on both the named and
+// long forms, and both the single-NAME and refresh-all code paths.
+func TestMarketplaceUpdate_VerboseFlagAccepted(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "update", "acme", "-v")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace update acme -v returned error: %v", err)
+	}
+	if !strings.Contains(out, "source: "+dir) {
+		t.Errorf("output = %q, want -v's extra source line", out)
+	}
+
+	// --verbose (long form) and the refresh-all path too.
+	if _, err := runMarketplaceCmd(t, "update", "--verbose"); err != nil {
+		t.Fatalf("marketplace update --verbose returned error: %v", err)
+	}
+}
+
+// TestMarketplaceRemove_VerboseFlagAccepted proves remove's -v/--verbose
+// parses without erroring, alongside -y.
+func TestMarketplaceRemove_VerboseFlagAccepted(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: "/abs/path", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "remove", "acme", "-y", "--verbose")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace remove -y --verbose returned error: %v", err)
+	}
+	if !strings.Contains(out, "source: /abs/path") {
+		t.Errorf("output = %q, want --verbose's extra source line", out)
+	}
+	if src, _ := marketplace.FindByName("acme"); src != nil {
+		t.Error("marketplace still registered after remove -y --verbose")
+	}
+}
+
+// TestMarketplaceValidate_VerboseFlagAccepted proves validate's -v/--verbose
+// parses without erroring and prints the per-plugin source-type detail
+// mirroring Python's validate.py:38-42.
+func TestMarketplaceValidate_VerboseFlagAccepted(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "validate", "acme", "-v")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace validate acme -v returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "p: source type: string") {
+		t.Errorf("output = %q, want -v's per-plugin source-type line", out)
+	}
+}
+
+// ── C10: EOF/non-interactive confirm read must never read as "declined" ──
+
+// resetStdinScanner points init.go's shared stdinScanner singleton (used by
+// both readYesNo and init.go's own confirmPrompt) at a fresh scanner
+// wrapping r for the duration of the test, restoring the original
+// afterward -- getScanner() only (re)creates it from the real os.Stdin when
+// nil, so a test-supplied reader would otherwise never be seen.
+func resetStdinScanner(t *testing.T, r io.Reader) {
+	t.Helper()
+	orig := stdinScanner
+	stdinScanner = bufio.NewScanner(r)
+	t.Cleanup(func() { stdinScanner = orig })
+}
+
+// forceInteractive overrides isInteractiveCheck (marketplace.go) so
+// confirmOrRequireYes's "looks interactive" branch can be driven
+// deterministically, independent of whatever the test process's real stdin
+// happens to be -- this is precisely the condition C10 fixes: a git-bash
+// pipe on Windows can make the real isInteractive() report true for a
+// non-interactive pipe.
+func forceInteractive(t *testing.T, interactive bool) {
+	t.Helper()
+	orig := isInteractiveCheck
+	isInteractiveCheck = func() bool { return interactive }
+	t.Cleanup(func() { isInteractiveCheck = orig })
+}
+
+// TestReadYesNo_EOFReturnsNotOK is C10's core unit-level regression case: an
+// immediately-exhausted reader simulates a git-bash pipe whose write end has
+// already closed. Before the fix, callers could not distinguish this from a
+// genuine "n" -- both collapsed to a zero-value read.
+func TestReadYesNo_EOFReturnsNotOK(t *testing.T) {
+	resetStdinScanner(t, strings.NewReader(""))
+
+	yes, ok := readYesNo("Remove?")
+
+	if ok {
+		t.Fatal("readYesNo() ok = true on EOF, want false -- EOF must never look like a completed read (C10)")
+	}
+	if yes {
+		t.Error("readYesNo() yes = true on EOF, want false")
+	}
+}
+
+func TestReadYesNo_ExplicitNo(t *testing.T) {
+	resetStdinScanner(t, strings.NewReader("n\n"))
+
+	yes, ok := readYesNo("Remove?")
+
+	if !ok {
+		t.Fatal("readYesNo() ok = false for a completed read, want true")
+	}
+	if yes {
+		t.Error(`readYesNo() yes = true for an explicit "n", want false`)
+	}
+}
+
+func TestReadYesNo_ExplicitYes(t *testing.T) {
+	resetStdinScanner(t, strings.NewReader("y\n"))
+
+	yes, ok := readYesNo("Remove?")
+
+	if !ok {
+		t.Fatal("readYesNo() ok = false for a completed read, want true")
+	}
+	if !yes {
+		t.Error(`readYesNo() yes = false for an explicit "y", want true`)
+	}
+}
+
+func TestConfirmOrRequireYes_NonInteractive_RequiresYes(t *testing.T) {
+	forceInteractive(t, false)
+
+	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
+
+	if err == nil {
+		t.Fatal("confirmOrRequireYes() err = nil for a non-interactive session, want the requires-yes error")
+	}
+	if proceed {
+		t.Error("confirmOrRequireYes() proceed = true for a non-interactive session, want false")
+	}
+}
+
+// TestConfirmOrRequireYes_LooksInteractiveButEOF is C10's core regression
+// case, reproducing the actual reported bug: a git-bash pipe on Windows can
+// make isInteractive() report true even though stdin is not actually
+// interactive. Before the fix, a failed read here was silently treated as
+// "declined" -- a clean exit 0 -- which reads as success to a CI/script
+// caller despite nothing having been removed. This proves it now requires
+// -y/--yes instead, matching the outright-non-interactive path.
+func TestConfirmOrRequireYes_LooksInteractiveButEOF(t *testing.T) {
+	forceInteractive(t, true)
+	resetStdinScanner(t, strings.NewReader(""))
+
+	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
+
+	if err == nil {
+		t.Fatal("confirmOrRequireYes() err = nil for a failed (EOF) read even though isInteractive() reported true, want the requires-yes error (C10)")
+	}
+	if proceed {
+		t.Error("confirmOrRequireYes() proceed = true for a failed read, want false")
+	}
+	if !strings.Contains(err.Error(), "requires -y/--yes") {
+		t.Errorf("err = %v, want it to mention requires -y/--yes", err)
+	}
+}
+
+// TestConfirmOrRequireYes_InteractiveExplicitNo_CleanDecline proves the
+// fix's boundary: a read that genuinely completes with "n" is still a
+// clean, non-error decline -- only a failed read is now treated as
+// requiring -y/--yes.
+func TestConfirmOrRequireYes_InteractiveExplicitNo_CleanDecline(t *testing.T) {
+	forceInteractive(t, true)
+	resetStdinScanner(t, strings.NewReader("n\n"))
+
+	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
+
+	if err != nil {
+		t.Fatalf("confirmOrRequireYes() err = %v for a genuine explicit decline, want nil (clean Aborted)", err)
+	}
+	if proceed {
+		t.Error(`confirmOrRequireYes() proceed = true for an explicit "n", want false`)
+	}
+}
+
+func TestConfirmOrRequireYes_InteractiveExplicitYes_Proceeds(t *testing.T) {
+	forceInteractive(t, true)
+	resetStdinScanner(t, strings.NewReader("y\n"))
+
+	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
+
+	if err != nil {
+		t.Fatalf(`confirmOrRequireYes() err = %v for an explicit "y", want nil`, err)
+	}
+	if !proceed {
+		t.Error(`confirmOrRequireYes() proceed = false for an explicit "y", want true`)
+	}
+}
+
+// TestMarketplaceRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove
+// is C10's full-CLI reproduction for `marketplace remove`: it must exit
+// non-zero and must NOT remove the entry -- asserted directly against the
+// registry, not just the exit code, matching the actual footgun (a script
+// checking only the exit code would previously see 0).
+func TestMarketplaceRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	forceInteractive(t, true)
+	resetStdinScanner(t, strings.NewReader(""))
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: "/abs/path", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "remove", "acme")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace remove with a failed (EOF) confirmation read returned no error, want the requires -y/--yes error (C10)")
+	}
+	if src, _ := marketplace.FindByName("acme"); src == nil {
+		t.Error("marketplace was removed despite the confirmation read failing (C10 footgun)")
+	}
+}
+
+// TestMarketplaceRemove_InteractiveExplicitNo_AbortsCleanly is the CLI-level
+// boundary case: a genuine interactive "n" is unaffected by the fix.
+func TestMarketplaceRemove_InteractiveExplicitNo_AbortsCleanly(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	forceInteractive(t, true)
+	resetStdinScanner(t, strings.NewReader("n\n"))
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: "/abs/path", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "remove", "acme")
+
+	// Assert
+	if err != nil {
+		t.Fatalf(`marketplace remove with an explicit interactive "n" returned error: %v, want a clean exit 0 Aborted`, err)
+	}
+	if !strings.Contains(out, "Aborted") {
+		t.Errorf("output = %q, want an Aborted message", out)
+	}
+	if src, _ := marketplace.FindByName("acme"); src == nil {
+		t.Error("marketplace was removed despite an explicit decline")
 	}
 }
 

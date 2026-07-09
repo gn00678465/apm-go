@@ -67,6 +67,227 @@ func TestMarketplacePackageRemoveCmd_HasNoEditFlags(t *testing.T) {
 	}
 }
 
+// ── C1: --verbose/-v on package add/set/remove ──────────────────────────
+
+func TestMarketplacePackageAddCmd_HasVerboseFlag(t *testing.T) {
+	cmd := marketplacePackageAddCmd()
+	if cmd.Flags().Lookup("verbose") == nil {
+		t.Error("package add is missing --verbose (C1)")
+	}
+	if cmd.Flags().ShorthandLookup("v") == nil {
+		t.Error("package add is missing the -v shorthand for --verbose (C1)")
+	}
+}
+
+func TestMarketplacePackageSetCmd_HasVerboseFlag(t *testing.T) {
+	cmd := marketplacePackageSetCmd()
+	if cmd.Flags().Lookup("verbose") == nil {
+		t.Error("package set is missing --verbose (C1)")
+	}
+	if cmd.Flags().ShorthandLookup("v") == nil {
+		t.Error("package set is missing the -v shorthand for --verbose (C1)")
+	}
+}
+
+func TestMarketplacePackageRemoveCmd_HasVerboseFlag(t *testing.T) {
+	cmd := marketplacePackageRemoveCmd()
+	if cmd.Flags().Lookup("verbose") == nil {
+		t.Error("package remove is missing --verbose (C1)")
+	}
+	if cmd.Flags().ShorthandLookup("v") == nil {
+		t.Error("package remove is missing the -v shorthand for --verbose (C1)")
+	}
+}
+
+// TestMarketplacePackageAdd_VerboseFlagAccepted proves `package add`'s
+// -v/--verbose parses without the "unknown flag" error C1 found.
+func TestMarketplacePackageAdd_VerboseFlagAccepted(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool", "-v")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add ./pkgs/tool -v returned error: %v", err)
+	}
+}
+
+// TestMarketplacePackageSet_VerboseFlagAccepted proves `package set`'s
+// -v/--verbose parses without erroring, alongside a real field flag.
+func TestMarketplacePackageSet_VerboseFlagAccepted(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "set", "tool", "--verbose", "--tag-pattern", "v{version}")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package set --verbose --tag-pattern ... returned error: %v", err)
+	}
+}
+
+// TestMarketplacePackageRemove_VerboseFlagAccepted proves `package remove`'s
+// -v/--verbose parses without erroring, alongside -y.
+func TestMarketplacePackageRemove_VerboseFlagAccepted(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "remove", "tool", "-y", "-v")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package remove -y -v returned error: %v", err)
+	}
+}
+
+// ── C2: `package set` with zero field flags must error, not no-op ───────
+
+// TestMarketplacePackageSet_NoFieldsSpecified_ExitsCode1 covers C2: Python
+// (set.py:98-103) exits 1 with "No fields specified..." rather than
+// silently rewriting the entry as a no-op. The guard fires before any I/O,
+// so apm.yml must be byte-for-byte unchanged.
+func TestMarketplacePackageSet_NoFieldsSpecified_ExitsCode1(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "set", "tool")
+
+	// Assert
+	if err == nil {
+		t.Fatal("package set tool with zero field flags returned no error, want Python's exit-1 guard (C2)")
+	}
+	if got := exitCodeOf(err); got != 1 {
+		t.Errorf("exitCodeOf(err) = %d, want 1 (Python's sys.exit(1), not mkt-045's usual 2)", got)
+	}
+	if !strings.Contains(err.Error(), "No fields specified. Pass at least one option (e.g. --version, --ref, --subdir).") {
+		t.Errorf("err = %v, want Python's exact message", err)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != apmYML {
+		t.Errorf("apm.yml = %q, want it byte-for-byte unchanged (the guard must fire before any I/O)", string(data))
+	}
+}
+
+// TestMarketplacePackageSet_WithVersionFlag_StillWorks is C2's regression
+// guard: giving at least one field flag must still succeed as before.
+func TestMarketplacePackageSet_WithVersionFlag_StillWorks(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "set", "tool", "--version", "^1.0.0")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package set tool --version ^1.0.0 returned error: %v", err)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(data), "version: ^1.0.0") {
+		t.Errorf("apm.yml = %q, want the new version recorded", string(data))
+	}
+}
+
+// ── C10: EOF/non-interactive confirm read must never read as "declined" ──
+
+// TestMarketplacePackageRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove
+// is C10's full-CLI reproduction for `marketplace package remove`: it must
+// exit non-zero and must NOT remove the package entry -- asserted directly
+// against apm.yml's content, not just the exit code.
+func TestMarketplacePackageRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	forceInteractive(t, true)
+	resetStdinScanner(t, strings.NewReader(""))
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "remove", "tool")
+
+	// Assert
+	if err == nil {
+		t.Fatal("package remove with a failed (EOF) confirmation read returned no error, want the requires -y/--yes error (C10)")
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(data), "name: tool") {
+		t.Error("package was removed despite the confirmation read failing (C10 footgun)")
+	}
+}
+
+// TestMarketplacePackageRemove_InteractiveExplicitNo_AbortsCleanly is the
+// CLI-level boundary case: a genuine interactive "n" is unaffected by the
+// fix.
+func TestMarketplacePackageRemove_InteractiveExplicitNo_AbortsCleanly(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	forceInteractive(t, true)
+	resetStdinScanner(t, strings.NewReader("n\n"))
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "remove", "tool")
+
+	// Assert
+	if err != nil {
+		t.Fatalf(`package remove with an explicit interactive "n" returned error: %v, want a clean exit 0 Aborted`, err)
+	}
+	if !strings.Contains(out, "Aborted") {
+		t.Errorf("output = %q, want an Aborted message", out)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(data), "name: tool") {
+		t.Error("package was removed despite an explicit decline")
+	}
+}
+
 // ── mkt-046 regression, end to end through the CLI (prd.md AC3) ─────────
 
 func TestMarketplacePackageAdd_LocalSource_NoFlags_SucceedsEndToEnd(t *testing.T) {

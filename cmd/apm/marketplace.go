@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -24,6 +25,72 @@ var marketplaceAliasPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 func isValidMarketplaceAlias(name string) bool {
 	return name != "" && marketplaceAliasPattern.MatchString(name)
+}
+
+// hostFQDNPattern implements C5's `--host` validation: mirrors Python's
+// is_valid_fqdn (utils/github_host.py) and internal/marketplace's own
+// unexported looksLikeFQDN (source.go) -- labels of alphanumerics/hyphens
+// that never start or end with a hyphen, with at least two labels (one
+// dot). Duplicated here rather than exported from internal/marketplace
+// because this fix's file scope does not include internal/marketplace/
+// source.go.
+var hostFQDNPattern = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+$`)
+
+func isValidHostFQDN(host string) bool {
+	return hostFQDNPattern.MatchString(host)
+}
+
+// ── C10: shared remove-confirmation helper ──────────────────────────────
+//
+// isInteractiveCheck wraps init.go's isInteractive() as a swappable
+// function var purely so a test can force confirmOrRequireYes's "looks
+// interactive" branch deterministically: this is the exact condition C10
+// fixes. A git-bash pipe on Windows can make isInteractive()'s
+// os.Stdin.Stat() ModeCharDevice check report true even though stdin is
+// not actually interactive, so the confirmation read's own EOF/error
+// result -- not this check alone -- must be the authority on whether a
+// decline was genuine.
+var isInteractiveCheck = isInteractive
+
+// readYesNo prints label followed by "[y/N]: " to os.Stderr (matching
+// init.go's confirmPrompt convention of writing the prompt straight to the
+// real stderr, not through cobra's cmd.ErrOrStderr()) and reads a single
+// line from stdin via the shared scanner (getScanner(), init.go). ok is
+// false when the read itself failed -- EOF or any other scanner error --
+// which must never be conflated with "user declined": only a read that
+// actually completes (even an empty line, which counts as a decline) sets
+// ok=true.
+func readYesNo(label string) (yes bool, ok bool) {
+	fmt.Fprintf(os.Stderr, "%s [y/N]: ", label)
+	scanner := getScanner()
+	if !scanner.Scan() {
+		return false, false
+	}
+	line := strings.TrimSpace(strings.ToLower(scanner.Text()))
+	return line == "y" || line == "yes", true
+}
+
+// confirmOrRequireYes is C10's shared fix for `marketplace remove` and
+// `marketplace package remove`'s confirmation gate -- the one place either
+// command should call to decide whether a destructive removal without
+// -y/--yes may proceed. errMsg is returned verbatim in two cases: stdin is
+// not interactive at all (the pre-existing isInteractiveCheck() gate), and
+// -- new here -- stdin looks interactive but the confirmation read itself
+// fails (EOF or a scanner error). Before this fix, a failed read was
+// silently treated the same as "declined" (Aborted, exit 0) -- a CI/script
+// footgun, since exit 0 reads as success. proceed is only true after a
+// read that genuinely completed with "y"/"yes"; a read that completed with
+// anything else (including an empty line) returns (false, nil), which the
+// caller renders as a clean "Aborted." and a normal exit 0.
+func confirmOrRequireYes(label, errMsg string) (proceed bool, err error) {
+	if !isInteractiveCheck() {
+		return false, fmt.Errorf("%s", errMsg)
+	}
+	yes, ok := readYesNo(label)
+	if !ok {
+		return false, fmt.Errorf("%s", errMsg)
+	}
+	return yes, nil
 }
 
 // marketplaceNotRegisteredErr builds the "not registered" error shared by
@@ -148,6 +215,17 @@ func marketplaceAddCmd() *cobra.Command {
 			}
 			if effectiveRef != "" {
 				src.Ref = effectiveRef
+			}
+
+			// C5: reject a malformed --host FQDN and an invalid --name
+			// before ever touching the network (mirrors Python
+			// __init__.py:565-570 and :621-628's placement -- both checks
+			// run before the slow probe + fetch).
+			if host != "" && !isValidHostFQDN(host) {
+				return fmt.Errorf("invalid host %q: expected a valid host FQDN, e.g. github.com", host)
+			}
+			if name != "" && !isValidMarketplaceAlias(name) {
+				return fmt.Errorf("invalid marketplace name %q: names may only contain letters, digits, '.', '_', and '-' (required for apm-go install's plugin@marketplace syntax)", name)
 			}
 
 			wasFullHTTPSSource := strings.HasPrefix(strings.ToLower(rawSource), "https://")
@@ -375,6 +453,7 @@ func marketplaceBrowseCmd() *cobra.Command {
 // here means "prove the source is still reachable and report its current
 // plugin count".
 func marketplaceUpdateCmd() *cobra.Command {
+	var verbose bool
 	cmd := &cobra.Command{
 		Use:          "update [NAME]",
 		Short:        "Refresh one or every registered marketplace",
@@ -396,6 +475,9 @@ func marketplaceUpdateCmd() *cobra.Command {
 					return fmt.Errorf("refresh marketplace %q: %w", name, err)
 				}
 				fmt.Fprintf(w, "[+] Refreshed marketplace %q (%d plugins)\n", name, len(m.Plugins))
+				if verbose {
+					fmt.Fprintf(w, "  source: %s\n", src.URL)
+				}
 				return nil
 			}
 
@@ -411,10 +493,19 @@ func marketplaceUpdateCmd() *cobra.Command {
 					continue
 				}
 				fmt.Fprintf(w, "[+] Refreshed marketplace %q (%d plugins)\n", s.Name, len(m.Plugins))
+				if verbose {
+					fmt.Fprintf(w, "  source: %s\n", s.URL)
+				}
 			}
 			return nil
 		},
 	}
+	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
+	// subcommand; update was missing it entirely (an unknown-flag hard
+	// error). Its effect here mirrors the Python original's own (minimal
+	// -- verbose there only adds traceback detail on error): printing each
+	// successfully refreshed marketplace's source.
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print each marketplace's source after refreshing")
 	return cmd
 }
 
@@ -424,7 +515,7 @@ func marketplaceUpdateCmd() *cobra.Command {
 // non-interactive session without -y is a hard error rather than a silent
 // no-confirm removal.
 func marketplaceRemoveCmd() *cobra.Command {
-	var yes bool
+	var yes, verbose bool
 	cmd := &cobra.Command{
 		Use:          "remove NAME",
 		Short:        "Unregister a marketplace",
@@ -440,10 +531,20 @@ func marketplaceRemoveCmd() *cobra.Command {
 				return marketplaceNotRegisteredErr(name)
 			}
 			if !yes {
-				if !isInteractive() {
-					return fmt.Errorf("marketplace remove requires -y/--yes in a non-interactive environment")
+				// C10: confirmOrRequireYes (not the old bare
+				// isInteractive()+confirmPrompt combo) ensures a failed
+				// confirmation read (EOF, or any other scanner error) is
+				// never conflated with "user declined" -- it requires
+				// -y/--yes instead, the same as an outright non-interactive
+				// session.
+				proceed, err := confirmOrRequireYes(
+					fmt.Sprintf("Remove marketplace %q?", name),
+					"marketplace remove requires -y/--yes in a non-interactive environment",
+				)
+				if err != nil {
+					return err
 				}
-				if !confirmPrompt(fmt.Sprintf("Remove marketplace %q?", name), false) {
+				if !proceed {
 					fmt.Fprintln(cmd.ErrOrStderr(), "Aborted.")
 					return nil
 				}
@@ -452,10 +553,17 @@ func marketplaceRemoveCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "[-] Removed marketplace %q\n", name)
+			if verbose {
+				fmt.Fprintf(cmd.OutOrStdout(), "  source: %s\n", src.URL)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the interactive confirmation prompt")
+	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
+	// subcommand; remove was missing it entirely (an unknown-flag hard
+	// error).
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print the removed marketplace's source")
 	return cmd
 }
 
@@ -465,6 +573,7 @@ func marketplaceRemoveCmd() *cobra.Command {
 // followed by a "Summary: N passed, N warnings, N errors" line, and failing
 // (exit 1) when any error was found.
 func marketplaceValidateCmd() *cobra.Command {
+	var verbose bool
 	cmd := &cobra.Command{
 		Use:          "validate NAME",
 		Short:        "Validate a registered marketplace's manifest",
@@ -484,8 +593,21 @@ func marketplaceValidateCmd() *cobra.Command {
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
 
-			findings := marketplace.Validate(m)
 			w := cmd.OutOrStdout()
+			if verbose {
+				// Mirrors Python's validate.py:38-42 per-plugin verbose
+				// detail (source type: dict vs string), printed after the
+				// fetch and before the validation results.
+				for _, p := range m.Plugins {
+					sourceType := "string"
+					if _, ok := p.Source.(map[string]any); ok {
+						sourceType = "dict"
+					}
+					fmt.Fprintf(w, "    %s: source type: %s\n", p.Name, sourceType)
+				}
+			}
+
+			findings := marketplace.Validate(m)
 			for _, f := range findings {
 				level := "warning"
 				if f.Level == marketplace.LevelError {
@@ -501,6 +623,10 @@ func marketplaceValidateCmd() *cobra.Command {
 			return nil
 		},
 	}
+	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
+	// subcommand; validate was missing it entirely (an unknown-flag hard
+	// error).
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print each plugin's source type before the validation results")
 	return cmd
 }
 
