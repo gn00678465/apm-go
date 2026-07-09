@@ -138,9 +138,6 @@ func TestParseDepString_Rejection(t *testing.T) {
 		{"", "empty"},
 		{"not valid string", "does not match"},
 		{"../../../etc/passwd", "escapes project root"},
-		{"/etc/passwd", "absolute"},
-		{"/absolute/path", "absolute"},
-		{"/tmp/malicious", "absolute"},
 		{"just-one-word", "does not match"},
 		{"https://", "requires host"},
 		// mkt-033 negative test (a): apm.yml never accepts the CLI's
@@ -158,6 +155,65 @@ func TestParseDepString_Rejection(t *testing.T) {
 				t.Errorf("error %q should contain %q", err.Error(), tt.errSS)
 			}
 		})
+	}
+}
+
+// TestParseDepString_AbsolutePath covers this task's approved design point
+// 3: an OS-absolute local filesystem path is now ACCEPTED as a local
+// dependency (IsLocal=true, Source="local"), reversing the previous blanket
+// "dependency path %q is absolute; only relative paths are allowed"
+// rejection -- inverted from what TestParseDepString_Rejection asserted
+// before this fix ("/etc/passwd", "/absolute/path", "/tmp/malicious" all
+// used to error with "absolute"). This is what lets (a) a plain
+// `apm install /abs/path` local git dependency parse at all, and (b)
+// mkt-025's local-marketplace fast path round-trip an out-of-project-tree
+// absolute canonical back through apm.yml. containsEscape must NOT run on
+// an explicitly-absolute path (it is user-intended, not a traversal
+// attempt) -- exercised here with a path that would itself look like it
+// "escapes" if the relative-path escape check ran on it.
+func TestParseDepString_AbsolutePath(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"posix absolute", "/etc/passwd"},
+		{"posix absolute nested", "/absolute/path"},
+		{"posix absolute tmp", "/tmp/malicious"},
+		{"windows drive letter backslash", `C:\Users\me\plugins\p`},
+		{"windows drive letter forward-slash", "C:/Users/me/plugins/p"},
+		{"windows UNC", `\\myserver\share\plugin`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d, err := ParseDepString(tt.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !d.IsLocal {
+				t.Error("expected IsLocal=true")
+			}
+			if d.Source != "local" {
+				t.Errorf("Source = %q, want local", d.Source)
+			}
+			if d.LocalPath != tt.input {
+				t.Errorf("LocalPath = %q, want %q", d.LocalPath, tt.input)
+			}
+		})
+	}
+}
+
+// TestParseDepString_AbsolutePathSkipsEscapeGuard covers the design's
+// explicit carve-out: an absolute path containing a literal ".." segment is
+// still accepted (never routed through containsEscape), since an explicitly
+// absolute path is user-intended and the RELATIVE-path escape guard only
+// makes sense for a path meant to stay inside the project root.
+func TestParseDepString_AbsolutePathSkipsEscapeGuard(t *testing.T) {
+	d, err := ParseDepString("/abs/foo/../bar")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !d.IsLocal || d.LocalPath != "/abs/foo/../bar" {
+		t.Errorf("d = %+v, want IsLocal=true LocalPath=/abs/foo/../bar", d)
 	}
 }
 

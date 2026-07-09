@@ -23,16 +23,53 @@ func validatePathComponent(field, value string) error {
 	if value == "" {
 		return nil
 	}
-	norm := strings.ReplaceAll(value, "\\", "/")
-	if path.IsAbs(norm) || filepath.IsAbs(value) || filepath.VolumeName(filepath.FromSlash(value)) != "" {
+	if isAbsolutePathValue(value) {
 		return fmt.Errorf("lockfile: %s %q must be a relative path (absolute path rejected)", field, value)
 	}
+	return validateNoDotDotSegments(field, value)
+}
+
+// isAbsolutePathValue reports whether value is an OS-absolute path in any
+// recognized form (POSIX, Windows drive-letter, or Windows volume/UNC).
+func isAbsolutePathValue(value string) bool {
+	norm := strings.ReplaceAll(value, "\\", "/")
+	return path.IsAbs(norm) || filepath.IsAbs(value) || filepath.VolumeName(filepath.FromSlash(value)) != ""
+}
+
+func validateNoDotDotSegments(field, value string) error {
+	norm := strings.ReplaceAll(value, "\\", "/")
 	for _, seg := range strings.Split(norm, "/") {
 		if seg == ".." {
 			return fmt.Errorf("lockfile: %s %q must not contain \"..\" path segments", field, value)
 		}
 	}
 	return nil
+}
+
+// validateRepoURLAbsoluteness enforces this task's approved design: only a
+// "git"-sourced dependency may carry an absolute repo_url -- mkt-025's
+// local-marketplace fast path (and a plain `apm install /abs/path` local git
+// dependency) legitimately resolve to one and must round-trip through a
+// later `apm install` read (install.go's ResolvedDep.RepoURL is ALWAYS the
+// absolute canonical for this case, regardless of whether apm.yml persisted
+// a relativized or absolute form -- see cmd/apm's localPathForManifest). A
+// non-"git" source -- in particular "registry" (req-sc-002 / lockfile
+// tampering §10.4, TestParseLockfile_RejectsPathTraversal's "repo_url
+// absolute" case) -- must never carry an absolute repo_url: that would let a
+// materialization step treat a package-registry identifier as an arbitrary
+// filesystem path. Called AFTER parseLockedDep's field loop completes (not
+// inline, unlike every other validatePathComponent call site) because this
+// decision needs d.Source, and apm's own lockfile writer emits "repo_url"
+// before "source" (write.go's fixed field order) -- so d.Source is not yet
+// populated at the point "repo_url" is encountered in the YAML.
+func validateRepoURLAbsoluteness(repoURL, source string) error {
+	if repoURL == "" || !isAbsolutePathValue(repoURL) {
+		return nil
+	}
+	if source == "git" {
+		return nil
+	}
+	return fmt.Errorf("lockfile: dependency repo_url %q must be a relative path (absolute path rejected)", repoURL)
 }
 
 // ParseLockfile parses a validated yaml.Node into a Lockfile.
@@ -119,7 +156,10 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 
 		switch key {
 		case "repo_url":
-			if err := validatePathComponent("dependency repo_url", val.Value); err != nil {
+			// Absoluteness is validated AFTER the loop (validateRepoURLAbsoluteness
+			// below), once d.Source is known -- only the ".." segment check
+			// applies unconditionally here.
+			if err := validateNoDotDotSegments("dependency repo_url", val.Value); err != nil {
 				return nil, err
 			}
 			d.RepoURL = val.Value
@@ -191,6 +231,10 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 		case "source_digest":
 			d.SourceDigest = val.Value
 		}
+	}
+
+	if err := validateRepoURLAbsoluteness(d.RepoURL, d.Source); err != nil {
+		return nil, err
 	}
 
 	return d, nil

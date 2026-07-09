@@ -333,3 +333,101 @@ func TestLoadPackage_RefusesVirtualPathEscapingModulesDir(t *testing.T) {
 		t.Errorf("sibling package under ModulesDir must survive: %v", statErr)
 	}
 }
+
+// TestMaterializeLocalCopy_CopiesTreeUnderModulesDir proves the happy path of
+// the F1 fix's loader change: a local (non-git) directory dependency carrying
+// LocalSourcePath is COPIED into apm_modules under its "_local/<name>" key,
+// with its content readable there afterwards, and its apm.yml parsed.
+func TestMaterializeLocalCopy_CopiesTreeUnderModulesDir(t *testing.T) {
+	modulesDir := t.TempDir()
+	r := &RealPackageLoader{ModulesDir: modulesDir}
+
+	// A plain source directory (no .git) with an apm.yml and a nested file.
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "apm.yml"), []byte("name: dep\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(src, "skills", "hello")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "SKILL.md"), []byte("# hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := &manifest.DependencyReference{RepoURL: "_local/hello-abc123", Source: "git", LocalSourcePath: src}
+	m, err := r.LoadPackage(ref, "")
+	if err != nil {
+		t.Fatalf("LoadPackage: %v", err)
+	}
+	if m == nil || m.Name != "dep" {
+		t.Fatalf("expected parsed sub-manifest name=dep, got %+v", m)
+	}
+	copied := filepath.Join(modulesDir, "_local", "hello-abc123", "skills", "hello", "SKILL.md")
+	if _, err := os.Stat(copied); err != nil {
+		t.Errorf("expected source tree copied under ModulesDir: %v", err)
+	}
+}
+
+// TestMaterializeLocalCopy_RefusesKeyEscapingModulesDir proves the copy
+// destination is guarded by the SAME archive.ContainedKey check as every other
+// dependency: a crafted "_local" key containing ".." must be refused, and an
+// unrelated sibling under ModulesDir must survive untouched (no copy, no
+// RemoveAll outside the intended key).
+func TestMaterializeLocalCopy_RefusesKeyEscapingModulesDir(t *testing.T) {
+	modulesDir := t.TempDir()
+	r := &RealPackageLoader{ModulesDir: modulesDir}
+
+	siblingMarker := filepath.Join(modulesDir, "victim", "marker.txt")
+	if err := os.MkdirAll(filepath.Dir(siblingMarker), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(siblingMarker, []byte("must survive"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "apm.yml"), []byte("name: dep\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// RepoURL key contains ".." -> ContainedKey (via installPath) must refuse.
+	ref := &manifest.DependencyReference{RepoURL: "_local/../victim", Source: "git", LocalSourcePath: src}
+	if _, err := r.LoadPackage(ref, ""); err == nil {
+		t.Fatal("expected materializeLocalCopy to refuse a key containing \"..\"")
+	}
+	if _, statErr := os.Stat(siblingMarker); statErr != nil {
+		t.Errorf("sibling under ModulesDir must survive a refused local copy: %v", statErr)
+	}
+}
+
+// TestCopyTreeNoSymlinks_SkipsSymlinks proves the security-relevant copy rule:
+// a symlink under the source tree (which could point outside it) is never
+// followed or copied into apm_modules; only the package's own in-tree regular
+// files land there.
+func TestCopyTreeNoSymlinks_SkipsSymlinks(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "real.txt"), []byte("in-tree"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// A secret the symlink would leak if followed.
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("must not be copied"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(src, "leak.txt")); err != nil {
+		t.Skipf("symlink unsupported on this platform/CI: %v", err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "out")
+	if err := copyTreeNoSymlinks(src, dst); err != nil {
+		t.Fatalf("copyTreeNoSymlinks: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "real.txt")); err != nil {
+		t.Errorf("regular file should be copied: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "leak.txt")); err == nil {
+		t.Error("symlink must NOT be copied (dereferenced or otherwise)")
+	}
+}

@@ -577,13 +577,21 @@ func TestRunInstall_MarketplaceProvenance_CarriesForwardAcrossNoTargetBareAndTar
 	}
 }
 
-// TestRunInstall_MarketplacePackage_AbsoluteLocalPath_FailsClosedOnPersist
-// covers the mkt-025 local-fast-path edge this task's design surfaced: a
-// local-marketplace-resolved absolute path has no apm.yml dependency-string
-// representation, so `apm install` must fail closed with a clear error
-// rather than silently writing a broken apm.yml. Also asserts apm.yml is
-// left byte-for-byte unmodified (the error fires before any write).
-func TestRunInstall_MarketplacePackage_AbsoluteLocalPath_FailsClosedOnPersist(t *testing.T) {
+// TestRunInstall_MarketplacePackage_LocalPathInProjectTree_PersistsRelative
+// covers this task's approved design point 1 (F1's core fix): a
+// local-marketplace-resolved absolute path that falls INSIDE the current
+// project tree is persisted to apm.yml as a portable "./"-relative path,
+// not the raw absolute filesystem path. Also proves the round-trip half of
+// point 3: a second, bare `apm install` (no positional packages, apm.yml
+// now holding the persisted relative string) parses it back and succeeds.
+//
+// Inverted from the old TestRunInstall_MarketplacePackage_AbsoluteLocalPath_
+// FailsClosedOnPersist, which asserted this exact scenario hard-errored
+// ("cannot add package ... it resolved to a local filesystem path ... which
+// has no apm.yml dependency-string form") and left apm.yml/apm.lock.yaml
+// untouched -- that fail-closed behavior is exactly the F1 bug this task
+// fixes.
+func TestRunInstall_MarketplacePackage_LocalPathInProjectTree_PersistsRelative(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -591,6 +599,75 @@ func TestRunInstall_MarketplacePackage_AbsoluteLocalPath_FailsClosedOnPersist(t 
 	defer os.Chdir(origDir)
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 
+	// The marketplace source AND its plugin both live inside the project
+	// tree (dir/vendor/mkt, dir/vendor/mkt/p) so the resolved canonical
+	// relativizes cleanly against cwd.
+	mktDir := filepath.Join(dir, "vendor", "mkt")
+	if err := os.MkdirAll(mktDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mktDir, "marketplace.json"),
+		[]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: mktDir}); err != nil {
+		t.Fatalf("AddSource(): %v", err)
+	}
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+
+	// Act (a): first install, CLI marketplace reference.
+	if err := runInstall(deps, false, true, "claude", nil, []string{"p@acme"}); err != nil {
+		t.Fatalf("(a) runInstall: %v", err)
+	}
+
+	// Assert (a): apm.yml persisted a portable "./"-relative path, not the
+	// raw absolute filesystem path.
+	wantRel := "./" + filepath.ToSlash(filepath.Join("vendor", "mkt", "p"))
+	apmYML, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatalf("read apm.yml: %v", err)
+	}
+	if !strings.Contains(string(apmYML), wantRel) {
+		t.Errorf("apm.yml = %q, want it to contain the relative path %q", apmYML, wantRel)
+	}
+	if strings.Contains(string(apmYML), mktDir) {
+		t.Errorf("apm.yml = %q, want it to NOT contain the absolute mktDir path %q", apmYML, mktDir)
+	}
+	if _, statErr := os.Stat("apm.lock.yaml"); statErr != nil {
+		t.Fatalf("expected apm.lock.yaml to be written: %v", statErr)
+	}
+
+	// Act + Assert (b): round-trip -- a second, bare `apm install` (no
+	// positional packages) re-reads the persisted relative apm.yml entry
+	// and the lockfile's absolute repo_url (mkt-025's canonical is always
+	// absolute regardless of how it's persisted) without erroring.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
+	}
+}
+
+// TestRunInstall_MarketplacePackage_LocalPathOutsideProjectTree_PersistsAbsolute
+// covers this task's approved design point 2: a local-marketplace-resolved
+// absolute path that falls OUTSIDE the current project tree (relativizing
+// would need a leading ".." escaping the root) is persisted to apm.yml as
+// the absolute path, unchanged -- matching Python's behavior for the
+// out-of-tree case -- instead of failing closed. Also proves the round-trip
+// half of point 3 for the absolute form specifically.
+func TestRunInstall_MarketplacePackage_LocalPathOutsideProjectTree_PersistsAbsolute(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+
+	// mktDir is a SIBLING temp dir, not nested under the project dir --
+	// relativizing its plugin path against cwd needs a leading "..".
 	mktDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(mktDir, "marketplace.json"),
 		[]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`), 0o644); err != nil {
@@ -600,31 +677,167 @@ func TestRunInstall_MarketplacePackage_AbsoluteLocalPath_FailsClosedOnPersist(t 
 		t.Fatalf("AddSource(): %v", err)
 	}
 
-	originalManifest := "name: test\nversion: \"1.0.0\"\n"
-	if err := os.WriteFile("apm.yml", []byte(originalManifest), 0644); err != nil {
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	// Act
-	err := runInstall(deps, false, true, "", nil, []string{"p@acme"})
+	// Act (a)
+	if err := runInstall(deps, false, true, "claude", nil, []string{"p@acme"}); err != nil {
+		t.Fatalf("(a) runInstall: %v", err)
+	}
 
-	// Assert
-	if err == nil {
-		t.Fatal("expected an error for a local-marketplace-resolved absolute path")
+	// Assert (a): apm.yml persisted the absolute path verbatim.
+	wantAbs := filepath.Join(mktDir, "p")
+	apmYML, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatalf("read apm.yml: %v", err)
 	}
-	if !strings.Contains(err.Error(), "local filesystem path") {
-		t.Errorf("error = %v, want it to mention the local filesystem path limitation", err)
+	if !strings.Contains(string(apmYML), wantAbs) {
+		t.Errorf("apm.yml = %q, want it to contain the absolute path %q", apmYML, wantAbs)
 	}
-	if _, statErr := os.Stat("apm.lock.yaml"); statErr == nil {
-		t.Error("apm.lock.yaml should not have been written")
+	if _, statErr := os.Stat("apm.lock.yaml"); statErr != nil {
+		t.Fatalf("expected apm.lock.yaml to be written: %v", statErr)
 	}
-	got, readErr := os.ReadFile("apm.yml")
-	if readErr != nil {
-		t.Fatalf("read apm.yml: %v", readErr)
+
+	// Act + Assert (b): round-trip -- a second, bare `apm install` re-reads
+	// the persisted absolute apm.yml entry AND the lockfile's absolute
+	// repo_url without erroring.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
 	}
-	if string(got) != originalManifest {
-		t.Errorf("apm.yml was modified; got:\n%s\nwant unchanged:\n%s", got, originalManifest)
+}
+
+// TestLocalPathForManifest covers localPathForManifest's relative-vs-
+// absolute decision in isolation, independent of the full install
+// pipeline: an in-tree absolute path relativizes to a "./"-prefixed,
+// forward-slash form; an out-of-tree absolute path (needing a leading ".."
+// to reach cwd) is returned unchanged.
+func TestLocalPathForManifest(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	t.Run("in-tree nested path relativizes", func(t *testing.T) {
+		abs := filepath.Join(dir, "vendor", "mkt", "p")
+		got := localPathForManifest(abs)
+		want := "./vendor/mkt/p"
+		if got != want {
+			t.Errorf("localPathForManifest(%q) = %q, want %q", abs, got, want)
+		}
+	})
+
+	t.Run("in-tree direct child relativizes", func(t *testing.T) {
+		abs := filepath.Join(dir, "p")
+		got := localPathForManifest(abs)
+		want := "./p"
+		if got != want {
+			t.Errorf("localPathForManifest(%q) = %q, want %q", abs, got, want)
+		}
+	})
+
+	t.Run("out-of-tree path stays absolute", func(t *testing.T) {
+		outside := t.TempDir()
+		got := localPathForManifest(outside)
+		if got != outside {
+			t.Errorf("localPathForManifest(%q) = %q, want unchanged %q", outside, got, outside)
+		}
+	})
+}
+
+// TestNormalizeLocalDep covers the loader-key normalization that completes the
+// F1 fix end to end: a local/absolute-path dependency is rewritten to a
+// COPY-materialized apm_modules form -- Source="git", a "_local/<name>-<hash>"
+// key in RepoURL (valid, relative, ContainedKey-safe), and the real source on
+// LocalSourcePath -- while relative git-local paths and normal git deps are
+// left untouched. Also proves determinism (same source -> same key, so the
+// round-trip second install reuses the key) and collision resistance (two
+// same-basename sources -> different keys).
+func TestNormalizeLocalDep(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	assertLocalKey := func(t *testing.T, ref *manifest.DependencyReference, wantAbs string) {
+		t.Helper()
+		if ref.IsLocal {
+			t.Error("IsLocal = true, want false after normalization")
+		}
+		if ref.Source != "git" {
+			t.Errorf("Source = %q, want git", ref.Source)
+		}
+		if !strings.HasPrefix(ref.RepoURL, "_local/") {
+			t.Errorf("RepoURL = %q, want a _local/ key", ref.RepoURL)
+		}
+		if strings.Contains(ref.RepoURL, "..") {
+			t.Errorf("RepoURL = %q must not contain \"..\"", ref.RepoURL)
+		}
+		if ref.LocalSourcePath != wantAbs {
+			t.Errorf("LocalSourcePath = %q, want %q", ref.LocalSourcePath, wantAbs)
+		}
 	}
+
+	t.Run("absolute marketplace git form -> _local key", func(t *testing.T) {
+		abs := filepath.Join(dir, "vendor", "hello")
+		ref := &manifest.DependencyReference{RepoURL: abs, Source: "git"}
+		normalizeLocalDep(ref)
+		assertLocalKey(t, ref, abs)
+	})
+
+	t.Run("IsLocal relative path anchors at cwd", func(t *testing.T) {
+		ref := &manifest.DependencyReference{IsLocal: true, LocalPath: "./vendor/hello", Source: "local"}
+		normalizeLocalDep(ref)
+		assertLocalKey(t, ref, filepath.Join(dir, "vendor", "hello"))
+	})
+
+	t.Run("deterministic: same source yields same key", func(t *testing.T) {
+		abs := filepath.Join(dir, "vendor", "hello")
+		a := &manifest.DependencyReference{RepoURL: abs, Source: "git"}
+		b := &manifest.DependencyReference{IsLocal: true, LocalPath: "./vendor/hello", Source: "local"}
+		normalizeLocalDep(a)
+		normalizeLocalDep(b)
+		if a.RepoURL != b.RepoURL {
+			t.Errorf("keys differ for the same resolved source: %q vs %q", a.RepoURL, b.RepoURL)
+		}
+	})
+
+	t.Run("idempotent: already-normalized ref unchanged", func(t *testing.T) {
+		abs := filepath.Join(dir, "vendor", "hello")
+		ref := &manifest.DependencyReference{RepoURL: abs, Source: "git"}
+		normalizeLocalDep(ref)
+		first := ref.RepoURL
+		normalizeLocalDep(ref)
+		if ref.RepoURL != first {
+			t.Errorf("second normalization changed the key: %q -> %q", first, ref.RepoURL)
+		}
+	})
+
+	t.Run("collision resistance: same basename, different dirs", func(t *testing.T) {
+		a := &manifest.DependencyReference{RepoURL: filepath.Join(dir, "a", "hello"), Source: "git"}
+		b := &manifest.DependencyReference{RepoURL: filepath.Join(dir, "b", "hello"), Source: "git"}
+		normalizeLocalDep(a)
+		normalizeLocalDep(b)
+		if a.RepoURL == b.RepoURL {
+			t.Errorf("distinct sources collided on key %q", a.RepoURL)
+		}
+	})
+
+	t.Run("relative git-local path is NOT normalized", func(t *testing.T) {
+		ref := &manifest.DependencyReference{RepoURL: "./remote", Source: "git", Reference: "v1.0.0"}
+		normalizeLocalDep(ref)
+		if ref.RepoURL != "./remote" || ref.LocalSourcePath != "" {
+			t.Errorf("relative git-local dep was normalized: %+v", ref)
+		}
+	})
+
+	t.Run("normal git dep is NOT normalized", func(t *testing.T) {
+		ref := &manifest.DependencyReference{RepoURL: "acme/repo", Owner: "acme", Repo: "repo", Source: "git"}
+		normalizeLocalDep(ref)
+		if ref.RepoURL != "acme/repo" || ref.LocalSourcePath != "" {
+			t.Errorf("normal git dep was normalized: %+v", ref)
+		}
+	})
 }

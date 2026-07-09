@@ -1259,3 +1259,58 @@ func TestRunInstall_SkillWildcardDeploysAllSkills(t *testing.T) {
 		}
 	}
 }
+
+// TestRunInstall_PlainAbsoluteLocalPathPackage_PersistsAndRoundTrips covers
+// the shared-root-cause half of this task's fix (the F1 marketplace bug's
+// underlying gap): `apm install /abs/path` -- a bare positional package
+// argument that is itself an OS-absolute filesystem path, no marketplace
+// syntax involved -- used to hard-error at manifest.ParseDepString
+// ("dependency path %q is absolute; only relative paths are allowed")
+// before this fix. It must now succeed exactly like any other local
+// positional package: forced into a "git" source pointing at that absolute
+// path (install.go's existing ref.IsLocal normalization, unchanged by this
+// task), persisted to apm.yml verbatim (no marketplace canonical involved,
+// so no relative/absolute decision to make here), lockfile written, and a
+// second bare `apm install` re-reads both apm.yml and apm.lock.yaml
+// without erroring (round-trip).
+func TestRunInstall_PlainAbsoluteLocalPathPackage_PersistsAndRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	// The "package" itself just needs to exist on disk -- LoadPackage is
+	// mocked (matching every other install test in this file), so no real
+	// git clone happens; only apm.yml/apm.lock.yaml persistence and
+	// round-trip parsing are under test here.
+	pkgDir := filepath.Join(dir, "external-pkg")
+	if err := os.MkdirAll(pkgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+
+	// Act (a): first install, plain absolute positional package.
+	if err := runInstall(deps, false, true, "claude", nil, []string{pkgDir}); err != nil {
+		t.Fatalf("(a) runInstall: %v", err)
+	}
+
+	// Assert (a): apm.yml persisted the absolute path verbatim.
+	apmYML, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatalf("read apm.yml: %v", err)
+	}
+	if !strings.Contains(string(apmYML), pkgDir) {
+		t.Errorf("apm.yml = %q, want it to contain %q", apmYML, pkgDir)
+	}
+	if _, statErr := os.Stat("apm.lock.yaml"); statErr != nil {
+		t.Fatalf("expected apm.lock.yaml to be written: %v", statErr)
+	}
+
+	// Act + Assert (b): round-trip.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
+	}
+}

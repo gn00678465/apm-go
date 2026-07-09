@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -10,21 +11,30 @@ import (
 )
 
 type DependencyReference struct {
-	RepoURL      string
-	Host         string
-	Owner        string
-	Repo         string
-	Reference    string
-	VirtualPath  string
-	VirtualType  string // "file" or "subdirectory"
-	Alias        string
-	IsLocal      bool
-	LocalPath    string
-	IsParent     bool
-	Port         int
-	Scheme       string // "https", "http", "ssh", "git" (SCP)
-	Source       string // "git", "registry", "local", "marketplace", "" (inferred)
-	RegistryName string // registry name for source=="registry" (empty = use default)
+	RepoURL     string
+	Host        string
+	Owner       string
+	Repo        string
+	Reference   string
+	VirtualPath string
+	VirtualType string // "file" or "subdirectory"
+	Alias       string
+	IsLocal     bool
+	LocalPath   string
+	// LocalSourcePath is a RUNTIME-ONLY materialization detail: for a
+	// dependency that must be vendored into apm_modules by COPYING a local
+	// directory (rather than git-cloning), it holds the real absolute
+	// filesystem source path. RepoURL then carries the sanitized, contained
+	// "_local/<name>" apm_modules KEY (used by the resolver, deploy, and
+	// lockfile), keeping the invalid-path-as-key problem out of every
+	// filepath.Join(apm_modules, key). Empty for git/registry/marketplace
+	// deps. Never serialized to apm.yml or the lockfile.
+	LocalSourcePath string
+	IsParent        bool
+	Port            int
+	Scheme          string // "https", "http", "ssh", "git" (SCP)
+	Source          string // "git", "registry", "local", "marketplace", "" (inferred)
+	RegistryName    string // registry name for source=="registry" (empty = use default)
 
 	// Marketplace* fields (mkt-033) are only ever set for Source=="marketplace"
 	// -- an apm.yml dependencies.apm dict entry of the form {name, marketplace,
@@ -55,8 +65,16 @@ func ParseDepString(s string) (*DependencyReference, error) {
 		return nil, fmt.Errorf("empty dependency string")
 	}
 
-	if strings.HasPrefix(s, "/") {
-		return nil, fmt.Errorf("dependency path %q is absolute; only relative paths are allowed", s)
+	// An OS-absolute filesystem path (POSIX "/...", Windows "C:\..."/"C:/...",
+	// or a "\\host\share" UNC path) is user-intended, not a path-traversal
+	// attempt -- accept it as a local dependency outright, WITHOUT running
+	// containsEscape below (that guard only makes sense for a path meant to
+	// stay relative to -- and inside -- the project root). This also lets an
+	// absolute path resolved by mkt-025's local-marketplace fast path
+	// round-trip back through apm.yml when install.go can't relativize it
+	// into the project tree.
+	if IsAbsoluteLocalPath(s) {
+		return &DependencyReference{IsLocal: true, LocalPath: s, Source: "local"}, nil
 	}
 
 	if isLocalPath(s) {
@@ -502,6 +520,22 @@ func (d *DependencyReference) IdentityKey() string {
 		return d.RepoURL + "/" + d.VirtualPath
 	}
 	return d.RepoURL
+}
+
+// IsAbsoluteLocalPath reports whether s is an OS-absolute filesystem path in
+// any form apm.yml/the CLI may need to round-trip: POSIX ("/..."), Windows
+// drive-letter ("C:\..." or "C:/..."), or UNC ("\\host\share..."). Checked
+// via filepath.IsAbs/filepath.VolumeName (native to the running GOOS) plus
+// explicit POSIX "/" and UNC "\\" prefix checks, so a path written on one OS
+// still parses as absolute when apm.yml is later read on another.
+func IsAbsoluteLocalPath(s string) bool {
+	if filepath.IsAbs(s) {
+		return true
+	}
+	if strings.HasPrefix(s, "/") || strings.HasPrefix(s, `\\`) {
+		return true
+	}
+	return filepath.VolumeName(s) != ""
 }
 
 func classifyVirtualPath(vp string) string {

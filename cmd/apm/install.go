@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path"
@@ -249,29 +251,42 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			if err := validatePersistableRef(pkg, ref); err != nil {
 				return err
 			}
-			if ref.IsLocal {
-				ref.IsLocal = false
-				ref.RepoURL = ref.LocalPath
-				ref.LocalPath = ""
-				ref.Source = "git"
-			}
-			key := deploy.DepRefKey(ref)
-			requestedKeys[key] = true
+			// Compute the apm.yml-persisted form from the ORIGINAL ref, BEFORE
+			// normalizeLocalDep rewrites RepoURL into the "_local/<name>" key
+			// (ToCanonical would otherwise return that key, not the real local
+			// path, and apm.yml would round-trip into a bogus github shorthand).
 			persistPkg := pkg
 			if provenance != nil {
-				marketplaceProvenance[key] = provenance
 				canonical := ref.ToCanonical(m.DefaultHost)
 				if filepath.IsAbs(canonical) {
 					// mkt-025's local-marketplace fast path resolves to an
-					// absolute filesystem path, which (like any absolute
-					// path) has no apm.yml dependency-string representation
-					// in this schema -- fail closed rather than write a
-					// string apm.yml can never parse back.
-					return fmt.Errorf("cannot add package %q to apm.yml: it resolved to a local filesystem path (%s), which has no apm.yml dependency-string form", pkg, canonical)
+					// absolute filesystem path. Persist it in the most
+					// PORTABLE form apm.yml can round-trip: a project-root-
+					// relative "./..." path when the resolved plugin lives
+					// inside this project tree (committable, works on any
+					// machine); otherwise the absolute path unchanged
+					// (machine-specific, but still a valid dependency string
+					// -- manifest.ParseDepString accepts an absolute local
+					// path -- so the very next `apm install` still parses it
+					// back).
+					canonical = localPathForManifest(canonical)
 				}
 				persistPkg = canonical
 			}
 			persistPackages = append(persistPackages, persistPkg)
+
+			// Normalize a local/absolute-path dependency into its
+			// copy-materialized apm_modules form. Done AFTER persistPkg so the
+			// dep key (requestedKeys/marketplaceProvenance/existing) and the
+			// resolver/deploy/lockfile all agree on the final "_local/<name>"
+			// key (F1: an absolute RepoURL was previously joined onto
+			// apm_modules verbatim, producing an invalid clone destination).
+			normalizeLocalDep(ref)
+			key := deploy.DepRefKey(ref)
+			requestedKeys[key] = true
+			if provenance != nil {
+				marketplaceProvenance[key] = provenance
+			}
 			// mi-fix (MI2): compare against the same key computed above
 			// (deploy.DepRefKey), not the bare ref.RepoURL.
 			if existing[key] {
@@ -279,6 +294,20 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			}
 			m.ParsedDeps = append(m.ParsedDeps, ref)
 		}
+	}
+
+	// 1b-2. Normalize every direct dependency's local/absolute-path form into
+	// its copy-materialized apm_modules key (idempotent -- already-normalized
+	// positional refs are skipped). Covers apm.yml-declared local deps too, so
+	// a bare `apm install` that re-reads a persisted local path (the round-trip
+	// after a marketplace-local install) materializes and deploys it the same
+	// way the original CLI install did, instead of resolving it in place and
+	// silently deploying nothing.
+	for _, dep := range m.ParsedDeps {
+		normalizeLocalDep(dep)
+	}
+	for _, dep := range m.ParsedDevDeps {
+		normalizeLocalDep(dep)
 	}
 
 	// 1c. HTTP dependency policy: refuse non-TLS http:// git dependencies by
@@ -1156,13 +1185,14 @@ func resolvePositionalPackage(pkg string) (*manifest.DependencyReference, *marke
 // already goes through (manifest.ParseDepString), with one necessary
 // extension: mkt-025's local-marketplace fast path produces an ABSOLUTE
 // local filesystem path (marketplace `add`'s SOURCE parser always
-// canonicalizes via filepath.Abs), which ParseDepString itself rejects
-// outright ("dependency path %q is absolute; only relative paths are
-// allowed") -- a restriction aimed at hand-written apm.yml/CLI strings, not
-// at an internally-computed marketplace canonical. Handled the same way
-// runInstall already normalizes an ordinary local positional package
-// (resolvePositionalPackage's caller): forced straight into a "git" source
-// pointing at that path, never ParseDepString's own "local" dependency kind.
+// canonicalizes via filepath.Abs). Although manifest.ParseDepString now
+// itself accepts an absolute path (as an IsLocal=true "local" dependency,
+// for apm.yml round-tripping), that is NOT what this call site wants: this
+// mirrors the SAME normalization runInstall already applies to an ordinary
+// local positional package (resolvePositionalPackage's caller) -- forced
+// straight into a "git" source pointing at that path (a real git-clone
+// fetch into apm_modules), never ParseDepString's own "local" dependency
+// kind (a direct, un-cloned reference with no apm_modules materialization).
 func depRefFromMarketplaceCanonical(canonical string) (*manifest.DependencyReference, error) {
 	if filepath.IsAbs(canonical) {
 		return &manifest.DependencyReference{RepoURL: canonical, Source: "git"}, nil
@@ -1172,6 +1202,136 @@ func depRefFromMarketplaceCanonical(canonical string) (*manifest.DependencyRefer
 		return nil, fmt.Errorf("marketplace canonical %q: %w", canonical, err)
 	}
 	return d, nil
+}
+
+// localPathForManifest converts an absolute local filesystem path resolved
+// by mkt-025's local-marketplace fast path into the form persisted to
+// apm.yml, per this task's approved design: a portable "./"-relative path
+// when abs lives inside the current project root, or the absolute path
+// unchanged when it falls outside the project tree. The project root is the
+// process's current directory -- runInstall always reads/writes apm.yml via
+// the bare relative path "apm.yml", so cwd IS the project root throughout
+// this pipeline. Falls back to returning abs unchanged if cwd or the
+// relative-path computation can't be determined (never worse than today's
+// prior absolute-path behavior).
+func localPathForManifest(abs string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return abs
+	}
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil {
+		return abs
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		// Outside the project tree -- relativizing would need a leading
+		// ".." escaping the root, which manifest.ParseDepString's
+		// containsEscape guard would then reject on the next read. Persist
+		// the absolute path instead (accepted by ParseDepString's dedicated
+		// absolute-path branch, which skips that guard entirely).
+		return abs
+	}
+	if !strings.HasPrefix(rel, "./") {
+		rel = "./" + rel
+	}
+	return rel
+}
+
+// normalizeLocalDep rewrites a local-directory dependency in place into the
+// form apm-go materializes by COPYING into apm_modules (Python's local-dep
+// model: apm_modules/_local/<name>/), instead of git-cloning it. It targets
+// two indistinguishable-downstream shapes:
+//
+//	(a) a genuine local dep (IsLocal, from a bare path in apm.yml or a CLI
+//	    positional arg like "./pkg" or "/abs/pkg"); and
+//	(b) mkt-025's local-marketplace fast path result (Source=="git" with an
+//	    empty Owner/Repo and an ABSOLUTE RepoURL, no git ref).
+//
+// Both are converted to {Source:"git", RepoURL:"_local/<name>", LocalSourcePath:
+// <abs source>}. RepoURL becomes the sanitized, contained apm_modules key that
+// the resolver (depKey), deploy (DepRefKey), and the lockfile (repo_url) all
+// use, so no filepath.Join(apm_modules, key) ever sees an absolute path. The
+// real source path rides on LocalSourcePath for the loader's copy step and is
+// never persisted. RELATIVE git-local paths (git: ./remote, which may pin a
+// ref and clone) are deliberately NOT matched -- only absolute ones, which the
+// clone path cannot handle at all. No-op (returns without change) for anything
+// else, and idempotent (an already-"_local/…" ref matches neither shape).
+func normalizeLocalDep(ref *manifest.DependencyReference) {
+	var src string
+	switch {
+	case ref.IsLocal && ref.LocalPath != "":
+		src = ref.LocalPath
+	case !ref.IsLocal && ref.Source == "git" && ref.Owner == "" && ref.Repo == "" &&
+		ref.Reference == "" && ref.RepoURL != "" && manifest.IsAbsoluteLocalPath(ref.RepoURL):
+		src = ref.RepoURL
+	default:
+		return
+	}
+
+	abs := resolveLocalSourceAbs(src)
+	ref.IsLocal = false
+	ref.LocalPath = ""
+	ref.Owner = ""
+	ref.Repo = ""
+	ref.VirtualPath = ""
+	ref.VirtualType = ""
+	ref.Reference = ""
+	ref.Source = "git"
+	ref.RepoURL = localModulesKey(abs)
+	ref.LocalSourcePath = abs
+}
+
+// resolveLocalSourceAbs turns a local dependency source (which may be
+// absolute, "~"-prefixed, or relative to the project root) into a cleaned
+// absolute path. A relative path is anchored at cwd, which IS the project root
+// throughout runInstall. Falls back to a cleaned form if the absolute
+// conversion fails, so the value is always deterministic for the same input.
+func resolveLocalSourceAbs(src string) string {
+	s := src
+	if strings.HasPrefix(s, "~/") || strings.HasPrefix(s, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			s = filepath.Join(home, s[2:])
+		}
+	}
+	if abs, err := filepath.Abs(s); err == nil {
+		return abs
+	}
+	return filepath.Clean(s)
+}
+
+// localModulesKey derives a stable, path-safe, contained apm_modules key for a
+// copy-materialized local dependency, mirroring Python's apm_modules/_local/
+// <name>/ layout but appending a short hash of the absolute source path so two
+// different sources sharing a basename (e.g. two ".../hello" dirs) never
+// collide on the same key. Deterministic for a given absolute source, so a
+// re-install (or the round-trip second `apm install`) reuses the same key.
+func localModulesKey(abs string) string {
+	base := sanitizePathSegment(filepath.Base(abs))
+	sum := sha256.Sum256([]byte(filepath.Clean(abs)))
+	return "_local/" + base + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// sanitizePathSegment reduces s to a single safe path segment: every character
+// outside [A-Za-z0-9._-] becomes '_', and a leading '.'/empty result is
+// replaced so the segment is never "", ".", "..", or a hidden dotfile. This
+// guarantees the derived apm_modules key carries no path separators or ".."
+// that could defeat archive.ContainedKey.
+func sanitizePathSegment(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	out := b.String()
+	if out == "" || out == "." || out == ".." || strings.HasPrefix(out, ".") {
+		out = "pkg" + strings.TrimLeft(out, ".")
+	}
+	return out
 }
 
 func kindToSource(k resolver.ReferenceKind) string {
