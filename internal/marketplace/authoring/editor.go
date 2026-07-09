@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -321,6 +322,44 @@ func verifyPackageSource(source string, lister RefLister, noVerify bool) error {
 	return nil
 }
 
+// ── F4: mutable-ref auto-resolution (marketplace.md:253-254's documented
+// promise: "Mutable refs (HEAD, branches) are auto-resolved to a concrete
+// SHA at write time") ───────────────────────────────────────────────────
+
+// shaRefPattern matches a concrete 40-hex-char git commit SHA, mirroring
+// Python's plugin/__init__.py _SHA_RE. A --ref matching this is already
+// concrete and is stored as-is, with no lister call.
+var shaRefPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// resolveRef mirrors Python's plugin/__init__.py _resolve_ref: a ref is
+// only resolved when one was actually given -- an empty ref short-circuits
+// before ever calling lister, preserving mkt-046's "zero-flag local add
+// must never touch the network" contract -- and it isn't already a
+// concrete SHA. Otherwise lister.ListRefs(source) (the same RefLister
+// abstraction verifyPackageSource and `check`/`outdated` already use) is
+// queried for an exact name match (tag or branch head -- refcheck.go's
+// ListRefs merges both into one list) and its commit SHA is returned; no
+// match, or a lister error, surfaces as a clear error rather than silently
+// falling back to storing the mutable ref verbatim (the bug this fixes).
+func resolveRef(source, ref string, lister RefLister) (string, error) {
+	if ref == "" {
+		return "", nil
+	}
+	if shaRefPattern.MatchString(ref) {
+		return ref, nil
+	}
+	refs, err := lister.ListRefs(source)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve ref %q for %q: %w", ref, source, err)
+	}
+	for _, r := range refs {
+		if r.Name == ref {
+			return r.Commit, nil
+		}
+	}
+	return "", fmt.Errorf("ref %q not found on %q", ref, source)
+}
+
 // defaultNameFromSource derives a package name from source's final path
 // segment when --name is not given (add's own default), mirroring Python's
 // _default_name_from_source: trim a trailing "/", trim a trailing ".git",
@@ -425,11 +464,16 @@ func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name str
 		return "", false, fmt.Errorf("package %q already exists", name)
 	}
 
+	resolvedRef, err := resolveRef(source, opts.Ref, lister)
+	if err != nil {
+		return "", false, err
+	}
+
 	newNode := packageEntryNode(PackageEntry{
 		Name:              name,
 		Source:            source,
 		Version:           opts.Version,
-		Ref:               opts.Ref,
+		Ref:               resolvedRef,
 		Subdir:            opts.Subdir,
 		TagPattern:        opts.TagPattern,
 		Tags:              opts.Tags,
@@ -466,8 +510,11 @@ type SetOptions struct {
 // packages[] entry (case-insensitive name match), fully re-rendering that
 // one element (yamlcore.SeqSet). Giving both Version and Ref is rejected;
 // giving one clears the other in storage, mirroring Python's
-// update_plugin_entry.
-func SetPackage(dir, name string, opts SetOptions) (fallbackUsed bool, err error) {
+// update_plugin_entry. A non-SHA opts.Ref is resolved to a concrete SHA via
+// lister (F4/resolveRef) before being stored -- mirroring Python's set.py,
+// which always attempts resolution for a given ref (no --no-verify escape
+// hatch on `set`).
+func SetPackage(dir, name string, opts SetOptions, lister RefLister) (fallbackUsed bool, err error) {
 	if opts.Version != nil && opts.Ref != nil {
 		return false, fmt.Errorf("--version and --ref are mutually exclusive; use --version for a semver range or --ref for a git ref")
 	}
@@ -492,7 +539,11 @@ func SetPackage(dir, name string, opts SetOptions) (fallbackUsed bool, err error
 		merged.Ref = ""
 	}
 	if opts.Ref != nil {
-		merged.Ref = *opts.Ref
+		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, lister)
+		if rerr != nil {
+			return false, rerr
+		}
+		merged.Ref = resolvedRef
 		merged.Version = ""
 	}
 	if opts.Subdir != nil {

@@ -157,7 +157,7 @@ func marketplacePackageSetCmd() *cobra.Command {
 				opts.IncludePrerelease = &includePrerelease
 			}
 
-			fallbackUsed, err := authoring.SetPackage(".", args[0], opts)
+			fallbackUsed, err := authoring.SetPackage(".", args[0], opts, authoring.DefaultRefLister)
 			if err != nil {
 				return withExitCode(2, err)
 			}

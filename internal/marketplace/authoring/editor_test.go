@@ -111,7 +111,7 @@ func TestSetPackage_VersionAndRefBothGiven_Errors(t *testing.T) {
 	version, ref := "^1.0.0", "v1.0.0"
 
 	// Act
-	_, err := SetPackage(dir, "foo", SetOptions{Version: &version, Ref: &ref})
+	_, err := SetPackage(dir, "foo", SetOptions{Version: &version, Ref: &ref}, panicLister{})
 
 	// Assert
 	if err == nil {
@@ -133,7 +133,7 @@ func TestSetPackage_SettingVersionClearsExistingRef(t *testing.T) {
 	version := "^2.0.0"
 
 	// Act
-	_, err := SetPackage(dir, "foo", SetOptions{Version: &version})
+	_, err := SetPackage(dir, "foo", SetOptions{Version: &version}, panicLister{})
 
 	// Assert
 	if err != nil {
@@ -214,7 +214,7 @@ func TestSetPackage_IncludePrereleaseNotGiven_LeavesExistingValueUnchanged(t *te
 	// Act: SetOptions with IncludePrerelease left nil (not given) while
 	// changing an unrelated field.
 	subdir := "packages/foo"
-	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir})
+	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir}, panicLister{})
 
 	// Assert
 	if err != nil {
@@ -237,7 +237,7 @@ func TestSetPackage_IncludePrereleaseExplicitFalse_ClearsExistingTrue(t *testing
 	falseVal := false
 
 	// Act
-	_, err := SetPackage(dir, "foo", SetOptions{IncludePrerelease: &falseVal})
+	_, err := SetPackage(dir, "foo", SetOptions{IncludePrerelease: &falseVal}, panicLister{})
 
 	// Assert
 	if err != nil {
@@ -328,7 +328,7 @@ func TestSetPackage_SubdirTraversal_Errors(t *testing.T) {
 	subdir := "../../etc"
 
 	// Act
-	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir})
+	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir}, panicLister{})
 
 	// Assert
 	if err == nil {
@@ -354,7 +354,7 @@ func TestSetPackage_SubdirLegitimateRelative_Succeeds(t *testing.T) {
 	subdir := "src/skills"
 
 	// Act
-	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir})
+	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir}, panicLister{})
 
 	// Assert
 	if err != nil {
@@ -446,7 +446,7 @@ func TestSetPackage_NotFound_Errors(t *testing.T) {
 	v := "^1.0.0"
 
 	// Act
-	_, err := SetPackage(dir, "nonexistent", SetOptions{Version: &v})
+	_, err := SetPackage(dir, "nonexistent", SetOptions{Version: &v}, panicLister{})
 
 	// Assert
 	if err == nil {
@@ -549,7 +549,7 @@ func TestSetPackage_HandAuthoredFixture_OnlyReplacesTargetEntry(t *testing.T) {
 	subdir := "nested/foo"
 
 	// Act
-	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir})
+	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir}, panicLister{})
 
 	// Assert
 	if err != nil {
@@ -739,6 +739,173 @@ func TestValidateEditedPackageBytes_AcceptsValidLegacyDocument(t *testing.T) {
 	}
 }
 
+// ── F4: mutable-ref auto-resolution (marketplace.md:253-254's documented
+// promise: "Mutable refs (HEAD, branches) are auto-resolved to a concrete
+// SHA at write time") ───────────────────────────────────────────────────
+
+const testResolvedSHA = "abcdef0123456789abcdef0123456789abcdef01"
+
+func TestAddPackage_MutableRef_ResolvesToConcreteSHA(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	lister := mapRefLister{refs: []semver.TagInfo{{Name: "main", Commit: testResolvedSHA}}}
+
+	// Act
+	_, _, err := AddPackage(dir, "owner/repo", AddOptions{Ref: "main"}, lister)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("AddPackage returned error: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(cfg.Packages) != 1 || cfg.Packages[0].Ref != testResolvedSHA {
+		t.Errorf("Packages = %+v, want a single entry pinned to the resolved SHA %q", cfg.Packages, testResolvedSHA)
+	}
+}
+
+func TestAddPackage_ShaRef_StoredVerbatim_NoListerCall(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+	// Act: NoVerify skips verifyPackageSource's own (unrelated) lister
+	// call, isolating this assertion to ref resolution; panicLister then
+	// proves an already-concrete 40-hex SHA never triggers a lister call
+	// -- there is nothing to resolve.
+	_, _, err := AddPackage(dir, "owner/repo", AddOptions{Ref: testResolvedSHA, NoVerify: true}, panicLister{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("AddPackage returned error for an already-concrete SHA ref: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(cfg.Packages) != 1 || cfg.Packages[0].Ref != testResolvedSHA {
+		t.Errorf("Packages = %+v, want Ref stored verbatim as %q", cfg.Packages, testResolvedSHA)
+	}
+}
+
+func TestAddPackage_UnresolvableRef_Errors(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	original := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	writeFile(t, dir, "apm.yml", original)
+	lister := mapRefLister{refs: []semver.TagInfo{{Name: "main", Commit: testResolvedSHA}}}
+
+	// Act
+	_, _, err := AddPackage(dir, "owner/repo", AddOptions{Ref: "does-not-exist"}, lister)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected AddPackage to fail when --ref cannot be resolved on the remote")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error = %v, want it to name the unresolved ref", err)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != original {
+		t.Errorf("apm.yml was modified despite an unresolvable --ref;\ngot:\n%s\nwant unchanged:\n%s", string(data), original)
+	}
+}
+
+func TestAddPackage_RefResolutionListerFailure_Errors(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	lister := mapRefLister{err: fmt.Errorf("boom: unreachable")}
+
+	// Act: NoVerify skips verifyPackageSource's own (unrelated) lister
+	// call, isolating this assertion to resolveRef's own failure handling.
+	_, _, err := AddPackage(dir, "owner/repo", AddOptions{Ref: "main", NoVerify: true}, lister)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected AddPackage to fail when the ref lister call itself fails")
+	}
+}
+
+func TestSetPackage_MutableRef_ResolvesToConcreteSHA(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n")
+	lister := mapRefLister{refs: []semver.TagInfo{{Name: "develop", Commit: testResolvedSHA}}}
+	ref := "develop"
+
+	// Act
+	_, err := SetPackage(dir, "foo", SetOptions{Ref: &ref}, lister)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetPackage returned error: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if cfg.Packages[0].Ref != testResolvedSHA {
+		t.Errorf("Ref = %q, want resolved SHA %q", cfg.Packages[0].Ref, testResolvedSHA)
+	}
+}
+
+func TestSetPackage_ShaRef_StoredVerbatim_NoListerCall(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n")
+	ref := testResolvedSHA
+
+	// Act: panicLister proves an already-concrete SHA never triggers a
+	// lister call.
+	_, err := SetPackage(dir, "foo", SetOptions{Ref: &ref}, panicLister{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetPackage returned error for an already-concrete SHA ref: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if cfg.Packages[0].Ref != testResolvedSHA {
+		t.Errorf("Ref = %q, want stored verbatim as %q", cfg.Packages[0].Ref, testResolvedSHA)
+	}
+}
+
+func TestSetPackage_UnresolvableRef_Errors(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	original := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n"
+	writeFile(t, dir, "apm.yml", original)
+	lister := mapRefLister{refs: []semver.TagInfo{{Name: "main", Commit: testResolvedSHA}}}
+	ref := "does-not-exist"
+
+	// Act
+	_, err := SetPackage(dir, "foo", SetOptions{Ref: &ref}, lister)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected SetPackage to fail when --ref cannot be resolved on the remote")
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != original {
+		t.Errorf("apm.yml was modified despite an unresolvable --ref;\ngot:\n%s\nwant unchanged:\n%s", string(data), original)
+	}
+}
+
 // ── test doubles ──────────────────────────────────────────────────────────
 
 // stubLister is a RefLister test double that records whether it was called
@@ -754,4 +921,19 @@ func (s *stubLister) ListRefs(source string) ([]semver.TagInfo, error) {
 		return nil, s.err
 	}
 	return nil, nil
+}
+
+// mapRefLister is a RefLister test double that returns a fixed set of named
+// refs regardless of source -- used to test F4's mutable-ref resolution
+// deterministically, with no real network calls.
+type mapRefLister struct {
+	refs []semver.TagInfo
+	err  error
+}
+
+func (m mapRefLister) ListRefs(source string) ([]semver.TagInfo, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.refs, nil
 }
