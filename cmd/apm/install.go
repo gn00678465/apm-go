@@ -571,6 +571,25 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, persistPackages, result, newLock, existingLock, existingNode, node)
 }
 
+// containsSkillWildcard reports whether skillSubset contains the '*' RESET
+// sentinel (install.md: "--skill '*' resets to install all skills"),
+// mirroring Python's install.py (~1387-1393): any occurrence -- even mixed
+// with other names, e.g. `--skill review --skill '*'` -- means "install ALL
+// skills," the same as never passing --skill at all. Every consumer of
+// skillSubset (deploy-time filtering via deploy.SkillFilter, lockfile
+// skill_subset persistence in buildLockfile, apm.yml skills: persistence in
+// persistPackagesToManifest) checks this instead of treating skillSubset as
+// a literal name list, so a package's actual skill named "*" (unlikely but
+// not impossible) is never mistaken for the reset.
+func containsSkillWildcard(skillSubset []string) bool {
+	for _, s := range skillSubset {
+		if s == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 // hasMarketplaceProvenance reports whether any of the four mkt-031
 // marketplace provenance fields are populated on a locked dependency, used by
 // buildLockfile's mkt-032 carry-forward to decide whether an existing
@@ -656,10 +675,16 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 		// Record skill_subset only on the dependency this --skill flag was
 		// scoped to this call -- not every dep in the resolved graph (bug
 		// fix: previously stamped every already-declared, unrelated
-		// dependency with the same subset).
-		if len(skillSubset) > 0 && requestedKeys[dep.Key] {
-			ld.SkillSubset = skillSubset
+		// dependency with the same subset). matchedKeys tracks "this
+		// requested package DID resolve" independently of whether a subset
+		// is actually recorded, so the '*' RESET sentinel (which records no
+		// subset -- install ALL skills) doesn't spuriously fail the
+		// "every requested package resolved" validation below.
+		if requestedKeys[dep.Key] {
 			matchedKeys[dep.Key] = true
+			if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
+				ld.SkillSubset = skillSubset
+			}
 		}
 
 		// req-lk-008: record resolved_at for git-semver entries
@@ -736,7 +761,12 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 		fmt.Printf("[i] Targets: %s  (source: %s)\n", strings.Join(targets, ", "), targetSource)
 
 		var skillFilter *deploy.SkillFilter
-		if len(skillSubset) > 0 {
+		// The '*' RESET sentinel means "install ALL skills" (install.md):
+		// leave skillFilter nil rather than constructing one with a literal
+		// "*" entry, so this call site never depends on deploy.SkillFilter's
+		// own wildcard handling to no-op it -- and the "[i] Skill subset:"
+		// line, which only makes sense for an actual narrowing, is skipped.
+		if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
 			fmt.Printf("[i] Skill subset: %s\n", strings.Join(skillSubset, ", "))
 			depKeys := make([]string, 0, len(requestedKeys))
 			for k := range requestedKeys {
@@ -957,12 +987,25 @@ func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string
 		}
 	}
 
+	// The '*' RESET sentinel (install.md: "--skill '*' resets to install
+	// all skills") means "install ALL skills," so it must never be
+	// persisted as a literal skills: ['*'] subset -- mirroring Python's
+	// `_skill_subset = None` (no subset persisted = install all).
+	skillReset := containsSkillWildcard(skillSubset)
+
 	appended := false
 	for _, pkg := range packages {
 		if existingPkgs[pkg] {
+			// A '*' reset must also undo a previously narrower skills:
+			// subset persisted by an earlier `apm install pkg --skill x`
+			// for this SAME package -- otherwise a later bare `apm
+			// install` (no --skill) would keep reading that stale subset.
+			if skillReset {
+				clearPersistedSkillSubset(apmSeq, pkg)
+			}
 			continue
 		}
-		if len(skillSubset) > 0 {
+		if len(skillSubset) > 0 && !skillReset {
 			// Object form: { git: <pkg>, skills: [<skill>...] }
 			entry := &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
 			entry.Content = append(entry.Content,
@@ -999,6 +1042,37 @@ func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string
 	}
 
 	return nil
+}
+
+// clearPersistedSkillSubset undoes a previously narrower skills: subset
+// recorded for pkg by an earlier `apm install pkg --skill x`: the '*' RESET
+// sentinel (install.md) means "install all skills going forward," so a
+// stale object-form entry `{git: pkg, skills: [...]}` must collapse back to
+// the plain string form -- otherwise a bare `apm install` (no --skill) run
+// afterward would keep reading the stale narrower subset from apm.yml.
+// No-op for a scalar entry or an object-form entry with no skills: key.
+func clearPersistedSkillSubset(apmSeq *yamllib.Node, pkg string) {
+	if apmSeq.Kind != yamllib.SequenceNode {
+		return
+	}
+	for i, entry := range apmSeq.Content {
+		if entry.Kind != yamllib.MappingNode {
+			continue
+		}
+		var gitVal string
+		hasSkills := false
+		for j := 0; j < len(entry.Content)-1; j += 2 {
+			switch entry.Content[j].Value {
+			case "git":
+				gitVal = entry.Content[j+1].Value
+			case "skills":
+				hasSkills = true
+			}
+		}
+		if gitVal == pkg && hasSkills {
+			apmSeq.Content[i] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"}
+		}
+	}
 }
 
 // resolvePositionalPackage parses a single `apm install` positional package

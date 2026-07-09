@@ -42,10 +42,24 @@ type SkillFilter struct {
 	DepKeys []string
 }
 
+// hasSkillWildcard reports whether names contains the '*' RESET sentinel
+// (install.md: "--skill '*' resets to install all skills"), mirroring
+// Python's install.py (~1387-1393): any occurrence -- even mixed with other
+// names, e.g. `--skill review --skill '*'` -- means "install ALL skills,"
+// not "whitelist a skill literally named *".
+func hasSkillWildcard(names []string) bool {
+	for _, n := range names {
+		if n == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
 func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter) (*DeployResult, error) {
 	var skillNames, skillDepKeys map[string]bool
-	if filter != nil && len(filter.Names) > 0 {
+	if filter != nil && len(filter.Names) > 0 && !hasSkillWildcard(filter.Names) {
 		skillNames = make(map[string]bool, len(filter.Names))
 		for _, s := range filter.Names {
 			skillNames[s] = true

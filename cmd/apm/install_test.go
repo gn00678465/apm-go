@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/registry"
@@ -451,6 +453,45 @@ func TestRunInstall_SkillWithFrozen_Errors(t *testing.T) {
 	}
 }
 
+// TestRunInstall_SkillWildcardWithoutPackages_Errors confirms the '*' RESET
+// sentinel doesn't bypass the pre-existing "--skill requires a positional
+// package" guard: the guard runs on the raw --skill flags before any
+// wildcard normalization, so `--skill '*'` alone must still be rejected the
+// same way `--skill x` alone is.
+func TestRunInstall_SkillWildcardWithoutPackages_Errors(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	err := runInstall(deps, false, true, "", []string{"*"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "--skill") {
+		t.Fatalf("expected a --skill error for --skill '*' with no positional package, got %v", err)
+	}
+}
+
+// TestRunInstall_SkillWildcardWithFrozen_Errors confirms the '*' RESET
+// sentinel doesn't bypass the pre-existing "--skill is not supported with
+// --frozen" guard.
+func TestRunInstall_SkillWildcardWithFrozen_Errors(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+	os.WriteFile("apm.lock.yaml", []byte("version: \"1\"\ndependencies: []\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	err := runInstall(deps, true, true, "", []string{"*"}, []string{"acme/foo"})
+	if err == nil || !strings.Contains(err.Error(), "--skill") || !strings.Contains(err.Error(), "frozen") {
+		t.Fatalf("expected a --skill+frozen error for --skill '*', got %v", err)
+	}
+}
+
 func TestRunInstall_FrozenMissingLockfile(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -853,5 +894,177 @@ func TestRunInstall_FrozenMissingTreeSHA256(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "tree_sha256") {
 		t.Errorf("error should mention tree_sha256: %v", err)
+	}
+}
+
+// TestBuildLockfile_SkillWildcardDoesNotRecordSubset is a regression test for
+// the documented `--skill '*'` RESET sentinel (install.md: "--skill '*'
+// resets to install all skills"): '*' used to be treated as a literal skill
+// name, so buildLockfile stamped skill_subset: ["*"] onto the dependency
+// instead of recording no subset at all (mirroring Python's `_skill_subset`
+// staying None). Covers both a pure wildcard and a mixed list (`--skill
+// review --skill '*'`) -- both must record no subset. The dependency must
+// still count as "matched" for the --skill scoping validation below even
+// though no subset is recorded (the requested package DID resolve).
+func TestBuildLockfile_SkillWildcardDoesNotRecordSubset(t *testing.T) {
+	tests := []struct {
+		name        string
+		skillSubset []string
+	}{
+		{"pure wildcard", []string{"*"}},
+		{"mixed with a concrete name", []string{"review", "*"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := &resolver.ResolutionResult{
+				Deps: []resolver.ResolvedDep{
+					{Key: "acme/foo", RepoURL: "acme/foo", Kind: resolver.KindRegistry},
+				},
+			}
+			requestedKeys := map[string]bool{"acme/foo": true}
+
+			lock, err := buildLockfile(result, nil, &registry.Loader{}, tt.skillSubset, requestedKeys, true, nil)
+			if err != nil {
+				t.Fatalf("buildLockfile: %v", err)
+			}
+			if len(lock.Dependencies) != 1 {
+				t.Fatalf("expected 1 dependency, got %d", len(lock.Dependencies))
+			}
+			if got := lock.Dependencies[0].SkillSubset; len(got) != 0 {
+				t.Errorf("expected no skill_subset recorded for --skill %v (reset to all), got %v", tt.skillSubset, got)
+			}
+		})
+	}
+}
+
+// TestPersistPackagesToManifest_SkillWildcard_NewPackageWritesStringForm is a
+// regression test: a NEW package installed with `--skill '*'` used to write
+// the object form `{git: pkg, skills: ['*']}` (since len(skillSubset) > 0
+// was the only check), persisting a literal "*" subset in apm.yml instead of
+// the plain string form that means "install all" -- mirroring Python's
+// `_skill_subset = None` (no subset persisted = install all).
+func TestPersistPackagesToManifest_SkillWildcard_NewPackageWritesStringForm(t *testing.T) {
+	doc, err := yamlcore.SafeLoad([]byte("name: d\nversion: 1.0.0\n"))
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, []string{"*"}); err != nil {
+		t.Fatalf("persistPackagesToManifest: %v", err)
+	}
+
+	out, err := yamlcore.SafeDump(doc)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
+	}
+	got := string(out)
+
+	if !strings.Contains(got, "apm:\n    - acme/foo") {
+		t.Errorf("expected plain string form for --skill '*' new package; got:\n%s", got)
+	}
+	if strings.Contains(got, "skills:") {
+		t.Errorf("must not persist a skills: subset for --skill '*'; got:\n%s", got)
+	}
+}
+
+// TestPersistPackagesToManifest_SkillWildcard_ClearsExistingSubset is a
+// regression test for the "reset going forward" requirement: a package
+// previously installed with a narrower `--skill x` (persisted as the object
+// form `{git: pkg, skills: [x]}`) must have that subset CLEARED when
+// re-installed with `--skill '*'` -- otherwise a later bare `apm install`
+// (no --skill) would keep reading the stale narrower subset from apm.yml.
+func TestPersistPackagesToManifest_SkillWildcard_ClearsExistingSubset(t *testing.T) {
+	src := "name: d\nversion: 1.0.0\ndependencies:\n  apm:\n    - git: acme/foo\n      skills:\n        - x\n"
+	doc, err := yamlcore.SafeLoad([]byte(src))
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, []string{"*"}); err != nil {
+		t.Fatalf("persistPackagesToManifest: %v", err)
+	}
+
+	out, err := yamlcore.SafeDump(doc)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
+	}
+	got := string(out)
+
+	if strings.Contains(got, "skills:") {
+		t.Errorf("expected --skill '*' to clear the previously-persisted skills: subset; got:\n%s", got)
+	}
+	if !strings.Contains(got, "acme/foo") {
+		t.Errorf("expected acme/foo to remain declared; got:\n%s", got)
+	}
+}
+
+// TestRunInstall_SkillWildcardDeploysAllSkills is the CLI-level regression
+// test for the `--skill '*'` RESET sentinel, exercising the real
+// runInstall -> resolver -> deploy.Run path (no mocks) using a local
+// git-path dependency (matching gitcheckout_e2e_test.go's offline-friendly
+// convention) with two skills. Before the fix, `--skill '*'` filtered
+// skills down to nothing (since '*' was treated as a literal skill name
+// nothing actually matches); after the fix, it must deploy every skill,
+// exactly as a plain install (no --skill) would, and must not persist a
+// skill_subset in apm.lock.yaml.
+func TestRunInstall_SkillWildcardDeploysAllSkills(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	git := func(repoDir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s\n%s", args, err, out)
+		}
+	}
+
+	remoteDir := filepath.Join(dir, "remote")
+	if err := os.MkdirAll(remoteDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	git(remoteDir, "init")
+	git(remoteDir, "config", "user.name", "test")
+	git(remoteDir, "config", "user.email", "test@test.com")
+	os.WriteFile(filepath.Join(remoteDir, "apm.yml"), []byte("name: dep\nversion: \"1.0.0\"\n"), 0644)
+	os.MkdirAll(filepath.Join(remoteDir, ".apm", "skills", "skillA"), 0755)
+	os.WriteFile(filepath.Join(remoteDir, ".apm", "skills", "skillA", "SKILL.md"), []byte("# skill A"), 0644)
+	os.MkdirAll(filepath.Join(remoteDir, ".apm", "skills", "skillB"), 0755)
+	os.WriteFile(filepath.Join(remoteDir, ".apm", "skills", "skillB", "SKILL.md"), []byte("# skill B"), 0644)
+	git(remoteDir, "add", ".")
+	git(remoteDir, "commit", "-m", "v1")
+	git(remoteDir, "tag", "v1.0.0")
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: ./remote\n      ref: v1.0.0\n"), 0644)
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+	}
+	if err := runInstall(deps, false, true, "claude", []string{"*"}, []string{"./remote"}); err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillA", "SKILL.md")); err != nil {
+		t.Errorf("expected skillA to deploy under --skill '*' (reset to all): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillB", "SKILL.md")); err != nil {
+		t.Errorf("expected skillB to deploy under --skill '*' (reset to all): %v", err)
+	}
+
+	lock := readLockfile(t)
+	for _, d := range lock.Dependencies {
+		if len(d.SkillSubset) != 0 {
+			t.Errorf("expected no skill_subset persisted in apm.lock.yaml for --skill '*', dep %s has %v", d.UniqueKey(), d.SkillSubset)
+		}
 	}
 }

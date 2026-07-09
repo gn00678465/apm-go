@@ -749,6 +749,58 @@ func TestRun_SkillFilterScopedToDepKey(t *testing.T) {
 	}
 }
 
+// TestRun_SkillFilterWildcardDeploysAll is a regression test for the
+// documented `--skill '*'` RESET sentinel (install.md: "--skill '*' resets
+// to install all skills"): SkillFilter used to treat "*" as a literal skill
+// name to whitelist, so a package's skills (none of which are actually
+// named "*") were all suppressed instead of all deployed. Covers both the
+// pure-wildcard case and a mixed list (e.g. `--skill review --skill '*'`),
+// both of which must deploy every skill for the scoped dependency.
+func TestRun_SkillFilterWildcardDeploysAll(t *testing.T) {
+	tests := []struct {
+		name  string
+		names []string
+	}{
+		{"pure wildcard", []string{"*"}},
+		{"mixed with a concrete name", []string{"a1", "*"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			depA := "acme/foo"
+			mkFile(t, filepath.Join(dir, "apm_modules", depA), ".apm/skills/a1/SKILL.md", "a1\n")
+			mkFile(t, filepath.Join(dir, "apm_modules", depA), ".apm/skills/a2/SKILL.md", "a2\n")
+
+			m := &manifest.Manifest{
+				Name:    "test",
+				Version: "1.0.0",
+				ParsedDeps: []*manifest.DependencyReference{
+					{RepoURL: depA, Owner: "acme", Repo: "foo", Source: "git"},
+				},
+			}
+			resolved := &resolver.ResolutionResult{
+				Deps: []resolver.ResolvedDep{
+					{Key: depA, RepoURL: depA, Kind: resolver.KindGitSemver, Depth: 1},
+				},
+			}
+
+			_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Names: tt.names, DepKeys: []string{depA}})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a1/SKILL.md")); err != nil {
+				t.Errorf("a1 should deploy under --skill %v (reset to all): %v", tt.names, err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a2/SKILL.md")); err != nil {
+				t.Errorf("a2 should also deploy under --skill %v (reset to all): %v", tt.names, err)
+			}
+		})
+	}
+}
+
 func TestRun_SkillDeduplication(t *testing.T) {
 	// When multiple targets active, same skill should only be deployed once
 	dir := t.TempDir()
