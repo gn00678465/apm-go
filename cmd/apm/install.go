@@ -59,6 +59,21 @@ func installCmd() *cobra.Command {
 		Use:   "install [packages...]",
 		Short: "Install dependencies from apm.yml or by URL/shorthand",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Validate --target/-t up front, before any other flag routing
+			// (mirrors Python's TargetParamType, which validates at CLI
+			// argument-parsing time before the command body runs): a
+			// genuinely unknown token is rejected naming it, regardless of
+			// whether this ends up being a regular package install or an
+			// --mcp install (both share this flag). Known targets without a
+			// registered adapter (cursor/gemini/windsurf) are valid
+			// vocabulary and pass here -- ResolveTargets separately reports
+			// the non-fatal "no registered handler" diagnostic for those.
+			if targetFlag != "" {
+				if _, err := deploy.SplitTargetFlag(targetFlag); err != nil {
+					return withExitCode(2, err)
+				}
+			}
+
 			dashAt := cmd.ArgsLenAtDash()
 			var prePackages, stdioCommand []string
 			if dashAt >= 0 {
@@ -135,7 +150,7 @@ func installCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&frozen, "frozen", false, "frozen install mode: lockfile must exist and cover all deps")
 	cmd.Flags().BoolVar(&noProvenance, "no-provenance", false, "omit generated_at and apm_version from lockfile")
-	cmd.Flags().StringVar(&targetFlag, "target", "", "explicit target for deployment (overrides auto-detection)")
+	cmd.Flags().StringVarP(&targetFlag, "target", "t", "", "explicit target(s) for deployment, comma-separated (overrides auto-detection)")
 	cmd.Flags().StringArrayVar(&skillFlags, "skill", nil, "install only named skills from the package (repeatable)")
 	cmd.Flags().IntVar(&maxEntries, "max-entries", archive.DefaultMaxEntries, "max archive entries before fail-closed (req-sc-004)")
 	cmd.Flags().Int64Var(&maxArchiveBytes, "max-archive-bytes", archive.DefaultMaxBytes, "max uncompressed archive bytes before fail-closed (req-sc-004)")
@@ -533,6 +548,23 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, requestedKeys, noProvenance, marketplaceProvenance)
 	if err != nil {
 		return err
+	}
+
+	// There are resolved dependencies to deploy but target resolution came up
+	// empty (no --target, no apm.yml target:, no auto-detected harness
+	// signal): fail loud with a teaching message and exit 2 (install.md's
+	// exit-code table), instead of silently skipping deployment and exiting
+	// 0. Checked here -- after resolution/lockfile-build succeed, before any
+	// apm.lock.yaml/apm.yml write -- so a doomed install fails closed with
+	// zero partial writes rather than persisting a lockfile nothing deployed
+	// from. Reuses step-4's targets/targetDiags so an explicit --target of a
+	// known-but-adapterless runtime (cursor/gemini/windsurf) still surfaces
+	// its "no registered handler" diagnostic (req-tg-004) before we exit.
+	if len(result.Deps) > 0 && len(targets) == 0 {
+		for _, d := range targetDiags {
+			fmt.Fprintln(os.Stderr, d)
+		}
+		return withExitCode(2, fmt.Errorf("no deployment target detected; pass --target <name> or add a target: to apm.yml"))
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.

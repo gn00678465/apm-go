@@ -67,7 +67,11 @@ func TestRunUpdate_RealGitSemver_ResolvesToNewTag(t *testing.T) {
 		tags:   &gitops.RealTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	// --target claude only satisfies the "dependencies present but no
+	// deployment target" exit-2 guard (F2), which applies to runInstall
+	// (not runUpdate, called unchanged below); this test's subject is
+	// req-rs-011 real-git semver update resolution, not deploy.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 
@@ -142,7 +146,11 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 		tags:   &gitops.RealTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	// --target claude only satisfies the "dependencies present but no
+	// deployment target" exit-2 guard (F2), which applies to runInstall
+	// (not runUpdate, called unchanged below); this test's subject is
+	// req-lk-010 re-clone-on-unchanged-tag, not deploy.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 

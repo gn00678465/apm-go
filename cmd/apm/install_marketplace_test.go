@@ -324,8 +324,11 @@ func TestRunInstall_MarketplacePackage_LockfileProvenanceAndPersistedCanonical(t
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	// Act -- first install with the marketplace CLI reference.
-	if err := runInstall(deps, false, true, "", nil, []string{"p@acme"}); err != nil {
+	// Act -- first install with the marketplace CLI reference. --target
+	// claude only satisfies the "dependencies present but no deployment
+	// target" exit-2 guard (F2); this test's subject is lockfile/apm.yml
+	// persistence, not deploy.
+	if err := runInstall(deps, false, true, "claude", nil, []string{"p@acme"}); err != nil {
 		t.Fatalf("first runInstall: %v", err)
 	}
 
@@ -357,8 +360,8 @@ func TestRunInstall_MarketplacePackage_LockfileProvenanceAndPersistedCanonical(t
 
 	// Act -- second, bare `apm install` (no positional args): re-parses the
 	// now-persisted apm.yml. Must succeed -- proving the persisted string
-	// round-trips.
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	// round-trips. --target claude again only satisfies the exit-2 guard.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("second (bare) runInstall failed to re-parse the persisted apm.yml: %v", err)
 	}
 }
@@ -475,17 +478,20 @@ func TestBuildLockfile_ProvenanceCarryForward_NoExistingProvenanceStaysEmpty(t *
 // data-loss path does not exist here. The real Go-variant risk this guards
 // is buildLockfile's from-scratch-every-call rebuild silently dropping
 // provenance on any later call that doesn't re-supply the marketplace CLI
-// ref -- exercised here across three successive install calls:
+// ref -- exercised here across three successive install calls, all passing
+// --target claude (F2: a project with resolved dependencies and no
+// resolvable deployment target now fails closed with exit 2 instead of
+// silently skipping deploy, so this regression -- unrelated to target
+// resolution -- must supply one explicitly to keep exercising the actual
+// subject, provenance carry-forward):
 //
-//	(a) `apm install p@acme` with no --target (and no auto-detectable
-//	    target in the project) -> deploy is skipped, but apm.lock.yaml
-//	    already carries the full provenance.
-//	(b) an immediately following BARE `apm install` (apm.yml now holds the
-//	    resolved canonical, not "p@acme") -> provenance is carried forward
-//	    unchanged (mkt-032's carry-forward fix).
-//	(c) an immediately following `apm install --target claude` -> deploy
-//	    actually runs (proven by a local instructions primitive landing in
-//	    .claude/rules/), AND provenance is still present afterward.
+//	(a) `apm install p@acme --target claude` -> apm.lock.yaml carries the
+//	    full provenance and local instructions deploy.
+//	(b) an immediately following BARE `apm install --target claude` (apm.yml
+//	    now holds the resolved canonical, not "p@acme") -> provenance is
+//	    carried forward unchanged (mkt-032's carry-forward fix).
+//	(c) a third `apm install --target claude` -> deploy and provenance both
+//	    still hold.
 func TestRunInstall_MarketplaceProvenance_CarriesForwardAcrossNoTargetBareAndTargetedInstalls(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
@@ -540,35 +546,34 @@ func TestRunInstall_MarketplaceProvenance_CarriesForwardAcrossNoTargetBareAndTar
 		}
 	}
 
-	// (a) install with the marketplace CLI reference, no --target and no
-	// auto-detectable target in this fresh project -- deploy must be
-	// skipped, but the lockfile must already carry provenance.
-	if err := runInstall(deps, false, true, "", nil, []string{"p@acme"}); err != nil {
+	// (a) install with the marketplace CLI reference, --target claude ->
+	// lockfile carries provenance and the local instructions primitive
+	// deploys.
+	if err := runInstall(deps, false, true, "claude", nil, []string{"p@acme"}); err != nil {
 		t.Fatalf("(a) runInstall: %v", err)
 	}
 	readLockAssertProvenance("(a)")
-	if _, err := os.Stat(filepath.Join(".claude", "rules", "demo.md")); err == nil {
-		t.Error("(a): local instructions were deployed even though no target was resolvable -- deploy should have been skipped")
+	if _, err := os.Stat(filepath.Join(".claude", "rules", "demo.md")); err != nil {
+		t.Errorf("(a): expected local instructions to deploy to .claude/rules/demo.md: %v", err)
 	}
 
-	// (b) a bare `apm install` -- no positional packages, so no fresh
-	// marketplaceProvenance for this call. Must succeed (proving apm.yml
-	// round-trips the persisted canonical) AND must carry provenance
-	// forward unchanged.
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	// (b) a bare `apm install --target claude` -- no positional packages, so
+	// no fresh marketplaceProvenance for this call. Must succeed (proving
+	// apm.yml round-trips the persisted canonical) AND must carry
+	// provenance forward unchanged.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("(b) bare runInstall: %v", err)
 	}
 	readLockAssertProvenance("(b)")
 
-	// (c) `apm install --target claude` -- deploy now actually runs (the
-	// local instructions primitive lands on disk), and provenance is still
-	// present in the rebuilt lockfile.
+	// (c) a third `apm install --target claude` -- deploy and provenance
+	// both still hold in the rebuilt lockfile.
 	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("(c) targeted runInstall: %v", err)
 	}
 	readLockAssertProvenance("(c)")
 	if _, err := os.Stat(filepath.Join(".claude", "rules", "demo.md")); err != nil {
-		t.Errorf("(c): expected local instructions to deploy to .claude/rules/demo.md now that --target was given: %v", err)
+		t.Errorf("(c): expected local instructions to still be deployed at .claude/rules/demo.md: %v", err)
 	}
 }
 

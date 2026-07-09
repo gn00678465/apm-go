@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/apm-go/apm/internal/manifest"
 )
@@ -37,8 +38,38 @@ var Adapters = map[string]TargetAdapter{
 	"agent-skills": &agentSkillsAdapter{},
 }
 
+// SplitTargetFlag splits a --target/-t CLI flag value on commas (trimming
+// whitespace, dropping empty segments) and validates each resulting token
+// against the canonical target vocabulary via manifest.ValidateTarget --
+// req-mf-005. That is the SAME validator apm.yml's target: field already
+// uses, so the CLI flag and the manifest field reject exactly the same set
+// of unknown tokens (canonical names including "all", known aliases, and
+// x-<vendor>-<name> extension tokens are all accepted). A genuinely unknown
+// token is rejected, naming it.
+//
+// Known-but-adapterless canonical targets (cursor/gemini/windsurf) pass
+// validation here -- ResolveTargets's checkUnsupported separately reports
+// the non-fatal "no registered handler" diagnostic for those (req-tg-004);
+// this function must never turn that into a hard error.
+func SplitTargetFlag(flagTarget string) ([]string, error) {
+	var tokens []string
+	for _, part := range strings.Split(flagTarget, ",") {
+		t := strings.TrimSpace(part)
+		if t == "" {
+			continue
+		}
+		normalized, err := manifest.ValidateTarget(t)
+		if err != nil {
+			return nil, fmt.Errorf("--target %q: %w", t, err)
+		}
+		tokens = append(tokens, normalized)
+	}
+	return tokens, nil
+}
+
 // ResolveTargets determines active targets by priority:
-// 1. --target flag (explicit CLI)
+// 1. --target flag (explicit CLI, comma-separated, validated against the
+//    canonical target vocabulary -- see SplitTargetFlag)
 // 2. manifest target: field
 // 3. auto-detection from filesystem signals
 // Returns empty if nothing detected (no-deploy).
@@ -46,9 +77,17 @@ func ResolveTargets(flagTarget string, manifestTargets []string, projectDir stri
 	var diags []string
 
 	if flagTarget != "" {
-		targets := []string{flagTarget}
-		if flagTarget == "all" {
-			targets = allAutoDetectableTargets()
+		tokens, err := SplitTargetFlag(flagTarget)
+		if err != nil {
+			return nil, []string{err.Error()}
+		}
+		var targets []string
+		for _, t := range tokens {
+			if t == "all" {
+				targets = append(targets, allAutoDetectableTargets()...)
+			} else {
+				targets = append(targets, t)
+			}
 		}
 		diags = append(diags, checkUnsupported(targets)...)
 		return filterSupported(targets), diags

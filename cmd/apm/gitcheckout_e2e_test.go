@@ -76,7 +76,10 @@ func TestRunInstall_StaleCheckoutIsRepaired(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	// --target claude only satisfies the "dependencies present but no
+	// deployment target" exit-2 guard (F2); this test's subject is stale
+	// checkout repair, not deploy.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("first runInstall: %v", err)
 	}
 
@@ -94,7 +97,10 @@ func TestRunInstall_StaleCheckoutIsRepaired(t *testing.T) {
 		t.Fatal("test setup failed: checkout should now be at the unrelated commit")
 	}
 
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	// --target claude only satisfies the "dependencies present but no
+	// deployment target" exit-2 guard (F2); this test's subject is stale
+	// checkout repair, not deploy.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("second runInstall: %v", err)
 	}
 

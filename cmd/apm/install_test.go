@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,7 +159,10 @@ func TestRunInstall_PositionalDedup_KeysByVirtualPath(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, false, true, "", nil, []string{"org/monorepo/skills/b"})
+	// --target claude only satisfies the "dependencies present but no
+	// deployment target" exit-2 guard (F2); this test's subject is
+	// positional-package dedup, not deploy.
+	err := runInstall(deps, false, true, "claude", nil, []string{"org/monorepo/skills/b"})
 	if err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
@@ -192,7 +196,10 @@ func TestRunInstall_PositionalDedup_TrueDuplicateStillSkipped(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, false, true, "", nil, []string{"acme/foo"})
+	// --target claude only satisfies the "dependencies present but no
+	// deployment target" exit-2 guard (F2); this test's subject is
+	// duplicate-dedup, not deploy.
+	err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"})
 	if err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
@@ -674,6 +681,153 @@ func TestInstallCmd_Help(t *testing.T) {
 	}
 	if f.Lookup("no-provenance") == nil {
 		t.Error("missing --no-provenance flag")
+	}
+}
+
+// TestInstallCmd_TargetShorthand is the F2 regression: `install -t claude`
+// used to fail with "unknown shorthand flag: t" because --target was
+// registered via StringVar (no shorthand). -t must resolve to --target.
+func TestInstallCmd_TargetShorthand(t *testing.T) {
+	cmd := installCmd()
+	sh := cmd.Flags().ShorthandLookup("t")
+	if sh == nil {
+		t.Fatal("expected -t shorthand to be registered")
+	}
+	if sh.Name != "target" {
+		t.Errorf("-t shorthand resolves to flag %q, want target", sh.Name)
+	}
+}
+
+// TestInstallCmd_TargetShorthand_ParsesOnCLI proves -t is actually usable on
+// the command line (not just registered), using it in place of --target for
+// a local-only deploy so the assertion is deploy actually happened.
+func TestInstallCmd_TargetShorthand_ParsesOnCLI(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+	os.MkdirAll(filepath.Join(".apm", "instructions"), 0755)
+	os.WriteFile(filepath.Join(".apm", "instructions", "demo.instructions.md"), []byte("# demo"), 0644)
+
+	cmd := installCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"-t", "claude"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("install -t claude: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "demo.md")); err != nil {
+		t.Errorf("expected -t claude to deploy local instructions to .claude/rules/demo.md: %v", err)
+	}
+}
+
+// TestRunInstall_TargetCommaSplit_DeploysToBothTargets is the F2 regression:
+// `--target claude,codex` used to be treated as one literal (unknown)
+// target string (no comma splitting), silently resolving to zero targets.
+// It must split and deploy to both.
+func TestRunInstall_TargetCommaSplit_DeploysToBothTargets(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+	os.MkdirAll(filepath.Join(".apm", "agents"), 0755)
+	os.WriteFile(filepath.Join(".apm", "agents", "demo.md"), []byte("# demo agent"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	if err := runInstall(deps, false, true, "claude,codex", nil, nil); err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "agents", "demo.md")); err != nil {
+		t.Errorf("expected --target claude,codex to deploy to .claude/agents/demo.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".codex", "agents", "demo.toml")); err != nil {
+		t.Errorf("expected --target claude,codex to deploy to .codex/agents/demo.toml: %v", err)
+	}
+}
+
+// TestInstallCmd_UnknownTargetRejected is the F2/mf-005 regression: an
+// unknown --target token used to silently resolve to zero targets (no
+// registered adapter -> diagnostic only -> filtered out) instead of being
+// rejected. It must now fail with exit 2, naming the offending token,
+// before any manifest/lockfile work happens.
+func TestInstallCmd_UnknownTargetRejected(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	cmd := installCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--target", "bogus"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error for --target bogus, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should name the offending token, got: %v", err)
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+}
+
+// TestRunInstall_DepsPresentZeroTarget_ExitsWithTeachingMessage is the F2
+// regression: with dependencies to install but no --target, no apm.yml
+// target:, and nothing auto-detected, apm-go used to silently skip
+// deployment and exit 0. install.md's exit-code table requires exit 2 with
+// a teaching message ("no deployment target detectable").
+func TestRunInstall_DepsPresentZeroTarget_ExitsWithTeachingMessage(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	err := runInstall(deps, false, true, "", nil, nil)
+	if err == nil {
+		t.Fatal("expected an error when dependencies are present but no deployment target resolves")
+	}
+	if !strings.Contains(err.Error(), "target") {
+		t.Errorf("error should teach the user about the missing target, got: %v", err)
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+	if _, statErr := os.Stat("apm.lock.yaml"); !os.IsNotExist(statErr) {
+		t.Error("apm.lock.yaml should not be written when the install fails closed on zero targets")
+	}
+}
+
+// TestRunInstall_NoDepsZeroTarget_StillExitsZero is the companion negative
+// case for the F2 fix: a project with NO dependencies to install and no
+// resolvable target must keep exiting 0 (existing "No dependencies to
+// install" behavior) -- the new exit-2 guard is scoped to "dependencies
+// present", not to "target resolution failed" in general.
+func TestRunInstall_NoDepsZeroTarget_StillExitsZero(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+		t.Fatalf("expected no error for a zero-dependency install with no target, got: %v", err)
 	}
 }
 

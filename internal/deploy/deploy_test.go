@@ -130,6 +130,98 @@ func TestResolveTargets_UnsupportedTargetDiag(t *testing.T) {
 	}
 }
 
+// TestResolveTargets_FlagCommaSplit is the F2 regression: `--target
+// claude,codex` used to be treated as one literal (unknown) target string
+// (targets := []string{flagTarget}, no split), silently resolving to zero
+// targets. It must split into both claude and codex.
+func TestResolveTargets_FlagCommaSplit(t *testing.T) {
+	dir := t.TempDir()
+
+	targets, diags := ResolveTargets("claude,codex", nil, dir)
+	if len(diags) != 0 {
+		t.Errorf("expected no diagnostics, got %v", diags)
+	}
+	want := map[string]bool{"claude": true, "codex": true}
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %v", targets)
+	}
+	for _, tgt := range targets {
+		if !want[tgt] {
+			t.Errorf("unexpected target %q, want one of claude/codex", tgt)
+		}
+	}
+}
+
+// TestResolveTargets_FlagCommaSplit_TrimsSpaces proves whitespace around
+// comma-separated tokens is tolerated (" claude, codex ").
+func TestResolveTargets_FlagCommaSplit_TrimsSpaces(t *testing.T) {
+	dir := t.TempDir()
+
+	targets, _ := ResolveTargets(" claude, codex ", nil, dir)
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %v", targets)
+	}
+}
+
+// TestSplitTargetFlag_UnknownTokenRejected is the F2/mf-005 regression: a
+// CLI --target token that is neither canonical, a known alias, nor an
+// x-<vendor>-<name> extension used to silently resolve to zero targets
+// (checkUnsupported found no adapter, diag-only, filterSupported dropped
+// it) instead of being rejected. It must now be a hard error naming the
+// offending token.
+func TestSplitTargetFlag_UnknownTokenRejected(t *testing.T) {
+	_, err := SplitTargetFlag("bogus")
+	if err == nil {
+		t.Fatal("expected an error for an unknown --target token, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should name the offending token, got: %v", err)
+	}
+}
+
+// TestSplitTargetFlag_KnownButAdapterlessAccepted proves req-tg-004's
+// contract survives F2: cursor/gemini/windsurf are canonical (real)
+// vocabulary without a registered adapter -- SplitTargetFlag (the
+// validation layer) must accept them; ResolveTargets's checkUnsupported is
+// what reports the separate non-fatal "no registered handler" diagnostic,
+// not a hard rejection here.
+func TestSplitTargetFlag_KnownButAdapterlessAccepted(t *testing.T) {
+	for _, tgt := range []string{"cursor", "gemini", "windsurf"} {
+		if _, err := SplitTargetFlag(tgt); err != nil {
+			t.Errorf("SplitTargetFlag(%q) should be accepted (known vocabulary, no adapter), got error: %v", tgt, err)
+		}
+	}
+}
+
+// TestSplitTargetFlag_AllAndVendorTokensAccepted proves the two other
+// accepted shapes besides plain canonical names: "all" and the
+// x-<vendor>-<name> extension pattern (req-tg-004/req-mf-005).
+func TestSplitTargetFlag_AllAndVendorTokensAccepted(t *testing.T) {
+	for _, tgt := range []string{"all", "x-acme-tool"} {
+		if _, err := SplitTargetFlag(tgt); err != nil {
+			t.Errorf("SplitTargetFlag(%q) should be accepted, got error: %v", tgt, err)
+		}
+	}
+}
+
+// TestResolveTargets_CommaListWithUnknownToken proves an unknown token
+// combined with a valid one in a comma list still fails closed as a
+// diagnostic-only zero-target result from ResolveTargets (the CLI-level
+// hard error is install.go's job, via deploy.SplitTargetFlag called
+// up front -- ResolveTargets itself keeps its existing no-crash,
+// diagnostics-only contract for every other caller, e.g. install --mcp).
+func TestResolveTargets_CommaListWithUnknownToken(t *testing.T) {
+	dir := t.TempDir()
+
+	targets, diags := ResolveTargets("claude,bogus", nil, dir)
+	if len(targets) != 0 {
+		t.Errorf("expected zero targets when the flag contains an unknown token, got %v", targets)
+	}
+	if len(diags) != 1 || !strings.Contains(diags[0], "bogus") {
+		t.Errorf("expected a diagnostic naming the unknown token, got %v", diags)
+	}
+}
+
 func TestDeployClaude_OracleMatch(t *testing.T) {
 	// Verify against oracle/targets/expected/claude.yaml:
 	//   .claude/rules/demo.md

@@ -75,8 +75,10 @@ func TestRunInstall_MarketplaceDictDep_RootResolvedIntoLockfile(t *testing.T) {
 
 	// Act -- a BARE `apm install`: the marketplace dependency comes entirely
 	// from apm.yml's dependencies.apm dict entry, never from a CLI
-	// positional package argument.
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	// positional package argument. --target claude is only here to satisfy
+	// the "dependencies present but no deployment target" exit-2 guard
+	// (F2) -- this test's actual subject is lockfile resolution, not deploy.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -164,8 +166,10 @@ func TestRunInstall_MarketplaceDictDep_TransitiveResolvedIntoLockfile(t *testing
 		}},
 	}
 
-	// Act
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	// Act -- --target claude only satisfies the "dependencies present but no
+	// deployment target" exit-2 guard (F2); this test's subject is
+	// transitive marketplace-dict lockfile resolution, not deploy.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
