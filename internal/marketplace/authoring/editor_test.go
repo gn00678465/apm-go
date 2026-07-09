@@ -252,6 +252,123 @@ func TestSetPackage_IncludePrereleaseExplicitFalse_ClearsExistingTrue(t *testing
 	}
 }
 
+// ── S2 security fix: --subdir path-traversal rejection ─────────────────
+//
+// Mirrors Python's yml_editor._validate_subdir / path_security.
+// validate_path_segments(subdir, context="subdir"): any "." or ".."
+// path segment, or an absolute path, must be rejected on both `add` and
+// `set` before the entry is ever written to apm.yml.
+
+func TestAddPackage_SubdirTraversal_Errors(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	original := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	writeFile(t, dir, "apm.yml", original)
+
+	// Act
+	_, _, err := AddPackage(dir, "./pkgs/tool", AddOptions{Subdir: "../../etc"}, panicLister{})
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected AddPackage to reject a --subdir containing '..' traversal segments")
+	}
+	if !strings.Contains(err.Error(), "../../etc") {
+		t.Errorf("error = %v, want it to name the offending subdir", err)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != original {
+		t.Errorf("apm.yml was modified despite a rejected --subdir;\ngot:\n%s\nwant unchanged:\n%s", string(data), original)
+	}
+}
+
+func TestAddPackage_SubdirAbsolutePath_Errors(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+	// Act
+	_, _, err := AddPackage(dir, "./pkgs/tool", AddOptions{Subdir: "/etc/passwd"}, panicLister{})
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected AddPackage to reject an absolute --subdir")
+	}
+}
+
+func TestAddPackage_SubdirLegitimateRelative_Succeeds(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+	// Act
+	_, _, err := AddPackage(dir, "./pkgs/tool", AddOptions{Subdir: "src/skills"}, panicLister{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("AddPackage rejected a legitimate relative --subdir: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(cfg.Packages) != 1 || cfg.Packages[0].Subdir != "src/skills" {
+		t.Errorf("Packages = %+v, want a single entry with subdir 'src/skills'", cfg.Packages)
+	}
+}
+
+func TestSetPackage_SubdirTraversal_Errors(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	original := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: ./pkgs/foo\n"
+	writeFile(t, dir, "apm.yml", original)
+	subdir := "../../etc"
+
+	// Act
+	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir})
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected SetPackage to reject a --subdir containing '..' traversal segments")
+	}
+	if !strings.Contains(err.Error(), "../../etc") {
+		t.Errorf("error = %v, want it to name the offending subdir", err)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != original {
+		t.Errorf("apm.yml was modified despite a rejected --subdir;\ngot:\n%s\nwant unchanged:\n%s", string(data), original)
+	}
+}
+
+func TestSetPackage_SubdirLegitimateRelative_Succeeds(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: ./pkgs/foo\n")
+	subdir := "src/skills"
+
+	// Act
+	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetPackage rejected a legitimate relative --subdir: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if cfg.Packages[0].Subdir != "src/skills" {
+		t.Errorf("Subdir = %q, want %q", cfg.Packages[0].Subdir, "src/skills")
+	}
+}
+
 // ── remove ───────────────────────────────────────────────────────────────
 
 func TestRemovePackage_RemovesByCaseInsensitiveName(t *testing.T) {

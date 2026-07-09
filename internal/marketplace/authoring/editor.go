@@ -334,6 +334,28 @@ func defaultNameFromSource(source string) string {
 	return s
 }
 
+// validateSubdir rejects a --subdir value that could escape the package
+// root, mirroring Python's yml_editor._validate_subdir ->
+// path_security.validate_path_segments(subdir, context="subdir"): any "."
+// or ".." path segment (POSIX or Windows separators) is rejected outright,
+// regardless of whether it nets to an actual escape -- Python's own guard
+// is this strict, and mirroring it (rather than apm-go's existing, laxer
+// net-depth escape checks elsewhere) is required here (S2 security fix).
+// An absolute path (POSIX "/...", Windows "C:\..." or "\...") is rejected
+// as well: an escaping/absolute subdir here has nothing to be relative to.
+func validateSubdir(subdir string) error {
+	norm := strings.ReplaceAll(subdir, "\\", "/")
+	if strings.HasPrefix(norm, "/") || filepath.IsAbs(subdir) || filepath.VolumeName(filepath.FromSlash(subdir)) != "" {
+		return fmt.Errorf("invalid subdir %q: absolute paths are not allowed", subdir)
+	}
+	for _, seg := range strings.Split(norm, "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("invalid subdir %q: segment %q is a traversal sequence", subdir, seg)
+		}
+	}
+	return nil
+}
+
 func findPackageIndex(cfg *AuthoringConfig, name string) int {
 	lower := strings.ToLower(name)
 	for i, pkg := range cfg.Packages {
@@ -377,6 +399,11 @@ type AddOptions struct {
 func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name string, fallbackUsed bool, err error) {
 	if opts.Version != "" && opts.Ref != "" {
 		return "", false, fmt.Errorf("--version and --ref are mutually exclusive; use --version for a semver range or --ref for a git ref")
+	}
+	if opts.Subdir != "" {
+		if err := validateSubdir(opts.Subdir); err != nil {
+			return "", false, err
+		}
 	}
 	if err := manifest.ValidateMarketplaceSource(source); err != nil {
 		return "", false, err
@@ -443,6 +470,11 @@ type SetOptions struct {
 func SetPackage(dir, name string, opts SetOptions) (fallbackUsed bool, err error) {
 	if opts.Version != nil && opts.Ref != nil {
 		return false, fmt.Errorf("--version and --ref are mutually exclusive; use --version for a semver range or --ref for a git ref")
+	}
+	if opts.Subdir != nil {
+		if err := validateSubdir(*opts.Subdir); err != nil {
+			return false, err
+		}
 	}
 
 	cfg, _, err := LoadAuthoringConfig(dir)
