@@ -19,6 +19,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| [Install / Marketplace Contracts](./install-marketplace-contracts.md) | install & marketplace CLI invariants, validation matrices, documented deviations | Active |
 
 ---
 
