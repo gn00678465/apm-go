@@ -84,6 +84,23 @@ func TestValidateMCP_SelfDefined(t *testing.T) {
 			mcp:     MCPDependency{Name: "relative", Registry: false, Transport: "http", URL: "example.com/mcp"},
 			wantErr: "must be absolute",
 		},
+		{
+			// Mirrors Python's _ALLOWED_URL_SCHEMES =
+			// frozenset({"http", "https"}) (models/dependency/mcp.py:40,
+			// 249): a literal URL with any other scheme must be rejected,
+			// not silently persisted into apm.yml only to fail later at
+			// deploy time.
+			name:    "ftp scheme rejected",
+			mcp:     MCPDependency{Name: "x", Registry: false, Transport: "http", URL: "ftp://example.com/mcp"},
+			wantErr: "scheme",
+		},
+		{
+			// WebSocket schemes are explicitly unsupported for MCP
+			// transports too.
+			name:    "ws scheme rejected",
+			mcp:     MCPDependency{Name: "x", Registry: false, Transport: "sse", URL: "ws://example.com/mcp"},
+			wantErr: "scheme",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -95,6 +112,54 @@ func TestValidateMCP_SelfDefined(t *testing.T) {
 				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestValidateMCP_RejectsNonHTTPSchemeNamingIt is a regression test (C9,
+// live-CLI finding): `install --mcp --url ftp://...` used to be persisted
+// verbatim into apm.yml with exit 0. Python restricts self-defined HTTP-like
+// transports to _ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
+// (models/dependency/mcp.py:40,249); ValidateMCP must reject any other
+// literal scheme and name it in the error, without echoing the rest of the
+// URL (which could carry a query-embedded token, per the "never echoes
+// secretish values" convention above).
+func TestValidateMCP_RejectsNonHTTPSchemeNamingIt(t *testing.T) {
+	m := &MCPDependency{Name: "api", Registry: false, Transport: "http", URL: "ftp://example.com/mcp?token=super-secret-value"}
+	err := ValidateMCP(m)
+	if err == nil {
+		t.Fatal("expected an error for a non-http(s) literal URL scheme")
+	}
+	if !strings.Contains(err.Error(), "ftp") {
+		t.Errorf("error = %v, want it to name the rejected scheme %q", err, "ftp")
+	}
+	if strings.Contains(err.Error(), "super-secret-value") {
+		t.Errorf("error message leaked the raw value: %v", err)
+	}
+}
+
+// TestValidateMCP_AcceptsHTTPAndHTTPSSchemes confirms the allowlist still
+// accepts exactly the two schemes Python allows.
+func TestValidateMCP_AcceptsHTTPAndHTTPSSchemes(t *testing.T) {
+	for _, scheme := range []string{"http", "https"} {
+		t.Run(scheme, func(t *testing.T) {
+			m := &MCPDependency{Name: "x", Registry: false, Transport: "http", URL: scheme + "://example.com/mcp"}
+			if err := ValidateMCP(m); err != nil {
+				t.Errorf("ValidateMCP rejected an allowed scheme %q: %v", scheme, err)
+			}
+		})
+	}
+}
+
+// TestValidateMCP_SchemeCheckSkippedForPlaceholderURL is a regression test
+// (C9 design constraint): a placeholder-containing URL is not a literal
+// value yet at declaration time, so it must skip scheme validation
+// entirely -- same as it already skips the absolute-URL and malformed-parse
+// checks above -- rather than being rejected because the placeholder
+// substring happens to look like a non-http(s) scheme.
+func TestValidateMCP_SchemeCheckSkippedForPlaceholderURL(t *testing.T) {
+	m := &MCPDependency{Name: "x", Registry: false, Transport: "http", URL: "${MCP_URL}"}
+	if err := ValidateMCP(m); err != nil {
+		t.Errorf("ValidateMCP rejected a placeholder URL on scheme grounds: %v", err)
 	}
 }
 

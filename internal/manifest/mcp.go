@@ -81,6 +81,11 @@ func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
 	return m, nil
 }
 
+// allowedMCPURLSchemes mirrors Python's _ALLOWED_URL_SCHEMES
+// (models/dependency/mcp.py:40): only http/https literal MCP server URLs
+// are accepted.
+var allowedMCPURLSchemes = map[string]bool{"http": true, "https": true}
+
 func ValidateMCP(m *MCPDependency) error {
 	isSelfDefined := m.Registry == false
 	if !isSelfDefined {
@@ -164,6 +169,18 @@ func ValidateMCP(m *MCPDependency) error {
 			// review).
 			if u.Scheme == "" || u.Host == "" {
 				return fmt.Errorf("MCP server %q: url must be absolute (scheme://host/...)", m.Name)
+			}
+			// Mirror Python's _ALLOWED_URL_SCHEMES = frozenset({"http",
+			// "https"}) (models/dependency/mcp.py:40,249): reject any other
+			// literal scheme (e.g. ftp://, ws://) instead of silently
+			// persisting it into apm.yml only to fail later at deploy time
+			// (live-CLI finding: `install --mcp --url ftp://...` used to
+			// exit 0). Only the scheme is named in the error, not the rest
+			// of the URL, since a query string can carry a token (mirrors
+			// this function's existing "never echo secretish values"
+			// convention).
+			if !allowedMCPURLSchemes[strings.ToLower(u.Scheme)] {
+				return fmt.Errorf("MCP server %q: url scheme %q is not supported; use http:// or https://", m.Name, u.Scheme)
 			}
 		}
 	default:
