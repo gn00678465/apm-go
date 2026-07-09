@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 19
-- **Last Active**: 2026-07-07
+- **Total Sessions**: 20
+- **Last Active**: 2026-07-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~685 | Active |
+| `journal-1.md` | ~729 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 20 | 2026-07-10 | install/marketplace CLI 驗證清單 + P0/P1/P2 修復 | `f4bdcac`, `f8d70f3`, `a1a07f4`, `e079599`, `13f1290`, `9cc6d51`, `07b443d`, `e43baf9`, `6d2232b`, `e718d8f`, `0a73736`, `0f63f1e` | `feat/marketplace-install` |
 | 19 | 2026-07-07 | install --mcp parity: #1 block style / #2 憑證互動 / D2 confirm / M8 per-target header + A/B | `706faf6`, `a907697`, `0f34fb2`, `f20dcc2`, `0daddd1` | `feat/marketplace-install` |
 | 18 | 2026-07-05 | runtime parity 缺口:建父/子 task + 完成 opencode-mcp(1/3) | `a645e64`, `93e4b29`, `665743c` | `feat/marketplace-install` |
 | 17 | 2026-07-05 | marketplace 生態系收尾:4 個實測 bug 修正 + 歷史整併(19→9) | `93c08b4`, `3c47e91`, `bdbe9b2`, `4d3305d` | `feat/marketplace-install` |

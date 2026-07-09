@@ -683,3 +683,47 @@ Sonnet subagent 實作/Fable 查核模式修 4 個實測 bug:(1)browse 改用 Py
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: install/marketplace CLI 驗證清單 + P0/P1/P2 修復
+
+**Date**: 2026-07-10
+**Task**: install/marketplace CLI 驗證清單 + P0/P1/P2 修復
+**Branch**: `feat/marketplace-install`
+
+### Summary
+
+4-agent workflow 產出 install/uninstall/marketplace 全 flag 三方比對驗證清單(75 項)。修復 P0 安全 2 項(http:// 依賴閘門、--subdir traversal)、P1 5 項(--target、ref→SHA、--skill '*'、devDeps、local marketplace/絕對路徑 copy 模型)、P2 6 項(verbose/set 防呆/add 驗證/confirm 安全/--mcp url scheme/check dup-name)。每項 sonnet subagent TDD + 主 session 親自 full-suite/安全/live 驗證。獨立 trellis-check 複查揪出並修正 F4 --ref HEAD HIGH bug。新增 backend/install-marketplace-contracts.md 契約 spec。全程 17/17 packages 綠。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f4bdcac` | (see git log) |
+| `f8d70f3` | (see git log) |
+| `a1a07f4` | (see git log) |
+| `e079599` | (see git log) |
+| `13f1290` | (see git log) |
+| `9cc6d51` | (see git log) |
+| `07b443d` | (see git log) |
+| `e43baf9` | (see git log) |
+| `6d2232b` | (see git log) |
+| `e718d8f` | (see git log) |
+| `0a73736` | (see git log) |
+| `0f63f1e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
