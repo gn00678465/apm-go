@@ -85,8 +85,9 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 	}
 	existingNode := lockNode
 
-	// Registry access is experimental; mirrors runInstall's gate.
-	for _, d := range m.ParsedDeps {
+	// Registry access is experimental; mirrors runInstall's gate (regular
+	// and dev dependencies both in scope).
+	for _, d := range allDirectDeps(m) {
 		if d.Source == "registry" {
 			if err := experimental.RequireEnabled("registries"); err != nil {
 				return err
@@ -161,10 +162,12 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 // the winning tag doesn't change (req-lk-010). pkg == "" means every direct
 // git-semver dependency is in scope (full update); otherwise only pkg itself
 // is cleared, not its transitive subtree, to avoid an unnecessary re-clone
-// of everything reachable from it.
+// of everything reachable from it. Regular and dev dependencies are both in
+// scope (F3-adjacent: `apm update` resolves devDependencies.apm exactly like
+// dependencies.apm, mirroring Python's apm_deps + dev_apm_deps).
 func directGitSemverUpdateScope(m *manifest.Manifest, pkg string) []string {
 	var keys []string
-	for _, dep := range m.ParsedDeps {
+	for _, dep := range allDirectDeps(m) {
 		if resolver.ClassifyReference(dep) != resolver.KindGitSemver {
 			continue
 		}

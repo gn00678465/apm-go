@@ -538,3 +538,89 @@ func TestResolve_LiteralConflict_EmptyVsNonEmpty(t *testing.T) {
 		t.Fatal("expected error for empty vs non-empty literal ref conflict")
 	}
 }
+
+// makeManifestWithDev builds a manifest whose ParsedDeps and ParsedDevDeps are
+// set independently, for F3 (devDependencies.apm silently ignored) coverage.
+func makeManifestWithDev(name string, deps []*manifest.DependencyReference, devDeps []*manifest.DependencyReference) *manifest.Manifest {
+	m := makeManifest(name, deps...)
+	m.ParsedDevDeps = devDeps
+	return m
+}
+
+// TestResolve_IncludesDevDependencies is the RED/GREEN test for F3: a
+// hand-authored devDependencies.apm entry must be resolved by the BFS root
+// queue exactly like an ordinary dependencies.apm entry, not silently
+// dropped (collectRootDeps used to return m.ParsedDeps only).
+func TestResolve_IncludesDevDependencies(t *testing.T) {
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/a": makeTags("v1.0.0"),
+		"acme/b": makeTags("v1.0.0"),
+	}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.0.0": makeManifest("a"),
+		"acme/b@v1.0.0": makeManifest("b"),
+	}}
+
+	root := makeManifestWithDev("root",
+		[]*manifest.DependencyReference{makeDep("acme/a", "^1.0.0")},
+		[]*manifest.DependencyReference{makeDep("acme/b", "^1.0.0")},
+	)
+	result, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Deps) != 2 {
+		t.Fatalf("deps count = %d, want 2 (prod acme/a + dev acme/b): %+v", len(result.Deps), result.Deps)
+	}
+	// Root order (req: stable, documented position — prod before dev,
+	// mirroring Python's apm_deps + dev_apm_deps root-BFS order).
+	wantOrder := []string{"acme/a", "acme/b"}
+	for i, want := range wantOrder {
+		if result.Deps[i].Key != want {
+			t.Errorf("deps[%d].Key = %q, want %q", i, result.Deps[i].Key, want)
+		}
+	}
+	if result.Deps[1].Depth != 1 {
+		t.Errorf("dev dep acme/b depth = %d, want 1 (direct dependency)", result.Deps[1].Depth)
+	}
+}
+
+// TestResolve_RootOrder_ProdThenDev_DiamondDeterministic proves resolver
+// determinism (req-rs-001) holds for a diamond where a prod root and a dev
+// root share a transitive child: repeated resolution of the same manifest
+// must produce byte-identical output order every time, and dev roots must
+// occupy a stable position (after all prod roots) in that order.
+func TestResolve_RootOrder_ProdThenDev_DiamondDeterministic(t *testing.T) {
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/a": makeTags("v1.0.0"),
+		"acme/b": makeTags("v1.0.0"),
+		"acme/c": makeTags("v1.0.0"),
+	}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.0.0": makeManifest("a", makeDep("acme/c", "^1.0.0")),
+		"acme/b@v1.0.0": makeManifest("b", makeDep("acme/c", "^1.0.0")),
+		"acme/c@v1.0.0": makeManifest("c"),
+	}}
+
+	wantOrder := []string{"acme/a", "acme/b", "acme/c"}
+	const runs = 20
+	for run := 0; run < runs; run++ {
+		root := makeManifestWithDev("root",
+			[]*manifest.DependencyReference{makeDep("acme/a", "^1.0.0")},
+			[]*manifest.DependencyReference{makeDep("acme/b", "^1.0.0")},
+		)
+		result, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+		if err != nil {
+			t.Fatalf("run %d: unexpected error: %v", run, err)
+		}
+		if len(result.Deps) != len(wantOrder) {
+			t.Fatalf("run %d: deps count = %d, want %d: %+v", run, len(result.Deps), len(wantOrder), result.Deps)
+		}
+		for i, want := range wantOrder {
+			if result.Deps[i].Key != want {
+				t.Fatalf("run %d: deps[%d].Key = %q, want %q (non-deterministic order)", run, i, result.Deps[i].Key, want)
+			}
+		}
+	}
+}

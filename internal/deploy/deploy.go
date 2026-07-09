@@ -81,9 +81,17 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	ordered = append(ordered, localMCP...)
 	mcpDiags = append(mcpDiags, localMCPDiags...)
 
-	// Direct deps in manifest declaration order (req-pr-003), deduplicated
+	// Direct deps in manifest declaration order (req-pr-003), deduplicated.
+	// Production dependencies.apm followed by devDependencies.apm (F3): a
+	// dev dependency is a direct (depth-1) dependency exactly like a
+	// production one -- same primitive priority, same MCP auto-trust --
+	// mirroring Python's all_apm_deps = apm_deps + dev_apm_deps.
+	directDeps := make([]*manifest.DependencyReference, 0, len(m.ParsedDeps)+len(m.ParsedDevDeps))
+	directDeps = append(directDeps, m.ParsedDeps...)
+	directDeps = append(directDeps, m.ParsedDevDeps...)
+
 	directKeys := make(map[string]bool)
-	for _, dep := range m.ParsedDeps {
+	for _, dep := range directDeps {
 		key := DepRefKey(dep)
 		if key == "" || directKeys[key] {
 			continue

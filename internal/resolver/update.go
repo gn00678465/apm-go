@@ -39,12 +39,23 @@ func PlanScopedUpdate(
 		return nil, fmt.Errorf("scoped update requires an existing lockfile")
 	}
 
-	// Verify the named package exists in the manifest
+	// Verify the named package exists in the manifest -- regular or dev
+	// (F3-adjacent: Python's `apm update <pkg>` resolves against
+	// apm_deps + dev_apm_deps, so a devDependencies.apm entry is a valid
+	// scoped-update target too).
 	found := false
 	for _, dep := range m.ParsedDeps {
 		if depKey(dep) == packageName {
 			found = true
 			break
+		}
+	}
+	if !found {
+		for _, dep := range m.ParsedDevDeps {
+			if depKey(dep) == packageName {
+				found = true
+				break
+			}
 		}
 	}
 	if !found {

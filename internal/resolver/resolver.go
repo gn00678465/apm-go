@@ -43,7 +43,7 @@ func Resolve(
 	childrenOf := map[string][]string{} // parent key -> child keys added by current pin
 
 	queue := []queueEntry{}
-	for _, dep := range collectRootDeps(rootManifest) {
+	for _, dep := range collectResolutionRootDeps(rootManifest) {
 		queue = append(queue, queueEntry{
 			ref:   dep,
 			depth: 1,
@@ -340,6 +340,30 @@ func collectRootDeps(m *manifest.Manifest) []*manifest.DependencyReference {
 		return nil
 	}
 	return m.ParsedDeps
+}
+
+// collectResolutionRootDeps seeds the top-level BFS queue for the manifest
+// being resolved: production dependencies.apm followed by
+// devDependencies.apm (F3 fix — devDependencies.apm was parsed into
+// m.ParsedDevDeps but never fed into the resolver). The prod-then-dev order
+// mirrors Python's apm_resolver.py build_dependency_tree, which queues
+// root_deps first and root_dev_deps second (both at depth 1).
+//
+// Only the TRUE resolution root gets this treatment: a transitive
+// dependency's own manifest is walked via collectRootDeps (prod only)
+// instead, matching Python -- a dependency's own devDependencies never
+// propagate to its consumers.
+func collectResolutionRootDeps(m *manifest.Manifest) []*manifest.DependencyReference {
+	if m == nil {
+		return nil
+	}
+	if len(m.ParsedDevDeps) == 0 {
+		return m.ParsedDeps
+	}
+	all := make([]*manifest.DependencyReference, 0, len(m.ParsedDeps)+len(m.ParsedDevDeps))
+	all = append(all, m.ParsedDeps...)
+	all = append(all, m.ParsedDevDeps...)
+	return all
 }
 
 func depKey(ref *manifest.DependencyReference) string {

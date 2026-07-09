@@ -120,6 +120,197 @@ func TestRunInstall_WithDeps(t *testing.T) {
 	}
 }
 
+// TestRunInstall_DevDependency_ResolvedDeployedAndLocked is the RED/GREEN
+// test for F3 (P1): a hand-authored devDependencies.apm entry -- with NO
+// dependencies.apm block at all in apm.yml -- must be resolved, deployed
+// (its primitives reach the target), and recorded in apm.lock.yaml, exactly
+// like an ordinary dependencies.apm entry. This also exercises the
+// "manifest declares ONLY dev deps" edge case: any gate keyed on
+// len(m.ParsedDeps) alone (frozen materialization, the pre-resolve
+// "No dependencies to install" short-circuit) must not treat a dev-only
+// manifest as dependency-free.
+func TestRunInstall_DevDependency_ResolvedDeployedAndLocked(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndevDependencies:\n  apm:\n    - acme/foo#^1.0.0\n"), 0644)
+
+	// Simulate apm_modules content for the dev dependency (as if already
+	// fetched), proving deploy.Run treats it as a DIRECT dep (depth 1) --
+	// its self-defined primitives get collected and deployed exactly like a
+	// dependencies.apm entry, not silently dropped or misfiled as
+	// transitive.
+	modDir := filepath.Join(dir, "apm_modules", "acme", "foo")
+	if err := os.MkdirAll(filepath.Join(modDir, ".apm", "instructions"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modDir, ".apm", "instructions", "dev.instructions.md"), []byte("# dev instructions"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{
+		tags: &mockInstallTagLister{tags: map[string][]semver.TagInfo{
+			"acme/foo": {{Name: "v1.0.0"}, {Name: "v1.5.0"}},
+		}},
+		loader: &mockInstallLoader{},
+	}
+
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "dev.md")); err != nil {
+		t.Errorf("expected devDependencies.apm entry's primitives to deploy to .claude/rules/dev.md: %v", err)
+	}
+
+	lock := readLockfile(t)
+	var found *lockfile.LockedDep
+	for i := range lock.Dependencies {
+		if lock.Dependencies[i].UniqueKey() == "acme/foo" {
+			found = &lock.Dependencies[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected devDependencies.apm entry acme/foo to be recorded in apm.lock.yaml, got: %+v", lock.Dependencies)
+	}
+	if found.ResolvedTag != "v1.5.0" {
+		t.Errorf("acme/foo resolved_tag = %q, want v1.5.0 (highest matching ^1.0.0)", found.ResolvedTag)
+	}
+	if len(found.DeployedFiles) == 0 {
+		t.Error("expected acme/foo lockfile entry to record deployed_files, got none")
+	}
+}
+
+// TestRunInstall_DevDependency_SecondBareInstallIsNoOp proves idempotency
+// (F3 requirement 4): a second bare `apm install` (no positional packages)
+// after devDependencies.apm has already been resolved must not rewrite
+// apm.yml or apm.lock.yaml.
+func TestRunInstall_DevDependency_SecondBareInstallIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndevDependencies:\n  apm:\n    - acme/foo#^1.0.0\n"), 0644)
+
+	deps := &installDeps{
+		tags: &mockInstallTagLister{tags: map[string][]semver.TagInfo{
+			"acme/foo": {{Name: "v1.0.0"}},
+		}},
+		loader: &mockInstallLoader{},
+	}
+
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("first runInstall: %v", err)
+	}
+	firstManifest, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockInfoBefore, err := os.Stat("apm.lock.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("second runInstall: %v", err)
+	}
+	secondManifest, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockInfoAfter, err := os.Stat("apm.lock.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(firstManifest) != string(secondManifest) {
+		t.Errorf("apm.yml changed on second bare install:\nfirst:\n%s\nsecond:\n%s", firstManifest, secondManifest)
+	}
+	if !lockInfoBefore.ModTime().Equal(lockInfoAfter.ModTime()) {
+		t.Error("apm.lock.yaml was rewritten on a second bare install (idempotency broken: expected a pure no-op)")
+	}
+}
+
+// TestRunInstall_Frozen_DevOnlyManifest_StillMaterializes is the F3 frozen
+// decision test (definition-of-done item 3): a manifest declaring ONLY
+// devDependencies.apm (zero dependencies.apm entries) must still run the
+// frozen install's source-materialization step for its locked dev
+// dependency, not silently skip it because that step used to gate on
+// len(m.ParsedDeps) alone.
+func TestRunInstall_Frozen_DevOnlyManifest_StillMaterializes(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndevDependencies:\n  apm:\n    - acme/foo#^1.0.0\n"), 0644)
+	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/foo\n    source: git\n    constraint: \"^1.0.0\"\n    resolved_tag: v1.0.0\n    depth: 1\n"), 0644)
+
+	spy := &spyLoader{}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
+	if err := runInstall(deps, true, false, "", nil, nil); err != nil {
+		t.Fatalf("expected frozen install to succeed with a dev-only manifest: %v", err)
+	}
+	if len(spy.calls) == 0 {
+		t.Error("expected frozen install's source-materialization step to run for a dev-only manifest (a len(m.ParsedDeps)==0 gate must not skip devDependencies)")
+	}
+}
+
+// TestRunInstall_FrozenMissingPin_DevDependency mirrors
+// TestRunInstall_FrozenMissingPin for a devDependencies.apm entry: frozen
+// structural verification (lockfile.CheckFrozenInstall) must fail the same
+// way for a missing dev dependency pin as it does for a missing prod one.
+func TestRunInstall_FrozenMissingPin_DevDependency(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndevDependencies:\n  apm:\n    - acme/foo#^1.0.0\n"), 0644)
+	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"1\"\ndependencies: []\n"), 0644)
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &mockInstallLoader{},
+	}
+	err := runInstall(deps, true, false, "", nil, nil)
+	if err == nil {
+		t.Fatal("expected error for frozen install with missing dev dependency pin")
+	}
+	if !strings.Contains(err.Error(), "acme/foo") {
+		t.Errorf("error should mention missing dev dep: %v", err)
+	}
+}
+
+// TestRunInstall_RefusesHTTPDependency_FromDevManifest proves the P0
+// insecure-http policy gate (F4bdcac) also applies to a devDependencies.apm
+// entry, not just dependencies.apm -- Python checks apm_deps + dev_apm_deps
+// together (_check_insecure_dependencies(all_apm_deps, ...)).
+func TestRunInstall_RefusesHTTPDependency_FromDevManifest(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndevDependencies:\n  apm:\n    - git: http://example.com/owner/repo\n"), 0644)
+
+	spy := &spyLoader{}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
+	err := runInstall(deps, false, true, "", nil, nil)
+	if err == nil {
+		t.Fatal("expected error for http:// devDependency without --allow-insecure, got nil")
+	}
+	if !strings.Contains(err.Error(), "--allow-insecure") {
+		t.Errorf("error should point at the --allow-insecure remediation, got: %v", err)
+	}
+	if len(spy.calls) != 0 {
+		t.Errorf("expected zero LoadPackage (clone) calls before the refusal, got %d", len(spy.calls))
+	}
+}
+
 // readLockfile is a small test helper: reads and parses apm.lock.yaml from
 // the current directory.
 func readLockfile(t *testing.T) *lockfile.Lockfile {

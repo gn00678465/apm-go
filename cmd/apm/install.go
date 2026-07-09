@@ -283,15 +283,25 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 
 	// 1c. HTTP dependency policy: refuse non-TLS http:// git dependencies by
 	// default -- both the CLI positional packages just merged into
-	// m.ParsedDeps above and pre-existing apm.yml dependencies.apm entries --
-	// unless --allow-insecure was passed. Flag-only, no host exemption
-	// (Python parity: insecure_policy.py's _check_insecure_dependencies).
-	// Must run before any git clone / network fetch (step 4 below).
-	for _, dep := range m.ParsedDeps {
+	// m.ParsedDeps above and pre-existing apm.yml dependencies.apm/
+	// devDependencies.apm entries -- unless --allow-insecure was passed.
+	// Flag-only, no host exemption (Python parity: insecure_policy.py's
+	// _check_insecure_dependencies(all_apm_deps, ...), which checks
+	// apm_deps + dev_apm_deps together). Must run before any git clone /
+	// network fetch (step 4 below).
+	for _, dep := range allDirectDeps(m) {
 		if err := manifest.CheckInsecureDependencyScheme(dep, deps.allowInsecure, m.DefaultHost); err != nil {
 			return err
 		}
 	}
+
+	// hasAnyDeps mirrors Python's has_any_apm_deps = bool(apm_deps) or
+	// bool(dev_apm_deps): a manifest declaring ONLY devDependencies.apm
+	// (zero dependencies.apm entries) still has dependencies to install --
+	// every len(m.ParsedDeps) gate below that decides "is there anything to
+	// resolve/materialize" must consider dev deps too (F3), or a dev-only
+	// project silently resolves/deploys/verifies nothing.
+	hasAnyDeps := len(m.ParsedDeps) > 0 || len(m.ParsedDevDeps) > 0
 
 	// 2. Load existing lockfile
 	var existingLock *lockfile.Lockfile
@@ -430,9 +440,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		}
 
 		// (B) Source materialization (git download + tree_sha256, req-lk-015) — only
-		// when the manifest declares deps. In verify-only mode (no apm.yml) there is
-		// nothing to materialize; (A) is the operative integrity gate.
-		if len(m.ParsedDeps) > 0 {
+		// when the manifest declares deps (regular or dev). In verify-only mode
+		// (no apm.yml) there is nothing to materialize; (A) is the operative
+		// integrity gate.
+		if hasAnyDeps {
 			for _, dep := range existingLock.Dependencies {
 				if dep.Source == "registry" || dep.Source == "local" {
 					continue
@@ -482,7 +493,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 
 	// 4. Resolve dependency graph, unless this is a local-only deploy.
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
-	if len(m.ParsedDeps) == 0 {
+	if !hasAnyDeps {
 		fmt.Println("No dependencies to install")
 		if len(targets) == 0 {
 			for _, d := range targetDiags {
@@ -494,12 +505,12 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 
 	var result *resolver.ResolutionResult
 	var regLoader *registry.Loader
-	if len(m.ParsedDeps) == 0 {
+	if !hasAnyDeps {
 		result = &resolver.ResolutionResult{}
 	} else {
 		fmt.Println("[>] Installing dependencies from apm.yml...")
 		seen := make(map[string]bool)
-		for _, dep := range m.ParsedDeps {
+		for _, dep := range allDirectDeps(m) {
 			canon := dep.ToCanonical(m.DefaultHost)
 			if !seen[canon] {
 				seen[canon] = true
@@ -510,7 +521,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		// Registry access is experimental (API may change); require the opt-in flag
 		// before any live registry resolution. Gates network use only — apm.yml
 		// registries parsing and lockfile schema stay unconditional.
-		for _, d := range m.ParsedDeps {
+		for _, d := range allDirectDeps(m) {
 			if d.Source == "registry" {
 				if err := experimental.RequireEnabled("registries"); err != nil {
 					return err
@@ -569,6 +580,24 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
 	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, persistPackages, result, newLock, existingLock, existingNode, node)
+}
+
+// allDirectDeps returns every direct (root) dependency a manifest declares,
+// production and dev alike: m.ParsedDeps followed by m.ParsedDevDeps (F3 —
+// devDependencies.apm participates in the same direct-dependency scans as
+// dependencies.apm: the insecure-http-scheme policy gate, the "Resolving
+// X..." progress log, and the registries-experimental-feature gate; mirrors
+// Python's all_apm_deps = apm_deps + dev_apm_deps). The resolver's own root
+// queue is seeded separately (resolver.collectResolutionRootDeps), not via
+// this helper.
+func allDirectDeps(m *manifest.Manifest) []*manifest.DependencyReference {
+	if len(m.ParsedDevDeps) == 0 {
+		return m.ParsedDeps
+	}
+	all := make([]*manifest.DependencyReference, 0, len(m.ParsedDeps)+len(m.ParsedDevDeps))
+	all = append(all, m.ParsedDeps...)
+	all = append(all, m.ParsedDevDeps...)
+	return all
 }
 
 // containsSkillWildcard reports whether skillSubset contains the '*' RESET

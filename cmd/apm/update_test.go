@@ -196,6 +196,44 @@ func TestRunUpdate_GitSemver_InstallPathClearedEvenWhenTagUnchanged(t *testing.T
 	}
 }
 
+// TestRunUpdate_GitSemver_DevDependency_InstallPathClearedEvenWhenTagUnchanged
+// is the F3-adjacent decision test for `apm update` (bare/full): Python's
+// `apm update` resolves against apm_deps + dev_apm_deps, so a
+// devDependencies.apm git-semver entry must get the same req-lk-010
+// cache-clear-before-resolve treatment as an ordinary dependencies.apm entry
+// -- not silently skipped because directGitSemverUpdateScope only walked
+// m.ParsedDeps.
+func TestRunUpdate_GitSemver_DevDependency_InstallPathClearedEvenWhenTagUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndevDependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
+	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/a\n    source: git\n    constraint: \"^1.0.0\"\n    resolved_tag: v1.0.0\n    depth: 1\n"), 0644)
+
+	// Only one tag exists, so the update re-resolves to the SAME tag --
+	// req-lk-010 requires the download path to rerun anyway.
+	deps := &installDeps{
+		tags: &mockInstallTagLister{tags: map[string][]semver.TagInfo{
+			"acme/a": {{Name: "v1.0.0"}},
+		}},
+		loader: &mockInstallLoader{},
+	}
+
+	markerPath := filepath.Join("apm_modules", "acme", "a", "marker.txt")
+	os.MkdirAll(filepath.Dir(markerPath), 0755)
+	os.WriteFile(markerPath, []byte("stale content from before"), 0644)
+
+	if err := runUpdate(deps, false, false, ""); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Errorf("expected apm_modules/acme/a (dev dependency) to be cleared before re-resolution (req-lk-010), marker still present (stat err: %v)", err)
+	}
+}
+
 // TestRunUpdate_RefusesVirtualPathEscapingApmModules guards the purge path
 // in directGitSemverUpdateScope/runUpdate: virtual_path is only charset
 // validated at parse time (unlike local-path deps, which reject ".."
@@ -273,6 +311,38 @@ func TestRunUpdate_RefusesParentSegmentStayingInsideApmModules(t *testing.T) {
 	}
 	if _, statErr := os.Stat(siblingMarker); statErr != nil {
 		t.Errorf("sibling package under apm_modules must survive: %v", statErr)
+	}
+}
+
+// TestRunUpdate_RegistryDevDependency_RequiresExperimentalFlag proves the
+// registries-experimental gate in runUpdate (which explicitly documents
+// itself as "mirrors runInstall's gate") also scans devDependencies.apm, not
+// just dependencies.apm -- a registry-sourced dev dependency must still be
+// refused pre-network when the "registries" experimental flag isn't
+// enabled, exactly like a registry-sourced prod dependency.
+func TestRunUpdate_RegistryDevDependency_RequiresExperimentalFlag(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	// Isolated config dir, guaranteed to have the "registries" experimental
+	// flag disabled (default off) -- proves the gate actually runs, rather
+	// than relying on the ambient environment.
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+
+	os.WriteFile("apm.yml", []byte(
+		"name: test\nversion: \"1.0.0\"\nregistries:\n  local:\n    url: http://127.0.0.1:1\n  default: local\n"+
+			"devDependencies:\n  apm:\n    - id: acme/sample\n      version: 1.0.0\n"), 0644)
+	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"2\"\ndependencies:\n  - repo_url: acme/sample\n    source: registry\n    version: 1.0.0\n    depth: 1\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	err := runUpdate(deps, false, false, "")
+	if err == nil {
+		t.Fatal("expected an error for a registry-sourced devDependencies.apm entry without the registries experimental flag enabled")
+	}
+	if !strings.Contains(err.Error(), "experimental feature") {
+		t.Errorf("expected the registries-experimental-gate error (gate likely skipped the dev dependency and hit a different failure instead), got: %v", err)
 	}
 }
 

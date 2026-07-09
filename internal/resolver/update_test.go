@@ -117,3 +117,41 @@ func TestPlanScopedUpdate_PackageNotFound(t *testing.T) {
 		t.Errorf("error should mention not found: %v", err)
 	}
 }
+
+// TestPlanScopedUpdate_DevDependencyFound is the F3-adjacent decision test
+// for `apm update <pkg>`: Python's update.py resolves the positional package
+// argument against apm_deps + dev_apm_deps (both regular and dev), so a
+// hand-authored devDependencies.apm entry must be a valid scoped-update
+// target too, not rejected as "not found in manifest".
+func TestPlanScopedUpdate_DevDependencyFound(t *testing.T) {
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/b": makeTags("v1.2.0", "v1.9.0"),
+	}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/b@v1.9.0": makeManifest("b"),
+	}}
+	lock := &lockfile.Lockfile{
+		Version: "1",
+		Dependencies: []lockfile.LockedDep{
+			{RepoURL: "acme/b", Constraint: "^1.0.0", ResolvedTag: "v1.2.0"},
+		},
+	}
+
+	root := makeManifestWithDev("root", nil, []*manifest.DependencyReference{makeDep("acme/b", "^1.0.0")})
+	result, err := PlanScopedUpdate(root, lock, tags, loader, ResolverConfig{}, "acme/b", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var bDep *ResolvedDep
+	for i := range result.Deps {
+		if result.Deps[i].Key == "acme/b" {
+			bDep = &result.Deps[i]
+		}
+	}
+	if bDep == nil {
+		t.Fatal("acme/b (dev dependency) not found in scoped update result")
+	}
+	if bDep.ResolvedTag != "v1.9.0" {
+		t.Errorf("dev dep acme/b should be re-resolved to v1.9.0, got %q", bDep.ResolvedTag)
+	}
+}
