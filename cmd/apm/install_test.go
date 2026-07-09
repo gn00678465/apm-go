@@ -209,6 +209,120 @@ func TestRunInstall_PositionalDedup_TrueDuplicateStillSkipped(t *testing.T) {
 	}
 }
 
+// TestRunInstall_RefusesHTTPDependency_Positional is the P0 security
+// regression test: `apm-go install http://...` used to proceed straight to
+// git clone with no policy gate. It must now refuse before any clone is
+// attempted (spy.calls stays empty) and name the offending dependency plus
+// the --allow-insecure remediation.
+func TestRunInstall_RefusesHTTPDependency_Positional(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	spy := &spyLoader{}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
+	err := runInstall(deps, false, true, "", nil, []string{"http://example.com/owner/repo.git"})
+	if err == nil {
+		t.Fatal("expected error for http:// dependency without --allow-insecure, got nil")
+	}
+	if !strings.Contains(err.Error(), "http://example.com/owner/repo") {
+		t.Errorf("error should name the offending dependency, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--allow-insecure") {
+		t.Errorf("error should point at the --allow-insecure remediation, got: %v", err)
+	}
+	if len(spy.calls) != 0 {
+		t.Errorf("expected zero LoadPackage (clone) calls before the refusal, got %d", len(spy.calls))
+	}
+}
+
+// TestRunInstall_RefusesHTTPDependency_FromManifest proves the same gate
+// applies to a dependencies.apm entry already declared in apm.yml, not just a
+// CLI positional package.
+func TestRunInstall_RefusesHTTPDependency_FromManifest(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: http://example.com/owner/repo\n"), 0644)
+
+	spy := &spyLoader{}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
+	err := runInstall(deps, false, true, "", nil, nil)
+	if err == nil {
+		t.Fatal("expected error for http:// dependency declared in apm.yml without --allow-insecure, got nil")
+	}
+	if !strings.Contains(err.Error(), "--allow-insecure") {
+		t.Errorf("error should point at the --allow-insecure remediation, got: %v", err)
+	}
+	if len(spy.calls) != 0 {
+		t.Errorf("expected zero LoadPackage (clone) calls before the refusal, got %d", len(spy.calls))
+	}
+}
+
+// TestRunInstall_AllowInsecureFlag_PermitsHTTPDependency proves
+// installDeps.allowInsecure (wired from the --allow-insecure CLI flag) lets
+// an http:// dependency to a public host proceed past the policy gate.
+func TestRunInstall_AllowInsecureFlag_PermitsHTTPDependency(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	spy := &spyLoader{}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy, allowInsecure: true}
+	err := runInstall(deps, false, true, "", nil, []string{"http://example.com/owner/repo.git"})
+	if err != nil && strings.Contains(err.Error(), "HTTP dependency (unencrypted)") {
+		t.Fatalf("--allow-insecure should have permitted the http:// dependency, got refusal: %v", err)
+	}
+	if len(spy.calls) == 0 {
+		t.Error("expected the install to proceed to LoadPackage once --allow-insecure permitted the http:// dependency")
+	}
+}
+
+// TestRunInstall_LoopbackHTTPDependency_AlsoRefusedWithoutFlag mirrors the
+// Python reference implementation's flag-only gate: there is NO host
+// exemption, so even a loopback host's http:// dependency is refused without
+// --allow-insecure -- and permitted with it.
+func TestRunInstall_LoopbackHTTPDependency_AlsoRefusedWithoutFlag(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	spy := &spyLoader{}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
+	err := runInstall(deps, false, true, "", nil, []string{"http://127.0.0.1/owner/repo.git"})
+	if err == nil {
+		t.Fatal("expected refusal for loopback http:// dependency without --allow-insecure (no host exemption, Python parity)")
+	}
+	if !strings.Contains(err.Error(), "--allow-insecure") {
+		t.Errorf("error should point at the --allow-insecure remediation, got: %v", err)
+	}
+	if len(spy.calls) != 0 {
+		t.Errorf("expected zero LoadPackage (clone) calls before the refusal, got %d", len(spy.calls))
+	}
+
+	// With --allow-insecure the same loopback dependency proceeds to clone.
+	spy2 := &spyLoader{}
+	deps2 := &installDeps{tags: &mockInstallTagLister{}, loader: spy2, allowInsecure: true}
+	err = runInstall(deps2, false, true, "", nil, []string{"http://127.0.0.1/owner/repo.git"})
+	if err != nil && strings.Contains(err.Error(), "HTTP dependency (unencrypted)") {
+		t.Fatalf("--allow-insecure should have permitted the loopback http:// dependency, got refusal: %v", err)
+	}
+	if len(spy2.calls) == 0 {
+		t.Error("expected the install to proceed to LoadPackage once --allow-insecure permitted the loopback http:// dependency")
+	}
+}
+
 // TestBuildLockfile_SkillSubsetScopedToRequestedDep is a regression test: the
 // skill_subset field used to be stamped onto every dependency in the
 // resolved graph whenever any --skill flag was combined with any positional

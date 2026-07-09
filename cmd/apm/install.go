@@ -33,6 +33,9 @@ type installDeps struct {
 	// defaults (100 MB / 10,000) inside internal/archive.
 	maxEntries      int
 	maxArchiveBytes int64
+	// allowInsecure permits non-TLS http:// git dependencies (--allow-insecure).
+	// Zero value (false) is fail-secure: refuse by default.
+	allowInsecure bool
 }
 
 func installCmd() *cobra.Command {
@@ -50,6 +53,7 @@ func installCmd() *cobra.Command {
 	var mcpVersion string
 	var mcpRegistry string
 	var mcpForce bool
+	var allowInsecure bool
 
 	cmd := &cobra.Command{
 		Use:   "install [packages...]",
@@ -123,6 +127,7 @@ func installCmd() *cobra.Command {
 				},
 				maxEntries:      maxEntries,
 				maxArchiveBytes: maxArchiveBytes,
+				allowInsecure:   allowInsecure,
 			}
 			return runInstall(deps, frozen, noProvenance, targetFlag, skillFlags, args)
 		},
@@ -142,6 +147,7 @@ func installCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mcpVersion, "mcp-version", "", "pin the MCP registry entry to a specific version (requires --mcp)")
 	cmd.Flags().StringVar(&mcpRegistry, "registry", "", "MCP registry URL for resolving --mcp NAME (requires --mcp; not valid with --url or a stdio command)")
 	cmd.Flags().BoolVar(&mcpForce, "force", false, "overwrite a conflicting existing --mcp entry non-interactively")
+	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "permit direct http:// (non-TLS) dependencies")
 
 	return cmd
 }
@@ -257,6 +263,18 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 				continue
 			}
 			m.ParsedDeps = append(m.ParsedDeps, ref)
+		}
+	}
+
+	// 1c. HTTP dependency policy: refuse non-TLS http:// git dependencies by
+	// default -- both the CLI positional packages just merged into
+	// m.ParsedDeps above and pre-existing apm.yml dependencies.apm entries --
+	// unless --allow-insecure was passed. Flag-only, no host exemption
+	// (Python parity: insecure_policy.py's _check_insecure_dependencies).
+	// Must run before any git clone / network fetch (step 4 below).
+	for _, dep := range m.ParsedDeps {
+		if err := manifest.CheckInsecureDependencyScheme(dep, deps.allowInsecure, m.DefaultHost); err != nil {
+			return err
 		}
 	}
 
