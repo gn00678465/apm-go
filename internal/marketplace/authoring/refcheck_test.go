@@ -284,6 +284,72 @@ func TestCheckPackages_AggregatesEveryPackageIndependently(t *testing.T) {
 	}
 }
 
+// ── duplicate package name warning (C6, non-fatal) ───────────────────────
+//
+// Mirrors Python's commands/marketplace/check.py:_warn_duplicate_names
+// (__init__.py:170-184): two packages whose names collide
+// case-insensitively is a WARNING, never a hard error -- `check`'s exit
+// code is still driven solely by resolvable/unresolvable refs.
+
+func TestDuplicatePackageNames_CaseDifferingCollision_ReturnsWarning(t *testing.T) {
+	// Arrange
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "Foo-Tool", Source: "./pkgs/a"},
+		{Name: "foo-tool", Source: "./pkgs/b"},
+	}}
+
+	// Act
+	warnings := DuplicatePackageNames(cfg)
+
+	// Assert
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want exactly 1", warnings)
+	}
+	// Names the *later* (colliding) occurrence's own name, per Python's
+	// f"Duplicate package name '{entry.name}' ..." (entry is packages[idx],
+	// not the earlier packages[seen[lower]]).
+	if !strings.Contains(warnings[0], "foo-tool") {
+		t.Errorf("warning = %q, want it to name the colliding occurrence %q", warnings[0], "foo-tool")
+	}
+	if !strings.Contains(warnings[0], "packages[0]") || !strings.Contains(warnings[0], "packages[1]") {
+		t.Errorf("warning = %q, want it to reference both package indices", warnings[0])
+	}
+}
+
+func TestDuplicatePackageNames_UniqueNames_NoWarnings(t *testing.T) {
+	// Arrange
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "tool-a", Source: "./pkgs/a"},
+		{Name: "tool-b", Source: "./pkgs/b"},
+	}}
+
+	// Act
+	warnings := DuplicatePackageNames(cfg)
+
+	// Assert
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none for unique names", warnings)
+	}
+}
+
+func TestDuplicatePackageNames_ThreeWayCollision_ReportsEachAdditionalOccurrence(t *testing.T) {
+	// Arrange: mirrors Python's per-occurrence reporting (each repeat after
+	// the first names the earlier index it collided with).
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "dup", Source: "./pkgs/a"},
+		{Name: "dup", Source: "./pkgs/b"},
+		{Name: "dup", Source: "./pkgs/c"},
+	}}
+
+	// Act
+	warnings := DuplicatePackageNames(cfg)
+
+	// Assert
+	if len(warnings) != 2 {
+		t.Fatalf("warnings = %v, want 2 (one per additional occurrence)", warnings)
+	}
+}
+
 // ── resolveCloneURL / parseRefsOutput unit coverage ──────────────────────
 
 func TestResolveCloneURL(t *testing.T) {

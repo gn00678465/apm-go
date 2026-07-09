@@ -690,6 +690,65 @@ func TestMarketplaceCheck_VerbosePrintsEveryPackage(t *testing.T) {
 	}
 }
 
+// TestMarketplaceCheck_DuplicatePackageNames_WarnsButExitsZero covers C6:
+// two local packages whose names collide case-insensitively must produce a
+// non-fatal warning naming the duplicate, while `check` still exits 0
+// because every ref/version is otherwise resolvable (both are local, so
+// nothing needs network verification at all) -- mirrors Python's
+// commands/marketplace/check.py:_warn_duplicate_names, which runs
+// unconditionally before the resolution loop and never touches
+// failure_count.
+func TestMarketplaceCheck_DuplicatePackageNames_WarnsButExitsZero(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n" +
+		"  packages:\n" +
+		"    - name: Foo-Tool\n      source: ./pkgs/a\n" +
+		"    - name: foo-tool\n      source: ./pkgs/b\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "check")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace check returned an error for a duplicate-name-only issue, want exit 0: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(strings.ToLower(out), "duplicate package name") {
+		t.Errorf("output = %q, want a duplicate package name warning", out)
+	}
+}
+
+// TestMarketplaceCheck_UniqueNames_NoDuplicateWarning is the negative
+// counterpart: a config with unique package names must produce no
+// duplicate-name warning at all.
+func TestMarketplaceCheck_UniqueNames_NoDuplicateWarning(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n" +
+		"  packages:\n" +
+		"    - name: tool-a\n      source: ./pkgs/a\n" +
+		"    - name: tool-b\n      source: ./pkgs/b\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "check")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace check returned an unexpected error: %v (output: %s)", err, out)
+	}
+	if strings.Contains(strings.ToLower(out), "duplicate") {
+		t.Errorf("output = %q, want no duplicate-name warning for unique names", out)
+	}
+}
+
 // ── `outdated` (mkt-042 修訂版) ──────────────────────────────────────────
 
 func TestMarketplaceOutdatedCmd_FlagsWired(t *testing.T) {

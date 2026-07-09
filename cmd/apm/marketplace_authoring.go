@@ -258,6 +258,15 @@ func marketplaceCheckCmd() *cobra.Command {
 				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
+			// C6 (defence-in-depth, mirrors Python's
+			// _warn_duplicate_names): a case-insensitive duplicate package
+			// name is a non-fatal warning, never a check failure -- printed
+			// unconditionally before ref/version resolution, and never
+			// contributing to `failed` below.
+			for _, w := range authoring.DuplicatePackageNames(cfg) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+			}
+
 			results := authoring.CheckPackages(cfg, authoring.DefaultRefLister, offline)
 			w := cmd.OutOrStdout()
 			failed := 0

@@ -188,6 +188,32 @@ func checkPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offl
 	return nil
 }
 
+// DuplicatePackageNames implements mkt-041's non-fatal duplicate-package-
+// name diagnostic (Python's commands/marketplace/check.py's
+// _warn_duplicate_names, __init__.py:170-184): every package after the
+// first whose name collides with an earlier one case-insensitively
+// produces one warning message naming both 0-based package indices.
+// Callers must treat these as WARNING-ONLY -- they must never affect
+// `check`'s exit code, only its diagnostic output (Python: the equivalent
+// yml_schema-level rejection is a *separate*, stricter parse-time check;
+// this one is deliberately "defence-in-depth" and non-fatal).
+func DuplicatePackageNames(cfg *AuthoringConfig) []string {
+	var warnings []string
+	seen := make(map[string]int, len(cfg.Packages))
+	for idx, pkg := range cfg.Packages {
+		lower := strings.ToLower(pkg.Name)
+		if firstIdx, ok := seen[lower]; ok {
+			warnings = append(warnings, fmt.Sprintf(
+				"duplicate package name %q (packages[%d] and packages[%d]); consumers will see duplicate entries in browse",
+				pkg.Name, firstIdx, idx,
+			))
+			continue
+		}
+		seen[lower] = idx
+	}
+	return warnings
+}
+
 func hasRefNamed(refs []semver.TagInfo, name string) bool {
 	for _, r := range refs {
 		if r.Name == name {
