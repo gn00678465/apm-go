@@ -120,7 +120,8 @@ type seqRemovalPlan struct {
 // planSequenceRemoval walks path (e.g. ["dependencies","apm"]) within root,
 // parses each of its entries into a DependencyReference (reusing the same
 // dict/string parsers validateDepBlock's "apm" branch uses), and collects
-// the indices whose IdentityKey() is in identities -- marking each matched
+// the indices whose IdentityKey() (or, for a local-path entry, the synthetic
+// "local:<path>" key) is in identities -- marking each matched
 // identity as found in removed. Returns nil when the sequence doesn't
 // exist, isn't a block-style sequence, or has no matches (nothing to do).
 func planSequenceRemoval(root *yaml.Node, path []string, identities map[string]bool, removed map[string]bool) *seqRemovalPlan {
@@ -144,6 +145,14 @@ func planSequenceRemoval(root *yaml.Node, path []string, identities map[string]b
 					continue
 				}
 				idKey := ref.IdentityKey()
+				if idKey == "" && ref.IsLocal {
+					// A local-path entry deliberately has no IdentityKey()
+					// (matching deploy.DepRefKey). Mirror cmd/apm's
+					// uninstallIdentity synthetic "local:<path>" key so a
+					// caller can still name a local dependency for removal
+					// (ag-23).
+					idKey = "local:" + ref.LocalPath
+				}
 				if idKey == "" || !identities[idKey] {
 					continue
 				}

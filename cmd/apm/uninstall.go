@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	yamllib "go.yaml.in/yaml/v4"
 
@@ -96,6 +97,14 @@ func runUninstall(args []string, opts uninstallOptions) error {
 type uninstallPlan struct {
 	resolution        *uninstallResolution
 	removedIdentities map[string]bool
+	// removedModuleKeys is removedIdentities translated through
+	// uninstallRemovalKey into the apm.lock.yaml / apm_modules key space --
+	// identical for git/marketplace targets, "_local/<base>-<sha8>" for
+	// local-path targets. Everything that touches the lockfile or
+	// apm_modules must use this set; removedIdentities stays in
+	// uninstallIdentity's matching space for the apm.yml splice and the
+	// remaining-roots filter.
+	removedModuleKeys map[string]bool
 	mcpNames          map[string]bool
 	orphans           map[string]bool
 	allRemovalKeys    map[string]bool
@@ -116,8 +125,10 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	resolution := resolveUninstallTargets(args, m, lock, defaultMarketplaceRegistryResolver, dryRun)
 
 	removedIdentities := make(map[string]bool, len(resolution.APMTargets))
+	removedModuleKeys := make(map[string]bool, len(resolution.APMTargets))
 	for _, t := range resolution.APMTargets {
 		removedIdentities[t.IdentityKey] = true
+		removedModuleKeys[uninstallRemovalKey(t.IdentityKey)] = true
 	}
 	mcpNames := make(map[string]bool, len(resolution.MCPTargets))
 	for _, t := range resolution.MCPTargets {
@@ -125,7 +136,7 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	}
 
 	remainingRootKeys := uninstallRemainingRootKeys(m, removedIdentities)
-	orphans := resolver.ActualOrphans(lock, removedIdentities, remainingRootKeys)
+	orphans := resolver.ActualOrphans(lock, removedModuleKeys, remainingRootKeys)
 
 	// CRITICAL #1 fix (applied here so --dry-run's preview matches the real
 	// run): resolver.ActualOrphans walks LockedDep.ResolvedBy, a single-parent
@@ -141,8 +152,8 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 		}
 	}
 
-	allRemovalKeys := make(map[string]bool, len(removedIdentities)+len(orphans))
-	for k := range removedIdentities {
+	allRemovalKeys := make(map[string]bool, len(removedModuleKeys)+len(orphans))
+	for k := range removedModuleKeys {
 		allRemovalKeys[k] = true
 	}
 	for k := range orphans {
@@ -152,10 +163,32 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	return &uninstallPlan{
 		resolution:        resolution,
 		removedIdentities: removedIdentities,
+		removedModuleKeys: removedModuleKeys,
 		mcpNames:          mcpNames,
 		orphans:           orphans,
 		allRemovalKeys:    allRemovalKeys,
 	}
+}
+
+// uninstallRemovalKey translates a matched target's identity key (the
+// uninstallIdentity space used to MATCH a PACKAGE argument against apm.yml)
+// into the key space apm.lock.yaml and apm_modules actually use (ag-23
+// defect fix). Git and marketplace identities already ARE that key space and
+// pass through unchanged. A local-path dependency's synthetic
+// "local:<path>" matching key has no on-disk counterpart: install
+// (install.go's normalizeLocalDep) materializes the package under
+// localModulesKey(resolveLocalSourceAbs(path)) == "_local/<base>-<sha8>"
+// and records that same key as the lockfile repo_url -- so THAT is the key
+// SafeRemoveModuleDir, lock.RemoveKeys, and the deployed-provenance lookup
+// must receive. A relative path resolves against cwd, which is the project
+// root throughout runUninstall exactly as it was throughout runInstall, so
+// the same source path always re-derives the same key install produced.
+func uninstallRemovalKey(identity string) string {
+	path, isLocal := strings.CutPrefix(identity, "local:")
+	if !isLocal {
+		return identity
+	}
+	return localModulesKey(resolveLocalSourceAbs(path))
 }
 
 // applyUninstallPlan performs every actual write for a non-dry-run uninstall:
@@ -196,8 +229,8 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		}
 	}
 
-	allRemovalKeys := make(map[string]bool, len(plan.removedIdentities)+len(orphans))
-	for k := range plan.removedIdentities {
+	allRemovalKeys := make(map[string]bool, len(plan.removedModuleKeys)+len(orphans))
+	for k := range plan.removedModuleKeys {
 		allRemovalKeys[k] = true
 	}
 	for k := range orphans {

@@ -944,3 +944,153 @@ func TestUninstallCmd_RequiresAtLeastOnePackage(t *testing.T) {
 		t.Fatal("expected an error when no PACKAGE arguments are given")
 	}
 }
+
+// TestPrepareUninstallPlan_LocalDepRemovalKeysUseModulesKey is the ag-23
+// defect's plan-level regression: a local-path dependency matches by
+// uninstallIdentity's synthetic "local:<path>" key, but install
+// (normalizeLocalDep) materializes it under apm_modules/_local/<base>-<sha8>
+// and records that same "_local/..." key as the lockfile repo_url -- so the
+// REMOVAL key space must carry the translated modules key, or every lockfile
+// lookup misses and SafeRemoveModuleDir is handed an invalid
+// "apm_modules/local:./..." path.
+func TestPrepareUninstallPlan_LocalDepRemovalKeysUseModulesKey(t *testing.T) {
+	chdirTemp(t)
+
+	localKey := localModulesKey(resolveLocalSourceAbs("./dep-pkg"))
+	m := &manifest.Manifest{
+		ParsedDeps: []*manifest.DependencyReference{
+			{IsLocal: true, LocalPath: "./dep-pkg", Source: "local"},
+		},
+	}
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{
+			{
+				RepoURL:        localKey,
+				Source:         "git",
+				DeployedFiles:  []string{".agents/agents/depagent/agent.md"},
+				DeployedHashes: map[string]string{".agents/agents/depagent/agent.md": "sha256:0000"},
+			},
+		},
+	}
+
+	plan := prepareUninstallPlan([]string{"./dep-pkg"}, m, lock, false)
+
+	if len(plan.resolution.APMTargets) != 1 {
+		t.Fatalf("expected the local dep to match, got %+v", plan.resolution)
+	}
+	if !plan.allRemovalKeys[localKey] {
+		t.Errorf("expected removal keys to contain modules key %q, got %v", localKey, plan.allRemovalKeys)
+	}
+	if plan.allRemovalKeys["local:./dep-pkg"] {
+		t.Errorf("expected the synthetic matching key to stay out of the removal key space, got %v", plan.allRemovalKeys)
+	}
+
+	files, _ := collectUninstallDeployedProvenance(lock, plan.allRemovalKeys)
+	if len(files) != 1 || files[0] != ".agents/agents/depagent/agent.md" {
+		t.Errorf("expected deployed provenance to be found via the modules key, got %v", files)
+	}
+}
+
+// TestRunUninstall_LocalPathDependencyRemovesModulesLockAndDeployedFiles is
+// the ag-23 end-to-end round trip against constructed post-install state:
+// apm.yml declares "- ./dep-pkg", the lockfile keys it as
+// "_local/dep-pkg-<sha8>", and its deployed antigravity agent file exists on
+// disk. Uninstalling "./dep-pkg" must remove the deployed file (pruning the
+// now-empty per-agent directory), the apm_modules/_local/... checkout, the
+// lockfile entry, and the apm.yml entry -- while a sibling agent file and an
+// unrelated git dependency survive untouched.
+func TestRunUninstall_LocalPathDependencyRemovesModulesLockAndDeployedFiles(t *testing.T) {
+	dir := chdirTemp(t)
+
+	manifestYAML := "name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/other\n    - ./dep-pkg\n"
+	if err := os.WriteFile("apm.yml", []byte(manifestYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// The local source directory itself (never touched by uninstall).
+	if err := os.MkdirAll(filepath.Join(dir, "dep-pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dep-pkg", "apm.yml"), []byte("name: dep-pkg\nversion: \"1.0.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	localKey := localModulesKey(resolveLocalSourceAbs("./dep-pkg"))
+	localModuleDir := filepath.Join(dir, "apm_modules", filepath.FromSlash(localKey))
+	if err := os.MkdirAll(localModuleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localModuleDir, "apm.yml"), []byte("name: dep-pkg\nversion: \"1.0.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherModuleDir := filepath.Join(dir, "apm_modules", "acme", "other")
+	if err := os.MkdirAll(otherModuleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(otherModuleDir, "apm.yml"), []byte("name: other\nversion: \"1.0.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agentHash := writeUninstallDeployedFile(t, dir, ".agents/agents/depagent/agent.md", "dep agent")
+	// Sibling agent, not owned by the removed dep -- must survive, and must
+	// keep .agents/agents/ itself from being pruned.
+	writeUninstallDeployedFile(t, dir, ".agents/agents/reviewer/agent.md", "reviewer agent")
+
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{
+			{RepoURL: "acme/other", Source: "git"},
+			{
+				RepoURL:        localKey,
+				Source:         "git",
+				DeployedFiles:  []string{".agents/agents/depagent/agent.md"},
+				DeployedHashes: map[string]string{".agents/agents/depagent/agent.md": agentHash},
+			},
+		},
+	}
+	writeUninstallLockfileFixture(t, lock)
+
+	if err := runUninstall([]string{"./dep-pkg"}, uninstallOptions{}); err != nil {
+		t.Fatalf("runUninstall: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "agents", "depagent")); !os.IsNotExist(err) {
+		t.Errorf("expected deployed agent file and its now-empty directory to be removed, stat err=%v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, ".agents", "agents", "reviewer", "agent.md")); err != nil || string(got) != "reviewer agent" {
+		t.Errorf("expected sibling agent to survive untouched, got=%q err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "_local")); !os.IsNotExist(err) {
+		t.Errorf("expected apm_modules/_local (now empty) to be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(otherModuleDir, "apm.yml")); err != nil {
+		t.Errorf("expected apm_modules/acme/other to survive, stat err=%v", err)
+	}
+
+	lockData, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatalf("expected apm.lock.yaml to survive (acme/other still locked): %v", err)
+	}
+	lockNode, err := yamlcore.SafeLoad(lockData)
+	if err != nil {
+		t.Fatalf("parse surviving lockfile: %v", err)
+	}
+	survived, err := lockfile.ParseLockfile(lockNode)
+	if err != nil {
+		t.Fatalf("validate surviving lockfile: %v", err)
+	}
+	if survived.FindByKey(localKey) != nil {
+		t.Errorf("expected lockfile entry %q to be removed", localKey)
+	}
+	if survived.FindByKey("acme/other") == nil {
+		t.Error("expected lockfile entry acme/other to survive")
+	}
+
+	fx := readManifestParsed(t)
+	if len(fx.ParsedDeps) != 1 || fx.ParsedDeps[0].RepoURL != "acme/other" {
+		t.Errorf("expected apm.yml to keep only acme/other, got %+v", fx.ParsedDeps)
+	}
+	for _, d := range fx.ParsedDeps {
+		if d.IsLocal {
+			t.Errorf("expected the local apm.yml entry to be removed, got %+v", d)
+		}
+	}
+}

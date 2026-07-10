@@ -105,6 +105,34 @@ func TestRemovePackagesFromManifest_IgnoresRefAndAlias_ForIdentityMatch(t *testi
 	}
 }
 
+// TestRemovePackagesFromManifest_LocalPathEntry_MatchesSyntheticLocalKey:
+// a local-path entry has no IdentityKey() (deliberately), so removal is
+// keyed on the synthetic "local:<path>" identity cmd/apm's uninstallIdentity
+// produces (ag-23 -- without this, `apm-go uninstall ./dep-pkg` could never
+// splice the entry out of apm.yml).
+func TestRemovePackagesFromManifest_LocalPathEntry_MatchesSyntheticLocalKey(t *testing.T) {
+	fixture := "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/foo\n    - ./dep-pkg\n"
+	doc, src := mustLoadManifestFixture(t, fixture)
+
+	out, removed, err := RemovePackagesFromManifest(src, doc, map[string]bool{"local:./dep-pkg": true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !removed["local:./dep-pkg"] {
+		t.Errorf("expected local:./dep-pkg to be reported as removed, got %v", removed)
+	}
+	outStr := string(out)
+	if strings.Contains(outStr, "./dep-pkg") {
+		t.Errorf("./dep-pkg should have been removed:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "acme/foo") {
+		t.Errorf("untouched entry acme/foo should survive:\n%s", outStr)
+	}
+	if _, err := yamlcore.SafeLoad(out); err != nil {
+		t.Fatalf("output does not parse: %v", err)
+	}
+}
+
 func TestRemovePackagesFromManifest_MultipleIndices_RemovesAllInOnePass(t *testing.T) {
 	doc, src := mustLoadManifestFixture(t, uninstallManifestFixture)
 
