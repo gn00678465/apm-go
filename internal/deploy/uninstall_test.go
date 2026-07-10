@@ -219,6 +219,39 @@ func TestRemoveDeployedFiles_StopsCleanupWhenSiblingRemains(t *testing.T) {
 	}
 }
 
+func TestRemoveDeployedFiles_AntigravityAgentDirPrunedSiblingSurvives(t *testing.T) {
+	// Lifecycle regression for the antigravity agents primitive
+	// (.agents/agents/<name>/agent.md): uninstall's reverse-clean is generic
+	// over the lockfile's deployed_files/deployed_file_hashes, so the new
+	// per-agent-directory path must behave exactly like existing primitives --
+	// the file is removed, its now-empty per-agent directory is pruned by
+	// cleanupEmptyParents, and a sibling agent deployed by another package
+	// survives along with the shared .agents/agents/ root.
+	dir := t.TempDir()
+	removedRel := ".agents/agents/reviewer/agent.md"
+	hash := writeDeployedFile(t, dir, removedRel, "reviewer agent body")
+	siblingRel := ".agents/agents/helper/agent.md"
+	writeDeployedFile(t, dir, siblingRel, "helper agent body")
+
+	removed, kept, diags := RemoveDeployedFiles(dir, []string{removedRel}, map[string]string{removedRel: hash})
+
+	if len(kept) != 0 || len(diags) != 0 {
+		t.Fatalf("expected clean removal, kept=%v diags=%v", kept, diags)
+	}
+	if len(removed) != 1 || removed[0] != removedRel {
+		t.Fatalf("expected removed=[%s], got %v", removedRel, removed)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "agents", "reviewer")); !os.IsNotExist(err) {
+		t.Fatalf("expected empty per-agent dir to be pruned, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(siblingRel))); err != nil {
+		t.Fatalf("expected sibling agent to survive, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "agents")); err != nil {
+		t.Fatalf("expected shared .agents/agents/ root to survive, stat err=%v", err)
+	}
+}
+
 func TestRemoveDeployedFiles_TargetIsDirectoryIsKept(t *testing.T) {
 	// Defensive case: deployed_files entries should always be regular files,
 	// but if a directory ever ends up at that path (stale/corrupted

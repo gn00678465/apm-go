@@ -3,6 +3,7 @@ package deploy
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -437,6 +438,115 @@ func TestDeployAntigravity_OracleMatch(t *testing.T) {
 		if !expected[f] {
 			t.Errorf("unexpected: %s", f)
 		}
+	}
+}
+
+// TestDeployAntigravity_AgentsPerAgentDirectory locks the antigravity agents
+// primitive mapping: .agents/agents/<name>/agent.md -- the static agent.md
+// format Antigravity CLI >=1.0.16 scans (research/cli-subagents.md). Unlike
+// claude's flat .claude/agents/<name>.md, each agent gets its own directory
+// named after the agent, with the file inside always called agent.md. The
+// content is a byte-copy of the source (no frontmatter transform), matching
+// the adapter-wide convention. This mapping is an apm-go documented extension
+// ahead of the Python upstream (prd.md decision 2026-07-10).
+func TestDeployAntigravity_AgentsPerAgentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	const src = "---\nname: reviewer\ndescription: Reviews diffs.\n---\nYou are a reviewer.\n"
+	mkFile(t, dir, ".apm/agents/reviewer.agent.md", src)
+
+	prims := CollectLocalPrimitives(dir)
+	agent := findByType(prims, TypeAgents)
+	if agent == nil {
+		t.Fatal("no agents primitive collected")
+	}
+
+	adapter := &antigravityAdapter{}
+	files, err := adapter.DeployPrimitive(*agent, dir)
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+
+	want := ".agents/agents/reviewer/agent.md"
+	if len(files) != 1 || files[0] != want {
+		t.Fatalf("expected [%s], got %v", want, files)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(want)))
+	if err != nil {
+		t.Fatalf("deployed file missing: %v", err)
+	}
+	if string(got) != src {
+		t.Errorf("deployed content not byte-identical to source:\n got: %q\nwant: %q", got, src)
+	}
+}
+
+// TestRun_AgentSameNameCollision_FirstDeclaredWins locks the same-name agent
+// collision semantics for both per-name-path targets: two packages deploying
+// an identically-named agent are resolved BEFORE any adapter runs, by
+// ResolvePrimitives (conflict.go) -- same source class, first-declared wins
+// (req-pr-003) with a "shadowed by" diagnostic; the loser never reaches
+// DeployPrimitive, so exactly one write happens and the deployed file carries
+// the first-declared dependency's bytes. antigravity's per-agent directory
+// path (.agents/agents/<name>/agent.md) must match claude's flat path
+// (.claude/agents/<name>.md) semantics exactly.
+func TestRun_AgentSameNameCollision_FirstDeclaredWins(t *testing.T) {
+	tests := []struct {
+		target string
+		path   string
+	}{
+		{"claude", ".claude/agents/reviewer.md"},
+		{"antigravity", ".agents/agents/reviewer/agent.md"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.target, func(t *testing.T) {
+			dir := t.TempDir()
+			const firstContent = "first-declared agent body\n"
+			const secondContent = "second-declared agent body\n"
+			mkFile(t, filepath.Join(dir, "apm_modules", "acme", "first"),
+				".apm/agents/reviewer.agent.md", firstContent)
+			mkFile(t, filepath.Join(dir, "apm_modules", "acme", "second"),
+				".apm/agents/reviewer.agent.md", secondContent)
+
+			m := &manifest.Manifest{
+				Name:    "test",
+				Version: "1.0.0",
+				ParsedDeps: []*manifest.DependencyReference{
+					{RepoURL: "acme/first", Owner: "acme", Repo: "first", Source: "git"},
+					{RepoURL: "acme/second", Owner: "acme", Repo: "second", Source: "git"},
+				},
+			}
+
+			result, err := Run([]string{tt.target}, dir, m, nil, nil)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(tt.path)))
+			if err != nil {
+				t.Fatalf("expected deployed agent at %s: %v", tt.path, err)
+			}
+			if string(got) != firstContent {
+				t.Errorf("expected first-declared dependency's content at %s, got %q", tt.path, got)
+			}
+
+			// The deployed path is recorded against the FIRST dep only, so
+			// lockfile provenance (deployed_files) attributes it to the winner.
+			if dr := result.PerDep["acme/first"]; dr == nil || !slices.Contains(dr.Files, tt.path) {
+				t.Errorf("expected %s recorded under acme/first, got %+v", tt.path, result.PerDep["acme/first"])
+			}
+			if dr := result.PerDep["acme/second"]; dr != nil && slices.Contains(dr.Files, tt.path) {
+				t.Errorf("loser acme/second must not record %s, got %+v", tt.path, dr)
+			}
+
+			found := false
+			for _, d := range result.Diags {
+				if strings.Contains(d, `"reviewer"`) && strings.Contains(d, "first-declared wins") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected first-declared-wins diagnostic for agent %q, got %v", "reviewer", result.Diags)
+			}
+		})
 	}
 }
 
@@ -1138,7 +1248,7 @@ func TestNotDeployed_PerTarget(t *testing.T) {
 		{&claudeAdapter{}, []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands}, []PrimitiveType{TypePrompts, TypeHooks}},
 		{&codexAdapter{}, []PrimitiveType{TypeAgents, TypeSkills, TypeHooks}, []PrimitiveType{TypeInstructions, TypePrompts, TypeCommands}},
 		{&copilotAdapter{}, []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeSkills, TypeHooks}, []PrimitiveType{TypeCommands}},
-		{&antigravityAdapter{}, []PrimitiveType{TypeInstructions, TypeSkills, TypeHooks}, []PrimitiveType{TypeCommands, TypePrompts, TypeAgents}},
+		{&antigravityAdapter{}, []PrimitiveType{TypeInstructions, TypeSkills, TypeHooks, TypeAgents}, []PrimitiveType{TypeCommands, TypePrompts}},
 		{&opencodeAdapter{}, []PrimitiveType{TypeAgents, TypeCommands, TypeSkills}, []PrimitiveType{TypeInstructions, TypeHooks, TypePrompts}},
 		{&agentSkillsAdapter{}, []PrimitiveType{TypeSkills}, []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeCommands, TypeHooks}},
 	}
