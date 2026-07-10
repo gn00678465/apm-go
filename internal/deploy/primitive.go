@@ -149,12 +149,13 @@ func collectFromAPMDir(apmDir, source, depKey string) []Primitive {
 	return prims
 }
 
+// extractInstructionName only accepts *.instructions.md: the
+// .instructions.md naming and the applyTo frontmatter are one contract
+// (Python find_instruction_files globs *.instructions.md exclusively), so
+// plain .md files in .apm/instructions/ are NOT collected.
 func extractInstructionName(filename string) string {
 	if strings.HasSuffix(filename, ".instructions.md") {
 		return strings.TrimSuffix(filename, ".instructions.md")
-	}
-	if strings.HasSuffix(filename, ".md") {
-		return strings.TrimSuffix(filename, ".md")
 	}
 	return ""
 }

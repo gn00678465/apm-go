@@ -19,7 +19,7 @@ func (a *claudeAdapter) DeployPrimitive(p Primitive, projectDir string) ([]strin
 	case TypeSkills:
 		return deploySkillClaude(p, projectDir)
 	case TypeInstructions:
-		return deployFileToPath(p, fmt.Sprintf(".claude/rules/%s.md", p.Name), projectDir)
+		return deployClaudeInstructions(p, projectDir)
 	case TypeAgents:
 		return deployFileToPath(p, fmt.Sprintf(".claude/agents/%s.md", p.Name), projectDir)
 	case TypeCommands:
