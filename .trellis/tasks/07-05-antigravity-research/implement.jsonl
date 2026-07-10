@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/07-05-antigravity-research/research/cli-mcp.md", "reason": "serverUrl 定案(官方+binary 雙證據)、MCP schema 全表、mcp_antigravity.go 修改點"}
+{"file": ".trellis/tasks/07-05-antigravity-research/research/cli-subagents.md", "reason": "agent.md 靜態格式 schema、.agents/agents/<name>/agent.md 路徑、apm-go 映射建議與 caveats"}
+{"file": ".trellis/tasks/07-05-antigravity-research/research/cli-skills.md", "reason": "skills 部署驗證正確(無需修改)的依據、全域 root ~/.gemini/config/ 定案"}
+{"file": ".trellis/tasks/07-05-antigravity-research/research/cli-plugins.md", "reason": "plugins 另開 task 依據、agy plugin validate 作為 A/B 驗證管道"}
+{"file": ".trellis/tasks/07-05-antigravity-research/research/antigravity-settings.md", "reason": "2026-07-05 基線研究:Python/apm-go 兩側現況、explicit-only 依據、deploy_test 鎖定行為"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "backend 品質規範"}
