@@ -115,17 +115,23 @@ func ResolveTargets(flagTarget string, manifestTargets []string, projectDir stri
 	return nil, nil
 }
 
-// explicitOnlyTargets must never be activated by auto-detection (req-tg-001).
-// agent-skills is the only target the spec designates explicit-only;
-// antigravity DOES auto-detect via GEMINI.md/AGENTS.md (see
-// acceptance-checklist.md's research note -- an earlier companion-doc
-// assumption that it was explicit-only was incorrect).
+// explicitOnlyTargets must never be activated by auto-detection
+// (req-tg-001), nor be included in the "all" expansion. agent-skills is the
+// target the spec designates explicit-only. antigravity is explicit-only per
+// the user decision of 2026-07-05, aligning with Python apm_cli's
+// EXPLICIT_ONLY_TARGETS={"agent-skills","antigravity"}: its former detection
+// signals (GEMINI.md/AGENTS.md) are cross-tool files also read by
+// opencode/agent-skills tooling, so their presence must not auto-enable
+// antigravity. Select it via --target antigravity (alias agy) or apm.yml
+// target:. (This supersedes acceptance-checklist.md's earlier research note
+// that had antigravity auto-detecting.)
 var explicitOnlyTargets = map[string]bool{
 	"agent-skills": true,
+	"antigravity":  true,
 }
 
 func allAutoDetectableTargets() []string {
-	return []string{"claude", "codex", "copilot", "opencode", "antigravity"}
+	return []string{"claude", "codex", "copilot", "opencode"}
 }
 
 // filterExplicitOnly removes targets that require explicit --target selection.

@@ -18,6 +18,7 @@ var CanonicalTargets = map[string]bool{
 var TargetAliases = map[string]string{
 	"vscode": "copilot",
 	"agents": "copilot",
+	"agy":    "antigravity",
 }
 
 var SupportedTargets = []string{

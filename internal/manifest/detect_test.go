@@ -39,12 +39,18 @@ func TestDetectTargets_AllSignals(t *testing.T) {
 		{"copilot hooks dir alone does NOT trigger copilot", func(d string) {
 			os.MkdirAll(filepath.Join(d, ".github", "hooks"), 0755)
 		}, nil},
-		{"antigravity GEMINI.md", func(d string) {
+		// Explicit-only alignment (user decision 2026-07-05, matching Python
+		// EXPLICIT_ONLY_TARGETS={"agent-skills","antigravity"}): GEMINI.md
+		// and AGENTS.md are cross-tool files (also read by opencode and
+		// agent-skills tooling), so their presence must NOT auto-enable
+		// antigravity. Selection requires --target antigravity (alias agy)
+		// or apm.yml target:.
+		{"GEMINI.md alone does NOT trigger antigravity", func(d string) {
 			os.WriteFile(filepath.Join(d, "GEMINI.md"), []byte(""), 0644)
-		}, []string{"antigravity"}},
-		{"antigravity AGENTS.md", func(d string) {
+		}, nil},
+		{"AGENTS.md alone does NOT trigger antigravity", func(d string) {
 			os.WriteFile(filepath.Join(d, "AGENTS.md"), []byte(""), 0644)
-		}, []string{"antigravity"}},
+		}, nil},
 		{"no signals", func(d string) {}, nil},
 		{"bare .github dir does NOT trigger copilot", func(d string) {
 			os.MkdirAll(filepath.Join(d, ".github"), 0755)

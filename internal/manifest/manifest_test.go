@@ -307,6 +307,24 @@ func TestParseManifest_AliasNormalization(t *testing.T) {
 	}
 }
 
+func TestParseManifest_AgyAliasNormalization(t *testing.T) {
+	// Explicit-only alignment (Codex H2 audit): apm.yml target: agy must
+	// canonicalize to antigravity at parse time (parseTargetField ->
+	// ValidateTarget), otherwise the raw alias token would flow into
+	// deploy.ResolveTargets, where filterSupported silently drops it.
+	for _, form := range []string{"target: agy\n", "target: [agy]\n"} {
+		data := []byte("name: p\nversion: \"1.0.0\"\n" + form)
+		node, _ := yamlcore.SafeLoad(data)
+		m, _, err := ParseManifest(node)
+		if err != nil {
+			t.Fatalf("%q: unexpected error: %v", form, err)
+		}
+		if len(m.Target) != 1 || m.Target[0] != "antigravity" {
+			t.Errorf("%q: agy should normalize to antigravity, got %v", form, m.Target)
+		}
+	}
+}
+
 func TestParseManifest_HttpInsecureAccepted(t *testing.T) {
 	data := []byte("name: p\nversion: \"1.0.0\"\nregistries:\n  local:\n    url: http://192.168.1.1/r\n")
 	node, _ := yamlcore.SafeLoad(data)

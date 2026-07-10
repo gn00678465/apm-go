@@ -26,6 +26,7 @@ func TestValidateTarget(t *testing.T) {
 		// aliases
 		{"vscode", "copilot", ""},
 		{"agents", "copilot", ""},
+		{"agy", "antigravity", ""},
 
 		// x-vendor (tg-004)
 		{"x-acme-tool", "x-acme-tool", ""},

@@ -13,14 +13,18 @@ type TargetSignal struct {
 	Target string
 }
 
+// SignalWhitelist deliberately has NO antigravity entry: GEMINI.md and
+// AGENTS.md are cross-tool files (also read by opencode/agent-skills
+// tooling), so their presence must not auto-enable antigravity. It is
+// explicit-only (user decision 2026-07-05, aligning with Python apm_cli's
+// EXPLICIT_ONLY_TARGETS) -- select it via --target antigravity (alias agy)
+// or apm.yml target:.
 var SignalWhitelist = []TargetSignal{
 	{".claude/", true, "claude"},
 	{"CLAUDE.md", false, "claude"},
 	{".github/copilot-instructions.md", false, "copilot"},
 	{".codex/", true, "codex"},
 	{".opencode/", true, "opencode"},
-	{"GEMINI.md", false, "antigravity"},
-	{"AGENTS.md", false, "antigravity"},
 }
 
 func DetectTargets(projectDir string) []string {

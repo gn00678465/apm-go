@@ -8,6 +8,7 @@ import (
 
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 func TestResolveTargets_FlagOverrides(t *testing.T) {
@@ -22,23 +23,34 @@ func TestResolveTargets_FlagOverrides(t *testing.T) {
 	}
 }
 
-func TestResolveTargets_FlagAllIncludesAntigravity(t *testing.T) {
-	// antigravity auto-detects like any other non-explicit-only target (see
-	// TestResolveTargets_AntigravityAutoDetected), so --target all must
-	// include it too -- agent-skills remains the only true exclusion.
+func TestResolveTargets_FlagAllExcludesAntigravity(t *testing.T) {
+	// Explicit-only alignment (user decision 2026-07-05, matching Python
+	// EXPLICIT_ONLY_TARGETS={"agent-skills","antigravity"}): neither
+	// agent-skills nor antigravity may ride along on --target all.
 	dir := t.TempDir()
 	targets, _ := ResolveTargets("all", nil, dir)
-	found := false
 	for _, tgt := range targets {
 		if tgt == "antigravity" {
-			found = true
+			t.Error("antigravity must not be included by --target all (explicit-only)")
 		}
 		if tgt == "agent-skills" {
 			t.Error("agent-skills must not be included by --target all")
 		}
 	}
-	if !found {
-		t.Errorf("expected antigravity in --target all expansion, got %v", targets)
+}
+
+func TestResolveTargets_ManifestAllExcludesAntigravity(t *testing.T) {
+	// The apm.yml target: [all] expansion path must apply the same
+	// explicit-only exclusion as the --target all flag path.
+	dir := t.TempDir()
+	targets, _ := ResolveTargets("", []string{"all"}, dir)
+	for _, tgt := range targets {
+		if tgt == "antigravity" {
+			t.Error("antigravity must not be included by manifest target: [all] (explicit-only)")
+		}
+		if tgt == "agent-skills" {
+			t.Error("agent-skills must not be included by manifest target: [all]")
+		}
 	}
 }
 
@@ -84,40 +96,91 @@ func TestResolveTargets_AgentSkillsNotAutoDetected(t *testing.T) {
 	}
 }
 
-func TestResolveTargets_AntigravityAutoDetected(t *testing.T) {
-	// req-tg-001 (research-corrected, see acceptance-checklist.md): antigravity
-	// DOES auto-detect via GEMINI.md or AGENTS.md at the project root -- it is
-	// NOT explicit-only (that was an incorrect companion assumption). Only
-	// agent-skills is genuinely explicit-only.
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "GEMINI.md"), []byte("# gemini"), 0644)
-
-	targets, _ := ResolveTargets("", nil, dir)
-	found := false
-	for _, tgt := range targets {
-		if tgt == "antigravity" {
-			found = true
-		}
+func TestResolveTargets_AntigravityNotAutoDetected(t *testing.T) {
+	// Explicit-only alignment (user decision 2026-07-05, matching Python
+	// EXPLICIT_ONLY_TARGETS={"agent-skills","antigravity"}): GEMINI.md and
+	// AGENTS.md are cross-tool files (also read by opencode/agent-skills
+	// tooling), so their presence must NOT auto-enable antigravity -- and
+	// with no other signals present the resolution must be empty. This
+	// flips the earlier auto-detect behavior.
+	tests := []struct {
+		name  string
+		files []string
+	}{
+		{"GEMINI.md alone", []string{"GEMINI.md"}},
+		{"AGENTS.md alone", []string{"AGENTS.md"}},
+		{"both GEMINI.md and AGENTS.md", []string{"GEMINI.md", "AGENTS.md"}},
 	}
-	if !found {
-		t.Errorf("expected antigravity to be auto-detected from GEMINI.md/AGENTS.md, got %v", targets)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte("# marker"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			targets, _ := ResolveTargets("", nil, dir)
+			if len(targets) != 0 {
+				t.Errorf("expected no targets with only %v present, got %v", tt.files, targets)
+			}
+		})
 	}
 }
 
-func TestResolveTargets_AntigravityAutoDetectedFromAgentsMDAlone(t *testing.T) {
+func TestResolveTargets_AntigravityExplicitSelection(t *testing.T) {
+	// Explicit selection matrix (Codex H1): both the --target flag path and
+	// the apm.yml target: path must activate antigravity, for the canonical
+	// name and the agy alias alike. The flag path canonicalizes inside
+	// SplitTargetFlag; the manifest path canonicalizes at apm.yml parse time
+	// (parseTargetField -> ValidateTarget), so ResolveTargets sees canonical
+	// tokens either way -- the manifest subtests parse a real apm.yml
+	// snippet to prove the alias survives the full path (Codex H2).
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# agents"), 0644)
 
-	targets, _ := ResolveTargets("", nil, dir)
-	found := false
-	for _, tgt := range targets {
-		if tgt == "antigravity" {
-			found = true
-		}
+	flagCases := []struct {
+		name string
+		flag string
+	}{
+		{"flag antigravity", "antigravity"},
+		{"flag agy alias", "agy"},
 	}
-	if !found {
-		t.Errorf("expected antigravity to be auto-detected from AGENTS.md alone, got %v", targets)
+	for _, tt := range flagCases {
+		t.Run(tt.name, func(t *testing.T) {
+			targets, diags := ResolveTargets(tt.flag, nil, dir)
+			if len(diags) != 0 {
+				t.Errorf("expected no diagnostics, got %v", diags)
+			}
+			if len(targets) != 1 || targets[0] != "antigravity" {
+				t.Errorf("expected [antigravity], got %v", targets)
+			}
+		})
+	}
+
+	manifestCases := []struct {
+		name string
+		yml  string
+	}{
+		{"manifest target antigravity", "name: p\nversion: \"1.0.0\"\ntarget: [antigravity]\n"},
+		{"manifest target agy alias", "name: p\nversion: \"1.0.0\"\ntarget: [agy]\n"},
+	}
+	for _, tt := range manifestCases {
+		t.Run(tt.name, func(t *testing.T) {
+			node, err := yamlcore.SafeLoad([]byte(tt.yml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, _, err := manifest.ParseManifest(node)
+			if err != nil {
+				t.Fatal(err)
+			}
+			targets, diags := ResolveTargets("", m.Target, dir)
+			if len(diags) != 0 {
+				t.Errorf("expected no diagnostics, got %v", diags)
+			}
+			if len(targets) != 1 || targets[0] != "antigravity" {
+				t.Errorf("expected [antigravity], got %v", targets)
+			}
+		})
 	}
 }
 
