@@ -171,6 +171,23 @@
 - [x] AGENTS.md 生成缺口:本 parent 不做,記錄為後續 task(缺口清單)
 - [x] 缺口清單交付:每項含處置分類,見下表
 
+## 硬性 checklist 驗證（2026-07-10,使用者指示補做）
+
+- 清單:`.trellis/spec/conformance/cli-verification-checklist.md` §7(git-ignored 本機檔),
+  **32 項全數 `[x]`**(live + unit 雙證據;7.1 選取 10、7.2 MCP 6、7.3 primitives 5、
+  7.4 生命週期 4、7.5 agy 實機 4、7.6 品質關卡 3)。
+- **checklist 抓到真缺陷(ag-23/25)**:local path dep 無法 uninstall —— uninstall 以
+  `local:<path>` 合成 key 組模組路徑(`apm_modules/local:./dep-pkg` 非法),與 install
+  F1 key `_local/<base>-<sha8>` 脫節;deployed 檔/lockfile/apm.yml 全未清。
+  **已修**(commit `171fd87`):`uninstallRemovalKey` key 空間翻譯 + manifest splice
+  local 合成 key;live 重驗 ag-23 6/6、ag-25 hash guard 均 PASS。
+  此缺陷先前僅靠 unit(RemoveDeployedFiles 層)誤判 PASS,live 全流程才暴露 ——
+  佐證硬性 checklist 的必要性。
+- **新 follow-up(記錄,未修)**:`uninstallRemainingRootKeys` 對「存活的 local root」
+  仍在 `local:` 空間,與 reachability BFS / stale-MCP 檢查的 `_local/` 空間不一致 ——
+  存活 local dep 的傳遞依賴可能未被 reachability 保護、其 MCP 可能被誤判 stale。
+  修法同款一行翻譯,待後續 task。
+
 ## 缺口清單（處置分類）
 
 | 缺口 | 處置 | 依據 |

@@ -70,6 +70,9 @@
 
 > **Warning / follow-up (F1 gap)**: `cmd/apm/update.go` `runUpdate` does NOT call `normalizeLocalDep`, so local deps are not copy-materialized on `apm update` (fails safe: nothing deployed). Inconsistent with `install`; scope question (should `update` deploy local deps?).
 
+**Uninstall key translation (ag-23 fix, commit 171fd87)**: `uninstall`'s matching space (`uninstallIdentity` → synthetic `local:<path>`) is NOT the lockfile/apm_modules key space. `cmd/apm/uninstall.go` `uninstallRemovalKey` translates a matched local identity to `localModulesKey(resolveLocalSourceAbs(path))` before it reaches `SafeRemoveModuleDir`/`lock.RemoveKeys`/deployed-provenance; git/marketplace identities pass through unchanged. The apm.yml splice stays in identity space (`internal/manifest/remove.go` computes the same synthetic `local:` key for local entries whose `IdentityKey()` is empty). **Wrong**: feeding `local:./x` to any apm_modules/lockfile consumer (invalid Windows path + never matches).
+> Follow-up: `uninstallRemainingRootKeys` still emits `local:` keys for SURVIVING local roots, mismatching the reachability BFS / stale-MCP `_local/` space (recorded in task 07-05-antigravity-research prd).
+
 **Security invariant (do not weaken)**: no WRITE-side guard was relaxed — `archive.Contained`/`ContainedKey`, symlink refusal, plugin.json resolver, lockfile `..` check all still fail-closed. Only the READ source-path policy (which paths apm may read a dep FROM) was widened.
 
 ---
