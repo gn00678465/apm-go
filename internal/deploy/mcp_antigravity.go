@@ -33,12 +33,10 @@ func antigravityMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 		}
 		return e, true, ""
 	}
-	e := map[string]any{}
-	if r.Transport == "sse" {
-		e["url"] = r.URL
-	} else {
-		e["serverUrl"] = r.URL
-	}
+	// All remote transports (sse, http, streamable-http) use serverUrl: the
+	// official docs reject legacy `url`/`httpUrl`, and the agy 1.0.16 binary
+	// validator only accepts command|serverUrl (research/cli-mcp.md).
+	e := map[string]any{"serverUrl": r.URL}
 	if len(r.Headers) > 0 {
 		e["headers"] = r.Headers
 	}

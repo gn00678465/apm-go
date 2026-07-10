@@ -113,7 +113,13 @@ func TestWriteMCP_Antigravity_MatchesOracleDescriptor(t *testing.T) {
 	}
 }
 
-func TestWriteMCP_Antigravity_SSEUsesURLField(t *testing.T) {
+// TestWriteMCP_Antigravity_SSEUsesServerUrlField locks the fix for the sse
+// special case (task 07-05-antigravity-research, research/cli-mcp.md): the
+// official Antigravity docs state verbatim "Legacy fields like `url` or
+// `httpUrl` are not supported", and the agy 1.0.16 binary's config validator
+// only accepts command|serverUrl. All remote transports, including sse, must
+// therefore write serverUrl.
+func TestWriteMCP_Antigravity_SSEUsesServerUrlField(t *testing.T) {
 	dir := t.TempDir()
 	prims := []Primitive{
 		mcpPrim("local", &manifest.MCPDependency{Name: "sse-server", Registry: false, Transport: "sse", URL: "https://api.example.com/sse"}),
@@ -124,11 +130,11 @@ func TestWriteMCP_Antigravity_SSEUsesURLField(t *testing.T) {
 	root := readJSON(t, filepath.Join(dir, ".agents", "mcp_config.json"))
 	servers := root["mcpServers"].(map[string]any)
 	entry := servers["sse-server"].(map[string]any)
-	if entry["url"] != "https://api.example.com/sse" {
-		t.Errorf("sse entry should use 'url' not 'serverUrl': %v", entry)
+	if entry["serverUrl"] != "https://api.example.com/sse" {
+		t.Errorf("sse entry should use 'serverUrl' (legacy 'url' is not supported by antigravity): %v", entry)
 	}
-	if _, hasServerURL := entry["serverUrl"]; hasServerURL {
-		t.Errorf("sse entry must not set serverUrl: %v", entry)
+	if _, hasURL := entry["url"]; hasURL {
+		t.Errorf("sse entry must not set legacy 'url': %v", entry)
 	}
 }
 
