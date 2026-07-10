@@ -51,12 +51,34 @@
 
 ## Acceptance Criteria（跨 child）
 
-- [ ] `apm-go uninstall` 存在且對照 Python 行為 parity（A/B 通過，deviation 記錄）
-- [ ] `install --mcp` 在 opencode target 產生 `opencode.json` mcp 區塊（格式對照 Python）
-- [ ] antigravity 研究報告產出：設定面完整清單、explicit-only 分歧定案、apm-go 缺口與修正建議
-- [ ] `install --mcp` apm.yml `mcp:` 為 block style 且 registry 憑證於互動 TTY 會 prompt（A/B 對照,deviation 記錄）
-- [ ] 全 repo `go build/vet/test ./...` 全綠;新功能測試覆蓋 ≥ 80%
-- [ ] 三個 child 各自可獨立驗收、archive
+- [x] `apm-go uninstall` 存在且對照 Python 行為 parity（A/B 通過，deviation 記錄）
+      【2026-07-10 重跑 ab_uninstall.py:6 passed / 0 failed / 2 documented deviations】
+- [x] `install --mcp` 在 opencode target 產生 `opencode.json` mcp 區塊（格式對照 Python）
+      【2026-07-10 重跑 ab_opencode_mcp.py:8/8 passed 含 Go↔Py field parity】
+- [x] antigravity 研究報告產出：設定面完整清單、explicit-only 分歧定案、apm-go 缺口與修正建議
+      【child 07-05-antigravity-research archived:5 份報告、explicit-only 已定案並實作
+      (c6ef3f7)、缺口清單 9 項處置分類;超出研究範圍另完成 3 修正 + 硬性 checklist 32 項】
+- [x] `install --mcp` apm.yml `mcp:` 為 block style 且 registry 憑證於互動 TTY 會 prompt
+      【2026-07-10 重跑 ab_mcp_install_parity.py:14/15 passed / 1 skip(TTY,已人工驗證)
+      / 3 documented deviations,VERDICT: PASS】
+- [x] 全 repo `go build/vet/test ./...` 全綠;新功能測試覆蓋 ≥ 80%
+      【2026-07-10:17 套件綠;cmd/apm 85.9% / deploy 87.7% / manifest 86.2%】
+- [x] 四個 child 各自獨立驗收、archive
+      【07-05-uninstall、07-05-opencode-mcp、07-05-antigravity-research、
+      07-06-mcp-install-parity 全數 archive/2026-07/】
+
+## 父任務確認記錄（2026-07-10）
+
+- A/B 腳本齊備(evals/,依慣例不入版控):ab_uninstall.py、ab_opencode_mcp.py、
+  ab_mcp_install_parity.py、**ab_antigravity.py(本次補,23/23 PASS 含 agy plugin
+  validate 實機段)** —— 「每項完成後補 A/B 對照腳本」要求就此補齊。
+- 3 支既有腳本於 antigravity 三修正 + uninstall key fix 之後重跑無回歸。
+- **殘留 follow-up(需決策:另開 task 或記錄不做)**:
+  1. plugins bundle 部署(`.agents/plugins/<pkg>/`,可解 hooks 覆蓋缺口)— child 拍板另開 task
+  2. AGENTS.md compile 生成(結構性大工程,原列 Non-Goal)
+  3. 存活 local root key 空間不一致(uninstallRemainingRootKeys `local:` vs `_local/`,
+     reachability/stale-MCP 誤判風險,一行翻譯可修)
+  4. `apm update` 不 materialize local deps(F1 既有 gap)
 
 ## Non-Goals
 
