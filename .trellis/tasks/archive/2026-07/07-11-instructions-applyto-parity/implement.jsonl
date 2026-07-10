@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/07-11-instructions-applyto-parity/prd.md", "reason": "需求、live A/B 發現表、修/不修分界與 AC"}
+{"file": ".trellis/spec/backend/install-marketplace-contracts.md", "reason": "F2 零 target 契約矩陣(§2)— 閘門擴充需同步更新且不得破壞既有行為"}
+{"file": ".trellis/tasks/archive/2026-07/07-05-antigravity-research/research/antigravity-settings.md", "reason": "instruction_integrator._FORMAT_CONVERTERS 與 _convert_to_claude_rules 的既有研究基線"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "backend 品質規範"}

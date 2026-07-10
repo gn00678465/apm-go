@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-07-10
+- **Total Sessions**: 23
+- **Last Active**: 2026-07-11
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~768 | Active |
+| `journal-1.md` | ~837 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-07-11 | runtime-parity-gaps 父任務狀態確認與收官 archive | - | `feat/marketplace-install` |
+| 22 | 2026-07-11 | runtime-parity-gaps 父任務確認與 instructions applyTo parity 實作 | `a440b85`, `04f4e58`, `ccc2c9d`, `6556088`, `33bcb24`, `27328d1` | `feat/marketplace-install` |
 | 21 | 2026-07-10 | antigravity CLI 研究定案、三修正實作與硬性 checklist 驗證 | `d72dc6a`, `c6ef3f7`, `3471e45`, `7ada7fb`, `d13b577`, `171fd87`, `8d5c516` | `feat/marketplace-install` |
 | 20 | 2026-07-10 | install/marketplace CLI 驗證清單 + P0/P1/P2 修復 | `f4bdcac`, `f8d70f3`, `a1a07f4`, `e079599`, `13f1290`, `9cc6d51`, `07b443d`, `e43baf9`, `6d2232b`, `e718d8f`, `0a73736`, `0f63f1e` | `feat/marketplace-install` |
 | 19 | 2026-07-07 | install --mcp parity: #1 block style / #2 憑證互動 / D2 confirm / M8 per-target header + A/B | `706faf6`, `a907697`, `0f34fb2`, `f20dcc2`, `0daddd1` | `feat/marketplace-install` |

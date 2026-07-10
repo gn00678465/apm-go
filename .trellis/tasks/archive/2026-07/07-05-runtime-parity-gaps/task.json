@@ -3,7 +3,7 @@
   "name": "runtime-parity-gaps",
   "title": "補齊 runtime 對 Python 原版的缺口",
   "description": "confirm 三缺口:uninstall 指令、install --mcp 缺 opencode、antigravity 設定研究",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "Madao",
   "assignee": "Madao",
   "createdAt": "2026-07-05",
-  "completedAt": null,
+  "completedAt": "2026-07-11",
   "branch": null,
   "base_branch": "feat/marketplace-install",
   "worktree_path": null,
@@ -22,7 +22,8 @@
     "07-05-uninstall",
     "07-05-opencode-mcp",
     "07-05-antigravity-research",
-    "07-06-mcp-install-parity"
+    "07-06-mcp-install-parity",
+    "07-11-instructions-applyto-parity"
   ],
   "parent": null,
   "relatedFiles": [],

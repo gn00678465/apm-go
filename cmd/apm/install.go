@@ -528,6 +528,16 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			for _, d := range targetDiags {
 				fmt.Fprintln(os.Stderr, d)
 			}
+			// Local .apm/ primitives with no target to deploy them to is the
+			// same failure as the deps-present zero-target gate below: exit 2
+			// with the teaching message instead of silently exiting 0 with the
+			// primitives ignored (Python parity: "No harness detected" fires
+			// whenever there is ANYTHING to integrate -- deps or local
+			// primitives; task 07-11-instructions-applyto-parity req #2). An
+			// EMPTY project (no deps, no local primitives) keeps exiting 0.
+			if len(deploy.CollectLocalPrimitives(".")) > 0 {
+				return errNoDeployTarget()
+			}
 			return nil
 		}
 	}
@@ -604,11 +614,18 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		for _, d := range targetDiags {
 			fmt.Fprintln(os.Stderr, d)
 		}
-		return withExitCode(2, fmt.Errorf("no deployment target detected; pass --target <name> or add a target: to apm.yml"))
+		return errNoDeployTarget()
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
 	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, persistPackages, result, newLock, existingLock, existingNode, node)
+}
+
+// errNoDeployTarget is the exit-2 teaching error shared by runInstall's two
+// zero-target gates (deps present, and local-primitives-only), so their
+// wording and exit code can never drift apart.
+func errNoDeployTarget() error {
+	return withExitCode(2, fmt.Errorf("no deployment target detected; pass --target <name> or add a target: to apm.yml"))
 }
 
 // allDirectDeps returns every direct (root) dependency a manifest declares,

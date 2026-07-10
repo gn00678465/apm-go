@@ -1045,10 +1045,11 @@ func TestRunInstall_DepsPresentZeroTarget_ExitsWithTeachingMessage(t *testing.T)
 }
 
 // TestRunInstall_NoDepsZeroTarget_StillExitsZero is the companion negative
-// case for the F2 fix: a project with NO dependencies to install and no
-// resolvable target must keep exiting 0 (existing "No dependencies to
-// install" behavior) -- the new exit-2 guard is scoped to "dependencies
-// present", not to "target resolution failed" in general.
+// case for the F2 fix: an EMPTY project (no dependencies to install, no
+// local .apm/ primitives) with no resolvable target must keep exiting 0
+// (existing "No dependencies to install" behavior) -- the exit-2 guard is
+// scoped to "anything to integrate present" (deps or local primitives), not
+// to "target resolution failed" in general.
 func TestRunInstall_NoDepsZeroTarget_StillExitsZero(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -1060,6 +1061,81 @@ func TestRunInstall_NoDepsZeroTarget_StillExitsZero(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
 		t.Fatalf("expected no error for a zero-dependency install with no target, got: %v", err)
+	}
+}
+
+// TestRunInstall_LocalPrimitivesZeroTarget_ExitsWithTeachingMessage extends
+// the F2 zero-target gate (task 07-11-instructions-applyto-parity, req #2):
+// a project with local .apm/ primitives but ZERO dependencies and ZERO
+// resolvable targets used to exit 0 silently WITHOUT deploying -- the user
+// got no signal their primitives were ignored. Python exits 2 ("No harness
+// detected") whenever there is anything to integrate (deps OR local
+// primitives) but no target; apm-go must do the same, keeping its existing
+// teaching-message wording and writing nothing.
+func TestRunInstall_LocalPrimitivesZeroTarget_ExitsWithTeachingMessage(t *testing.T) {
+	tests := []struct {
+		name   string
+		subdir string
+		file   string
+	}{
+		{"instructions", "instructions", "x.instructions.md"},
+		{"agents", "agents", "x.md"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			origDir, _ := os.Getwd()
+			os.Chdir(dir)
+			defer os.Chdir(origDir)
+
+			os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+			os.MkdirAll(filepath.Join(".apm", tt.subdir), 0755)
+			os.WriteFile(filepath.Join(".apm", tt.subdir, tt.file), []byte("# x"), 0644)
+
+			deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+			err := runInstall(deps, false, true, "", nil, nil)
+			if err == nil {
+				t.Fatal("expected an error when local primitives are present but no deployment target resolves")
+			}
+			if !strings.Contains(err.Error(), "no deployment target detected") {
+				t.Errorf("error should carry the teaching message, got: %v", err)
+			}
+			if got := exitCodeOf(err); got != 2 {
+				t.Errorf("exitCodeOf(err) = %d, want 2", got)
+			}
+			if _, statErr := os.Stat("apm.lock.yaml"); !os.IsNotExist(statErr) {
+				t.Error("apm.lock.yaml should not be written when the install fails closed on zero targets")
+			}
+			if _, statErr := os.Stat(".claude"); !os.IsNotExist(statErr) {
+				t.Error("nothing should be deployed when the install fails closed on zero targets")
+			}
+		})
+	}
+}
+
+// TestRunInstall_LocalPrimitivesWithTargetSignal_StillDeploys is the
+// over-fire regression for the local-primitives zero-target gate: with a
+// detectable harness signal (.claude/ directory) present, a bare install of
+// a local-primitives-only project must NOT hit the exit-2 gate -- it deploys
+// and exits 0, exactly as before.
+func TestRunInstall_LocalPrimitivesWithTargetSignal_StillDeploys(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+	os.MkdirAll(filepath.Join(".apm", "instructions"), 0755)
+	os.WriteFile(filepath.Join(".apm", "instructions", "x.instructions.md"), []byte("# x"), 0644)
+	os.MkdirAll(".claude", 0755) // auto-detect signal for the claude target
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+		t.Fatalf("runInstall with a detectable target: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "x.md")); err != nil {
+		t.Errorf("expected local instructions deployed to .claude/rules/x.md: %v", err)
 	}
 }
 

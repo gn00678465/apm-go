@@ -36,7 +36,8 @@
 | `-t claude,codex` | deploys to both |
 | `--target bogus` (unknown vocab) | exit 2, names token |
 | deps present + zero resolvable target | exit 2 + teaching msg, **diags printed**, no partial write |
-| zero deps + zero target | exit 0 (`hasAnyDeps` gate) |
+| zero deps + zero local prims + zero target | exit 0 (`hasAnyDeps` gate; empty project) |
+| zero deps + local `.apm/` primitives present + zero target | exit 2 + same teaching msg, **diags printed**, nothing deployed/written (task 07-11-instructions-applyto-parity; Python parity: "No harness detected" fires for anything to integrate — deps OR local primitives) |
 
 **Wrong vs correct**: the zero-target exit-2 guard MUST reuse step-4's `targets`/`targetDiags` (so the adapterless diagnostic still prints) and run **before** `deployAndFinalize` (no partial lockfile/apm.yml write).
 
@@ -109,6 +110,28 @@
 
 ---
 
+## 8. Instructions pipeline: applyTo -> per-target formats (task 07-11-instructions-applyto-parity)
+
+**Pairing contract** (mirrors Python): the `*.instructions.md` filename and the `applyTo` frontmatter are ONE contract. `.apm/instructions/` collects ONLY `*.instructions.md` (`extractInstructionName`, plain `.md` fallback removed); the `applyTo` value is translated to each target's native scoping semantic where one exists.
+
+- Signature: `convertToClaudeRules(content []byte) []byte` + `parseApplyTo(string) []string` + `yamlDoubleQuote(string) string` (`internal/deploy/instructions_claude.go`), oracle = Python `_convert_to_claude_rules` / `patterns.py`.
+- claude: `applyTo: "**/*.go"` -> `paths:` YAML list frontmatter; no applyTo / no frontmatter -> unconditional rule (existing frontmatter STRIPPED, leading blank lines trimmed). `parseApplyTo` splits on TOP-LEVEL commas only (brace alternation `{a,b}` commas are part of the glob); values are quote-stripped (cutset). Emitted frontmatter is LF; body bytes preserved.
+- copilot: NO transform (applyTo is copilot-native). antigravity: NO transform (07-05 documented deviation, byte-copy). Both locked by `TestDeployOtherTargets_InstructionsStayByteIdentical`.
+- The transform sits at the claude adapter layer -> applies to local AND dependency instructions; lockfile hashes are computed post-write so uninstall provenance is unaffected.
+
+| Input | claude output |
+|---|---|
+| `applyTo: "**/*.{css,scss},**/*.py"` | `paths:` with 2 entries (brace comma not split) |
+| frontmatter without applyTo | body only (frontmatter stripped) |
+| no frontmatter | passthrough minus leading blank lines |
+| glob containing `"` or `\` | YAML 1.2 double-quote escaped |
+
+**Wrong vs correct**: byte-copying `applyTo` to `.claude/rules/` silently voids scoping (Claude Code reads `paths:`, not `applyTo`) -- the pre-04f4e58 behavior.
+
+> **Follow-up (Codex verify LOW-B)**: Python's `find_files_by_glob` also collects `*.instructions.md` from the PACKAGE ROOT (not just `.apm/instructions/`) and skips symlinks/hardlinks; apm-go scans `.apm/instructions/` only, no link filter. Pre-existing scope difference, recorded in task 07-11 prd -- decide parity vs documented deviation.
+
+---
+
 ## Documented deviations (intentional — keep apm-go behavior, record in conformance statement)
 
 | id | apm-go | Python | rationale |
@@ -118,3 +141,5 @@
 | C7 | `package add/set/remove` no-config / both-config guard → exit 2 | exit 1 | uniform exit-2 for package edit failures |
 | C8 | `uninstall` zero-args → exit 1 (cobra) | exit 2 (click) | cobra default |
 | — | `add --ref`+`--branch` mutex msg = cobra template | custom sentence | cosmetic |
+| — | deployed agents keep source bytes (LF) | text-mode rewrite (CRLF on Windows) | apm-go is more faithful; content identical |
+| — | no automatic `.gitignore` (apm_modules/) write | appends `apm_modules/` to .gitignore | cosmetic; user-managed file left alone |
