@@ -727,3 +727,42 @@ Sonnet subagent 實作/Fable 查核模式修 4 個實測 bug:(1)browse 改用 Py
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: antigravity CLI 研究定案、三修正實作與硬性 checklist 驗證
+
+**Date**: 2026-07-10
+**Task**: antigravity CLI 研究定案、三修正實作與硬性 checklist 驗證
+**Branch**: `feat/marketplace-install`
+
+### Summary
+
+antigravity CLI 專項研究(4 subagent:MCP/Skills/Plugins/Subagents,官方文件+agy 1.0.16 binary 雙軌)定案 serverUrl 與新能力面;Codex 盤查(0C/2H/4M/2L 全採納)後實作三修正:sse->serverUrl(d72dc6a)、explicit-only+agy alias(c6ef3f7,BREAKING)、agents primitive(3471e45,documented extension);agy 實機 6-probe 驗出 rules 非 always-on 與 project 註冊 gotcha;A/B 全 PASS(結構比對+plugin validate+實機發現)。補做硬性 checklist(conformance §7,32 項全勾),live 驗證抓到 local dep uninstall key 脫節真缺陷並修復(171fd87);spec 新增 antigravity-target-contract.md 與 uninstall key 契約(d13b577/8d5c516)。follow-up:存活 local root key 空間不一致、plugins bundle 另開 task。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d72dc6a` | (see git log) |
+| `c6ef3f7` | (see git log) |
+| `3471e45` | (see git log) |
+| `7ada7fb` | (see git log) |
+| `d13b577` | (see git log) |
+| `171fd87` | (see git log) |
+| `8d5c516` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
