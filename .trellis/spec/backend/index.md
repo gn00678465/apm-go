@@ -21,6 +21,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [Install / Marketplace Contracts](./install-marketplace-contracts.md) | install & marketplace CLI invariants, validation matrices, documented deviations | Active |
 | [Antigravity Target Contract](./antigravity-target-contract.md) | antigravity deploy target: serverUrl, explicit-only, agents primitive, agy verification gotchas | Active |
+| [Compile Contract](./compile-contract.md) | `apm-go compile`: agents-family AGENTS.md generation, Build ID, idempotency, documented deviations | Active |
 
 ---
 

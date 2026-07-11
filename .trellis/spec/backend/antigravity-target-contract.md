@@ -6,6 +6,11 @@
 
 ---
 
+> See also: [Compile Contract](./compile-contract.md) — `apm-go compile` is
+> the only apm-go path that produces an `AGENTS.md` for antigravity (this
+> adapter's own `DeployPrimitive` only byte-copies instructions to
+> `.agents/rules/`, §3/§4 below; it never maintains `AGENTS.md`).
+
 ## 1. MCP writer: `serverUrl` for ALL remote transports (d72dc6a)
 
 - Signature: `antigravityMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string)` in `internal/deploy/mcp_antigravity.go`.

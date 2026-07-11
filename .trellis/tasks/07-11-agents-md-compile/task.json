@@ -3,7 +3,7 @@
   "name": "agents-md-compile",
   "title": "AGENTS.md compile 生成",
   "description": "對照 Python compilation/agents_compiler.py 補 apm-go 缺失的 compile 步驟(結構性大工程)",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
