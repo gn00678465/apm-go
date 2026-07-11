@@ -402,7 +402,7 @@ func uninstallRemainingRootKeys(m *manifest.Manifest, removedIdentities map[stri
 	addRemaining := func(deps []*manifest.DependencyReference) {
 		for _, d := range deps {
 			if k, ok := uninstallIdentity(d); ok && !removedIdentities[k] {
-				remaining[k] = true
+				remaining[uninstallRemovalKey(k)] = true
 			}
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -219,8 +220,15 @@ func TestRunUninstall_HashMismatchKeepsFileWithWarning(t *testing.T) {
 	}
 	writeUninstallLockfileFixture(t, lock)
 
-	if err := runUninstall([]string{"acme/foo"}, uninstallOptions{}); err != nil {
-		t.Fatalf("runUninstall: %v", err)
+	// opts.Verbose is deliberately left false: the warning must not be
+	// gated behind --verbose (only removedFiles's "[-] ..." transcript is).
+	stderr := captureUninstallStderr(t, func() {
+		if err := runUninstall([]string{"acme/foo"}, uninstallOptions{}); err != nil {
+			t.Fatalf("runUninstall: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "modified since deploy (hash mismatch)") {
+		t.Errorf(`expected a stderr warning containing "modified since deploy (hash mismatch)" even without --verbose, got:\n%s`, stderr)
 	}
 
 	got, err := os.ReadFile(editedPath)
@@ -243,8 +251,9 @@ func TestRunUninstall_OnlyRemovesTargetedPackagesFiles(t *testing.T) {
 	if err := os.WriteFile("apm.yml", []byte(manifestYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
+	const barContent = "bar rule"
 	fooHash := writeUninstallDeployedFile(t, dir, ".claude/rules/foo.md", "foo rule")
-	barHash := writeUninstallDeployedFile(t, dir, ".claude/rules/bar.md", "bar rule")
+	barHash := writeUninstallDeployedFile(t, dir, ".claude/rules/bar.md", barContent)
 	if err := os.MkdirAll(filepath.Join(dir, "apm_modules", "acme", "foo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -267,8 +276,8 @@ func TestRunUninstall_OnlyRemovesTargetedPackagesFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "foo.md")); !os.IsNotExist(err) {
 		t.Errorf("expected foo.md removed, stat err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "bar.md")); err != nil {
-		t.Errorf("expected bar.md (untouched package) to survive, stat err=%v", err)
+	if got, err := os.ReadFile(filepath.Join(dir, ".claude", "rules", "bar.md")); err != nil || string(got) != barContent {
+		t.Errorf("expected bar.md (untouched package) to survive byte-identical, got=%q err=%v", got, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "acme", "foo")); !os.IsNotExist(err) {
 		t.Errorf("expected apm_modules/acme/foo removed, stat err=%v", err)
@@ -933,6 +942,140 @@ func TestReachableFromRemainingRoots_DepNotInLockfileIsSkipped(t *testing.T) {
 	}
 }
 
+// TestReachableFromRemainingRoots_LocalModulesKeyWalksTransitive is this
+// task's (07-11-local-root-key-space) reproduction: the BFS must be fed the
+// translated "_local/<base>-<sha8>" module key -- the same key
+// apm_modules/lockfile actually use for a local root -- to walk into its
+// real on-disk apm.yml and discover its transitive dependency. Feeding it
+// the untranslated synthetic "local:<path>" identity (this bug's shape)
+// finds no such directory, so the walk never proceeds past the root itself.
+func TestReachableFromRemainingRoots_LocalModulesKeyWalksTransitive(t *testing.T) {
+	dir := chdirTemp(t)
+
+	localKey := localModulesKey(resolveLocalSourceAbs("./dep-pkg"))
+	localModDir := filepath.Join(dir, "apm_modules", filepath.FromSlash(localKey))
+	if err := os.MkdirAll(localModDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localModDir, "apm.yml"), []byte("name: dep-pkg\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/transitive-of-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lock := &lockfile.Lockfile{
+		Dependencies: []lockfile.LockedDep{
+			{RepoURL: localKey, Source: "git"},
+			{RepoURL: "acme/transitive-of-a", Source: "git", ResolvedBy: localKey},
+		},
+	}
+
+	reachable := reachableFromRemainingRoots(map[string]bool{localKey: true}, lock, dir)
+
+	if !reachable[localKey] || !reachable["acme/transitive-of-a"] {
+		t.Errorf("expected the local root and its transitive dependency to be reachable, got %v", reachable)
+	}
+	if len(reachable) != 2 {
+		t.Errorf("expected exactly the local root and its transitive dependency to be reachable, got %v", reachable)
+	}
+	if reachable["local:./dep-pkg"] {
+		t.Errorf("expected the synthetic \"local:\" identity to never be probed, got %v", reachable)
+	}
+}
+
+// TestUninstallRemainingRootKeys_LocalRootUsesModulesKey is this task's
+// (07-11-local-root-key-space) main TDD reproduction: uninstallRemainingRootKeys
+// must translate a SURVIVING local root's synthetic uninstallIdentity
+// "local:<path>" matching key into the same "_local/<base>-<sha8>"
+// apm_modules/lockfile key space uninstallRemovalKey already produces for
+// REMOVED local roots (commit 171fd87) -- reachableFromRemainingRoots and
+// computeUninstallStaleMCP both only understand that key space. Covers
+// dependencies.apm/devDependencies.apm x relative/absolute local paths --
+// four cases, all translating the same way.
+func TestUninstallRemainingRootKeys_LocalRootUsesModulesKey(t *testing.T) {
+	localKeyRe := regexp.MustCompile(`^_local/[^/]+-[0-9a-f]{8}$`)
+
+	tests := []struct {
+		name string
+		dev  bool
+		path func(dir string) string
+	}{
+		{name: "prod relative", dev: false, path: func(dir string) string { return "./dep-pkg" }},
+		{name: "prod absolute", dev: false, path: func(dir string) string { return filepath.Join(dir, "dep-pkg") }},
+		{name: "dev relative", dev: true, path: func(dir string) string { return "./dep-pkg" }},
+		{name: "dev absolute", dev: true, path: func(dir string) string { return filepath.Join(dir, "dep-pkg") }},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := chdirTemp(t)
+			path := tc.path(dir)
+			wantKey := localModulesKey(resolveLocalSourceAbs(path))
+			if !localKeyRe.MatchString(wantKey) {
+				t.Fatalf("test setup produced an unexpected key shape %q", wantKey)
+			}
+
+			ref := &manifest.DependencyReference{IsLocal: true, LocalPath: path, Source: "local"}
+			m := &manifest.Manifest{}
+			if tc.dev {
+				m.ParsedDevDeps = []*manifest.DependencyReference{ref}
+			} else {
+				m.ParsedDeps = []*manifest.DependencyReference{ref}
+			}
+
+			got := uninstallRemainingRootKeys(m, map[string]bool{})
+
+			if len(got) != 1 {
+				t.Fatalf("expected exactly one remaining root key, got %v", got)
+			}
+			if !got[wantKey] {
+				t.Errorf("expected remaining root key %q, got %v", wantKey, got)
+			}
+			for k := range got {
+				if strings.HasPrefix(k, "local:") {
+					t.Errorf("expected no synthetic \"local:\" key in remaining root keys, got %v", got)
+				}
+			}
+		})
+	}
+}
+
+// TestUninstallRemainingRootKeys_RemovedLocalRootExcluded proves the
+// removedIdentities filter still runs in the SAME identity space
+// uninstallIdentity produces (before translation) -- a local root that is
+// itself being removed must never reappear, translated or not, in the
+// remaining set.
+func TestUninstallRemainingRootKeys_RemovedLocalRootExcluded(t *testing.T) {
+	chdirTemp(t)
+	m := &manifest.Manifest{
+		ParsedDeps: []*manifest.DependencyReference{
+			{IsLocal: true, LocalPath: "./dep-pkg", Source: "local"},
+		},
+	}
+
+	got := uninstallRemainingRootKeys(m, map[string]bool{"local:./dep-pkg": true})
+
+	if len(got) != 0 {
+		t.Errorf("expected the removed local root to be excluded entirely, got %v", got)
+	}
+}
+
+// TestUninstallRemainingRootKeys_NonLocalKeyUnchanged proves
+// uninstallRemovalKey's translation is a no-op for git/marketplace roots --
+// their remaining-root key must stay byte-identical to their
+// uninstallIdentity.
+func TestUninstallRemainingRootKeys_NonLocalKeyUnchanged(t *testing.T) {
+	m := &manifest.Manifest{
+		ParsedDeps: []*manifest.DependencyReference{
+			{RepoURL: "acme/foo", Source: "git"},
+		},
+	}
+
+	got := uninstallRemainingRootKeys(m, map[string]bool{})
+
+	if len(got) != 1 || !got["acme/foo"] {
+		t.Errorf("expected the git root key to pass through unchanged, got %v", got)
+	}
+}
+
 // TestUninstallCmd_RequiresAtLeastOnePackage is un-002: zero PACKAGE
 // arguments is a usage error (cobra.MinimumNArgs(1)), not a silent no-op.
 func TestUninstallCmd_RequiresAtLeastOnePackage(t *testing.T) {
@@ -1034,22 +1177,42 @@ func TestRunUninstall_LocalPathDependencyRemovesModulesLockAndDeployedFiles(t *t
 	// Sibling agent, not owned by the removed dep -- must survive, and must
 	// keep .agents/agents/ itself from being pruned.
 	writeUninstallDeployedFile(t, dir, ".agents/agents/reviewer/agent.md", "reviewer agent")
+	// A file the removed local dep itself deployed, but that the user then
+	// hand-edited -- this task's SEC-09 non-regression: even when the local
+	// dep root is removed outright (not just an orphan), un-053's hash-check
+	// safety line must still keep a hand-modified file instead of deleting
+	// it, exercised through uninstallRemovalKey's translated key space
+	// (rather than SEC-07's git-dep fixture).
+	origNotesHash := writeUninstallDeployedFile(t, dir, ".claude/rules/dep-pkg-notes.md", "original notes")
+	editedNotesPath := filepath.Join(dir, ".claude", "rules", "dep-pkg-notes.md")
+	const editedNotesContent = "hand edited notes"
+	if err := os.WriteFile(editedNotesPath, []byte(editedNotesContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	lock := &lockfile.Lockfile{
 		Dependencies: []lockfile.LockedDep{
 			{RepoURL: "acme/other", Source: "git"},
 			{
-				RepoURL:        localKey,
-				Source:         "git",
-				DeployedFiles:  []string{".agents/agents/depagent/agent.md"},
-				DeployedHashes: map[string]string{".agents/agents/depagent/agent.md": agentHash},
+				RepoURL:       localKey,
+				Source:        "git",
+				DeployedFiles: []string{".agents/agents/depagent/agent.md", ".claude/rules/dep-pkg-notes.md"},
+				DeployedHashes: map[string]string{
+					".agents/agents/depagent/agent.md": agentHash,
+					".claude/rules/dep-pkg-notes.md":   origNotesHash,
+				},
 			},
 		},
 	}
 	writeUninstallLockfileFixture(t, lock)
 
-	if err := runUninstall([]string{"./dep-pkg"}, uninstallOptions{}); err != nil {
-		t.Fatalf("runUninstall: %v", err)
+	stderr := captureUninstallStderr(t, func() {
+		if err := runUninstall([]string{"./dep-pkg"}, uninstallOptions{}); err != nil {
+			t.Fatalf("runUninstall: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "modified since deploy (hash mismatch)") {
+		t.Errorf(`expected a stderr warning containing "modified since deploy (hash mismatch)" for the hand-edited local-dep file, got:\n%s`, stderr)
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, ".agents", "agents", "depagent")); !os.IsNotExist(err) {
@@ -1057,6 +1220,9 @@ func TestRunUninstall_LocalPathDependencyRemovesModulesLockAndDeployedFiles(t *t
 	}
 	if got, err := os.ReadFile(filepath.Join(dir, ".agents", "agents", "reviewer", "agent.md")); err != nil || string(got) != "reviewer agent" {
 		t.Errorf("expected sibling agent to survive untouched, got=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(editedNotesPath); err != nil || string(got) != editedNotesContent {
+		t.Errorf("expected the hand-edited local-dep file to survive byte-identical, got=%q err=%v", got, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "_local")); !os.IsNotExist(err) {
 		t.Errorf("expected apm_modules/_local (now empty) to be removed, stat err=%v", err)

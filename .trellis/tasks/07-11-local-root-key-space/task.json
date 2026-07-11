@@ -3,7 +3,7 @@
   "name": "local-root-key-space",
   "title": "存活 local root key 空間不一致修復",
   "description": "uninstallRemainingRootKeys 對存活 local root 仍用 local: 空間,與 reachability/stale-MCP 的 _local/ 空間不一致,一行翻譯可修",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

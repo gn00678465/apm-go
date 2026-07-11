@@ -47,9 +47,32 @@ func TestSafeExtract_ZipSlip(t *testing.T) {
 	noLeak(t, dest)
 }
 
+// writeCanary drops a canary file as a sibling of dest's parent temp dir
+// (i.e. outside dest and outside dest's ".apmtmp" staging dir) and returns a
+// closure that fails the test if the canary's bytes ever changed -- proof
+// that a fail-closed extraction touched nothing outside its own staging
+// area.
+func writeCanary(t *testing.T, parent string) func() {
+	t.Helper()
+	canary := filepath.Join(parent, "canary.txt")
+	const content = "must not change"
+	if err := os.WriteFile(canary, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return func() {
+		t.Helper()
+		got, err := os.ReadFile(canary)
+		if err != nil || string(got) != content {
+			t.Errorf("canary outside dest changed unexpectedly: got=%q err=%v", got, err)
+		}
+	}
+}
+
 func TestSafeExtract_SymlinkEscape(t *testing.T) {
 	f := openOracle(t, "symlink-escape.tar.gz")
-	dest := filepath.Join(t.TempDir(), "out")
+	parent := t.TempDir()
+	dest := filepath.Join(parent, "out")
+	checkCanary := writeCanary(t, parent)
 	_, err := SafeExtract(f, dest, Limits{})
 	if err == nil {
 		t.Fatal("expected fail-closed on symlink-escape, got nil")
@@ -58,6 +81,31 @@ func TestSafeExtract_SymlinkEscape(t *testing.T) {
 		t.Errorf("diagnostic must contain \"link\", got %q", err.Error())
 	}
 	noLeak(t, dest)
+	checkCanary()
+}
+
+// TestSafeExtract_HardlinkEscape is SEC-03's hardlink counterpart to
+// TestSafeExtract_SymlinkEscape: extract.go rejects tar.TypeLink identically
+// to tar.TypeSymlink (see the combined guard in extractInto), but until now
+// only the symlink shape had a covering test. Built synthetically via tgz
+// (like the other non-oracle cases below) since no committed oracle fixture
+// contains a hardlink entry.
+func TestSafeExtract_HardlinkEscape(t *testing.T) {
+	data := tgz(t, func(tw *tar.Writer) {
+		tw.WriteHeader(&tar.Header{Name: "evil-hardlink", Typeflag: tar.TypeLink, Linkname: "../../etc/passwd", Mode: 0o644})
+	})
+	parent := t.TempDir()
+	dest := filepath.Join(parent, "out")
+	checkCanary := writeCanary(t, parent)
+	_, err := SafeExtract(bytes.NewReader(data), dest, Limits{})
+	if err == nil {
+		t.Fatal("expected fail-closed on hardlink entry, got nil")
+	}
+	if !strings.Contains(err.Error(), "link") {
+		t.Errorf("diagnostic must contain \"link\", got %q", err.Error())
+	}
+	noLeak(t, dest)
+	checkCanary()
 }
 
 func TestSafeExtract_FourEntryCap(t *testing.T) {

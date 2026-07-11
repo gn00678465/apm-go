@@ -65,8 +65,8 @@ func TestRemoveDeployedFiles_HashMismatchIsKeptWithWarning(t *testing.T) {
 	if len(kept) != 1 || kept[0] != rel {
 		t.Fatalf("expected kept=[%s], got %v", rel, kept)
 	}
-	if len(diags) == 0 {
-		t.Fatalf("expected a diagnostic warning for hash mismatch, got none")
+	if len(diags) != 1 || !strings.Contains(diags[0], "modified since deploy (hash mismatch)") {
+		t.Fatalf(`expected a diagnostic containing "modified since deploy (hash mismatch)", got %v`, diags)
 	}
 	if _, err := os.Stat(full); err != nil {
 		t.Fatalf("expected user-edited file to remain on disk, stat err=%v", err)
@@ -79,7 +79,8 @@ func TestRemoveDeployedFiles_HashMismatchIsKeptWithWarning(t *testing.T) {
 func TestRemoveDeployedFiles_MissingHashKeyIsKept(t *testing.T) {
 	dir := t.TempDir()
 	rel := ".agents/agents/baz.md"
-	writeDeployedFile(t, dir, rel, "content")
+	const content = "content"
+	writeDeployedFile(t, dir, rel, content)
 
 	// hashes map has no entry for rel at all (older lockfile / provenance gap).
 	removed, kept, diags := RemoveDeployedFiles(dir, []string{rel}, map[string]string{})
@@ -90,11 +91,15 @@ func TestRemoveDeployedFiles_MissingHashKeyIsKept(t *testing.T) {
 	if len(kept) != 1 || kept[0] != rel {
 		t.Fatalf("expected kept=[%s], got %v", rel, kept)
 	}
-	if len(diags) == 0 {
-		t.Fatalf("expected a diagnostic for missing hash, got none")
+	if len(diags) != 1 || !strings.Contains(diags[0], "no recorded hash") {
+		t.Fatalf(`expected a diagnostic containing "no recorded hash", got %v`, diags)
 	}
-	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+	got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+	if err != nil {
 		t.Fatalf("expected file to remain on disk, stat err=%v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("file content changed unexpectedly: got %q want %q", got, content)
 	}
 }
 
@@ -103,7 +108,8 @@ func TestRemoveDeployedFiles_PathEscapeIsRejected(t *testing.T) {
 	// Sibling directory outside dir, to prove nothing outside dir is touched.
 	parent := filepath.Dir(dir)
 	outside := filepath.Join(parent, "escaped-uninstall-victim.txt")
-	if err := os.WriteFile(outside, []byte("should never be deleted"), 0o644); err != nil {
+	const canary = "should never be deleted"
+	if err := os.WriteFile(outside, []byte(canary), 0o644); err != nil {
 		t.Fatalf("seed outside file: %v", err)
 	}
 	defer os.Remove(outside)
@@ -114,14 +120,18 @@ func TestRemoveDeployedFiles_PathEscapeIsRejected(t *testing.T) {
 	if len(removed) != 0 {
 		t.Fatalf("expected no removed files, got %v", removed)
 	}
-	if len(kept) != 1 {
+	if len(kept) != 1 || kept[0] != rel {
 		t.Fatalf("expected kept=[%s], got %v", rel, kept)
 	}
-	if len(diags) == 0 {
-		t.Fatalf("expected a diagnostic for path escape, got none")
+	if len(diags) != 1 || !strings.Contains(diags[0], "path escapes project directory") {
+		t.Fatalf(`expected a diagnostic containing "path escapes project directory", got %v`, diags)
 	}
-	if _, err := os.Stat(outside); err != nil {
+	got, err := os.ReadFile(outside)
+	if err != nil {
 		t.Fatalf("expected outside file to survive, stat err=%v", err)
+	}
+	if string(got) != canary {
+		t.Fatalf("outside file bytes changed unexpectedly: got %q want %q", got, canary)
 	}
 }
 
@@ -132,7 +142,8 @@ func TestRemoveDeployedFiles_UserHandwrittenFileNotInListUntouched(t *testing.T)
 
 	// A user-authored file living alongside the deployed one, never passed in files.
 	userRel := ".agents/instructions/my-notes.md"
-	writeDeployedFile(t, dir, userRel, "user notes")
+	const userContent = "user notes"
+	writeDeployedFile(t, dir, userRel, userContent)
 
 	removed, kept, diags := RemoveDeployedFiles(dir, []string{deployedRel}, map[string]string{deployedRel: hash})
 
@@ -142,8 +153,12 @@ func TestRemoveDeployedFiles_UserHandwrittenFileNotInListUntouched(t *testing.T)
 	if len(removed) != 1 || removed[0] != deployedRel {
 		t.Fatalf("expected removed=[%s], got %v", deployedRel, removed)
 	}
-	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(userRel))); err != nil {
+	got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(userRel)))
+	if err != nil {
 		t.Fatalf("expected user file to survive untouched, stat err=%v", err)
+	}
+	if string(got) != userContent {
+		t.Fatalf("user file content changed unexpectedly: got %q want %q", got, userContent)
 	}
 }
 
@@ -316,6 +331,14 @@ func TestSafeRemoveModuleDir_SiblingPackageSurvives(t *testing.T) {
 	if err := os.MkdirAll(barDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// bar has real content, so the byte comparison below actually proves
+	// something (an empty dir can't distinguish "survived untouched" from
+	// "deleted and silently recreated empty").
+	barFile := filepath.Join(barDir, "apm.yml")
+	const barContent = "name: bar\nversion: \"1.0.0\"\n"
+	if err := os.WriteFile(barFile, []byte(barContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	removed, err := SafeRemoveModuleDir(dir, "acme/foo")
 	if err != nil {
@@ -327,11 +350,25 @@ func TestSafeRemoveModuleDir_SiblingPackageSurvives(t *testing.T) {
 	if _, err := os.Stat(fooDir); !os.IsNotExist(err) {
 		t.Fatalf("expected acme/foo gone, stat err=%v", err)
 	}
-	if _, err := os.Stat(barDir); err != nil {
+	got, err := os.ReadFile(barFile)
+	if err != nil {
 		t.Fatalf("expected acme/bar (sibling) to survive, stat err=%v", err)
 	}
+	if string(got) != barContent {
+		t.Fatalf("acme/bar content changed unexpectedly: got %q want %q", got, barContent)
+	}
+	// The shared "acme" parent is NOT empty (bar is still in it), so
+	// cleanupEmptyParents must stop there -- only a genuinely empty parent
+	// chain is ever pruned.
 	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "acme")); err != nil {
 		t.Fatalf("expected apm_modules/acme to survive (still has bar), stat err=%v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "apm_modules", "acme"))
+	if err != nil {
+		t.Fatalf("expected apm_modules/acme to be readable: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "bar" {
+		t.Fatalf("expected apm_modules/acme to contain only bar, got %v", entries)
 	}
 }
 

@@ -26,11 +26,24 @@ key 的問題，使其與 reachability BFS / stale-MCP 檢查使用的 `_local/<
 
 ## Acceptance Criteria
 
-- [ ] 重現測試先紅後綠（存活 local root 的傳遞依賴受 reachability 保護、
+- [x] 重現測試先紅後綠（存活 local root 的傳遞依賴受 reachability 保護、
       MCP 不誤判 stale）
-- [ ] 全 repo `go build/vet/test ./...` 綠；ab_uninstall.py 重跑無回歸
-- [ ] spec `backend/install-marketplace-contracts.md` 的 follow-up 註記改為
-      已修（含 commit）
+      【8 個新測試（E2E diamond/MCP survivor/dry-run/devDeps + unit key 翻譯），
+      紅燈證據經臨時 revert 兩度獨立重現（實作 agent + codex 各一次）】
+- [x] 全 repo `go build/vet/test ./...` 綠；ab_uninstall.py 重跑無回歸
+      【2026-07-11：17 套件綠；ab_uninstall.py 6 passed/2 documented deviations;
+      ab_antigravity.py ALL PASSED】
+- [x] spec `backend/install-marketplace-contracts.md` 的 follow-up 註記改為
+      已修（含 commit）【commit `3c9910c`；DOC-01 驗證腳本 exit 0】
+
+## 完成記錄（2026-07-11）
+
+- 修復 commit：`3c9910c`（`uninstall.go` 一行 + 8 新測試 + 安全斷言補強）。
+- 硬性 checklist（codex 產出 29 項）對抗性驗證兩輪：第 1 輪 CONFIRMED 15/FAIL 13
+  （全為測試斷言深度不足），修復迴圈補強後第 2 輪 CONFIRMED 28/FAIL 0，
+  DOC-01 於 commit 後補驗——最終 29/29。
+- 補強副產物：archive/gitops/deploy 測試新增 byte-level canary、stderr 診斷
+  斷言、hardlink escape 測試（SEC-02~09）。
 
 ## Non-Goals
 
