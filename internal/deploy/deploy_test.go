@@ -485,16 +485,19 @@ func TestDeployAntigravity_AgentsPerAgentDirectory(t *testing.T) {
 // ResolvePrimitives (conflict.go) -- same source class, first-declared wins
 // (req-pr-003) with a "shadowed by" diagnostic; the loser never reaches
 // DeployPrimitive, so exactly one write happens and the deployed file carries
-// the first-declared dependency's bytes. antigravity's per-agent directory
-// path (.agents/agents/<name>/agent.md) must match claude's flat path
-// (.claude/agents/<name>.md) semantics exactly.
+// the first-declared dependency's bytes. antigravity's dependency agent path
+// now lands inside the winning dependency's plugin bundle
+// (.agents/plugins/<pkg>/agents/<name>/agent.md, task
+// 07-11-antigravity-plugins-bundle) rather than the flat
+// .agents/agents/<name>/agent.md local primitives still use; it must match
+// claude's flat path (.claude/agents/<name>.md) collision semantics exactly.
 func TestRun_AgentSameNameCollision_FirstDeclaredWins(t *testing.T) {
 	tests := []struct {
 		target string
 		path   string
 	}{
 		{"claude", ".claude/agents/reviewer.md"},
-		{"antigravity", ".agents/agents/reviewer/agent.md"},
+		{"antigravity", ".agents/plugins/first/agents/reviewer/agent.md"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.target, func(t *testing.T) {

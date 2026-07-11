@@ -3,7 +3,7 @@
   "name": "antigravity-plugins-bundle",
   "title": "antigravity plugins bundle 部署",
   "description": "部署 .agents/plugins/<pkg>/ plugin bundle,一併解 hooks.json 覆蓋不合併缺口",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

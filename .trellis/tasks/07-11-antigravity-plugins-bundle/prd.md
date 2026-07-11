@@ -35,13 +35,34 @@
 
 ## Acceptance Criteria
 
-- [ ] install 產出 `.agents/plugins/<pkg>/plugin.json` + 內容子目錄，
+- [x] install 產出 `.agents/plugins/<pkg>/plugin.json` + 內容子目錄，
       `agy plugin validate` 實機 PASS
-- [ ] 兩套件各帶 hooks 同時安裝互不覆蓋
-- [ ] uninstall 完整清理 bundle 目錄且不誤刪使用者手動檔案
-- [ ] unit 覆蓋 ≥ 80%；ab_antigravity.py 重跑無回歸
-- [ ] spec 更新：antigravity-target-contract.md 記錄 bundle 佈局與
-      documented extension 決策
+      【agy 1.1.1 對兩個真實生成 bundle validate [ok] exit 0，含 N processed
+      精確數量斷言（checklist AGB 系列 + ab_antigravity.py live 段）】
+- [x] 兩套件各帶 hooks 同時安裝互不覆蓋
+      【per-plugin hooks.json；Go 測試（cross/same-package isolation）+
+      ab_antigravity.py 兩 dependency bundles fixture】
+- [x] uninstall 完整清理 bundle 目錄且不誤刪使用者手動檔案
+      【零特例反向清理（provenance 驅動）；sibling 存活 + 手寫檔存活測試鎖定】
+- [x] unit 覆蓋 ≥ 80%；ab_antigravity.py 重跑無回歸
+      【internal/deploy 88.5% / cmd/apm 86.1%；ab_antigravity.py 46 斷言全綠
+      （腳本經補強：byte-identical 四型、精確 key set、processed 數量）】
+- [x] spec 更新：antigravity-target-contract.md 記錄 bundle 佈局與
+      documented extension 決策【新增 §7，commit `6a66e07`】
+
+## 完成記錄（2026-07-11）
+
+- 實作 commit：`6a66e07`（BundleTarget 介面 + antigravity bundle 路由 +
+  fail-closed 同名碰撞 + 12 新測試）。
+- 拍板落地：dependency primitives 進 bundle、local primitives 維持扁平路徑
+  （D1）；同名碰撞採 fail-closed（比 design 原稿 diagnostic-only 嚴格，
+  research 風險 #4 的處置）；plugin.json 最小 manifest（key set 恰為 name）。
+- 硬性 checklist（39 項）codex 對抗性驗證兩輪：第 1 輪 CONFIRMED 38/FAIL 1
+  （AGB-033 `-race` 無 cgo toolchain 環境不可行）；第 2 輪以環境限制記錄 +
+  最強替代驗證（vet + 全量/focused -count=1）收斂——最終 39/39。
+- ab-script-review：第 1 輪抓到 5 個 A/B 斷言弱化點，補強後 resolved。
+- 派工紀錄：實作 dispatch prompt 曾發生 mojibake，agent 以 checklist 為準據
+  自行收斂決策，主 session 事後審核接受（fail-closed 選擇優於原裁示）。
 
 ## Non-Goals
 

@@ -29,6 +29,28 @@ type MCPTarget interface {
 	WriteMCP(prims []Primitive, projectDir string) (files []string, written []string, diags []string, err error)
 }
 
+// BundleTarget is implemented by adapters that group a dependency's
+// primitives into a per-package bundle directory (e.g. antigravity's
+// .agents/plugins/<pkg>/) instead of writing them at fixed, shared paths.
+//
+// ValidateBundleNames is called once per target, for every DepKey that will
+// receive at least one primitive under this target, BEFORE any primitive is
+// deployed to ANY target this Run. It must fail closed (return a non-nil
+// error, with nothing yet written) if two different DepKeys would collide on
+// the same bundle directory, rather than let their files silently mix.
+//
+// FinalizeBundles is called once per target, AFTER every primitive has been
+// deployed, with the DepKeys that actually produced at least one file. It
+// writes any per-bundle manifest (e.g. plugin.json) and returns the
+// manifest's relative path(s) keyed by DepKey, mirroring MCPTarget.WriteMCP's
+// once-per-target shape. It must be idempotent: every Run() call rewrites
+// and re-reports the manifest, so a re-install never drops it from
+// deployed_files/deployed_file_hashes provenance.
+type BundleTarget interface {
+	ValidateBundleNames(depKeys []string) error
+	FinalizeBundles(depKeys []string, projectDir string) (map[string][]string, error)
+}
+
 var Adapters = map[string]TargetAdapter{
 	"claude":       &claudeAdapter{},
 	"codex":        &codexAdapter{},

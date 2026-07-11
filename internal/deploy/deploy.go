@@ -143,6 +143,26 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// 3. Resolve conflicts
 	winners, conflictDiags := ResolvePrimitives(ordered)
 
+	// 3.5. Bundle-target dependency naming must be validated for every
+	// target BEFORE any primitive is deployed anywhere in this Run: a
+	// bundle-directory name collision (e.g. two dependencies whose DepKey
+	// sanitizes to the same antigravity plugin bundle name) fails closed --
+	// nothing written for either dependency -- rather than let their files
+	// silently mix into one physical directory (BundleTarget doc).
+	for _, target := range targets {
+		adapter, ok := Adapters[target]
+		if !ok {
+			continue
+		}
+		bundleAdapter, ok := adapter.(BundleTarget)
+		if !ok {
+			continue
+		}
+		if err := bundleAdapter.ValidateBundleNames(bundleCandidateDepKeys(adapter, winners)); err != nil {
+			return nil, fmt.Errorf("%s: %w", target, err)
+		}
+	}
+
 	// 4. Deploy to each target
 	result := &DeployResult{
 		PerDep: make(map[string]*DepDeployResult),
@@ -153,12 +173,18 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// Track which primitive first wrote each destination path, to warn on
 	// fixed-path overwrites (e.g. multiple hook files -> .agents/hooks.json).
 	writtenBy := make(map[string]string)
+	// Track, per bundle-target, the ordered/deduplicated DepKeys that
+	// actually produced at least one file this Run -- passed to
+	// FinalizeBundles below.
+	bundledDepsByTarget := make(map[string][]string)
+	bundledDepsSeen := make(map[string]map[string]bool)
 
 	for _, target := range targets {
 		adapter, ok := Adapters[target]
 		if !ok {
 			continue
 		}
+		_, isBundleTarget := adapter.(BundleTarget)
 		for _, p := range winners {
 			if !adapterSupports(adapter, p.Type) {
 				continue
@@ -219,6 +245,54 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 					}
 					depResult.Hashes[f] = hash
 				}
+
+				if isBundleTarget && p.DepKey != "" {
+					if bundledDepsSeen[target] == nil {
+						bundledDepsSeen[target] = make(map[string]bool)
+					}
+					if !bundledDepsSeen[target][p.DepKey] {
+						bundledDepsSeen[target][p.DepKey] = true
+						bundledDepsByTarget[target] = append(bundledDepsByTarget[target], p.DepKey)
+					}
+				}
+			}
+		}
+	}
+
+	// 4.5. Finalize bundle-target manifests once per target, mirroring the
+	// once-per-target MCP write below, for every dependency that actually
+	// produced at least one bundled file this Run (e.g. antigravity's
+	// plugin.json -- BundleTarget doc).
+	for _, target := range targets {
+		adapter, ok := Adapters[target]
+		if !ok {
+			continue
+		}
+		bundleAdapter, ok := adapter.(BundleTarget)
+		if !ok {
+			continue
+		}
+		depKeys := bundledDepsByTarget[target]
+		if len(depKeys) == 0 {
+			continue
+		}
+		filesByDep, err := bundleAdapter.FinalizeBundles(depKeys, projectDir)
+		if err != nil {
+			return nil, fmt.Errorf("finalize %s bundles: %w", target, err)
+		}
+		for depKey, files := range filesByDep {
+			depResult := result.PerDep[depKey]
+			if depResult == nil {
+				depResult = &DepDeployResult{Hashes: make(map[string]string)}
+				result.PerDep[depKey] = depResult
+			}
+			for _, f := range files {
+				hash, err := lockfile.HashFileBytes(filepath.Join(projectDir, f))
+				if err != nil {
+					return nil, fmt.Errorf("hash bundle manifest %s: %w", f, err)
+				}
+				depResult.Files = append(depResult.Files, f)
+				depResult.Hashes[f] = hash
 			}
 		}
 	}
@@ -316,4 +390,24 @@ func adapterSupports(adapter TargetAdapter, pt PrimitiveType) bool {
 		}
 	}
 	return false
+}
+
+// bundleCandidateDepKeys returns the ordered, deduplicated DepKeys among
+// prims that are non-local (DepKey != "") and whose Type this adapter
+// supports -- the dependencies that WILL land at least one primitive under
+// this adapter's bundle scheme, computed before any file is written so
+// BundleTarget.ValidateBundleNames can fail closed up front.
+func bundleCandidateDepKeys(adapter TargetAdapter, prims []Primitive) []string {
+	seen := make(map[string]bool)
+	var keys []string
+	for _, p := range prims {
+		if p.DepKey == "" || !adapterSupports(adapter, p.Type) {
+			continue
+		}
+		if !seen[p.DepKey] {
+			seen[p.DepKey] = true
+			keys = append(keys, p.DepKey)
+		}
+	}
+	return keys
 }
