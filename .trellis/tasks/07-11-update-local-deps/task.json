@@ -3,7 +3,7 @@
   "name": "update-local-deps",
   "title": "apm update 不 materialize local deps(F1 gap)",
   "description": "cmd/apm/update.go runUpdate 不呼叫 normalizeLocalDep,local deps 於 update 不 copy-materialize;含 update 零 target 閘門同族問題",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

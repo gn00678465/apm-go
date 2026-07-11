@@ -16,7 +16,12 @@ func TestRunUpdate_Full_ReResolvesToNewestAndRewritesLock(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(origDir)
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
+	// target: claude (07-11-update-local-deps C2): this test's apm.yml has
+	// deps but, before this task, no target: field and no auto-detected
+	// harness signal dir -- runUpdate's new zero-target gate would otherwise
+	// exit 2 here instead of exercising the git-semver re-resolution this
+	// test actually targets.
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
 	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/a\n    source: git\n    constraint: \"^1.0.0\"\n    resolved_tag: v1.2.0\n    depth: 1\n"), 0644)
 
 	deps := &installDeps{
@@ -50,7 +55,9 @@ func TestRunUpdate_Scoped_OnlyNamedPackageChanges(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(origDir)
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n    - acme/b#^2.0.0\n"), 0644)
+	// target: claude (07-11-update-local-deps C2): see the identical comment
+	// in TestRunUpdate_Full_ReResolvesToNewestAndRewritesLock above.
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n    - acme/b#^2.0.0\n"), 0644)
 	os.WriteFile("apm.lock.yaml", []byte(
 		"lockfile_version: \"1\"\ndependencies:\n"+
 			"  - repo_url: acme/a\n    source: git\n    constraint: \"^1.0.0\"\n    resolved_tag: v1.2.0\n    depth: 1\n"+
@@ -148,7 +155,9 @@ func TestRunUpdate_Scoped_NoFrozenOverridesCIAutoFrozen(t *testing.T) {
 
 	t.Setenv("CI", "true")
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
+	// target: claude (07-11-update-local-deps C2): see the identical comment
+	// in TestRunUpdate_Full_ReResolvesToNewestAndRewritesLock above.
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
 	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/a\n    source: git\n    constraint: \"^1.0.0\"\n    resolved_tag: v1.2.0\n    depth: 1\n"), 0644)
 
 	deps := &installDeps{
@@ -171,7 +180,9 @@ func TestRunUpdate_GitSemver_InstallPathClearedEvenWhenTagUnchanged(t *testing.T
 	os.Chdir(dir)
 	defer os.Chdir(origDir)
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
+	// target: claude (07-11-update-local-deps C2): see the identical comment
+	// in TestRunUpdate_Full_ReResolvesToNewestAndRewritesLock above.
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
 	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/a\n    source: git\n    constraint: \"^1.0.0\"\n    resolved_tag: v1.0.0\n    depth: 1\n"), 0644)
 
 	// Only one tag exists, so the update re-resolves to the SAME tag --
@@ -209,7 +220,9 @@ func TestRunUpdate_GitSemver_DevDependency_InstallPathClearedEvenWhenTagUnchange
 	os.Chdir(dir)
 	defer os.Chdir(origDir)
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndevDependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
+	// target: claude (07-11-update-local-deps C2): see the identical comment
+	// in TestRunUpdate_Full_ReResolvesToNewestAndRewritesLock above.
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndevDependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
 	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/a\n    source: git\n    constraint: \"^1.0.0\"\n    resolved_tag: v1.0.0\n    depth: 1\n"), 0644)
 
 	// Only one tag exists, so the update re-resolves to the SAME tag --

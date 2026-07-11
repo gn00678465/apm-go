@@ -61,17 +61,19 @@ func TestRunUpdate_RealGitSemver_ResolvesToNewTag(t *testing.T) {
 	git(remoteDir, "commit", "-m", "v1")
 	git(remoteDir, "tag", "v1.0.0")
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: ./remote\n      ref: \"^1.0.0\"\n"), 0644)
+	// target: claude in the manifest (rather than only --target on the
+	// initial install) is required so runUpdate's own C2 zero-target gate
+	// (07-11-update-local-deps) -- which has no --target flag of its own and
+	// reads m.Target -- can resolve a target too; before that fix runUpdate
+	// had no target gate at all, so this real-git resolution assertion
+	// didn't need m.Target set for update to reach the lockfile write.
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: ./remote\n      ref: \"^1.0.0\"\n"), 0644)
 
 	deps := &installDeps{
 		tags:   &gitops.RealTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	// --target claude only satisfies the "dependencies present but no
-	// deployment target" exit-2 guard (F2), which applies to runInstall
-	// (not runUpdate, called unchanged below); this test's subject is
-	// req-rs-011 real-git semver update resolution, not deploy.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 
@@ -140,17 +142,17 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 	git(remoteDir, "commit", "-m", "v1")
 	git(remoteDir, "tag", "v1.0.0")
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: ./remote\n      ref: \"^1.0.0\"\n"), 0644)
+	// target: claude in the manifest (see the identical comment in
+	// TestRunUpdate_RealGitSemver_ResolvesToNewTag above) is required so
+	// runUpdate's own C2 zero-target gate (07-11-update-local-deps) can
+	// resolve a target too.
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: ./remote\n      ref: \"^1.0.0\"\n"), 0644)
 
 	deps := &installDeps{
 		tags:   &gitops.RealTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	// --target claude only satisfies the "dependencies present but no
-	// deployment target" exit-2 guard (F2), which applies to runInstall
-	// (not runUpdate, called unchanged below); this test's subject is
-	// req-lk-010 re-clone-on-unchanged-tag, not deploy.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 

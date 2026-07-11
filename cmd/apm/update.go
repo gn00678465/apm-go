@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/apm-go/apm/internal/archive"
+	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/experimental"
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
@@ -69,6 +70,34 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 	m, _, err := manifest.ParseManifest(node)
 	if err != nil {
 		return fmt.Errorf("validate apm.yml: %w", err)
+	}
+
+	// F1 (07-11-update-local-deps): mirror install.go's 1b-2 normalization so
+	// a local/absolute-path dependency is copy-materialized into
+	// apm_modules/_local/<name>/ on `apm update` too, instead of resolving it
+	// in place (via depKey==ref.LocalPath) and deploying nothing -- or worse,
+	// letting PlanFullUpdate rebuild the lockfile entry under the bare
+	// LocalPath key and lose the existing deployed_files/deployed_file_hashes
+	// provenance an install had already recorded under "_local/...".
+	for _, dep := range m.ParsedDeps {
+		normalizeLocalDep(dep)
+	}
+	for _, dep := range m.ParsedDevDeps {
+		normalizeLocalDep(dep)
+	}
+
+	// C3 (07-11-update-local-deps): translate a scoped positional token that
+	// names a local/absolute-path dependency into the same synthetic
+	// apm_modules key normalizeLocalDep just gave it, mirroring
+	// uninstallRemovalKey (uninstall.go:186-192) -- otherwise the
+	// normalization above moves the manifest's dependency key space out from
+	// under a still-relative-path `apm update ./dep-pkg` invocation and
+	// PlanScopedUpdate's depKey(dep)==packageName lookup would report
+	// "package not found" for a dependency that IS present.
+	if pkg != "" {
+		if ref, perr := manifest.ParseDepString(pkg); perr == nil && ref.IsLocal {
+			pkg = localModulesKey(resolveLocalSourceAbs(ref.LocalPath))
+		}
 	}
 
 	lockData, err := os.ReadFile("apm.lock.yaml")
@@ -154,6 +183,28 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 
 	printUpdateSummary(existingLock, newLock)
 
+	// C2 (07-11-update-local-deps): same deps-present/zero-target teaching
+	// exit as runInstall (install.go:613-618), reusing the identical
+	// errNoDeployTarget() wording/exit-code so the two commands never drift.
+	// Placed after printUpdateSummary (which has no side effect) so a doomed
+	// update's plan output still prints before the teaching error, matching
+	// the oracle's observed stdout ordering -- and before deployAndFinalize,
+	// so a doomed update never writes apm.lock.yaml (zero partial writes).
+	// Previously a deps-present update with no resolvable target silently
+	// exited 0 after already rewriting the lockfile (deployAndFinalize's
+	// no-op check compares semantic equality, not "did anything deploy"),
+	// destroying any local dep's deployed_files/deployed_file_hashes
+	// provenance with nothing deployed to show for it. targetFlag is always
+	// "" here -- apm-go's `update` has no --target flag (Python parity gap,
+	// out of this task's scope).
+	targets, targetDiags := deploy.ResolveTargets("", m.Target, ".")
+	if len(result.Deps) > 0 && len(targets) == 0 {
+		for _, d := range targetDiags {
+			fmt.Fprintln(os.Stderr, d)
+		}
+		return errNoDeployTarget()
+	}
+
 	return deployAndFinalize(m, "", nil, nil, nil, result, newLock, existingLock, existingNode, node)
 }
 
@@ -188,7 +239,14 @@ func directGitSemverUpdateScope(m *manifest.Manifest, pkg string) []string {
 // pins) between the existing and newly-resolved lockfiles. Unchanged
 // packages are silent; deployAndFinalize's own no-op check reports "Already
 // up to date" when nothing at all changed.
+//
+// ULD-13 (07-11-update-local-deps): when there is at least one change, the
+// summary is prefixed with a "[i] Update plan for apm.yml" heading, mirroring
+// the oracle's render_plan_text heading (apm/src/apm_cli/install/plan.py:333)
+// -- the C2 zero-target gate relies on this heading appearing in stdout
+// before its teaching error so a doomed update's plan is still visible.
 func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
+	var lines []string
 	for i := range newLock.Dependencies {
 		nd := &newLock.Dependencies[i]
 		newTag := nd.ResolvedTag
@@ -198,7 +256,7 @@ func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
 
 		old := oldLock.FindByKey(nd.UniqueKey())
 		if old == nil {
-			fmt.Printf("  + %s@%s (new)\n", nd.UniqueKey(), newTag)
+			lines = append(lines, fmt.Sprintf("  + %s@%s (new)", nd.UniqueKey(), newTag))
 			continue
 		}
 		oldTag := old.ResolvedTag
@@ -206,7 +264,14 @@ func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
 			oldTag = old.ResolvedRef
 		}
 		if oldTag != newTag {
-			fmt.Printf("  %s: %s -> %s\n", nd.UniqueKey(), oldTag, newTag)
+			lines = append(lines, fmt.Sprintf("  %s: %s -> %s", nd.UniqueKey(), oldTag, newTag))
 		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Println("[i] Update plan for apm.yml")
+	for _, line := range lines {
+		fmt.Println(line)
 	}
 }
