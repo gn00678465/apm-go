@@ -23,6 +23,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [Oracle Parity Gates](./oracle-parity-gates.md) | Catch same-name-different-behavior CLI defects against the Python `apm` oracle | Adding/changing an apm-go CLI command, subcommand, or flag |
 
 ---
 
@@ -50,6 +51,19 @@ These guides help you **ask the right questions before coding**.
 - [ ] Multiple branches update the same derived state from `kind` / `action`
 
 → Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
+
+### When Touching apm-go's CLI Surface
+
+- [ ] You're adding or renaming an apm-go command/subcommand
+- [ ] The command name matches (case-insensitive) an existing Python `apm <verb>` command
+- [ ] Requirement wording is copied from spec text rather than compared against Python CLI directly
+- [ ] You're deliberately implementing less than Python's full behavior for a command
+- [ ] Output is written to a path whose extension/location implies a structured format (TOML/JSON/YAML/...)
+- [ ] Research recorded a `format_id`/transformer key without expanding its logic
+
+→ Read [Oracle Parity Gates](./oracle-parity-gates.md); check
+`.trellis/spec/evals/cli-surface-parity-register.md` for the command's existing
+classification before writing the PRD.
 
 ### When Verifying AI Cross-Review Results
 

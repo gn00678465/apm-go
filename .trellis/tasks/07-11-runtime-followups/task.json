@@ -22,7 +22,8 @@
     "07-11-antigravity-plugins-bundle",
     "07-11-agents-md-compile",
     "07-11-local-root-key-space",
-    "07-11-update-local-deps"
+    "07-11-update-local-deps",
+    "07-12-codex-agent-toml"
   ],
   "parent": null,
   "relatedFiles": [],

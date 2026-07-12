@@ -134,6 +134,70 @@
 
 ---
 
+## 9. Codex agents deployment: MD -> TOML (task 07-12-codex-agent-toml)
+
+**Contract**: the codex adapter's `TypeAgents` deployment converts a markdown
+agent source into a three-key TOML document at `.codex/agents/<p.Name>.toml`
+— it does NOT byte-copy the markdown (byte-copying produces a `.toml`
+extension over non-TOML content, which Codex CLI cannot parse). This
+mirrors Python's `_write_codex_agent` (`agent_integrator.py:302-335`)
+exactly; claude/opencode/copilot agents deployment is unchanged (still
+byte-copy, still parity).
+
+- Signature: `transformCodexAgent(sourcePath string) (codexAgentDoc, error)`
+  + `deployCodexAgentTOML(p Primitive, projectDir string) ([]string, error)`
+  (`internal/deploy/codex_agent.go`); serialized via the same
+  `github.com/pelletier/go-toml/v2` module already used by the codex MCP
+  `config.toml` writer (`internal/deploy/mcp_codex.go`) — no new dependency.
+- Output document, exactly three keys, in this order:
+  `{name, description, developer_instructions}`.
+
+**Six-point oracle semantics** (`agent_integrator.py:302-335`):
+
+1. A symlink source is rejected outright (`os.Lstat`, never followed) —
+   `transformCodexAgent` errors before reading content.
+2. `name` defaults to the filename stem with a trailing `.agent` suffix
+   stripped (e.g. `accessibility-runtime-tester.agent.md` ->
+   `accessibility-runtime-tester`).
+3. A frontmatter block matching `^---\s*\n(.*?)\n---\s*\n?` (DOTALL,
+   anchored at the absolute start of the file — the same regex as
+   `claudeFrontmatterRE` in `internal/deploy/instructions_claude.go`) is cut
+   from the body regardless of whether it parses as YAML. When the captured
+   block DOES parse (`go.yaml.in/yaml/v4`, into `map[string]any`), string
+   `name`/`description` keys override the defaults; **a YAML parse failure
+   is swallowed silently** (mirrors Python's bare `except: pass`) — the
+   frontmatter is still cut from the body, and name/description stay at
+   their defaults. Any other key (`model`, `tools`, ...) is always ignored.
+4. `description` defaults to `""` (never omitted, never null).
+5. `developer_instructions` = body with frontmatter removed, then
+   `strings.TrimSpace` (Python `.strip()`) — only the two ends are trimmed;
+   internal blank lines/whitespace are preserved verbatim.
+6. When no frontmatter block matches (including the case where `---...---`
+   appears after a leading blank line — the anchor requires the very first
+   byte of the file), the entire file content becomes
+   `developer_instructions` after `strings.TrimSpace`.
+
+| Input | `name` | `description` | `developer_instructions` |
+|---|---|---|---|
+| `foo.agent.md`, no frontmatter | `foo` | `""` | full body, trimmed |
+| frontmatter with `name`/`description` | frontmatter value | frontmatter value | body after frontmatter, trimmed |
+| frontmatter with unterminated quote (invalid YAML) | fallback (`.agent` stripped) | `""` | body after frontmatter, trimmed (frontmatter still cut) |
+| frontmatter present but no `description` key | fallback or frontmatter `name` | `""` | body after frontmatter, trimmed |
+
+**Wrong vs correct**: `deployFileToPath(p, ".codex/agents/<name>.toml", ...)`
+(pre-07-12 behavior, byte-copy) writes markdown bytes under a `.toml`
+extension — a file that fails to parse in any TOML reader; the fix must
+always go through `transformCodexAgent`.
+
+**Downstream**: filename (`<p.Name>.toml`), lockfile provenance (hash of the
+transformed TOML bytes), `audit`, and `uninstall` all continue through the
+existing generic per-file mechanisms in `deploy.Run`/`cmd/apm/audit.go` — no
+Codex-specific lock/uninstall/audit branch was added.
+
+Fixed (task 07-12-codex-agent-toml; commit: `197fe98`, 2026-07-12): oracle A/B (scratch, `uv --project D:/Projects/apm-dev/apm run apm install --target codex` vs. `bin/apm-go.exe install --target codex`) confirmed parsed-TOML semantic equality (key set + all three values) across a frontmatter-override fixture, a malformed-YAML fixture, and a no-frontmatter fixture; `evals/test1`'s `accessibility-runtime-tester.agent.md` replayed in a throwaway scratch copy produces a Codex TOML that parses with the expected `name`/`description`/`developer_instructions`.
+
+---
+
 ## Documented deviations (intentional — keep apm-go behavior, record in conformance statement)
 
 | id | apm-go | Python | rationale |

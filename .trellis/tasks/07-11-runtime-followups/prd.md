@@ -31,6 +31,7 @@ follow-up，各開 child 獨立驗收。本父任務只負責 task map、跨 chi
 | 07-11-agents-md-compile | compile 可行性/範圍定案 → 分階段實作或記錄不做 | 研究先行(大) |
 | 07-11-local-root-key-space | key 空間翻譯修復 + 回歸測試 | 實作(輕量) |
 | 07-11-update-local-deps | update 行為對照 Python 定案 → 修復或 documented deviation | 實作(中) |
+| 07-12-codex-agent-toml | codex agents MD→TOML 轉換 parity（live 驗證追加發現） | 實作(輕量) |
 
 排序建議：local-root-key-space（一行修）先行；update-local-deps 次之（需先
 A/B 對照定案 scope）；plugins-bundle 中大型；agents-md-compile 最後（研究
