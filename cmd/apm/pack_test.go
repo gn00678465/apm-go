@@ -64,9 +64,25 @@ func TestPackCmd_DoesNotExposeDeferredFlags(t *testing.T) {
 	}
 }
 
-// ── no marketplace: block -> message + exit 0 ────────────────────────────
+// ── no producer applies -> exit 1, "nothing to pack" ─────────────────────
+//
+// Phase 2-5 (design.md Gate 1 disposition) replaced the P0 quick-win's
+// exit-0 "nothing to do" info with Python's own BuildOrchestrator.run
+// BuildError semantics: apm-go now implements all three producers
+// (Bundle/Marketplace/PluginManifest), so a project with none of
+// dependencies:/marketplace:/target:{claude,copilot} genuinely has nothing
+// any producer can act on, and that is a user-facing failure (exit 1), not
+// a silent no-op.
 
-func TestPackCmd_NoMarketplaceBlock_PrintsMessageAndExitsZero(t *testing.T) {
+// wantNothingToPack duplicates pack.ErrNothingToPack's text as an
+// independent string literal -- not a reference to the production
+// identifier -- so a wording change in internal/pack breaks this test with
+// a red diff instead of both sides silently drifting together (same
+// verbatim-lock pattern as errNoDeployTarget's literal check in
+// install_test.go).
+const wantNothingToPack = "apm.yml has neither 'dependencies:' nor 'marketplace:' block, and 'target:' does not include 'claude' or 'copilot'. Nothing to pack. Add dependencies via 'apm-go install <pkg>', configure a 'marketplace:' block, or set 'target:' to include 'claude' or 'copilot'."
+
+func TestPackCmd_NoMarketplaceBlock_ExitsOne(t *testing.T) {
 	// Arrange
 	chdirTemp(t)
 	writePackApmYML(t, "name: demo\nversion: 1.0.0\n")
@@ -75,139 +91,173 @@ func TestPackCmd_NoMarketplaceBlock_PrintsMessageAndExitsZero(t *testing.T) {
 	out, err := runPackCmd(t)
 
 	// Assert
-	if err != nil {
-		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	if err == nil {
+		t.Fatalf("expected an error for a manifest with no producer inputs (output: %s)", out)
 	}
-	if !strings.Contains(out, "nothing to do") {
-		t.Errorf("output = %q, want a 'nothing to do' message", out)
+	if exitCodeOf(err) != 1 {
+		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(err))
+	}
+	if err.Error() != wantNothingToPack {
+		t.Errorf("err = %q, want %q", err.Error(), wantNothingToPack)
 	}
 }
 
-func TestPackCmd_ExplicitNullMarketplaceKey_PrintsMessageAndExitsZero(t *testing.T) {
+func TestPackCmd_ExplicitNullMarketplaceKey_ExitsOne(t *testing.T) {
 	// Arrange: a bare "marketplace:" key with nothing after it is mkt-047's
 	// "_has_marketplace_block" null case -- not really present.
 	chdirTemp(t)
 	writePackApmYML(t, "name: demo\nversion: 1.0.0\nmarketplace:\n")
 
 	// Act
-	out, err := runPackCmd(t)
+	_, err := runPackCmd(t)
 
 	// Assert
-	if err != nil {
-		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	if err == nil {
+		t.Fatal("expected an error for a null marketplace: key")
 	}
-	if !strings.Contains(out, "nothing to do") {
-		t.Errorf("output = %q, want a 'nothing to do' message", out)
+	if exitCodeOf(err) != 1 {
+		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(err))
 	}
 }
 
-func TestPackCmd_NoApmYMLAtAll_PrintsMessageAndExitsZero(t *testing.T) {
+func TestPackCmd_NoApmYMLAtAll_ExitsOne(t *testing.T) {
 	// Arrange: not even an apm.yml exists yet.
 	chdirTemp(t)
 
 	// Act
-	out, err := runPackCmd(t)
+	_, err := runPackCmd(t)
 
 	// Assert
-	if err != nil {
-		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	if err == nil {
+		t.Fatal("expected an error when no apm.yml exists at all")
 	}
-	if !strings.Contains(out, "nothing to do") {
-		t.Errorf("output = %q, want a 'nothing to do' message", out)
+	if exitCodeOf(err) != 1 {
+		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(err))
 	}
 }
 
-// ── P0 #2: pack --help documents the marketplace-only scope ─────────────
+// ── pack --help documents all three producers ────────────────────────────
 
-func TestPackCmd_HelpDocumentsMarketplaceOnlyScope(t *testing.T) {
+func TestPackCmd_HelpDocumentsThreeProducers(t *testing.T) {
 	out, err := runPackCmd(t, "--help")
 	if err != nil {
 		t.Fatalf("pack --help returned error: %v", err)
 	}
-	for _, token := range []string{"marketplace.json", "Python", "plugin bundle"} {
+	for _, token := range []string{"marketplace.json", "dependencies:", "plugin.json", "target:"} {
 		if !strings.Contains(out, token) {
 			t.Errorf("pack --help output missing %q:\n%s", token, out)
 		}
 	}
-	if !strings.Contains(strings.ToLower(out), "only") && !strings.Contains(out, "does not") {
-		t.Errorf("pack --help output lacks explicit scope-limiting language:\n%s", out)
-	}
-	// Full scope line locked verbatim, mirroring the checklist's live-binary
-	// capture -- must stay in sync with packCmd's Long text.
-	const scopeLine = "Python-style plugin bundle (from dependencies:) or a project-root"
-	if !strings.Contains(out, scopeLine) {
-		t.Errorf("pack --help output missing scope line %q:\n%s", scopeLine, out)
+	// Full scope lines locked verbatim -- must stay in sync with packCmd's
+	// Long text.
+	for _, line := range []string{
+		"a plugin-native bundle, from a 'dependencies:' block",
+		"a standalone plugin.json, from 'target:'/'targets:' containing",
+	} {
+		if !strings.Contains(out, line) {
+			t.Errorf("pack --help output missing scope line %q:\n%s", line, out)
+		}
 	}
 }
 
-// ── P0 #2 Gate 2: dependencies:/target: without marketplace: must warn ──
+// ── Gate 2: dependencies:/target: without marketplace: actually build ────
+//
+// Phase 2-5 upgraded BundleProducer/PluginManifestProducer from P0's
+// warn-only stubs to full producers -- dependencies: now really builds a
+// bundle under ./build/, and target: claude/copilot now really writes
+// plugin.json, matching Python's oracle instead of deferring to a warning.
 
-// wantPackDepsWarning and wantPackTargetWarning duplicate pack.go's
-// packDepsWarning/packTargetWarning as independent string literals -- not a
-// reference to the production identifier -- so a wording change in packCmd
-// breaks this test with a red diff instead of both sides silently drifting
-// together (same verbatim-lock pattern as errNoDeployTarget's literal
-// "no deployment target detected" check in install_test.go).
-const (
-	wantPackDepsWarning   = "[warn] apm.yml has dependencies: but no 'marketplace:' block; apm-go pack only builds marketplace.json and will not produce a Python-style plugin bundle from dependencies: -- see 'apm-go pack --help'."
-	wantPackTargetWarning = "[warn] apm.yml has target: but no 'marketplace:' block; apm-go pack only builds marketplace.json and will not produce a Python-style plugin.json from target: -- see 'apm-go pack --help'."
-)
+func TestRunPack_DependenciesOnly_BuildsRealBundle(t *testing.T) {
+	// A remote dependencies.apm entry with no apm.lock.yaml present is
+	// enough to trigger BundleProducer (hasDeps only looks at
+	// ParsedDeps -- it does not require the dependency to actually be
+	// resolved/materialized); with no lockfile, BundleProducer's
+	// dependency-collection loop is simply empty and the bundle is built
+	// purely from the project's own local .apm/ content.
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
 
-func TestRunPack_NoMarketplaceDeferredInput(t *testing.T) {
-	t.Run("dependencies present, no marketplace: warns instead of silent nothing-to-do", func(t *testing.T) {
-		chdirTemp(t)
-		writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "Packed") {
+		t.Errorf("output = %q, want a real bundle-built confirmation", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build", "demo-1.0.0", "plugin.json")); statErr != nil {
+		t.Errorf("expected a real bundle at build/demo-1.0.0/plugin.json: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build", "demo-1.0.0", "agents", "foo.md")); statErr != nil {
+		t.Errorf("expected local .apm/agents content bundled: %v", statErr)
+	}
+}
 
-		out, err := runPackCmd(t)
-		if err != nil {
-			t.Fatalf("pack returned error: %v (output: %s)", err, out)
-		}
-		if !strings.Contains(out, wantPackDepsWarning) {
-			t.Errorf("output = %q, want the full dependencies: warning %q", out, wantPackDepsWarning)
-		}
-	})
+func TestRunPack_TargetClaudeOnly_WritesRealPluginJSON(t *testing.T) {
+	dir := chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ntarget:\n  - claude\n")
 
-	t.Run("target present, no marketplace: warns instead of silent nothing-to-do", func(t *testing.T) {
-		dir := chdirTemp(t)
-		writePackApmYML(t, "name: demo\nversion: 1.0.0\ntarget:\n  - claude\n")
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "Generated plugin manifest") {
+		t.Errorf("output = %q, want a real plugin.json confirmation", out)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json"))
+	if rerr != nil {
+		t.Fatalf("expected a real plugin.json: %v", rerr)
+	}
+	if !strings.Contains(string(data), `"name": "demo"`) {
+		t.Errorf("plugin.json = %s, want the synthesized name field", data)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Errorf("target-only input must not also build a bundle (stat err = %v)", statErr)
+	}
+}
 
-		out, err := runPackCmd(t)
-		if err != nil {
-			t.Fatalf("pack returned error: %v (output: %s)", err, out)
-		}
-		if !strings.Contains(out, wantPackTargetWarning) {
-			t.Errorf("output = %q, want the full target: warning %q", out, wantPackTargetWarning)
-		}
-		if _, statErr := os.Stat(filepath.Join(dir, "plugin.json")); !os.IsNotExist(statErr) {
-			t.Errorf("apm-go must not produce a Python-style plugin.json (stat err = %v)", statErr)
-		}
-		if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
-			t.Errorf("apm-go must not produce a Python-style bundle (stat err = %v)", statErr)
-		}
-	})
+func TestRunPack_TargetCodexOnly_ExitsOne_NotPluginManifestEcosystem(t *testing.T) {
+	// codex is a valid target but NOT a plugin-manifest ecosystem
+	// (claude/copilot only) -- with no dependencies:/marketplace: either,
+	// this is still "nothing to pack".
+	dir := chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ntarget:\n  - codex\n")
 
-	t.Run("genuinely empty apm.yml: nothing-to-do info, no warning", func(t *testing.T) {
-		dir := chdirTemp(t)
-		writePackApmYML(t, "name: demo\nversion: 1.0.0\n")
+	_, err := runPackCmd(t)
+	if err == nil {
+		t.Fatal("expected an error: codex alone triggers no producer")
+	}
+	if exitCodeOf(err) != 1 {
+		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(err))
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".claude-plugin")); !os.IsNotExist(statErr) {
+		t.Errorf("apm-go must not produce a plugin.json for a non-plugin-manifest target (stat err = %v)", statErr)
+	}
+}
 
-		out, err := runPackCmd(t)
-		if err != nil {
-			t.Fatalf("pack returned error: %v (output: %s)", err, out)
-		}
-		if !strings.Contains(out, "nothing to do") {
-			t.Errorf("output = %q, want a genuine no-op message", out)
-		}
-		if strings.Contains(out, "[warn]") {
-			t.Errorf("output = %q, a genuinely empty apm.yml must not warn", out)
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) != 1 || entries[0].Name() != "apm.yml" {
-			t.Errorf("pack must not write any file/dir for a genuinely empty apm.yml, got %v", entries)
-		}
-	})
+func TestRunPack_GenuinelyEmptyApmYML_ExitsOne(t *testing.T) {
+	dir := chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\n")
+
+	_, err := runPackCmd(t)
+	if err == nil {
+		t.Fatal("expected an error for a genuinely empty apm.yml")
+	}
+	if exitCodeOf(err) != 1 {
+		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(err))
+	}
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(entries) != 1 || entries[0].Name() != "apm.yml" {
+		t.Errorf("pack must not write any file/dir for a genuinely empty apm.yml, got %v", entries)
+	}
 }
 
 // ── output location: never the repo root, both outputs written ──────────
@@ -825,5 +875,54 @@ packages:
 	}
 	if !strings.Contains(out, "marketplace migrate") {
 		t.Errorf("output = %q, want a deprecation warning pointing at 'apm marketplace migrate'", out)
+	}
+}
+
+// ── authoring-path license nudge (export/authoring.py's _WARN_MESSAGE) ──
+
+// wantLicenseUndeclaredWarning duplicates pack.go's licenseUndeclaredWarning
+// as an independent string literal, matching this file's verbatim-lock
+// convention.
+const wantLicenseUndeclaredWarning = "[warn] No 'license:' field in apm.yml; the SBOM will record NOASSERTION for this package. Add a 'license:' field to apm.yml (an SPDX expression such as MIT or Apache-2.0, or UNLICENSED) to declare it."
+
+func TestRunPack_NoLicenseField_WarnsEvenOnNothingToPack(t *testing.T) {
+	// The nudge fires before producer routing, independent of whether pack
+	// ultimately succeeds -- mirrors Python firing it before
+	// BuildOrchestrator().run() is ever called.
+	chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\n")
+
+	out, err := runPackCmd(t)
+	if err == nil {
+		t.Fatal("expected the usual nothing-to-pack error")
+	}
+	if !strings.Contains(out, wantLicenseUndeclaredWarning) {
+		t.Errorf("output = %q, want the license-undeclared warning", out)
+	}
+}
+
+func TestRunPack_LicenseDeclared_NoWarning(t *testing.T) {
+	chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\nlicense: MIT\ntarget:\n  - claude\n")
+
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if strings.Contains(out, "NOASSERTION") {
+		t.Errorf("output = %q, must not warn when license: is declared", out)
+	}
+}
+
+func TestRunPack_EmptyLicenseField_StillWarns(t *testing.T) {
+	chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\nlicense: \"\"\ntarget:\n  - claude\n")
+
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, wantLicenseUndeclaredWarning) {
+		t.Errorf("output = %q, want the license-undeclared warning for an empty license: value", out)
 	}
 }
