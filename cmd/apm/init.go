@@ -159,7 +159,6 @@ func initCmd() *cobra.Command {
 			fmt.Fprintln(os.Stderr, "\n[*] APM project initialized successfully!")
 			fmt.Fprintln(os.Stderr, "\nNext steps:")
 			fmt.Fprintln(os.Stderr, "  * Install a package:  apm-go install <owner>/<repo>")
-			fmt.Fprintln(os.Stderr, "  * Run a script:       apm-go run <script>")
 			return nil
 		},
 	}

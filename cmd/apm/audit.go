@@ -12,10 +12,23 @@ import (
 // auditCmd implements `apm audit` (req-sc-001): re-verify every deployed file's
 // recorded SHA-256 against disk and report content-integrity violations. It
 // operates from the lockfile + disk alone — apm.yml is NOT required.
+//
+// P0 #3 (register §3.1/§5): apm-go audit (bare) and Python's `apm audit`
+// (bare) share a name but check different things -- see Long below and
+// .trellis/spec/backend/cli-parity-notes.md for the full contrast. This
+// task does not change audit's behavior, only documents the gap.
 func auditCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:          "audit",
-		Short:        "Re-verify deployed-file integrity against apm.lock.yaml",
+		Use:   "audit",
+		Short: "Re-verify deployed-file integrity against apm.lock.yaml",
+		Long: `Re-verify deployed-file integrity against apm.lock.yaml.
+
+apm-go audit (bare) recomputes every deployed file's SHA-256 hash and
+compares it against apm.lock.yaml. This differs from Python's 'apm
+audit' (bare), which instead runs a hidden-Unicode scan and never
+touches SHA-256 -- the two commands share a name but check different
+things. Python's equivalent SHA-256 re-verification is buried behind
+'apm audit --ci' as its content-integrity check.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := os.ReadFile("apm.lock.yaml")

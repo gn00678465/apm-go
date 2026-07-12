@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -406,6 +407,87 @@ func TestParseManifest_HttpLocalhostTextAccepted(t *testing.T) {
 	_, _, err := ParseManifest(node)
 	if err != nil {
 		t.Errorf("http with localhost should be accepted: %v", err)
+	}
+}
+
+// wantAllowExecutablesWarning duplicates allowExecutablesWarning as an
+// independent string literal -- not a reference to that const -- so a
+// wording change to allowExecutablesWarning breaks this test with a red
+// diff instead of both sides silently changing together (same
+// verbatim-lock pattern as errNoDeployTarget's literal
+// "no deployment target detected" check in cmd/apm/install_test.go).
+const wantAllowExecutablesWarning = "[warn] apm.yml has an allowExecutables: block, but apm-go does not enforce it yet; this block is not effective in apm-go and every executable primitive (hooks, bin, MCP) is still deployed unconditionally"
+
+// TestParseManifest_AllowExecutablesWarning locks P0 #4 (register §4.1/§5):
+// an allowExecutables: block must produce a returned Diagnostic AND print
+// directly to stderr (the only way this reaches `apm-go install`, which
+// discards ParseManifest's returned diags -- see allowExecutablesWarning's
+// doc comment), while never turning into a parse error.
+func TestParseManifest_AllowExecutablesWarning(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\nallowExecutables: {}\n")
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	_, diags, parseErr := ParseManifest(node)
+	w.Close()
+	os.Stderr = orig
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatal(err)
+	}
+	stderr := buf.String()
+
+	if parseErr != nil {
+		t.Fatalf("allowExecutables: {} must not fail parsing: %v", parseErr)
+	}
+	if !strings.Contains(stderr, wantAllowExecutablesWarning) {
+		t.Errorf("stderr = %q, want the full allowExecutables warning %q", stderr, wantAllowExecutablesWarning)
+	}
+	found := false
+	for _, d := range diags {
+		if d.Message == wantAllowExecutablesWarning {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("diags = %+v, want the allowExecutables warning among returned diagnostics too", diags)
+	}
+}
+
+func TestParseManifest_NoAllowExecutables_NoWarning(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\n")
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	_, _, parseErr := ParseManifest(node)
+	w.Close()
+	os.Stderr = orig
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatal(err)
+	}
+
+	if parseErr != nil {
+		t.Fatalf("unexpected error: %v", parseErr)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("stderr = %q, want no output when apm.yml has no allowExecutables: block", buf.String())
 	}
 }
 

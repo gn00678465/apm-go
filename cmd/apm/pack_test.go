@@ -117,6 +117,99 @@ func TestPackCmd_NoApmYMLAtAll_PrintsMessageAndExitsZero(t *testing.T) {
 	}
 }
 
+// ── P0 #2: pack --help documents the marketplace-only scope ─────────────
+
+func TestPackCmd_HelpDocumentsMarketplaceOnlyScope(t *testing.T) {
+	out, err := runPackCmd(t, "--help")
+	if err != nil {
+		t.Fatalf("pack --help returned error: %v", err)
+	}
+	for _, token := range []string{"marketplace.json", "Python", "plugin bundle"} {
+		if !strings.Contains(out, token) {
+			t.Errorf("pack --help output missing %q:\n%s", token, out)
+		}
+	}
+	if !strings.Contains(strings.ToLower(out), "only") && !strings.Contains(out, "does not") {
+		t.Errorf("pack --help output lacks explicit scope-limiting language:\n%s", out)
+	}
+	// Full scope line locked verbatim, mirroring the checklist's live-binary
+	// capture -- must stay in sync with packCmd's Long text.
+	const scopeLine = "Python-style plugin bundle (from dependencies:) or a project-root"
+	if !strings.Contains(out, scopeLine) {
+		t.Errorf("pack --help output missing scope line %q:\n%s", scopeLine, out)
+	}
+}
+
+// ── P0 #2 Gate 2: dependencies:/target: without marketplace: must warn ──
+
+// wantPackDepsWarning and wantPackTargetWarning duplicate pack.go's
+// packDepsWarning/packTargetWarning as independent string literals -- not a
+// reference to the production identifier -- so a wording change in packCmd
+// breaks this test with a red diff instead of both sides silently drifting
+// together (same verbatim-lock pattern as errNoDeployTarget's literal
+// "no deployment target detected" check in install_test.go).
+const (
+	wantPackDepsWarning   = "[warn] apm.yml has dependencies: but no 'marketplace:' block; apm-go pack only builds marketplace.json and will not produce a Python-style plugin bundle from dependencies: -- see 'apm-go pack --help'."
+	wantPackTargetWarning = "[warn] apm.yml has target: but no 'marketplace:' block; apm-go pack only builds marketplace.json and will not produce a Python-style plugin.json from target: -- see 'apm-go pack --help'."
+)
+
+func TestRunPack_NoMarketplaceDeferredInput(t *testing.T) {
+	t.Run("dependencies present, no marketplace: warns instead of silent nothing-to-do", func(t *testing.T) {
+		chdirTemp(t)
+		writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+
+		out, err := runPackCmd(t)
+		if err != nil {
+			t.Fatalf("pack returned error: %v (output: %s)", err, out)
+		}
+		if !strings.Contains(out, wantPackDepsWarning) {
+			t.Errorf("output = %q, want the full dependencies: warning %q", out, wantPackDepsWarning)
+		}
+	})
+
+	t.Run("target present, no marketplace: warns instead of silent nothing-to-do", func(t *testing.T) {
+		dir := chdirTemp(t)
+		writePackApmYML(t, "name: demo\nversion: 1.0.0\ntarget:\n  - claude\n")
+
+		out, err := runPackCmd(t)
+		if err != nil {
+			t.Fatalf("pack returned error: %v (output: %s)", err, out)
+		}
+		if !strings.Contains(out, wantPackTargetWarning) {
+			t.Errorf("output = %q, want the full target: warning %q", out, wantPackTargetWarning)
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, "plugin.json")); !os.IsNotExist(statErr) {
+			t.Errorf("apm-go must not produce a Python-style plugin.json (stat err = %v)", statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+			t.Errorf("apm-go must not produce a Python-style bundle (stat err = %v)", statErr)
+		}
+	})
+
+	t.Run("genuinely empty apm.yml: nothing-to-do info, no warning", func(t *testing.T) {
+		dir := chdirTemp(t)
+		writePackApmYML(t, "name: demo\nversion: 1.0.0\n")
+
+		out, err := runPackCmd(t)
+		if err != nil {
+			t.Fatalf("pack returned error: %v (output: %s)", err, out)
+		}
+		if !strings.Contains(out, "nothing to do") {
+			t.Errorf("output = %q, want a genuine no-op message", out)
+		}
+		if strings.Contains(out, "[warn]") {
+			t.Errorf("output = %q, a genuinely empty apm.yml must not warn", out)
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 || entries[0].Name() != "apm.yml" {
+			t.Errorf("pack must not write any file/dir for a genuinely empty apm.yml, got %v", entries)
+		}
+	})
+}
+
 // ── output location: never the repo root, both outputs written ──────────
 
 func TestPackCmd_TwoOutputs_WrittenAtCorrectPaths_NotRepoRoot(t *testing.T) {

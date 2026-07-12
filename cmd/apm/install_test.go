@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1388,5 +1389,81 @@ func TestRunInstall_PlainAbsoluteLocalPathPackage_PersistsAndRoundTrips(t *testi
 	// Act + Assert (b): round-trip.
 	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
+	}
+}
+
+// wantAllowExecutablesWarning duplicates internal/manifest's
+// allowExecutablesWarning as an independent string literal -- not a
+// reference to that package's unexported identifier -- so a wording change
+// there breaks this cmd/apm E2E test too, not just internal/manifest's own
+// unit test (same verbatim-lock pattern as pack_test.go's
+// wantPackDepsWarning/wantPackTargetWarning).
+const wantAllowExecutablesWarning = "[warn] apm.yml has an allowExecutables: block, but apm-go does not enforce it yet; this block is not effective in apm-go and every executable primitive (hooks, bin, MCP) is still deployed unconditionally"
+
+// TestRunInstall_AllowExecutablesWarning locks P0 #4 (register §4.1/§5): an
+// apm.yml `allowExecutables:` block is not enforced by apm-go -- every
+// executable primitive (hooks, bin, MCP) is still deployed unconditionally,
+// with or without the block -- but `apm-go install` must warn instead of
+// silently ignoring it.
+func TestRunInstall_AllowExecutablesWarning(t *testing.T) {
+	const hookBody = `{"Stop":[{"hooks":[{"type":"command","command":"echo unchanged"}]}]}`
+
+	runCase := func(t *testing.T, withBlock bool) (stderr string, hookHash [32]byte) {
+		t.Helper()
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		if err := os.MkdirAll(filepath.Join(dir, ".apm", "hooks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		manifestYAML := "name: allow-test\nversion: \"1.0.0\"\ntarget:\n  - codex\n"
+		if withBlock {
+			manifestYAML += "allowExecutables: {}\n"
+		}
+		if err := os.WriteFile("apm.yml", []byte(manifestYAML), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(".apm", "hooks", "probe.json"), []byte(hookBody), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+		stderr = captureUninstallStderr(t, func() {
+			if err := runInstall(deps, false, false, "", nil, nil); err != nil {
+				t.Fatalf("runInstall failed: %v", err)
+			}
+		})
+
+		hookPath := filepath.Join(dir, ".codex", "hooks.json")
+		data, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatalf("hook not deployed at %s: %v", hookPath, err)
+		}
+		return stderr, sha256.Sum256(data)
+	}
+
+	stderrWith, hashWith := runCase(t, true)
+	if !strings.Contains(stderrWith, "allowExecutables") {
+		t.Errorf("stderr = %q, want an allowExecutables warning", stderrWith)
+	}
+	if !strings.Contains(strings.ToLower(stderrWith), "warn") {
+		t.Errorf("stderr = %q, want a [warn]-level message", stderrWith)
+	}
+	if !strings.Contains(stderrWith, "not effective") {
+		t.Errorf("stderr = %q, want the warning to say the block is not effective in apm-go", stderrWith)
+	}
+	if !strings.Contains(stderrWith, wantAllowExecutablesWarning) {
+		t.Errorf("stderr = %q, want the full allowExecutables warning %q", stderrWith, wantAllowExecutablesWarning)
+	}
+
+	stderrWithout, hashWithout := runCase(t, false)
+	if strings.Contains(stderrWithout, "allowExecutables") {
+		t.Errorf("stderr = %q, must not warn when apm.yml has no allowExecutables: block", stderrWithout)
+	}
+
+	if hashWith != hashWithout {
+		t.Errorf("deployed .codex/hooks.json differs with vs without allowExecutables: block (with=%x, without=%x)", hashWith, hashWithout)
 	}
 }

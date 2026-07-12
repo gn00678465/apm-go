@@ -238,3 +238,37 @@ which check order applies). See Gate 4.
 Full evidence and transcripts:
 `.trellis/tasks/07-12-cli-surface-parity-audit/research/root-cause-analysis.md`
 and `.trellis/spec/evals/cli-surface-parity-register.md` §3.
+
+---
+
+## Gate 6 (Triage & reporting gate): Partial Dispositions Must Schedule the Rest; Reports Must Lead With What Still Doesn't Work
+
+Added 2026-07-12 after the gates themselves failed to prevent a recurrence:
+the parity register's P0 triage dispatched `pack` as "print a warning" and
+`audit` as "document the difference" — both legitimate quick wins — but the
+roadmap never scheduled the actual full-parity work for either, and the
+completion report led with "checklist 26/26 all green" while the user's real
+question ("does `pack` build a bundle now?") was still a NO buried in a
+Non-Goals bullet. The verification chain proved conformance-to-declared-scope
+perfectly; nobody was assigned to check the declared scope against the user's
+expectation. That is the Reused-Name Blind Spot recurring one level up, at
+triage time.
+
+**Rule 6a — no dangling partial dispositions.** Whenever a DIVERGENT/PARTIAL
+register item gets a disposition weaker than full parity (warn-only,
+document-only, defer), the SAME triage table MUST also contain either (a) an
+explicit scheduled item for the remaining full-parity work, or (b) an explicit
+user decision to not do it ("記錄不做", with the user's words or the decision
+date). A warn/document disposition alone never closes a DIVERGENT item.
+Verification: grep the triage table — every warn/document/defer row must
+reference its follow-up row or decision record.
+
+**Rule 6b — user-scenario replay + "what this does NOT fix".** Any task fixing
+a user-reported parity defect ends with (1) replaying the user's ORIGINAL
+failing command (same shape of fixture, both CLIs) and putting the actual
+before/after transcript in the completion report, and (2) a mandatory "此修正
+不做什麼" (what this does NOT fix) section stated BEFORE the pass/fail
+statistics — the user must never have to discover remaining gaps by re-running
+the command themselves. Checklist authors: encode the replay as a numbered
+item; verifiers: the replay transcript is evidence, a checklist verdict alone
+is not.

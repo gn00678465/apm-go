@@ -8,10 +8,26 @@ import (
 
 	yamllib "go.yaml.in/yaml/v4"
 
+	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/marketplace/authoring"
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
+)
+
+// P0 #2 (register §3.2/§5): the two full warning lines printed by runPack
+// when apm.yml declares dependencies:/target: content that Python's `apm
+// pack` would route to BundleProducer/PluginManifestProducer, but apm-go's
+// pack only ever builds marketplace.json -- Gate 2 forbids a silent exit-0
+// "nothing to do" for input that would trigger a scope this command
+// deliberately does not cover. Defined as constants (not inlined) so
+// runPack's two warning sites share exact wording; pack_test.go
+// additionally hardcodes this text as its own independent string literal
+// (not a reference to these identifiers) so a wording change here is
+// caught by a red test instead of silently passing.
+const (
+	packDepsWarning   = "[warn] apm.yml has dependencies: but no 'marketplace:' block; apm-go pack only builds marketplace.json and will not produce a Python-style plugin bundle from dependencies: -- see 'apm-go pack --help'."
+	packTargetWarning = "[warn] apm.yml has target: but no 'marketplace:' block; apm-go pack only builds marketplace.json and will not produce a Python-style plugin.json from target: -- see 'apm-go pack --help'."
 )
 
 // packCmd implements mkt-054/055's `apm pack`: read apm.yml's `marketplace:`
@@ -45,8 +61,13 @@ func packCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:          "pack",
-		Short:        "Generate marketplace.json from apm.yml's 'marketplace:' block",
+		Use:   "pack",
+		Short: "Generate marketplace.json from apm.yml's 'marketplace:' block",
+		Long: `Generate marketplace.json from apm.yml's 'marketplace:' block.
+
+Scope: apm-go pack only generates marketplace.json; it does not build a
+Python-style plugin bundle (from dependencies:) or a project-root
+plugin.json (from target:), unlike the Python 'apm pack' original.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -84,7 +105,23 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 	w := cmd.OutOrStdout()
 
 	if !hasMarketplaceConfig(".") {
-		fmt.Fprintln(w, "[i] No 'marketplace:' block found (neither apm.yml's marketplace: block nor a legacy marketplace.yml exist); nothing to do.")
+		hasDeps, hasTarget := deferredPackInputs(".")
+		switch {
+		case hasDeps, hasTarget:
+			// Gate 2 (oracle-parity-gates.md): out-of-scope input must fail
+			// loud, not silently exit 0 with no output. dependencies:/
+			// target: are exactly the branches Python's BundleProducer/
+			// PluginManifestProducer would act on; apm-go implements
+			// neither, so warn instead of the generic "nothing to do".
+			if hasDeps {
+				fmt.Fprintln(cmd.ErrOrStderr(), packDepsWarning)
+			}
+			if hasTarget {
+				fmt.Fprintln(cmd.ErrOrStderr(), packTargetWarning)
+			}
+		default:
+			fmt.Fprintln(w, "[i] No 'marketplace:' block found (neither apm.yml's marketplace: block nor a legacy marketplace.yml exist); nothing to do.")
+		}
 		return nil
 	}
 
@@ -306,4 +343,31 @@ func hasMarketplaceConfig(dir string) bool {
 		}
 	}
 	return false // apm.yml parses fine but has no marketplace: key at all
+}
+
+// deferredPackInputs reports whether apm.yml declares non-empty
+// dependencies: (regular/dev/mcp) and/or a non-empty target: -- the two
+// inputs Python's `apm pack` would route to BundleProducer/
+// PluginManifestProducer (register §3.2) -- so runPack can warn instead of
+// silently doing nothing (Gate 2). Only called once hasMarketplaceConfig
+// has already reported no marketplace: block, so apm.yml (if present) is
+// already known to parse as a well-formed mapping; any read/parse failure
+// here (including "apm.yml does not exist at all") is reported as neither
+// present, matching a genuine empty project's existing "nothing to do".
+func deferredPackInputs(dir string) (hasDeps, hasTarget bool) {
+	data, err := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if err != nil {
+		return false, false
+	}
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		return false, false
+	}
+	m, _, err := manifest.ParseManifest(node)
+	if err != nil {
+		return false, false
+	}
+	hasDeps = len(m.ParsedDeps) > 0 || len(m.ParsedDevDeps) > 0 || len(m.MCPServers) > 0 || len(m.MCPDevServers) > 0
+	hasTarget = len(m.Target) > 0
+	return hasDeps, hasTarget
 }

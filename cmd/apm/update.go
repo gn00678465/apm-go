@@ -21,11 +21,18 @@ import (
 func updateCmd() *cobra.Command {
 	var frozen bool
 	var noFrozen bool
+	var dryRun bool
 
 	cmd := &cobra.Command{
 		Use:   "update [package]",
 		Short: "Re-resolve dependencies to their newest matching version",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Re-resolve dependencies to their newest matching version.
+
+The dry-run flag prints the same update plan a real update would apply
+(old -> new version per changed dependency) and returns without writing
+apm.lock.yaml, without materializing or removing anything under
+apm_modules/, and without deploying any change to a target.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			deps := &installDeps{
 				tags:   &gitops.RealTagLister{},
@@ -35,16 +42,17 @@ func updateCmd() *cobra.Command {
 			if len(args) == 1 {
 				pkg = args[0]
 			}
-			return runUpdate(deps, frozen, noFrozen, pkg)
+			return runUpdate(deps, frozen, noFrozen, pkg, dryRun)
 		},
 	}
 	cmd.Flags().BoolVar(&frozen, "frozen", false, "refuse a scoped update against a frozen install (req-rs-012); auto-enabled in CI")
 	cmd.Flags().BoolVar(&noFrozen, "no-frozen", false, "override CI auto-frozen detection to allow a scoped update")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview the update plan without applying it: no apm.lock.yaml write, no apm_modules/ mutation, no target deploy")
 	cmd.MarkFlagsMutuallyExclusive("frozen", "no-frozen")
 	return cmd
 }
 
-func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
+func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool) error {
 	if noFrozen {
 		frozen = false
 	} else if !frozen && lockfile.IsCIEnvironment() {
@@ -125,6 +133,23 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 		}
 	}
 
+	// mkt-029/033/F1: same BFS-level marketplace-dict resolution as
+	// runInstall -- an apm.yml dependencies.apm dict entry
+	// ({name, marketplace, version}) must resolve identically whether
+	// reached via `apm install` or `apm update`.
+	resolverCfg := resolver.ResolverConfig{MarketplaceResolve: newMarketplaceResolveFunc()}
+
+	// P0 #5 (register §3.3 D-1/§5): --dry-run prints the plan a real update
+	// would apply, then returns -- zero writes to apm.lock.yaml, apm_modules/,
+	// or any deployed target file. It resolves into its own throwaway
+	// scratch directory rather than reusing the real-update path below,
+	// because PackageLoader.LoadPackage is not read-only (it clones/removes
+	// stale checkouts as a side effect of resolving, per gitops.clone.go),
+	// and buildLockfile/deployAndFinalize are disk-writing by design.
+	if dryRun {
+		return runUpdateDryRun(m, existingLock, deps, pkg, resolverCfg)
+	}
+
 	// Composite loader: registry-sourced deps go through the HTTP consumer,
 	// everything else via git (mirrors runInstall).
 	regLoader := &registry.Loader{
@@ -156,12 +181,6 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 			return fmt.Errorf("clear %s before update: %w", key, err)
 		}
 	}
-
-	// mkt-029/033/F1: same BFS-level marketplace-dict resolution as
-	// runInstall -- an apm.yml dependencies.apm dict entry
-	// ({name, marketplace, version}) must resolve identically whether
-	// reached via `apm install` or `apm update`.
-	resolverCfg := resolver.ResolverConfig{MarketplaceResolve: newMarketplaceResolveFunc()}
 
 	var result *resolver.ResolutionResult
 	if pkg == "" {
@@ -206,6 +225,65 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string) error {
 	}
 
 	return deployAndFinalize(m, "", nil, nil, nil, result, newLock, existingLock, existingNode, node)
+}
+
+// runUpdateDryRun resolves --dry-run's plan against a throwaway scratch
+// ModulesDir (never "apm_modules") and prints it via the same
+// printUpdateSummary heading/format a real update uses, without ever
+// calling buildLockfile or deployAndFinalize -- so apm.lock.yaml,
+// apm_modules/, and every deployed target file stay byte-identical to
+// before the call (register §3.3 D-1, oracle-parity-gates.md Gate 2). The
+// scratch directory is removed before returning; nothing under it is ever
+// visible to the caller.
+//
+// PlanScopedUpdate's frozen argument is hardcoded false: runUpdate already
+// refuses pkg!="" && frozen before resolverCfg is ever built, so this
+// function is only ever reached with pkg!="" when frozen is guaranteed
+// false.
+func runUpdateDryRun(m *manifest.Manifest, existingLock *lockfile.Lockfile, deps *installDeps, pkg string, resolverCfg resolver.ResolverConfig) error {
+	scratchDir, err := os.MkdirTemp("", "apm-go-update-dry-run-*")
+	if err != nil {
+		return fmt.Errorf("update --dry-run: create scratch directory: %w", err)
+	}
+	defer os.RemoveAll(scratchDir)
+
+	scratchLoader := &gitops.RealPackageLoader{ModulesDir: scratchDir}
+	scratchRegLoader := &registry.Loader{
+		Registries:      m.Registries,
+		DefaultRegistry: m.DefaultRegistry,
+		ModulesDir:      scratchDir,
+		Next:            scratchLoader,
+		MaxBytes:        deps.maxArchiveBytes,
+		MaxEntries:      deps.maxEntries,
+	}
+
+	var result *resolver.ResolutionResult
+	if pkg == "" {
+		result, err = resolver.PlanFullUpdate(m, existingLock, deps.tags, scratchRegLoader, resolverCfg)
+	} else {
+		result, err = resolver.PlanScopedUpdate(m, existingLock, deps.tags, scratchRegLoader, resolverCfg, pkg, false)
+	}
+	if err != nil {
+		return fmt.Errorf("update --dry-run: %w", err)
+	}
+
+	// A minimal, in-memory-only Lockfile carrying just enough
+	// (RepoURL/VirtualPath for UniqueKey, ResolvedTag/ResolvedRef for the
+	// old->new comparison) for printUpdateSummary -- deliberately NOT
+	// buildLockfile's full construction, which resolves commit SHAs and
+	// tree_sha256 from "apm_modules/<key>" (a hardcoded real path, not this
+	// scratch dir) and would either read stale content or fail outright.
+	displayLock := &lockfile.Lockfile{}
+	for _, dep := range result.Deps {
+		displayLock.Dependencies = append(displayLock.Dependencies, lockfile.LockedDep{
+			RepoURL:     dep.RepoURL,
+			VirtualPath: dep.VirtualPath,
+			ResolvedTag: dep.ResolvedTag,
+			ResolvedRef: dep.ResolvedRef,
+		})
+	}
+	printUpdateSummary(existingLock, displayLock)
+	return nil
 }
 
 // directGitSemverUpdateScope returns the apm_modules/<key> keys that must be

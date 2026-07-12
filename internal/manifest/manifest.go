@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 
@@ -18,6 +19,19 @@ const (
 	LevelWarning DiagLevel = iota
 	LevelError
 )
+
+// allowExecutablesWarning is P0 #4's full warning text (register §4.1/§5):
+// apm-go does not implement Python's allowExecutables deny-by-default
+// executable-primitives gate (security/executables.py) -- every hook/bin/
+// MCP primitive is still deployed unconditionally. Printed directly by
+// ParseManifest (see the "allowExecutables" case below) rather than only
+// returned as a Diagnostic: install/update/uninstall/mcp-install all parse
+// a manifest through this same function but currently discard its returned
+// diags, so a returned-only Diagnostic would never reach a user running
+// `apm-go install`. This is a prompt, not a gate -- it never changes
+// deployment behavior (P0 #4 is scoped to eliminating the silent failure,
+// not to implementing enforcement; see prd.md Non-Goals).
+const allowExecutablesWarning = "[warn] apm.yml has an allowExecutables: block, but apm-go does not enforce it yet; this block is not effective in apm-go and every executable primitive (hooks, bin, MCP) is still deployed unconditionally"
 
 type Diagnostic struct {
 	Level   DiagLevel
@@ -152,6 +166,16 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 			if err := validateMarketplaceBlock(val); err != nil {
 				return nil, nil, err
 			}
+		case "allowExecutables":
+			// P0 #4: not(yet) enforced -- warn, don't gate. See
+			// allowExecutablesWarning's doc comment for why this prints
+			// directly instead of relying on a caller to consume diags.
+			fmt.Fprintln(os.Stderr, allowExecutablesWarning)
+			diags = append(diags, Diagnostic{
+				Level:   LevelWarning,
+				Req:     "req-sec-allowexec",
+				Message: allowExecutablesWarning,
+			})
 		default:
 			// Unknown keys (including x-*) preserved by Node — no action needed
 		}

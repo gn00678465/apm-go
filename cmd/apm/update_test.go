@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,31 @@ import (
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/semver"
 )
+
+// TestUpdateCmd_DryRunFlag locks P0 #5's CLI wiring (register §2/§3.3
+// D-1/§5): --dry-run must exist and its rendered --help line (including
+// cobra's column alignment) must promise both a plan/preview and no
+// mutation, so wording drift is caught immediately.
+func TestUpdateCmd_DryRunFlag(t *testing.T) {
+	cmd := updateCmd()
+	if cmd.Flags().Lookup("dry-run") == nil {
+		t.Fatal("update is missing --dry-run")
+	}
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("update --help returned error: %v", err)
+	}
+	out := buf.String()
+
+	const dryRunHelpLine = "--dry-run     preview the update plan without applying it: no apm.lock.yaml write, no apm_modules/ mutation, no target deploy"
+	if !strings.Contains(out, dryRunHelpLine) {
+		t.Errorf("update --help output missing the --dry-run flag line %q:\n%s", dryRunHelpLine, out)
+	}
+}
 
 func TestRunUpdate_Full_ReResolvesToNewestAndRewritesLock(t *testing.T) {
 	dir := t.TempDir()
@@ -33,7 +59,7 @@ func TestRunUpdate_Full_ReResolvesToNewestAndRewritesLock(t *testing.T) {
 		}},
 	}
 
-	if err := runUpdate(deps, false, false, ""); err != nil {
+	if err := runUpdate(deps, false, false, "", false); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -74,7 +100,7 @@ func TestRunUpdate_Scoped_OnlyNamedPackageChanges(t *testing.T) {
 		}},
 	}
 
-	if err := runUpdate(deps, false, false, "acme/a"); err != nil {
+	if err := runUpdate(deps, false, false, "acme/a", false); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -113,7 +139,7 @@ func TestRunUpdate_Scoped_FrozenRefusedWithoutOverride(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	err := runUpdate(deps, true, false, "acme/a")
+	err := runUpdate(deps, true, false, "acme/a", false)
 	if err == nil {
 		t.Fatal("expected error for scoped update against a frozen install without override")
 	}
@@ -138,7 +164,7 @@ func TestRunUpdate_Scoped_CIAutoFrozenRefused(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	err := runUpdate(deps, false, false, "acme/a")
+	err := runUpdate(deps, false, false, "acme/a", false)
 	if err == nil {
 		t.Fatal("expected CI environment to auto-refuse a scoped update without --no-frozen")
 	}
@@ -169,7 +195,7 @@ func TestRunUpdate_Scoped_NoFrozenOverridesCIAutoFrozen(t *testing.T) {
 		}},
 	}
 
-	if err := runUpdate(deps, false, true, "acme/a"); err != nil {
+	if err := runUpdate(deps, false, true, "acme/a", false); err != nil {
 		t.Fatalf("--no-frozen should override CI auto-frozen detection: %v", err)
 	}
 }
@@ -198,7 +224,7 @@ func TestRunUpdate_GitSemver_InstallPathClearedEvenWhenTagUnchanged(t *testing.T
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("stale content from before"), 0644)
 
-	if err := runUpdate(deps, false, false, ""); err != nil {
+	if err := runUpdate(deps, false, false, "", false); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -238,7 +264,7 @@ func TestRunUpdate_GitSemver_DevDependency_InstallPathClearedEvenWhenTagUnchange
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("stale content from before"), 0644)
 
-	if err := runUpdate(deps, false, false, ""); err != nil {
+	if err := runUpdate(deps, false, false, "", false); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -275,7 +301,7 @@ func TestRunUpdate_RefusesVirtualPathEscapingApmModules(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	err := runUpdate(deps, false, false, "")
+	err := runUpdate(deps, false, false, "", false)
 	if err == nil {
 		t.Fatal("expected an error refusing to clear a path outside apm_modules")
 	}
@@ -315,7 +341,7 @@ func TestRunUpdate_RefusesParentSegmentStayingInsideApmModules(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	err := runUpdate(deps, false, false, "")
+	err := runUpdate(deps, false, false, "", false)
 	if err == nil {
 		t.Fatal("expected an error refusing to clear a \"..\"-containing path")
 	}
@@ -350,7 +376,7 @@ func TestRunUpdate_RegistryDevDependency_RequiresExperimentalFlag(t *testing.T) 
 	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"2\"\ndependencies:\n  - repo_url: acme/sample\n    source: registry\n    version: 1.0.0\n    depth: 1\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runUpdate(deps, false, false, "")
+	err := runUpdate(deps, false, false, "", false)
 	if err == nil {
 		t.Fatal("expected an error for a registry-sourced devDependencies.apm entry without the registries experimental flag enabled")
 	}
@@ -366,7 +392,7 @@ func TestRunUpdate_NoManifest(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runUpdate(deps, false, false, "")
+	err := runUpdate(deps, false, false, "", false)
 	if err == nil {
 		t.Fatal("expected error when apm.yml is missing")
 	}
@@ -384,7 +410,7 @@ func TestRunUpdate_NoLockfile(t *testing.T) {
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runUpdate(deps, false, false, "")
+	err := runUpdate(deps, false, false, "", false)
 	if err == nil {
 		t.Fatal("expected error when apm.lock.yaml is missing")
 	}

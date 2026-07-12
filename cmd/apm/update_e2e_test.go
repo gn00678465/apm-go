@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/gitops"
@@ -87,7 +88,7 @@ func TestRunUpdate_RealGitSemver_ResolvesToNewTag(t *testing.T) {
 	git(remoteDir, "tag", "v1.5.0")
 	v15Head := headOf(remoteDir)
 
-	if err := runUpdate(deps, false, false, ""); err != nil {
+	if err := runUpdate(deps, false, false, "", false); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -162,11 +163,102 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runUpdate(deps, false, false, ""); err != nil {
+	if err := runUpdate(deps, false, false, "", false); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
 		t.Errorf("expected apm_modules/remote to be cleared and re-cloned even though the tag (v1.0.0) didn't change (req-lk-010); marker still present (stat err: %v)", err)
 	}
+}
+
+// TestRunUpdate_DryRunPlanNoSideEffects is P0 #5's real-git zero-side-effect
+// proof (register §3.3 D-1/§5, oracle-parity-gates.md Gate 2): --dry-run
+// must print the same "Update plan for apm.yml" plan a real update would
+// (old -> new version), while leaving apm.lock.yaml, apm_modules/, and
+// every deployed target file byte-identical to before the call -- proven
+// against the real cmd/apm -> resolver -> RealTagLister -> RealPackageLoader
+// path (no mocks), mirroring TestRunUpdate_RealGitSemver_ResolvesToNewTag.
+func TestRunUpdate_DryRunPlanNoSideEffects(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	git := func(repoDir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s\n%s", args, err, out)
+		}
+	}
+
+	remoteDir := filepath.Join(dir, "remote")
+	if err := os.MkdirAll(filepath.Join(remoteDir, ".apm", "skills", "demo"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	git(remoteDir, "init")
+	git(remoteDir, "config", "user.name", "test")
+	git(remoteDir, "config", "user.email", "test@test.com")
+	os.WriteFile(filepath.Join(remoteDir, "apm.yml"), []byte("name: dep\nversion: \"1.0.0\"\n"), 0644)
+	os.WriteFile(filepath.Join(remoteDir, ".apm", "skills", "demo", "SKILL.md"), []byte("# demo v1\n"), 0644)
+	git(remoteDir, "add", ".")
+	git(remoteDir, "commit", "-m", "v1")
+	git(remoteDir, "tag", "v1.0.0")
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: ./remote\n      ref: \"^1.0.0\"\n"), 0644)
+
+	deps := &installDeps{
+		tags:   &gitops.RealTagLister{},
+		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+	}
+	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+		t.Fatalf("initial runInstall: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "demo", "SKILL.md")); err != nil {
+		t.Fatalf("baseline install did not deploy the skill: %v", err)
+	}
+
+	// A newer release appears on the remote, still within ^1.0.0.
+	os.WriteFile(filepath.Join(remoteDir, "apm.yml"), []byte("name: dep\nversion: \"1.5.0\"\n"), 0644)
+	os.WriteFile(filepath.Join(remoteDir, ".apm", "skills", "demo", "SKILL.md"), []byte("# demo v1.5\n"), 0644)
+	git(remoteDir, "add", ".")
+	git(remoteDir, "commit", "-m", "v1.5")
+	git(remoteDir, "tag", "v1.5.0")
+
+	lockBefore, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modulesBefore := snapshotDir(t, filepath.Join(dir, "apm_modules"))
+	targetBefore := snapshotDir(t, filepath.Join(dir, ".claude"))
+
+	stdout := captureUninstallStdout(t, func() {
+		if err := runUpdate(deps, false, false, "", true); err != nil {
+			t.Fatalf("update --dry-run: %v", err)
+		}
+	})
+
+	if !strings.Contains(stdout, "Update plan for apm.yml") {
+		t.Errorf("stdout = %q, want the plan heading", stdout)
+	}
+	if !strings.Contains(stdout, "v1.0.0") || !strings.Contains(stdout, "v1.5.0") {
+		t.Errorf("stdout = %q, want both the old (v1.0.0) and new (v1.5.0) versions", stdout)
+	}
+
+	lockAfter, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(lockBefore) != string(lockAfter) {
+		t.Errorf("apm.lock.yaml changed during --dry-run:\nbefore:\n%s\nafter:\n%s", lockBefore, lockAfter)
+	}
+	assertSnapshotsEqual(t, "apm_modules", modulesBefore, snapshotDir(t, filepath.Join(dir, "apm_modules")))
+	assertSnapshotsEqual(t, ".claude", targetBefore, snapshotDir(t, filepath.Join(dir, ".claude")))
 }

@@ -79,7 +79,7 @@ func TestRunUpdate_LocalDep_MaterializesAndDeploys(t *testing.T) {
 	writeLocalDepContent(t, "dep-pkg", "v2")
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
-	if err := runUpdate(deps, false, true, ""); err != nil {
+	if err := runUpdate(deps, false, true, "", false); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -132,7 +132,7 @@ func TestRunUpdate_LocalDep_LockfileKeyStable_NoBarePathEntry(t *testing.T) {
 	writeLocalDepContent(t, "dep-pkg", "v2")
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
-	if err := runUpdate(deps, false, true, ""); err != nil {
+	if err := runUpdate(deps, false, true, "", false); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -164,7 +164,7 @@ func TestRunUpdate_LocalDep_MatchesFreshInstallDeployedBytes(t *testing.T) {
 	updateDir, _ := setupLocalDepUpdateFixture(t)
 	writeLocalDepContent(t, "dep-pkg", "v2")
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
-	if err := runUpdate(deps, false, true, ""); err != nil {
+	if err := runUpdate(deps, false, true, "", false); err != nil {
 		t.Fatalf("update-side runUpdate: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestRunUpdate_Scoped_LocalPathToken_Matches(t *testing.T) {
 	writeLocalDepContent(t, "dep-pkg", "v2")
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
-	if err := runUpdate(deps, false, true, "./dep-pkg"); err != nil {
+	if err := runUpdate(deps, false, true, "./dep-pkg", false); err != nil {
 		t.Fatalf("scoped update on a local-path token must not fail: %v", err)
 	}
 
@@ -257,7 +257,7 @@ func TestRunUpdate_DepsPresentZeroTarget_ExitsWithTeachingMessage(t *testing.T) 
 
 	var err error
 	stdout := captureUninstallStdout(t, func() {
-		err = runUpdate(deps, false, true, "")
+		err = runUpdate(deps, false, true, "", false)
 	})
 	if err == nil {
 		t.Fatal("expected an error when dependencies are present but no deployment target resolves")

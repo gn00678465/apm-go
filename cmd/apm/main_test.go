@@ -176,6 +176,37 @@ func TestInitCmd_ProjectNameArg(t *testing.T) {
 	}
 }
 
+// TestInitCmd_DoesNotSuggestRun locks P0 #1 (register §4.8/§5): init's
+// "Next steps" must never promise `apm-go run <script>` -- that command does
+// not exist, so every user who followed the old prompt hit "unknown
+// command" on their very first next step. The valid `apm-go install`
+// next-step must still be there.
+func TestInitCmd_DoesNotSuggestRun(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	stderr := captureUninstallStderr(t, func() {
+		cmd := initCmd()
+		cmd.SetArgs([]string{"--yes"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("init --yes failed: %v", err)
+		}
+	})
+
+	if !strings.Contains(stderr, "apm-go install") {
+		t.Errorf("init output = %q, want the valid 'apm-go install' next-step to remain", stderr)
+	}
+	const removedPromise = "apm-go run <script>"
+	if strings.Contains(stderr, removedPromise) {
+		t.Errorf("init output = %q, must not contain the removed promise %q (that command does not exist)", stderr, removedPromise)
+	}
+	if strings.Contains(stderr, "Run a script") {
+		t.Errorf("init output = %q, must not contain the removed 'Run a script' next-step label", stderr)
+	}
+}
+
 // ── validate dispatch tests ──
 
 func TestValidateCmd_LockfileBypass(t *testing.T) {
