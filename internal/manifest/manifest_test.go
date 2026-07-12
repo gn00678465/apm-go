@@ -326,6 +326,175 @@ func TestParseManifest_AgyAliasNormalization(t *testing.T) {
 	}
 }
 
+// ── target:/targets: decision tree (research/pack-parity-findings.md §2.1,
+// mirroring apm_yml.py:47-108 parse_targets_field) ──
+
+func TestParseManifest_TargetsPluralList(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntargets:\n  - claude\n  - copilot\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 2 || m.Target[0] != "claude" || m.Target[1] != "copilot" {
+		t.Errorf("targets: [claude, copilot] got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetsPluralScalarSingleElement(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntargets: claude\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 1 || m.Target[0] != "claude" {
+		t.Errorf("targets: claude (scalar) should become single-element list, got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetsEmptyListRejected(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntargets: []\n")
+	node, _ := yamlcore.SafeLoad(data)
+	_, _, err := ParseManifest(node)
+	if err == nil {
+		t.Fatal("expected error for empty targets: list")
+	}
+	if !strings.Contains(err.Error(), "targets") {
+		t.Errorf("error %q should mention 'targets'", err.Error())
+	}
+}
+
+func TestParseManifest_TargetsNullRejected(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntargets:\n")
+	node, _ := yamlcore.SafeLoad(data)
+	_, _, err := ParseManifest(node)
+	if err == nil {
+		t.Fatal("expected error for null targets:")
+	}
+	if !strings.Contains(err.Error(), "targets") {
+		t.Errorf("error %q should mention 'targets'", err.Error())
+	}
+}
+
+func TestParseManifest_TargetCSVSugar(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: \"claude,copilot\"\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 2 || m.Target[0] != "claude" || m.Target[1] != "copilot" {
+		t.Errorf("target: \"claude,copilot\" (CSV sugar) got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetCSVSugarWithSpaces(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: \"claude, copilot\"\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 2 || m.Target[0] != "claude" || m.Target[1] != "copilot" {
+		t.Errorf("target: \"claude, copilot\" (CSV sugar w/ spaces) got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetSingleUnchanged(t *testing.T) {
+	// Existing single-target behavior must not regress under the CSV-sugar
+	// change: a scalar with no comma is still a one-element list.
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: claude\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 1 || m.Target[0] != "claude" {
+		t.Errorf("target: claude got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetNullFallsThroughToAutoDetect(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget:\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 0 {
+		t.Errorf("target: (null) should be empty (auto-detect), got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetAndTargetsConflict(t *testing.T) {
+	forms := []string{
+		"name: p\nversion: \"1.0.0\"\ntarget: claude\ntargets:\n  - claude\n",
+		"name: p\nversion: \"1.0.0\"\ntargets:\n  - claude\ntarget: claude\n",
+	}
+	for _, data := range forms {
+		node, _ := yamlcore.SafeLoad([]byte(data))
+		_, _, err := ParseManifest(node)
+		if err == nil {
+			t.Fatalf("expected conflict error for both keys present, form %q", data)
+		}
+	}
+}
+
+// wantConflictingTargetsError duplicates the mutex-conflict error text as an
+// independent literal (not a reference to the string embedded in
+// manifest.go) so wording drift breaks this test loudly, matching the
+// allowExecutablesWarning verbatim-lock pattern above.
+const wantConflictingTargetsError = "apm.yml must not define both 'target:' and 'targets:'; use only one"
+
+// TestParseManifest_TargetAndTargetsConflict_InvalidFirstValueMasksNothing
+// locks codex-verify-phase01.md FAIL 1: Python computes key presence and
+// raises ConflictingTargetsError before reading either value
+// (apm_yml.py:53-58). The prior Go implementation only noticed the conflict
+// once it reached the second key, so an invalid or empty value under
+// whichever key appeared first surfaced instead of the mutex error.
+func TestParseManifest_TargetAndTargetsConflict_InvalidFirstValueMasksNothing(t *testing.T) {
+	forms := map[string]string{
+		"empty targets first, valid target second":   "name: p\nversion: \"1.0.0\"\ntargets: []\ntarget: claude\n",
+		"invalid target first, valid targets second": "name: p\nversion: \"1.0.0\"\ntarget: bogus\ntargets:\n  - claude\n",
+	}
+	for name, data := range forms {
+		t.Run(name, func(t *testing.T) {
+			node, _ := yamlcore.SafeLoad([]byte(data))
+			_, _, err := ParseManifest(node)
+			if err == nil {
+				t.Fatal("expected conflict error")
+			}
+			if err.Error() != wantConflictingTargetsError {
+				t.Errorf("error = %q, want %q (conflict must be checked before either value is parsed)", err.Error(), wantConflictingTargetsError)
+			}
+		})
+	}
+}
+
+// TestParseManifest_TargetListRejectsMappingElement locks
+// codex-verify-phase01.md FAIL 2: Python stringifies every list element
+// before filtering and canonical validation (apm_yml.py:82-84,94-98), so a
+// mapping element becomes a non-empty string and is rejected as an unknown
+// target. The prior Go implementation copied yaml.Node.Value without
+// checking the element kind; a mapping node has an empty Value, so it was
+// silently dropped as blank and the manifest parsed successfully.
+func TestParseManifest_TargetListRejectsMappingElement(t *testing.T) {
+	forms := map[string]string{
+		"targets: [{foo: bar}]": "name: p\nversion: \"1.0.0\"\ntargets:\n  - foo: bar\n",
+		"target: [{foo: bar}]":  "name: p\nversion: \"1.0.0\"\ntarget:\n  - foo: bar\n",
+	}
+	for name, data := range forms {
+		t.Run(name, func(t *testing.T) {
+			node, _ := yamlcore.SafeLoad([]byte(data))
+			_, _, err := ParseManifest(node)
+			if err == nil {
+				t.Fatalf("expected error for mapping element inside target list, form %q", data)
+			}
+		})
+	}
+}
+
 func TestParseManifest_HttpInsecureAccepted(t *testing.T) {
 	data := []byte("name: p\nversion: \"1.0.0\"\nregistries:\n  local:\n    url: http://192.168.1.1/r\n")
 	node, _ := yamlcore.SafeLoad(data)
