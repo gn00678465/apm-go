@@ -129,7 +129,7 @@ func loadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []
 }
 
 // LoadDependencyMCP is an exported wrapper around loadDependencyMCP for
-// callers outside this package (cmd/apm's uninstall un-061 transitive MCP
+// callers outside this package (cmd/apm-go's uninstall un-061 transitive MCP
 // stale-diff needs the same "read a dependency's own apm.yml prod MCP
 // servers" lenience rules) without duplicating its logic.
 func LoadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []string) {
@@ -143,7 +143,7 @@ func LoadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []
 // follows a transitive dependency's devDependencies either. Mirrors
 // loadDependencyMCP's lenience exactly: a missing apm.yml is "no
 // dependencies" (nil, nil), and one that exists but fails to parse is a
-// diagnostic, not an error. Used by cmd/apm's uninstall orchestration
+// diagnostic, not an error. Used by cmd/apm-go's uninstall orchestration
 // (reachableFromRemainingRoots) to walk the actual dependency graph declared
 // on disk, rather than trusting LockedDep.ResolvedBy -- which only records a
 // single parent and can't represent a diamond dependency shared by two root

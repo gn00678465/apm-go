@@ -13,7 +13,7 @@ import (
 )
 
 // mockMCPRegistryServer is a minimal MCP Registry v0.1 stand-in, mirroring
-// cmd/apm's mcpRegistryServer test helper (kept as a separate copy since Go
+// cmd/apm-go's mcpRegistryServer test helper (kept as a separate copy since Go
 // doesn't share unexported test helpers across packages).
 func mockMCPRegistryServer(t *testing.T, name string, remotes []map[string]any) *httptest.Server {
 	t.Helper()

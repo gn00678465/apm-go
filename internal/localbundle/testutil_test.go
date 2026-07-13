@@ -78,7 +78,7 @@ func buildTestBundle(t *testing.T) string {
 
 // bundleTestPackMeta re-detects bundleDir (produced by buildTestBundle) to
 // obtain the *bundle.PackMetadata IntegrateLocalBundle expects -- exercising
-// the same DetectLocalBundle path cmd/apm/install.go's real caller uses,
+// the same DetectLocalBundle path cmd/apm-go/install.go's real caller uses,
 // rather than hand-constructing a PackMetadata that could silently diverge.
 func bundleTestPackMeta(t *testing.T, bundleDir string) *bundle.PackMetadata {
 	t.Helper()

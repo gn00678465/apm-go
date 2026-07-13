@@ -584,7 +584,7 @@ func TestParseManifest_HttpLocalhostTextAccepted(t *testing.T) {
 // wording change to allowExecutablesWarning breaks this test with a red
 // diff instead of both sides silently changing together (same
 // verbatim-lock pattern as errNoDeployTarget's literal
-// "no deployment target detected" check in cmd/apm/install_test.go).
+// "no deployment target detected" check in cmd/apm-go/install_test.go).
 const wantAllowExecutablesWarning = "[warn] apm.yml has an allowExecutables: block, but apm-go does not enforce it yet; this block is not effective in apm-go and every executable primitive (hooks, bin, MCP) is still deployed unconditionally"
 
 // TestParseManifest_AllowExecutablesWarning locks P0 #4 (register §4.1/§5):

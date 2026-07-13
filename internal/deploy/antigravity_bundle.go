@@ -39,7 +39,7 @@ func bundleNameFromDepKey(depKey string) string {
 // sanitizeBundleSegment reduces s to a single safe path segment: every
 // character outside [A-Za-z0-9._-] becomes '-', and a result that is empty,
 // ".", "..", or starts with "." is replaced with a "pkg-" prefixed
-// fallback -- the same convention cmd/apm/install.go's sanitizePathSegment
+// fallback -- the same convention cmd/apm-go/install.go's sanitizePathSegment
 // uses for apm_modules keys -- so the derived bundle directory name can
 // never be empty, hidden, or a traversal segment.
 func sanitizeBundleSegment(s string) string {

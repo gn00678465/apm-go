@@ -16,7 +16,7 @@ import (
 
 // handAuthoredApmYMLWithDictMarketplaceDep mirrors the project's established
 // "舊坑 1" fixture convention (see internal/manifest/depref_marketplace_test.go's
-// handAuthoredApmYMLWithMarketplaceDep and cmd/apm/marketplace_authoring_test.go's
+// handAuthoredApmYMLWithMarketplaceDep and cmd/apm-go/marketplace_authoring_test.go's
 // handAuthoredApmYML): unusual spacing, inline comments on the very lines
 // under test, and unrelated surrounding content -- proving F1's fix resolves
 // a dict-form marketplace dependency even embedded in a realistic,

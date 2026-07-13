@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
-- **Last Active**: 2026-07-11
+- **Total Sessions**: 24
+- **Last Active**: 2026-07-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~837 | Active |
+| `journal-1.md` | ~877 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-07-14 | pack/audit 完整 parity 收尾：Phase 6-8 + cmd 目錄改名 | `d1bfad8`, `7c95c48`, `f2453b8`, `276c56b`, `6585876`, `63857c1`, `0766389`, `440857c` | `feat/marketplace-install` |
 | 23 | 2026-07-11 | runtime-parity-gaps 父任務狀態確認與收官 archive | - | `feat/marketplace-install` |
 | 22 | 2026-07-11 | runtime-parity-gaps 父任務確認與 instructions applyTo parity 實作 | `a440b85`, `04f4e58`, `ccc2c9d`, `6556088`, `33bcb24`, `27328d1` | `feat/marketplace-install` |
 | 21 | 2026-07-10 | antigravity CLI 研究定案、三修正實作與硬性 checklist 驗證 | `d72dc6a`, `c6ef3f7`, `3471e45`, `7ada7fb`, `d13b577`, `171fd87`, `8d5c516` | `feat/marketplace-install` |

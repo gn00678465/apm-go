@@ -12,7 +12,7 @@ import (
 
 // chdirTemp changes the working directory to a fresh t.TempDir() for the
 // duration of the test (following this file's own os.Chdir/defer
-// convention, e.g. cmd/apm/install_test.go), and returns that directory.
+// convention, e.g. cmd/apm-go/install_test.go), and returns that directory.
 func chdirTemp(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

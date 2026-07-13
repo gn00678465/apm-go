@@ -11,7 +11,7 @@ import (
 )
 
 // TestRunInstall_StaleCheckoutIsRepaired is the CLI-level req-lk-007
-// regression: it exercises the real cmd/apm -> resolver -> RealPackageLoader
+// regression: it exercises the real cmd/apm-go -> resolver -> RealPackageLoader
 // path (no mocks) using a local git-path dependency (git: ./remote), which
 // is offline-friendly since it never contacts a real network host. A
 // realistic "acme/foo" shorthand reference would resolve Owner/Repo and

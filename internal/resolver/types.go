@@ -42,7 +42,7 @@ type MarketplaceProvenance struct {
 // internal/marketplace deliberately does not import internal/resolver (see
 // version_spec.go's TagLister doc comment), and by the same reasoning
 // internal/resolver does not import internal/marketplace either -- this
-// function type is the dependency-injection seam cmd/apm wires with a
+// function type is the dependency-injection seam cmd/apm-go wires with a
 // closure around marketplace.ResolvePlugin, keeping both packages
 // import-cycle-free of each other.
 type MarketplaceResolveFunc func(dep *manifest.DependencyReference) (resolved *manifest.DependencyReference, provenance *MarketplaceProvenance, err error)
@@ -97,7 +97,7 @@ type ResolutionResult struct {
 	// this call (mkt-031), keyed identically to ResolvedDep.Key (the same
 	// depKey/deploy.DepRefKey coordinate). nil/empty when no marketplace
 	// dependency was resolved. Callers merge this into whatever provenance
-	// map they build from other sources (e.g. cmd/apm's CLI
+	// map they build from other sources (e.g. cmd/apm-go's CLI
 	// PLUGIN@MARKETPLACE positional-argument path).
 	MarketplaceProvenance map[string]*MarketplaceProvenance
 }

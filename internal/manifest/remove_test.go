@@ -107,7 +107,7 @@ func TestRemovePackagesFromManifest_IgnoresRefAndAlias_ForIdentityMatch(t *testi
 
 // TestRemovePackagesFromManifest_LocalPathEntry_MatchesSyntheticLocalKey:
 // a local-path entry has no IdentityKey() (deliberately), so removal is
-// keyed on the synthetic "local:<path>" identity cmd/apm's uninstallIdentity
+// keyed on the synthetic "local:<path>" identity cmd/apm-go's uninstallIdentity
 // produces (ag-23 -- without this, `apm-go uninstall ./dep-pkg` could never
 // splice the entry out of apm.yml).
 func TestRemovePackagesFromManifest_LocalPathEntry_MatchesSyntheticLocalKey(t *testing.T) {

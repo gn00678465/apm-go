@@ -10,7 +10,7 @@ import (
 
 // captureStderr redirects os.Stderr for the duration of fn and returns
 // everything written to it, mirroring the os.Pipe technique already used in
-// cmd/apm/mcpinstall_test.go (there for os.Stdout).
+// cmd/apm-go/mcpinstall_test.go (there for os.Stdout).
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()

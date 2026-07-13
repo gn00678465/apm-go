@@ -19,7 +19,7 @@ import (
 
 // apmGoVersion is the "APM Version" compile writes into AGENTS.md, matching
 // the same self-reported version install.go's lockfile writer already uses
-// (cmd/apm/install.go: newLock.APMVersion = "0.1.0").
+// (cmd/apm-go/install.go: newLock.APMVersion = "0.1.0").
 const apmGoVersion = "0.1.0"
 
 // agentsFamilyTargets is apm-go compile's v1 target vocabulary -- the three

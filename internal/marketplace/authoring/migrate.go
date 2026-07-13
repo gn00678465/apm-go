@@ -7,7 +7,7 @@
 // -- into apm.yml's own parsed Node tree, then writing the result back via
 // yamlcore.PatchMappingPath's single-key-value-span splice: the same "never
 // a full-document re-encode" contract editor.go and
-// cmd/apm/marketplace_authoring.go's init already rely on (design.md's
+// cmd/apm-go/marketplace_authoring.go's init already rely on (design.md's
 // explicit callback to the PatchMappingPath lesson from the --mcp task).
 // Every HeadComment/LineComment/FootComment attached anywhere in the legacy
 // document's Node tree survives because it is the identical *yaml.Node

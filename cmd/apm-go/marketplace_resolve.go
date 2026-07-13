@@ -25,7 +25,7 @@ import (
 // internal/resolver never imports internal/marketplace, and vice versa (see
 // resolver.MarketplaceResolveFunc's doc comment and
 // internal/marketplace/version_spec.go's TagLister comment) -- this closure
-// is the dependency-injection seam cmd/apm uses to wire the two together
+// is the dependency-injection seam cmd/apm-go uses to wire the two together
 // without an import cycle.
 //
 // mkt-034's ref-swap-pin/shadow warnings are printed to stderr here, never
@@ -70,7 +70,7 @@ func newMarketplaceResolveFunc() resolver.MarketplaceResolveFunc {
 }
 
 // mergeMarketplaceProvenance converts resolver's package-local provenance map
-// (keyed identically to ResolvedDep.Key/deploy.DepRefKey) into cmd/apm's
+// (keyed identically to ResolvedDep.Key/deploy.DepRefKey) into cmd/apm-go's
 // marketplace.Provenance-keyed map and merges it into dst, so buildLockfile's
 // single marketplaceProvenance parameter serves both the CLI
 // PLUGIN@MARKETPLACE positional-package path and the apm.yml dict-form path

@@ -147,7 +147,7 @@ func planSequenceRemoval(root *yaml.Node, path []string, identities map[string]b
 				idKey := ref.IdentityKey()
 				if idKey == "" && ref.IsLocal {
 					// A local-path entry deliberately has no IdentityKey()
-					// (matching deploy.DepRefKey). Mirror cmd/apm's
+					// (matching deploy.DepRefKey). Mirror cmd/apm-go's
 					// uninstallIdentity synthetic "local:<path>" key so a
 					// caller can still name a local dependency for removal
 					// (ag-23).

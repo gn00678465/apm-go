@@ -570,7 +570,7 @@ func SetPackage(dir, name string, opts SetOptions, lister RefLister) (fallbackUs
 // RemovePackage implements `apm marketplace package remove NAME` (mkt-045):
 // delete a packages[] entry by case-insensitive name match. The --yes/-y
 // confirmation gate is a CLI-layer (terminal) concern -- see
-// cmd/apm/marketplace_package.go -- not performed here.
+// cmd/apm-go/marketplace_package.go -- not performed here.
 func RemovePackage(dir, name string) (fallbackUsed bool, err error) {
 	cfg, _, err := LoadAuthoringConfig(dir)
 	if err != nil {

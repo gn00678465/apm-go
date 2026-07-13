@@ -1395,7 +1395,7 @@ func TestRunInstall_PlainAbsoluteLocalPathPackage_PersistsAndRoundTrips(t *testi
 // wantAllowExecutablesWarning duplicates internal/manifest's
 // allowExecutablesWarning as an independent string literal -- not a
 // reference to that package's unexported identifier -- so a wording change
-// there breaks this cmd/apm E2E test too, not just internal/manifest's own
+// there breaks this cmd/apm-go E2E test too, not just internal/manifest's own
 // unit test (same verbatim-lock pattern as pack_test.go's
 // wantPackDepsWarning/wantPackTargetWarning).
 const wantAllowExecutablesWarning = "[warn] apm.yml has an allowExecutables: block, but apm-go does not enforce it yet; this block is not effective in apm-go and every executable primitive (hooks, bin, MCP) is still deployed unconditionally"

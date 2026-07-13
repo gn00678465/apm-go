@@ -19,7 +19,7 @@ import (
 
 // IntegrateResult mirrors integrate_local_bundle's return shape (Python:
 // {"deployed_files": [...], "deployed_file_hashes": {...}}), narrowed to
-// what cmd/apm/install.go's caller needs to print a summary and persist
+// what cmd/apm-go/install.go's caller needs to print a summary and persist
 // LocalDeployedFiles/LocalDeployedHashes.
 type IntegrateResult struct {
 	Files  []string
@@ -48,7 +48,7 @@ type targetRouting struct {
 // targets.py's KNOWN_TARGETS entries for exactly the six targets apm-go's
 // deploy.Adapters registers (adapter.go) -- an adapterless target
 // (cursor/gemini/windsurf/...) never reaches this table because
-// cmd/apm/install.go's deploy.ResolveTargets already filters to
+// cmd/apm-go/install.go's deploy.ResolveTargets already filters to
 // deploy.Adapters keys before calling IntegrateLocalBundle.
 var targetRoutingTable = map[string]targetRouting{
 	"claude":       {RootDir: ".claude", HasInstructions: true},
@@ -91,7 +91,7 @@ var targetRoutingTable = map[string]targetRouting{
 // Returns an empty, non-nil result (no error) when targets is empty --
 // mirroring Python's "no active targets resolved -- nothing will be
 // deployed" warn-and-return (not a failure): the caller
-// (cmd/apm/install.go) is responsible for deciding whether/how to warn
+// (cmd/apm-go/install.go) is responsible for deciding whether/how to warn
 // before ever calling this function with an empty targets slice.
 func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets []string, projectDir string) (*IntegrateResult, error) {
 	result := &IntegrateResult{Hashes: map[string]string{}}

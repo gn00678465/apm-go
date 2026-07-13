@@ -34,7 +34,7 @@ func writeLocalMarketplacePlugin(t *testing.T, mktDir string) {
 }
 
 // TestRunInstall_LocalMarketplacePlugin_E2E_InTree is the NON-MOCKED end-to-end
-// proof of the F1 fix: it drives the real cmd/apm -> resolver ->
+// proof of the F1 fix: it drives the real cmd/apm-go -> resolver ->
 // RealPackageLoader -> deploy pipeline (no mock loader) for
 // `install hello@<local-marketplace>` where the marketplace lives INSIDE the
 // project tree. The mocked unit tests could not catch the gap this covers:

@@ -26,7 +26,7 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 	// model: apm_modules/_local/<name>/), never git-cloned -- the source may
 	// be a plain (non-git) directory, and its absolute path could never be a
 	// valid clone DESTINATION under apm_modules. ref.RepoURL already holds the
-	// sanitized, contained apm_modules key (set by cmd/apm's normalizeLocalDep).
+	// sanitized, contained apm_modules key (set by cmd/apm-go's normalizeLocalDep).
 	if ref.LocalSourcePath != "" {
 		return r.materializeLocalCopy(ref)
 	}

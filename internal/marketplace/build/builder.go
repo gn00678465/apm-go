@@ -91,7 +91,7 @@ type Options struct {
 	// ProjectRoot is the project root a local package's own apm.yml is
 	// resolved relative to for metadata enrichment (F1/mkt-050 修訂版 (c)):
 	// <ProjectRoot>/<entry.Source>/apm.yml. "" falls back to ".", mirroring
-	// cmd/apm/pack.go's own authoring.LoadAuthoringConfig(".") call (pack
+	// cmd/apm-go/pack.go's own authoring.LoadAuthoringConfig(".") call (pack
 	// always resolves relative to the current working directory).
 	ProjectRoot string
 }

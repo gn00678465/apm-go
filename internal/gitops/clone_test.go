@@ -309,7 +309,7 @@ func TestIsCommitSHA(t *testing.T) {
 // resolve installDir outside ModulesDir (or onto an unrelated sibling
 // directory still technically inside it) before LoadPackage's req-lk-007
 // stale-checkout repair does an os.RemoveAll on it. A found-in-review
-// regression: this was fixed in cmd/apm/update.go's purge path first, then
+// regression: this was fixed in cmd/apm-go/update.go's purge path first, then
 // found to also be missing here in the actual shared LoadPackage, which is
 // reachable from every install (not just apm update).
 func TestLoadPackage_RefusesVirtualPathEscapingModulesDir(t *testing.T) {

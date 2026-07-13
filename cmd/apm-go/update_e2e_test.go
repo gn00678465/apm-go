@@ -12,7 +12,7 @@ import (
 )
 
 // TestRunUpdate_RealGitSemver_ResolvesToNewTag is the CLI-level end-to-end
-// req-rs-011 regression: it exercises the real cmd/apm -> resolver ->
+// req-rs-011 regression: it exercises the real cmd/apm-go -> resolver ->
 // RealTagLister -> RealPackageLoader path (no mocks) for a git-semver
 // dependency, using a local git-path remote (git: ./remote) to stay
 // offline-friendly (same rationale as TestRunInstall_StaleCheckoutIsRepaired).
@@ -177,7 +177,7 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 // must print the same "Update plan for apm.yml" plan a real update would
 // (old -> new version), while leaving apm.lock.yaml, apm_modules/, and
 // every deployed target file byte-identical to before the call -- proven
-// against the real cmd/apm -> resolver -> RealTagLister -> RealPackageLoader
+// against the real cmd/apm-go -> resolver -> RealTagLister -> RealPackageLoader
 // path (no mocks), mirroring TestRunUpdate_RealGitSemver_ResolvesToNewTag.
 func TestRunUpdate_DryRunPlanNoSideEffects(t *testing.T) {
 	dir := t.TempDir()

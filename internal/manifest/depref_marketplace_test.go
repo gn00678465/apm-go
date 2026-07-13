@@ -316,7 +316,7 @@ func TestValidateResolved(t *testing.T) {
 // ── Phase V fixture: "already existing, hand-formatted" apm.yml (舊坑 1) ──
 
 // handAuthoredApmYMLWithMarketplaceDep mirrors the project's established
-// "舊坑 1" fixture convention (see cmd/apm/marketplace_authoring_test.go's
+// "舊坑 1" fixture convention (see cmd/apm-go/marketplace_authoring_test.go's
 // handAuthoredApmYML): unusual spacing, an inline comment on the very line
 // under test, and unrelated surrounding content -- proving the parser
 // handles a dict marketplace entry embedded in a realistic, not

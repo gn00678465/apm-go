@@ -14,7 +14,7 @@ import (
 
 // buildInstallTestBundle produces a real plugin-format bundle (via the same
 // bundle.Produce BundleProducer `apm-go pack` calls) with an embedded,
-// integrity-checked apm.lock.yaml, for cmd/apm's own runInstall tests of
+// integrity-checked apm.lock.yaml, for cmd/apm-go's own runInstall tests of
 // the local-bundle consumption path (Phase 6).
 func buildInstallTestBundle(t *testing.T) string {
 	t.Helper()

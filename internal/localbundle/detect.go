@@ -19,7 +19,7 @@ import (
 
 // BundleInfo describes a detected local bundle, mirroring Python's
 // bundle/local_bundle.py::LocalBundleInfo -- narrowed to the fields this
-// package's consumers (verify.go/integrate.go, cmd/apm/install.go) actually
+// package's consumers (verify.go/integrate.go, cmd/apm-go/install.go) actually
 // use (design.md's "plugin_json"/"package_id" fields are Python-side
 // logging/aliasing details this task does not port -- no --as ALIAS support
 // exists in apm-go's install command).
@@ -71,7 +71,7 @@ func (b *BundleInfo) Cleanup() {
 // only raises for an explicit ValueError security signal): a security-
 // sensitive extraction step failing closed on ANY error, rather than
 // string-matching to distinguish "corrupt" from "attack", is the safer and
-// simpler rule (see also DetectLocalBundle's caller in cmd/apm/install.go,
+// simpler rule (see also DetectLocalBundle's caller in cmd/apm-go/install.go,
 // which surfaces this error as "bundle security check failed").
 func DetectLocalBundle(path string) (*BundleInfo, error) {
 	fi, err := os.Stat(path)

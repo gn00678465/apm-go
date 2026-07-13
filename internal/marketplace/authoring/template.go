@@ -1,7 +1,7 @@
 // This file (template.go) holds `apm marketplace init`'s scaffold text
 // (mkt-040): raw, hand-formatted YAML strings, not values run through
 // yaml.Marshal -- init needs to reproduce exact comments and layout that a
-// Marshal round-trip cannot, and the cmd layer (cmd/apm/marketplace_authoring.go)
+// Marshal round-trip cannot, and the cmd layer (cmd/apm-go/marketplace_authoring.go)
 // splices this text onto apm.yml surgically (append, or a
 // yamlcore.PatchMappingPath value-span replace under --force), never by
 // re-encoding the whole file.

@@ -52,7 +52,7 @@ func validateNoDotDotSegments(field, value string) error {
 // dependency) legitimately resolve to one and must round-trip through a
 // later `apm install` read (install.go's ResolvedDep.RepoURL is ALWAYS the
 // absolute canonical for this case, regardless of whether apm.yml persisted
-// a relativized or absolute form -- see cmd/apm's localPathForManifest). A
+// a relativized or absolute form -- see cmd/apm-go's localPathForManifest). A
 // non-"git" source -- in particular "registry" (req-sc-002 / lockfile
 // tampering §10.4, TestParseLockfile_RejectsPathTraversal's "repo_url
 // absolute" case) -- must never carry an absolute repo_url: that would let a

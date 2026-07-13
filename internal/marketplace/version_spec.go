@@ -27,7 +27,7 @@ type TagLister interface {
 
 // DefaultTagLister is the production TagLister ResolveOptions falls back to
 // when Tags is left nil: a real gitops.RealTagLister (git ls-remote),
-// matching how cmd/apm/install.go/update.go wire the same concrete type for
+// matching how cmd/apm-go/install.go/update.go wire the same concrete type for
 // ordinary git-semver dependency resolution.
 var DefaultTagLister TagLister = &gitops.RealTagLister{}
 

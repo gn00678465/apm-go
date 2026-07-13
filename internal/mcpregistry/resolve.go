@@ -19,7 +19,7 @@ import (
 // wording differs between `apm install --mcp` (mentions --header) and the
 // general `apm install` MCP deploy path (no equivalent flag).
 //
-// Shared by `apm install --mcp` (cmd/apm) and the general `apm install`
+// Shared by `apm install --mcp` (cmd/apm-go) and the general `apm install`
 // MCP deploy path (internal/deploy), so registry resolution semantics --
 // including the credential-safety checks on registry-supplied URLs -- never
 // drift between the two entry points.
