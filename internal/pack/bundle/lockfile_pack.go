@@ -76,6 +76,54 @@ func addYAMLStr(m *yaml.Node, key, value string) {
 	m.Content = append(m.Content, yamlStrNode(key), yamlStrNode(value))
 }
 
+// ParsePackMetadata extracts the "pack:" top-level section from an
+// already-parsed apm.lock.yaml document's root mapping node (doc.Content[0]
+// for a document produced by yamlcore.SafeLoad), mirroring Python's
+// bundle/local_bundle.py: `_read_bundle_lockfile` (a plain yaml.safe_load,
+// no schema validation) followed by `lockfile.get("pack") or {}`. Returns
+// ok=false when root has no "pack" key at all, or "pack" is present but not
+// a mapping -- callers (internal/localbundle) treat that the same as
+// Python's empty-dict fallback (verify_bundle_integrity: an empty
+// bundle_files map, so every bundle file is reported as "unlisted" --
+// matching the oracle's own strict behavior for a lockfile that lacks pack
+// metadata, rather than silently skipping verification).
+func ParsePackMetadata(root *yaml.Node) (PackMetadata, bool) {
+	if root == nil || root.Kind != yaml.MappingNode {
+		return PackMetadata{}, false
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "pack" {
+			continue
+		}
+		packNode := root.Content[i+1]
+		if packNode.Kind != yaml.MappingNode {
+			return PackMetadata{}, false
+		}
+		meta := PackMetadata{}
+		for j := 0; j+1 < len(packNode.Content); j += 2 {
+			key := packNode.Content[j].Value
+			val := packNode.Content[j+1]
+			switch key {
+			case "format":
+				meta.Format = val.Value
+			case "target":
+				meta.Target = val.Value
+			case "packed_at":
+				meta.PackedAt = val.Value
+			case "bundle_files":
+				if val.Kind == yaml.MappingNode {
+					meta.BundleFiles = make(map[string]string, len(val.Content)/2)
+					for k := 0; k+1 < len(val.Content); k += 2 {
+						meta.BundleFiles[val.Content[k].Value] = val.Content[k+1].Value
+					}
+				}
+			}
+		}
+		return meta, true
+	}
+	return PackMetadata{}, false
+}
+
 // EnrichLockfileForPack serializes lf -- with LocalDeployedFiles/
 // LocalDeployedHashes stripped (findings §3.6 point 3: issue #887, a
 // bundle's embedded lockfile must never carry the packager's own repo

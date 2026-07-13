@@ -19,6 +19,7 @@ import (
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/experimental"
 	"github.com/apm-go/apm/internal/gitops"
+	"github.com/apm-go/apm/internal/localbundle"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/marketplace"
@@ -170,6 +171,20 @@ func installCmd() *cobra.Command {
 }
 
 func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string, skillSubset []string, packages []string) error {
+	// Local-bundle early-exit (research/pack-parity-findings.md §6; design.md
+	// "install <bundle-path> 消費回路"), mirroring Python's install.py:1260's
+	// placement: checked before EVERYTHING else in this function -- before
+	// apm.yml is even read -- so a bundle path never accidentally falls into
+	// the ordinary dependency-resolution pipeline. Only the sole-positional-
+	// argument shape is probed (Python: `len(packages) == 1`); zero or
+	// multiple positional packages, or an MCP install (already routed to
+	// runMCPInstall before runInstall is ever called), never reach here.
+	if len(packages) == 1 {
+		if handled, err := tryLocalBundleInstall(packages[0], targetFlag, skillSubset, deps.allowInsecure); handled {
+			return err
+		}
+	}
+
 	// Determine frozen mode up front (explicit flag or CI default) so apm.yml can
 	// be optional in frozen verify-only mode (integrity is checked from lockfile+disk).
 	if !frozen && lockfile.IsCIEnvironment() {
@@ -626,6 +641,178 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 // wording and exit code can never drift apart.
 func errNoDeployTarget() error {
 	return withExitCode(2, fmt.Errorf("no deployment target detected; pass --target <name> or add a target: to apm.yml"))
+}
+
+// tryLocalBundleInstall probes bundleArg for a local bundle (a directory,
+// .zip, or .tar.gz/.tgz produced by `apm-go pack`), mirroring Python's
+// install.py:1260-1331 early-exit. handled=false means bundleArg is not a
+// recognized bundle -- the caller falls through to the ordinary
+// dependency-resolution install path unchanged. handled=true means this
+// call fully owns the outcome (success or failure); the caller must return
+// err verbatim without doing anything else.
+func tryLocalBundleInstall(bundleArg, targetFlag string, skillSubset []string, allowInsecure bool) (handled bool, err error) {
+	fi, statErr := os.Stat(bundleArg)
+	if statErr != nil {
+		return false, nil // not an existing filesystem path -> not a bundle
+	}
+
+	info, detectErr := localbundle.DetectLocalBundle(bundleArg)
+	if detectErr != nil {
+		return true, fmt.Errorf("bundle security check failed: %w", detectErr)
+	}
+	if info == nil {
+		// IM7: an archive-shaped path that isn't a recognized bundle gets a
+		// targeted usage error (naming the extension) instead of silently
+		// falling through to the registry-clone path, which would just fail
+		// confusingly later. A bare directory (e.g. a local dependency
+		// checkout with no plugin.json) DOES fall through -- `apm-go install
+		// ./packages/source-pkg` is a supported local-path dependency
+		// install, unrelated to bundle detection.
+		lower := strings.ToLower(bundleArg)
+		if !fi.IsDir() && (strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz")) {
+			return true, fmt.Errorf("%q is not a valid APM bundle archive (no plugin.json found at the bundle root). "+
+				"Use 'apm-go install org/package' for registry installs, or repack the source with 'apm-go pack'", bundleArg)
+		}
+		return false, nil
+	}
+	defer info.Cleanup()
+
+	// Local-bundle install is an imperative deploy: it does not interact
+	// with the dependency resolver, MCP, or registry machinery, so flags
+	// that only make sense for THAT pipeline are rejected with a single
+	// consolidated error (Python: install/local_bundle_handler.py:64-75).
+	// --mcp is excluded from this set because runInstall is never reached
+	// for an --mcp invocation (installCmd routes it to runMCPInstall
+	// first) -- mirroring Python's `not mcp_name` gate one level up.
+	var rejected []string
+	if len(skillSubset) > 0 {
+		rejected = append(rejected, "--skill")
+	}
+	if allowInsecure {
+		rejected = append(rejected, "--allow-insecure")
+	}
+	if len(rejected) > 0 {
+		return true, fmt.Errorf("the following flag(s) are not valid with a local bundle install (%s): %s. "+
+			"Local-bundle install is an imperative deploy and does not interact with the dependency "+
+			"resolver, MCP, registry, or policy machinery", bundleArg, strings.Join(rejected, ", "))
+	}
+
+	return true, runLocalBundleInstall(info, bundleArg, targetFlag)
+}
+
+// runLocalBundleInstall deploys a detected local bundle: verifies its
+// embedded integrity manifest (if any), resolves install targets, warns on
+// a bundle/install target mismatch, deploys plugin-native content, and
+// persists local_deployed_files/local_deployed_file_hashes to the project
+// lockfile -- apm.yml is never touched (imperative deploy, not a
+// declarative dependency), mirroring install_local_bundle
+// (install/local_bundle_handler.py:34-297).
+func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag string) error {
+	if !info.HasLockfile {
+		fmt.Fprintln(os.Stderr, "[warn] Bundle has no apm.lock.yaml -- skipping integrity check. "+
+			"This bundle may have been produced by an older or non-apm-go tool.")
+	} else if !info.HasPackMeta {
+		fmt.Fprintln(os.Stderr, "[warn] Bundle has an apm.lock.yaml but no 'pack:' metadata section -- skipping integrity check.")
+	} else if errs := localbundle.VerifyBundleIntegrity(info.SourceDir, info.PackMeta); len(errs) > 0 {
+		fmt.Fprintln(os.Stderr, "Bundle integrity check failed:")
+		for _, e := range errs {
+			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		}
+		return fmt.Errorf("bundle integrity check failed for %s", bundleArg)
+	}
+
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, nil, ".")
+	for _, d := range targetDiags {
+		fmt.Fprintln(os.Stderr, d)
+	}
+	if len(targets) == 0 {
+		fmt.Println("[warn] No active targets resolved -- nothing will be deployed. Pass --target to select one explicitly.")
+		return nil
+	}
+
+	if warning := localbundle.CheckTargetMismatch(info.PackTargets, targets); warning != "" {
+		fmt.Fprintf(os.Stderr, "[warn] %s\n", warning)
+	}
+
+	result, err := localbundle.IntegrateLocalBundle(info.SourceDir, targets, ".")
+	if err != nil {
+		return fmt.Errorf("deploy local bundle: %w", err)
+	}
+	for _, d := range result.Diags {
+		fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+	}
+
+	if len(result.Files) == 0 {
+		fmt.Println("No files deployed from local bundle")
+		return nil
+	}
+
+	if err := persistLocalBundleDeployment(result); err != nil {
+		return err
+	}
+
+	fmt.Printf("[+] Installed %d file(s) from local bundle %s\n", len(result.Files), bundleArg)
+	return nil
+}
+
+// persistLocalBundleDeployment merges result's deployed files/hashes into
+// apm.lock.yaml's local_deployed_files/local_deployed_file_hashes,
+// mirroring install_local_bundle's lockfile step (install/
+// local_bundle_handler.py:189-260, minus the legacy skill-path migration --
+// out of scope for this task): union with whatever was already recorded
+// (a local bundle install is additive, never replacing a project's own
+// local .apm/ primitive deployments or a PRIOR bundle install's files), and
+// never touches apm.yml.
+func persistLocalBundleDeployment(result *localbundle.IntegrateResult) error {
+	var existingLock *lockfile.Lockfile
+	var existingNode *yamllib.Node
+	lockData, lockErr := os.ReadFile("apm.lock.yaml")
+	if lockErr == nil {
+		lockNode, err := yamlcore.SafeLoad(lockData)
+		if err != nil {
+			return fmt.Errorf("parse apm.lock.yaml: %w", err)
+		}
+		existingNode = lockNode
+		existingLock, err = lockfile.ParseLockfile(lockNode)
+		if err != nil {
+			return fmt.Errorf("validate apm.lock.yaml: %w", err)
+		}
+	}
+
+	lf := existingLock
+	if lf == nil {
+		lf = &lockfile.Lockfile{Version: "1"}
+	}
+
+	fileSet := make(map[string]bool, len(lf.LocalDeployedFiles)+len(result.Files))
+	for _, f := range lf.LocalDeployedFiles {
+		fileSet[f] = true
+	}
+	for _, f := range result.Files {
+		fileSet[f] = true
+	}
+	merged := make([]string, 0, len(fileSet))
+	for f := range fileSet {
+		merged = append(merged, f)
+	}
+	sort.Strings(merged)
+	lf.LocalDeployedFiles = merged
+
+	if lf.LocalDeployedHashes == nil {
+		lf.LocalDeployedHashes = map[string]string{}
+	}
+	for f, h := range result.Hashes {
+		lf.LocalDeployedHashes[f] = h
+	}
+
+	outBytes, err := lockfile.WriteLockfile(lf, existingNode)
+	if err != nil {
+		return fmt.Errorf("serialize lockfile: %w", err)
+	}
+	if err := os.WriteFile("apm.lock.yaml", outBytes, 0644); err != nil {
+		return fmt.Errorf("write apm.lock.yaml: %w", err)
+	}
+	return nil
 }
 
 // allDirectDeps returns every direct (root) dependency a manifest declares,

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/lockfile"
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 func TestEnrichLockfileForPack_BareHexNotEnvelopePrefixed(t *testing.T) {
@@ -101,5 +102,64 @@ func TestEnrichLockfileForPack_FieldOrderAndPackSectionFirst(t *testing.T) {
 	lockVerIdx := strings.Index(text, "lockfile_version:")
 	if !(formatIdx >= 0 && formatIdx < targetIdx && targetIdx < packedIdx && packedIdx < lockVerIdx) {
 		t.Errorf("output = %s, want format < target < packed_at < lockfile_version ordering", text)
+	}
+}
+
+func TestParsePackMetadata_RoundTripsThroughEnrich(t *testing.T) {
+	lf := &lockfile.Lockfile{Version: "1"}
+	meta := PackMetadata{
+		Format:      "plugin",
+		Target:      "claude,copilot",
+		PackedAt:    "2026-07-12T00:00:00+00:00",
+		BundleFiles: map[string]string{"plugin.json": "abc123", "agents/foo.md": "def456"},
+	}
+	out, err := EnrichLockfileForPack(lf, meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := yamlcore.SafeLoad(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ParsePackMetadata(doc.Content[0])
+	if !ok {
+		t.Fatal("ParsePackMetadata: ok = false, want true")
+	}
+	if got.Format != meta.Format || got.Target != meta.Target || got.PackedAt != meta.PackedAt {
+		t.Errorf("got = %+v, want %+v", got, meta)
+	}
+	if len(got.BundleFiles) != 2 || got.BundleFiles["plugin.json"] != "abc123" || got.BundleFiles["agents/foo.md"] != "def456" {
+		t.Errorf("BundleFiles = %v, want round-tripped bare hex map", got.BundleFiles)
+	}
+}
+
+func TestParsePackMetadata_NoPackSection_ReturnsNotOK(t *testing.T) {
+	doc, err := yamlcore.SafeLoad([]byte("lockfile_version: \"1\"\ndependencies: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ok := ParsePackMetadata(doc.Content[0])
+	if ok {
+		t.Error("ParsePackMetadata: ok = true, want false for a lockfile with no pack: section")
+	}
+}
+
+func TestParsePackMetadata_EmptyBundleFiles_OmittedKeyYieldsNilMap(t *testing.T) {
+	lf := &lockfile.Lockfile{Version: "1"}
+	meta := PackMetadata{Format: "plugin", Target: "all", PackedAt: "t"}
+	out, err := EnrichLockfileForPack(lf, meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := yamlcore.SafeLoad(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ParsePackMetadata(doc.Content[0])
+	if !ok {
+		t.Fatal("ParsePackMetadata: ok = false, want true")
+	}
+	if len(got.BundleFiles) != 0 {
+		t.Errorf("BundleFiles = %v, want empty when bundle_files was omitted", got.BundleFiles)
 	}
 }
