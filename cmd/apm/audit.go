@@ -17,8 +17,14 @@ import (
 // (bare) share a name but check different things -- see Long below and
 // .trellis/spec/backend/cli-parity-notes.md for the full contrast. This
 // task does not change audit's behavior, only documents the gap.
+//
+// Phase 7 (07-12-p0-parity-quickwins design.md "audit 掃描接線"): --content
+// adds the other half of that contrast -- Python's hidden-Unicode scan
+// pillar -- as an opt-in flag, without touching the bare SHA-256 path.
 func auditCmd() *cobra.Command {
-	return &cobra.Command{
+	var content bool
+
+	cmd := &cobra.Command{
 		Use:   "audit",
 		Short: "Re-verify deployed-file integrity against apm.lock.yaml",
 		Long: `Re-verify deployed-file integrity against apm.lock.yaml.
@@ -28,7 +34,19 @@ compares it against apm.lock.yaml. This differs from Python's 'apm
 audit' (bare), which instead runs a hidden-Unicode scan and never
 touches SHA-256 -- the two commands share a name but check different
 things. Python's equivalent SHA-256 re-verification is buried behind
-'apm audit --ci' as its content-integrity check.`,
+'apm audit --ci' as its content-integrity check.
+
+--content runs apm-go's shared hidden-Unicode scanner (the same
+internal/security scanner 'pack' already runs warn-only over bundle
+sources) across every deployed file recorded in apm.lock.yaml --
+both dependency deployed_files and the project's own
+local_deployed_files. This closes the content-scan gap with Python's
+bare audit, but it does NOT reproduce Python's default install-replay
+drift detection (which re-materializes the lockfile in a scratch dir
+and diffs it against the project to catch orphaned/unintegrated/
+modified files), nor any of Python's --ci, --policy, --external,
+--format, -o, or --strip flags -- those remain separate,
+unimplemented subsystems.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := os.ReadFile("apm.lock.yaml")
@@ -42,6 +60,10 @@ things. Python's equivalent SHA-256 re-verification is buried behind
 			lock, err := lockfile.ParseLockfile(node)
 			if err != nil {
 				return fmt.Errorf("validate apm.lock.yaml: %w", err)
+			}
+
+			if content {
+				return runAuditContentScan(cmd.OutOrStdout(), cmd.ErrOrStderr(), lock)
 			}
 
 			viol := lockfile.VerifyDeployedState(lock, ".")
@@ -66,4 +88,10 @@ things. Python's equivalent SHA-256 re-verification is buried behind
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&content, "content", false,
+		"Scan every deployed file for hidden Unicode characters "+
+			"(does not run SHA re-verification, drift replay, or --ci/--policy/--external/--format/-o/--strip)")
+
+	return cmd
 }
