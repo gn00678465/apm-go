@@ -26,6 +26,7 @@ import (
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -879,7 +880,7 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 	}
 	if !noProvenance {
 		newLock.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
-		newLock.APMVersion = "0.1.0"
+		newLock.APMVersion = version.Version
 	}
 
 	matchedKeys := make(map[string]bool, len(requestedKeys))

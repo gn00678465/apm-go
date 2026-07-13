@@ -14,13 +14,14 @@ import (
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
-// apmGoVersion is the "APM Version" compile writes into AGENTS.md, matching
-// the same self-reported version install.go's lockfile writer already uses
-// (cmd/apm-go/install.go: newLock.APMVersion = "0.1.0").
-const apmGoVersion = "0.1.0"
+// apmGoVersion is the "APM Version" compile writes into AGENTS.md, sourced
+// from the single version const (internal/version) that also drives the root
+// command's --version flag and install.go's lockfile apm_version field.
+const apmGoVersion = version.Version
 
 // agentsFamilyTargets is apm-go compile's v1 target vocabulary -- the three
 // adapters that mirror Python's compile_family="agents" routing
