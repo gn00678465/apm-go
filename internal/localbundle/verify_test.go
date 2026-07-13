@@ -1,6 +1,8 @@
 package localbundle
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -83,6 +85,70 @@ func TestVerifyBundleIntegrity_ListedSymlink_StillRejected(t *testing.T) {
 	errs := VerifyBundleIntegrity(bundleDir, meta)
 	if !containsSubstring(errs, "Symlink rejected") {
 		t.Errorf("errs = %v, want a symlink-rejected error even though the path is listed in bundle_files", errs)
+	}
+}
+
+// TestVerifyBundleIntegrity_Junction_Rejected covers Gate 6b's B2 finding
+// (codex-verify-gate6b-fix.md): an NTFS junction ANYWHERE under the bundle
+// root -- even one that requires no elevated privilege to create, unlike a
+// real symlink -- must be rejected by the same sweep that rejects symlinks,
+// not silently pass because os.Lstat only sets os.ModeSymlink for a true
+// symlink reparse tag (isSymlinkOrReparsePoint covers the gap).
+func TestVerifyBundleIntegrity_Junction_Rejected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("NTFS junctions are windows-specific")
+	}
+	bundleDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(bundleDir, "plugin.json"), "{}")
+
+	linkPath := filepath.Join(bundleDir, "skills", "linked")
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideDir := t.TempDir()
+	createJunction(t, linkPath, outsideDir)
+
+	errs := VerifyBundleIntegrity(bundleDir, bundle.PackMetadata{})
+	if !containsSubstring(errs, "Symlink rejected") || !containsSubstring(errs, "skills/linked") {
+		t.Errorf("errs = %v, want a symlink/reparse-point-rejected error naming skills/linked", errs)
+	}
+}
+
+// TestVerifyBundleIntegrity_JunctionWithListedTargetFile_StillRejected
+// reproduces codex's exact B2 PoC shape: a tampered bundle whose manifest
+// lists a path THROUGH the junction (skills/linked/SKILL.md) with a hash
+// matching the file OUTSIDE the bundle the junction points at -- a leaf-only
+// os.Lstat on the joined path would transparently resolve through the
+// junction and see a perfectly normal, hash-matching regular file. The
+// symlink sweep must still reject the bundle because it visits the junction
+// entry itself (skills/linked), independent of what any manifest key claims.
+func TestVerifyBundleIntegrity_JunctionWithListedTargetFile_StillRejected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("NTFS junctions are windows-specific")
+	}
+	bundleDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(bundleDir, "plugin.json"), "{}")
+
+	outsideDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(outsideDir, "SKILL.md"), "outside secret")
+	data, err := os.ReadFile(filepath.Join(outsideDir, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+
+	linkPath := filepath.Join(bundleDir, "skills", "linked")
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	createJunction(t, linkPath, outsideDir)
+
+	meta := bundle.PackMetadata{BundleFiles: map[string]string{
+		"skills/linked/SKILL.md": hex.EncodeToString(sum[:]),
+	}}
+	errs := VerifyBundleIntegrity(bundleDir, meta)
+	if !containsSubstring(errs, "Symlink rejected") || !containsSubstring(errs, "skills/linked") {
+		t.Errorf("errs = %v, want a symlink/reparse-point-rejected error naming skills/linked even though a manifest key's hash matches the outside file", errs)
 	}
 }
 

@@ -22,6 +22,21 @@ import (
 // Python excludes it unconditionally regardless).
 var allowedExtraBundleFiles = map[string]bool{"apm.lock.yaml": true, "plugin.json": true}
 
+// isSymlinkOrReparsePoint reports whether info describes a POSIX symlink or
+// any other filesystem-level indirection a bare os.ModeSymlink check cannot
+// see -- most notably an NTFS junction (mount point). Go's os.Lstat only
+// sets os.ModeSymlink for the IO_REPARSE_TAG_SYMLINK reparse tag; every
+// other reparse tag -- junctions included -- surfaces as os.ModeIrregular
+// instead (see Go's os/types_windows.go fileStat.mode()). Unlike a real
+// symlink, creating an NTFS junction does NOT require an elevated/Developer-
+// Mode privilege on Windows, so a check against os.ModeSymlink alone would
+// let an unprivileged junction placed inside a bundle point a bundle-
+// relative path anywhere else on disk while still passing a naive Lstat
+// probe (Gate 6b's B2 finding).
+func isSymlinkOrReparsePoint(info os.FileInfo) bool {
+	return info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0
+}
+
 // VerifyBundleIntegrity walks bundleDir and verifies every file against
 // meta.BundleFiles, mirroring verify_bundle_integrity
 // (bundle/local_bundle.py:282-357). Returns a list of human-readable error
@@ -34,16 +49,27 @@ var allowedExtraBundleFiles = map[string]bool{"apm.lock.yaml": true, "plugin.jso
 func VerifyBundleIntegrity(bundleDir string, meta bundle.PackMetadata) []string {
 	var errs []string
 
-	// 1) Reject any symlink under the bundle root, regardless of manifest.
+	// 1) Reject any symlink -- or Windows reparse-point indirection a plain
+	// os.ModeSymlink check cannot see, most notably an NTFS junction
+	// (isSymlinkOrReparsePoint) -- under the bundle root, regardless of
+	// manifest. Never descends into a rejected entry even if it looks like a
+	// directory, so nothing on the other side of the indirection is ever
+	// walked or reported as bundle content.
 	_ = filepath.WalkDir(bundleDir, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil || p == bundleDir {
 			return nil
 		}
 		info, lerr := os.Lstat(p)
-		if lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+		if lerr != nil {
+			return nil
+		}
+		if isSymlinkOrReparsePoint(info) {
 			rel, rerr := filepath.Rel(bundleDir, p)
 			if rerr == nil {
 				errs = append(errs, fmt.Sprintf("Symlink rejected in bundle: %s", filepath.ToSlash(rel)))
+			}
+			if d.IsDir() {
+				return filepath.SkipDir
 			}
 		}
 		return nil
@@ -68,7 +94,7 @@ func VerifyBundleIntegrity(bundleDir string, meta bundle.PackMetadata) []string 
 		target := filepath.Join(bundleDir, filepath.FromSlash(rel))
 
 		fi, lerr := os.Lstat(target)
-		if lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if lerr == nil && isSymlinkOrReparsePoint(fi) {
 			continue // already reported by the symlink sweep above
 		}
 		if lerr != nil || !fi.Mode().IsRegular() {
@@ -98,11 +124,23 @@ func VerifyBundleIntegrity(bundleDir string, meta bundle.PackMetadata) []string 
 	// signal, the only allowed exclusions being the bundle's own
 	// apm.lock.yaml and plugin.json.
 	_ = filepath.WalkDir(bundleDir, func(p string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil || d.IsDir() {
+		if walkErr != nil {
 			return nil
 		}
 		info, lerr := os.Lstat(p)
-		if lerr != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		if lerr != nil {
+			return nil
+		}
+		if isSymlinkOrReparsePoint(info) {
+			// Already reported by the symlink sweep above (section 1); never
+			// descend into a reparse point's target and enumerate ITS files
+			// as unlisted bundle content.
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, rerr := filepath.Rel(bundleDir, p)

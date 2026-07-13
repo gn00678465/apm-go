@@ -42,6 +42,89 @@ func buildInstallTestBundle(t *testing.T) string {
 	return result.BundleDir
 }
 
+// buildInstallTestBundleWithNestedSkill mirrors buildInstallTestBundle but
+// packs a two-level nested skill (skills/<category>/<name>/SKILL.md) -- the
+// shape test1's real skills carry (e.g.
+// .agents/skills/engineering/ask-matt/SKILL.md) -- rather than the flat
+// skills/bar/SKILL.md every other fixture in this file uses. It exists
+// solely so TestRunInstall_LocalBundle_NestedSkill_* has automated coverage
+// for the deploy-verbatim-no-flattening guarantee Gate 6b's A3 finding only
+// checked via a manual A/B script run (research/codex-verify-gate6b-fix.md).
+func buildInstallTestBundleWithNestedSkill(t *testing.T) string {
+	t.Helper()
+	projectRoot := t.TempDir()
+	writeInstallFixtureFile(t, filepath.Join(projectRoot, ".apm", "skills", "engineering", "ask-matt", "SKILL.md"), "# nested skill ask-matt")
+
+	doc, err := yamlcore.SafeLoad([]byte("name: demo\nversion: 1.0.0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	result, err := bundle.Produce(&buf, bundle.ProduceOptions{
+		ProjectRoot: projectRoot,
+		OutputDir:   filepath.Join(projectRoot, "build"),
+		PkgName:     "demo",
+		PkgVersion:  "1.0.0",
+		Target:      "claude",
+		ApmYMLNode:  doc.Content[0],
+		Lockfile:    &lockfile.Lockfile{Version: "1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.BundleDir
+}
+
+// TestRunInstall_LocalBundle_NestedSkill_DeploysVerbatim locks in Gate 6b's
+// A3 finding (codex-verify-gate6b-fix.md: 78 two-level nested skills found
+// in a real pack->install run, path/hash diff both 0 against Python) as an
+// automated regression: a skill nested two levels deep
+// (skills/<category>/<name>/SKILL.md) must deploy VERBATIM under the
+// target's deploy root -- never flattened to skills/<name>/SKILL.md.
+func TestRunInstall_LocalBundle_NestedSkill_DeploysVerbatim(t *testing.T) {
+	bundleDir := buildInstallTestBundleWithNestedSkill(t)
+	chdirTemp(t)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	if err := runInstall(deps, false, false, "claude", nil, []string{bundleDir}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantPath := filepath.Join(".claude", "skills", "engineering", "ask-matt", "SKILL.md")
+	data, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("expected %s to be deployed (nested skill path preserved): %v", wantPath, err)
+	}
+	if string(data) != "# nested skill ask-matt" {
+		t.Errorf("%s content = %q, want verbatim source copy", wantPath, data)
+	}
+
+	// The flattened (bug) shape must NOT exist either.
+	if _, statErr := os.Stat(filepath.Join(".claude", "skills", "ask-matt", "SKILL.md")); statErr == nil {
+		t.Error(".claude/skills/ask-matt/SKILL.md must not exist -- nested skill must not be flattened")
+	}
+}
+
+// TestRunInstall_LocalBundle_NestedSkill_CopilotUsesAgentsRoot covers the
+// same nested-skill verbatim-path guarantee for copilot's skills
+// deploy_root override (.agents, not .github) -- a second target-routing
+// branch integrate.go's targetRoutingTable selects independently of the
+// nesting depth itself.
+func TestRunInstall_LocalBundle_NestedSkill_CopilotUsesAgentsRoot(t *testing.T) {
+	bundleDir := buildInstallTestBundleWithNestedSkill(t)
+	chdirTemp(t)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	if err := runInstall(deps, false, false, "copilot", nil, []string{bundleDir}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantPath := filepath.Join(".agents", "skills", "engineering", "ask-matt", "SKILL.md")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Errorf("expected %s to be deployed: %v", wantPath, err)
+	}
+}
+
 func writeInstallFixtureFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -66,8 +149,12 @@ func TestRunInstall_LocalBundle_DeploysAndWritesLockfile(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(".claude", "agents", "foo.md")); err != nil {
 		t.Errorf("expected .claude/agents/foo.md to be deployed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(".agents", "skills", "bar", "SKILL.md")); err != nil {
-		t.Errorf("expected .agents/skills/bar/SKILL.md to be deployed: %v", err)
+	// claude's skills primitive has no deploy_root override in Python's
+	// KNOWN_TARGETS (targets.py:513) -- a claude-only install lands skills
+	// under .claude/skills/, not the cross-tool .agents/skills/ apm-go's
+	// REGULAR (non-bundle) deploy pipeline additionally writes to.
+	if _, err := os.Stat(filepath.Join(".claude", "skills", "bar", "SKILL.md")); err != nil {
+		t.Errorf("expected .claude/skills/bar/SKILL.md to be deployed: %v", err)
 	}
 
 	lockData, err := os.ReadFile("apm.lock.yaml")
@@ -166,8 +253,12 @@ func TestRunInstall_LocalBundle_TargetMismatch_WarnsButStillDeploys(t *testing.T
 	if err := runInstall(deps, false, false, "codex", nil, []string{bundleDir}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(".codex", "agents", "foo.toml")); err != nil {
-		t.Errorf("expected .codex/agents/foo.toml to be deployed despite the target mismatch: %v", err)
+	// Verbatim deploy: the bundle's "agents/foo.md" is copied byte-for-byte
+	// under codex's default root, NOT re-derived into a deploy.Primitive and
+	// reformatted into codex's own TOML agent convention (that transform only
+	// applies to apm-go's REGULAR .apm/-source deploy pipeline).
+	if _, err := os.Stat(filepath.Join(".codex", "agents", "foo.md")); err != nil {
+		t.Errorf("expected .codex/agents/foo.md to be deployed verbatim despite the target mismatch: %v", err)
 	}
 }
 

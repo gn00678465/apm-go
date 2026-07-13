@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -13,6 +14,20 @@ import (
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
+
+// createJunction creates an NTFS junction (mount point) at link pointing at
+// target, via `mklink /J` -- unlike a real symlink (which needs an
+// elevated/Developer-Mode privilege on Windows), a junction requires no
+// special privilege, which is exactly why it's the vector Gate 6b's B2
+// finding used to demonstrate a bundle escaping VerifyBundleIntegrity's
+// symlink sweep (codex-verify-gate6b-fix.md).
+func createJunction(t *testing.T, link, target string) {
+	t.Helper()
+	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+	if err != nil {
+		t.Fatalf("mklink /J %s %s failed: %v: %s", link, target, err, out)
+	}
+}
 
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -59,6 +74,22 @@ func buildTestBundle(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return result.BundleDir
+}
+
+// bundleTestPackMeta re-detects bundleDir (produced by buildTestBundle) to
+// obtain the *bundle.PackMetadata IntegrateLocalBundle expects -- exercising
+// the same DetectLocalBundle path cmd/apm/install.go's real caller uses,
+// rather than hand-constructing a PackMetadata that could silently diverge.
+func bundleTestPackMeta(t *testing.T, bundleDir string) *bundle.PackMetadata {
+	t.Helper()
+	info, err := DetectLocalBundle(bundleDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil || !info.HasPackMeta {
+		t.Fatal("expected buildTestBundle's output to carry pack: metadata")
+	}
+	return &info.PackMeta
 }
 
 // zipDir packs dir's contents (relative paths preserved, dir itself as the

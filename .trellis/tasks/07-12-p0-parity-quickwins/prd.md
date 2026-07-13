@@ -104,9 +104,12 @@
 
 ### Phase 2 Acceptance Criteria
 
-- [ ] pack 三 producer 觸發矩陣與 oracle 一致（A/B）；bundle 佈局/植入
-      lockfile/plugin.json 合成語意等價
-- [ ] Gate 6b 重播：test1 情境雙邊 transcript 附於報告
-- [ ] audit Unicode 掃描 parity（A/B 含竄改/Unicode fixture 兩類）
-- [ ] 全 repo build/vet/test 綠；codex 硬性 checklist 逐項全過
-- [ ] 登記冊 §3.1/§3.2 兩個 DIVERGENT 項正式關閉（含 commit）
+- [x] pack 三 producer 觸發矩陣與 oracle 一致（A/B）；bundle 佈局/植入
+      lockfile/plugin.json 合成語意等價【test1 雙邊 73 檔樹狀一致；commit `f547b4b`】
+- [x] Gate 6b 重播：test1 情境雙邊 transcript 附於報告【`research/gate6b-report.md`；
+      install 部署樹 byte-identical 222 檔（PATH_DIFF=0/HASH_DIFF=0）】
+- [x] audit Unicode 掃描 parity（A/B）【`--content` exit 0/1/2；ContentScanner A/B
+      2 hidden chars 兩邊一致；commit `f2453b8`】
+- [x] 全 repo build/vet/test 綠；codex 硬性 checklist 逐項全過【23 套件；codex 三輪
+      對抗性驗證 pack/install/audit 全 CONFIRMED（缺口修正後）】
+- [x] 登記冊 §3.1/§3.2 兩個 DIVERGENT 項正式關閉【標 ✅ RESOLVED + 19a/19b 完成】

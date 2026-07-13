@@ -23,6 +23,7 @@ import (
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/marketplace"
+	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -734,7 +735,11 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 		fmt.Fprintf(os.Stderr, "[warn] %s\n", warning)
 	}
 
-	result, err := localbundle.IntegrateLocalBundle(info.SourceDir, targets, ".")
+	var packMeta *bundle.PackMetadata
+	if info.HasPackMeta {
+		packMeta = &info.PackMeta
+	}
+	result, err := localbundle.IntegrateLocalBundle(info.SourceDir, packMeta, targets, ".")
 	if err != nil {
 		return fmt.Errorf("deploy local bundle: %w", err)
 	}
