@@ -1,0 +1,31 @@
+{
+  "id": "marketplace-ecosystem",
+  "name": "marketplace-ecosystem",
+  "title": "新增 marketplace 生態系指令(消費端+發布端)",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Madao",
+  "assignee": "Madao",
+  "createdAt": "2026-07-03",
+  "completedAt": "2026-07-05",
+  "branch": null,
+  "base_branch": "feat/marketplace-install",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-03-marketplace-consumer",
+    "07-03-marketplace-install-ref",
+    "07-03-marketplace-authoring",
+    "07-03-marketplace-pack"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

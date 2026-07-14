@@ -27,11 +27,19 @@ func IsTruthyCI(val string) bool {
 }
 
 // CheckFrozenInstall verifies all direct deps have lockfile pins (req-lk-006).
+// Regular and dev dependencies participate identically (Python's
+// _enforce_frozen checks "regular + dev" manifest deps against the
+// lockfile) — a dev dependency missing its pin fails frozen the same way a
+// prod one does.
 func CheckFrozenInstall(m *manifest.Manifest, lock *Lockfile) error {
 	if lock == nil {
 		return fmt.Errorf("frozen install requires a lockfile but none was found")
 	}
-	for _, dep := range m.ParsedDeps {
+	deps := m.ParsedDeps
+	if len(m.ParsedDevDeps) > 0 {
+		deps = append(append([]*manifest.DependencyReference{}, deps...), m.ParsedDevDeps...)
+	}
+	for _, dep := range deps {
 		key := dep.RepoURL
 		if dep.VirtualPath != "" {
 			key += "/" + dep.VirtualPath

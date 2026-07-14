@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/07-05-antigravity-research/prd.md", "reason": "兩輪決策(2026-07-05/07-10)與 AC、缺口清單處置分類 —— 檢查實作是否偏離拍板"}
+{"file": ".trellis/tasks/07-05-antigravity-research/implement.md", "reason": "執行清單與驗證命令、A/B(agy) 驗證步驟"}
+{"file": ".trellis/tasks/07-05-antigravity-research/research/cli-mcp.md", "reason": "serverUrl 斷言依據(sse 不得有 url 欄位)"}
+{"file": ".trellis/tasks/07-05-antigravity-research/research/cli-subagents.md", "reason": "agent.md 路徑/格式斷言依據(per-agent 目錄層)"}

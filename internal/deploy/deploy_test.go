@@ -3,11 +3,13 @@ package deploy
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 func TestResolveTargets_FlagOverrides(t *testing.T) {
@@ -22,23 +24,34 @@ func TestResolveTargets_FlagOverrides(t *testing.T) {
 	}
 }
 
-func TestResolveTargets_FlagAllIncludesAntigravity(t *testing.T) {
-	// antigravity auto-detects like any other non-explicit-only target (see
-	// TestResolveTargets_AntigravityAutoDetected), so --target all must
-	// include it too -- agent-skills remains the only true exclusion.
+func TestResolveTargets_FlagAllExcludesAntigravity(t *testing.T) {
+	// Explicit-only alignment (user decision 2026-07-05, matching Python
+	// EXPLICIT_ONLY_TARGETS={"agent-skills","antigravity"}): neither
+	// agent-skills nor antigravity may ride along on --target all.
 	dir := t.TempDir()
 	targets, _ := ResolveTargets("all", nil, dir)
-	found := false
 	for _, tgt := range targets {
 		if tgt == "antigravity" {
-			found = true
+			t.Error("antigravity must not be included by --target all (explicit-only)")
 		}
 		if tgt == "agent-skills" {
 			t.Error("agent-skills must not be included by --target all")
 		}
 	}
-	if !found {
-		t.Errorf("expected antigravity in --target all expansion, got %v", targets)
+}
+
+func TestResolveTargets_ManifestAllExcludesAntigravity(t *testing.T) {
+	// The apm.yml target: [all] expansion path must apply the same
+	// explicit-only exclusion as the --target all flag path.
+	dir := t.TempDir()
+	targets, _ := ResolveTargets("", []string{"all"}, dir)
+	for _, tgt := range targets {
+		if tgt == "antigravity" {
+			t.Error("antigravity must not be included by manifest target: [all] (explicit-only)")
+		}
+		if tgt == "agent-skills" {
+			t.Error("agent-skills must not be included by manifest target: [all]")
+		}
 	}
 }
 
@@ -84,40 +97,91 @@ func TestResolveTargets_AgentSkillsNotAutoDetected(t *testing.T) {
 	}
 }
 
-func TestResolveTargets_AntigravityAutoDetected(t *testing.T) {
-	// req-tg-001 (research-corrected, see acceptance-checklist.md): antigravity
-	// DOES auto-detect via GEMINI.md or AGENTS.md at the project root -- it is
-	// NOT explicit-only (that was an incorrect companion assumption). Only
-	// agent-skills is genuinely explicit-only.
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# agents"), 0644)
-	os.WriteFile(filepath.Join(dir, "GEMINI.md"), []byte("# gemini"), 0644)
-
-	targets, _ := ResolveTargets("", nil, dir)
-	found := false
-	for _, tgt := range targets {
-		if tgt == "antigravity" {
-			found = true
-		}
+func TestResolveTargets_AntigravityNotAutoDetected(t *testing.T) {
+	// Explicit-only alignment (user decision 2026-07-05, matching Python
+	// EXPLICIT_ONLY_TARGETS={"agent-skills","antigravity"}): GEMINI.md and
+	// AGENTS.md are cross-tool files (also read by opencode/agent-skills
+	// tooling), so their presence must NOT auto-enable antigravity -- and
+	// with no other signals present the resolution must be empty. This
+	// flips the earlier auto-detect behavior.
+	tests := []struct {
+		name  string
+		files []string
+	}{
+		{"GEMINI.md alone", []string{"GEMINI.md"}},
+		{"AGENTS.md alone", []string{"AGENTS.md"}},
+		{"both GEMINI.md and AGENTS.md", []string{"GEMINI.md", "AGENTS.md"}},
 	}
-	if !found {
-		t.Errorf("expected antigravity to be auto-detected from GEMINI.md/AGENTS.md, got %v", targets)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte("# marker"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			targets, _ := ResolveTargets("", nil, dir)
+			if len(targets) != 0 {
+				t.Errorf("expected no targets with only %v present, got %v", tt.files, targets)
+			}
+		})
 	}
 }
 
-func TestResolveTargets_AntigravityAutoDetectedFromAgentsMDAlone(t *testing.T) {
+func TestResolveTargets_AntigravityExplicitSelection(t *testing.T) {
+	// Explicit selection matrix (Codex H1): both the --target flag path and
+	// the apm.yml target: path must activate antigravity, for the canonical
+	// name and the agy alias alike. The flag path canonicalizes inside
+	// SplitTargetFlag; the manifest path canonicalizes at apm.yml parse time
+	// (parseTargetField -> ValidateTarget), so ResolveTargets sees canonical
+	// tokens either way -- the manifest subtests parse a real apm.yml
+	// snippet to prove the alias survives the full path (Codex H2).
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("# agents"), 0644)
 
-	targets, _ := ResolveTargets("", nil, dir)
-	found := false
-	for _, tgt := range targets {
-		if tgt == "antigravity" {
-			found = true
-		}
+	flagCases := []struct {
+		name string
+		flag string
+	}{
+		{"flag antigravity", "antigravity"},
+		{"flag agy alias", "agy"},
 	}
-	if !found {
-		t.Errorf("expected antigravity to be auto-detected from AGENTS.md alone, got %v", targets)
+	for _, tt := range flagCases {
+		t.Run(tt.name, func(t *testing.T) {
+			targets, diags := ResolveTargets(tt.flag, nil, dir)
+			if len(diags) != 0 {
+				t.Errorf("expected no diagnostics, got %v", diags)
+			}
+			if len(targets) != 1 || targets[0] != "antigravity" {
+				t.Errorf("expected [antigravity], got %v", targets)
+			}
+		})
+	}
+
+	manifestCases := []struct {
+		name string
+		yml  string
+	}{
+		{"manifest target antigravity", "name: p\nversion: \"1.0.0\"\ntarget: [antigravity]\n"},
+		{"manifest target agy alias", "name: p\nversion: \"1.0.0\"\ntarget: [agy]\n"},
+	}
+	for _, tt := range manifestCases {
+		t.Run(tt.name, func(t *testing.T) {
+			node, err := yamlcore.SafeLoad([]byte(tt.yml))
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, _, err := manifest.ParseManifest(node)
+			if err != nil {
+				t.Fatal(err)
+			}
+			targets, diags := ResolveTargets("", m.Target, dir)
+			if len(diags) != 0 {
+				t.Errorf("expected no diagnostics, got %v", diags)
+			}
+			if len(targets) != 1 || targets[0] != "antigravity" {
+				t.Errorf("expected [antigravity], got %v", targets)
+			}
+		})
 	}
 }
 
@@ -130,12 +194,107 @@ func TestResolveTargets_UnsupportedTargetDiag(t *testing.T) {
 	}
 }
 
+// TestResolveTargets_FlagCommaSplit is the F2 regression: `--target
+// claude,codex` used to be treated as one literal (unknown) target string
+// (targets := []string{flagTarget}, no split), silently resolving to zero
+// targets. It must split into both claude and codex.
+func TestResolveTargets_FlagCommaSplit(t *testing.T) {
+	dir := t.TempDir()
+
+	targets, diags := ResolveTargets("claude,codex", nil, dir)
+	if len(diags) != 0 {
+		t.Errorf("expected no diagnostics, got %v", diags)
+	}
+	want := map[string]bool{"claude": true, "codex": true}
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %v", targets)
+	}
+	for _, tgt := range targets {
+		if !want[tgt] {
+			t.Errorf("unexpected target %q, want one of claude/codex", tgt)
+		}
+	}
+}
+
+// TestResolveTargets_FlagCommaSplit_TrimsSpaces proves whitespace around
+// comma-separated tokens is tolerated (" claude, codex ").
+func TestResolveTargets_FlagCommaSplit_TrimsSpaces(t *testing.T) {
+	dir := t.TempDir()
+
+	targets, _ := ResolveTargets(" claude, codex ", nil, dir)
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets, got %v", targets)
+	}
+}
+
+// TestSplitTargetFlag_UnknownTokenRejected is the F2/mf-005 regression: a
+// CLI --target token that is neither canonical, a known alias, nor an
+// x-<vendor>-<name> extension used to silently resolve to zero targets
+// (checkUnsupported found no adapter, diag-only, filterSupported dropped
+// it) instead of being rejected. It must now be a hard error naming the
+// offending token.
+func TestSplitTargetFlag_UnknownTokenRejected(t *testing.T) {
+	_, err := SplitTargetFlag("bogus")
+	if err == nil {
+		t.Fatal("expected an error for an unknown --target token, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should name the offending token, got: %v", err)
+	}
+}
+
+// TestSplitTargetFlag_KnownButAdapterlessAccepted proves req-tg-004's
+// contract survives F2: cursor/gemini/windsurf are canonical (real)
+// vocabulary without a registered adapter -- SplitTargetFlag (the
+// validation layer) must accept them; ResolveTargets's checkUnsupported is
+// what reports the separate non-fatal "no registered handler" diagnostic,
+// not a hard rejection here.
+func TestSplitTargetFlag_KnownButAdapterlessAccepted(t *testing.T) {
+	for _, tgt := range []string{"cursor", "gemini", "windsurf"} {
+		if _, err := SplitTargetFlag(tgt); err != nil {
+			t.Errorf("SplitTargetFlag(%q) should be accepted (known vocabulary, no adapter), got error: %v", tgt, err)
+		}
+	}
+}
+
+// TestSplitTargetFlag_AllAndVendorTokensAccepted proves the two other
+// accepted shapes besides plain canonical names: "all" and the
+// x-<vendor>-<name> extension pattern (req-tg-004/req-mf-005).
+func TestSplitTargetFlag_AllAndVendorTokensAccepted(t *testing.T) {
+	for _, tgt := range []string{"all", "x-acme-tool"} {
+		if _, err := SplitTargetFlag(tgt); err != nil {
+			t.Errorf("SplitTargetFlag(%q) should be accepted, got error: %v", tgt, err)
+		}
+	}
+}
+
+// TestResolveTargets_CommaListWithUnknownToken proves an unknown token
+// combined with a valid one in a comma list still fails closed as a
+// diagnostic-only zero-target result from ResolveTargets (the CLI-level
+// hard error is install.go's job, via deploy.SplitTargetFlag called
+// up front -- ResolveTargets itself keeps its existing no-crash,
+// diagnostics-only contract for every other caller, e.g. install --mcp).
+func TestResolveTargets_CommaListWithUnknownToken(t *testing.T) {
+	dir := t.TempDir()
+
+	targets, diags := ResolveTargets("claude,bogus", nil, dir)
+	if len(targets) != 0 {
+		t.Errorf("expected zero targets when the flag contains an unknown token, got %v", targets)
+	}
+	if len(diags) != 1 || !strings.Contains(diags[0], "bogus") {
+		t.Errorf("expected a diagnostic naming the unknown token, got %v", diags)
+	}
+}
+
 func TestDeployClaude_OracleMatch(t *testing.T) {
 	// Verify against oracle/targets/expected/claude.yaml:
 	//   .claude/rules/demo.md
 	//   .claude/agents/helper.md
 	//   .claude/commands/hello.md
 	//   .agents/skills/demo/SKILL.md
+	// Plus a Go-specific addition beyond the Python oracle: claude also
+	// copies skills to .claude/skills/<name>/ because Claude Code does not
+	// discover skills from the cross-tool .agents/skills/ canonical path.
 	dir := t.TempDir()
 
 	// Create .apm/ structure matching oracle _input
@@ -160,6 +319,8 @@ func TestDeployClaude_OracleMatch(t *testing.T) {
 	}
 
 	expected := oracleFileSet(loadOracle(t, "claude"))
+	const extraSkillCopy = ".claude/skills/demo/SKILL.md"
+	expected[extraSkillCopy] = true
 
 	if len(deployed) != len(expected) {
 		t.Fatalf("expected %d files, got %d: %v", len(expected), len(deployed), deployed)
@@ -280,6 +441,118 @@ func TestDeployAntigravity_OracleMatch(t *testing.T) {
 	}
 }
 
+// TestDeployAntigravity_AgentsPerAgentDirectory locks the antigravity agents
+// primitive mapping: .agents/agents/<name>/agent.md -- the static agent.md
+// format Antigravity CLI >=1.0.16 scans (research/cli-subagents.md). Unlike
+// claude's flat .claude/agents/<name>.md, each agent gets its own directory
+// named after the agent, with the file inside always called agent.md. The
+// content is a byte-copy of the source (no frontmatter transform), matching
+// the adapter-wide convention. This mapping is an apm-go documented extension
+// ahead of the Python upstream (prd.md decision 2026-07-10).
+func TestDeployAntigravity_AgentsPerAgentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	const src = "---\nname: reviewer\ndescription: Reviews diffs.\n---\nYou are a reviewer.\n"
+	mkFile(t, dir, ".apm/agents/reviewer.agent.md", src)
+
+	prims := CollectLocalPrimitives(dir)
+	agent := findByType(prims, TypeAgents)
+	if agent == nil {
+		t.Fatal("no agents primitive collected")
+	}
+
+	adapter := &antigravityAdapter{}
+	files, err := adapter.DeployPrimitive(*agent, dir)
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+
+	want := ".agents/agents/reviewer/agent.md"
+	if len(files) != 1 || files[0] != want {
+		t.Fatalf("expected [%s], got %v", want, files)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(want)))
+	if err != nil {
+		t.Fatalf("deployed file missing: %v", err)
+	}
+	if string(got) != src {
+		t.Errorf("deployed content not byte-identical to source:\n got: %q\nwant: %q", got, src)
+	}
+}
+
+// TestRun_AgentSameNameCollision_FirstDeclaredWins locks the same-name agent
+// collision semantics for both per-name-path targets: two packages deploying
+// an identically-named agent are resolved BEFORE any adapter runs, by
+// ResolvePrimitives (conflict.go) -- same source class, first-declared wins
+// (req-pr-003) with a "shadowed by" diagnostic; the loser never reaches
+// DeployPrimitive, so exactly one write happens and the deployed file carries
+// the first-declared dependency's bytes. antigravity's dependency agent path
+// now lands inside the winning dependency's plugin bundle
+// (.agents/plugins/<pkg>/agents/<name>/agent.md, task
+// 07-11-antigravity-plugins-bundle) rather than the flat
+// .agents/agents/<name>/agent.md local primitives still use; it must match
+// claude's flat path (.claude/agents/<name>.md) collision semantics exactly.
+func TestRun_AgentSameNameCollision_FirstDeclaredWins(t *testing.T) {
+	tests := []struct {
+		target string
+		path   string
+	}{
+		{"claude", ".claude/agents/reviewer.md"},
+		{"antigravity", ".agents/plugins/first/agents/reviewer/agent.md"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.target, func(t *testing.T) {
+			dir := t.TempDir()
+			const firstContent = "first-declared agent body\n"
+			const secondContent = "second-declared agent body\n"
+			mkFile(t, filepath.Join(dir, "apm_modules", "acme", "first"),
+				".apm/agents/reviewer.agent.md", firstContent)
+			mkFile(t, filepath.Join(dir, "apm_modules", "acme", "second"),
+				".apm/agents/reviewer.agent.md", secondContent)
+
+			m := &manifest.Manifest{
+				Name:    "test",
+				Version: "1.0.0",
+				ParsedDeps: []*manifest.DependencyReference{
+					{RepoURL: "acme/first", Owner: "acme", Repo: "first", Source: "git"},
+					{RepoURL: "acme/second", Owner: "acme", Repo: "second", Source: "git"},
+				},
+			}
+
+			result, err := Run([]string{tt.target}, dir, m, nil, nil)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(tt.path)))
+			if err != nil {
+				t.Fatalf("expected deployed agent at %s: %v", tt.path, err)
+			}
+			if string(got) != firstContent {
+				t.Errorf("expected first-declared dependency's content at %s, got %q", tt.path, got)
+			}
+
+			// The deployed path is recorded against the FIRST dep only, so
+			// lockfile provenance (deployed_files) attributes it to the winner.
+			if dr := result.PerDep["acme/first"]; dr == nil || !slices.Contains(dr.Files, tt.path) {
+				t.Errorf("expected %s recorded under acme/first, got %+v", tt.path, result.PerDep["acme/first"])
+			}
+			if dr := result.PerDep["acme/second"]; dr != nil && slices.Contains(dr.Files, tt.path) {
+				t.Errorf("loser acme/second must not record %s, got %+v", tt.path, dr)
+			}
+
+			found := false
+			for _, d := range result.Diags {
+				if strings.Contains(d, `"reviewer"`) && strings.Contains(d, "first-declared wins") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected first-declared-wins diagnostic for agent %q, got %v", "reviewer", result.Diags)
+			}
+		})
+	}
+}
+
 func TestDeployOpenCode_OracleMatch(t *testing.T) {
 	// oracle: .opencode/agents/helper.md, .opencode/commands/hello.md, .agents/skills/demo/SKILL.md
 	dir := t.TempDir()
@@ -390,7 +663,10 @@ func TestDeployRootConstraint(t *testing.T) {
 }
 
 func TestSkillConvergence(t *testing.T) {
-	// req-tg-003: all targets deploy skills to .agents/skills/<name>/SKILL.md
+	// req-tg-003: all targets deploy skills to .agents/skills/<name>/SKILL.md.
+	// claude additionally deploys to .claude/skills/<name>/SKILL.md because
+	// Claude Code only discovers skills from .claude/skills, not
+	// .agents/skills -- the canonical path alone is invisible to it.
 	dir := t.TempDir()
 	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body")
 
@@ -417,6 +693,23 @@ func TestSkillConvergence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", adapter.Name(), err)
 		}
+
+		if adapter.Name() == "claude" {
+			want := map[string]bool{
+				".agents/skills/demo/SKILL.md": true,
+				".claude/skills/demo/SKILL.md": true,
+			}
+			if len(files) != len(want) {
+				t.Errorf("claude should deploy %d files (canonical + Claude Code compat copy), got %v", len(want), files)
+			}
+			for _, f := range files {
+				if !want[f] {
+					t.Errorf("claude: unexpected deployed file %s", f)
+				}
+			}
+			continue
+		}
+
 		if len(files) != 1 || files[0] != ".agents/skills/demo/SKILL.md" {
 			t.Errorf("req-tg-003: %s should deploy to .agents/skills/demo/SKILL.md, got %v",
 				adapter.Name(), files)
@@ -498,6 +791,7 @@ func TestRun_FullPipeline(t *testing.T) {
 		".claude/agents/helper.md":     true,
 		".claude/commands/hello.md":    true,
 		".agents/skills/demo/SKILL.md": true,
+		".claude/skills/demo/SKILL.md": true, // Claude Code compat copy (req-tg-003 note)
 	}
 	for _, f := range localResult.Files {
 		if !localExpected[f] {
@@ -513,8 +807,17 @@ func TestRun_FullPipeline(t *testing.T) {
 	if depResult == nil {
 		t.Fatal("expected dep deploy result")
 	}
-	if len(depResult.Files) != 1 || depResult.Files[0] != ".agents/skills/extra/SKILL.md" {
-		t.Errorf("expected [.agents/skills/extra/SKILL.md], got %v", depResult.Files)
+	depExpected := map[string]bool{
+		".agents/skills/extra/SKILL.md": true,
+		".claude/skills/extra/SKILL.md": true, // Claude Code compat copy (req-tg-003 note)
+	}
+	if len(depResult.Files) != len(depExpected) {
+		t.Errorf("expected %d dep files, got %d: %v", len(depExpected), len(depResult.Files), depResult.Files)
+	}
+	for _, f := range depResult.Files {
+		if !depExpected[f] {
+			t.Errorf("unexpected dep file: %s", f)
+		}
 	}
 
 	// Hashes should be computed
@@ -622,6 +925,58 @@ func TestRun_SkillFilterScopedToDepKey(t *testing.T) {
 	}
 }
 
+// TestRun_SkillFilterWildcardDeploysAll is a regression test for the
+// documented `--skill '*'` RESET sentinel (install.md: "--skill '*' resets
+// to install all skills"): SkillFilter used to treat "*" as a literal skill
+// name to whitelist, so a package's skills (none of which are actually
+// named "*") were all suppressed instead of all deployed. Covers both the
+// pure-wildcard case and a mixed list (e.g. `--skill review --skill '*'`),
+// both of which must deploy every skill for the scoped dependency.
+func TestRun_SkillFilterWildcardDeploysAll(t *testing.T) {
+	tests := []struct {
+		name  string
+		names []string
+	}{
+		{"pure wildcard", []string{"*"}},
+		{"mixed with a concrete name", []string{"a1", "*"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			depA := "acme/foo"
+			mkFile(t, filepath.Join(dir, "apm_modules", depA), ".apm/skills/a1/SKILL.md", "a1\n")
+			mkFile(t, filepath.Join(dir, "apm_modules", depA), ".apm/skills/a2/SKILL.md", "a2\n")
+
+			m := &manifest.Manifest{
+				Name:    "test",
+				Version: "1.0.0",
+				ParsedDeps: []*manifest.DependencyReference{
+					{RepoURL: depA, Owner: "acme", Repo: "foo", Source: "git"},
+				},
+			}
+			resolved := &resolver.ResolutionResult{
+				Deps: []resolver.ResolvedDep{
+					{Key: depA, RepoURL: depA, Kind: resolver.KindGitSemver, Depth: 1},
+				},
+			}
+
+			_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Names: tt.names, DepKeys: []string{depA}})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a1/SKILL.md")); err != nil {
+				t.Errorf("a1 should deploy under --skill %v (reset to all): %v", tt.names, err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a2/SKILL.md")); err != nil {
+				t.Errorf("a2 should also deploy under --skill %v (reset to all): %v", tt.names, err)
+			}
+		})
+	}
+}
+
 func TestRun_SkillDeduplication(t *testing.T) {
 	// When multiple targets active, same skill should only be deployed once
 	dir := t.TempDir()
@@ -647,6 +1002,99 @@ func TestRun_SkillDeduplication(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("skill should be deployed once, found %d times", count)
+	}
+}
+
+// TestRun_SkillDeduplication_ClaudeExtraCopySurvivesTargetOrder is a
+// regression test for a bug where the cross-target skill dedup in Run
+// skipped calling claudeAdapter.DeployPrimitive entirely whenever another
+// skill-supporting target (e.g. codex) had already deployed the canonical
+// .agents/skills/<name>/ path first. That `continue` meant claude's
+// target-specific .claude/skills/<name>/ copy (needed because Claude Code
+// does not discover skills from .agents/skills) was silently dropped
+// whenever claude wasn't the first skill-supporting target to run.
+func TestRun_SkillDeduplication_ClaudeExtraCopySurvivesTargetOrder(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill\n")
+
+	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
+
+	// codex runs before claude -- this ordering used to trigger the bug.
+	result, err := Run([]string{"codex", "claude"}, dir, m, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	localResult := result.PerDep[""]
+	if localResult == nil {
+		t.Fatal("expected local result")
+	}
+
+	counts := map[string]int{}
+	for _, f := range localResult.Files {
+		counts[f]++
+	}
+
+	if counts[".agents/skills/demo/SKILL.md"] != 1 {
+		t.Errorf(".agents/skills/demo/SKILL.md should appear exactly once, got %d (files: %v)",
+			counts[".agents/skills/demo/SKILL.md"], localResult.Files)
+	}
+	if counts[".claude/skills/demo/SKILL.md"] != 1 {
+		t.Errorf(".claude/skills/demo/SKILL.md should appear exactly once even when codex "+
+			"deploys first, got %d (files: %v)", counts[".claude/skills/demo/SKILL.md"], localResult.Files)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/demo/SKILL.md")); err != nil {
+		t.Errorf("expected .claude/skills/demo/SKILL.md on disk: %v", err)
+	}
+}
+
+// TestDeploySkillClaude_BundleWithSiblings verifies the .claude/skills/ extra
+// copy carries the whole skill bundle (not just SKILL.md) -- a skill with
+// scripts/ or references/ siblings must not be truncated in the Claude Code
+// compat copy.
+func TestDeploySkillClaude_BundleWithSiblings(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body")
+	mkFile(t, dir, ".apm/skills/demo/scripts/run.sh", "#!/bin/sh\necho hi")
+	mkFile(t, dir, ".apm/skills/demo/references/guide.md", "# guide")
+
+	prims := CollectLocalPrimitives(dir)
+	skillPrim := findByType(prims, TypeSkills)
+	if skillPrim == nil {
+		t.Fatal("no skill primitive")
+	}
+
+	adapter := &claudeAdapter{}
+	files, err := adapter.DeployPrimitive(*skillPrim, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := map[string]bool{
+		".agents/skills/demo/SKILL.md":            true,
+		".agents/skills/demo/scripts/run.sh":      true,
+		".agents/skills/demo/references/guide.md": true,
+		".claude/skills/demo/SKILL.md":            true,
+		".claude/skills/demo/scripts/run.sh":      true,
+		".claude/skills/demo/references/guide.md": true,
+	}
+	if len(files) != len(expected) {
+		t.Fatalf("expected %d files, got %d: %v", len(expected), len(files), files)
+	}
+	for _, f := range files {
+		if !expected[f] {
+			t.Errorf("unexpected: %s", f)
+		}
+		abs := filepath.Join(dir, filepath.FromSlash(f))
+		content, err := os.ReadFile(abs)
+		if err != nil {
+			t.Errorf("deployed file does not exist: %s: %v", abs, err)
+			continue
+		}
+		if len(content) == 0 {
+			t.Errorf("deployed file is empty: %s", abs)
+		}
 	}
 }
 
@@ -803,7 +1251,7 @@ func TestNotDeployed_PerTarget(t *testing.T) {
 		{&claudeAdapter{}, []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands}, []PrimitiveType{TypePrompts, TypeHooks}},
 		{&codexAdapter{}, []PrimitiveType{TypeAgents, TypeSkills, TypeHooks}, []PrimitiveType{TypeInstructions, TypePrompts, TypeCommands}},
 		{&copilotAdapter{}, []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeSkills, TypeHooks}, []PrimitiveType{TypeCommands}},
-		{&antigravityAdapter{}, []PrimitiveType{TypeInstructions, TypeSkills, TypeHooks}, []PrimitiveType{TypeCommands, TypePrompts, TypeAgents}},
+		{&antigravityAdapter{}, []PrimitiveType{TypeInstructions, TypeSkills, TypeHooks, TypeAgents}, []PrimitiveType{TypeCommands, TypePrompts}},
 		{&opencodeAdapter{}, []PrimitiveType{TypeAgents, TypeCommands, TypeSkills}, []PrimitiveType{TypeInstructions, TypeHooks, TypePrompts}},
 		{&agentSkillsAdapter{}, []PrimitiveType{TypeSkills}, []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeCommands, TypeHooks}},
 	}

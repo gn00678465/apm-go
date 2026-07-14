@@ -73,6 +73,13 @@ func makeTags(names ...string) []semver.TagInfo {
 	return tags
 }
 
+// makeVPDep is makeDep plus a VirtualPath (monorepo subpath dep).
+func makeVPDep(repo, virtualPath, ref string) *manifest.DependencyReference {
+	d := makeDep(repo, ref)
+	d.VirtualPath = virtualPath
+	return d
+}
+
 // ── Tests ──
 
 func TestResolve_LinearThreeLevel(t *testing.T) {
@@ -257,6 +264,58 @@ func TestResolve_FixpointReExpansion(t *testing.T) {
 	}
 	if hasX {
 		t.Error("acme/x should NOT be in graph (stale child of A@v1.9.0)")
+	}
+}
+
+func TestResolve_SharedChildAcrossIndependentParents_KeepsVirtualPath(t *testing.T) {
+	// MI6 repro: a virtual-path child ("acme/c/sub") is declared by TWO
+	// independent parents -- A (a semver dep that later re-pins via a
+	// diamond with B) and P (an unrelated direct dep that never re-pins).
+	//
+	// A's first pin (v1.9.0) is dequeued first and adds "acme/c/sub" as its
+	// child. The B diamond then narrows A's constraint (^1.0.0 ∩ ~1.3.0),
+	// forcing A to re-pin to v1.3.0; invalidateChildren wipes the
+	// per-resolution state it recorded for "acme/c/sub" (including
+	// depRefs) -- but does NOT clear `kinds`. When P's own, still-pending,
+	// independent edge to "acme/c/sub" is dequeued afterward, the
+	// first-seen `kinds` gate is already true, so depRefs never gets
+	// re-filled: the surviving dep silently loses its VirtualPath and
+	// keeps an un-trimmed RepoURL.
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/a": makeTags("v1.0.0", "v1.3.0", "v1.9.0"),
+		"acme/b": makeTags("v1.0.0"),
+	}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.9.0": makeManifest("a-1.9", makeVPDep("acme/c", "sub", "")),
+		"acme/a@v1.3.0": makeManifest("a-1.3"),
+		"acme/b@v1.0.0": makeManifest("b", makeDep("acme/a", "~1.3.0")),
+		"acme/p@":       makeManifest("p", makeVPDep("acme/c", "sub", "")),
+	}}
+
+	root := makeManifest("root",
+		makeDep("acme/a", "^1.0.0"),
+		makeDep("acme/b", "^1.0.0"),
+		makeDep("acme/p", ""),
+	)
+	result, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var childDep *ResolvedDep
+	for i := range result.Deps {
+		if result.Deps[i].Key == "acme/c/sub" {
+			childDep = &result.Deps[i]
+		}
+	}
+	if childDep == nil {
+		t.Fatal("acme/c/sub not found in result")
+	}
+	if childDep.RepoURL != "acme/c" {
+		t.Errorf("RepoURL = %q, want %q (VirtualPath must be trimmed off RepoURL)", childDep.RepoURL, "acme/c")
+	}
+	if childDep.VirtualPath != "sub" {
+		t.Errorf("VirtualPath = %q, want %q", childDep.VirtualPath, "sub")
 	}
 }
 
@@ -477,5 +536,91 @@ func TestResolve_LiteralConflict_EmptyVsNonEmpty(t *testing.T) {
 	_, err := Resolve(root, nil, tags, loader, ResolverConfig{})
 	if err == nil {
 		t.Fatal("expected error for empty vs non-empty literal ref conflict")
+	}
+}
+
+// makeManifestWithDev builds a manifest whose ParsedDeps and ParsedDevDeps are
+// set independently, for F3 (devDependencies.apm silently ignored) coverage.
+func makeManifestWithDev(name string, deps []*manifest.DependencyReference, devDeps []*manifest.DependencyReference) *manifest.Manifest {
+	m := makeManifest(name, deps...)
+	m.ParsedDevDeps = devDeps
+	return m
+}
+
+// TestResolve_IncludesDevDependencies is the RED/GREEN test for F3: a
+// hand-authored devDependencies.apm entry must be resolved by the BFS root
+// queue exactly like an ordinary dependencies.apm entry, not silently
+// dropped (collectRootDeps used to return m.ParsedDeps only).
+func TestResolve_IncludesDevDependencies(t *testing.T) {
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/a": makeTags("v1.0.0"),
+		"acme/b": makeTags("v1.0.0"),
+	}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.0.0": makeManifest("a"),
+		"acme/b@v1.0.0": makeManifest("b"),
+	}}
+
+	root := makeManifestWithDev("root",
+		[]*manifest.DependencyReference{makeDep("acme/a", "^1.0.0")},
+		[]*manifest.DependencyReference{makeDep("acme/b", "^1.0.0")},
+	)
+	result, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Deps) != 2 {
+		t.Fatalf("deps count = %d, want 2 (prod acme/a + dev acme/b): %+v", len(result.Deps), result.Deps)
+	}
+	// Root order (req: stable, documented position — prod before dev,
+	// mirroring Python's apm_deps + dev_apm_deps root-BFS order).
+	wantOrder := []string{"acme/a", "acme/b"}
+	for i, want := range wantOrder {
+		if result.Deps[i].Key != want {
+			t.Errorf("deps[%d].Key = %q, want %q", i, result.Deps[i].Key, want)
+		}
+	}
+	if result.Deps[1].Depth != 1 {
+		t.Errorf("dev dep acme/b depth = %d, want 1 (direct dependency)", result.Deps[1].Depth)
+	}
+}
+
+// TestResolve_RootOrder_ProdThenDev_DiamondDeterministic proves resolver
+// determinism (req-rs-001) holds for a diamond where a prod root and a dev
+// root share a transitive child: repeated resolution of the same manifest
+// must produce byte-identical output order every time, and dev roots must
+// occupy a stable position (after all prod roots) in that order.
+func TestResolve_RootOrder_ProdThenDev_DiamondDeterministic(t *testing.T) {
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{
+		"acme/a": makeTags("v1.0.0"),
+		"acme/b": makeTags("v1.0.0"),
+		"acme/c": makeTags("v1.0.0"),
+	}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.0.0": makeManifest("a", makeDep("acme/c", "^1.0.0")),
+		"acme/b@v1.0.0": makeManifest("b", makeDep("acme/c", "^1.0.0")),
+		"acme/c@v1.0.0": makeManifest("c"),
+	}}
+
+	wantOrder := []string{"acme/a", "acme/b", "acme/c"}
+	const runs = 20
+	for run := 0; run < runs; run++ {
+		root := makeManifestWithDev("root",
+			[]*manifest.DependencyReference{makeDep("acme/a", "^1.0.0")},
+			[]*manifest.DependencyReference{makeDep("acme/b", "^1.0.0")},
+		)
+		result, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+		if err != nil {
+			t.Fatalf("run %d: unexpected error: %v", run, err)
+		}
+		if len(result.Deps) != len(wantOrder) {
+			t.Fatalf("run %d: deps count = %d, want %d: %+v", run, len(result.Deps), len(wantOrder), result.Deps)
+		}
+		for i, want := range wantOrder {
+			if result.Deps[i].Key != want {
+				t.Fatalf("run %d: deps[%d].Key = %q, want %q (non-deterministic order)", run, i, result.Deps[i].Key, want)
+			}
+		}
 	}
 }

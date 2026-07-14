@@ -1,7 +1,5 @@
 package deploy
 
-import "fmt"
-
 type codexAdapter struct{}
 
 func (a *codexAdapter) Name() string { return "codex" }
@@ -17,7 +15,7 @@ func (a *codexAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string
 	case TypeSkills:
 		return deploySkill(p, projectDir)
 	case TypeAgents:
-		return deployFileToPath(p, fmt.Sprintf(".codex/agents/%s.toml", p.Name), projectDir)
+		return deployCodexAgentTOML(p, projectDir)
 	case TypeHooks:
 		return deployFileToPath(p, ".codex/hooks.json", projectDir)
 	default:

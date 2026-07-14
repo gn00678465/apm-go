@@ -11,7 +11,10 @@ func (a *claudeAdapter) MCPResolveMode() manifest.ResolveMode { return manifest.
 // WriteMCP writes .mcp.json (apm-cli parity: key mcpServers, type+url for
 // remote transports).
 func (a *claudeAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string, []string, []string, error) {
-	entries, diags := buildMCPEntries(prims, manifest.ResolveBake, claudeMCPEntry)
+	// env bakes (parity with the Python original), but headers keep ${VAR}
+	// verbatim: Claude Code .mcp.json natively expands ${VAR}/${VAR:-default}
+	// in headers at runtime, so a credential must not be baked to disk (M8).
+	entries, diags := buildMCPEntries(prims, manifest.ResolveBake, manifest.ResolveTranslate, claudeMCPEntry)
 	if len(prims) == 0 {
 		return nil, nil, diags, nil
 	}

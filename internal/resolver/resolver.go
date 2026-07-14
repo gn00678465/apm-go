@@ -43,7 +43,7 @@ func Resolve(
 	childrenOf := map[string][]string{} // parent key -> child keys added by current pin
 
 	queue := []queueEntry{}
-	for _, dep := range collectRootDeps(rootManifest) {
+	for _, dep := range collectResolutionRootDeps(rootManifest) {
 		queue = append(queue, queueEntry{
 			ref:   dep,
 			depth: 1,
@@ -62,6 +62,29 @@ func Resolve(
 				maxDepth, strings.Join(entry.chain, " -> "))
 		}
 
+		// mkt-029/033: a Source=="marketplace" dependency (an apm.yml dict
+		// entry {name, marketplace, version}, root or transitive alike) is
+		// collapsed into an ordinary git/local dependency BEFORE any of the
+		// BFS's own key-based bookkeeping below runs -- its placeholder
+		// RepoURL ("_marketplace/<mkt>/<name>") has no real repository
+		// identity to dedupe/pin against. Once collapsed, entry.ref is an
+		// ordinary dependency for the rest of this loop iteration (and any
+		// re-enqueue) -- ClassifyReference below will never again see
+		// KindMarketplace for it.
+		if entry.ref.Source == "marketplace" {
+			resolved, provenance, err := resolveMarketplaceEntry(cfg.MarketplaceResolve, entry.ref)
+			if err != nil {
+				return nil, err
+			}
+			entry.ref = resolved
+			if provenance != nil {
+				if result.MarketplaceProvenance == nil {
+					result.MarketplaceProvenance = map[string]*MarketplaceProvenance{}
+				}
+				result.MarketplaceProvenance[depKey(resolved)] = provenance
+			}
+		}
+
 		key := depKey(entry.ref)
 		kind := ClassifyReference(entry.ref)
 
@@ -75,6 +98,13 @@ func Resolve(
 		if _, exists := kinds[key]; !exists {
 			depOrder = append(depOrder, key)
 			kinds[key] = kind
+			depRefs[key] = entry.ref
+		} else if _, ok := depRefs[key]; !ok {
+			// mi-fix (MI6): depRefs is per-resolution state cleared by
+			// invalidateChildren, but its re-population was gated behind the
+			// first-seen kinds check, so a child shared by two independent
+			// parents (one re-pinning) never got depRefs re-filled -> result
+			// lost VirtualPath / left RepoURL untrimmed. Re-fill it here.
 			depRefs[key] = entry.ref
 		}
 
@@ -153,6 +183,29 @@ func Resolve(
 		// Track and enqueue children
 		var newChildKeys []string
 		for _, subDep := range collectRootDeps(subManifest) {
+			// mi-fix (MI1): a transitive marketplace dict dependency must be
+			// collapsed to its real ref HERE, before childKey is computed,
+			// not left for dequeue-time collapse. Otherwise childKey is the
+			// unresolved placeholder "_marketplace/<mkt>/<name>" while the
+			// dequeued entry's `processed`/constraints/etc. end up keyed by
+			// the RESOLVED key (e.g. "acme/x") -- invalidateChildren then
+			// deletes only the placeholder, and the real key survives a
+			// parent re-pin. Resolving here keeps childrenOf/dequeue-time
+			// keys identical, so invalidation actually reaches the child.
+			if subDep.Source == "marketplace" {
+				resolved, provenance, err := resolveMarketplaceEntry(cfg.MarketplaceResolve, subDep)
+				if err != nil {
+					return nil, err
+				}
+				subDep = resolved
+				if provenance != nil {
+					if result.MarketplaceProvenance == nil {
+						result.MarketplaceProvenance = map[string]*MarketplaceProvenance{}
+					}
+					result.MarketplaceProvenance[depKey(resolved)] = provenance
+				}
+			}
+
 			childKey := depKey(subDep)
 			newChildKeys = append(newChildKeys, childKey)
 
@@ -238,6 +291,43 @@ func invalidateChildren(
 	}
 }
 
+// resolveMarketplaceEntry collapses a single Source=="marketplace" dep via
+// resolveFn (mkt-029/033). A nil resolveFn (an existing caller that hasn't
+// been updated to wire ResolverConfig.MarketplaceResolve) is a hard error --
+// fail loud rather than silently falling through to the old, wrong
+// default-case handling (a bogus "_marketplace/..." RepoURL reaching
+// PackageLoader/TagLister). resolveFn itself returning an unresolved
+// marketplace dep back (Source still "marketplace") is likewise treated as
+// an error rather than looping forever or being silently accepted.
+func resolveMarketplaceEntry(resolveFn MarketplaceResolveFunc, dep *manifest.DependencyReference) (*manifest.DependencyReference, *MarketplaceProvenance, error) {
+	if resolveFn == nil {
+		return nil, nil, fmt.Errorf(
+			"cannot resolve marketplace dependency %q (marketplace %q): no marketplace resolver configured",
+			dep.MarketplacePluginName, dep.MarketplaceName,
+		)
+	}
+	resolved, provenance, err := resolveFn(dep)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"resolve marketplace dependency %q (marketplace %q): %w",
+			dep.MarketplacePluginName, dep.MarketplaceName, err,
+		)
+	}
+	if resolved == nil {
+		return nil, nil, fmt.Errorf(
+			"marketplace resolver returned no dependency for %q (marketplace %q)",
+			dep.MarketplacePluginName, dep.MarketplaceName,
+		)
+	}
+	if resolved.Source == "marketplace" {
+		return nil, nil, fmt.Errorf(
+			"marketplace resolver returned an unresolved marketplace dependency for %q (marketplace %q)",
+			dep.MarketplacePluginName, dep.MarketplaceName,
+		)
+	}
+	return resolved, provenance, nil
+}
+
 func checkNestRejection(m *manifest.Manifest) error {
 	if m.ConflictResolution == "nest" {
 		return fmt.Errorf("conflict_resolution: nest is reserved for v0.2 (Section 7.2 clause 3)")
@@ -250,6 +340,30 @@ func collectRootDeps(m *manifest.Manifest) []*manifest.DependencyReference {
 		return nil
 	}
 	return m.ParsedDeps
+}
+
+// collectResolutionRootDeps seeds the top-level BFS queue for the manifest
+// being resolved: production dependencies.apm followed by
+// devDependencies.apm (F3 fix — devDependencies.apm was parsed into
+// m.ParsedDevDeps but never fed into the resolver). The prod-then-dev order
+// mirrors Python's apm_resolver.py build_dependency_tree, which queues
+// root_deps first and root_dev_deps second (both at depth 1).
+//
+// Only the TRUE resolution root gets this treatment: a transitive
+// dependency's own manifest is walked via collectRootDeps (prod only)
+// instead, matching Python -- a dependency's own devDependencies never
+// propagate to its consumers.
+func collectResolutionRootDeps(m *manifest.Manifest) []*manifest.DependencyReference {
+	if m == nil {
+		return nil
+	}
+	if len(m.ParsedDevDeps) == 0 {
+		return m.ParsedDeps
+	}
+	all := make([]*manifest.DependencyReference, 0, len(m.ParsedDeps)+len(m.ParsedDevDeps))
+	all = append(all, m.ParsedDeps...)
+	all = append(all, m.ParsedDevDeps...)
+	return all
 }
 
 func depKey(ref *manifest.DependencyReference) string {

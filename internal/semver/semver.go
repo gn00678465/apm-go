@@ -110,3 +110,18 @@ func StripVPrefix(tag string) string {
 	}
 	return tag
 }
+
+// IsPrerelease reports whether version (parsed under the NPM dialect, after
+// stripping an optional leading "v") carries a prerelease tag -- used by
+// `apm marketplace outdated`'s --include-prerelease filter (mkt-042 修訂版)
+// to decide whether a candidate tag should even be considered before ranking
+// (a separate concern from MaxSatisfying's own npm-style range matching,
+// which already excludes most prereleases from non-prerelease ranges on its
+// own). A version that fails to parse is reported as not a prerelease.
+func IsPrerelease(version string) bool {
+	v, err := depsdev.NPM.Parse(StripVPrefix(version))
+	if err != nil {
+		return false
+	}
+	return v.IsPrerelease()
+}

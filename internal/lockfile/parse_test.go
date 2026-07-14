@@ -158,6 +158,86 @@ func TestParseLockfile_RejectsPathTraversal(t *testing.T) {
 	}
 }
 
+// TestParseLockfile_AbsoluteRepoURL_GitSourceAllowed covers this task's
+// approved design: a "git"-sourced dependency's repo_url MAY be an
+// OS-absolute filesystem path -- mkt-025's local-marketplace fast path (and
+// a plain `apm install /abs/path` local git dependency) legitimately
+// resolve to one, and the lockfile entry apm writes for it must round-trip
+// through a later `apm install`'s lockfile read. Windows drive-letter,
+// UNC, and POSIX forms are all exercised.
+func TestParseLockfile_AbsoluteRepoURL_GitSourceAllowed(t *testing.T) {
+	tests := []struct {
+		name    string
+		repoURL string
+	}{
+		{"posix absolute", "/home/me/plugins/p"},
+		{"windows drive letter", `C:\Users\me\plugins\p`},
+		{"windows UNC", `\\myserver\share\plugin`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yamlSrc := "lockfile_version: \"2\"\ndependencies:\n  - repo_url: " +
+				yamlQuote(tt.repoURL) + "\n    source: git\n"
+			node, err := yamlcore.SafeLoad([]byte(yamlSrc))
+			if err != nil {
+				t.Fatalf("SafeLoad: %v", err)
+			}
+			lf, err := ParseLockfile(node)
+			if err != nil {
+				t.Fatalf("ParseLockfile: %v", err)
+			}
+			if len(lf.Dependencies) != 1 || lf.Dependencies[0].RepoURL != tt.repoURL {
+				t.Fatalf("Dependencies = %+v, want one dep with repo_url %q", lf.Dependencies, tt.repoURL)
+			}
+		})
+	}
+}
+
+// TestParseLockfile_AbsoluteRepoURL_NonGitSourceRejected covers the other
+// half of the same design decision: an absolute repo_url is REJECTED for
+// any source other than "git" -- in particular "registry" and "local" --
+// since a materialization step must never treat a package-registry
+// identifier (or a genuine `path:` local dependency's own LocalPath) as an
+// arbitrary filesystem path. Extends TestParseLockfile_RejectsPathTraversal's
+// pre-existing "repo_url absolute"/source=registry case with an explicit
+// source=local negative, proving the "git"-only carve-out is precise, not a
+// blanket relaxation.
+func TestParseLockfile_AbsoluteRepoURL_NonGitSourceRejected(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{"registry", "registry"},
+		{"local", "local"},
+		{"no source at all", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sourceLine := ""
+			if tt.source != "" {
+				sourceLine = "\n    source: " + tt.source
+			}
+			yamlSrc := "lockfile_version: \"2\"\ndependencies:\n  - repo_url: /home/me/plugins/p" + sourceLine + "\n"
+			node, err := yamlcore.SafeLoad([]byte(yamlSrc))
+			if err != nil {
+				t.Fatalf("SafeLoad: %v", err)
+			}
+			if _, err := ParseLockfile(node); err == nil {
+				t.Fatal("expected an error, got nil")
+			} else if !strings.Contains(err.Error(), "absolute") {
+				t.Errorf("error should mention absolute: %v", err)
+			}
+		})
+	}
+}
+
+// yamlQuote double-quotes a value for embedding into a hand-written YAML
+// snippet, escaping backslashes so Windows-style paths survive as literal
+// text rather than YAML escape sequences.
+func yamlQuote(s string) string {
+	return `"` + strings.ReplaceAll(s, `\`, `\\`) + `"`
+}
+
 func TestParseLockfile_FindByKey(t *testing.T) {
 	lf := loadFixture(t, filepath.Join("lockfile", "v1-git-only.yml"))
 	dep := lf.FindByKey("github.com/octocat/example")

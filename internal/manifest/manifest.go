@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 
@@ -18,6 +19,19 @@ const (
 	LevelWarning DiagLevel = iota
 	LevelError
 )
+
+// allowExecutablesWarning is P0 #4's full warning text (register §4.1/§5):
+// apm-go does not implement Python's allowExecutables deny-by-default
+// executable-primitives gate (security/executables.py) -- every hook/bin/
+// MCP primitive is still deployed unconditionally. Printed directly by
+// ParseManifest (see the "allowExecutables" case below) rather than only
+// returned as a Diagnostic: install/update/uninstall/mcp-install all parse
+// a manifest through this same function but currently discard its returned
+// diags, so a returned-only Diagnostic would never reach a user running
+// `apm-go install`. This is a prompt, not a gate -- it never changes
+// deployment behavior (P0 #4 is scoped to eliminating the silent failure,
+// not to implementing enforcement; see prd.md Non-Goals).
+const allowExecutablesWarning = "[warn] apm.yml has an allowExecutables: block, but apm-go does not enforce it yet; this block is not effective in apm-go and every executable primitive (hooks, bin, MCP) is still deployed unconditionally"
 
 type Diagnostic struct {
 	Level   DiagLevel
@@ -74,6 +88,14 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 	m := &Manifest{node: doc}
 	var diags []Diagnostic
 
+	// mf-tg: mutex check runs before either key's value is read
+	// (apm_yml.py:53-58), so an invalid or empty value under whichever key
+	// appears first can never mask the schema conflict (regression:
+	// codex-verify-phase01.md FAIL 1).
+	if hasConflictingTargetKeys(root) {
+		return nil, nil, fmt.Errorf("apm.yml must not define both 'target:' and 'targets:'; use only one")
+	}
+
 	for i := 0; i < len(root.Content)-1; i += 2 {
 		key := root.Content[i]
 		val := root.Content[i+1]
@@ -96,6 +118,12 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 			m.Type = val.Value
 		case "target":
 			targets, err := parseTargetField(val)
+			if err != nil {
+				return nil, nil, err
+			}
+			m.Target = targets
+		case "targets":
+			targets, err := parseTargetsField(val)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -152,6 +180,16 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 			if err := validateMarketplaceBlock(val); err != nil {
 				return nil, nil, err
 			}
+		case "allowExecutables":
+			// P0 #4: not(yet) enforced -- warn, don't gate. See
+			// allowExecutablesWarning's doc comment for why this prints
+			// directly instead of relying on a caller to consume diags.
+			fmt.Fprintln(os.Stderr, allowExecutablesWarning)
+			diags = append(diags, Diagnostic{
+				Level:   LevelWarning,
+				Req:     "req-sec-allowexec",
+				Message: allowExecutablesWarning,
+			})
 		default:
 			// Unknown keys (including x-*) preserved by Node — no action needed
 		}
@@ -190,27 +228,112 @@ func ParseManifest(doc *yaml.Node) (*Manifest, []Diagnostic, error) {
 	return m, diags, nil
 }
 
+// hasConflictingTargetKeys reports whether the top-level mapping defines
+// both 'target:' and 'targets:'. Must be checked before either value is
+// parsed (apm_yml.py:53-58) -- see the mf-tg comment in ParseManifest.
+func hasConflictingTargetKeys(root *yaml.Node) bool {
+	var hasTarget, hasTargets bool
+	for i := 0; i < len(root.Content)-1; i += 2 {
+		switch root.Content[i].Value {
+		case "target":
+			hasTarget = true
+		case "targets":
+			hasTargets = true
+		}
+	}
+	return hasTarget && hasTargets
+}
+
+// parseTargetField parses the singular `target:` key (apm_yml.py:86-105):
+//   - null -> nil (falls through to auto-detect upstream)
+//   - list -> each element validated (list sugar, #1188); empty/blank
+//     elements filtered; a list with no non-blank elements -> nil
+//     (auto-detect), not an error
+//   - non-list scalar, empty after trim -> nil (auto-detect)
+//   - non-list scalar, non-empty -> split on "," (CSV sugar), trim each,
+//     validate every non-empty token
 func parseTargetField(val *yaml.Node) ([]string, error) {
+	if val.Kind == yaml.ScalarNode && val.Tag == "!!null" {
+		return nil, nil
+	}
 	switch val.Kind {
 	case yaml.ScalarNode:
-		normalized, err := ValidateTarget(val.Value)
-		if err != nil {
-			return nil, err
+		raw := strings.TrimSpace(val.Value)
+		if raw == "" {
+			return nil, nil
 		}
-		return []string{normalized}, nil
+		return validateTargetTokens(strings.Split(raw, ","))
 	case yaml.SequenceNode:
-		var targets []string
-		for _, item := range val.Content {
-			normalized, err := ValidateTarget(item.Value)
-			if err != nil {
-				return nil, err
-			}
-			targets = append(targets, normalized)
+		tokens := make([]string, len(val.Content))
+		for i, item := range val.Content {
+			tokens[i] = targetTokenFromNode(item)
 		}
-		return targets, nil
+		return validateTargetTokens(tokens)
 	default:
 		return nil, fmt.Errorf("target must be a string or list of strings")
 	}
+}
+
+// targetTokenFromNode mirrors Python's str(t) coercion applied to every
+// list element before trimming/validation (apm_yml.py:82,94). A scalar
+// contributes its literal value; a mapping or nested sequence element has
+// no yaml.Node.Value, so copying it verbatim produced an empty string that
+// validateTargetTokens silently dropped as blank instead of rejecting it as
+// an unknown target (regression: codex-verify-phase01.md FAIL 2). Returning
+// a non-empty, non-canonical placeholder here routes it through
+// ValidateTarget instead, which rejects it.
+func targetTokenFromNode(item *yaml.Node) string {
+	if item.Kind == yaml.ScalarNode {
+		return item.Value
+	}
+	return fmt.Sprintf("<%s>", item.Tag)
+}
+
+// parseTargetsField parses the plural `targets:` key (apm_yml.py:60-84):
+//   - null, or an empty list -> error (a targets: block must not be empty)
+//   - non-list scalar -> treated as a single-element list
+//   - list -> each element validated; blank elements are filtered without
+//     re-checking emptiness (matches Python: only `targets: []`/null errors,
+//     an all-blank list quietly resolves to zero targets)
+func parseTargetsField(val *yaml.Node) ([]string, error) {
+	if val.Kind == yaml.ScalarNode && val.Tag == "!!null" {
+		return nil, fmt.Errorf("'targets:' in apm.yml is empty; the targets list must contain at least one target")
+	}
+	if val.Kind == yaml.SequenceNode && len(val.Content) == 0 {
+		return nil, fmt.Errorf("'targets:' in apm.yml is empty; the targets list must contain at least one target")
+	}
+
+	var rawTokens []string
+	switch val.Kind {
+	case yaml.SequenceNode:
+		for _, item := range val.Content {
+			rawTokens = append(rawTokens, targetTokenFromNode(item))
+		}
+	case yaml.ScalarNode:
+		rawTokens = []string{val.Value}
+	default:
+		return nil, fmt.Errorf("targets must be a string or list of strings")
+	}
+	return validateTargetTokens(rawTokens)
+}
+
+// validateTargetTokens trims each raw token, drops blanks, and validates
+// the remainder against ValidateTarget. A result of zero tokens (e.g. every
+// element was blank) is not an error -- it's returned as nil.
+func validateTargetTokens(raw []string) ([]string, error) {
+	var targets []string
+	for _, r := range raw {
+		tok := strings.TrimSpace(r)
+		if tok == "" {
+			continue
+		}
+		normalized, err := ValidateTarget(tok)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, normalized)
+	}
+	return targets, nil
 }
 
 func parseStringMap(val *yaml.Node) map[string]string {

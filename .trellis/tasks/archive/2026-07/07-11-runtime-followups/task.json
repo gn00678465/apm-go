@@ -1,0 +1,32 @@
+{
+  "id": "runtime-followups",
+  "name": "runtime-followups",
+  "title": "runtime-parity-gaps 殘留 follow-up 收整",
+  "description": "收整 07-05-runtime-parity-gaps 父任務記錄的 4 項殘留 follow-up:plugins bundle、AGENTS.md compile、local root key 空間、update local deps",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Madao",
+  "assignee": "Madao",
+  "createdAt": "2026-07-11",
+  "completedAt": "2026-07-12",
+  "branch": null,
+  "base_branch": "feat/marketplace-install",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-11-antigravity-plugins-bundle",
+    "07-11-agents-md-compile",
+    "07-11-local-root-key-space",
+    "07-11-update-local-deps",
+    "07-12-codex-agent-toml"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

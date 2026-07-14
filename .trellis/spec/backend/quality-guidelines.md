@@ -77,7 +77,7 @@ Questions to answer:
 - Translate URL `${input:mcp-url}` -> write URL verbatim for Copilot.
 - Translate URL `http://host/mcp` -> skip with non-HTTPS diagnostic.
 - Translate URL `http://host/${input:path}` -> skip with non-HTTPS diagnostic.
-- No `dependencies.apm` and no active target -> print "No dependencies to install" and return.
+- No `dependencies.apm` and no active target -> print "No dependencies to install"; then exit 0 ONLY when the project also has no local `.apm/` primitives -- local primitives present with zero targets is exit 2 with the teaching message (task 07-11-instructions-applyto-parity; see install-marketplace-contracts.md #2 matrix).
 - No `dependencies.apm` with active target -> deploy local/MCP primitives and write local deployed hashes.
 
 ### 5. Good/Base/Bad Cases

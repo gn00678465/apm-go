@@ -32,11 +32,14 @@ func envLookup(name string) (string, bool) {
 }
 
 // resolveMCPServer runs mf-013 resolution over one server's args/env/headers/
-// url for mode. Command and Transport are not placeholder-bearing fields in
+// url. args/env/url use envMode; headers use headerMode -- decoupled so a
+// target that bakes env can still keep header placeholders verbatim (M8: the
+// Python original always preserves ${VAR} in headers, issue #1152, even when
+// it bakes env). Command and Transport are not placeholder-bearing fields in
 // practice and pass through unresolved. In translate mode, an authored env
 // value with no placeholder is rewritten to ${<key>} so secrets never bake
 // into a translate-mode target's config (design.md §3).
-func resolveMCPServer(s *manifest.MCPDependency, mode manifest.ResolveMode) *ResolvedMCPServer {
+func resolveMCPServer(s *manifest.MCPDependency, mode, headerMode manifest.ResolveMode) *ResolvedMCPServer {
 	r := &ResolvedMCPServer{Name: s.Name, Transport: s.Transport, Command: s.Command}
 
 	if s.Args != nil {
@@ -74,7 +77,7 @@ func resolveMCPServer(s *manifest.MCPDependency, mode manifest.ResolveMode) *Res
 		r.Headers = map[string]string{}
 		for _, k := range sortedKeys(s.Headers) {
 			v := s.Headers[k]
-			out, diags, refuse, omit := manifest.ResolvePlaceholders(v, mode, manifest.PosHeader, envLookup)
+			out, diags, refuse, omit := manifest.ResolvePlaceholders(v, headerMode, manifest.PosHeader, envLookup)
 			r.Diags = append(r.Diags, diags...)
 			if refuse {
 				r.Refused = true
@@ -152,11 +155,11 @@ type mcpEntryBuilder func(r *ResolvedMCPServer) (entry map[string]any, ok bool, 
 // buildMCPEntries resolves every self-defined MCP primitive via mf-013 for
 // mode, drops refused and non-https-remote servers with diagnostics, and
 // delegates the remaining per-server shape to build.
-func buildMCPEntries(prims []Primitive, mode manifest.ResolveMode, build mcpEntryBuilder) (entries map[string]map[string]any, diags []string) {
+func buildMCPEntries(prims []Primitive, mode, headerMode manifest.ResolveMode, build mcpEntryBuilder) (entries map[string]map[string]any, diags []string) {
 	entries = map[string]map[string]any{}
 	for _, p := range prims {
 		s := p.MCP
-		r := resolveMCPServer(s, mode)
+		r := resolveMCPServer(s, mode, headerMode)
 		diags = append(diags, r.Diags...)
 		if r.Refused {
 			diags = append(diags, fmt.Sprintf("mcp %q: refused (unresolved placeholder)", s.Name))
@@ -213,6 +216,7 @@ func placeholderAtStart(s string) bool {
 var managedMCPKeys = map[string]bool{
 	"command": true, "args": true, "env": true, "headers": true,
 	"url": true, "serverUrl": true, "type": true, "id": true, "http_headers": true,
+	"environment": true, "enabled": true,
 }
 
 // mergeMCPServers folds this run's entries into the existing servers map.

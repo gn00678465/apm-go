@@ -159,6 +159,28 @@ func TestIsSemverRange(t *testing.T) {
 	}
 }
 
+func TestIsPrerelease(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"1.2.3", false},
+		{"v1.2.3", false},
+		{"1.2.3-beta.1", true},
+		{"v1.2.3-beta.1", true},
+		{"1.2.3+build.5", false},
+		{"not-a-version", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			if got := IsPrerelease(tt.version); got != tt.want {
+				t.Errorf("IsPrerelease(%q) = %v, want %v", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
 		a, b string

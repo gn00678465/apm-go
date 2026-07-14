@@ -13,7 +13,7 @@ func (a *copilotAdapter) MCPResolveMode() manifest.ResolveMode { return manifest
 // design.md D2). Translate mode: placeholders pass through verbatim for the
 // runtime to resolve.
 func (a *copilotAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string, []string, []string, error) {
-	entries, diags := buildMCPEntries(prims, manifest.ResolveTranslate, copilotMCPEntry)
+	entries, diags := buildMCPEntries(prims, manifest.ResolveTranslate, manifest.ResolveTranslate, copilotMCPEntry)
 	if len(prims) == 0 {
 		return nil, nil, diags, nil
 	}

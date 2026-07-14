@@ -1,0 +1,246 @@
+# Implement: pack 完整 parity + install 消費回路 + 共用 ContentScanner
+
+> draft — 待 orchestrator/使用者 review
+
+TDD 每步：先寫測試（RED）→ 實作（GREEN）→ `go build ./... && go vet ./... &&
+go test ./...`。本輪不留可做而不做的 deferred（Gate 1 disposition 表的 (iii)
+項是獨立子系統/另一批功能，非切割）。
+
+## Phase 0 — target/targets 解析前置（登記冊 P1 #7 承接）
+
+- [ ] `internal/manifest/target.go`：`CanonicalTargets` 加 `"kiro"`（all/
+      antigravity 是 apm-go EXTENSION 保留）
+- [ ] 測試：`ValidateTarget("kiro")` 成功；既有 target 不回歸
+- [ ] `internal/manifest/manifest.go`：新增 `case "targets":`（SequenceNode
+      逐元素驗證、非 list scalar 視單元素、空 list → error）；`case "target":`
+      ScalarNode 加 CSV sugar（Split "," + trim + ValidateTarget 逐元素）；
+      loop 後檢查 target/targets 兩鍵並存 → error
+- [ ] 測試（對照 findings §2.1 決策樹）：`targets: [claude,copilot]`；
+      `targets: claude`(scalar→單元素)；`targets: []`→error；
+      `target: "claude,copilot"`(CSV→兩元素，先紅後綠)；兩鍵並存→error；
+      既有純 `target: claude` 不回歸
+- 驗證：`go test ./internal/manifest/...`
+
+## Phase 1 — internal/security：ContentScanner + SecurityGate（Review Gate A）
+
+**逐條對照 `apm/src/apm_cli/security/content_scanner.py` 與 `gate.py` 原始碼，
+不得依賴摘要。**
+
+- [ ] `scanner.go`：ScanFinding struct；30 條 suspicious-range 表（含分類）；
+      `ScanText`（isascii fast-path、逐行逐字元、mid-file BOM 特判、
+      ZWJ-in-emoji 特判）；`ScanFile`（解碼/讀檔失敗→空 slice）；
+      `HasCritical`/`Summarize`/`Classify`/`StripDangerous`
+- [ ] 測試（每分類 ≥1 fixture）：純 ASCII→空(驗 fast-path 被走)、tag char→
+      critical、9 bidi-override→critical、VS SMP→critical、zero-width→warning、
+      ZWJ 夾 emoji→info、BOM 檔首→info/中間→warning、nbsp→info、
+      StripDangerous(critical+warning 移除、info 與 emoji ZWJ 序列保留)
+- [ ] `gate.go`：ScanPolicy(OnCritical + ForceOverrides)、WARN/BLOCK/REPORT
+      預建、ScanVerdict(HasCritical/ShouldBlock/CriticalCount/WarningCount/
+      FilesScanned/AllFindings)、ScanFiles(symlink 用 Lstat 跳過)、ScanText
+- [ ] 測試：WARN_POLICY critical 不 ShouldBlock；BLOCK_POLICY critical+
+      force=false→ShouldBlock；force=true+ForceOverrides→不 block；symlink 跳過
+- **Review Gate A**：30 條 range + 3 特殊規則逐條核對原始碼，不接受「摘要即實作」
+- 驗證：`go test ./internal/security/...`（無依賴，可獨立高覆蓋）
+
+## Phase 2 — pack 三路由重寫（detectOutputs + nothing-to-do exit 1）
+
+- [ ] `internal/pack/detect.go`：`DetectOutputs(hasDeps, hasMarketplace,
+      targets) (bundle, marketplace, pluginManifest bool, err)`——矩陣最後
+      列(有 target 非 claude/copilot 其餘皆空→err)
+- [ ] 測試：矩陣 9 列全覆蓋（含 hasDeps 只看 ParsedDeps 的修正）
+- [ ] `cmd/apm/pack.go`：runPack 改呼叫 DetectOutputs、三獨立 if 區塊；
+      nothing-to-do→`return err`（exit 1）；兩警告常數暫留（Phase 5 移除）
+- [ ] 測試（Gate 2 fail-loud）：純 deps→觸發 Bundle 分支(先用 TODO)、
+      純 `target: codex`→exit 1、完全空 apm.yml→exit 1(現行 exit 0，行為變更)、
+      既有 marketplace-only→exit 0 不回歸
+- 驗證：`go test ./internal/pack/... ./cmd/apm/... -run Pack`；
+  `ab_marketplace_pack.py` 14/14
+
+## Phase 3 — PluginManifestProducer（Review Gate B 一部分）
+
+- [ ] `pluginmanifest/synthesize.go`：窄範圍 apm.yml 再讀（8 欄位，對照
+      `plugin_parser.py`）
+- [ ] 測試：name 缺→error；author string→{name}；author dict 缺 name→丟棄；
+      homepage/repository 字串化；keywords 單字串→list
+- [ ] `bundle/mcpjson.go`：`ReadMCPServers`(symlink/parse 失敗→空)；
+      `SanitizeServers`（逐字對照 `plugin_manifest.py:73-278`）
+- [ ] 測試（每條 redaction ≥1 fixture，Gate 3 逐條）：4 key 精確匹配→丟棄；
+      accessKey/API_KEY substring→丟棄；URL userinfo；`--token=x`；
+      `["--token","x"]` list 分離；`API_KEY=x`；`Bearer x`；供應商前綴
+      (ghp_/sk-/AKIA 三代表)；server 名含 key 不消毒；巢狀任意深度丟棄；
+      droppedPaths 非空/空
+- [ ] `pluginmanifest/write.go`：skip-without-force 包裝 WriteOutput
+- [ ] 測試：無 force 不覆寫、force 覆寫、`.github/` 額外 info
+- [ ] `pluginmanifest/producer.go`：組裝 synthesize+mcpjson(claude only)+write
+- [ ] 測試：`target: [claude,copilot]`→兩 plugin.json，claude 帶消毒 mcpServers、
+      copilot 不帶；JSON 縮排/尾換行/鍵序
+- 驗證：`go build/vet/test ./internal/pack/pluginmanifest/... -cover`
+
+## Phase 4 — BundleProducer（Review Gate B）
+
+- [ ] `bundle/collect.go`：包一層轉 Primitive → bundle-relative 路徑
+      (agents 平坦/skills 遞迴/prompts→commands+.prompt.md→.md/instructions/
+      commands/extensions 遞迴，對照 findings §3.2)
+- [ ] `bundle/merge.go`：三合併，**兩相反方向獨立測試**：dep-vs-dep first-wins
+      (force→last)；root-vs-dep file_map **dep 贏**；root-vs-dep hooks/mcp
+      **root 贏**(overwrite)
+- [ ] 測試（每方向 ≥1 衝突 fixture 斷言贏家）：dep-vs-dep first-wins；
+      root/dep 同 `agents/foo.md`→dep 贏；root/dep 同 hooks key→root 贏
+      (與前條相反，兩獨立斷言)；Local dep→Produce error
+- [ ] `bundle/lockfile_pack.go`：pack: 節序列化(裸 hex、key 排序)+deserialize
+- [ ] 測試：裸 hex(與 HashFileBytes 比對確認差異刻意)、key 排序、round-trip
+- [ ] `bundle/producer.go`：收集→合併→sanitize name→EnsureWithinRoot→dry-run
+      提前返回→非 dry-run 才跑 ScanFiles/ScanText(WARN_POLICY,來源檔)→彙總
+      警告→寫檔→hooks.json/.mcp.json(非空)/plugin.json(恆)→pack: 節
+- [ ] 測試：dry-run 零寫入+**掃描器零呼叫**(mock)；非 dry-run critical char→
+      印警告仍成功；--force 對掃描零影響；sanitize name `../../etc`→unnamed；
+      output_files 排序+條件式+恆附 plugin.json
+- **Review Gate B**：.mcp.json 6 regex 逐字核對；file_map/hooks/mcp 方向表
+  兩相反規則各自驗證
+- 驗證：`go build/vet/test ./internal/pack/bundle/... -cover`
+
+## Phase 5 — pack CLI 接線 + P0 警告退場
+
+- [ ] `cmd/apm/pack.go`：三分支真呼叫 producer；新增 `--force`；`--dry-run`
+      擴展到新 producer
+- [ ] 移除 packDepsWarning/packTargetWarning 及列印點；舊警告測試改斷言新行為
+- [ ] 測試（Gate 2 fixture 替換舊「印警告」斷言）：deps-only→build/ 真產出；
+      target-only→.claude-plugin/plugin.json 產出；三者皆有→三輸出+訊息序
+      Bundle→Marketplace→PluginManifest；一 producer 失敗→已完成輸出不回滾
+- [ ] license/SBOM「license undeclared」警告文字移植（authoring path，用
+      既有 `m.License`）
+- 驗證：`go build/vet/gofmt/test ./... -cover`；`ab_marketplace_pack.py` 14/14
+
+## Phase 6 — install <bundle-path> 消費回路（Review Gate C）
+
+- [x] `localbundle/detect.go`：`DetectLocalBundle`(目錄根 plugin.json/.zip/
+      .tar.gz→BundleInfo；皆非→nil,nil)
+- [x] 測試：三形狀各 fixture；像本地依賴但無 plugin.json→nil,nil
+- [x] `localbundle/verify.go`：`VerifyBundleIntegrity`(無 lockfile→warn 不擋；
+      symlink 一律拒；逐檔裸 hex；反向 unlisted-file 檢查)
+- [x] 測試：乾淨全過；竄改位元組→error 列路徑；symlink(列/未列各 fixture)→
+      error；多 unlisted 檔→error；路徑穿越檔名→error
+- [x] `localbundle/integrate.go`：`IntegrateLocalBundle`(部署 plugin-native→
+      resolved targets；零 target→warn 不失敗；check_target_mismatch 警告)
+- [x] 測試：正常部署；零 target；target mismatch 印警告仍部署
+- [x] `cmd/apm/install.go`：runInstall 最前插 DetectLocalBundle 分支→繞過
+      resolver、verify+integrate、寫專案 lockfile local_deployed_*
+- [x] 測試：`install build/pkg-1.0.0/` 成功部署+lockfile；一般 install 不回歸；
+      flag 衝突→彙總 usage error
+- **Review Gate C**：竄改+symlink 拒絕測試通過；未誤用 F1 normalizeLocalDep ✅
+- 驗證：`go build/vet/test ./internal/localbundle/... ./cmd/apm/... -cover` ✅
+
+> ### Phase 6 狀態：**完成（DONE）** — 2026-07-13
+>
+> 實作：`internal/localbundle/{detect,verify,integrate}.go`、
+> `internal/archive/zip.go`（`SafeExtractZip`）、`cmd/apm/install.go`（runInstall
+> 早退 + tryLocalBundleInstall/runLocalBundleInstall/persistLocalBundleDeployment）、
+> `internal/pack/bundle/lockfile_pack.go` 的 `ParsePackMetadata`。
+>
+> 驗證（雙軌，claim 不採信）：
+> - **主 session 親自**：`go build/vet/test ./...` 全綠；localbundle 81.6%、
+>   cmd/apm 84.1%（升 +1.3pp）。真實 CLI 閉環實測（bin/apm-go.exe）：
+>   pack→install（目錄）部署 3 檔 + lockfile `local_deployed_*`、apm.yml 未建立；
+>   pack→install（.zip 走 SafeExtractZip）成功；byte 竄改→`Hash mismatch` exit 1
+>   零部署；unlisted 檔→`Unlisted bundle file` exit 1 零部署。
+> - **codex 對抗性驗證**：`research/codex-verify-phase6.md` 判定
+>   **OVERALL PASS 22/22**（硬性 checklist A/B/C/D 全 CONFIRMED）。含獨立重現：
+>   真實 NTFS symlink 拒絕（A2）、`/absolute`+`C:\absolute` 穿越（A4）、
+>   registry fresh+frozen + MCP E2E 零回歸（C2）、HEAD 基線覆蓋率對照（D2）。
+>
+> **教訓（codex 卡死根因）**：codex exec 卡在 `Reading additional input from
+> stdin...`——背景任務 stdin 無 EOF 導致阻塞（非 `| tail` 緩衝）。修法：
+> `codex exec ... < /dev/null`。續作以此為準。
+
+## Phase 7 — audit Unicode 掃描接線（共用掃描器第二接點）
+
+- [x] `cmd/apm/audit.go`：新增 flag `--content`（codex-checklist-phase7.md
+      已暫定此名）觸發掃描；bare 行為不變（early-return 前置，SHA 分支碼
+      本身零改動；既有 SHA 測試零回歸，已跑 baseline 比對）
+- [x] 掃描邏輯（`cmd/apm/audit_content.go`）：讀 lockfile DeployedFiles ∪
+      LocalDeployedFiles（跨 deps+local，`TestAuditContent_ScansDepsAndLocal`
+      鎖定兩來源都必掃）→逐檔 `internal/security.ScanFile`→exit 0/1/2；
+      純文字輸出（逐 finding 一行：severity/category/codepoint/位置/描述）
+- [x] **drift 語意核對**（design.md「audit drift 澄清」）：
+      `research/audit-drift-reconciliation.md`——逐項比對 Python
+      `install/drift.py` 三分類（`modified`/`unintegrated`/`orphaned`，
+      file:line 引用原始碼）與 apm-go 既有 SHA drift。結論（**codex B1
+      REFUTED 修正後的準確版**）：`modified` 部分重疊、`unintegrated`
+      部分重疊（tracked-but-missing-from-disk 常見案例經 `VerifyDeployedState`
+      的 `<missing>` violation 有覆蓋；never-recorded-but-should-exist 邊界
+      案例才是缺口）、`orphaned` 全缺——皆因 apm-go 無 install-replay 引擎
+      （獨立子系統，非本輪）。已寫入 Gate 6b「此修正不做什麼」準確段落。
+- [x] 測試（`cmd/apm/audit_content_test.go`，table-driven + AAA）：全乾淨→
+      exit 0；critical(bidi-override)→exit 1 列檔案+行列位置；
+      warning-only(zero-width)→exit 2；info-only(leading BOM)→exit 0 不升級；
+      deps+local 兩來源都必掃；既有 SHA 測試（`TestAudit_DeployedFileMismatch`、
+      `TestAuditCmd_HelpDocumentsSemanticDifference`）100% 不回歸（已跑）
+- [x] --help/Long 更新：明寫 `--content` 不含 drift replay 與
+      `--ci`/`--policy`/`--external`/`--format`/`-o`/`--strip`（已跑
+      `apm-go audit --help` 實機核對輸出）
+> ### Phase 7 狀態：**完成（DONE）** — 2026-07-13
+>
+> 實作：`cmd/apm/audit.go`（`--content` flag + 3 行 early-return，bare SHA
+> 路徑零改動）、`cmd/apm/audit_content.go`（`collectDeployedFilePaths` union
+> deps∪local + `runAuditContentScan` 逐檔 `security.ScanFile`，exit 0/1/2）。
+>
+> 驗證（雙軌，claim 不採信）：
+> - **主 session 親自**：`go build/vet/test ./...` 全綠（23 套件）；
+>   `go test -run Audit` 全 PASS；cmd/apm 84.4%（升 +0.3pp）；gofmt 乾淨；
+>   五檔邊界只 audit.go 改。親自造隱藏字元 fixture 實測三 exit code
+>   （clean=0、U+200B warning=2、U+202E critical=1，輸出含 file:line:col）；
+>   親自 mutation 確認新 help-lock 測試有辨識力（翻轉極性→RED、還原→GREEN）。
+> - **codex 對抗性驗證**：round 1（`codex-verify-phase7.md`）14 項中
+>   B1（drift 文件誇大 unintegrated「零覆蓋」）、D4（help 文案無測試鎖定）
+>   REFUTED → 已修（B1 改為準確「部分重疊」、D4 加
+>   `TestAuditContent_HelpLocksExclusionWording`）；round 2
+>   （`codex-verify-phase7-round2.md`）**B1+D4 CONFIRMED，OVERALL PASS**。
+>   codex 亦驗 audit.go SHA-256 於其 mutation 前後一致（無殘留損壞）。
+>
+> **drift 缺口（Gate 6b 準確版）**：見 `research/audit-drift-reconciliation.md`
+> 文末引用區塊——`modified`/`unintegrated` 部分重疊、`orphaned` 全缺，皆需
+> install-replay 引擎（獨立子系統，非本輪）。
+
+## Phase 8 — 全域驗證 + Gate 6b 重播 + 登記冊更新（Review Gate D）
+
+1. [x] `go build/vet/test ./... -cover` 全綠（23 套件）；`gofmt -l` 新檔乾淨（既有
+      CRLF checkout 噪音為環境產物，`git ls-files --eol` 確認新檔 i/lf w/lf）
+2. [x] `go build -o bin/apm-go.exe ./cmd/apm`
+3. [x] test1 fixture 雙邊重播：pack 73 檔樹狀一致；install 部署樹 **byte-identical**
+      （222 檔，PATH_DIFF=0/HASH_DIFF=0）；竄改巢狀 skill→exit 1 零部署；
+      完整雙邊 transcript 存 `research/gate6b-report.md`
+4. [x] `ab_marketplace_pack.py` 14/14；`ab_uninstall.py` 6/0（2 既有 deviation）——codex 親跑
+5. [x] ContentScanner A/B：含 1 critical + 1 warning 的 fixture，apm-go pack 與 apm pack
+      皆報 2 hidden character(s)（非 tautology）
+6. [x] codex 硬性 checklist 對抗性驗證：pack 三 producer/合併方向/6 regex/裸 hex/
+      nothing-to-do exit 1/kiro/CSV 於 Phase 2-5 codex 全過（commit `2b628c9`）；
+      install verbatim parity 於 `codex-verify-gate6b-fix.md`(13/16→修正後全 CONFIRMED)
+7. [x] adversarial 發現分級修復：install 錯模型（4/72 檔）→ verbatim-tree-copy 改寫；
+      codex 三缺口 A6(大寫 metadata)/B2(NTFS junction 逃逸)/C2(巢狀測試) 全修並重驗
+8. [x] 報告 `research/gate6b-report.md`（Gate 6b 順序：「此修正不做什麼」在統計之前）
+9. [x] 更新 `cli-surface-parity-register.md` §3.1/§3.2 標 ✅ RESOLVED、19a/19b 標完成
+10. [x] 最終整合 commit + register 更新；勾選 implement.md 與 prd.md Phase 2 AC
+
+> ### Phase 8 狀態：**完成（DONE）** — 2026-07-13
+>
+> Gate 6b test1 雙邊重播是本 task 的核心驗收，揭露並修復了 Phase 6 install 的重大
+> parity 缺口（錯用二次-transform 模型，對 test1 只部署 4/72 檔）→ 改寫為 Python 的
+> verbatim-tree-copy，達 **byte-identical**（222 檔）。codex 三輪對抗性驗證各抓到真實
+> 缺口（pack Phase 2-5 6 Gate B、install fix A6/B2/C2、audit B1/D4）全數修正並重驗。
+>
+> **事故**：一 fix agent 誤刪使用者 test1 fixture，主 session 從本 session scratch 副本
+> 還原（`.apm`/`apm_modules`/`apm.lock.yaml`）並重生完整狀態；後續全 agent 嚴令唯讀 test1。
+> **codex 限制**：round 2 junction 重驗被 OpenAI cybersecurity 過濾阻擋，改主 session
+> mutation 測試（symlink-only→junction RED）替代，證據更強。
+
+## Review Gates 總覽
+
+- A（Phase 1 後）：ContentScanner 逐條核對原始碼
+- B（Phase 3/4 後）：.mcp.json 6 regex 逐字；合併方向表兩相反規則
+- C（Phase 6 後）：install 竄改/symlink 拒絕；未誤用 F1
+- D（Phase 8）：Gate 6b 重播 transcript；「此修正不做什麼」在統計之前
+
+## Rollback Points
+
+Phase 0/1 獨立(internal/manifest、internal/security 互不依賴)。Phase 2-5(pack)
+與 6(install)與 7(audit)除 Phase 1 共用外互相獨立。五接線檔每 phase 各一 commit。

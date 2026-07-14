@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -307,6 +308,193 @@ func TestParseManifest_AliasNormalization(t *testing.T) {
 	}
 }
 
+func TestParseManifest_AgyAliasNormalization(t *testing.T) {
+	// Explicit-only alignment (Codex H2 audit): apm.yml target: agy must
+	// canonicalize to antigravity at parse time (parseTargetField ->
+	// ValidateTarget), otherwise the raw alias token would flow into
+	// deploy.ResolveTargets, where filterSupported silently drops it.
+	for _, form := range []string{"target: agy\n", "target: [agy]\n"} {
+		data := []byte("name: p\nversion: \"1.0.0\"\n" + form)
+		node, _ := yamlcore.SafeLoad(data)
+		m, _, err := ParseManifest(node)
+		if err != nil {
+			t.Fatalf("%q: unexpected error: %v", form, err)
+		}
+		if len(m.Target) != 1 || m.Target[0] != "antigravity" {
+			t.Errorf("%q: agy should normalize to antigravity, got %v", form, m.Target)
+		}
+	}
+}
+
+// ── target:/targets: decision tree (research/pack-parity-findings.md §2.1,
+// mirroring apm_yml.py:47-108 parse_targets_field) ──
+
+func TestParseManifest_TargetsPluralList(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntargets:\n  - claude\n  - copilot\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 2 || m.Target[0] != "claude" || m.Target[1] != "copilot" {
+		t.Errorf("targets: [claude, copilot] got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetsPluralScalarSingleElement(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntargets: claude\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 1 || m.Target[0] != "claude" {
+		t.Errorf("targets: claude (scalar) should become single-element list, got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetsEmptyListRejected(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntargets: []\n")
+	node, _ := yamlcore.SafeLoad(data)
+	_, _, err := ParseManifest(node)
+	if err == nil {
+		t.Fatal("expected error for empty targets: list")
+	}
+	if !strings.Contains(err.Error(), "targets") {
+		t.Errorf("error %q should mention 'targets'", err.Error())
+	}
+}
+
+func TestParseManifest_TargetsNullRejected(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntargets:\n")
+	node, _ := yamlcore.SafeLoad(data)
+	_, _, err := ParseManifest(node)
+	if err == nil {
+		t.Fatal("expected error for null targets:")
+	}
+	if !strings.Contains(err.Error(), "targets") {
+		t.Errorf("error %q should mention 'targets'", err.Error())
+	}
+}
+
+func TestParseManifest_TargetCSVSugar(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: \"claude,copilot\"\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 2 || m.Target[0] != "claude" || m.Target[1] != "copilot" {
+		t.Errorf("target: \"claude,copilot\" (CSV sugar) got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetCSVSugarWithSpaces(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: \"claude, copilot\"\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 2 || m.Target[0] != "claude" || m.Target[1] != "copilot" {
+		t.Errorf("target: \"claude, copilot\" (CSV sugar w/ spaces) got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetSingleUnchanged(t *testing.T) {
+	// Existing single-target behavior must not regress under the CSV-sugar
+	// change: a scalar with no comma is still a one-element list.
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: claude\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 1 || m.Target[0] != "claude" {
+		t.Errorf("target: claude got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetNullFallsThroughToAutoDetect(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\ntarget:\n")
+	node, _ := yamlcore.SafeLoad(data)
+	m, _, err := ParseManifest(node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.Target) != 0 {
+		t.Errorf("target: (null) should be empty (auto-detect), got %v", m.Target)
+	}
+}
+
+func TestParseManifest_TargetAndTargetsConflict(t *testing.T) {
+	forms := []string{
+		"name: p\nversion: \"1.0.0\"\ntarget: claude\ntargets:\n  - claude\n",
+		"name: p\nversion: \"1.0.0\"\ntargets:\n  - claude\ntarget: claude\n",
+	}
+	for _, data := range forms {
+		node, _ := yamlcore.SafeLoad([]byte(data))
+		_, _, err := ParseManifest(node)
+		if err == nil {
+			t.Fatalf("expected conflict error for both keys present, form %q", data)
+		}
+	}
+}
+
+// wantConflictingTargetsError duplicates the mutex-conflict error text as an
+// independent literal (not a reference to the string embedded in
+// manifest.go) so wording drift breaks this test loudly, matching the
+// allowExecutablesWarning verbatim-lock pattern above.
+const wantConflictingTargetsError = "apm.yml must not define both 'target:' and 'targets:'; use only one"
+
+// TestParseManifest_TargetAndTargetsConflict_InvalidFirstValueMasksNothing
+// locks codex-verify-phase01.md FAIL 1: Python computes key presence and
+// raises ConflictingTargetsError before reading either value
+// (apm_yml.py:53-58). The prior Go implementation only noticed the conflict
+// once it reached the second key, so an invalid or empty value under
+// whichever key appeared first surfaced instead of the mutex error.
+func TestParseManifest_TargetAndTargetsConflict_InvalidFirstValueMasksNothing(t *testing.T) {
+	forms := map[string]string{
+		"empty targets first, valid target second":   "name: p\nversion: \"1.0.0\"\ntargets: []\ntarget: claude\n",
+		"invalid target first, valid targets second": "name: p\nversion: \"1.0.0\"\ntarget: bogus\ntargets:\n  - claude\n",
+	}
+	for name, data := range forms {
+		t.Run(name, func(t *testing.T) {
+			node, _ := yamlcore.SafeLoad([]byte(data))
+			_, _, err := ParseManifest(node)
+			if err == nil {
+				t.Fatal("expected conflict error")
+			}
+			if err.Error() != wantConflictingTargetsError {
+				t.Errorf("error = %q, want %q (conflict must be checked before either value is parsed)", err.Error(), wantConflictingTargetsError)
+			}
+		})
+	}
+}
+
+// TestParseManifest_TargetListRejectsMappingElement locks
+// codex-verify-phase01.md FAIL 2: Python stringifies every list element
+// before filtering and canonical validation (apm_yml.py:82-84,94-98), so a
+// mapping element becomes a non-empty string and is rejected as an unknown
+// target. The prior Go implementation copied yaml.Node.Value without
+// checking the element kind; a mapping node has an empty Value, so it was
+// silently dropped as blank and the manifest parsed successfully.
+func TestParseManifest_TargetListRejectsMappingElement(t *testing.T) {
+	forms := map[string]string{
+		"targets: [{foo: bar}]": "name: p\nversion: \"1.0.0\"\ntargets:\n  - foo: bar\n",
+		"target: [{foo: bar}]":  "name: p\nversion: \"1.0.0\"\ntarget:\n  - foo: bar\n",
+	}
+	for name, data := range forms {
+		t.Run(name, func(t *testing.T) {
+			node, _ := yamlcore.SafeLoad([]byte(data))
+			_, _, err := ParseManifest(node)
+			if err == nil {
+				t.Fatalf("expected error for mapping element inside target list, form %q", data)
+			}
+		})
+	}
+}
+
 func TestParseManifest_HttpInsecureAccepted(t *testing.T) {
 	data := []byte("name: p\nversion: \"1.0.0\"\nregistries:\n  local:\n    url: http://192.168.1.1/r\n")
 	node, _ := yamlcore.SafeLoad(data)
@@ -388,6 +576,87 @@ func TestParseManifest_HttpLocalhostTextAccepted(t *testing.T) {
 	_, _, err := ParseManifest(node)
 	if err != nil {
 		t.Errorf("http with localhost should be accepted: %v", err)
+	}
+}
+
+// wantAllowExecutablesWarning duplicates allowExecutablesWarning as an
+// independent string literal -- not a reference to that const -- so a
+// wording change to allowExecutablesWarning breaks this test with a red
+// diff instead of both sides silently changing together (same
+// verbatim-lock pattern as errNoDeployTarget's literal
+// "no deployment target detected" check in cmd/apm-go/install_test.go).
+const wantAllowExecutablesWarning = "[warn] apm.yml has an allowExecutables: block, but apm-go does not enforce it yet; this block is not effective in apm-go and every executable primitive (hooks, bin, MCP) is still deployed unconditionally"
+
+// TestParseManifest_AllowExecutablesWarning locks P0 #4 (register §4.1/§5):
+// an allowExecutables: block must produce a returned Diagnostic AND print
+// directly to stderr (the only way this reaches `apm-go install`, which
+// discards ParseManifest's returned diags -- see allowExecutablesWarning's
+// doc comment), while never turning into a parse error.
+func TestParseManifest_AllowExecutablesWarning(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\nallowExecutables: {}\n")
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	_, diags, parseErr := ParseManifest(node)
+	w.Close()
+	os.Stderr = orig
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatal(err)
+	}
+	stderr := buf.String()
+
+	if parseErr != nil {
+		t.Fatalf("allowExecutables: {} must not fail parsing: %v", parseErr)
+	}
+	if !strings.Contains(stderr, wantAllowExecutablesWarning) {
+		t.Errorf("stderr = %q, want the full allowExecutables warning %q", stderr, wantAllowExecutablesWarning)
+	}
+	found := false
+	for _, d := range diags {
+		if d.Message == wantAllowExecutablesWarning {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("diags = %+v, want the allowExecutables warning among returned diagnostics too", diags)
+	}
+}
+
+func TestParseManifest_NoAllowExecutables_NoWarning(t *testing.T) {
+	data := []byte("name: p\nversion: \"1.0.0\"\n")
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	_, _, parseErr := ParseManifest(node)
+	w.Close()
+	os.Stderr = orig
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatal(err)
+	}
+
+	if parseErr != nil {
+		t.Fatalf("unexpected error: %v", parseErr)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("stderr = %q, want no output when apm.yml has no allowExecutables: block", buf.String())
 	}
 }
 

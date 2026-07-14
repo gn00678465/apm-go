@@ -29,7 +29,7 @@ func TestResolveMCPServer_RefusesPostResolutionEmbeddedCredentials(t *testing.T)
 	t.Setenv("MCP_URL", "https://user:pass@evil.example.com/mcp")
 	s := &manifest.MCPDependency{Name: "leaky", Registry: false, Transport: "http", URL: "${MCP_URL}"}
 
-	r := resolveMCPServer(s, manifest.ResolveBake)
+	r := resolveMCPServer(s, manifest.ResolveBake, manifest.ResolveBake)
 	if !r.Refused {
 		t.Fatalf("expected the server to be refused after resolving to a credentialed url, got URL=%q Refused=%v", r.URL, r.Refused)
 	}
@@ -113,7 +113,13 @@ func TestWriteMCP_Antigravity_MatchesOracleDescriptor(t *testing.T) {
 	}
 }
 
-func TestWriteMCP_Antigravity_SSEUsesURLField(t *testing.T) {
+// TestWriteMCP_Antigravity_SSEUsesServerUrlField locks the fix for the sse
+// special case (task 07-05-antigravity-research, research/cli-mcp.md): the
+// official Antigravity docs state verbatim "Legacy fields like `url` or
+// `httpUrl` are not supported", and the agy 1.0.16 binary's config validator
+// only accepts command|serverUrl. All remote transports, including sse, must
+// therefore write serverUrl.
+func TestWriteMCP_Antigravity_SSEUsesServerUrlField(t *testing.T) {
 	dir := t.TempDir()
 	prims := []Primitive{
 		mcpPrim("local", &manifest.MCPDependency{Name: "sse-server", Registry: false, Transport: "sse", URL: "https://api.example.com/sse"}),
@@ -124,11 +130,11 @@ func TestWriteMCP_Antigravity_SSEUsesURLField(t *testing.T) {
 	root := readJSON(t, filepath.Join(dir, ".agents", "mcp_config.json"))
 	servers := root["mcpServers"].(map[string]any)
 	entry := servers["sse-server"].(map[string]any)
-	if entry["url"] != "https://api.example.com/sse" {
-		t.Errorf("sse entry should use 'url' not 'serverUrl': %v", entry)
+	if entry["serverUrl"] != "https://api.example.com/sse" {
+		t.Errorf("sse entry should use 'serverUrl' (legacy 'url' is not supported by antigravity): %v", entry)
 	}
-	if _, hasServerURL := entry["serverUrl"]; hasServerURL {
-		t.Errorf("sse entry must not set serverUrl: %v", entry)
+	if _, hasURL := entry["url"]; hasURL {
+		t.Errorf("sse entry must not set legacy 'url': %v", entry)
 	}
 }
 
@@ -294,6 +300,199 @@ func TestWriteMCP_Claude_InputRefusesServerInBakeMode(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected refuse diagnostic for s1, got: %v", diags)
+	}
+}
+
+// ── opencode: bake mode, "mcp" key (not mcpServers), unified remote shape
+// (no transport branch, no SSE skip) ──
+
+var _ MCPTarget = (*opencodeAdapter)(nil)
+
+func TestWriteMCP_Opencode_StdioShape(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("OPENCODE_TEST_TOKEN", "secret123")
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{
+			Name: "stdio-server", Registry: false, Transport: "stdio",
+			Command: "my-server", Args: &[]string{"--flag"},
+			Env: map[string]string{"TOKEN": "${OPENCODE_TEST_TOKEN}"},
+		}),
+	}
+	files, written, diags, err := (&opencodeAdapter{}).WriteMCP(prims, dir)
+	if err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+	if len(files) != 1 || files[0] != "opencode.json" {
+		t.Fatalf("files = %v, want [opencode.json]", files)
+	}
+	if len(written) != 1 || written[0] != "stdio-server" {
+		t.Errorf("written = %v", written)
+	}
+
+	root := readJSON(t, filepath.Join(dir, "opencode.json"))
+	servers, ok := root["mcp"].(map[string]any)
+	if !ok {
+		t.Fatalf(`root["mcp"] missing or not a map: %v`, root)
+	}
+	entry, ok := servers["stdio-server"].(map[string]any)
+	if !ok {
+		t.Fatalf("stdio-server entry missing: %v", servers)
+	}
+	if entry["type"] != "local" {
+		t.Errorf("type = %v, want local", entry["type"])
+	}
+	if entry["enabled"] != true {
+		t.Errorf("enabled = %v, want true", entry["enabled"])
+	}
+	cmd, ok := entry["command"].([]any)
+	if !ok || len(cmd) != 2 || cmd[0] != "my-server" || cmd[1] != "--flag" {
+		t.Errorf("command = %v, want a single array [my-server --flag]", entry["command"])
+	}
+	if _, hasArgs := entry["args"]; hasArgs {
+		t.Errorf("entry must not have a separate args field (cmd+args merge into one array): %v", entry)
+	}
+	env, ok := entry["environment"].(map[string]any)
+	if !ok || env["TOKEN"] != "secret123" {
+		t.Errorf("environment.TOKEN = %v, want resolved secret123", entry["environment"])
+	}
+	if _, hasEnv := entry["env"]; hasEnv {
+		t.Errorf("entry must use the 'environment' key, not 'env': %v", entry)
+	}
+}
+
+func TestWriteMCP_Opencode_RemoteUnifiedAcrossTransports(t *testing.T) {
+	dir := t.TempDir()
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{
+			Name: "http-server", Registry: false, Transport: "http",
+			URL: "https://api.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer tok"},
+		}),
+		mcpPrim("local", &manifest.MCPDependency{
+			Name: "sse-server", Registry: false, Transport: "sse",
+			URL: "https://api.example.com/sse",
+		}),
+	}
+	_, _, diags, err := (&opencodeAdapter{}).WriteMCP(prims, dir)
+	if err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+	root := readJSON(t, filepath.Join(dir, "opencode.json"))
+	servers := root["mcp"].(map[string]any)
+
+	http, ok := servers["http-server"].(map[string]any)
+	if !ok {
+		t.Fatalf("http-server entry missing: %v", servers)
+	}
+	if http["type"] != "remote" || http["url"] != "https://api.example.com/mcp" || http["enabled"] != true {
+		t.Errorf("http-server = %v", http)
+	}
+	headers, ok := http["headers"].(map[string]any)
+	if !ok || headers["Authorization"] != "Bearer tok" {
+		t.Errorf("http-server headers = %v", http["headers"])
+	}
+	if _, hasServerURL := http["serverUrl"]; hasServerURL {
+		t.Errorf("opencode must not switch to serverUrl (that is antigravity's shape): %v", http)
+	}
+
+	sse, ok := servers["sse-server"].(map[string]any)
+	if !ok {
+		t.Fatalf("sse-server entry missing: %v", servers)
+	}
+	if sse["type"] != "remote" || sse["url"] != "https://api.example.com/sse" || sse["enabled"] != true {
+		t.Errorf("sse-server = %v, want the same type:remote+url shape as http (no transport branch)", sse)
+	}
+	if _, hasHeaders := sse["headers"]; hasHeaders {
+		t.Errorf("sse-server should have no headers key when none supplied: %v", sse)
+	}
+}
+
+func TestWriteMCP_Opencode_MergePreservesUserSettingsAndForeignKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	preexisting := `{"mcp":{"untouched":{"type":"local","command":["kept"]}},"theme":"dark"}`
+	if err := os.WriteFile(path, []byte(preexisting), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "new-server", Registry: false, Transport: "stdio", Command: "new"}),
+	}
+	if _, _, diags, err := (&opencodeAdapter{}).WriteMCP(prims, dir); err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+
+	root := readJSON(t, path)
+	if root["theme"] != "dark" {
+		t.Errorf("user's other opencode.json settings lost: %v", root)
+	}
+	servers := root["mcp"].(map[string]any)
+	if _, ok := servers["untouched"]; !ok {
+		t.Errorf("preexisting server lost: %v", servers)
+	}
+	if _, ok := servers["new-server"]; !ok {
+		t.Errorf("new server not written: %v", servers)
+	}
+}
+
+func TestWriteMCP_Opencode_ManagedKeysExpansionDropsStaleEnvironmentAndEnabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a stale entry: an "environment" key left over from a prior run
+	// and a hand-toggled "enabled": false. Neither must survive a redeploy
+	// now that both keys are in managedMCPKeys (mcp_common.go).
+	preexisting := `{"mcp":{"s1":{"type":"local","command":["cmd"],"environment":{"STALE":"leftover"},"enabled":false}}}`
+	if err := os.WriteFile(path, []byte(preexisting), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "s1", Registry: false, Transport: "stdio", Command: "cmd"}),
+	}
+	if _, _, diags, err := (&opencodeAdapter{}).WriteMCP(prims, dir); err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+
+	root := readJSON(t, path)
+	servers := root["mcp"].(map[string]any)
+	s1 := servers["s1"].(map[string]any)
+	if s1["enabled"] != true {
+		t.Errorf("enabled must be overwritten to true (managed key), got %v", s1["enabled"])
+	}
+	if _, hasEnv := s1["environment"]; hasEnv {
+		t.Errorf("stale environment from a prior run must be dropped when this run has no env vars, got %v", s1["environment"])
+	}
+}
+
+func TestWriteMCP_Opencode_RedeployDoesNotStackDuplicateEntries(t *testing.T) {
+	dir := t.TempDir()
+	first := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "s1", Registry: false, Transport: "stdio", Command: "cmd", Args: &[]string{"-a"}}),
+	}
+	if _, _, diags, err := (&opencodeAdapter{}).WriteMCP(first, dir); err != nil {
+		t.Fatalf("first WriteMCP: %v (diags=%v)", err, diags)
+	}
+	second := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "s1", Registry: false, Transport: "stdio", Command: "cmd", Args: &[]string{"-b"}}),
+	}
+	if _, _, diags, err := (&opencodeAdapter{}).WriteMCP(second, dir); err != nil {
+		t.Fatalf("second WriteMCP: %v (diags=%v)", err, diags)
+	}
+
+	root := readJSON(t, filepath.Join(dir, "opencode.json"))
+	servers := root["mcp"].(map[string]any)
+	if len(servers) != 1 {
+		t.Fatalf("servers = %v, want exactly 1 entry for s1 (no duplicate stacking)", servers)
+	}
+	s1 := servers["s1"].(map[string]any)
+	cmd := s1["command"].([]any)
+	if len(cmd) != 2 || cmd[1] != "-b" {
+		t.Errorf("command = %v, want the latest run's args [cmd -b], not stacked from both runs", cmd)
 	}
 }
 
@@ -688,5 +887,103 @@ func TestWriteMCP_Copilot_TranslateLiteralHTTPWithPlaceholderPathStillSkipped(t 
 	}
 	if !found {
 		t.Errorf("expected non-https diagnostic, got: %v", diags)
+	}
+}
+
+// ── M8: per-target header credential placeholder encoding ──
+
+func TestTranslateOpencodeHeaders(t *testing.T) {
+	got := translateOpencodeHeaders(map[string]string{
+		"Authorization": "Bearer ${MY_TOKEN}",
+		"X-Env":         "${env:FOO}",
+		"X-Static":      "literal",
+	})
+	if got["Authorization"] != "Bearer {env:MY_TOKEN}" {
+		t.Errorf("Authorization = %q, want Bearer {env:MY_TOKEN}", got["Authorization"])
+	}
+	if got["X-Env"] != "{env:FOO}" {
+		t.Errorf("X-Env = %q, want {env:FOO}", got["X-Env"])
+	}
+	if got["X-Static"] != "literal" {
+		t.Errorf("X-Static = %q, want literal (unchanged)", got["X-Static"])
+	}
+}
+
+func TestSoleEnvVar(t *testing.T) {
+	for v, want := range map[string]string{"${VAR}": "VAR", "${env:TOK}": "TOK"} {
+		if name, ok := soleEnvVar(v); !ok || name != want {
+			t.Errorf("soleEnvVar(%q) = %q,%v; want %q,true", v, name, ok, want)
+		}
+	}
+	for _, v := range []string{"Bearer ${VAR}", "literal", "${VAR}x", "x${VAR}", ""} {
+		if name, ok := soleEnvVar(v); ok {
+			t.Errorf("soleEnvVar(%q) = %q,true; want false", v, name)
+		}
+	}
+}
+
+func TestBearerEnvVar(t *testing.T) {
+	if name, ok := bearerEnvVar("Bearer ${MY_TOKEN}"); !ok || name != "MY_TOKEN" {
+		t.Errorf("bearerEnvVar(Bearer ${MY_TOKEN}) = %q,%v; want MY_TOKEN,true", name, ok)
+	}
+	for _, v := range []string{"Bearer tok", "${MY_TOKEN}", "Basic ${X}", "Bearer ${A}${B}"} {
+		if name, ok := bearerEnvVar(v); ok {
+			t.Errorf("bearerEnvVar(%q) = %q,true; want false", v, name)
+		}
+	}
+}
+
+func TestEncodeCodexHeaders(t *testing.T) {
+	e := map[string]any{}
+	encodeCodexHeaders(e, map[string]string{
+		"Authorization": "Bearer ${MY_TOKEN}",
+		"X-Env":         "${FOO}",
+		"X-Static":      "us-east-1",
+	})
+	if e["bearer_token_env_var"] != "MY_TOKEN" {
+		t.Errorf("bearer_token_env_var = %v, want MY_TOKEN", e["bearer_token_env_var"])
+	}
+	envH, _ := e["env_http_headers"].(map[string]string)
+	if envH["X-Env"] != "FOO" {
+		t.Errorf("env_http_headers = %v, want X-Env->FOO", e["env_http_headers"])
+	}
+	staticH, _ := e["http_headers"].(map[string]string)
+	if staticH["X-Static"] != "us-east-1" {
+		t.Errorf("http_headers = %v, want X-Static->us-east-1", e["http_headers"])
+	}
+	// The bearer token must not also leak into the plaintext buckets.
+	if _, ok := staticH["Authorization"]; ok {
+		t.Errorf("Authorization must not appear in http_headers: %v", staticH)
+	}
+	if _, ok := envH["Authorization"]; ok {
+		t.Errorf("Authorization must not appear in env_http_headers: %v", envH)
+	}
+}
+
+// TestMCPEntry_HeaderPlaceholderPerTarget covers M8 end-to-end at the entry
+// builder: a resolved header carrying ${MY_TOKEN} is encoded per each target's
+// native runtime-substitution syntax, never baked.
+func TestMCPEntry_HeaderPlaceholderPerTarget(t *testing.T) {
+	r := &ResolvedMCPServer{
+		Name: "github", Transport: "streamable-http", URL: "https://x/mcp",
+		Headers: map[string]string{"Authorization": "Bearer ${MY_TOKEN}"},
+	}
+
+	claude, _, _ := claudeMCPEntry(r)
+	if h := claude["headers"].(map[string]string); h["Authorization"] != "Bearer ${MY_TOKEN}" {
+		t.Errorf("claude header = %v, want Bearer ${MY_TOKEN}", claude["headers"])
+	}
+
+	oc, _, _ := opencodeMCPEntry(r)
+	if h := oc["headers"].(map[string]string); h["Authorization"] != "Bearer {env:MY_TOKEN}" {
+		t.Errorf("opencode header = %v, want Bearer {env:MY_TOKEN}", oc["headers"])
+	}
+
+	cx, _, _ := codexMCPEntry(r)
+	if cx["bearer_token_env_var"] != "MY_TOKEN" {
+		t.Errorf("codex bearer_token_env_var = %v, want MY_TOKEN", cx["bearer_token_env_var"])
+	}
+	if _, ok := cx["http_headers"]; ok {
+		t.Errorf("codex must not bake Authorization into http_headers: %v", cx)
 	}
 }

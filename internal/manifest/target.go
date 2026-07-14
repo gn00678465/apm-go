@@ -11,6 +11,7 @@ var CanonicalTargets = map[string]bool{
 	"opencode":     true,
 	"windsurf":     true,
 	"agent-skills": true,
+	"kiro":         true, // parity: Python CANONICAL_TARGETS (apm_yml.py:25-37)
 	"all":          true,
 	"antigravity":  true, // pre-standard, tracking microsoft/apm#1650
 }
@@ -18,6 +19,7 @@ var CanonicalTargets = map[string]bool{
 var TargetAliases = map[string]string{
 	"vscode": "copilot",
 	"agents": "copilot",
+	"agy":    "antigravity",
 }
 
 var SupportedTargets = []string{

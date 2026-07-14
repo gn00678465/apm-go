@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/apm-go/apm/internal/manifest"
 )
@@ -28,6 +29,28 @@ type MCPTarget interface {
 	WriteMCP(prims []Primitive, projectDir string) (files []string, written []string, diags []string, err error)
 }
 
+// BundleTarget is implemented by adapters that group a dependency's
+// primitives into a per-package bundle directory (e.g. antigravity's
+// .agents/plugins/<pkg>/) instead of writing them at fixed, shared paths.
+//
+// ValidateBundleNames is called once per target, for every DepKey that will
+// receive at least one primitive under this target, BEFORE any primitive is
+// deployed to ANY target this Run. It must fail closed (return a non-nil
+// error, with nothing yet written) if two different DepKeys would collide on
+// the same bundle directory, rather than let their files silently mix.
+//
+// FinalizeBundles is called once per target, AFTER every primitive has been
+// deployed, with the DepKeys that actually produced at least one file. It
+// writes any per-bundle manifest (e.g. plugin.json) and returns the
+// manifest's relative path(s) keyed by DepKey, mirroring MCPTarget.WriteMCP's
+// once-per-target shape. It must be idempotent: every Run() call rewrites
+// and re-reports the manifest, so a re-install never drops it from
+// deployed_files/deployed_file_hashes provenance.
+type BundleTarget interface {
+	ValidateBundleNames(depKeys []string) error
+	FinalizeBundles(depKeys []string, projectDir string) (map[string][]string, error)
+}
+
 var Adapters = map[string]TargetAdapter{
 	"claude":       &claudeAdapter{},
 	"codex":        &codexAdapter{},
@@ -37,8 +60,38 @@ var Adapters = map[string]TargetAdapter{
 	"agent-skills": &agentSkillsAdapter{},
 }
 
+// SplitTargetFlag splits a --target/-t CLI flag value on commas (trimming
+// whitespace, dropping empty segments) and validates each resulting token
+// against the canonical target vocabulary via manifest.ValidateTarget --
+// req-mf-005. That is the SAME validator apm.yml's target: field already
+// uses, so the CLI flag and the manifest field reject exactly the same set
+// of unknown tokens (canonical names including "all", known aliases, and
+// x-<vendor>-<name> extension tokens are all accepted). A genuinely unknown
+// token is rejected, naming it.
+//
+// Known-but-adapterless canonical targets (cursor/gemini/windsurf) pass
+// validation here -- ResolveTargets's checkUnsupported separately reports
+// the non-fatal "no registered handler" diagnostic for those (req-tg-004);
+// this function must never turn that into a hard error.
+func SplitTargetFlag(flagTarget string) ([]string, error) {
+	var tokens []string
+	for _, part := range strings.Split(flagTarget, ",") {
+		t := strings.TrimSpace(part)
+		if t == "" {
+			continue
+		}
+		normalized, err := manifest.ValidateTarget(t)
+		if err != nil {
+			return nil, fmt.Errorf("--target %q: %w", t, err)
+		}
+		tokens = append(tokens, normalized)
+	}
+	return tokens, nil
+}
+
 // ResolveTargets determines active targets by priority:
-// 1. --target flag (explicit CLI)
+// 1. --target flag (explicit CLI, comma-separated, validated against the
+//    canonical target vocabulary -- see SplitTargetFlag)
 // 2. manifest target: field
 // 3. auto-detection from filesystem signals
 // Returns empty if nothing detected (no-deploy).
@@ -46,9 +99,17 @@ func ResolveTargets(flagTarget string, manifestTargets []string, projectDir stri
 	var diags []string
 
 	if flagTarget != "" {
-		targets := []string{flagTarget}
-		if flagTarget == "all" {
-			targets = allAutoDetectableTargets()
+		tokens, err := SplitTargetFlag(flagTarget)
+		if err != nil {
+			return nil, []string{err.Error()}
+		}
+		var targets []string
+		for _, t := range tokens {
+			if t == "all" {
+				targets = append(targets, allAutoDetectableTargets()...)
+			} else {
+				targets = append(targets, t)
+			}
 		}
 		diags = append(diags, checkUnsupported(targets)...)
 		return filterSupported(targets), diags
@@ -76,17 +137,23 @@ func ResolveTargets(flagTarget string, manifestTargets []string, projectDir stri
 	return nil, nil
 }
 
-// explicitOnlyTargets must never be activated by auto-detection (req-tg-001).
-// agent-skills is the only target the spec designates explicit-only;
-// antigravity DOES auto-detect via GEMINI.md/AGENTS.md (see
-// acceptance-checklist.md's research note -- an earlier companion-doc
-// assumption that it was explicit-only was incorrect).
+// explicitOnlyTargets must never be activated by auto-detection
+// (req-tg-001), nor be included in the "all" expansion. agent-skills is the
+// target the spec designates explicit-only. antigravity is explicit-only per
+// the user decision of 2026-07-05, aligning with Python apm_cli's
+// EXPLICIT_ONLY_TARGETS={"agent-skills","antigravity"}: its former detection
+// signals (GEMINI.md/AGENTS.md) are cross-tool files also read by
+// opencode/agent-skills tooling, so their presence must not auto-enable
+// antigravity. Select it via --target antigravity (alias agy) or apm.yml
+// target:. (This supersedes acceptance-checklist.md's earlier research note
+// that had antigravity auto-detecting.)
 var explicitOnlyTargets = map[string]bool{
 	"agent-skills": true,
+	"antigravity":  true,
 }
 
 func allAutoDetectableTargets() []string {
-	return []string{"claude", "codex", "copilot", "opencode", "antigravity"}
+	return []string{"claude", "codex", "copilot", "opencode"}
 }
 
 // filterExplicitOnly removes targets that require explicit --target selection.
@@ -123,7 +190,15 @@ func filterSupported(targets []string) []string {
 // deploySkill recursively copies a skill directory to .agents/skills/<name>/ (req-tg-003).
 // Shared by all adapters.
 func deploySkill(p Primitive, projectDir string) ([]string, error) {
-	destDir := path.Join(".agents/skills", p.Name)
+	return deploySkillTo(p, projectDir, ".agents/skills")
+}
+
+// deploySkillTo recursively copies a skill directory to <root>/<name>/.
+// Extracted from deploySkill so the claude adapter can additionally deploy
+// to .claude/skills/ (Claude Code does not discover skills from the
+// cross-tool .agents/skills/ canonical path -- see claude.go).
+func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
+	destDir := path.Join(root, p.Name)
 	absDestDir := filepath.Join(projectDir, filepath.FromSlash(destDir))
 	if err := os.MkdirAll(absDestDir, 0755); err != nil {
 		return nil, fmt.Errorf("create skill dir: %w", err)

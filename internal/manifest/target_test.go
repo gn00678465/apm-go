@@ -21,11 +21,13 @@ func TestValidateTarget(t *testing.T) {
 		{"gemini", "gemini", ""},
 		{"windsurf", "windsurf", ""},
 		{"agent-skills", "agent-skills", ""},
+		{"kiro", "kiro", ""},
 		{"all", "all", ""},
 
 		// aliases
 		{"vscode", "copilot", ""},
 		{"agents", "copilot", ""},
+		{"agy", "antigravity", ""},
 
 		// x-vendor (tg-004)
 		{"x-acme-tool", "x-acme-tool", ""},
@@ -82,6 +84,7 @@ func TestHasAdapter(t *testing.T) {
 		{"gemini", false},
 		{"cursor", false},
 		{"windsurf", false},
+		{"kiro", false},
 		{"x-acme-tool", false},
 	}
 	for _, tt := range tests {

@@ -48,7 +48,7 @@ func TestCollectDependencyPrimitives(t *testing.T) {
 	modDir := filepath.Join(dir, "apm_modules", "acme/foo")
 
 	mkFile(t, modDir, ".apm/skills/bar/SKILL.md", "bar skill")
-	mkFile(t, modDir, ".apm/instructions/setup.md", "setup")
+	mkFile(t, modDir, ".apm/instructions/setup.instructions.md", "setup")
 
 	prims := CollectDependencyPrimitives("acme/foo", modDir)
 
@@ -113,7 +113,9 @@ func TestExtractInstructionName(t *testing.T) {
 		input, expected string
 	}{
 		{"demo.instructions.md", "demo"},
-		{"setup.md", "setup"},
+		// Plain .md is NOT an instruction: the .instructions.md suffix and
+		// applyTo frontmatter are one contract (Python parity).
+		{"setup.md", ""},
 		{"readme.txt", ""},
 	}
 	for _, tt := range tests {

@@ -13,7 +13,7 @@ import (
 )
 
 // mockMCPRegistryServer is a minimal MCP Registry v0.1 stand-in, mirroring
-// cmd/apm's mcpRegistryServer test helper (kept as a separate copy since Go
+// cmd/apm-go's mcpRegistryServer test helper (kept as a separate copy since Go
 // doesn't share unexported test helpers across packages).
 func mockMCPRegistryServer(t *testing.T, name string, remotes []map[string]any) *httptest.Server {
 	t.Helper()
@@ -140,6 +140,41 @@ func TestRun_MCPCollection_TransitiveSelfDefinedSkippedWithWarning(t *testing.T)
 	}
 }
 
+// TestRun_MCPCollection_DevDependencySelfDefinedAutoTrusted is the F3
+// deploy-parity test: a devDependencies.apm entry is a DIRECT (depth-1)
+// dependency exactly like a dependencies.apm entry, so its own self-defined
+// MCP server must be auto-trusted the same way -- not routed through the
+// "transitive, never auto-trusted" bucket just because deploy.Run's direct-
+// dep loop used to only scan m.ParsedDeps.
+func TestRun_MCPCollection_DevDependencySelfDefinedAutoTrusted(t *testing.T) {
+	dir := t.TempDir()
+	devKey := "acme/devtool"
+	writeDepManifestWithMCP(t, filepath.Join(dir, "apm_modules", devKey), "    - name: dev-server\n      registry: false\n      transport: stdio\n      command: dev-cmd\n")
+
+	m := &manifest.Manifest{
+		Name:    "test",
+		Version: "1.0.0",
+		ParsedDevDeps: []*manifest.DependencyReference{
+			{RepoURL: devKey, Owner: "acme", Repo: "devtool", Source: "git"},
+		},
+	}
+	resolved := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{
+			{Key: devKey, RepoURL: devKey, Kind: resolver.KindGitSemver, Depth: 1},
+		},
+	}
+
+	result, err := Run(nil, dir, m, resolved, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, d := range result.Diags {
+		if strings.Contains(d, `mcp "dev-server"`) && strings.Contains(d, "not auto-trusted") {
+			t.Fatalf("dev dependency's self-defined MCP server was routed through the transitive (not-auto-trusted) path, got diag: %q (all diags: %v)", d, result.Diags)
+		}
+	}
+}
+
 func TestCollectMCPPrimitives_RegistryBackedResolvedLive(t *testing.T) {
 	srv := mockMCPRegistryServer(t, "from-registry", []map[string]any{
 		{"type": "http", "url": "https://resolved.example.com/mcp"},
@@ -222,6 +257,51 @@ func TestLoadDependencyMCP_MalformedFileDiagnosed(t *testing.T) {
 	}
 	if len(diags) != 1 || !strings.Contains(diags[0], "acme/broken") {
 		t.Errorf("expected one diagnostic naming the dep, got %v", diags)
+	}
+}
+
+// TestLoadDependencyDeps_MissingFileIsSilent mirrors
+// TestLoadDependencyMCP_MissingFileIsSilent's lenience contract for
+// LoadDependencyDeps: no apm.yml means "no dependencies", not an error.
+func TestLoadDependencyDeps_MissingFileIsSilent(t *testing.T) {
+	dir := t.TempDir()
+	keys, diags := LoadDependencyDeps("acme/none", filepath.Join(dir, "apm_modules", "acme/none"))
+	if keys != nil || diags != nil {
+		t.Errorf("missing apm.yml should be silent, got keys=%v diags=%v", keys, diags)
+	}
+}
+
+// TestLoadDependencyDeps_MalformedFileDiagnosed mirrors
+// TestLoadDependencyMCP_MalformedFileDiagnosed.
+func TestLoadDependencyDeps_MalformedFileDiagnosed(t *testing.T) {
+	dir := t.TempDir()
+	modDir := filepath.Join(dir, "apm_modules", "acme/broken")
+	mkFile(t, modDir, "apm.yml", "not: [valid, yaml, manifest\n")
+	keys, diags := LoadDependencyDeps("acme/broken", modDir)
+	if keys != nil {
+		t.Errorf("expected nil keys for malformed apm.yml, got %v", keys)
+	}
+	if len(diags) != 1 || !strings.Contains(diags[0], "acme/broken") {
+		t.Errorf("expected one diagnostic naming the dep, got %v", diags)
+	}
+}
+
+// TestLoadDependencyDeps_ReturnsProdIdentityKeysIgnoringRefAndDev locks down
+// CRITICAL #1's fix prerequisite: LoadDependencyDeps returns identity keys
+// (ignoring git ref, matching DependencyReference.IdentityKey()) for a
+// dependency's own PROD dependencies.apm entries only -- devDependencies.apm
+// is never followed, matching deploy.Run's own transitive depth split.
+func TestLoadDependencyDeps_ReturnsProdIdentityKeysIgnoringRefAndDev(t *testing.T) {
+	dir := t.TempDir()
+	modDir := filepath.Join(dir, "apm_modules", "acme/parent")
+	mkFile(t, modDir, "apm.yml", "name: parent\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/child#v1.2.3\ndevDependencies:\n  apm:\n    - acme/dev-only\n")
+
+	keys, diags := LoadDependencyDeps("acme/parent", modDir)
+	if len(diags) != 0 {
+		t.Errorf("expected no diagnostics, got %v", diags)
+	}
+	if len(keys) != 1 || keys[0] != "acme/child" {
+		t.Errorf("expected exactly [acme/child] (ref stripped, dev dep excluded), got %v", keys)
 	}
 }
 

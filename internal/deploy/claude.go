@@ -17,9 +17,9 @@ func (a *claudeAdapter) SupportedTypes() []PrimitiveType {
 func (a *claudeAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
 	switch p.Type {
 	case TypeSkills:
-		return deploySkill(p, projectDir)
+		return deploySkillClaude(p, projectDir)
 	case TypeInstructions:
-		return deployFileToPath(p, fmt.Sprintf(".claude/rules/%s.md", p.Name), projectDir)
+		return deployClaudeInstructions(p, projectDir)
 	case TypeAgents:
 		return deployFileToPath(p, fmt.Sprintf(".claude/agents/%s.md", p.Name), projectDir)
 	case TypeCommands:
@@ -27,4 +27,21 @@ func (a *claudeAdapter) DeployPrimitive(p Primitive, projectDir string) ([]strin
 	default:
 		return nil, nil
 	}
+}
+
+// deploySkillClaude deploys a skill to the canonical cross-tool path
+// (.agents/skills/<name>/, req-tg-003) and additionally to
+// .claude/skills/<name>/. Claude Code itself only discovers skills under
+// .claude/skills, not .agents/skills, so the canonical-only deployment left
+// skills invisible to Claude Code even though req-tg-003 was satisfied.
+func deploySkillClaude(p Primitive, projectDir string) ([]string, error) {
+	canonical, err := deploySkill(p, projectDir)
+	if err != nil {
+		return nil, err
+	}
+	extra, err := deploySkillTo(p, projectDir, ".claude/skills")
+	if err != nil {
+		return nil, err
+	}
+	return append(canonical, extra...), nil
 }

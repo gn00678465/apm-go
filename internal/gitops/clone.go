@@ -21,6 +21,15 @@ type RealPackageLoader struct {
 }
 
 func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
+	// A dependency carrying LocalSourcePath is materialized by COPYING the
+	// local directory into apm_modules (mirrors Python's local-dependency
+	// model: apm_modules/_local/<name>/), never git-cloned -- the source may
+	// be a plain (non-git) directory, and its absolute path could never be a
+	// valid clone DESTINATION under apm_modules. ref.RepoURL already holds the
+	// sanitized, contained apm_modules key (set by cmd/apm-go's normalizeLocalDep).
+	if ref.LocalSourcePath != "" {
+		return r.materializeLocalCopy(ref)
+	}
 	if ref.IsLocal {
 		return r.loadLocalPackage(ref.LocalPath)
 	}
@@ -227,6 +236,90 @@ func ResolveCommit(repoDir string) (string, error) {
 
 func (r *RealPackageLoader) loadLocalPackage(path string) (*manifest.Manifest, error) {
 	return r.parseSubManifest(path)
+}
+
+// materializeLocalCopy vendors a local-directory dependency into apm_modules
+// by copying it, then parses its sub-manifest -- the Go equivalent of Python's
+// _copy_local_package (apm_modules/_local/<name>/). The destination is
+// installPath(ref), whose apm_modules key (ref.RepoURL, e.g. "_local/foo-ab12")
+// is guarded by archive.ContainedKey exactly like every other dependency, so a
+// crafted key can never escape ModulesDir. The clone SOURCE guard is moot here
+// (no git clone happens); the source directory is user-trusted (it came from
+// the user's own apm.yml/CLI arg), and symlinks under it are SKIPPED to prevent
+// any copy-out-of-tree escape.
+func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReference) (*manifest.Manifest, error) {
+	installDir, err := r.installPath(ref)
+	if err != nil {
+		return nil, err
+	}
+	src := ref.LocalSourcePath
+	info, err := os.Stat(src)
+	if err != nil {
+		return nil, fmt.Errorf("local dependency source %s: %w", src, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("local dependency source %s is not a directory", src)
+	}
+
+	// Replace any stale prior materialization so the result matches a fresh
+	// copy of the current source (parity with the stale-checkout repair on the
+	// git path).
+	if err := os.RemoveAll(installDir); err != nil {
+		return nil, fmt.Errorf("remove stale local copy %s: %w", installDir, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(installDir), 0o755); err != nil {
+		return nil, err
+	}
+	if err := copyTreeNoSymlinks(src, installDir); err != nil {
+		return nil, fmt.Errorf("copy local dependency %s: %w", src, err)
+	}
+
+	return r.parseSubManifest(installDir)
+}
+
+// copyTreeNoSymlinks recursively copies srcDir to dstDir, copying regular files
+// and directories only and SKIPPING symlinks entirely (never following them).
+// Skipping symlinks is the security-relevant choice: a symlink under an
+// otherwise-trusted local source could point outside it, and dereferencing it
+// during the copy would pull unrelated content into apm_modules. Matching the
+// Python original's "never bundle symlinks" rule keeps materialization to the
+// package's own in-tree content.
+func copyTreeNoSymlinks(srcDir, dstDir string) error {
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue // never follow/copy symlinks
+		}
+		srcPath := filepath.Join(srcDir, e.Name())
+		dstPath := filepath.Join(dstDir, e.Name())
+		if e.IsDir() {
+			if err := copyTreeNoSymlinks(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			continue // skip devices, pipes, sockets
+		}
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *RealPackageLoader) parseSubManifest(dir string) (*manifest.Manifest, error) {

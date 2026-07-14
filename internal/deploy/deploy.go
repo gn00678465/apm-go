@@ -42,10 +42,24 @@ type SkillFilter struct {
 	DepKeys []string
 }
 
+// hasSkillWildcard reports whether names contains the '*' RESET sentinel
+// (install.md: "--skill '*' resets to install all skills"), mirroring
+// Python's install.py (~1387-1393): any occurrence -- even mixed with other
+// names, e.g. `--skill review --skill '*'` -- means "install ALL skills,"
+// not "whitelist a skill literally named *".
+func hasSkillWildcard(names []string) bool {
+	for _, n := range names {
+		if n == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
 func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter) (*DeployResult, error) {
 	var skillNames, skillDepKeys map[string]bool
-	if filter != nil && len(filter.Names) > 0 {
+	if filter != nil && len(filter.Names) > 0 && !hasSkillWildcard(filter.Names) {
 		skillNames = make(map[string]bool, len(filter.Names))
 		for _, s := range filter.Names {
 			skillNames[s] = true
@@ -67,9 +81,17 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	ordered = append(ordered, localMCP...)
 	mcpDiags = append(mcpDiags, localMCPDiags...)
 
-	// Direct deps in manifest declaration order (req-pr-003), deduplicated
+	// Direct deps in manifest declaration order (req-pr-003), deduplicated.
+	// Production dependencies.apm followed by devDependencies.apm (F3): a
+	// dev dependency is a direct (depth-1) dependency exactly like a
+	// production one -- same primitive priority, same MCP auto-trust --
+	// mirroring Python's all_apm_deps = apm_deps + dev_apm_deps.
+	directDeps := make([]*manifest.DependencyReference, 0, len(m.ParsedDeps)+len(m.ParsedDevDeps))
+	directDeps = append(directDeps, m.ParsedDeps...)
+	directDeps = append(directDeps, m.ParsedDevDeps...)
+
 	directKeys := make(map[string]bool)
-	for _, dep := range m.ParsedDeps {
+	for _, dep := range directDeps {
 		key := DepRefKey(dep)
 		if key == "" || directKeys[key] {
 			continue
@@ -121,6 +143,26 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// 3. Resolve conflicts
 	winners, conflictDiags := ResolvePrimitives(ordered)
 
+	// 3.5. Bundle-target dependency naming must be validated for every
+	// target BEFORE any primitive is deployed anywhere in this Run: a
+	// bundle-directory name collision (e.g. two dependencies whose DepKey
+	// sanitizes to the same antigravity plugin bundle name) fails closed --
+	// nothing written for either dependency -- rather than let their files
+	// silently mix into one physical directory (BundleTarget doc).
+	for _, target := range targets {
+		adapter, ok := Adapters[target]
+		if !ok {
+			continue
+		}
+		bundleAdapter, ok := adapter.(BundleTarget)
+		if !ok {
+			continue
+		}
+		if err := bundleAdapter.ValidateBundleNames(bundleCandidateDepKeys(adapter, winners)); err != nil {
+			return nil, fmt.Errorf("%s: %w", target, err)
+		}
+	}
+
 	// 4. Deploy to each target
 	result := &DeployResult{
 		PerDep: make(map[string]*DepDeployResult),
@@ -131,24 +173,21 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// Track which primitive first wrote each destination path, to warn on
 	// fixed-path overwrites (e.g. multiple hook files -> .agents/hooks.json).
 	writtenBy := make(map[string]string)
+	// Track, per bundle-target, the ordered/deduplicated DepKeys that
+	// actually produced at least one file this Run -- passed to
+	// FinalizeBundles below.
+	bundledDepsByTarget := make(map[string][]string)
+	bundledDepsSeen := make(map[string]map[string]bool)
 
 	for _, target := range targets {
 		adapter, ok := Adapters[target]
 		if !ok {
 			continue
 		}
+		_, isBundleTarget := adapter.(BundleTarget)
 		for _, p := range winners {
 			if !adapterSupports(adapter, p.Type) {
 				continue
-			}
-
-			// Deduplicate skill deployments across targets (same path)
-			if p.Type == TypeSkills {
-				skillPath := fmt.Sprintf(".agents/skills/%s/SKILL.md", p.Name)
-				if deployedSkills[skillPath] {
-					continue
-				}
-				deployedSkills[skillPath] = true
 			}
 
 			files, err := adapter.DeployPrimitive(p, projectDir)
@@ -156,6 +195,26 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				result.Diags = append(result.Diags,
 					fmt.Sprintf("deploy %s to %s failed: %v", p.Name, target, err))
 				continue
+			}
+
+			// Deduplicate skill file writes across targets: most targets
+			// converge on the same canonical .agents/skills/<name>/... path
+			// (req-tg-003), so only count/hash each distinct path once per
+			// primitive. This is file-level rather than "skip the whole
+			// primitive" because claude also writes a target-specific extra
+			// copy under .claude/skills/ that no other target produces --
+			// skipping the call entirely (as before) would drop that extra
+			// copy whenever another skill-supporting target ran first.
+			if p.Type == TypeSkills {
+				var deduped []string
+				for _, f := range files {
+					if deployedSkills[f] {
+						continue
+					}
+					deployedSkills[f] = true
+					deduped = append(deduped, f)
+				}
+				files = deduped
 			}
 
 			// Warn when a different primitive overwrites a path already written.
@@ -186,6 +245,54 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 					}
 					depResult.Hashes[f] = hash
 				}
+
+				if isBundleTarget && p.DepKey != "" {
+					if bundledDepsSeen[target] == nil {
+						bundledDepsSeen[target] = make(map[string]bool)
+					}
+					if !bundledDepsSeen[target][p.DepKey] {
+						bundledDepsSeen[target][p.DepKey] = true
+						bundledDepsByTarget[target] = append(bundledDepsByTarget[target], p.DepKey)
+					}
+				}
+			}
+		}
+	}
+
+	// 4.5. Finalize bundle-target manifests once per target, mirroring the
+	// once-per-target MCP write below, for every dependency that actually
+	// produced at least one bundled file this Run (e.g. antigravity's
+	// plugin.json -- BundleTarget doc).
+	for _, target := range targets {
+		adapter, ok := Adapters[target]
+		if !ok {
+			continue
+		}
+		bundleAdapter, ok := adapter.(BundleTarget)
+		if !ok {
+			continue
+		}
+		depKeys := bundledDepsByTarget[target]
+		if len(depKeys) == 0 {
+			continue
+		}
+		filesByDep, err := bundleAdapter.FinalizeBundles(depKeys, projectDir)
+		if err != nil {
+			return nil, fmt.Errorf("finalize %s bundles: %w", target, err)
+		}
+		for depKey, files := range filesByDep {
+			depResult := result.PerDep[depKey]
+			if depResult == nil {
+				depResult = &DepDeployResult{Hashes: make(map[string]string)}
+				result.PerDep[depKey] = depResult
+			}
+			for _, f := range files {
+				hash, err := lockfile.HashFileBytes(filepath.Join(projectDir, f))
+				if err != nil {
+					return nil, fmt.Errorf("hash bundle manifest %s: %w", f, err)
+				}
+				depResult.Files = append(depResult.Files, f)
+				depResult.Hashes[f] = hash
 			}
 		}
 	}
@@ -283,4 +390,24 @@ func adapterSupports(adapter TargetAdapter, pt PrimitiveType) bool {
 		}
 	}
 	return false
+}
+
+// bundleCandidateDepKeys returns the ordered, deduplicated DepKeys among
+// prims that are non-local (DepKey != "") and whose Type this adapter
+// supports -- the dependencies that WILL land at least one primitive under
+// this adapter's bundle scheme, computed before any file is written so
+// BundleTarget.ValidateBundleNames can fail closed up front.
+func bundleCandidateDepKeys(adapter TargetAdapter, prims []Primitive) []string {
+	seen := make(map[string]bool)
+	var keys []string
+	for _, p := range prims {
+		if p.DepKey == "" || !adapterSupports(adapter, p.Type) {
+			continue
+		}
+		if !seen[p.DepKey] {
+			seen[p.DepKey] = true
+			keys = append(keys, p.DepKey)
+		}
+	}
+	return keys
 }

@@ -51,6 +51,19 @@ func CollectDependencyPrimitives(depKey, modulePath string) []Primitive {
 		})
 	}
 
+	// Claude-plugin manifest (.claude-plugin/plugin.json): when present and
+	// valid, its skills/agents/commands arrays are the authoritative source
+	// for this module. An explicitly-declared "skills" key (even an empty
+	// array) takes precedence over the legacy single-level scan below, so a
+	// nested layout like skills/<category>/<name>/ (which that scan can't
+	// see one level deep) is discovered correctly instead of silently
+	// deploying nothing.
+	pluginPrims, skillsDeclared := collectPluginPrimitives(depKey, modulePath)
+	prims = append(prims, pluginPrims...)
+	if skillsDeclared {
+		return prims
+	}
+
 	// Skill collection: skills/<name>/SKILL.md
 	skillsDir := filepath.Join(modulePath, "skills")
 	if entries, err := os.ReadDir(skillsDir); err == nil {
@@ -136,12 +149,13 @@ func collectFromAPMDir(apmDir, source, depKey string) []Primitive {
 	return prims
 }
 
+// extractInstructionName only accepts *.instructions.md: the
+// .instructions.md naming and the applyTo frontmatter are one contract
+// (Python find_instruction_files globs *.instructions.md exclusively), so
+// plain .md files in .apm/instructions/ are NOT collected.
 func extractInstructionName(filename string) string {
 	if strings.HasSuffix(filename, ".instructions.md") {
 		return strings.TrimSuffix(filename, ".instructions.md")
-	}
-	if strings.HasSuffix(filename, ".md") {
-		return strings.TrimSuffix(filename, ".md")
 	}
 	return ""
 }
