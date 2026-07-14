@@ -32,11 +32,11 @@ func marketplaceMigrateCmd() *cobra.Command {
 
 			w := cmd.OutOrStdout()
 			if dryRun {
-				fmt.Fprintln(w, "Dry run -- the following changes would be applied to apm.yml:")
+				ux.Section(w, "Dry run -- the following changes would be applied to apm.yml:")
 				if diff == "" {
 					fmt.Fprintln(w, "(no changes)")
 				} else {
-					fmt.Fprint(w, diff)
+					ux.Diff(w, diff)
 				}
 				return nil
 			}
@@ -44,7 +44,7 @@ func marketplaceMigrateCmd() *cobra.Command {
 			ux.Success(w, "Migrated marketplace.yml into apm.yml's 'marketplace:' block")
 			fmt.Fprintln(w, "marketplace.yml has been removed. Commit apm.yml to record the migration.")
 			if verbose {
-				fmt.Fprint(w, diff)
+				ux.Diff(w, diff)
 			}
 			return nil
 		},

@@ -241,10 +241,12 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 	}
 
 	if opts.dryRun {
-		ux.Info(w, "dry-run: Would pack %d file(s) -> %s", len(result.Files), result.BundleDir)
-		for _, f := range result.Files {
-			fmt.Fprintf(w, "  %s\n", f)
+		ux.Section(w, fmt.Sprintf("dry-run: Would pack %d file(s) -> %s", len(result.Files), result.BundleDir))
+		items := make([]ux.Item, len(result.Files))
+		for i, f := range result.Files {
+			items[i] = ux.Item{Text: f}
 		}
+		ux.BulletList(w, items)
 		return nil
 	}
 	ux.Success(w, "Packed %d file(s) -> %s", len(result.Files), result.BundleDir)

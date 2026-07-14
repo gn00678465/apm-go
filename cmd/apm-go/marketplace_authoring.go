@@ -271,15 +271,23 @@ func marketplaceCheckCmd() *cobra.Command {
 			results := authoring.CheckPackages(cfg, authoring.DefaultRefLister, offline)
 			w := cmd.OutOrStdout()
 			failed := 0
+			var items []ux.Item
 			for _, r := range results {
 				if r.Err != nil {
 					failed++
-					ux.Error(w, "%s: %v", r.Package.Name, r.Err)
+					items = append(items, ux.Item{Text: fmt.Sprintf("%s: %s: %v", ux.SymbolError, r.Package.Name, r.Err)})
 					continue
 				}
 				if verbose {
-					ux.Success(w, "%s: ok", r.Package.Name)
+					items = append(items, ux.Item{Text: fmt.Sprintf("%s: %s: ok", ux.SymbolSuccess, r.Package.Name)})
 				}
+			}
+			if len(items) > 0 {
+				ux.BulletList(w, items)
+			}
+			if len(results) > 0 {
+				verified := len(results) - failed
+				ux.Info(w, "pass rate: %d/%d (%.0f%%)", verified, len(results), float64(verified)/float64(len(results))*100)
 			}
 			if failed > 0 {
 				return fmt.Errorf("check failed: %d/%d package(s) have an unverifiable pin", failed, len(results))
@@ -329,17 +337,16 @@ func marketplaceOutdatedCmd() *cobra.Command {
 
 			w := cmd.OutOrStdout()
 			upgradable := 0
-			for _, r := range rows {
-				note := ""
-				if r.Note != "" {
-					note = fmt.Sprintf("  (%s)", r.Note)
+			tableRows := make([][]string, len(rows))
+			for i, r := range rows {
+				tableRows[i] = []string{
+					outdatedStatusSymbol(r.Status), r.Package.Name, r.Current, r.LatestInRange, r.LatestOverall, r.Note,
 				}
-				fmt.Fprintf(w, "%s %-20s current=%-10s latest-in-range=%-12s latest=%-12s%s\n",
-					r.Status, r.Package.Name, r.Current, r.LatestInRange, r.LatestOverall, note)
 				if r.Upgradable {
 					upgradable++
 				}
 			}
+			ux.Table(w, []string{"STATUS", "NAME", "CURRENT", "LATEST-IN-RANGE", "LATEST", "NOTE"}, tableRows)
 
 			if upgradable > 0 {
 				fmt.Fprintf(w, "%d package(s) can be updated\n", upgradable)
@@ -361,6 +368,26 @@ func marketplaceOutdatedCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "include prerelease versions when determining the latest tag")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print extra diagnostics")
 	return cmd
+}
+
+// outdatedStatusSymbol maps authoring.OutdatedRow.Status's bracket token to
+// the cmd layer's ✓/!/ℹ/✗ symbol set for display. refcheck.go's own Status
+// field is left as "[+]"/"[!]"/"[*]"/"[i]"/"[x]" -- internal/marketplace/
+// authoring's tests assert those literal values -- so this mapping happens
+// only here, at render time.
+func outdatedStatusSymbol(status string) string {
+	switch status {
+	case "[+]":
+		return ux.SymbolSuccess
+	case "[!]", "[*]":
+		return ux.SymbolWarn
+	case "[i]":
+		return ux.SymbolInfo
+	case "[x]":
+		return ux.SymbolError
+	default:
+		return status
+	}
 }
 
 // warnIfGitignoreIgnoresMarketplaceJSON prints a warning to w when the

@@ -3,6 +3,7 @@ package ux
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/pterm/pterm"
 )
@@ -65,4 +66,29 @@ func toPtermTreeNode(n TreeNode) pterm.TreeNode {
 // Section renders a section heading to w.
 func Section(w io.Writer, title string) {
 	fmt.Fprint(w, renderForWriter(w, pterm.DefaultSection.Sprintln(title)))
+}
+
+// Diff renders a unified diff to w: "+"-prefixed lines (other than the
+// "+++ ..." file header) are colored green, "-"-prefixed lines (other than
+// "--- ...") red; every other line (context, "@@ ... @@" hunk headers, file
+// headers) is printed as-is.
+func Diff(w io.Writer, diffText string) {
+	lines := strings.Split(strings.TrimRight(diffText, "\n"), "\n")
+	for i, line := range lines {
+		lines[i] = colorDiffLine(line)
+	}
+	fmt.Fprintln(w, renderForWriter(w, strings.Join(lines, "\n")))
+}
+
+func colorDiffLine(line string) string {
+	switch {
+	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+		return line
+	case strings.HasPrefix(line, "+"):
+		return pterm.NewStyle(pterm.FgGreen).Sprint(line)
+	case strings.HasPrefix(line, "-"):
+		return pterm.NewStyle(pterm.FgRed).Sprint(line)
+	default:
+		return line
+	}
 }

@@ -600,12 +600,16 @@ func marketplaceValidateCmd() *cobra.Command {
 			}
 
 			findings := marketplace.Validate(m)
-			for _, f := range findings {
-				level := "warning"
-				if f.Level == marketplace.LevelError {
-					level = "error"
+			if len(findings) > 0 {
+				items := make([]ux.Item, len(findings))
+				for i, f := range findings {
+					icon := ux.SymbolWarn
+					if f.Level == marketplace.LevelError {
+						icon = ux.SymbolError
+					}
+					items[i] = ux.Item{Text: fmt.Sprintf("%s %s", icon, f.Message)}
 				}
-				fmt.Fprintf(w, "  [%s] %s\n", level, f.Message)
+				ux.BulletList(w, items)
 			}
 			passed, warnings, errs := summarizeFindings(m, findings)
 			fmt.Fprintf(w, "Summary: %d passed, %d warnings, %d errors\n", passed, warnings, errs)

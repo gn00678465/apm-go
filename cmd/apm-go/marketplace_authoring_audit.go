@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/apm-go/apm/internal/marketplace"
 	"github.com/apm-go/apm/internal/marketplace/authoring"
@@ -79,11 +80,7 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 				continue
 			}
 			bypassTotal += len(r.Issues)
-			ux.Warn(w, "%s: %d dependencies bypass the marketplace", r.PluginName, len(r.Issues))
-			for _, issue := range r.Issues {
-				fmt.Fprintf(w, "      - %q\n", issue.Dep)
-				fmt.Fprintf(w, "        hint: %s\n", issue.Suggestion)
-			}
+			printBypassTree(w, r)
 		case authoring.FetchNoManifest, authoring.FetchUnsupportedSource:
 			skipped++
 			if verbose {
@@ -95,4 +92,20 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 		}
 	}
 	return ok, bypassTotal, skipped, unverifiable
+}
+
+// printBypassTree renders one plugin's marketplace-bypass findings as a
+// two-level nested tree (plugin -> dependency -> hint), replacing the
+// former flat "- dep" / "  hint: ..." indentation.
+func printBypassTree(w io.Writer, r authoring.PluginAuditReport) {
+	root := ux.TreeNode{
+		Text: fmt.Sprintf("%s: %d dependencies bypass the marketplace", r.PluginName, len(r.Issues)),
+	}
+	for _, issue := range r.Issues {
+		root.Children = append(root.Children, ux.TreeNode{
+			Text:     issue.Dep,
+			Children: []ux.TreeNode{{Text: "hint: " + issue.Suggestion}},
+		})
+	}
+	ux.Tree(w, root)
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/security"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // collectDeployedFilePaths returns the deduplicated, sorted set of every
@@ -51,14 +52,22 @@ func runAuditContentScan(out, errOut io.Writer, lock *lockfile.Lockfile) error {
 	}
 
 	if len(all) == 0 {
-		fmt.Fprintf(out, "audit --content: %d file(s) scanned, no hidden characters\n", len(paths))
+		ux.Success(out, "audit --content: %d file(s) scanned, no hidden characters", len(paths))
 		return nil
 	}
 
 	hasCritical, counts := security.Classify(all)
 	for _, f := range all {
-		fmt.Fprintf(errOut, "%s: %s %s at %s:%d:%d (%s)\n",
+		msg := fmt.Sprintf("%s: %s %s at %s:%d:%d (%s)",
 			f.Severity, f.Category, f.Codepoint, f.File, f.Line, f.Column, f.Description)
+		switch f.Severity {
+		case security.SeverityCritical:
+			ux.Error(errOut, "%s", msg)
+		case security.SeverityWarning:
+			ux.Warn(errOut, "%s", msg)
+		default:
+			ux.Info(errOut, "%s", msg)
+		}
 	}
 
 	if hasCritical {
@@ -71,7 +80,7 @@ func runAuditContentScan(out, errOut io.Writer, lock *lockfile.Lockfile) error {
 	}
 
 	// Only info-level findings (e.g. a leading BOM) -- not actionable.
-	fmt.Fprintf(out, "audit --content: %d file(s) scanned, %d info-level finding(s) (no action needed)\n",
+	ux.Info(out, "audit --content: %d file(s) scanned, %d info-level finding(s) (no action needed)",
 		len(paths), counts[security.SeverityInfo])
 	return nil
 }

@@ -95,4 +95,24 @@ func TestOutputGolden_NoANSIWhenStylingDisabled(t *testing.T) {
 			t.Fatalf("Section output %q missing title", out)
 		}
 	})
+
+	t.Run("Diff", func(t *testing.T) {
+		// Arrange
+		var buf bytes.Buffer
+		diff := "--- apm.yml (current)\n+++ apm.yml (after migrate)\n@@ -1,2 +1,3 @@\n name: demo\n-version: 1.0.0\n+version: 1.0.0\n+marketplace:\n"
+
+		// Act
+		Diff(&buf, diff)
+		out := buf.String()
+
+		// Assert
+		if ansiEscape.MatchString(out) {
+			t.Fatalf("Diff output contains ANSI escape codes: %q", out)
+		}
+		for _, want := range []string{"name: demo", "-version: 1.0.0", "+version: 1.0.0", "+marketplace:"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("Diff output %q missing %q", out, want)
+			}
+		}
+	})
 }
