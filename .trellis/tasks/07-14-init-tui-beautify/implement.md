@@ -1,6 +1,13 @@
 # 執行計畫 — init/stdout 美化（三階段，同一 task）
 
 > 分支：`feat/init-tui-beautify`。每階段結尾有 review gate + 可獨立 build/test 驗證 + commit。
+>
+> **Gate 對抗審核機制（實測後定案）**：本機 codex read-only sandbox helper
+> （`codex-windows-sandbox-setup.exe`）缺失 → `/codex:adversarial-review` companion runtime
+> 雖能啟動，但 codex 內部仍需跑 shell 抓 diff 而失敗，回傳「無法審查」空結果 → **本機不可用**。
+> 實際採用：`git diff [--cached|<base>...HEAD] | codex exec - -c model_reasoning_effort=medium`
+> （diff 從 stdin 餵入，codex 不需跑 shell，繞過壞掉的 sandbox），prompt 採官方 adversarial-review
+> 的對抗 stance。Phase A/B gate 已用此法驗證可用。
 
 ## Phase A — 基礎：internal/ux + 全域前綴
 
