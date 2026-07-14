@@ -83,8 +83,10 @@ var (
 	stderrIsTTY = defaultStderrIsTTY
 )
 
-// isInteractive reports whether stdin is a real terminal, mirroring
-// cmd/apm-go/init.go's isInteractive().
+// isInteractive reports whether stdin is a real terminal. cmd/apm-go/init.go
+// and mcp_prompt.go call this indirectly via CanPrompt() rather than
+// duplicating their own os.ModeCharDevice-based check, which incorrectly
+// treated a redirected non-terminal (e.g. /dev/null) as interactive.
 func isInteractive() bool {
 	return stdinIsTTY()
 }

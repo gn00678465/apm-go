@@ -57,7 +57,7 @@ func initCmd() *cobra.Command {
 			if apmYmlExists {
 				if yes || force {
 					fmt.Fprintln(os.Stderr, "--yes specified, overwriting apm.yml...")
-				} else if isInteractive() {
+				} else if ux.CanPrompt() {
 					ok, err := ux.Confirm("apm.yml already exists. Continue and overwrite?", false)
 					if err != nil {
 						return fmt.Errorf("confirm overwrite: %w", err)
@@ -74,7 +74,7 @@ func initCmd() *cobra.Command {
 			var name, version, description, author string
 
 			// Phase 3: Metadata collection
-			if yes || !isInteractive() {
+			if yes || !ux.CanPrompt() {
 				name = filepath.Base(cwd)
 				version = "1.0.0"
 				description = fmt.Sprintf("APM project for %s", name)
@@ -118,7 +118,7 @@ func initCmd() *cobra.Command {
 					}
 					selectedTargets = append(selectedTargets, t)
 				}
-			} else if yes || !isInteractive() {
+			} else if yes || !ux.CanPrompt() {
 				selectedTargets = manifest.DetectTargets(cwd)
 			} else {
 				var existingTargets []string
@@ -133,7 +133,7 @@ func initCmd() *cobra.Command {
 			}
 
 			// Phase 5: Confirmation
-			if !yes && isInteractive() {
+			if !yes && ux.CanPrompt() {
 				fmt.Fprintln(os.Stderr)
 				ux.Section(os.Stderr, "About to create")
 				items := []ux.Item{
@@ -211,14 +211,6 @@ func buildManifestData(name, version, description, author string, targets []stri
 	data["includes"] = "auto"
 	data["scripts"] = map[string]any{}
 	return data
-}
-
-func isInteractive() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // interactiveTargetSelect prompts for the target list via a huh MultiSelect

@@ -35,18 +35,19 @@ func isNonInteractiveEnv() bool {
 }
 
 // canPromptCreds reports whether it's safe to interactively prompt for MCP
-// credentials: BOTH stdin and stdout must be a TTY (matching the Python
-// original's writer.py `is_tty = sys.stdin.isatty() and sys.stdout.isatty()`),
-// and not a CI/E2E environment. Requiring stdout too means a piped/captured
-// run (e.g. `apm-go install ... | tee`, or a script capturing output) is
-// treated as non-interactive and never blocks waiting on a prompt the user
-// cannot even see.
+// credentials: ux.CanPrompt() (real term.IsTerminal on stdin+stderr, not CI)
+// must hold, stdout must ALSO be a TTY (matching the Python original's
+// writer.py `is_tty = sys.stdin.isatty() and sys.stdout.isatty()`), and it
+// must not be a CI/E2E environment. Requiring stdout too means a
+// piped/captured run (e.g. `apm-go install ... | tee`, or a script capturing
+// output) is treated as non-interactive and never blocks waiting on a prompt
+// the user cannot even see.
 func canPromptCreds() bool {
-	return isInteractive() && stdoutIsTTY() && !isNonInteractiveEnv()
+	return ux.CanPrompt() && stdoutIsTTY() && !isNonInteractiveEnv()
 }
 
-// stdoutIsTTY reports whether os.Stdout is a character device (a terminal),
-// mirroring isInteractive()'s stdin check for stdout.
+// stdoutIsTTY reports whether os.Stdout is a real terminal, mirroring
+// ux.CanPrompt()'s stdin/stderr check for stdout.
 func stdoutIsTTY() bool {
 	fi, err := os.Stdout.Stat()
 	if err != nil {
