@@ -26,6 +26,7 @@ import (
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
@@ -564,13 +565,13 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	if !hasAnyDeps {
 		result = &resolver.ResolutionResult{}
 	} else {
-		fmt.Println("[>] Installing dependencies from apm.yml...")
+		ux.Info(os.Stdout, "Installing dependencies from apm.yml...")
 		seen := make(map[string]bool)
 		for _, dep := range allDirectDeps(m) {
 			canon := dep.ToCanonical(m.DefaultHost)
 			if !seen[canon] {
 				seen[canon] = true
-				fmt.Printf("[>] Resolving %s...\n", canon)
+				ux.Info(os.Stdout, "Resolving %s...", canon)
 			}
 		}
 
@@ -711,10 +712,10 @@ func tryLocalBundleInstall(bundleArg, targetFlag string, skillSubset []string, a
 // (install/local_bundle_handler.py:34-297).
 func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag string) error {
 	if !info.HasLockfile {
-		fmt.Fprintln(os.Stderr, "[warn] Bundle has no apm.lock.yaml -- skipping integrity check. "+
+		ux.Warn(os.Stderr, "Bundle has no apm.lock.yaml -- skipping integrity check. "+
 			"This bundle may have been produced by an older or non-apm-go tool.")
 	} else if !info.HasPackMeta {
-		fmt.Fprintln(os.Stderr, "[warn] Bundle has an apm.lock.yaml but no 'pack:' metadata section -- skipping integrity check.")
+		ux.Warn(os.Stderr, "Bundle has an apm.lock.yaml but no 'pack:' metadata section -- skipping integrity check.")
 	} else if errs := localbundle.VerifyBundleIntegrity(info.SourceDir, info.PackMeta); len(errs) > 0 {
 		fmt.Fprintln(os.Stderr, "Bundle integrity check failed:")
 		for _, e := range errs {
@@ -728,12 +729,12 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 		fmt.Fprintln(os.Stderr, d)
 	}
 	if len(targets) == 0 {
-		fmt.Println("[warn] No active targets resolved -- nothing will be deployed. Pass --target to select one explicitly.")
+		ux.Warn(os.Stdout, "No active targets resolved -- nothing will be deployed. Pass --target to select one explicitly.")
 		return nil
 	}
 
 	if warning := localbundle.CheckTargetMismatch(info.PackTargets, targets); warning != "" {
-		fmt.Fprintf(os.Stderr, "[warn] %s\n", warning)
+		ux.Warn(os.Stderr, "%s", warning)
 	}
 
 	var packMeta *bundle.PackMetadata
@@ -745,7 +746,7 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 		return fmt.Errorf("deploy local bundle: %w", err)
 	}
 	for _, d := range result.Diags {
-		fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 
 	if len(result.Files) == 0 {
@@ -757,7 +758,7 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 		return err
 	}
 
-	fmt.Printf("[+] Installed %d file(s) from local bundle %s\n", len(result.Files), bundleArg)
+	ux.Success(os.Stdout, "Installed %d file(s) from local bundle %s", len(result.Files), bundleArg)
 	return nil
 }
 
@@ -1026,16 +1027,16 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 		} else if len(m.Target) > 0 {
 			targetSource = "apm.yml"
 		}
-		fmt.Printf("[i] Targets: %s  (source: %s)\n", strings.Join(targets, ", "), targetSource)
+		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
 
 		var skillFilter *deploy.SkillFilter
 		// The '*' RESET sentinel means "install ALL skills" (install.md):
 		// leave skillFilter nil rather than constructing one with a literal
 		// "*" entry, so this call site never depends on deploy.SkillFilter's
-		// own wildcard handling to no-op it -- and the "[i] Skill subset:"
+		// own wildcard handling to no-op it -- and the "Skill subset:" info
 		// line, which only makes sense for an actual narrowing, is skipped.
 		if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
-			fmt.Printf("[i] Skill subset: %s\n", strings.Join(skillSubset, ", "))
+			ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
 			depKeys := make([]string, 0, len(requestedKeys))
 			for k := range requestedKeys {
 				depKeys = append(depKeys, k)
@@ -1048,7 +1049,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 			return fmt.Errorf("deploy: %w", err)
 		}
 		for _, d := range deployResult.Diags {
-			fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+			ux.Warn(os.Stderr, "%s", d)
 		}
 
 		// Print deploy summary per dep
@@ -1057,7 +1058,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 			if label == "" {
 				label = "(local)"
 			}
-			fmt.Printf("  [+] %s\n", label)
+			ux.Success(os.Stdout, "  %s", label)
 			printDeploySummary(dr.Files, targets)
 		}
 
@@ -1067,7 +1068,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 		// (e.g. an unrecognized manifest format).
 		for _, dep := range result.Deps {
 			if _, ok := deployResult.PerDep[dep.Key]; !ok {
-				fmt.Fprintf(os.Stderr, "[!] warning: %s deployed 0 files to any target\n", dep.Key)
+				ux.Warn(os.Stderr, "%s deployed 0 files to any target", dep.Key)
 			}
 		}
 
@@ -1150,7 +1151,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 		}
 	}
 
-	fmt.Printf("\n[*] Installed %d dependencies\n", len(result.Deps))
+	fmt.Println()
+	ux.Success(os.Stdout, "Installed %d dependencies", len(result.Deps))
 	for _, dep := range result.Deps {
 		tag := dep.ResolvedTag
 		if tag == "" {
@@ -1372,7 +1374,7 @@ func resolvePositionalPackage(pkg string) (*manifest.DependencyReference, *marke
 	// mkt-034: ref-swap-pin/shadow advisories are never blocking -- surface
 	// them and keep going.
 	for _, w := range res.Warnings {
-		fmt.Fprintf(os.Stderr, "[!] %s\n", w)
+		ux.Warn(os.Stderr, "%s", w)
 	}
 
 	// mkt-027: a structured DepRef (a non-GitHub-family host's

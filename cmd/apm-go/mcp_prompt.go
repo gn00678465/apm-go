@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/apm-go/apm/internal/ux"
 	"golang.org/x/term"
 )
 
@@ -118,7 +119,7 @@ func ttyAsk(label string, secret bool) string {
 // the Python original's writer.py TTY branch). Passed as confirmReplaceFunc
 // only when stdin is interactive.
 func promptReplaceMCP(name string, diff []string) (bool, error) {
-	fmt.Fprintf(os.Stderr, "[!] MCP server %q already exists. Replacement diff:\n", name)
+	ux.Warn(os.Stderr, "MCP server %q already exists. Replacement diff:", name)
 	for _, line := range diff {
 		fmt.Fprintf(os.Stderr, "%s\n", line)
 	}

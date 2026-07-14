@@ -962,7 +962,7 @@ func TestMarketplaceList_TableIncludesEveryRegisteredSource(t *testing.T) {
 // the Python original renders a rich HEAVY_HEAD box table titled
 // "Plugins in '<name>'" (Plugin/Description/Version/Install columns, `--`
 // placeholders, Install cell = `<plugin>@<mkt>` with NO command prefix)
-// after a "[>] Fetching..." line, then an [i] footer naming this binary
+// after an "ℹ: Fetching..." line, then an ℹ footer naming this binary
 // (apm-go, not the Python original's `apm`).
 func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
 	// Arrange -- one fully-described plugin whose description is long enough
@@ -985,14 +985,14 @@ func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
 		t.Fatalf("marketplace browse returned error: %v", err)
 	}
 	for _, want := range []string{
-		"[>] Fetching plugins from 'acme'...",
+		"ℹ: Fetching plugins from 'acme'...",
 		"Plugins in 'acme'",
 		"┃ Plugin",
 		"│ cool-plugin",
 		"cool-plugin@acme",
 		"bare-plugin@acme",
 		"--",
-		"[i] Install a plugin: apm-go install <plugin-name>@acme",
+		"ℹ: Install a plugin: apm-go install <plugin-name>@acme",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)

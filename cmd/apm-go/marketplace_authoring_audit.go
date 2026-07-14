@@ -6,6 +6,7 @@ import (
 
 	"github.com/apm-go/apm/internal/marketplace"
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
 )
 
@@ -73,12 +74,12 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 			if len(r.Issues) == 0 {
 				ok++
 				if verbose {
-					fmt.Fprintf(w, "[+] %s: deps are marketplace-resolved\n", r.PluginName)
+					ux.Success(w, "%s: deps are marketplace-resolved", r.PluginName)
 				}
 				continue
 			}
 			bypassTotal += len(r.Issues)
-			fmt.Fprintf(w, "[!] %s: %d dependencies bypass the marketplace\n", r.PluginName, len(r.Issues))
+			ux.Warn(w, "%s: %d dependencies bypass the marketplace", r.PluginName, len(r.Issues))
 			for _, issue := range r.Issues {
 				fmt.Fprintf(w, "      - %q\n", issue.Dep)
 				fmt.Fprintf(w, "        hint: %s\n", issue.Suggestion)
@@ -86,11 +87,11 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 		case authoring.FetchNoManifest, authoring.FetchUnsupportedSource:
 			skipped++
 			if verbose {
-				fmt.Fprintf(w, "[i] %s: skipped (%s)\n", r.PluginName, r.Detail)
+				ux.Info(w, "%s: skipped (%s)", r.PluginName, r.Detail)
 			}
 		default:
 			unverifiable++
-			fmt.Fprintf(w, "[!] %s: could not verify (%s)\n", r.PluginName, r.Detail)
+			ux.Warn(w, "%s: could not verify (%s)", r.PluginName, r.Detail)
 		}
 	}
 	return ok, bypassTotal, skipped, unverifiable

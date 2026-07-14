@@ -11,6 +11,7 @@ import (
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -156,7 +157,8 @@ func initCmd() *cobra.Command {
 			}
 
 			// Phase 7: Success output
-			fmt.Fprintln(os.Stderr, "\n[*] APM project initialized successfully!")
+			fmt.Fprintln(os.Stderr)
+			ux.Success(os.Stderr, "APM project initialized successfully!")
 			fmt.Fprintln(os.Stderr, "\nNext steps:")
 			fmt.Fprintln(os.Stderr, "  * Install a package:  apm-go install <owner>/<repo>")
 			return nil

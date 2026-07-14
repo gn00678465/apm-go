@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/apm-go/apm/internal/marketplace"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
 )
 
@@ -230,7 +231,7 @@ func marketplaceAddCmd() *cobra.Command {
 
 			wasFullHTTPSSource := strings.HasPrefix(strings.ToLower(rawSource), "https://")
 			if needsUnpinnedGitRefWarning(wasFullHTTPSSource, src.Kind(), effectiveRef) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] Pin this git marketplace with a #ref (e.g. SOURCE#v1.2.3) to avoid silently tracking a moving branch")
+				ux.Warn(cmd.ErrOrStderr(), "Pin this git marketplace with a #ref (e.g. SOURCE#v1.2.3) to avoid silently tracking a moving branch")
 			}
 
 			m, err := marketplace.Fetch(context.Background(), src)
@@ -240,7 +241,7 @@ func marketplaceAddCmd() *cobra.Command {
 
 			effectiveName, aliasWarning := resolveMarketplaceAlias(name, m.Name, src)
 			if aliasWarning != "" {
-				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", aliasWarning)
+				ux.Warn(cmd.ErrOrStderr(), "%s", aliasWarning)
 			}
 			src.Name = effectiveName
 
@@ -249,7 +250,7 @@ func marketplaceAddCmd() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "[+] Added marketplace %q (kind: %s)\n", effectiveName, src.Kind())
+			ux.Success(w, "Added marketplace %q (kind: %s)", effectiveName, src.Kind())
 			if verbose {
 				fmt.Fprintf(w, "  source: %s\n", src.URL)
 				fmt.Fprintf(w, "  ref: %s\n", src.Ref)
@@ -411,13 +412,13 @@ func marketplaceBrowseCmd() *cobra.Command {
 				return marketplaceNotRegisteredErr(name)
 			}
 			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "[>] Fetching plugins from '%s'...\n", name)
+			ux.Info(w, "Fetching plugins from '%s'...", name)
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
 			if len(m.Plugins) == 0 {
-				fmt.Fprintf(w, "[!] Marketplace '%s' has no plugins\n", name)
+				ux.Warn(w, "Marketplace '%s' has no plugins", name)
 				return nil
 			}
 
@@ -437,7 +438,7 @@ func marketplaceBrowseCmd() *cobra.Command {
 			if verbose {
 				fmt.Fprintf(w, "%d plugin(s) in %q\n", len(m.Plugins), name)
 			}
-			fmt.Fprintf(w, "[i] Install a plugin: apm-go install <plugin-name>@%s\n", name)
+			ux.Info(w, "Install a plugin: apm-go install <plugin-name>@%s", name)
 			return nil
 		},
 	}
@@ -474,7 +475,7 @@ func marketplaceUpdateCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("refresh marketplace %q: %w", name, err)
 				}
-				fmt.Fprintf(w, "[+] Refreshed marketplace %q (%d plugins)\n", name, len(m.Plugins))
+				ux.Success(w, "Refreshed marketplace %q (%d plugins)", name, len(m.Plugins))
 				if verbose {
 					fmt.Fprintf(w, "  source: %s\n", src.URL)
 				}
@@ -489,10 +490,10 @@ func marketplaceUpdateCmd() *cobra.Command {
 				s := sources[i]
 				m, ferr := marketplace.Fetch(context.Background(), &s)
 				if ferr != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "[!] failed to refresh marketplace %q: %v\n", s.Name, ferr)
+					ux.Error(cmd.ErrOrStderr(), "failed to refresh marketplace %q: %v", s.Name, ferr)
 					continue
 				}
-				fmt.Fprintf(w, "[+] Refreshed marketplace %q (%d plugins)\n", s.Name, len(m.Plugins))
+				ux.Success(w, "Refreshed marketplace %q (%d plugins)", s.Name, len(m.Plugins))
 				if verbose {
 					fmt.Fprintf(w, "  source: %s\n", s.URL)
 				}
@@ -552,7 +553,7 @@ func marketplaceRemoveCmd() *cobra.Command {
 			if err := marketplace.RemoveSource(name); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "[-] Removed marketplace %q\n", name)
+			ux.Success(cmd.OutOrStdout(), "Removed marketplace %q", name)
 			if verbose {
 				fmt.Fprintf(cmd.OutOrStdout(), "  source: %s\n", src.URL)
 			}

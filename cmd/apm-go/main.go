@@ -7,12 +7,15 @@ import (
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
 
 func main() {
+	ux.Init()
+
 	root := &cobra.Command{
 		Use:     "apm-go",
 		Short:   "Agent Package Manager (Go)",

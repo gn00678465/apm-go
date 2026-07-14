@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
 )
 
@@ -40,7 +41,7 @@ func marketplaceMigrateCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintln(w, "[+] Migrated marketplace.yml into apm.yml's 'marketplace:' block")
+			ux.Success(w, "Migrated marketplace.yml into apm.yml's 'marketplace:' block")
 			fmt.Fprintln(w, "marketplace.yml has been removed. Commit apm.yml to record the migration.")
 			if verbose {
 				fmt.Fprint(w, diff)

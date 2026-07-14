@@ -13,6 +13,7 @@ import (
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -73,7 +74,7 @@ func runUninstall(args []string, opts uninstallOptions) error {
 		printUninstallNotFound(nf)
 	}
 	for _, rej := range plan.resolution.SupplyChainRejected {
-		fmt.Fprintf(os.Stderr, "[!] %q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)\n", rej.Name, rej.Canonical)
+		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
 	}
 	if len(plan.resolution.APMTargets) == 0 && len(plan.resolution.MCPTargets) == 0 {
 		// un-013: every argument was some flavor of not-found -- no changes.
@@ -245,7 +246,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 
 	removedFiles, _, diags := deploy.RemoveDeployedFiles(".", deployedFiles, deployedHashes)
 	for _, d := range diags {
-		fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 	if verbose {
 		for _, f := range removedFiles {
@@ -275,7 +276,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		if len(stale) > 0 {
 			sort.Strings(stale)
 			for _, d := range deploy.RemoveMCPServersFromTargets(".", stale) {
-				fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+				ux.Warn(os.Stderr, "%s", d)
 			}
 		}
 		lock.MCPServers = sortedStringSet(newMCP)
@@ -512,7 +513,7 @@ func removeUninstallStandaloneMCP(mcpNames map[string]bool, lock *lockfile.Lockf
 	names := sortedStringSet(mcpNames)
 	diags := deploy.RemoveMCPServersFromTargets(".", names)
 	for _, d := range diags {
-		fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 	if lock == nil || len(lock.MCPServers) == 0 {
 		return
@@ -556,15 +557,15 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 func printUninstallNotFound(nf uninstallNotFound) {
 	switch nf.Reason {
 	case uninstallNotFoundDryRunSkipped:
-		fmt.Fprintf(os.Stderr, "[!] %q: cannot preview with --dry-run (marketplace reference has no lockfile anchor); use owner/repo, or run without --dry-run\n", nf.Name)
+		ux.Warn(os.Stderr, "%q: cannot preview with --dry-run (marketplace reference has no lockfile anchor); use owner/repo, or run without --dry-run", nf.Name)
 	case uninstallNotFoundUnresolvable:
 		if nf.Detail != "" {
-			fmt.Fprintf(os.Stderr, "[!] %q: could not resolve (%s)\n", nf.Name, nf.Detail)
+			ux.Warn(os.Stderr, "%q: could not resolve (%s)", nf.Name, nf.Detail)
 		} else {
-			fmt.Fprintf(os.Stderr, "[!] %q: could not resolve\n", nf.Name)
+			ux.Warn(os.Stderr, "%q: could not resolve", nf.Name)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "[!] %q: not found in apm.yml\n", nf.Name)
+		ux.Warn(os.Stderr, "%q: not found in apm.yml", nf.Name)
 	}
 }
 
@@ -572,7 +573,7 @@ func printUninstallNotFound(nf uninstallNotFound) {
 // from apm.yml, whether each apm_modules/<key> path currently exists, and
 // which transitive dependencies would be pruned as orphans -- no writes.
 func printUninstallDryRunPlan(resolution *uninstallResolution, allRemovalKeys, orphans map[string]bool) {
-	fmt.Println("[dry-run] would remove from apm.yml:")
+	ux.Info(os.Stdout, "dry-run: would remove from apm.yml:")
 	for _, t := range resolution.APMTargets {
 		section := "dependencies.apm"
 		if t.IsDev {
@@ -584,12 +585,12 @@ func printUninstallDryRunPlan(resolution *uninstallResolution, allRemovalKeys, o
 		fmt.Printf("  - %s (dependencies.mcp)\n", t.Name)
 	}
 	if len(orphans) > 0 {
-		fmt.Println("[dry-run] transitive orphans that would also be removed:")
+		ux.Info(os.Stdout, "dry-run: transitive orphans that would also be removed:")
 		for _, k := range sortedStringSet(orphans) {
 			fmt.Printf("  - %s\n", k)
 		}
 	}
-	fmt.Println("[dry-run] apm_modules:")
+	ux.Info(os.Stdout, "dry-run: apm_modules:")
 	for _, k := range sortedStringSet(allRemovalKeys) {
 		state := "missing"
 		if _, err := os.Stat(filepath.Join("apm_modules", filepath.FromSlash(k))); err == nil {
@@ -597,18 +598,18 @@ func printUninstallDryRunPlan(resolution *uninstallResolution, allRemovalKeys, o
 		}
 		fmt.Printf("  - apm_modules/%s: %s\n", k, state)
 	}
-	fmt.Println("[dry-run] no changes made")
+	ux.Info(os.Stdout, "dry-run: no changes made")
 }
 
 // printUninstallSummary is un-101's closing summary.
 func printUninstallSummary(resolution *uninstallResolution, orphans map[string]bool, removedModuleDirs int) {
 	removedPackages := len(resolution.APMTargets) + len(resolution.MCPTargets)
 	if len(orphans) > 0 {
-		fmt.Printf("[+] Removed %d package(s) (+%d transitive orphan(s))\n", removedPackages, len(orphans))
+		ux.Success(os.Stdout, "Removed %d package(s) (+%d transitive orphan(s))", removedPackages, len(orphans))
 	} else {
-		fmt.Printf("[+] Removed %d package(s)\n", removedPackages)
+		ux.Success(os.Stdout, "Removed %d package(s)", removedPackages)
 	}
-	fmt.Printf("[+] apm_modules: removed %d director%s\n", removedModuleDirs, pluralYIES(removedModuleDirs))
+	ux.Success(os.Stdout, "apm_modules: removed %d director%s", removedModuleDirs, pluralYIES(removedModuleDirs))
 }
 
 func pluralYIES(n int) string {

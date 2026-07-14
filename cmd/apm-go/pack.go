@@ -16,6 +16,7 @@ import (
 	"github.com/apm-go/apm/internal/pack"
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/pack/pluginmanifest"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -240,13 +241,13 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 	}
 
 	if opts.dryRun {
-		fmt.Fprintf(w, "[dry-run] Would pack %d file(s) -> %s\n", len(result.Files), result.BundleDir)
+		ux.Info(w, "dry-run: Would pack %d file(s) -> %s", len(result.Files), result.BundleDir)
 		for _, f := range result.Files {
 			fmt.Fprintf(w, "  %s\n", f)
 		}
 		return nil
 	}
-	fmt.Fprintf(w, "[+] Packed %d file(s) -> %s\n", len(result.Files), result.BundleDir)
+	ux.Success(w, "Packed %d file(s) -> %s", len(result.Files), result.BundleDir)
 	fmt.Fprintln(w, "Plugin bundle ready -- contains plugin.json plus plugin-native directories "+
 		"(agents/, skills/, commands/, ...) and an embedded apm.lock.yaml for install-time "+
 		"integrity verification.")
@@ -316,7 +317,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
 		return err
 	}
 	if src == authoring.ConfigSourceLegacy {
-		fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
+		ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 	}
 
 	cliOverrides, err := parseMarketplacePathOverrides(opts.pathOverrideArgs)
@@ -343,7 +344,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
 		}
 	}
 	if len(activeOutputs) == 0 {
-		fmt.Fprintln(w, "[i] No marketplace outputs selected; nothing to write.")
+		ux.Info(w, "No marketplace outputs selected; nothing to write.")
 		return nil
 	}
 
@@ -356,7 +357,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
 		return err
 	}
 	for _, warning := range warnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", warning)
+		ux.Warn(cmd.ErrOrStderr(), "%s", warning)
 	}
 	if opts.verbose {
 		for _, pkg := range resolved {
@@ -403,18 +404,18 @@ func packOneOutput(
 		return err
 	}
 	for _, warning := range docWarnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", warning)
+		ux.Warn(cmd.ErrOrStderr(), "%s", warning)
 	}
 
 	if opts.dryRun {
-		fmt.Fprintf(w, "[i] Would write marketplace.json [%s] (%d package(s)) -> %s\n", format, len(resolved), outputPath)
+		ux.Info(w, "dry-run: Would write marketplace.json [%s] (%d package(s)) -> %s", format, len(resolved), outputPath)
 		return nil
 	}
 
 	if err := build.WriteOutput(absPath, doc); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "[+] Built marketplace.json [%s] (%d package(s)) -> %s\n", format, len(resolved), outputPath)
+	ux.Success(w, "Built marketplace.json [%s] (%d package(s)) -> %s", format, len(resolved), outputPath)
 	return nil
 }
 
@@ -531,8 +532,8 @@ func hasMarketplaceConfig(dir string) bool {
 }
 
 // licenseUndeclaredWarning is export/authoring.py's _WARN_MESSAGE, ported
-// verbatim.
-const licenseUndeclaredWarning = "[warn] No 'license:' field in apm.yml; the SBOM will record NOASSERTION for this package. Add a 'license:' field to apm.yml (an SPDX expression such as MIT or Apache-2.0, or UNLICENSED) to declare it."
+// verbatim (minus the leading "[warn] " tag, now supplied by ux.Warn).
+const licenseUndeclaredWarning = "No 'license:' field in apm.yml; the SBOM will record NOASSERTION for this package. Add a 'license:' field to apm.yml (an SPDX expression such as MIT or Apache-2.0, or UNLICENSED) to declare it."
 
 // warnIfLicenseUndeclared mirrors export/authoring.py's authoring-path
 // license nudge (issue #1777, findings §4): when apm.yml exists and has no
@@ -568,5 +569,5 @@ func warnIfLicenseUndeclared(w io.Writer) {
 	if declared {
 		return
 	}
-	fmt.Fprintln(w, licenseUndeclaredWarning)
+	ux.Warn(w, "%s", licenseUndeclaredWarning)
 }

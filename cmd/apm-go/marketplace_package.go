@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
 )
 
@@ -120,9 +121,9 @@ func marketplacePackageAddCmd() *cobra.Command {
 				return withExitCode(2, err)
 			}
 			if fallbackUsed {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
+				ux.Warn(cmd.ErrOrStderr(), "packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "[+] Added package %q from %s\n", resolved, args[0])
+			ux.Success(cmd.OutOrStdout(), "Added package %q from %s", resolved, args[0])
 			return nil
 		},
 	}
@@ -196,9 +197,9 @@ func marketplacePackageSetCmd() *cobra.Command {
 				return withExitCode(2, err)
 			}
 			if fallbackUsed {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
+				ux.Warn(cmd.ErrOrStderr(), "packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "[+] Updated package %q\n", args[0])
+			ux.Success(cmd.OutOrStdout(), "Updated package %q", args[0])
 			return nil
 		},
 	}
@@ -256,7 +257,7 @@ func marketplacePackageRemoveCmd() *cobra.Command {
 			if _, err := authoring.RemovePackage(".", name); err != nil {
 				return withExitCode(2, err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "[-] Removed package %q\n", name)
+			ux.Success(cmd.OutOrStdout(), "Removed package %q", name)
 			return nil
 		},
 	}

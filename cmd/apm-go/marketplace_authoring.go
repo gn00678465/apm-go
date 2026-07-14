@@ -11,6 +11,7 @@ import (
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -90,9 +91,9 @@ func marketplaceInitCmd() *cobra.Command {
 			}
 
 			if scaffoldedApmYML {
-				fmt.Fprintln(w, "[+] Created apm.yml with 'marketplace:' block")
+				ux.Success(w, "Created apm.yml with 'marketplace:' block")
 			} else {
-				fmt.Fprintln(w, "[+] Added 'marketplace:' block to apm.yml")
+				ux.Success(w, "Added 'marketplace:' block to apm.yml")
 			}
 			if verbose {
 				cwd, cerr := os.Getwd()
@@ -255,7 +256,7 @@ func marketplaceCheckCmd() *cobra.Command {
 				return err
 			}
 			if src == authoring.ConfigSourceLegacy {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
+				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
 			// C6 (defence-in-depth, mirrors Python's
@@ -264,7 +265,7 @@ func marketplaceCheckCmd() *cobra.Command {
 			// unconditionally before ref/version resolution, and never
 			// contributing to `failed` below.
 			for _, w := range authoring.DuplicatePackageNames(cfg) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+				ux.Warn(cmd.ErrOrStderr(), "%s", w)
 			}
 
 			results := authoring.CheckPackages(cfg, authoring.DefaultRefLister, offline)
@@ -273,17 +274,17 @@ func marketplaceCheckCmd() *cobra.Command {
 			for _, r := range results {
 				if r.Err != nil {
 					failed++
-					fmt.Fprintf(w, "[x] %s: %v\n", r.Package.Name, r.Err)
+					ux.Error(w, "%s: %v", r.Package.Name, r.Err)
 					continue
 				}
 				if verbose {
-					fmt.Fprintf(w, "[+] %s: ok\n", r.Package.Name)
+					ux.Success(w, "%s: ok", r.Package.Name)
 				}
 			}
 			if failed > 0 {
 				return fmt.Errorf("check failed: %d/%d package(s) have an unverifiable pin", failed, len(results))
 			}
-			fmt.Fprintf(w, "[+] all %d package(s) verified\n", len(results))
+			ux.Success(w, "all %d package(s) verified", len(results))
 			return nil
 		},
 	}
@@ -321,7 +322,7 @@ func marketplaceOutdatedCmd() *cobra.Command {
 				return err
 			}
 			if src == authoring.ConfigSourceLegacy {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
+				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
 			rows := authoring.OutdatedPackages(cfg, authoring.DefaultRefLister, offline, includePrerelease, nil)
@@ -377,7 +378,7 @@ func warnIfGitignoreIgnoresMarketplaceJSON(w io.Writer) {
 			continue
 		}
 		if marketplaceGitignorePatterns[trimmed] {
-			fmt.Fprintln(w, "[warn] Your .gitignore ignores marketplace.json. Track apm.yml plus generated "+
+			ux.Warn(w, "Your .gitignore ignores marketplace.json. Track apm.yml plus generated "+
 				"marketplace files such as .claude-plugin/marketplace.json and .agents/plugins/marketplace.json. "+
 				"Remove the .gitignore rule or add explicit unignore entries.")
 			return
