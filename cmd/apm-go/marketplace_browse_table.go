@@ -5,90 +5,41 @@ import (
 	"io"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/apm-go/apm/internal/ux"
 )
 
-// browseTableMaxWidth caps the rendered table width.
-// ponytail: fixed budget instead of probing the terminal size (rich uses the
-// real terminal width); add golang.org/x/term if the difference bites.
-const browseTableMaxWidth = 120
+// browseDescriptionWrapWidth caps the rendered width of the Description
+// column so a long description word-wraps into a multi-line table cell
+// instead of stretching the whole table arbitrarily wide.
+const browseDescriptionWrapWidth = 60
 
-var browseTableHeaders = [4]string{"Plugin", "Description", "Version", "Install"}
+var browseTableHeaders = []string{"Plugin", "Description", "Version", "Install"}
 
-// renderBrowseTable prints the rich-style HEAVY_HEAD box table the Python
-// original draws via rich.table.Table for `marketplace browse`: a centered
-// title, heavy borders around the header row, light borders around the body.
-// Only the Description column wraps (rich's ratio=1 column); Version is
-// centered; everything else is left-aligned.
-// ponytail: widths are rune counts, not terminal cells -- CJK text may
-// misalign; switch to go-runewidth if that matters.
-func renderBrowseTable(w io.Writer, title string, rows [][4]string) {
-	var widths [4]int
-	for i, h := range browseTableHeaders {
-		widths[i] = utf8.RuneCountInString(h)
-	}
-	for _, row := range rows {
-		for i, cell := range row {
-			if n := utf8.RuneCountInString(cell); n > widths[i] {
-				widths[i] = n
-			}
-		}
-	}
-	// 5 border runes + 2 padding runes per column; shrink only Description
-	// to stay within the budget.
-	const chrome = 5 + 4*2
-	fixed := chrome + widths[0] + widths[2] + widths[3]
-	if fixed+widths[1] > browseTableMaxWidth {
-		widths[1] = browseTableMaxWidth - fixed
-		if min := utf8.RuneCountInString(browseTableHeaders[1]); widths[1] < min {
-			widths[1] = min
-		}
-	}
-	total := fixed + widths[1]
-
-	if pad := (total - utf8.RuneCountInString(title)) / 2; pad > 0 {
-		fmt.Fprint(w, strings.Repeat(" ", pad))
-	}
+// renderBrowseTable prints the plugin listing for `marketplace browse` as a
+// pterm-boxed table (ux.Table). This intentionally does not reproduce the
+// Python original's rich HEAVY_HEAD box styling byte-for-byte (design.md:
+// "browse box table 遷移到 pterm.Table" accepts the visual difference) --
+// only the Description column is still pre-wrapped here, since ux.Table
+// itself does not word-wrap.
+func renderBrowseTable(w io.Writer, title string, rows [][]string) {
 	fmt.Fprintln(w, title)
 
-	rule := func(left, fill, mid, right string) {
-		parts := make([]string, len(widths))
-		for i, cw := range widths {
-			parts[i] = strings.Repeat(fill, cw+2)
+	wrapped := make([][]string, len(rows))
+	for i, row := range rows {
+		cells := make([]string, len(row))
+		copy(cells, row)
+		if len(cells) > 1 {
+			cells[1] = strings.Join(wrapRunes(cells[1], browseDescriptionWrapWidth), "\n")
 		}
-		fmt.Fprintln(w, left+strings.Join(parts, mid)+right)
+		wrapped[i] = cells
 	}
-	line := func(sep string, cells [4]string) {
-		parts := make([]string, len(cells))
-		for i, c := range cells {
-			pad := widths[i] - utf8.RuneCountInString(c)
-			if i == 2 { // Version is centered
-				left := pad / 2
-				parts[i] = strings.Repeat(" ", left) + c + strings.Repeat(" ", pad-left)
-			} else {
-				parts[i] = c + strings.Repeat(" ", pad)
-			}
-			parts[i] = " " + parts[i] + " "
-		}
-		fmt.Fprintln(w, sep+strings.Join(parts, sep)+sep)
-	}
-
-	rule("┏", "━", "┳", "┓")
-	line("┃", browseTableHeaders)
-	rule("┡", "━", "╇", "┩")
-	for _, row := range rows {
-		for j, desc := range wrapRunes(row[1], widths[1]) {
-			cells := [4]string{"", desc, "", ""}
-			if j == 0 {
-				cells = [4]string{row[0], desc, row[2], row[3]}
-			}
-			line("│", cells)
-		}
-	}
-	rule("└", "─", "┴", "┘")
+	ux.Table(w, browseTableHeaders, wrapped)
 }
 
 // wrapRunes greedily word-wraps s to at most width runes per line,
-// hard-splitting any single word longer than width so the box never breaks.
+// hard-splitting any single word longer than width so the cell never
+// blows the column width.
 func wrapRunes(s string, width int) []string {
 	var lines []string
 	cur := ""

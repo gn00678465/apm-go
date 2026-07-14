@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -43,52 +42,42 @@ func isValidHostFQDN(host string) bool {
 
 // ── C10: shared remove-confirmation helper ──────────────────────────────
 //
-// isInteractiveCheck wraps init.go's isInteractive() as a swappable
-// function var purely so a test can force confirmOrRequireYes's "looks
-// interactive" branch deterministically: this is the exact condition C10
-// fixes. A git-bash pipe on Windows can make isInteractive()'s
-// os.Stdin.Stat() ModeCharDevice check report true even though stdin is
-// not actually interactive, so the confirmation read's own EOF/error
-// result -- not this check alone -- must be the authority on whether a
-// decline was genuine.
-var isInteractiveCheck = isInteractive
-
-// readYesNo prints label followed by "[y/N]: " to os.Stderr (matching
-// init.go's confirmPrompt convention of writing the prompt straight to the
-// real stderr, not through cobra's cmd.ErrOrStderr()) and reads a single
-// line from stdin via the shared scanner (getScanner(), init.go). ok is
-// false when the read itself failed -- EOF or any other scanner error --
-// which must never be conflated with "user declined": only a read that
-// actually completes (even an empty line, which counts as a decline) sets
-// ok=true.
-func readYesNo(label string) (yes bool, ok bool) {
-	fmt.Fprintf(os.Stderr, "%s [y/N]: ", label)
-	scanner := getScanner()
-	if !scanner.Scan() {
-		return false, false
-	}
-	line := strings.TrimSpace(strings.ToLower(scanner.Text()))
-	return line == "y" || line == "yes", true
-}
+// richCheck and confirmFn are swappable function vars (mirroring the
+// pre-existing isInteractiveCheck seam) so a test can drive
+// confirmOrRequireYes's "genuinely interactive" branch deterministically,
+// without needing a real terminal: ux.CanPrompt() itself cannot be forced
+// from outside the ux package. richCheck defaults to ux.CanPrompt, which --
+// unlike the crude os.Stdin.Stat() ModeCharDevice check isInteractiveCheck
+// used to rely on -- performs a real term.IsTerminal() check, so a git-bash
+// pipe on Windows (C10's original footgun) is no longer mistaken for an
+// interactive terminal in the first place.
+//
+// richCheck deliberately uses ux.CanPrompt, not ux.IsRich: IsRich() also
+// requires NO_COLOR to be unset, which would make a real, TTY-backed
+// terminal that merely has NO_COLOR set (nothing to do with whether it can
+// answer a yes/no question) hard-require -y/--yes the same as a genuinely
+// non-interactive session -- a footgun of its own.
+var richCheck = ux.CanPrompt
+var confirmFn = ux.Confirm
 
 // confirmOrRequireYes is C10's shared fix for `marketplace remove` and
 // `marketplace package remove`'s confirmation gate -- the one place either
 // command should call to decide whether a destructive removal without
-// -y/--yes may proceed. errMsg is returned verbatim in two cases: stdin is
-// not interactive at all (the pre-existing isInteractiveCheck() gate), and
-// -- new here -- stdin looks interactive but the confirmation read itself
-// fails (EOF or a scanner error). Before this fix, a failed read was
-// silently treated the same as "declined" (Aborted, exit 0) -- a CI/script
-// footgun, since exit 0 reads as success. proceed is only true after a
-// read that genuinely completed with "y"/"yes"; a read that completed with
-// anything else (including an empty line) returns (false, nil), which the
-// caller renders as a clean "Aborted." and a normal exit 0.
+// -y/--yes may proceed. errMsg is returned verbatim in two cases: the
+// session cannot prompt at all (richCheck() false -- not a real terminal on
+// stdin/stderr, or running in CI), and -- C10's fix -- richCheck() is true
+// but the confirmation prompt itself fails (e.g. the huh form is aborted).
+// Before the fix, a failed read was silently treated the same as "declined"
+// (Aborted, exit 0) -- a CI/script footgun, since exit 0 reads as success.
+// proceed is only true after a prompt that genuinely completes; a prompt
+// that completes with "no" returns (false, nil), which the caller renders
+// as a clean "Aborted." and a normal exit 0.
 func confirmOrRequireYes(label, errMsg string) (proceed bool, err error) {
-	if !isInteractiveCheck() {
+	if !richCheck() {
 		return false, fmt.Errorf("%s", errMsg)
 	}
-	yes, ok := readYesNo(label)
-	if !ok {
+	yes, cerr := confirmFn(label, false)
+	if cerr != nil {
 		return false, fmt.Errorf("%s", errMsg)
 	}
 	return yes, nil
@@ -371,18 +360,19 @@ func marketplaceListCmd() *cobra.Command {
 				fmt.Fprintln(w, "No marketplaces registered. Add one with: apm-go marketplace add SOURCE")
 				return nil
 			}
+			headers := []string{"NAME", "SOURCE", "REF", "PATH"}
 			if verbose {
-				fmt.Fprintf(w, "%-20s %-40s %-10s %-24s %s\n", "NAME", "SOURCE", "REF", "HOST", "PATH")
-			} else {
-				fmt.Fprintf(w, "%-20s %-40s %-10s %s\n", "NAME", "SOURCE", "REF", "PATH")
+				headers = []string{"NAME", "SOURCE", "REF", "HOST", "PATH"}
 			}
+			rows := make([][]string, 0, len(sources))
 			for _, s := range sources {
 				if verbose {
-					fmt.Fprintf(w, "%-20s %-40s %-10s %-24s %s\n", s.Name, s.URL, s.Ref, s.Host, s.Path)
+					rows = append(rows, []string{s.Name, s.URL, s.Ref, s.Host, s.Path})
 				} else {
-					fmt.Fprintf(w, "%-20s %-40s %-10s %s\n", s.Name, s.URL, s.Ref, s.Path)
+					rows = append(rows, []string{s.Name, s.URL, s.Ref, s.Path})
 				}
 			}
+			ux.Table(w, headers, rows)
 			return nil
 		},
 	}
@@ -412,17 +402,19 @@ func marketplaceBrowseCmd() *cobra.Command {
 				return marketplaceNotRegisteredErr(name)
 			}
 			w := cmd.OutOrStdout()
-			ux.Info(w, "Fetching plugins from '%s'...", name)
+			sp := ux.Spinner(w, fmt.Sprintf("Fetching plugins from '%s'...", name))
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
+				sp.Fail(fmt.Sprintf("could not reach marketplace %q", name))
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
+			sp.Success(fmt.Sprintf("Fetched %d plugin(s) from '%s'", len(m.Plugins), name))
 			if len(m.Plugins) == 0 {
 				ux.Warn(w, "Marketplace '%s' has no plugins", name)
 				return nil
 			}
 
-			rows := make([][4]string, 0, len(m.Plugins))
+			rows := make([][]string, 0, len(m.Plugins))
 			for _, p := range m.Plugins {
 				desc, ver := p.Description, p.Version
 				if desc == "" {
@@ -431,7 +423,7 @@ func marketplaceBrowseCmd() *cobra.Command {
 				if ver == "" {
 					ver = "--"
 				}
-				rows = append(rows, [4]string{p.Name, desc, ver, p.Name + "@" + name})
+				rows = append(rows, []string{p.Name, desc, ver, p.Name + "@" + name})
 			}
 			fmt.Fprintln(w)
 			renderBrowseTable(w, fmt.Sprintf("Plugins in '%s'", name), rows)
@@ -511,10 +503,9 @@ func marketplaceUpdateCmd() *cobra.Command {
 }
 
 // marketplaceRemoveCmd implements mkt-015: -y/--yes skips confirmation
-// entirely; otherwise an interactive terminal is prompted (isInteractive/
-// confirmPrompt, shared with init.go's confirmation flow), and a
-// non-interactive session without -y is a hard error rather than a silent
-// no-confirm removal.
+// entirely; otherwise a genuinely interactive session is prompted via
+// confirmOrRequireYes (ux.Confirm), and a non-interactive session without
+// -y is a hard error rather than a silent no-confirm removal.
 func marketplaceRemoveCmd() *cobra.Command {
 	var yes, verbose bool
 	cmd := &cobra.Command{

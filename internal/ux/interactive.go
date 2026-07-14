@@ -5,8 +5,8 @@ import (
 )
 
 // Option is a single choice for MultiSelect. Selected marks the option as
-// pre-selected, which also acts as the default returned in non-rich
-// terminals (see MultiSelect).
+// pre-selected, which also acts as the default returned when prompting
+// isn't possible (see MultiSelect).
 type Option struct {
 	Label    string
 	Value    string
@@ -20,11 +20,11 @@ var runField = func(f huh.Field) error {
 	return f.Run()
 }
 
-// Confirm asks a yes/no question with the given default. In non-rich
-// terminals (non-TTY / NO_COLOR / CI) it returns def immediately without
-// prompting.
+// Confirm asks a yes/no question with the given default. When prompting
+// isn't possible (non-TTY stdin/stderr, or CI -- see CanPrompt) it returns
+// def immediately without prompting.
 func Confirm(prompt string, def bool) (bool, error) {
-	if !richMode {
+	if !CanPrompt() {
 		return def, nil
 	}
 
@@ -37,10 +37,11 @@ func Confirm(prompt string, def bool) (bool, error) {
 	return val, err
 }
 
-// InputText asks for a single line of text, prefilled with def. In
-// non-rich terminals it returns def immediately without prompting.
+// InputText asks for a single line of text, prefilled with def. When
+// prompting isn't possible (see CanPrompt) it returns def immediately
+// without prompting.
 func InputText(label, def string) (string, error) {
-	if !richMode {
+	if !CanPrompt() {
 		return def, nil
 	}
 
@@ -53,10 +54,10 @@ func InputText(label, def string) (string, error) {
 	return val, err
 }
 
-// Password asks for a masked secret value. In non-rich terminals it
-// returns an empty string immediately without prompting.
+// Password asks for a masked secret value. When prompting isn't possible
+// (see CanPrompt) it returns an empty string immediately without prompting.
 func Password(label string) (string, error) {
-	if !richMode {
+	if !CanPrompt() {
 		return "", nil
 	}
 
@@ -71,10 +72,10 @@ func Password(label string) (string, error) {
 }
 
 // MultiSelect lets the user toggle any number of opts (space to toggle).
-// In non-rich terminals it returns the values of options pre-marked
-// Selected, without prompting.
+// When prompting isn't possible (see CanPrompt) it returns the values of
+// options pre-marked Selected, without prompting.
 func MultiSelect(title string, opts []Option) ([]string, error) {
-	if !richMode {
+	if !CanPrompt() {
 		var defaults []string
 		for _, o := range opts {
 			if o.Selected {

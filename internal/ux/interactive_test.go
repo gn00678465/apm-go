@@ -21,8 +21,10 @@ func stubRunField(t *testing.T, fn func(huh.Field) error) {
 }
 
 // setRichMode overrides the package's richMode decision directly (bypassing
-// Init/TTY detection) so interactive-function tests are deterministic and
-// never depend on the test runner's actual stdin/stderr. It also overrides
+// Init/TTY detection), and forces CanPrompt() to the same boolean via the
+// stdinIsTTY/stderrIsTTY seams (plus clearing CI, which CanPrompt also
+// checks), so interactive-function tests are deterministic and never depend
+// on the test runner's actual stdin/stderr/environment. It also overrides
 // the spinnerIsRich seam the same way, so Spin tests can exercise the live
 // pterm.SpinnerPrinter lifecycle without a real terminal writer, and keeps
 // pterm's global styling state in sync, mirroring what Init()/Spinner() do
@@ -34,6 +36,9 @@ func setRichMode(t *testing.T, rich bool) {
 	prevRaw := pterm.RawOutput
 	richMode = rich
 	spinnerIsRich = func(io.Writer) bool { return rich }
+	withStdinTTY(t, rich)
+	withStderrTTY(t, rich)
+	t.Setenv("CI", "")
 	if rich {
 		pterm.EnableStyling()
 	} else {
@@ -240,6 +245,22 @@ func TestPassword_RichModeBuildsFieldAndPropagatesRunResult(t *testing.T) {
 	}
 	if got != "" {
 		t.Fatalf("Password() = %q, want empty (stub never sets a value)", got)
+	}
+}
+
+func TestMultiSelect_RichModePropagatesRunError(t *testing.T) {
+	// Arrange
+	setRichMode(t, true)
+	wantErr := errors.New("aborted")
+	stubRunField(t, func(huh.Field) error { return wantErr })
+	opts := []Option{{Label: "claude", Value: "claude", Selected: true}}
+
+	// Act
+	_, err := MultiSelect("targets", opts)
+
+	// Assert
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("MultiSelect() err = %v, want %v", err, wantErr)
 	}
 }
 

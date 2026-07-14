@@ -565,13 +565,13 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	if !hasAnyDeps {
 		result = &resolver.ResolutionResult{}
 	} else {
-		ux.Info(os.Stdout, "Installing dependencies from apm.yml...")
+		sp := ux.Spinner(os.Stdout, "Installing dependencies from apm.yml...")
 		seen := make(map[string]bool)
 		for _, dep := range allDirectDeps(m) {
 			canon := dep.ToCanonical(m.DefaultHost)
 			if !seen[canon] {
 				seen[canon] = true
-				ux.Info(os.Stdout, "Resolving %s...", canon)
+				sp.Update(fmt.Sprintf("Resolving %s...", canon))
 			}
 		}
 
@@ -602,8 +602,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			MarketplaceResolve: newMarketplaceResolveFunc(),
 		})
 		if err != nil {
+			sp.Fail(fmt.Sprintf("resolve: %v", err))
 			return fmt.Errorf("resolve: %w", err)
 		}
+		sp.Success(fmt.Sprintf("Resolved %d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies")))
 		// mkt-029/033/F1: apm.yml dict-form marketplace dependencies
 		// (dependencies.apm entries {name, marketplace, version}) are
 		// resolved by the BFS itself now (root and transitive alike), not
@@ -1058,8 +1060,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 			if label == "" {
 				label = "(local)"
 			}
-			ux.Success(os.Stdout, "  %s", label)
-			printDeploySummary(dr.Files, targets)
+			ux.Tree(os.Stdout, deployedFilesTree(label, dr.Files))
 		}
 
 		// Warn about resolved dependencies that deployed zero files to any
@@ -1152,43 +1153,86 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 	}
 
 	fmt.Println()
-	ux.Success(os.Stdout, "Installed %d dependencies", len(result.Deps))
+	ux.Success(os.Stdout, "Installed %d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies"))
+	items := make([]ux.Item, 0, len(result.Deps))
 	for _, dep := range result.Deps {
 		tag := dep.ResolvedTag
 		if tag == "" {
 			tag = dep.ResolvedRef
 		}
-		fmt.Printf("  %s@%s (depth %d)\n", dep.Key, tag, dep.Depth)
+		label := dep.Key
+		if tag != "" {
+			label += "@" + tag
+		}
+		items = append(items, ux.Item{Text: fmt.Sprintf("%s (depth %d)", label, dep.Depth)})
+	}
+	if len(items) > 0 {
+		ux.BulletList(os.Stdout, items)
 	}
 
 	return nil
 }
 
-func printDeploySummary(files []string, targets []string) {
-	counts := map[string][]string{}
+// deployedFilesTree groups a single dependency's deployed files by
+// primitive type (skill/agent/instruction/command/prompt/file) and
+// destination directory, as a compact per-dep summary tree. Unlike the
+// former flat "N type(s) -> dir" lines, the type noun is pluralized only
+// when the count actually calls for it (no bare "(s)" suffix).
+func deployedFilesTree(label string, files []string) ux.TreeNode {
+	type group struct {
+		kind  string
+		dir   string
+		count int
+	}
+	order := make([]string, 0)
+	groups := map[string]*group{}
 	for _, f := range files {
-		var ptype string
-		switch {
-		case strings.Contains(f, "/skills/"):
-			ptype = "skill(s)"
-		case strings.Contains(f, "/agents/") && !strings.Contains(f, ".agents/"):
-			ptype = "agent(s)"
-		case strings.Contains(f, "/rules/") || strings.Contains(f, "/instructions/"):
-			ptype = "instruction(s)"
-		case strings.Contains(f, "/commands/"):
-			ptype = "command(s)"
-		case strings.Contains(f, "/prompts/"):
-			ptype = "prompt(s)"
-		default:
-			ptype = "file(s)"
-		}
+		kind := deployedFileKind(f)
 		dir := f[:strings.LastIndex(f, "/")+1]
-		key := ptype + " -> " + dir
-		counts[key] = append(counts[key], f)
+		key := kind + "\x00" + dir
+		g, ok := groups[key]
+		if !ok {
+			g = &group{kind: kind, dir: dir}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.count++
 	}
-	for key, items := range counts {
-		fmt.Printf("  |-- %d %s\n", len(items), key)
+	children := make([]ux.TreeNode, 0, len(order))
+	for _, key := range order {
+		g := groups[key]
+		children = append(children, ux.TreeNode{
+			Text: fmt.Sprintf("%d %s -> %s", g.count, pluralWord(g.count, g.kind, g.kind+"s"), g.dir),
+		})
 	}
+	return ux.TreeNode{Text: label, Children: children}
+}
+
+// deployedFileKind classifies a deployed file path into the primitive type
+// it belongs to, for deployedFilesTree's grouping.
+func deployedFileKind(f string) string {
+	switch {
+	case strings.Contains(f, "/skills/"):
+		return "skill"
+	case strings.Contains(f, "/agents/") && !strings.Contains(f, ".agents/"):
+		return "agent"
+	case strings.Contains(f, "/rules/") || strings.Contains(f, "/instructions/"):
+		return "instruction"
+	case strings.Contains(f, "/commands/"):
+		return "command"
+	case strings.Contains(f, "/prompts/"):
+		return "prompt"
+	default:
+		return "file"
+	}
+}
+
+// pluralWord returns singular when n == 1, plural otherwise.
+func pluralWord(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 func toLockDeps(deps []resolver.ResolvedDep) []lockfile.LockedDep {

@@ -219,12 +219,11 @@ func marketplacePackageSetCmd() *cobra.Command {
 }
 
 // marketplacePackageRemoveCmd implements `apm marketplace package remove
-// NAME` (mkt-045): -y/--yes skips confirmation entirely; otherwise an
-// interactive terminal is prompted (isInteractive/confirmPrompt, shared
-// with mkt-015's own `marketplace remove` and init.go's confirmation
-// flow), and a non-interactive session without -y is a hard error -- exit
-// 1, mkt-045's one exit-code exception, not the 2 every other package
-// edit failure uses.
+// NAME` (mkt-045): -y/--yes skips confirmation entirely; otherwise a
+// genuinely interactive session is prompted via confirmOrRequireYes
+// (ux.Confirm, shared with mkt-015's own `marketplace remove`), and a
+// non-interactive session without -y is a hard error -- exit 1, mkt-045's
+// one exit-code exception, not the 2 every other package edit failure uses.
 func marketplacePackageRemoveCmd() *cobra.Command {
 	var yes, verbose bool
 

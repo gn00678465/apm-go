@@ -55,6 +55,44 @@ func TestInit_RichModeDecision(t *testing.T) {
 	}
 }
 
+// TestCanPrompt_IgnoresNoColor proves CanPrompt's key difference from
+// IsRich: a real TTY session with NO_COLOR set can still prompt (NO_COLOR
+// only means "don't colorize", not "don't ask questions").
+func TestCanPrompt_IgnoresNoColor(t *testing.T) {
+	tests := []struct {
+		name         string
+		stdinTTY     bool
+		stderrTTY    bool
+		noColor      string
+		ci           string
+		wantCanPromp bool
+	}{
+		{name: "stdin+stderr tty, no NO_COLOR, no CI", stdinTTY: true, stderrTTY: true, wantCanPromp: true},
+		{name: "stdin+stderr tty, NO_COLOR set", stdinTTY: true, stderrTTY: true, noColor: "1", wantCanPromp: true},
+		{name: "non-tty stdin", stdinTTY: false, stderrTTY: true, wantCanPromp: false},
+		{name: "non-tty stderr", stdinTTY: true, stderrTTY: false, wantCanPromp: false},
+		{name: "tty but CI set", stdinTTY: true, stderrTTY: true, ci: "true", wantCanPromp: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			withStdinTTY(t, tt.stdinTTY)
+			withStderrTTY(t, tt.stderrTTY)
+			t.Setenv("NO_COLOR", tt.noColor)
+			t.Setenv("CI", tt.ci)
+
+			// Act
+			got := CanPrompt()
+
+			// Assert
+			if got != tt.wantCanPromp {
+				t.Fatalf("CanPrompt() = %v, want %v", got, tt.wantCanPromp)
+			}
+		})
+	}
+}
+
 func TestIsCI_DetectsCommonCIEnvVars(t *testing.T) {
 	tests := []struct {
 		name string

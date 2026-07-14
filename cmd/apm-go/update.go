@@ -14,6 +14,7 @@ import (
 	"github.com/apm-go/apm/internal/marketplace"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -319,12 +320,12 @@ func directGitSemverUpdateScope(m *manifest.Manifest, pkg string) []string {
 // up to date" when nothing at all changed.
 //
 // ULD-13 (07-11-update-local-deps): when there is at least one change, the
-// summary is prefixed with a "[i] Update plan for apm.yml" heading, mirroring
+// summary is prefixed with an "Update plan for apm.yml" heading, mirroring
 // the oracle's render_plan_text heading (apm/src/apm_cli/install/plan.py:333)
 // -- the C2 zero-target gate relies on this heading appearing in stdout
 // before its teaching error so a doomed update's plan is still visible.
 func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
-	var lines []string
+	var items []ux.Item
 	for i := range newLock.Dependencies {
 		nd := &newLock.Dependencies[i]
 		newTag := nd.ResolvedTag
@@ -334,7 +335,7 @@ func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
 
 		old := oldLock.FindByKey(nd.UniqueKey())
 		if old == nil {
-			lines = append(lines, fmt.Sprintf("  + %s@%s (new)", nd.UniqueKey(), newTag))
+			items = append(items, ux.Item{Text: fmt.Sprintf("+ %s@%s (new)", nd.UniqueKey(), newTag)})
 			continue
 		}
 		oldTag := old.ResolvedTag
@@ -342,14 +343,12 @@ func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
 			oldTag = old.ResolvedRef
 		}
 		if oldTag != newTag {
-			lines = append(lines, fmt.Sprintf("  %s: %s -> %s", nd.UniqueKey(), oldTag, newTag))
+			items = append(items, ux.Item{Text: fmt.Sprintf("%s: %s -> %s", nd.UniqueKey(), oldTag, newTag)})
 		}
 	}
-	if len(lines) == 0 {
+	if len(items) == 0 {
 		return
 	}
-	fmt.Println("[i] Update plan for apm.yml")
-	for _, line := range lines {
-		fmt.Println(line)
-	}
+	ux.Section(os.Stdout, "Update plan for apm.yml")
+	ux.BulletList(os.Stdout, items)
 }

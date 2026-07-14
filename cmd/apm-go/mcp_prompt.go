@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/apm-go/apm/internal/ux"
-	"golang.org/x/term"
 )
 
 // looksSecret reports whether a header/variable name denotes a credential, so
@@ -94,24 +93,23 @@ func promptRegistryHeaders(requiredHeaders []string) map[string]string {
 	return hdrs
 }
 
-// ttyAsk prompts on stderr and reads one line from stdin. Secret values are
-// read without echo via x/term so a token never lands in the terminal (or its
-// scrollback) or any log.
+// ttyAsk prompts for a single credential value. Secret values are read
+// without echo via ux.Password (a masked huh Input) so a token never lands
+// in the terminal (or its scrollback) or any log; non-secret values use
+// ux.InputText.
 func ttyAsk(label string, secret bool) string {
-	fmt.Fprintf(os.Stderr, "  %s: ", label)
 	if secret {
-		b, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(os.Stderr)
+		val, err := ux.Password(label)
 		if err != nil {
 			return ""
 		}
-		return strings.TrimSpace(string(b))
+		return strings.TrimSpace(val)
 	}
-	scanner := getScanner()
-	if scanner.Scan() {
-		return strings.TrimSpace(scanner.Text())
+	val, err := ux.InputText(label, "")
+	if err != nil {
+		return ""
 	}
-	return ""
+	return strings.TrimSpace(val)
 }
 
 // promptReplaceMCP shows the replacement diff and asks the user to confirm
@@ -123,5 +121,5 @@ func promptReplaceMCP(name string, diff []string) (bool, error) {
 	for _, line := range diff {
 		fmt.Fprintf(os.Stderr, "%s\n", line)
 	}
-	return confirmPrompt(fmt.Sprintf("Replace MCP server %q?", name), false), nil
+	return ux.Confirm(fmt.Sprintf("Replace MCP server %q?", name), false)
 }

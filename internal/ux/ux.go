@@ -8,16 +8,19 @@ import (
 	"golang.org/x/term"
 )
 
-// richMode gates interactive prompts (Confirm/InputText/Password/
-// MultiSelect): true when stdin is a real TTY (for reading answers) *and*
-// stderr is a real TTY (huh renders its forms to stderr), NO_COLOR is
-// unset, and the process is not running in a CI environment.
+// richMode backs IsRich(): true when stdin is a real TTY (for reading
+// answers) *and* stderr is a real TTY (huh renders its forms to stderr),
+// NO_COLOR is unset, and the process is not running in a CI environment.
+//
+// Interactive prompts (Confirm/InputText/Password/MultiSelect) gate on
+// CanPrompt(), not richMode/IsRich(): see CanPrompt's doc comment for why
+// NO_COLOR must not disable prompting.
 //
 // Structured/prefixed output (Success/Info/Warn/Error/Table/BulletList/
-// Tree/Section/Spinner) does NOT use richMode: each call decides per-writer,
-// via isRichWriter/renderForWriter, whether to keep or strip the ANSI pterm
-// already produced, so redirecting one command's stdout to a file doesn't
-// leak ANSI just because stdin/stderr happen to still be a TTY.
+// Tree/Section/Spinner) does NOT use richMode either: each call decides
+// per-writer, via isRichWriter/renderForWriter, whether to keep or strip the
+// ANSI pterm already produced, so redirecting one command's stdout to a file
+// doesn't leak ANSI just because stdin/stderr happen to still be a TTY.
 var richMode bool
 
 // styleEnabled is pterm's process-wide styling decision, set exactly once by
@@ -56,11 +59,21 @@ func Init() {
 }
 
 // IsRich reports whether interactive prompts should be shown (real TTY on
-// both stdin and stderr, no NO_COLOR, not CI). Interactive functions
-// (Confirm/InputText/Password/MultiSelect) use this to decide whether to
-// prompt or fall back to plain defaults.
+// both stdin and stderr, no NO_COLOR, not CI).
 func IsRich() bool {
 	return richMode
+}
+
+// CanPrompt reports whether a prompt can be shown at all: real TTY on both
+// stdin (to read the answer) and stderr (huh renders forms there), and not
+// running in CI. Interactive functions (Confirm/InputText/Password/
+// MultiSelect) gate on this, deliberately excluding NO_COLOR: NO_COLOR only
+// means "don't colorize", not "don't ask questions" -- gating prompts on
+// IsRich() (as an earlier revision did) meant a real, TTY-backed session
+// with NO_COLOR set silently skipped every prompt and took its default,
+// which is a UX regression NO_COLOR was never meant to cause.
+func CanPrompt() bool {
+	return stdinIsTTY() && stderrIsTTY() && !isCI()
 }
 
 // stdinIsTTY and stderrIsTTY are swappable seams for tests; production
