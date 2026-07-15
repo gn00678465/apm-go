@@ -102,7 +102,7 @@
                    padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
   .tag { font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; border-radius: 20px; font-weight:600; }
   .tag.huh { background: color-mix(in srgb, var(--brand-2) 18%, transparent); color: var(--brand-2); }
-  .tag.pterm { background: color-mix(in srgb, var(--brand) 20%, transparent); color: var(--brand); }
+  .tag.lipgloss { background: color-mix(in srgb, var(--brand) 20%, transparent); color: var(--brand); }
 
   /* option cards */
   .opts { display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin:18px 0; }
@@ -123,17 +123,21 @@
   <p class="eyebrow">Trellis · 07-14-init-tui-beautify</p>
   <h1>APM-Go 終端機介面美化計畫</h1>
   <p class="lead">為 <code>apm-go</code> 導入一套統一的終端機視覺主題，重整目前散落各檔、手刻前綴的
-  互動選單與 stdout 輸出。以 <b>pterm</b> 承接輸出樣式，<b>huh</b> 承接互動表單，共用同一組色票與符號。</p>
+  互動選單與 stdout 輸出。以單一 <b>charmbracelet</b> 生態承接：<b>lipgloss</b>（樣式 / 表格 / 邊框 / 顏色）
+  + <b>huh</b>（互動表單 / spinner，建於 bubbletea），共用同一組色票與符號。<b>v1 的 pterm 方案已作廢</b>——
+  pterm 的寬度引擎無法正確渲染對齊的 box-drawing 表格，且顏色是全域旗標，有 per-writer 洩漏 footgun。</p>
   <div class="meta">
-    <span>研究來源：Context7 · charmbracelet/huh v2 · pterm/pterm</span>
+    <span>研究來源：Context7 · charmbracelet/lipgloss v2 · charmbracelet/huh v2</span>
     <span>現況：0 依賴・0 共用 helper</span>
+    <span>分支：feat/init-tui-lipgloss</span>
   </div>
 </header>
 
 <!-- ============ 1. 統一主題 ============ -->
 <h2><span class="num">01</span>統一主題 — APM Terminal Theme</h2>
-<p class="sub">單一色票，兩個套件共用：huh 透過 <code>lipgloss</code> 色碼套用，pterm 透過 <code>pterm.NewStyle</code> /
-自訂 <code>PrefixPrinter</code> 套用。色碼皆對得上 ANSI，非 TrueColor 終端會自動降階。</p>
+<p class="sub">單一色票，huh 與 lipgloss 共讀同一組色碼：訊息 / 表格 / box 皆由
+<code>lipgloss.NewStyle().Foreground(...)</code> 套用，huh Theme 套用相同色碼於互動元件。色碼皆對得上
+ANSI，非 TrueColor 終端會自動降階（lipgloss <code>colorprofile</code> 原生處理，見下方降階策略）。</p>
 
 <div class="tokens">
   <div class="swatch"><div class="chip" style="background:#2dd4bf"></div><div class="lbl"><b>brand</b><span>#2dd4bf</span></div></div>
@@ -153,37 +157,42 @@
   <div class="sym"><span class="g" style="color:var(--brand)">▸</span> progress<span style="color:var(--muted)">・原 [&gt;] → spinner</span></div>
   <div class="sym"><span class="g" style="color:var(--brand-2)">•</span> list item<span style="color:var(--muted)">・原 - / |--</span></div>
 </div>
-<div class="note"><b>降階策略：</b>兩套件都會在非 TTY / <code>NO_COLOR</code> / CI 下自動關色。統一封裝進新的
+<div class="note"><b>降階策略（lipgloss 原生 per-writer）：</b><code>lipgloss.Fprint(w, s)</code> /
+<code>Fprintln(w, s)</code> 會把 <code>w</code> 包進 <code>colorprofile.NewWriter(w, os.Environ())</code>，
+依<b>該 writer 自己</b>的終端能力自動降階：<code>TrueColor → ANSI256 → ANSI16 → mono → strip</code>，
+非 TTY / <code>NO_COLOR</code> / CI 下自動去色；huh 互動元件另有 accessible 模式。統一封裝進新的
 <code>internal/ux</code> package，各檔案既有的私有 <code>print*</code> helper 改呼叫它。</div>
+<div class="note warn"><b>對比 pterm（棄用原因之一）：</b>pterm 的顏色是<b>全域旗標</b>
+（<code>pterm.DisableColor()</code>），所有 writer 共用同一份設定——先對 TTY 印過、再對檔案 writer
+印時容易漏關色（per-writer footgun）。lipgloss 每次呼叫都依<b>該 writer 自己</b>判定 profile，
+無全域狀態、無洩漏風險。</div>
 <div class="note warn"><b>串流契約（opus advisor 修正）：</b><b>不是</b>把所有輸出 blanket 搬到 stderr ——
 許多指令的「結果行」本來就在 <b>stdout</b>（marketplace list/validate、pack、install/uninstall 摘要）。
 規則改為<b>逐處保留原串流</b>：把該行原本的 <code>os.Stdout</code>/<code>os.Stderr</code> 原樣傳給 <code>ux.*</code>。
 互動元件固定走 stderr+stdin。驗收保護<b>所有</b>指令的 stdout 結果內容不變，不只 <code>normalize</code>。</div>
 
 <!-- ============ 2. 套件策略 ============ -->
-<h2><span class="num">02</span>套件策略 — 需要你拍板</h2>
-<p class="sub">huh v2 已改用 <code>charm.land/huh/v2</code> vanity 路徑，會連帶拉進 bubbletea/v2 + lipgloss/v2 +
-bubbles/v2 一整棵樹。而 pterm 本身就內建 select / multiselect / confirm / textinput，單一相依即可全包。</p>
-<div class="opts">
-  <div class="opt reco">
-    <h4>A. pterm 為主 + huh 選配 <span class="pill">建議</span></h4>
-    <ul>
-      <li>stdout / table / spinner / bullet 全用 <b>pterm</b></li>
-      <li>互動選單（多選、輸入、確認、密碼）用 <b>huh</b>，體驗最好</li>
-      <li>兩相依，但各司其職、符合你原始構想</li>
-      <li>huh 帶入 charm.land/v2 依賴樹（+4 modules）</li>
-    </ul>
-  </div>
-  <div class="opt">
-    <h4>B. 只用 pterm（最精簡）</h4>
-    <ul>
-      <li>單一相依即涵蓋輸出 + 全部互動元件</li>
-      <li>go.mod 最乾淨、CI/NO_COLOR 降階原生支援</li>
-      <li>多選 UX 略遜 huh（無群組化表單流）</li>
-      <li>不符「同時用 huh」的原始指定</li>
-    </ul>
-  </div>
+<h2><span class="num">02</span>套件策略 — 已定案：charm 生態（lipgloss + huh）</h2>
+<p class="sub">v1 的 pterm 方案已作廢：pterm v0.12.83 的寬度引擎無法正確處理「對齊的 box-drawing 表格」
+（多位元組分隔線算錯寬度導致跑版），且顏色是<b>全域旗標</b>，有 per-writer 洩漏 footgun。v2 全部收斂到
+<code>charm.land/lipgloss/v2</code>（樣式 / 表格 / 邊框 / 顏色）+ <code>charm.land/huh/v2</code>
+（互動表單 / spinner，已建於 bubbletea），單一生態、<b>移除 pterm 相依</b>。</p>
+<div class="map-scroll">
+<table class="map">
+  <tr><th>能力</th><th>v1（已棄用）</th><th>v2（採用）</th></tr>
+  <tr><td>訊息 Success/Info/Warn/Error</td><td>pterm PrefixPrinter</td><td><span class="tag lipgloss">lipgloss</span> Style + <code>Fprint(w, …)</code></td></tr>
+  <tr><td>表格 Table</td><td>pterm.DefaultTable</td><td><span class="tag lipgloss">lipgloss</span> <code>lipgloss/table</code>（RoundedBorder）</td></tr>
+  <tr><td>條列 BulletList</td><td>pterm.BulletListPrinter</td><td><span class="tag lipgloss">lipgloss</span> <code>lipgloss/list</code></td></tr>
+  <tr><td>巢狀 Tree</td><td>pterm.TreePrinter</td><td><span class="tag lipgloss">lipgloss</span> <code>lipgloss/tree</code></td></tr>
+  <tr><td>Box（確認框）</td><td>pterm.Box</td><td><span class="tag lipgloss">lipgloss</span> RoundedBorder</td></tr>
+  <tr><td>進度 Spinner</td><td>pterm spinner</td><td><span class="tag huh">huh</span> <code>huh/spinner</code></td></tr>
+  <tr><td>互動 Confirm/Input/Password/MultiSelect</td><td>huh（不變）</td><td><span class="tag huh">huh</span>（不變）</td></tr>
+</table>
 </div>
+<div class="note"><b>關鍵優勢：</b>lipgloss <code>Fprint(w, …)</code> 依<b>該 writer</b> 自己的 colorprofile
+原生 downsample / 去色——徹底取代先前手刻的 <code>renderForWriter</code>，且沒有全域旗標 footgun。
+huh 已建於 bubbletea，改用 lipgloss 使全部相依收斂到 charm 生態，<code>go mod tidy</code> 後 go.mod
+無 pterm。</div>
 
 <!-- ============ 3. 美化前後對照 ============ -->
 <h2><span class="num">03</span>美化前後對照（預期效果）</h2>
@@ -240,7 +249,7 @@ Toggle (1-5, ranges, 'all'/'none', Enter): <span class="cur"> </span></pre></div
 <code>all</code>/<code>none</code> 批次切換與 <code>1-3</code> 範圍語法（target 僅 5 個，逐項切換成本低）。
 連帶效果：<code>init.go:316 parseToggleInput</code> 成為孤兒，隨本次變更移除。</div>
 
-<h3>3.3　init — 建立前確認　<span class="tag huh">huh Confirm</span> <span class="tag pterm">pterm Box</span></h3>
+<h3>3.3　init — 建立前確認　<span class="tag huh">huh Confirm</span> <span class="tag lipgloss">lipgloss Box</span></h3>
 <p class="sub"><code>init.go:117-135</code>（About to create 區塊 + <code>confirmPrompt</code> Y/n）</p>
 <div class="cols">
   <div class="pane"><div class="cap before"><span class="dot b"></span>BEFORE</div>
@@ -265,7 +274,7 @@ Is this OK? [Y/n]: <span class="cur"> </span></pre></div>
   Is this OK?   <span class="inv"> Yes </span>  <span class="mut">No</span></pre></div>
 </div>
 
-<h3>3.4　全域 stdout 前綴　<span class="tag pterm">pterm Success/Info/Warning/Error</span></h3>
+<h3>3.4　全域 stdout 前綴　<span class="tag lipgloss">lipgloss Style + Fprint</span></h3>
 <p class="sub">遍佈 install / compile / uninstall / update / marketplace / mcpinstall，前綴不一致</p>
 <div class="cols">
   <div class="pane"><div class="cap before"><span class="dot b"></span>BEFORE</div>
@@ -288,7 +297,7 @@ Is this OK? [Y/n]: <span class="cur"> </span></pre></div>
 「refused to remove」其實是錯誤）。本次不是無腦 <code>[!] → !</code>，而是<b>逐處按真實嚴重度分流</b>：
 真警告 → <code>!</code>（warn），真失敗 → <code>✗</code>（error）。所以同一個 <code>[!]</code> 會依語意對到不同符號。</div>
 
-<h3>3.5　進度：抓取 / 解析　<span class="tag pterm">pterm Spinner</span></h3>
+<h3>3.5　進度：抓取 / 解析　<span class="tag huh">huh Spinner</span></h3>
 <p class="sub"><code>marketplace.go:414 Fetching plugins</code> · <code>install.go:573 Resolving</code>（目前是靜態文字）</p>
 <div class="cols">
   <div class="pane"><div class="cap before"><span class="dot b"></span>BEFORE</div>
@@ -301,23 +310,24 @@ Is this OK? [Y/n]: <span class="cur"> </span></pre></div>
 <span class="ok">✓</span> Fetched 24 plugins from <span class="hi">awesome-mp</span></pre></div>
 </div>
 
-<h3>3.6　marketplace list 表格　<span class="tag pterm">pterm Table · boxed</span></h3>
-<p class="sub"><code>marketplace.go:374-382</code>（手刻 <code>%-20s %-40s…</code> padding）→ <code>pterm.DefaultTable.WithHasHeader().WithBoxed()</code></p>
+<h3>3.6　marketplace list 表格　<span class="tag lipgloss">lipgloss/table · rounded</span></h3>
+<p class="sub"><code>marketplace.go:374-382</code>（手刻 <code>%-20s %-40s…</code> padding）→ <code>lipgloss/table</code>
+（<code>RoundedBorder</code> + <code>BorderHeader</code>）</p>
 <div class="cols">
   <div class="pane"><div class="cap before"><span class="dot b"></span>BEFORE</div>
 <pre class="term">NAME                 SOURCE          REF     HOST
 awesome-mp           github.com/a/b  main    github
 local-mp             ./plugins       -       local</pre></div>
-  <div class="pane"><div class="cap after"><span class="dot a"></span>AFTER</div>
-<pre class="term"><span class="info">┌────────────┬────────────────┬──────┬────────┐</span>
+  <div class="pane"><div class="cap after"><span class="dot a"></span>AFTER · lipgloss/table</div>
+<pre class="term"><span class="info">╭────────────┬────────────────┬──────┬────────╮</span>
 <span class="info">│</span> <span class="info b">NAME</span>       <span class="info">│</span> <span class="info b">SOURCE</span>         <span class="info">│</span> <span class="info b">REF</span>  <span class="info">│</span> <span class="info b">HOST</span>   <span class="info">│</span>
 <span class="info">├────────────┼────────────────┼──────┼────────┤</span>
 <span class="info">│</span> awesome-mp <span class="info">│</span> github.com/a/b <span class="info">│</span> <span class="hi">main</span> <span class="info">│</span> github <span class="info">│</span>
 <span class="info">│</span> local-mp   <span class="info">│</span> ./plugins      <span class="info">│</span> <span class="mut">-</span>    <span class="info">│</span> local  <span class="info">│</span>
-<span class="info">└────────────┴────────────────┴──────┴────────┘</span></pre></div>
+<span class="info">╰────────────┴────────────────┴──────┴────────╯</span></pre></div>
 </div>
 
-<h3>3.7　uninstall dry-run / 依賴樹　<span class="tag pterm">pterm Section + BulletList</span></h3>
+<h3>3.7　uninstall dry-run / 依賴樹　<span class="tag lipgloss">lipgloss Section + list</span></h3>
 <p class="sub"><code>uninstall.go:575-598</code> · <code>install.go:1159-1188</code></p>
 <div class="cols">
   <div class="pane"><div class="cap before"><span class="dot b"></span>BEFORE</div>
@@ -330,9 +340,9 @@ local-mp             ./plugins       -       local</pre></div>
   <span class="hi">•</span> other/dep          <span class="mut">transitive orphan</span></pre></div>
 </div>
 
-<h3>3.8　marketplace browse box table　<span class="tag pterm">pterm Table · boxed</span></h3>
+<h3>3.8　marketplace browse box table　<span class="tag lipgloss">lipgloss/table · rounded</span></h3>
 <p class="sub"><code>marketplace_browse_table.go</code>（原刻意模仿 Python rich <code>HEAVY_HEAD</code>）→ <b>明確遷移</b>
-到 <code>pterm.DefaultTable</code>，與 3.6 同一套 boxed 風格，全專案表格統一。</p>
+到 <code>lipgloss/table</code>，與 3.6 同一套 RoundedBorder 風格，全專案表格統一。</p>
 <div class="cols">
   <div class="pane"><div class="cap before"><span class="dot b"></span>BEFORE · rich HEAVY_HEAD</div>
 <pre class="term">                    Marketplace: awesome-mp
@@ -341,18 +351,18 @@ local-mp             ./plugins       -       local</pre></div>
 ┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
 │ code-lens  │ Inline hints   │ 1.2.0   │ apm add │
 └────────────┴────────────────┴─────────┴─────────┘</pre></div>
-  <div class="pane"><div class="cap after"><span class="dot a"></span>AFTER · pterm boxed（統一）</div>
+  <div class="pane"><div class="cap after"><span class="dot a"></span>AFTER · lipgloss/table（統一）</div>
 <pre class="term"><span class="mut">  Marketplace: </span><span class="hi b">awesome-mp</span>
-<span class="info">┌───────────┬──────────────┬─────────┬─────────┐</span>
+<span class="info">╭───────────┬──────────────┬─────────┬─────────╮</span>
 <span class="info">│</span> <span class="info b">Plugin</span>    <span class="info">│</span> <span class="info b">Description</span>  <span class="info">│</span> <span class="info b">Version</span> <span class="info">│</span> <span class="info b">Install</span> <span class="info">│</span>
 <span class="info">├───────────┼──────────────┼─────────┼─────────┤</span>
 <span class="info">│</span> code-lens <span class="info">│</span> Inline hints <span class="info">│</span> <span class="hi">1.2.0</span>   <span class="info">│</span> apm add <span class="info">│</span>
-<span class="info">└───────────┴──────────────┴─────────┴─────────┘</span></pre></div>
+<span class="info">╰───────────┴──────────────┴─────────┴─────────╯</span></pre></div>
 </div>
 <div class="note"><b>影響：</b>與 Python 版的 <code>HEAVY_HEAD</code> 視覺 parity 放棄（已確認接受）；
 若有對應的 golden / 快照測試需一併更新。</div>
 
-<h3>3.9　install 部署摘要（安裝了哪些 primitive → 哪些目錄）　<span class="tag pterm">pterm TreePrinter</span></h3>
+<h3>3.9　install 部署摘要（安裝了哪些 primitive → 哪些目錄）　<span class="tag lipgloss">lipgloss/tree</span></h3>
 <p class="sub"><code>install.go:1029-1062</code> · <code>printDeploySummary</code> install.go:1165 · 結尾 install.go:1153-1160
 —— install 最重要的可見輸出：每個依賴部署了幾個 skill/agent/instruction 到哪些 target 目錄。</p>
 <div class="cols">
@@ -399,7 +409,7 @@ local-mp             ./plugins       -       local</pre></div>
 <div class="note" style="border-left-color:var(--brand-2)"><b>以下 3.10 / 3.11 為 Workflow 全指令盤查（24 agents）補上的缺口：</b>
 原 14 點漏掉了 audit / pack / experimental / marketplace authoring 家族等獨立子指令。</div>
 
-<h3>3.10　audit --content 安全掃描報表　<span class="tag pterm">pterm BulletList · 依嚴重度分色</span></h3>
+<h3>3.10　audit --content 安全掃描報表　<span class="tag lipgloss">lipgloss/list · 依嚴重度分色</span></h3>
 <p class="sub"><code>audit_content.go:59</code> —— 全計畫唯一的結構化安全掃描報表（隱藏 Unicode 字元），
 現為裸 <code>fmt.Fprintf</code>。</p>
 <div class="cols">
@@ -419,7 +429,7 @@ audit --content failed: 1 critical finding(s), 1 warning(s) across 42 file(s)</p
 <span class="err b">✗ 1 critical</span> <span class="mut">·</span> <span class="warn">1 warning</span> <span class="mut">· 42 files scanned</span></pre></div>
 </div>
 
-<h3>3.11　marketplace audit 兩層巢狀報告　<span class="tag pterm">pterm TreePrinter</span></h3>
+<h3>3.11　marketplace audit 兩層巢狀報告　<span class="tag lipgloss">lipgloss/tree</span></h3>
 <p class="sub"><code>marketplace_authoring_audit.go:81-84 printAuditReports</code> —— 計畫中唯一的
 plugin → issue → hint 兩層巢狀，現為手動空白縮排。</p>
 <div class="cols">
@@ -445,47 +455,50 @@ plugin → issue → hint 兩層巢狀，現為手動空白縮排。</p>
   <tr><th>#</th><th>目標</th><th>位置</th><th>套件</th><th>作法</th></tr>
   <tr><td>1</td><td>專案 metadata 輸入</td><td><code>init.go:207</code></td><td><span class="tag huh">huh</span></td><td>Input + 預設值 + 驗證</td></tr>
   <tr><td>2</td><td>Target 多選</td><td><code>init.go:236</code></td><td><span class="tag huh">huh</span></td><td>MultiSelect 取代數字切換迴圈</td></tr>
-  <tr><td>3</td><td>建立前確認</td><td><code>init.go:117</code></td><td><span class="tag huh">huh</span>+<span class="tag pterm">pterm</span></td><td>Box 摘要 + Confirm 按鈕</td></tr>
-  <tr><td>4</td><td>init 成功輸出 + Next steps</td><td><code>init.go:159</code></td><td><span class="tag pterm">pterm</span></td><td>Success + Box/BulletList</td></tr>
+  <tr><td>3</td><td>建立前確認</td><td><code>init.go:117</code></td><td><span class="tag huh">huh</span>+<span class="tag lipgloss">lipgloss</span></td><td>Box 摘要 + Confirm 按鈕</td></tr>
+  <tr><td>4</td><td>init 成功輸出 + Next steps</td><td><code>init.go:159</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>Success + Box/list</td></tr>
   <tr><td>5</td><td>marketplace 移除確認</td><td><code>marketplace.go:63/85</code></td><td><span class="tag huh">huh</span></td><td>Confirm 整併 readYesNo</td></tr>
   <tr><td>6</td><td>MCP 覆蓋確認</td><td><code>mcp_prompt.go:120</code></td><td><span class="tag huh">huh</span></td><td>diff + Confirm</td></tr>
   <tr><td>7</td><td>MCP 機密輸入（遮蔽）</td><td><code>mcp_prompt.go:99</code></td><td><span class="tag huh">huh</span></td><td>Input().Password 取代 term.ReadPassword</td></tr>
-  <tr><td>8</td><td>全域 success/info/warn/error 前綴</td><td>install / compile / uninstall / update / marketplace / mcpinstall</td><td><span class="tag pterm">pterm</span></td><td>統一 PrefixPrinter，封裝進 <code>internal/ux</code></td></tr>
-  <tr><td>9</td><td>抓取 / 解析進度</td><td><code>marketplace.go:414</code> · <code>install.go:573</code></td><td><span class="tag pterm">pterm</span></td><td>Spinner → 完成收斂 ✓</td></tr>
-  <tr><td>10</td><td>marketplace list 表格</td><td><code>marketplace.go:374</code></td><td><span class="tag pterm">pterm</span></td><td>DefaultTable + header style</td></tr>
-  <tr><td>11</td><td>uninstall dry-run 條列</td><td><code>uninstall.go:575</code></td><td><span class="tag pterm">pterm</span></td><td>Section + BulletList</td></tr>
-  <tr><td>12</td><td>install 部署摘要（primitive → 目錄）+ 已安裝依賴清單</td><td><code>install.go:1055</code> · <code>1165 printDeploySummary</code> · <code>1153</code></td><td><span class="tag pterm">pterm</span></td><td>TreePrinter 分組；順修複數與空 tag</td></tr>
-  <tr><td>13</td><td>update plan 差異</td><td><code>update.go:326/351</code></td><td><span class="tag pterm">pterm</span></td><td>Section + 加減行上色</td></tr>
-  <tr><td>14</td><td>browse box table</td><td><code>marketplace_browse_table.go</code></td><td><span class="tag pterm">pterm</span></td><td>遷移到 pterm.Table boxed（統一風格，放棄 rich parity）</td></tr>
+  <tr><td>8</td><td>全域 success/info/warn/error 前綴</td><td>install / compile / uninstall / update / marketplace / mcpinstall</td><td><span class="tag lipgloss">lipgloss</span></td><td>統一 Style + Fprint，封裝進 <code>internal/ux</code></td></tr>
+  <tr><td>9</td><td>抓取 / 解析進度</td><td><code>marketplace.go:414</code> · <code>install.go:573</code></td><td><span class="tag huh">huh</span></td><td>huh/spinner → 完成收斂 ✓</td></tr>
+  <tr><td>10</td><td>marketplace list 表格</td><td><code>marketplace.go:374</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>lipgloss/table + header style（RoundedBorder）</td></tr>
+  <tr><td>11</td><td>uninstall dry-run 條列</td><td><code>uninstall.go:575</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>Section + lipgloss/list</td></tr>
+  <tr><td>12</td><td>install 部署摘要（primitive → 目錄）+ 已安裝依賴清單</td><td><code>install.go:1055</code> · <code>1165 printDeploySummary</code> · <code>1153</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>lipgloss/tree 分組；順修複數與空 tag</td></tr>
+  <tr><td>13</td><td>update plan 差異</td><td><code>update.go:326/351</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>Section + 加減行上色</td></tr>
+  <tr><td>14</td><td>browse box table</td><td><code>marketplace_browse_table.go</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>遷移到 lipgloss/table RoundedBorder（統一風格，放棄 rich parity）</td></tr>
   <tr><td colspan="5" style="background:var(--bg-soft);color:var(--brand-2);font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;">▼ WORKFLOW 盤查補漏（原 14 點外的獨立子指令）</td></tr>
-  <tr><td>15</td><td>audit --content 安全掃描報表</td><td><code>audit_content.go:59</code></td><td><span class="tag pterm">pterm</span></td><td>依嚴重度分色 BulletList + Spinner + stat 摘要</td></tr>
-  <tr><td>16</td><td>audit 完整性錯誤/成功</td><td><code>audit.go:76/87</code></td><td><span class="tag pterm">pterm</span></td><td>併入全域前綴（第 8 點檔案清單擴充）</td></tr>
-  <tr><td>17</td><td>pack 指令（3 producer + dry-run）</td><td><code>pack.go:244/249…</code></td><td><span class="tag pterm">pterm</span></td><td>前綴 + dry-run BulletList/Section</td></tr>
-  <tr><td>18</td><td>marketplace check 逐包清單</td><td><code>marketplace_authoring.go:276</code></td><td><span class="tag pterm">pterm</span></td><td>BulletList + 通過率 stat</td></tr>
-  <tr><td>19</td><td>marketplace outdated 表格</td><td><code>marketplace_authoring.go:336</code></td><td><span class="tag pterm">pterm</span></td><td>Table boxed，狀態上色</td></tr>
-  <tr><td>20</td><td>marketplace audit 兩層巢狀報告</td><td><code>marketplace_authoring_audit.go:81</code></td><td><span class="tag pterm">pterm</span></td><td>TreePrinter（plugin→issue→hint）</td></tr>
-  <tr><td>21</td><td>marketplace migrate dry-run diff</td><td><code>marketplace_authoring_migrate.go:34</code></td><td><span class="tag pterm">pterm</span></td><td>Section + +/- 行上色（同第 13 點）</td></tr>
-  <tr><td>22</td><td>marketplace validate finding + Summary</td><td><code>marketplace.go:610</code></td><td><span class="tag pterm">pterm</span></td><td>依 level 上色 BulletList + 多欄 stat</td></tr>
-  <tr><td>23</td><td>marketplace package add/set/remove</td><td><code>marketplace_package.go:125</code></td><td><span class="tag pterm">pterm</span></td><td>併入全域前綴</td></tr>
-  <tr><td>24</td><td>experimental list 表格</td><td><code>experimental.go:25</code></td><td><span class="tag pterm">pterm</span></td><td>Table boxed，enabled/disabled 上色</td></tr>
-  <tr><td>25</td><td>apm-go validate diagnostics</td><td><code>main.go:72</code></td><td><span class="tag pterm">pterm</span></td><td>Warning + 逐筆 BulletList</td></tr>
-  <tr><td>26</td><td>help / banner 客製化（選配）</td><td><code>main.go:16</code></td><td><span class="tag pterm">pterm</span></td><td>root 補 Long/Example 或自訂 usage template</td></tr>
+  <tr><td>15</td><td>audit --content 安全掃描報表</td><td><code>audit_content.go:59</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>依嚴重度分色 lipgloss/list + huh Spinner + stat 摘要</td></tr>
+  <tr><td>16</td><td>audit 完整性錯誤/成功</td><td><code>audit.go:76/87</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>併入全域前綴（第 8 點檔案清單擴充）</td></tr>
+  <tr><td>17</td><td>pack 指令（3 producer + dry-run）</td><td><code>pack.go:244/249…</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>前綴 + dry-run lipgloss/list + Section</td></tr>
+  <tr><td>18</td><td>marketplace check 逐包清單</td><td><code>marketplace_authoring.go:276</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>lipgloss/list + 通過率 stat</td></tr>
+  <tr><td>19</td><td>marketplace outdated 表格</td><td><code>marketplace_authoring.go:336</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>lipgloss/table RoundedBorder，狀態上色</td></tr>
+  <tr><td>20</td><td>marketplace audit 兩層巢狀報告</td><td><code>marketplace_authoring_audit.go:81</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>lipgloss/tree（plugin→issue→hint）</td></tr>
+  <tr><td>21</td><td>marketplace migrate dry-run diff</td><td><code>marketplace_authoring_migrate.go:34</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>Section + +/- 行上色（同第 13 點）</td></tr>
+  <tr><td>22</td><td>marketplace validate finding + Summary</td><td><code>marketplace.go:610</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>依 level 上色 lipgloss/list + 多欄 stat</td></tr>
+  <tr><td>23</td><td>marketplace package add/set/remove</td><td><code>marketplace_package.go:125</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>併入全域前綴</td></tr>
+  <tr><td>24</td><td>experimental list 表格</td><td><code>experimental.go:25</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>lipgloss/table RoundedBorder，enabled/disabled 上色</td></tr>
+  <tr><td>25</td><td>apm-go validate diagnostics</td><td><code>main.go:72</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>Warning + 逐筆 lipgloss/list</td></tr>
+  <tr><td>26</td><td>help / banner 客製化（選配）</td><td><code>main.go:16</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>root 補 Long/Example 或自訂 usage template</td></tr>
 </table>
 </div>
 
 <!-- ============ 5. 落地方式 ============ -->
 <h2><span class="num">05</span>落地方式</h2>
 <ul class="plain">
-  <li>新增 <code>internal/ux</code> package：集中主題（色票 / 符號 / huh Theme / pterm printer 設定）與
+  <li>新增 <code>internal/ux</code> package：集中主題（色票 / 符號 / lipgloss Style / huh Theme）與
       <code>Success/Info/Warn/Error/Table/Spinner/Confirm/Input/MultiSelect</code> 封裝。</li>
-  <li>單一 TTY/CI 偵測入口，決定 huh accessible 模式與 pterm 關色。</li>
+  <li>單一 TTY/CI 偵測入口，決定 huh accessible 模式；著色交給 lipgloss per-writer colorprofile，
+      無需全域關色旗標。</li>
   <li>各檔案既有私有 <code>print*</code> helper 改呼叫 <code>internal/ux</code>，逐指令替換、不動業務邏輯。</li>
   <li>非互動 / <code>--yes</code> 路徑維持原樣純文字輸出（不套動畫 spinner）。</li>
   <li>測試：<code>internal/ux</code> 加單元測試（關色時輸出純文字 golden）；互動流程既有 e2e 以 <code>--yes</code> 繞過，維持綠燈。</li>
 </ul>
 
 <footer>
-  預期效果 mockup · 已確認：<b>策略 A（pterm + huh）</b>、<b>browse 遷移 pterm.Table</b>、<b>多選採 huh 預設</b>、<b>全指令 26 點分三階段</b>。
+  預期效果 mockup（v2）· 已確認：<b>charm 生態（lipgloss + huh，pterm 已棄用）</b>、<b>browse 遷移 lipgloss/table</b>、
+  <b>多選採 huh 預設</b>、<b>全指令 26 點分三階段</b>。新分支 <code>feat/init-tui-lipgloss</code>；
+  舊 pterm 分支 <code>feat/init-tui-beautify</code> 已作廢保留可參考。
   獨立 opus advisor 已產出 <b>40 項硬性驗證 checklist</b>（verification-checklist.md）並修正 4 個計畫漏洞（串流契約、測試斷言、golden 排程、前綴列舉）。待實作綠燈。
 </footer>
 </div>

@@ -88,9 +88,40 @@ lipgloss.Fprintln(w, t.String())
 ```
 lipgloss 正確算欄寬與 CJK 全形 → **對齊**、box-drawing、可有 header 分隔線（解決 pterm 的所有問題）。
 
+### BulletList / Tree（lipgloss 原生子套件）
+- `BulletList` → `charm.land/lipgloss/v2/list`：`list.New().Items(...).Enumerator(list.Bullet).
+  EnumeratorStyle(mutedStyle).ItemStyle(...)`；縮排層級用巢狀 sub-list（`list.New()` 當 item）。
+- `Tree` → `charm.land/lipgloss/v2/tree`：`tree.New().Root(name).Child(...)`，原生連接線
+  （`├─`/`└─`/`│`），供 install 部署摘要、marketplace audit 兩層巢狀用。
+
 ### Box（Section/建立前確認）
 `lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(brand).Padding(0,1).Render(content)`，
 標題可用 `lipgloss.JoinVertical` 或 border title 技巧。
+
+## 符號 / 前綴 / 文字替換對照（明確）
+
+### 訊息前綴符號（單一來源 colors.go；lipgloss Foreground 上色）
+| 語意 | 新符號 | 顏色 | 取代的舊前綴 |
+|---|---|---|---|
+| success | `✓` | green #3fb950 | `[+]` `[*]` |
+| info | `ℹ` | cyan #2dd4bf | `[i]` |
+| warn | `!` | amber #d29922 | `[warn]`，`[!]`（真警告） |
+| error | `✗` | red #f85149 | stderr 裸字串，`[!]`（真失敗） |
+| progress | `▸`（或 spinner 動畫） | cyan | `[>]` |
+| list item | `•` / `-` | muted | `-` `|--` |
+
+- `[!]` **依語意分流**：non-fatal → `!`（warn）；緊接失敗/exit≠0 → `✗`（error）。
+- refcheck 的 `[x]/[+]/[*]/[i]` Status token 是**資料**，在 cmd 渲染層對應到符號（不改 refcheck）。
+- `pack.go` 的 `licenseUndeclaredWarning` 等 production 常數內嵌前綴 → 移除字面，由 `ux.Warn` 供符號。
+
+### 文字/區塊替換（維持語意，只改呈現）
+- init：`Setting up your APM project...` → `ux.Section`；`+--- About to create ---+` 手刻框 →
+  `ux.Box`；`Next steps:` → `ux.Section` + `ux.BulletList`；成功行 → `ux.Success`。
+- marketplace list / browse padding 表 → `ux.Table`；`source:`/`ref:` 明細 → `ux.BulletList`。
+- install 部署摘要 `|-- N type -> dir` → `ux.Tree`；`Installed N dependencies` 複數修正、空 `@tag` fallback。
+- uninstall/pack dry-run `[dry-run]` + 逐項 → `ux.Section` + `ux.BulletList`。
+- update plan `[i] Update plan` → `ux.Section`；migrate diff → `ux.Diff`。
+- audit --content 逐筆 → 依 severity 分色（`ux.Error/Warn/Info`）；marketplace audit 兩層 → `ux.Tree`。
 
 ### Spinner（huh/spinner）
 `spinner.New().Title(text).Action(fn).Run()`（同步）或 `.ActionWithErr(ctx, fn)`。非 TTY/CI 下

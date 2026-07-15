@@ -15,7 +15,8 @@
    `colorprofile.NewWriter(w, os.Environ())`。
 4. **表格**：`Table` = `lipgloss/table`（RoundedBorder、BorderColumn、BorderHeader、
    StyleFunc header cyan bold）→ `lipgloss.Fprintln(w, t.String())`。
-5. **結構化**：`BulletList`（縮排）、`Tree`（遞迴縮排 + 連接線）、`Section`（標題樣式）、
+5. **結構化**：`BulletList` = `lipgloss/list`（Bullet enumerator + 縮排巢狀）、
+   `Tree` = `lipgloss/tree`（原生 ├─└─ 連接線）、`Section`（標題樣式）、
    `Box`（lipgloss border + 標題）、`Diff`（+/- 上色）。
 6. **Spinner**：`Spinner` = huh/spinner；非 CanPrompt 走靜態行、不阻塞。
 7. **互動**：`Confirm/InputText/Password/MultiSelect` = huh（沿用 v1）。
