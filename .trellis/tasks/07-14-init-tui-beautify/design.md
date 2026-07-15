@@ -1,0 +1,113 @@
+# 技術設計 v2 — init/stdout 美化（lipgloss + huh）
+
+## 決策
+
+- **棄用 pterm**，改用 charmbracelet 生態：`lipgloss`（樣式/表格/邊框/顏色）+ `huh`（互動/spinner）。
+- `internal/ux` **門面 API 維持與 v1 相容**，只換底層實作 → cmd 層呼叫點（前綴/串流/severity/
+  互動安全）沿用 v1 的成果，不重寫。
+
+## 依賴
+
+- `charm.land/lipgloss/v2`（已是直接相依，huh 帶入）+ 子套件 `charm.land/lipgloss/v2/table`。
+- `charm.land/huh/v2` + `charm.land/huh/v2/spinner`。
+- 顏色偵測：lipgloss v2 內部用 `github.com/charmbracelet/colorprofile`（隨 lipgloss 帶入）。
+- **移除** `github.com/pterm/pterm`（及其獨有的 atomicgo/gookit 等傳遞相依）；`go mod tidy`。
+
+## 門面契約（internal/ux，API 同 v1）
+
+```go
+package ux
+
+func Init()                    // 一次性：偵測 CanPrompt 條件、設定 huh accessible
+func IsRich() bool
+func CanPrompt() bool          // stdin+stderr TTY 且非 CI（不含 NO_COLOR）
+
+// 訊息（帶符號前綴 + lipgloss 色）；每個接收目標 writer。
+func Success(w io.Writer, format string, a ...any)  // ✓ 綠
+func Info(w io.Writer, format string, a ...any)     // ℹ 品牌青
+func Warn(w io.Writer, format string, a ...any)     // ! 琥珀
+func Error(w io.Writer, format string, a ...any)    // ✗ 紅
+
+// 結構化
+type Item struct { Level int; Text string }
+type TreeNode struct { Text string; Children []TreeNode }
+func Table(w io.Writer, headers []string, rows [][]string)
+func BulletList(w io.Writer, items []Item)
+func Tree(w io.Writer, root TreeNode)
+func Section(w io.Writer, title string)
+func Box(w io.Writer, title string, body []string)
+func Diff(w io.Writer, diffText string)
+
+// 進度（huh/spinner）
+func Spinner(w io.Writer, text string) *Spin
+func (s *Spin) Update(text string); func (s *Spin) Success(msg string); func (s *Spin) Fail(msg string)
+
+// 互動（huh，固定 stderr+stdin；非 CanPrompt 回傳預設值不阻塞）
+type Option struct { Label, Value string; Selected bool }
+func Confirm(prompt string, def bool) (bool, error)
+func InputText(label, def string) (string, error)
+func Password(label string) (string, error)
+func MultiSelect(title string, opts []Option) ([]string, error)
+```
+
+## 著色模型（核心改進：lipgloss 原生 per-writer）
+
+- 樣式：`lipgloss.NewStyle().Foreground(lipgloss.Color("#…")).Bold(true).Render(text)` 產生字串。
+- 輸出：**`lipgloss.Fprint(w, s)` / `lipgloss.Fprintln(w, s)`** —— 依 **該 writer** 的 colorprofile
+  自動 downsample（TrueColor→ANSI256→ANSI16→mono）並在**非 TTY 時去色**。
+- **已讀 `charm.land/lipgloss/v2 v2.0.5` 原始碼確認**（writer.go:81）：
+  ```go
+  func Fprintln(w io.Writer, v ...any) (int, error) {
+      return fmt.Fprintln(colorprofile.NewWriter(w, os.Environ()), v...)
+  }
+  ```
+  `lipgloss.Fprint/Fprintln(w, …)` 把 `w` 包進 `colorprofile.NewWriter(w, env)`，**依該 writer
+  自己的 profile（TTY/NO_COLOR）downsample/去色**。
+- 因此：`apm-go list > out.txt`（stdout 非 TTY）→ 檔案**自動純文字**；真 TTY → 有色（且依終端
+  能力 TrueColor/256/16 降階）。**per-writer、函式庫原生、每次呼叫判定**：傳任意非終端 writer
+  （檔案/`bytes.Buffer`）都會正確去色 → **徹底無 footgun**（pterm 全域旗標的洩漏問題不存在）。
+- 因此 ux 輸出函式一律：`s := style.Render(text)`（或 table `.String()`）→ `lipgloss.Fprintln(w, s)`。
+  不需 renderForWriter / isRichWriter / 全域旗標。
+
+### 色票 / 符號（單一來源，colors.go）
+`ColorBrand #2dd4bf`、`ColorHeading #8aa0ff`、`ColorSuccess #3fb950`、`ColorWarning #d29922`、
+`ColorError #f85149`、`ColorMuted #8b949e`；`✓ ℹ ! ✗ ▸ •`。
+
+### 表格（lipgloss/table）
+```go
+t := table.New().
+    Border(lipgloss.RoundedBorder()).
+    BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color(ColorMuted))).
+    BorderColumn(true).BorderHeader(true).      // 欄分隔 + header/body 分隔線
+    Headers(headers...).Rows(rows...).
+    StyleFunc(func(row, col int) lipgloss.Style {
+        if row == table.HeaderRow { return headerStyle /* cyan bold */ }
+        return cellStyle /* padding */
+    })
+lipgloss.Fprintln(w, t.String())
+```
+lipgloss 正確算欄寬與 CJK 全形 → **對齊**、box-drawing、可有 header 分隔線（解決 pterm 的所有問題）。
+
+### Box（Section/建立前確認）
+`lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(brand).Padding(0,1).Render(content)`，
+標題可用 `lipgloss.JoinVertical` 或 border title 技巧。
+
+### Spinner（huh/spinner）
+`spinner.New().Title(text).Action(fn).Run()`（同步）或 `.ActionWithErr(ctx, fn)`。非 TTY/CI 下
+huh spinner 需確認不阻塞（accessible / 直接執行 action 並印靜態行）；`ux.Spinner` 封裝此判斷。
+
+## 串流契約
+- 逐處保留原 writer；stdout 結果不搬 stderr；`normalize` 走 `os.Stdout.Write`，不經 ux，位元組不變。
+- 互動元件固定 stderr+stdin。
+
+## 業務邏輯層界線
+`internal/manifest`·`marketplace`·`pack` **不 import ux**（維持 v1 決定）；library 層警告維持原樣。
+
+## 相容性 / 風險
+- lipgloss v2 是 beta 系列（`charm.land/lipgloss/v2 v2.0.5`）；API 以實際安裝版為準，讀 module 確認。
+- huh/spinner 在非 TTY 的行為需驗證（不得在 CI 阻塞）；`ux.Spinner` 對非 CanPrompt 走靜態輸出。
+- `lipgloss/table` 的 border/column 開關與 v1 mockup 的視覺對齊，需以實際渲染（含 CJK/換行）驗證。
+- 移除 pterm 後確認無其他程式碼引用 pterm。
+
+## Rollback
+- 全部集中在 `internal/ux` + go.mod；新分支 `feat/init-tui-lipgloss` 隔離。舊 pterm 分支已作廢保留可參考。
