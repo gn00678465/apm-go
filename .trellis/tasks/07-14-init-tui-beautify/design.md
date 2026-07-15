@@ -8,10 +8,14 @@
 
 ## 依賴
 
-- `charm.land/lipgloss/v2`（已是直接相依，huh 帶入）+ 子套件 `charm.land/lipgloss/v2/table`。
-- `charm.land/huh/v2` + `charm.land/huh/v2/spinner`。
+- **現況（2026-07-15 核對 go.mod）**：本分支自 `main` 分出，go.mod **乾淨** —— huh / lipgloss /
+  pterm **皆不在**。以下依賴需**全新 `go get`**（非「已相依」）：
+- `charm.land/huh/v2` + `charm.land/huh/v2/spinner`（huh 會帶入 lipgloss v2）。
+- `charm.land/lipgloss/v2` + 子套件 `.../v2/table`、`.../v2/list`、`.../v2/tree`（huh 帶入，
+  但需在 go.mod 升為直接相依）。實際 module 路徑與版本以 `go get` 結果為準（Charm 目前用
+  `charm.land/*` vanity；若解析失敗回退 `github.com/charmbracelet/*/v2`）。
 - 顏色偵測：lipgloss v2 內部用 `github.com/charmbracelet/colorprofile`（隨 lipgloss 帶入）。
-- **移除** `github.com/pterm/pterm`（及其獨有的 atomicgo/gookit 等傳遞相依）；`go mod tidy`。
+- **pterm 無需移除**（本分支從未引入）；新增依賴後 `go mod tidy`。
 
 ## 門面契約（internal/ux，API 同 v1）
 

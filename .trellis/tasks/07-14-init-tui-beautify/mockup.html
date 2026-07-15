@@ -458,7 +458,7 @@ plugin → issue → hint 兩層巢狀，現為手動空白縮排。</p>
 <div class="map-scroll">
 <table class="map">
   <tr><th>#</th><th>目標</th><th>位置</th><th>套件</th><th>作法</th></tr>
-  <tr><td>1</td><td>專案 metadata 輸入</td><td><code>init.go:207</code></td><td><span class="tag huh">huh</span></td><td>Input + 預設值 + 驗證</td></tr>
+  <tr><td>1</td><td>專案 metadata 輸入</td><td><code>init.go:80-88</code></td><td><span class="tag huh">huh</span></td><td><code>ux.InputForm</code> 單一群組（4 欄同畫面·可回退）+ 預設值 + 驗證</td></tr>
   <tr><td>2</td><td>Target 多選</td><td><code>init.go:236</code></td><td><span class="tag huh">huh</span></td><td>MultiSelect 取代數字切換迴圈</td></tr>
   <tr><td>3</td><td>建立前確認</td><td><code>init.go:117</code></td><td><span class="tag huh">huh</span>+<span class="tag lipgloss">lipgloss</span></td><td>Box 摘要 + Confirm 按鈕</td></tr>
   <tr><td>4</td><td>init 成功輸出 + Next steps</td><td><code>init.go:159</code></td><td><span class="tag lipgloss">lipgloss</span></td><td>Success + Box/list</td></tr>
@@ -492,7 +492,7 @@ plugin → issue → hint 兩層巢狀，現為手動空白縮排。</p>
 <h2><span class="num">05</span>落地方式</h2>
 <ul class="plain">
   <li>新增 <code>internal/ux</code> package：集中主題（色票 / 符號 / lipgloss Style / huh Theme）與
-      <code>Success/Info/Warn/Error/Table/Spinner/Confirm/Input/MultiSelect</code> 封裝。</li>
+      <code>Success/Info/Warn/Error/Table/BulletList/Tree/Section/Box/Diff/Spinner/Confirm/InputText/InputForm/Password/MultiSelect</code> 封裝。</li>
   <li>單一 TTY/CI 偵測入口，決定 huh accessible 模式；著色交給 lipgloss per-writer colorprofile，
       無需全域關色旗標。</li>
   <li>各檔案既有私有 <code>print*</code> helper 改呼叫 <code>internal/ux</code>，逐指令替換、不動業務邏輯。</li>

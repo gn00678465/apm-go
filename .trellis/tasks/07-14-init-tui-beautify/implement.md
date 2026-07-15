@@ -6,8 +6,11 @@
 
 ## Phase 1 — internal/ux 以 lipgloss 重寫
 
-1. **依賴**：確認 `charm.land/lipgloss/v2` 為直接相依；改用 `.../v2/table`、`.../huh/v2/spinner`。
-   → verify: `go build ./internal/ux/...`（pterm 稍後移除）
+1. **依賴（go.mod 目前乾淨，需全新新增）**：`go get charm.land/huh/v2 charm.land/lipgloss/v2`
+   （huh 帶入 lipgloss；再把 lipgloss 升為直接相依）；子套件 `.../v2/table`、`.../v2/list`、
+   `.../v2/tree`、`.../huh/v2/spinner`。module 路徑/版本以 `go get` 實際結果為準
+   （`charm.land/*` 解析失敗則用 `github.com/charmbracelet/*/v2`）。
+   → verify: `go get` exit 0、`grep -E "huh|lipgloss" go.mod` 各至少一筆、`go build ./internal/ux/...`
 2. **colors.go / theme**：色票 + 符號 + lipgloss Style（Success/Info/Warn/Error 各自 Foreground）
    + huh Theme（沿用 v1）。
 3. **訊息輸出**：`Success/Info/Warn/Error(w, …)` = `lipgloss` style Render + **`lipgloss.Fprint(w, …)`**
@@ -37,8 +40,9 @@
 
 ## Phase 3 — 移除 pterm + 全量驗證
 
-10. **移除 pterm**：確認無任何檔案 import pterm → `go mod tidy` → go.mod 無 pterm。
-    → verify: `grep -rn "pterm" --include=*.go .` 應為空；`grep pterm go.mod` 為空
+10. **依賴收斂**：`go mod tidy` → 確認 go.mod 有 huh+lipgloss、無 pterm（本分支本就無 pterm）。
+    → verify: `grep -rn "pterm" --include=*.go .` 應為空；`grep pterm go.mod` 為空；
+    `grep -E "huh|lipgloss" go.mod` 各至少一筆
 11. **全量驗證**：
     - `go build ./...`、`go vet ./...`、`go test ./... -count=1` 全綠（-race 待 CI）。
     - **表格渲染實測**（含 CJK + 換行）：`apm-go experimental list` / `marketplace browse`

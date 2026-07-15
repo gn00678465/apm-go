@@ -1,4 +1,9 @@
-# 驗證 Checklist — init/stdout 美化（huh + pterm）
+# 驗證 Checklist — init/stdout 美化（huh + lipgloss）
+
+> **2026-07-15 對齊**：本 checklist 原為 pterm 版；pivot 至 charmbracelet（lipgloss + huh）後，
+> 僅**函式庫機制相關**的項目（A1 依賴、A3 簽章、B2 表格、X1 門面 grep）已就地換為 lipgloss，
+> **所有 PASS/FAIL 行為判定邏輯不變**。Phase A/B/C 標號對應 implement.md 的 Phase 1/2/3
+> （1=重寫 internal/ux、2=套用 cmd、3=收斂驗證），僅為分組，behavioural 項目不受影響。
 
 ## 用途與原則
 
@@ -57,25 +62,31 @@
 ## Phase A — 基礎：internal/ux + 全域前綴替換
 
 - [ ] **A1. 依賴加入且可編譯**
-  判定：`go get charm.land/huh/v2@latest github.com/pterm/pterm && go mod tidy && go build ./...`
+  判定：`go get charm.land/huh/v2 charm.land/lipgloss/v2 && go mod tidy && go build ./...`
   全部指令 exit code 為 0。
-  FAIL：任何一步非 0，或 `go.mod`/`go.sum` 未包含 `charm.land/huh/v2` 與
-  `github.com/pterm/pterm`（`grep -E "huh|pterm" go.mod` 應各至少一筆）。
+  FAIL：任何一步非 0，或 `go.mod` 未包含 `huh` 與 `lipgloss`
+  （`grep -E "huh|lipgloss" go.mod` 應各至少一筆）；或 go.mod 殘留 `pterm`。
 
 - [ ] **A2. `internal/ux` package 存在**
   判定：`Glob internal/ux/**/*.go` 有結果；`go build ./internal/ux/...` exit code 0。
   FAIL：目錄不存在，或編譯失敗。
 
-- [ ] **A3. `internal/ux` 對外契約符合 design.md 第 16-41 行**
-  判定：`grep -n "^func " internal/ux/*.go`，逐一核對存在
-  `Init(w io.Writer)`、`Success/Info/Warn/Error(format string, a ...any)`、
-  `Table(headers []string, rows [][]string)`、`BulletList(items []Item)`、
-  `Section(title string)`、`Spinner(text string) *Spin`、
+- [ ] **A3. `internal/ux` 對外契約符合 design.md 門面契約（第 18-61 行）**
+  判定：`grep -n "^func " internal/ux/*.go`，逐一核對存在（**per-writer：訊息/結構化函式第一參數為
+  `w io.Writer`**）：
+  `Init()`、`IsRich() bool`、`CanPrompt() bool`、
+  `Success/Info/Warn/Error(w io.Writer, format string, a ...any)`、
+  `Table(w io.Writer, headers []string, rows [][]string)`、`BulletList(w io.Writer, items []Item)`、
+  `Tree(w io.Writer, root TreeNode)`、`Section(w io.Writer, title string)`、
+  `Box(w io.Writer, title string, body []string)`、`Diff(w io.Writer, diffText string)`、
+  `Spinner(w io.Writer, text string) *Spin`、
   `Confirm(prompt string, def bool) (bool, error)`、
   `InputText(label, def string) (string, error)`、
   `Password(label string) (string, error)`、
-  `MultiSelect(title string, opts []Option) ([]string, error)`。
-  FAIL：任一函式簽名缺漏或簽名不符（例如少了非 TTY 回傳預設值的 `ok`/`error` 語意）。
+  `MultiSelect(title string, opts []Option) ([]string, error)`、
+  `InputForm(title string, fields []Field) (map[string]string, error)`。
+  FAIL：任一函式簽名缺漏或簽名不符（尤其訊息/結構化函式**漏掉 `w io.Writer` 首參**，或非
+  CanPrompt 互動函式未回傳預設值語意）。
 
 - [ ] **A4. 關色模式（NO_COLOR / CI / 非 TTY）純文字 golden 測試存在且通過**
   判定：`go test ./internal/ux/... -run Golden -v`（或等效測試名）；輸出斷言中不含
@@ -139,7 +150,7 @@
   欄位（NAME/SOURCE/REF/[HOST]/PATH）內容與 Phase A 之前的輸出資料值一致，只有邊框/顏色改變。
   FAIL：任何一筆資料值（不含表格邊框字元）與美化前不同，或欄位順序改變。
 
-- [ ] **B2. `marketplace browse` 遷至 `pterm.Table` 且對應測試已更新**
+- [ ] **B2. `marketplace browse` 遷至 `lipgloss/table` 且對應測試已更新**
   判定：`go test ./cmd/apm-go/... -run TestMarketplaceBrowse -v`。
   FAIL：`TestMarketplaceBrowse_RendersPluginTable`（`marketplace_e2e_test.go:967`）
   仍斷言舊 box-drawing 字元 `┃`/`│` 卻測試失敗（代表測試沒同步更新）；或該測試被直接刪除
@@ -352,10 +363,10 @@
 ## 跨階段總驗收（三階段全部完成後）
 
 - [ ] **X1. `internal/ux` 是唯一輸出/互動門面**
-  判定：`grep -rn "huh\.\|pterm\." cmd/apm-go/*.go` 應為空（`_test.go` 除外）——
-  `cmd/apm-go` 下的業務程式碼不得直接 import/呼叫 `huh`/`pterm`，一律經
+  判定：`grep -rn "huh\.\|lipgloss\." cmd/apm-go/*.go` 應為空（`_test.go` 除外）——
+  `cmd/apm-go` 下的業務程式碼不得直接 import/呼叫 `huh`/`lipgloss`，一律經
   `internal/ux`。
-  FAIL：任何 `cmd/apm-go` 下的非測試檔直接呼叫 `huh.*`/`pterm.*` API。
+  FAIL：任何 `cmd/apm-go` 下的非測試檔直接呼叫 `huh.*`/`lipgloss.*` API。
 
 - [ ] **X2. 舊前綴符號在全專案範圍內清零（含 acceptance criteria 明列的六個家族）**
   判定：
