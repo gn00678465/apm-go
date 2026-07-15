@@ -31,7 +31,9 @@
    `git checkout feat/init-tui-beautify -- cmd/apm-go`（這些檔只呼叫 ux.*，與底層無關）。
    逐一 reconcile：確認所有 ux.* 呼叫的簽章與新 internal/ux 一致（含 `ux.Box`、
    `ux.CanPrompt`、`SetTTYSeamsForTest`）。
-   → verify: `go build ./...`
+   **init metadata 例外**：舊分支呼叫 4 次 `ux.InputText`（逐欄、前一欄消失、不可回退）→
+   改用 `ux.InputForm`（單一群組表單，4 欄同時可見、Tab/Shift+Tab 回退修改）。
+   → verify: `go build ./...`、`go run ./cmd/apm-go init` 手動確認 4 欄同畫面可回退
 
 ## Phase 3 — 移除 pterm + 全量驗證
 

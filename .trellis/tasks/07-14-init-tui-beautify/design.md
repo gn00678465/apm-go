@@ -45,9 +45,19 @@ func (s *Spin) Update(text string); func (s *Spin) Success(msg string); func (s 
 // 互動（huh，固定 stderr+stdin；非 CanPrompt 回傳預設值不阻塞）
 type Option struct { Label, Value string; Selected bool }
 func Confirm(prompt string, def bool) (bool, error)
-func InputText(label, def string) (string, error)
+func InputText(label, def string) (string, error)   // 單一欄位（少數場景）
 func Password(label string) (string, error)
 func MultiSelect(title string, opts []Option) ([]string, error)
+
+// 群組表單：所有欄位在同一 huh Group 一次渲染 —— 全部同時可見、Tab/Shift+Tab
+// 在欄位間回退修改（huh PrevField/NextField）。取代「呼叫 InputText N 次」的
+// 逐欄獨立表單（會讓前一欄資訊消失、無法回退）。非 CanPrompt → 回傳各欄預設值。
+type Field struct {
+    Key, Label, Default string
+    Password bool
+    Validate func(string) error
+}
+func InputForm(title string, fields []Field) (map[string]string, error)  // 回傳 key→value
 ```
 
 ## 著色模型（核心改進：lipgloss 原生 per-writer）
@@ -117,6 +127,9 @@ lipgloss 正確算欄寬與 CJK 全形 → **對齊**、box-drawing、可有 hea
 ### 文字/區塊替換（維持語意，只改呈現）
 - init：`Setting up your APM project...` → `ux.Section`；`+--- About to create ---+` 手刻框 →
   `ux.Box`；`Next steps:` → `ux.Section` + `ux.BulletList`；成功行 → `ux.Success`。
+- init metadata 輸入（name/version/description/author）→ **`ux.InputForm` 單一群組表單**
+  （4 欄同時可見、Tab/Shift+Tab 回退修改），**取代** v1 呼叫 4 次 `ux.InputText`
+  （逐欄獨立、前一欄消失、無法回退）。
 - marketplace list / browse padding 表 → `ux.Table`；`source:`/`ref:` 明細 → `ux.BulletList`。
 - install 部署摘要 `|-- N type -> dir` → `ux.Tree`；`Installed N dependencies` 複數修正、空 `@tag` fallback。
 - uninstall/pack dry-run `[dry-run]` + 逐項 → `ux.Section` + `ux.BulletList`。
