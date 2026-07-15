@@ -157,6 +157,17 @@ ANSI，非 TrueColor 終端會自動降階（lipgloss <code>colorprofile</code> 
   <div class="sym"><span class="g" style="color:var(--brand)">▸</span> progress<span style="color:var(--muted)">・原 [&gt;] → spinner</span></div>
   <div class="sym"><span class="g" style="color:var(--brand-2)">•</span> list item<span style="color:var(--muted)">・原 - / |--</span></div>
 </div>
+<div class="note"><b>統一寬度（R8 定案 · <code>Width(3)</code> 置中 · 甲類）：</b>每個符號以
+<code>NewStyle().Bold(true).Foreground(語意色).AlignHorizontal(lipgloss.Center).Width(3)</code> 渲染成
+固定 3 格、置中，訊息自第 4 欄起對齊，視覺份量近似舊 <code>[i]</code>/<code>[&gt;]</code>。符號後<b>不再加空格</b>
+（Width 已含 padding）；<code>•</code> bullet 亦同寬。實作期須以真終端截圖確認 Ambiguous 寬度（<code>✓ ℹ •</code>）對齊。</div>
+<div class="pane" style="max-width:460px;margin:10px 0"><div class="cap after"><span class="dot a"></span>對齊效果（符號固定 3 格置中）</div>
+<pre class="term"> <span class="ok">✓</span>  Installed 2 dependencies
+ <span class="info">ℹ</span>  Targets: claude, codex
+ <span class="warn">!</span>  1 dependency unpinned
+ <span class="err">✗</span>  path outside module root
+ <span class="info">▸</span>  Deploy summary
+ <span class="hi">•</span>  chromedevtools/chrome-devtools-mcp</pre></div>
 <div class="note"><b>降階策略（lipgloss 原生 per-writer）：</b><code>lipgloss.Fprint(w, s)</code> /
 <code>Fprintln(w, s)</code> 會把 <code>w</code> 包進 <code>colorprofile.NewWriter(w, os.Environ())</code>，
 依<b>該 writer 自己</b>的終端能力自動降階：<code>TrueColor → ANSI256 → ANSI16 → mono → strip</code>，
@@ -390,26 +401,27 @@ local-mp             ./plugins       -       local</pre></div>
 [*] Installed 1 dependencies
   mattpocock/skills@ (depth 1)</pre></div>
   <div class="pane"><div class="cap after"><span class="dot a"></span>AFTER</div>
-<pre class="term"><span class="ok">✓</span> Resolved <span class="hi">mattpocock/skills</span>
-<span class="info">ℹ</span> Targets  <span class="hi">copilot</span><span class="mut">,</span> <span class="hi">claude</span><span class="mut">,</span> <span class="hi">opencode</span><span class="mut">,</span> <span class="hi">codex</span>   <span class="mut">(apm.yml)</span>
-<span class="info">ℹ</span> Skill subset  <span class="hi">grill-me</span>
+<pre class="term"><span class="ok">✓</span> Resolved 2 dependencies
+<span class="info">ℹ</span> Targets  <span class="hi">copilot</span><span class="mut">,</span> <span class="hi">claude</span><span class="mut">,</span> <span class="hi">codex</span>   <span class="mut">(apm.yml)</span>
 
 <span class="info b">▸ Deploy summary</span>
-<span class="hi">●</span> <span class="b">(local)</span>
-<span class="mut">├─</span> 1 agent        <span class="info">→</span> <span class="mut">.claude/agents/</span>
-<span class="mut">├─</span> 1 instruction  <span class="info">→</span> <span class="mut">.claude/rules/</span>
-<span class="mut">├─</span> 1 agent        <span class="info">→</span> <span class="mut">.codex/agents/</span>
-<span class="mut">└─</span> 1 agent        <span class="info">→</span> <span class="mut">.opencode/agents/</span>
-<span class="hi">●</span> <span class="b">mattpocock/skills</span>
-<span class="mut">├─</span> 1 skill        <span class="info">→</span> <span class="mut">.agents/skills/grill-me/</span>
-<span class="mut">└─</span> 1 skill        <span class="info">→</span> <span class="mut">.claude/skills/grill-me/</span>
+<span class="hi">●</span> <span class="b">&lt;project root&gt; (local)</span>
+<span class="mut">├─</span> 3 agents        <span class="info">→</span> <span class="mut">3 targets</span>
+<span class="mut">└─</span> 2 instructions  <span class="info">→</span> <span class="mut">.claude/rules/, .github/instructions/</span>
+<span class="hi">●</span> <span class="b">chromedevtools/chrome-devtools-mcp</span>  <span class="mut">@2d944f9f</span>
+<span class="mut">└─</span> 6 skills        <span class="info">→</span> <span class="mut">.agents/skills/, .claude/skills/</span>
+<span class="mut">● emilkowalski/skills  @1a2b3c4d   (已在 apm.yml)</span>
 
-<span class="ok b">✓ Installed 1 dependency</span>
-  <span class="mut">•</span> <span class="hi">mattpocock/skills</span><span class="mut">@main · depth 1</span></pre></div>
+<span class="ok b">✓ Installed 2 dependencies</span>
+  <span class="mut">•</span> <span class="hi">chromedevtools/chrome-devtools-mcp</span><span class="mut">@2d944f9f · depth 1</span></pre></div>
 </div>
-<div class="note"><b>順帶修的小瑕疵：</b>BEFORE 的 <code>Installed 1 dependencies</code>（複數不對）與空的
-<code>@</code>（tag 缺失時沒 fallback 顯示）—— 遷移時一併處理為 <code>1 dependency</code> 與
-<code>@main</code>。型別標籤去掉贅字尾 <code>(s)</code>，改用單複數判斷或統一單數。</div>
+<div class="note"><b>本段體現甲類美化：</b>
+<b>R10b 樹聚合</b> —— 逐 skill 子目錄（實測 chrome-devtools 達 20 行、design 達 65 行的「牆」）聚合為
+「<code>N skill → root1, root2</code>」單行；<b>R10a</b> 顯示短 hash <code>@2d944f9f</code>；
+<b>R14</b> local 節點標為 <code>&lt;project root&gt; (local)</code>；<b>R9</b> 已在 apm.yml 的
+<code>emilkowalski/skills</code> 整列<span style="color:var(--muted)">灰化</span>（對比新增項高亮）。
+<b>F4 守衛</b>：聚合時仍保留 <code>! …shadowed…</code> / <code>deployed 0 files</code> 衝突警告（走 stderr、未被吞）。
+<br><b>註</b>：MCP 部署摘要、summary 的「and M MCP server(s)」計數屬<b>乙類（輸出 parity 子任務）</b>，不在本任務 mockup。</div>
 
 <div class="note" style="border-left-color:var(--brand-2)"><b>以下 3.10 / 3.11 為 Workflow 全指令盤查（24 agents）補上的缺口：</b>
 原 14 點漏掉了 audit / pack / experimental / marketplace authoring 家族等獨立子指令。</div>

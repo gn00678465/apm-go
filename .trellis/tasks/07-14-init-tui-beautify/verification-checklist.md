@@ -419,3 +419,198 @@
 
 **總計項目數：以上共 41 項可獨立勾選的 PASS/FAIL 判定項（Phase A 10 項、Phase B 13 項、
 Phase C 11 項、跨階段總驗收 7 項）。含 X7 = `codex exec` 對抗式審核關卡。**
+
+---
+
+## Phase 4 — 實測回饋修正（R7–R10）
+
+> 由 **codex（獨立於實作者）** 於 2026-07-15 依 prd.md v2.1（R7–R10）產出。對應 implement.md Phase 4
+> 步驟 12–18。判定路徑以 `07-14-init-tui-beautify` 為準；codex 對抗閘門一律用 stdin 餵法
+> （`git diff … | codex exec - -c model_reasoning_effort="medium"`；本機 `codex review --uncommitted`
+> 因 Windows sandbox helper 缺失無法使用）。
+
+- [ ] **P4-1. uninstall 摘要列出單一移除套件名稱**
+  判定：`cmd/apm-go/uninstall.go:619-628` 的 `printUninstallSummary` 在移除 `owner/pkg-a` 時，輸出包含完整名稱 `owner/pkg-a`。
+  FAIL：輸出只有套件數量，或缺少、截斷、改寫套件名稱。
+
+- [ ] **P4-2. uninstall 摘要列出所有移除套件名稱**
+  判定：`cmd/apm-go/uninstall.go:619-628` 在同次移除 `owner/pkg-a`、`owner/pkg-b` 時，兩個完整名稱各出現一次。
+  FAIL：任一名稱未出現、重複出現，或只顯示總數。
+
+- [ ] **P4-3. uninstall 摘要指出更新的 apm.yml 路徑**
+  判定：`cmd/apm-go/uninstall.go:619-628` 的摘要包含 `apm.yml updated` 語意及實際更新檔案路徑；該路徑可解析至本次使用的 `apm.yml`。
+  FAIL：未顯示更新資訊、只顯示固定字串 `apm.yml`，或顯示的路徑不是實際更新檔案。
+
+- [ ] **P4-4. uninstall 摘要顯示整合檔清理數量**
+  判定：`cmd/apm-go/uninstall.go:619-628` 顯示本次實際清除的 integrated file 數量；清除 0、1、3 個檔案時分別輸出 0、1、3。
+  FAIL：欄位缺失、固定顯示常數，或任一數量與 deploy/uninstall 層回傳值不同。
+
+- [ ] **P4-5. 符號固定 3 格寬置中（R8 定案）**
+  判定：`internal/ux` 的符號樣式為 `lipgloss.NewStyle()....AlignHorizontal(lipgloss.Center).Width(3)`；
+  對非 TTY writer render 單一符號去除 ANSI 後，顯示寬度為 3（置中，例如 `✓`→`" ✓ "`）；訊息符號與 `•` enumerator 同寬。
+  FAIL：未套 `Width(3)`/`Center`、符號區寬度不一致、或訊息符號與 bullet 寬度不同。
+
+- [ ] **P4-6. 符號後無多餘空格、訊息對齊**
+  判定：`printer.go` 的 `printLine` 為 `symStyle.Render(symbol) + msg`（**無**額外 `" "`）；多列訊息去除 ANSI 後，
+  訊息文字起始欄位一致對齊（皆自第 4 欄起）。
+  FAIL：符號與文字間出現兩格（Width padding + 多加的空格）、各列訊息未對齊、或仍用 `Render(sym)+" "+msg`。
+
+- [ ] **P4-7. design.md 記錄符號顯示寬度決策**
+  判定：`.trellis/tasks/07-14-init-tui-beautify/design.md` 明確記載 `✓`、`ℹ`、`•`、`!` 視為窄字元，並明確選定「補齊顯示寬度」或「接受單一空白、不補齊」其中一種策略。
+  FAIL：文件缺少任一符號、未記載窄字元判定，或同時保留兩種策略而未作決策。
+
+- [ ] **P4-8. 既存 apm.yml dependency 使用 ColorMuted**
+  判定：`cmd/apm-go/install.go:239-258` 以 `requestedKeys` 與 `existing` 判斷既存 dependency，TTY 渲染結果使用 `internal/ux` 的 `ColorMuted`，新加入 dependency 不使用 `ColorMuted`。
+  FAIL：既存項目未灰化、新項目也被灰化，或以名稱／索引等非 `requestedKeys`、`existing` 資訊猜測狀態。
+
+- [ ] **P4-9. 重複 dependency 使用 ColorMuted**
+  判定：同一次 install 輸入含重複 dependency 時，`cmd/apm-go/install.go:239-258` 將重複項目以 `ColorMuted` 渲染，且仍保留可辨識的 dependency 名稱。
+  FAIL：重複項目使用一般／成功色、被無聲省略，或名稱無法辨識。
+
+- [ ] **P4-10. install 摘要區分本次新增與原已存在**
+  判定：`cmd/apm-go/install.go:1159-1169` 的同一份摘要同時含新加入與既存 dependency 時，兩者具有可機器判定的不同標示或樣式；去除 ANSI 後仍可由文字辨識其狀態。
+  FAIL：兩類項目輸出完全相同，或只能依賴顏色區分。
+
+- [ ] **P4-11. install 仍解析完整 manifest（scope 邊界守衛）**
+  判定：`cmd/apm-go/install.go:608` 仍以完整 `result.Deps` 執行解析／部署；既存 dependency 仍出現在處理結果中，變更僅影響呈現。
+  FAIL：改成只處理 `requestedKeys`、略過既存 dependency，或改變安裝集合、順序、解析結果等 business logic。
+
+- [ ] **P4-12. installed summary 無 tag/ref 時使用短 commit**
+  判定：`cmd/apm-go/install.go:1159-1169` 在 `ResolvedTag`、`ResolvedRef` 皆空且 commit 為 `e9fcdf9512345678` 時，label 精確包含 `@e9fcdf95`。
+  FAIL：省略 `@`、顯示完整 commit、不是前 8 字元、顯示空 suffix，或少於 8 字元的 commit 造成 panic。
+
+- [ ] **P4-13. deploy label 無 tag/ref 時使用短 commit**
+  判定：deploy label 建立處在 `ResolvedTag`、`ResolvedRef` 皆空時，依序使用可用的 `ResolvedCommit`、`Commit`、`ResolvedHash`，並只顯示其前 8 字元。
+  FAIL：任一可用 commit/hash 未成為 fallback、優先序錯誤、長度超過 8，或 install summary 與 deploy label 結果不一致。
+
+- [ ] **P4-14. tag/ref 優先於短 commit**
+  判定：`cmd/apm-go/install.go:1159-1169` 與 deploy label 在 tag、ref、commit 同時存在時使用 tag；無 tag 但有 ref、commit 時使用 ref。
+  FAIL：有 tag/ref 時仍顯示短 commit，或兩處優先序不同。
+
+- [ ] **P4-15. 部署樹依 primitive kind 聚合**
+  判定：`cmd/apm-go/install.go:1183-1211` 的 `deployedFilesTree` 對 22 個 skill、分布於 `.agents/skills/` 與 `.claude/skills/` 時，只產生一個 skill 聚合項目：`22 skill(s) -> .agents/skills/, .claude/skills/`。
+  FAIL：每個 skill 各成一列、依最深子目錄分組、數量不是 22，或同一 kind 產生多個聚合項目。
+
+- [ ] **P4-16. 部署樹只顯示 target root**
+  判定：`cmd/apm-go/install.go:1183-1211` 的 skill 聚合目的地只包含 `.agents/skills/`、`.claude/skills/` 等 primitive target root，且每個 root 最多出現一次。
+  FAIL：輸出 skill 自有子目錄、檔名、重複 root，或把不同 primitive kind 合併成同一列。
+
+- [ ] **P4-17. install 與 uninstall exit code 不變**
+  判定：以變更前相同 fixture 與參數分別執行 `go run ./cmd/apm-go install ...`、`go run ./cmd/apm-go uninstall ...` 的成功、無效輸入及執行失敗案例，各案例結束狀態與變更前基準完全相同。
+  FAIL：任一案例由成功變失敗、由失敗變成功，或非零 exit code 數值改變。
+
+- [ ] **P4-18. normalize stdout byte-identical**
+  判定：對同一 fixture 執行 `go run ./cmd/apm-go normalize ...`，將 stdout 寫入檔案後與變更前 golden 以 `fc /b`（或 `cmp`）比對，結果回傳 0。
+  FAIL：任一 byte 不同、stdout 多出符號／ANSI／提示文字，或原 stdout 內容被移至 stderr。
+
+- [ ] **P4-19. 非 TTY 輸出不含 ANSI**
+  判定：將 install、uninstall、normalize 各自 stdout 與 stderr redirect 至檔案後執行 `grep -P "\x1b\[" <file>`，所有檔案皆回傳 1 且無匹配內容。
+  FAIL：任一 redirected 輸出匹配 ANSI CSI escape sequence，或因 writer 判定錯誤仍輸出色碼。
+
+- [ ] **P4-20. 全專案測試通過**
+  判定：在專案根目錄執行 `go test ./... -count=1`，exit code 為 0，且無 `FAIL` package。
+  FAIL：命令 exit code 非 0、任一 package 顯示 `FAIL`，或測試因 build error 未執行。
+
+- [ ] **P4-21. commit 前通過 codex 對抗式審查（stdin 餵法）**
+  判定：commit 前執行 `git diff main...HEAD | codex exec - -c model_reasoning_effort="medium"`（本機 sandbox helper 缺失，`codex review --uncommitted` 不可用），輸出為零項未解決 CRITICAL/HIGH finding，並確認審查範圍包含 R7–R10、exit code、normalize stdout、ANSI stripping 與 business-logic scope 邊界。
+  FAIL：命令失敗、存在任一未解決 CRITICAL/HIGH finding、漏審任一指定範圍，或在審查後修改程式但未重新執行。
+
+### R11 — install --mcp 輸出補強（presentation-only；deployed 資料已存在）
+
+- [ ] **P4-22. mcp install 顯示已配置目標清單**
+  判定：`cmd/apm-go/mcpinstall.go:170-174` 在成功配置後，輸出包含 `deployMCPEntry` 回傳的 `deployed`
+  目標清單（每個實際配置到的 target 名稱均出現，如 `copilot`、`claude`、`codex`）。
+  FAIL：輸出未列出任何已配置 target、清單與 `deployed` slice 不一致，或改用 `targets`/猜測而非實際 `deployed`。
+
+- [ ] **P4-23. mcp install 顯示 apm.yml 絕對路徑**
+  判定：`cmd/apm-go/mcpinstall.go:170-174` 的 `apm.yml:` 行顯示**絕對路徑**（`filepath.Abs` 解析），
+  可解析至本次寫入的 `apm.yml`。
+  FAIL：仍輸出寫死相對字串 `apm.yml`，或路徑非本次實際寫入檔案。
+
+- [ ] **P4-24. mcp install 明細 BulletList 間隔正確（同 R8a）**
+  判定：`cmd/apm-go/mcpinstall.go:171-174` 的 `transport:` / `apm.yml:` 明細行去除 ANSI 後為 `• transport: ...`
+  （符號與文字間恰一個 U+0020）。
+  FAIL：出現 `•transport`、無空格，或與 P4-5 的 BulletList 間隔規則不一致。
+
+- [ ] **P4-25. mcp install 非回歸 + 不動業務邏輯**
+  判定：`git diff main..HEAD -- cmd/apm-go/mcpinstall.go` 的變更僅涉及輸出行（`ux.*` 呼叫、路徑解析），
+  不觸及 `deployMCPEntry`/`buildPersistEntry`/apm.yml 寫入邏輯；`go test ./cmd/apm-go/... -run TestRunMCPInstall` 綠。
+  FAIL：改動了 deploy/persist/manifest 邏輯，或既有 mcp 測試需放寬斷言才能過。
+
+### R12 — 消除 dry-run/error 比正式/成功更詳細的不對稱（稽核 research/output-parity-audit.md）
+
+- [ ] **P4-26. pack 正式執行列出檔案清單**
+  判定：`cmd/apm-go/pack.go:252` 正式（非 `--dry-run`）分支輸出包含 `result.Files` 每個檔案路徑
+  （與 `243-250` dry-run 分支相同的逐檔清單）。
+  FAIL：正式分支仍只印 `Packed %d file(s)` 數字、清單與 dry-run 不一致，或漏印任一檔案。
+
+- [ ] **P4-27. local-bundle install 補檔案摘要且為聚合樹**
+  判定：`cmd/apm-go/install.go:765` local-bundle 成功輸出包含 `result.Files` 的摘要，且**沿用 R10b 聚合**
+  （依 primitive kind 聚合、目標 root，非逐檔逐列）。
+  FAIL：仍只印 `Installed %d file(s)` 數字，或逐檔洗版（未套 R10b 聚合），或與一般 install 樹樣式不一致。
+
+- [ ] **P4-28. audit / frozen 成功預設輸出位元組不變，細節僅 --verbose**
+  判定：不加 `--verbose` 時，`audit`（成功，`audit.go:88`）與 `install --frozen`（`install.go:537`）的
+  stdout 與變更前**逐位元組相同**；加 `--verbose` 才出現檔案/dep 清單。
+  FAIL：預設輸出改變（新增清單造成 byte diff）、或 `--verbose` 未提供任何額外明細。
+
+- [ ] **P4-29. compile 未在本任務改動業務層（scope 守衛）**
+  判定：`git diff main..HEAD -- internal/compile/` 為空（`Result` struct 未加欄位）；compile 的 parity
+  缺口在 prd.md 標記為「另立子任務」。
+  FAIL：本任務改了 `internal/compile.Result`/`Run` 以暴露 `SourcedInstruction`，或 prd 未記錄其為出範圍。
+
+- [ ] **P4-30. R12 修復不觸業務邏輯**
+  判定：P4-26/27 的變更 `git diff` 僅涉及 cmd 層輸出行（`ux.*`），不改 `pack`/`localbundle`/`deploy`
+  的檔案集合、順序或計算；相關既有測試（pack/install local-bundle）綠、無放寬斷言。
+  FAIL：改動了產生 `result.Files` 的邏輯，或既有測試需弱化才能過。
+
+### R13–R15 / BUG-1 — install plugin 輸出（實測 chrome-devtools plugin）
+
+- [ ] **P4-31. install 主流程印出 MCP 部署摘要**
+  判定：安裝含 MCP server 的 plugin 時，`cmd/apm-go/install.go` 部署摘要輸出包含每個已配置的 MCP server
+  名稱與其配置到的 target（資料源 `deployResult.MCPProvenance`）。
+  FAIL：MCP 已部署（lockfile `MCPServers` 非空）卻無任何 MCP 摘要輸出，或清單與 `MCPProvenance` 不一致。
+
+- [ ] **P4-32. 部署樹 local 節點語意化**
+  判定：`cmd/apm-go/install.go:1062-1063` local 部署節點標籤為 `<project root> (local)`（或等義可辨識字樣），非裸 `(local)`。
+  FAIL：仍印裸 `(local)`，或標籤無法表達「來自專案本地」。
+
+- [ ] **P4-33. install summary 反映 MCP server 計數**
+  判定：`cmd/apm-go/install.go:1158` 在本次配置了 MCP server 時，summary 含 MCP server 數量
+  （如 `and 1 MCP server`，數量＝`len(newLock.MCPServers)`）；無 MCP 時不顯示該子句。
+  FAIL：配置了 MCP 卻只印 `Installed N dependencies`、數量與 `MCPServers` 不符，或無 MCP 時仍硬印 `and 0 MCP server`。
+
+- [ ] **P4-34. BUG-1 未在本任務修改業務層（範圍守衛）**
+  判定：`git diff main..HEAD -- internal/resolver internal/manifest internal/deploy` 不含「合併大小寫重複 dep / case-fold dep-key」的邏輯變更；BUG-1 在 prd.md 標記為出範圍、另立任務。
+  FAIL：本任務改了 resolver/manifest/deploy 去合併大小寫 dep（越界修 bug），或 prd 未記錄 BUG-1 為出範圍。
+
+- [ ] **P4-35. 未用 ux 遮蔽 BUG-1 衍生噪音（反遮蔽守衛）**
+  判定：`cmd/apm-go` 無「偵測大小寫重複 dep 後灰化/隱藏/去重其 bullet 或 shadow/0-files 警告」的呈現層 workaround；
+  幽靈 dep 的 shadow 警告仍照實走 stderr（不被吞掉）。
+  FAIL：新增了「隱藏幽靈 dep bullet」「吞掉 shadow 警告」等呈現層遮蔽，掩蓋 BUG-1。
+
+### R16 — 空 apm.yml + local 部署的矛盾訊息（實測 evals/test1）
+
+- [ ] **P4-36. 有 local 部署時不印「No dependencies to install」矛盾行**
+  判定：於 `evals/test1`（`dependencies.apm: []` 且有 `.apm/agents`+`.apm/instructions`）跑
+  `go run ./cmd/apm-go install`，輸出**不同時**出現 `No dependencies to install` 與其後的 local 部署樹。
+  FAIL：仍先印 `No dependencies to install` 又緊接印 local 部署樹（自相矛盾），或誤把整段 local 部署略過。
+
+- [ ] **P4-37. summary 反映 local 部署、不印誤導的「Installed 0 dependencies」**
+  判定：同上情境，收尾 summary 反映實際部署了 local（如 `Installed 1 …`／`Installed local project …`），
+  而非在明明部署了 `.apm/` 檔案時印 `✓ Installed 0 dependencies`。
+  FAIL：有 local 部署卻仍印 `Installed 0 dependencies`；或為此改動了 `hasAnyDeps`/`result.Deps` 的計算邏輯（越界動業務層）。
+
+### R17 / F4 守衛 — A/B 實跑補充（full-ab-parity-sweep）
+
+- [ ] **P4-38. install 無 target 錯誤訊息為結構化診斷、無 Cobra flag dump**
+  判定：於 `evals/bundle-demo`（無 `target:`）跑 `go run ./cmd/apm-go install`，stderr 含「掃描過的 harness
+  marker 清單 + 具體修法」，且**不**出現整包 `Flags:` 用法；exit code 仍為 2。
+  FAIL：仍砸出 Cobra flag 用法、無掃描/修法資訊，或 exit code 改變、或改動了 signal-detection 偵測邏輯。
+
+- [ ] **P4-39. 輸出聚合/精簡未吞掉衝突警告（F4 守衛）**
+  判定：造「兩個不同 repo 內含同名 skill」情境（如 `forrestchang/…` + `multica-ai/andrej-karpathy-skills`）跑 install，
+  R10b 聚合樹 / R7-R12 精簡後，stderr **仍**出現 `shadowed`（first-declared wins）與 `deployed 0 files` 警告。
+  FAIL：聚合/精簡邏輯把 `shadowed`/`deployed 0 files` 衝突警告吞掉或弱化，喪失 apm-go 對 Python 的資料完整性優勢。
+
+**Phase 4 總計：39 項（P4-1 ~ P4-39）。全檔合計 80 項。R18/F5 為次要、以 prd 記錄追蹤，未列硬性項。**
