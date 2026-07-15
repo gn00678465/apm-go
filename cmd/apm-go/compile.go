@@ -10,6 +10,7 @@ import (
 	"github.com/apm-go/apm/internal/compile"
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +49,7 @@ func runCompile(targetFlag, projectDir string) error {
 	}
 
 	if !compile.HasCompilableContent(projectDir) {
-		fmt.Fprintln(os.Stderr, "No instruction files found in .apm/ directory")
+		ux.Error(os.Stderr, "No instruction files found in .apm/ directory")
 		return withExitCode(1, errors.New("no instruction files found in .apm/ directory"))
 	}
 
@@ -60,7 +61,7 @@ func runCompile(targetFlag, projectDir string) error {
 			label = strings.Join(resolved, ",")
 		}
 		msg := fmt.Sprintf("compile for target(s) %s not implemented in apm-go yet", label)
-		fmt.Fprintln(os.Stderr, msg)
+		ux.Error(os.Stderr, "%s", msg)
 		return withExitCode(2, errors.New(msg))
 	}
 
@@ -69,9 +70,9 @@ func runCompile(targetFlag, projectDir string) error {
 		return fmt.Errorf("compile: %w", err)
 	}
 	if result.Wrote {
-		fmt.Printf("Compiled %d instruction(s) to %s\n", result.InstructionCount, result.Path)
+		ux.Success(os.Stdout, "Compiled %d instruction(s) to %s", result.InstructionCount, result.Path)
 	} else {
-		fmt.Println("No changes detected; preserving existing AGENTS.md for idempotency")
+		ux.Info(os.Stdout, "No changes detected; preserving existing AGENTS.md for idempotency")
 	}
 	return nil
 }
@@ -84,7 +85,7 @@ func loadCompileManifest(projectDir string) (*manifest.Manifest, error) {
 	data, err := os.ReadFile(filepath.Join(projectDir, "apm.yml"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintln(os.Stderr, "Not an APM project - no apm.yml found")
+			ux.Error(os.Stderr, "Not an APM project - no apm.yml found")
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read apm.yml: %w", err)

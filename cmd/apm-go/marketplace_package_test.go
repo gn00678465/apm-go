@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -231,8 +232,8 @@ func TestMarketplacePackageSet_WithVersionFlag_StillWorks(t *testing.T) {
 func TestMarketplacePackageRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove(t *testing.T) {
 	// Arrange
 	chdirTemp(t)
-	forceInteractive(t, true)
-	resetStdinScanner(t, strings.NewReader(""))
+	forceRich(t, true)
+	stubConfirm(t, func(string, bool) (bool, error) { return false, errors.New("prompt aborted") })
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
@@ -244,7 +245,7 @@ func TestMarketplacePackageRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRe
 
 	// Assert
 	if err == nil {
-		t.Fatal("package remove with a failed (EOF) confirmation read returned no error, want the requires -y/--yes error (C10)")
+		t.Fatal("package remove with a failed confirmation prompt returned no error, want the requires -y/--yes error (C10)")
 	}
 	data, rerr := os.ReadFile("apm.yml")
 	if rerr != nil {
@@ -261,8 +262,8 @@ func TestMarketplacePackageRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRe
 func TestMarketplacePackageRemove_InteractiveExplicitNo_AbortsCleanly(t *testing.T) {
 	// Arrange
 	chdirTemp(t)
-	forceInteractive(t, true)
-	resetStdinScanner(t, strings.NewReader("n\n"))
+	forceRich(t, true)
+	stubConfirm(t, func(string, bool) (bool, error) { return false, nil })
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {

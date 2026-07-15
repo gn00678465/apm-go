@@ -11,6 +11,7 @@ import (
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -90,14 +91,14 @@ func marketplaceInitCmd() *cobra.Command {
 			}
 
 			if scaffoldedApmYML {
-				fmt.Fprintln(w, "[+] Created apm.yml with 'marketplace:' block")
+				ux.Success(w, "Created apm.yml with 'marketplace:' block")
 			} else {
-				fmt.Fprintln(w, "[+] Added 'marketplace:' block to apm.yml")
+				ux.Success(w, "Added 'marketplace:' block to apm.yml")
 			}
 			if verbose {
 				cwd, cerr := os.Getwd()
 				if cerr == nil {
-					fmt.Fprintf(w, "    Path: %s\n", filepath.Join(cwd, "apm.yml"))
+					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("Path: %s", filepath.Join(cwd, "apm.yml"))}})
 				}
 			}
 
@@ -105,11 +106,14 @@ func marketplaceInitCmd() *cobra.Command {
 				warnIfGitignoreIgnoresMarketplaceJSON(cmd.ErrOrStderr())
 			}
 
-			fmt.Fprintln(w, "\nNext steps:")
-			fmt.Fprintln(w, "  1. Edit the 'marketplace:' block in apm.yml to add your packages")
-			fmt.Fprintln(w, "  2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json")
-			fmt.Fprintln(w, "  3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json")
-			fmt.Fprintln(w, "  4. Commit apm.yml and the generated marketplace file(s)")
+			fmt.Fprintln(w)
+			ux.Section(w, "Next steps")
+			ux.BulletList(w, []ux.Item{
+				{Text: "1. Edit the 'marketplace:' block in apm.yml to add your packages"},
+				{Text: "2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json"},
+				{Text: "3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json"},
+				{Text: "4. Commit apm.yml and the generated marketplace file(s)"},
+			})
 			return nil
 		},
 	}
@@ -255,7 +259,7 @@ func marketplaceCheckCmd() *cobra.Command {
 				return err
 			}
 			if src == authoring.ConfigSourceLegacy {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
+				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
 			// C6 (defence-in-depth, mirrors Python's
@@ -264,26 +268,34 @@ func marketplaceCheckCmd() *cobra.Command {
 			// unconditionally before ref/version resolution, and never
 			// contributing to `failed` below.
 			for _, w := range authoring.DuplicatePackageNames(cfg) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+				ux.Warn(cmd.ErrOrStderr(), "%s", w)
 			}
 
 			results := authoring.CheckPackages(cfg, authoring.DefaultRefLister, offline)
 			w := cmd.OutOrStdout()
 			failed := 0
+			var items []ux.Item
 			for _, r := range results {
 				if r.Err != nil {
 					failed++
-					fmt.Fprintf(w, "[x] %s: %v\n", r.Package.Name, r.Err)
+					items = append(items, ux.Item{Text: fmt.Sprintf("%s: %s: %v", ux.SymbolError, r.Package.Name, r.Err)})
 					continue
 				}
 				if verbose {
-					fmt.Fprintf(w, "[+] %s: ok\n", r.Package.Name)
+					items = append(items, ux.Item{Text: fmt.Sprintf("%s: %s: ok", ux.SymbolSuccess, r.Package.Name)})
 				}
+			}
+			if len(items) > 0 {
+				ux.BulletList(w, items)
+			}
+			if len(results) > 0 {
+				verified := len(results) - failed
+				ux.Info(w, "pass rate: %d/%d (%.0f%%)", verified, len(results), float64(verified)/float64(len(results))*100)
 			}
 			if failed > 0 {
 				return fmt.Errorf("check failed: %d/%d package(s) have an unverifiable pin", failed, len(results))
 			}
-			fmt.Fprintf(w, "[+] all %d package(s) verified\n", len(results))
+			ux.Success(w, "all %d package(s) verified", len(results))
 			return nil
 		},
 	}
@@ -321,32 +333,31 @@ func marketplaceOutdatedCmd() *cobra.Command {
 				return err
 			}
 			if src == authoring.ConfigSourceLegacy {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
+				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
 			rows := authoring.OutdatedPackages(cfg, authoring.DefaultRefLister, offline, includePrerelease, nil)
 
 			w := cmd.OutOrStdout()
 			upgradable := 0
-			for _, r := range rows {
-				note := ""
-				if r.Note != "" {
-					note = fmt.Sprintf("  (%s)", r.Note)
+			tableRows := make([][]string, len(rows))
+			for i, r := range rows {
+				tableRows[i] = []string{
+					outdatedStatusSymbol(r.Status), r.Package.Name, r.Current, r.LatestInRange, r.LatestOverall, r.Note,
 				}
-				fmt.Fprintf(w, "%s %-20s current=%-10s latest-in-range=%-12s latest=%-12s%s\n",
-					r.Status, r.Package.Name, r.Current, r.LatestInRange, r.LatestOverall, note)
 				if r.Upgradable {
 					upgradable++
 				}
 			}
+			ux.Table(w, []string{"STATUS", "NAME", "CURRENT", "LATEST-IN-RANGE", "LATEST", "NOTE"}, tableRows)
 
 			if upgradable > 0 {
-				fmt.Fprintf(w, "%d package(s) can be updated\n", upgradable)
+				ux.Info(w, "%d package(s) can be updated", upgradable)
 			} else {
-				fmt.Fprintln(w, "All packages are up to date")
+				ux.Info(w, "All packages are up to date")
 			}
 			if verbose {
-				fmt.Fprintf(w, "    %d upgradable entries\n", upgradable)
+				ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("%d upgradable entries", upgradable)}})
 			}
 
 			if upgradable > 0 {
@@ -360,6 +371,26 @@ func marketplaceOutdatedCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "include prerelease versions when determining the latest tag")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print extra diagnostics")
 	return cmd
+}
+
+// outdatedStatusSymbol maps authoring.OutdatedRow.Status's bracket token to
+// the cmd layer's ✓/!/ℹ/✗ symbol set for display. refcheck.go's own Status
+// field is left as "[+]"/"[!]"/"[*]"/"[i]"/"[x]" -- internal/marketplace/
+// authoring's tests assert those literal values -- so this mapping happens
+// only here, at render time.
+func outdatedStatusSymbol(status string) string {
+	switch status {
+	case "[+]":
+		return ux.SymbolSuccess
+	case "[!]", "[*]":
+		return ux.SymbolWarn
+	case "[i]":
+		return ux.SymbolInfo
+	case "[x]":
+		return ux.SymbolError
+	default:
+		return status
+	}
 }
 
 // warnIfGitignoreIgnoresMarketplaceJSON prints a warning to w when the
@@ -377,7 +408,7 @@ func warnIfGitignoreIgnoresMarketplaceJSON(w io.Writer) {
 			continue
 		}
 		if marketplaceGitignorePatterns[trimmed] {
-			fmt.Fprintln(w, "[warn] Your .gitignore ignores marketplace.json. Track apm.yml plus generated "+
+			ux.Warn(w, "Your .gitignore ignores marketplace.json. Track apm.yml plus generated "+
 				"marketplace files such as .claude-plugin/marketplace.json and .agents/plugins/marketplace.json. "+
 				"Remove the .gitignore rule or add explicit unignore entries.")
 			return

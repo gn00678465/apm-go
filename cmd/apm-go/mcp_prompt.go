@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"golang.org/x/term"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // looksSecret reports whether a header/variable name denotes a credential, so
@@ -35,18 +35,19 @@ func isNonInteractiveEnv() bool {
 }
 
 // canPromptCreds reports whether it's safe to interactively prompt for MCP
-// credentials: BOTH stdin and stdout must be a TTY (matching the Python
-// original's writer.py `is_tty = sys.stdin.isatty() and sys.stdout.isatty()`),
-// and not a CI/E2E environment. Requiring stdout too means a piped/captured
-// run (e.g. `apm-go install ... | tee`, or a script capturing output) is
-// treated as non-interactive and never blocks waiting on a prompt the user
-// cannot even see.
+// credentials: ux.CanPrompt() (real term.IsTerminal on stdin+stderr, not CI)
+// must hold, stdout must ALSO be a TTY (matching the Python original's
+// writer.py `is_tty = sys.stdin.isatty() and sys.stdout.isatty()`), and it
+// must not be a CI/E2E environment. Requiring stdout too means a
+// piped/captured run (e.g. `apm-go install ... | tee`, or a script capturing
+// output) is treated as non-interactive and never blocks waiting on a prompt
+// the user cannot even see.
 func canPromptCreds() bool {
-	return isInteractive() && stdoutIsTTY() && !isNonInteractiveEnv()
+	return ux.CanPrompt() && stdoutIsTTY() && !isNonInteractiveEnv()
 }
 
-// stdoutIsTTY reports whether os.Stdout is a character device (a terminal),
-// mirroring isInteractive()'s stdin check for stdout.
+// stdoutIsTTY reports whether os.Stdout is a real terminal, mirroring
+// ux.CanPrompt()'s stdin/stderr check for stdout.
 func stdoutIsTTY() bool {
 	fi, err := os.Stdout.Stat()
 	if err != nil {
@@ -85,7 +86,7 @@ func promptRegistryHeaders(requiredHeaders []string) map[string]string {
 	if len(requiredHeaders) == 0 || !canPromptCreds() {
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, "Credentials needed:")
+	ux.Section(os.Stderr, "Credentials needed")
 	hdrs := collectHeaderValues(requiredHeaders, ttyAsk)
 	if len(hdrs) == 0 {
 		return nil
@@ -93,24 +94,23 @@ func promptRegistryHeaders(requiredHeaders []string) map[string]string {
 	return hdrs
 }
 
-// ttyAsk prompts on stderr and reads one line from stdin. Secret values are
-// read without echo via x/term so a token never lands in the terminal (or its
-// scrollback) or any log.
+// ttyAsk prompts for a single credential value. Secret values are read
+// without echo via ux.Password (a masked huh Input) so a token never lands
+// in the terminal (or its scrollback) or any log; non-secret values use
+// ux.InputText.
 func ttyAsk(label string, secret bool) string {
-	fmt.Fprintf(os.Stderr, "  %s: ", label)
 	if secret {
-		b, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(os.Stderr)
+		val, err := ux.Password(label)
 		if err != nil {
 			return ""
 		}
-		return strings.TrimSpace(string(b))
+		return strings.TrimSpace(val)
 	}
-	scanner := getScanner()
-	if scanner.Scan() {
-		return strings.TrimSpace(scanner.Text())
+	val, err := ux.InputText(label, "")
+	if err != nil {
+		return ""
 	}
-	return ""
+	return strings.TrimSpace(val)
 }
 
 // promptReplaceMCP shows the replacement diff and asks the user to confirm
@@ -118,9 +118,11 @@ func ttyAsk(label string, secret bool) string {
 // the Python original's writer.py TTY branch). Passed as confirmReplaceFunc
 // only when stdin is interactive.
 func promptReplaceMCP(name string, diff []string) (bool, error) {
-	fmt.Fprintf(os.Stderr, "[!] MCP server %q already exists. Replacement diff:\n", name)
-	for _, line := range diff {
-		fmt.Fprintf(os.Stderr, "%s\n", line)
+	ux.Warn(os.Stderr, "MCP server %q already exists. Replacement diff:", name)
+	items := make([]ux.Item, len(diff))
+	for i, line := range diff {
+		items[i] = ux.Item{Text: line}
 	}
-	return confirmPrompt(fmt.Sprintf("Replace MCP server %q?", name), false), nil
+	ux.BulletList(os.Stderr, items)
+	return ux.Confirm(fmt.Sprintf("Replace MCP server %q?", name), false)
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
 )
 
@@ -120,9 +121,9 @@ func marketplacePackageAddCmd() *cobra.Command {
 				return withExitCode(2, err)
 			}
 			if fallbackUsed {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
+				ux.Warn(cmd.ErrOrStderr(), "packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "[+] Added package %q from %s\n", resolved, args[0])
+			ux.Success(cmd.OutOrStdout(), "Added package %q from %s", resolved, args[0])
 			return nil
 		},
 	}
@@ -196,9 +197,9 @@ func marketplacePackageSetCmd() *cobra.Command {
 				return withExitCode(2, err)
 			}
 			if fallbackUsed {
-				fmt.Fprintln(cmd.ErrOrStderr(), "[warn] packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
+				ux.Warn(cmd.ErrOrStderr(), "packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "[+] Updated package %q\n", args[0])
+			ux.Success(cmd.OutOrStdout(), "Updated package %q", args[0])
 			return nil
 		},
 	}
@@ -218,12 +219,11 @@ func marketplacePackageSetCmd() *cobra.Command {
 }
 
 // marketplacePackageRemoveCmd implements `apm marketplace package remove
-// NAME` (mkt-045): -y/--yes skips confirmation entirely; otherwise an
-// interactive terminal is prompted (isInteractive/confirmPrompt, shared
-// with mkt-015's own `marketplace remove` and init.go's confirmation
-// flow), and a non-interactive session without -y is a hard error -- exit
-// 1, mkt-045's one exit-code exception, not the 2 every other package
-// edit failure uses.
+// NAME` (mkt-045): -y/--yes skips confirmation entirely; otherwise a
+// genuinely interactive session is prompted via confirmOrRequireYes
+// (ux.Confirm, shared with mkt-015's own `marketplace remove`), and a
+// non-interactive session without -y is a hard error -- exit 1, mkt-045's
+// one exit-code exception, not the 2 every other package edit failure uses.
 func marketplacePackageRemoveCmd() *cobra.Command {
 	var yes, verbose bool
 
@@ -249,14 +249,14 @@ func marketplacePackageRemoveCmd() *cobra.Command {
 					return err
 				}
 				if !proceed {
-					fmt.Fprintln(cmd.ErrOrStderr(), "Aborted.")
+					ux.Info(cmd.ErrOrStderr(), "Aborted.")
 					return nil
 				}
 			}
 			if _, err := authoring.RemovePackage(".", name); err != nil {
 				return withExitCode(2, err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "[-] Removed package %q\n", name)
+			ux.Success(cmd.OutOrStdout(), "Removed package %q", name)
 			return nil
 		},
 	}

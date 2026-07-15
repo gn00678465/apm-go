@@ -26,6 +26,7 @@ import (
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
@@ -191,7 +192,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// be optional in frozen verify-only mode (integrity is checked from lockfile+disk).
 	if !frozen && lockfile.IsCIEnvironment() {
 		frozen = true
-		fmt.Fprintln(os.Stderr, "CI environment detected, defaulting to frozen install")
+		ux.Info(os.Stderr, "CI environment detected, defaulting to frozen install")
 	}
 
 	// --skill requires an actual package to scope to. Reject up front rather
@@ -533,17 +534,17 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			}
 		}
 
-		fmt.Println("Frozen install: all dependencies pinned and verified")
+		ux.Success(os.Stdout, "Frozen install: all dependencies pinned and verified")
 		return nil
 	}
 
 	// 4. Resolve dependency graph, unless this is a local-only deploy.
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	if !hasAnyDeps {
-		fmt.Println("No dependencies to install")
+		ux.Info(os.Stdout, "No dependencies to install")
 		if len(targets) == 0 {
 			for _, d := range targetDiags {
-				fmt.Fprintln(os.Stderr, d)
+				ux.Error(os.Stderr, "%s", d)
 			}
 			// Local .apm/ primitives with no target to deploy them to is the
 			// same failure as the deps-present zero-target gate below: exit 2
@@ -564,13 +565,13 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	if !hasAnyDeps {
 		result = &resolver.ResolutionResult{}
 	} else {
-		fmt.Println("[>] Installing dependencies from apm.yml...")
+		sp := ux.Spinner(os.Stdout, "Installing dependencies from apm.yml...")
 		seen := make(map[string]bool)
 		for _, dep := range allDirectDeps(m) {
 			canon := dep.ToCanonical(m.DefaultHost)
 			if !seen[canon] {
 				seen[canon] = true
-				fmt.Printf("[>] Resolving %s...\n", canon)
+				sp.Update(fmt.Sprintf("Resolving %s...", canon))
 			}
 		}
 
@@ -601,8 +602,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			MarketplaceResolve: newMarketplaceResolveFunc(),
 		})
 		if err != nil {
+			sp.Fail(fmt.Sprintf("resolve: %v", err))
 			return fmt.Errorf("resolve: %w", err)
 		}
+		sp.Success(fmt.Sprintf("Resolved %d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies")))
 		// mkt-029/033/F1: apm.yml dict-form marketplace dependencies
 		// (dependencies.apm entries {name, marketplace, version}) are
 		// resolved by the BFS itself now (root and transitive alike), not
@@ -629,7 +632,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// its "no registered handler" diagnostic (req-tg-004) before we exit.
 	if len(result.Deps) > 0 && len(targets) == 0 {
 		for _, d := range targetDiags {
-			fmt.Fprintln(os.Stderr, d)
+			ux.Error(os.Stderr, "%s", d)
 		}
 		return errNoDeployTarget()
 	}
@@ -711,29 +714,31 @@ func tryLocalBundleInstall(bundleArg, targetFlag string, skillSubset []string, a
 // (install/local_bundle_handler.py:34-297).
 func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag string) error {
 	if !info.HasLockfile {
-		fmt.Fprintln(os.Stderr, "[warn] Bundle has no apm.lock.yaml -- skipping integrity check. "+
+		ux.Warn(os.Stderr, "Bundle has no apm.lock.yaml -- skipping integrity check. "+
 			"This bundle may have been produced by an older or non-apm-go tool.")
 	} else if !info.HasPackMeta {
-		fmt.Fprintln(os.Stderr, "[warn] Bundle has an apm.lock.yaml but no 'pack:' metadata section -- skipping integrity check.")
+		ux.Warn(os.Stderr, "Bundle has an apm.lock.yaml but no 'pack:' metadata section -- skipping integrity check.")
 	} else if errs := localbundle.VerifyBundleIntegrity(info.SourceDir, info.PackMeta); len(errs) > 0 {
-		fmt.Fprintln(os.Stderr, "Bundle integrity check failed:")
-		for _, e := range errs {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		ux.Error(os.Stderr, "Bundle integrity check failed:")
+		items := make([]ux.Item, len(errs))
+		for i, e := range errs {
+			items[i] = ux.Item{Text: e}
 		}
+		ux.BulletList(os.Stderr, items)
 		return fmt.Errorf("bundle integrity check failed for %s", bundleArg)
 	}
 
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, nil, ".")
 	for _, d := range targetDiags {
-		fmt.Fprintln(os.Stderr, d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 	if len(targets) == 0 {
-		fmt.Println("[warn] No active targets resolved -- nothing will be deployed. Pass --target to select one explicitly.")
+		ux.Warn(os.Stdout, "No active targets resolved -- nothing will be deployed. Pass --target to select one explicitly.")
 		return nil
 	}
 
 	if warning := localbundle.CheckTargetMismatch(info.PackTargets, targets); warning != "" {
-		fmt.Fprintf(os.Stderr, "[warn] %s\n", warning)
+		ux.Warn(os.Stderr, "%s", warning)
 	}
 
 	var packMeta *bundle.PackMetadata
@@ -745,11 +750,11 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 		return fmt.Errorf("deploy local bundle: %w", err)
 	}
 	for _, d := range result.Diags {
-		fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 
 	if len(result.Files) == 0 {
-		fmt.Println("No files deployed from local bundle")
+		ux.Info(os.Stdout, "No files deployed from local bundle")
 		return nil
 	}
 
@@ -757,7 +762,7 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 		return err
 	}
 
-	fmt.Printf("[+] Installed %d file(s) from local bundle %s\n", len(result.Files), bundleArg)
+	ux.Success(os.Stdout, "Installed %d file(s) from local bundle %s", len(result.Files), bundleArg)
 	return nil
 }
 
@@ -1017,7 +1022,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
-		fmt.Fprintln(os.Stderr, d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 	if len(targets) > 0 {
 		targetSource := "auto-detect"
@@ -1026,16 +1031,16 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 		} else if len(m.Target) > 0 {
 			targetSource = "apm.yml"
 		}
-		fmt.Printf("[i] Targets: %s  (source: %s)\n", strings.Join(targets, ", "), targetSource)
+		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
 
 		var skillFilter *deploy.SkillFilter
 		// The '*' RESET sentinel means "install ALL skills" (install.md):
 		// leave skillFilter nil rather than constructing one with a literal
 		// "*" entry, so this call site never depends on deploy.SkillFilter's
-		// own wildcard handling to no-op it -- and the "[i] Skill subset:"
+		// own wildcard handling to no-op it -- and the "Skill subset:" info
 		// line, which only makes sense for an actual narrowing, is skipped.
 		if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
-			fmt.Printf("[i] Skill subset: %s\n", strings.Join(skillSubset, ", "))
+			ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
 			depKeys := make([]string, 0, len(requestedKeys))
 			for k := range requestedKeys {
 				depKeys = append(depKeys, k)
@@ -1048,7 +1053,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 			return fmt.Errorf("deploy: %w", err)
 		}
 		for _, d := range deployResult.Diags {
-			fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+			ux.Warn(os.Stderr, "%s", d)
 		}
 
 		// Print deploy summary per dep
@@ -1057,8 +1062,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 			if label == "" {
 				label = "(local)"
 			}
-			fmt.Printf("  [+] %s\n", label)
-			printDeploySummary(dr.Files, targets)
+			ux.Tree(os.Stdout, deployedFilesTree(label, dr.Files))
 		}
 
 		// Warn about resolved dependencies that deployed zero files to any
@@ -1067,7 +1071,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 		// (e.g. an unrecognized manifest format).
 		for _, dep := range result.Deps {
 			if _, ok := deployResult.PerDep[dep.Key]; !ok {
-				fmt.Fprintf(os.Stderr, "[!] warning: %s deployed 0 files to any target\n", dep.Key)
+				ux.Warn(os.Stderr, "%s deployed 0 files to any target", dep.Key)
 			}
 		}
 
@@ -1122,7 +1126,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 
 	// 7. No-op check
 	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) {
-		fmt.Println("Already up to date")
+		ux.Info(os.Stdout, "Already up to date")
 		return nil
 	}
 
@@ -1150,43 +1154,87 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 		}
 	}
 
-	fmt.Printf("\n[*] Installed %d dependencies\n", len(result.Deps))
+	fmt.Println()
+	ux.Success(os.Stdout, "Installed %d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies"))
+	items := make([]ux.Item, 0, len(result.Deps))
 	for _, dep := range result.Deps {
 		tag := dep.ResolvedTag
 		if tag == "" {
 			tag = dep.ResolvedRef
 		}
-		fmt.Printf("  %s@%s (depth %d)\n", dep.Key, tag, dep.Depth)
+		label := dep.Key
+		if tag != "" {
+			label += "@" + tag
+		}
+		items = append(items, ux.Item{Text: fmt.Sprintf("%s (depth %d)", label, dep.Depth)})
+	}
+	if len(items) > 0 {
+		ux.BulletList(os.Stdout, items)
 	}
 
 	return nil
 }
 
-func printDeploySummary(files []string, targets []string) {
-	counts := map[string][]string{}
+// deployedFilesTree groups a single dependency's deployed files by
+// primitive type (skill/agent/instruction/command/prompt/file) and
+// destination directory, as a compact per-dep summary tree. Unlike the
+// former flat "N type(s) -> dir" lines, the type noun is pluralized only
+// when the count actually calls for it (no bare "(s)" suffix).
+func deployedFilesTree(label string, files []string) ux.TreeNode {
+	type group struct {
+		kind  string
+		dir   string
+		count int
+	}
+	order := make([]string, 0)
+	groups := map[string]*group{}
 	for _, f := range files {
-		var ptype string
-		switch {
-		case strings.Contains(f, "/skills/"):
-			ptype = "skill(s)"
-		case strings.Contains(f, "/agents/") && !strings.Contains(f, ".agents/"):
-			ptype = "agent(s)"
-		case strings.Contains(f, "/rules/") || strings.Contains(f, "/instructions/"):
-			ptype = "instruction(s)"
-		case strings.Contains(f, "/commands/"):
-			ptype = "command(s)"
-		case strings.Contains(f, "/prompts/"):
-			ptype = "prompt(s)"
-		default:
-			ptype = "file(s)"
-		}
+		kind := deployedFileKind(f)
 		dir := f[:strings.LastIndex(f, "/")+1]
-		key := ptype + " -> " + dir
-		counts[key] = append(counts[key], f)
+		key := kind + "\x00" + dir
+		g, ok := groups[key]
+		if !ok {
+			g = &group{kind: kind, dir: dir}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.count++
 	}
-	for key, items := range counts {
-		fmt.Printf("  |-- %d %s\n", len(items), key)
+	children := make([]ux.TreeNode, 0, len(order))
+	for _, key := range order {
+		g := groups[key]
+		children = append(children, ux.TreeNode{
+			Text: fmt.Sprintf("%d %s -> %s", g.count, pluralWord(g.count, g.kind, g.kind+"s"), g.dir),
+		})
 	}
+	return ux.TreeNode{Text: label, Children: children}
+}
+
+// deployedFileKind classifies a deployed file path into the primitive type
+// it belongs to, for deployedFilesTree's grouping.
+func deployedFileKind(f string) string {
+	switch {
+	case strings.Contains(f, "/skills/"):
+		return "skill"
+	case strings.Contains(f, "/agents/") && !strings.Contains(f, ".agents/"):
+		return "agent"
+	case strings.Contains(f, "/rules/") || strings.Contains(f, "/instructions/"):
+		return "instruction"
+	case strings.Contains(f, "/commands/"):
+		return "command"
+	case strings.Contains(f, "/prompts/"):
+		return "prompt"
+	default:
+		return "file"
+	}
+}
+
+// pluralWord returns singular when n == 1, plural otherwise.
+func pluralWord(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 func toLockDeps(deps []resolver.ResolvedDep) []lockfile.LockedDep {
@@ -1372,7 +1420,7 @@ func resolvePositionalPackage(pkg string) (*manifest.DependencyReference, *marke
 	// mkt-034: ref-swap-pin/shadow advisories are never blocking -- surface
 	// them and keep going.
 	for _, w := range res.Warnings {
-		fmt.Fprintf(os.Stderr, "[!] %s\n", w)
+		ux.Warn(os.Stderr, "%s", w)
 	}
 
 	// mkt-027: a structured DepRef (a non-GitHub-family host's

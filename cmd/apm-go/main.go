@@ -7,12 +7,15 @@ import (
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
 
 func main() {
+	ux.Init()
+
 	root := &cobra.Command{
 		Use:     "apm-go",
 		Short:   "Agent Package Manager (Go)",
@@ -69,8 +72,13 @@ func validateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("%s: %w", args[0], err)
 			}
-			for _, d := range diags {
-				fmt.Fprintf(os.Stderr, "warning: %s\n", d.Message)
+			if len(diags) > 0 {
+				ux.Warn(os.Stderr, "%d diagnostic(s) found in %s", len(diags), args[0])
+				items := make([]ux.Item, len(diags))
+				for i, d := range diags {
+					items[i] = ux.Item{Text: d.Message}
+				}
+				ux.BulletList(os.Stderr, items)
 			}
 			return nil
 		},

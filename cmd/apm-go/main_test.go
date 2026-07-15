@@ -238,38 +238,6 @@ func TestValidateCmd_ValidManifest(t *testing.T) {
 
 // ── helper tests ──
 
-func TestParseToggleInput(t *testing.T) {
-	tests := []struct {
-		input string
-		max   int
-		want  []int
-	}{
-		{"1", 5, []int{0}},
-		{"3", 5, []int{2}},
-		{"1,3,5", 5, []int{0, 2, 4}},
-		{"1-3", 5, []int{0, 1, 2}},
-		{"1,3-5", 5, []int{0, 2, 3, 4}},
-		{"", 5, nil},
-		{"0", 5, nil},
-		{"6", 5, nil},
-		{"abc", 5, nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := parseToggleInput(tt.input, tt.max)
-			if len(got) != len(tt.want) {
-				t.Errorf("parseToggleInput(%q, %d) = %v, want %v", tt.input, tt.max, got, tt.want)
-				return
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("index %d: got %d, want %d", i, got[i], tt.want[i])
-				}
-			}
-		})
-	}
-}
-
 func TestBuildManifestData(t *testing.T) {
 	data := buildManifestData("test", "1.0.0", "desc", "author", []string{"claude"})
 	if data["name"] != "test" {

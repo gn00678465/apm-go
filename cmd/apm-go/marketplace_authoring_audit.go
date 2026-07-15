@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/apm-go/apm/internal/marketplace"
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
 )
 
@@ -47,7 +49,8 @@ func marketplaceAuditCmd() *cobra.Command {
 			reports := authoring.RunAudit(m, name, src.Host, authoring.DefaultApmYMLFetcher)
 			ok, bypassTotal, skipped, unverifiable := printAuditReports(cmd, reports, verbose)
 
-			fmt.Fprintf(cmd.OutOrStdout(), "\nSummary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)\n",
+			fmt.Fprintln(cmd.OutOrStdout())
+			ux.Info(cmd.OutOrStdout(), "Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
 				ok, bypassTotal, skipped, unverifiable)
 
 			if strict && (bypassTotal > 0 || unverifiable > 0) {
@@ -73,25 +76,37 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 			if len(r.Issues) == 0 {
 				ok++
 				if verbose {
-					fmt.Fprintf(w, "[+] %s: deps are marketplace-resolved\n", r.PluginName)
+					ux.Success(w, "%s: deps are marketplace-resolved", r.PluginName)
 				}
 				continue
 			}
 			bypassTotal += len(r.Issues)
-			fmt.Fprintf(w, "[!] %s: %d dependencies bypass the marketplace\n", r.PluginName, len(r.Issues))
-			for _, issue := range r.Issues {
-				fmt.Fprintf(w, "      - %q\n", issue.Dep)
-				fmt.Fprintf(w, "        hint: %s\n", issue.Suggestion)
-			}
+			printBypassTree(w, r)
 		case authoring.FetchNoManifest, authoring.FetchUnsupportedSource:
 			skipped++
 			if verbose {
-				fmt.Fprintf(w, "[i] %s: skipped (%s)\n", r.PluginName, r.Detail)
+				ux.Info(w, "%s: skipped (%s)", r.PluginName, r.Detail)
 			}
 		default:
 			unverifiable++
-			fmt.Fprintf(w, "[!] %s: could not verify (%s)\n", r.PluginName, r.Detail)
+			ux.Warn(w, "%s: could not verify (%s)", r.PluginName, r.Detail)
 		}
 	}
 	return ok, bypassTotal, skipped, unverifiable
+}
+
+// printBypassTree renders one plugin's marketplace-bypass findings as a
+// two-level nested tree (plugin -> dependency -> hint), replacing the
+// former flat "- dep" / "  hint: ..." indentation.
+func printBypassTree(w io.Writer, r authoring.PluginAuditReport) {
+	root := ux.TreeNode{
+		Text: fmt.Sprintf("%s: %d dependencies bypass the marketplace", r.PluginName, len(r.Issues)),
+	}
+	for _, issue := range r.Issues {
+		root.Children = append(root.Children, ux.TreeNode{
+			Text:     issue.Dep,
+			Children: []ux.TreeNode{{Text: "hint: " + issue.Suggestion}},
+		})
+	}
+	ux.Tree(w, root)
 }
