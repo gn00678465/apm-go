@@ -17,12 +17,12 @@ var (
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorError))
 )
 
-// Success prints a "✓ ..." line to w.
+// Success prints a "+ ..." line to w.
 func Success(w io.Writer, format string, a ...any) {
 	printLine(w, successStyle, SymbolSuccess, format, a...)
 }
 
-// Info prints an "ℹ ..." line to w.
+// Info prints an "i ..." line to w.
 func Info(w io.Writer, format string, a ...any) {
 	printLine(w, infoStyle, SymbolInfo, format, a...)
 }
@@ -32,17 +32,21 @@ func Warn(w io.Writer, format string, a ...any) {
 	printLine(w, warnStyle, SymbolWarn, format, a...)
 }
 
-// Error prints a "✗ ..." line to w.
+// Error prints an "x ..." line to w.
 func Error(w io.Writer, format string, a ...any) {
 	printLine(w, errorStyle, SymbolError, format, a...)
 }
 
-// printLine renders "<symbol> <message>" with symbol in style, then writes
-// it to w via lipgloss.Fprintln, which downsamples/strips colors per-writer
-// (see writer.go's use of colorprofile.NewWriter) -- no renderForWriter or
-// global styling flag needed.
+// printLine renders "<symbol><message>" with the symbol centered in a
+// fixed-width-3 column (R8: all message symbols share one visual width, so
+// multi-line output stays aligned; the centered padding already supplies the
+// gap before msg -- no separate " " is added), then writes it to w via
+// lipgloss.Fprintln, which downsamples/strips colors per-writer (see
+// writer.go's use of colorprofile.NewWriter) -- no renderForWriter or global
+// styling flag needed.
 func printLine(w io.Writer, style lipgloss.Style, symbol, format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	line := style.Render(symbol) + " " + msg
+	symStyle := style.Bold(true).AlignHorizontal(lipgloss.Center).Width(3)
+	line := symStyle.Render(symbol) + msg
 	lipgloss.Fprintln(w, line)
 }

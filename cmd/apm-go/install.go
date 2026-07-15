@@ -238,6 +238,19 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// scoped to only these dependencies instead of the whole resolved graph.
 	requestedKeys := make(map[string]bool)
 	marketplaceProvenance := make(map[string]*marketplace.Provenance)
+	// existing tracks every dep key ALREADY declared in apm.yml before this
+	// call's positional packages are merged in below (deploy.DepRefKey,
+	// matching requestedKeys's identity). The install summary (in
+	// deployAndFinalize) uses requestedKeys+existing together to tell a
+	// genuinely new addition from a dep the user re-requested that was
+	// already declared, so it can mute the latter (R9/R10c) instead of
+	// presenting it as a fresh install.
+	existing := make(map[string]bool)
+	for _, d := range m.ParsedDeps {
+		if k := deploy.DepRefKey(d); k != "" {
+			existing[k] = true
+		}
+	}
 	// persistPackages mirrors packages 1:1 for the persistPackagesToManifest
 	// call in deployAndFinalize below, substituting each marketplace
 	// reference's RESOLVED canonical for the raw CLI string (mkt-030): the
@@ -255,12 +268,6 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		// from the same monorepo against an already-declared dep sharing
 		// only the RepoURL, silently dropping it. Local/parent refs have no
 		// dep key ("") and are skipped so they don't pollute the map.
-		existing := make(map[string]bool)
-		for _, d := range m.ParsedDeps {
-			if k := deploy.DepRefKey(d); k != "" {
-				existing[k] = true
-			}
-		}
 		for _, pkg := range packages {
 			ref, provenance, err := resolvePositionalPackage(pkg)
 			if err != nil {
@@ -638,7 +645,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, persistPackages, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, existing, persistPackages, result, newLock, existingLock, existingNode, node)
 }
 
 // errNoDeployTarget is the exit-2 teaching error shared by runInstall's two
@@ -1017,7 +1024,11 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // deployAndFinalize runs deploy.Run, prints the deploy summary, checks for a
 // no-op (steps 6-7), then writes apm.lock.yaml and (for positional package
 // installs) apm.yml (steps 8-9). Shared by runInstall and runUpdate.
-func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []string, requestedKeys map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+// requestedKeys and existing (both dep keys, deploy.DepRefKey identity) are
+// only meaningful for a real `install` call: requestedKeys is nil for
+// `update` (which has no per-call "was this positionally requested"
+// concept), and the R9/R10c muting below is skipped whenever it is.
+func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 
 	// 6. Deploy primitives to targets
@@ -1056,11 +1067,25 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 			ux.Warn(os.Stderr, "%s", d)
 		}
 
+		// depsByKey looks up each resolved dependency's tag/ref/commit by its
+		// deploy key, for the R10a short-hash label fallback below --
+		// deployResult.PerDep is keyed by the same dep key, not by a
+		// human-readable version label.
+		depsByKey := make(map[string]resolver.ResolvedDep, len(result.Deps))
+		for _, dep := range result.Deps {
+			depsByKey[dep.Key] = dep
+		}
+
 		// Print deploy summary per dep
 		for key, dr := range deployResult.PerDep {
 			label := key
 			if label == "" {
-				label = "(local)"
+				// R14: name the local-primitives bucket after what it
+				// actually is (files integrated from this project's own
+				// .apm/ tree), not a bare, ambiguous "(local)".
+				label = "<project root> (local)"
+			} else if dep, ok := depsByKey[key]; ok {
+				label += depVersionLabel(dep)
 			}
 			ux.Tree(os.Stdout, deployedFilesTree(label, dr.Files))
 		}
@@ -1158,15 +1183,31 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 	ux.Success(os.Stdout, "Installed %d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies"))
 	items := make([]ux.Item, 0, len(result.Deps))
 	for _, dep := range result.Deps {
-		tag := dep.ResolvedTag
-		if tag == "" {
-			tag = dep.ResolvedRef
+		label := dep.Key + depVersionLabel(dep)
+		// R9/R10c: a dep is "new" only if this call's positional args asked
+		// for it AND it wasn't already declared in apm.yml before this call.
+		// Everything else here -- transitively-resolved deps, deps a bare
+		// `install` re-resolved from an already-populated apm.yml, or a
+		// re-requested already-declared dep -- is muted rather than
+		// presented as a fresh install. requestedKeys is nil for `update`
+		// (see deployAndFinalize's doc comment), where every dep counts as
+		// "new" to preserve its unchanged summary rendering.
+		isNew := requestedKeys == nil || (requestedKeys[dep.Key] && !existing[dep.Key])
+		text := fmt.Sprintf("%s (depth %d)", label, dep.Depth)
+		if !isNew {
+			// P4-10: the distinction must survive ANSI stripping too, so a
+			// non-new dep isn't identified by color alone. A transitive dep
+			// (depth>0) is muted as well but is NOT necessarily declared in
+			// apm.yml, so it gets an accurate "(transitive)" marker instead of
+			// the misleading "(already in apm.yml)".
+			switch {
+			case existing[dep.Key]:
+				text += " (already in apm.yml)"
+			case dep.Depth > 0:
+				text += " (transitive)"
+			}
 		}
-		label := dep.Key
-		if tag != "" {
-			label += "@" + tag
-		}
-		items = append(items, ux.Item{Text: fmt.Sprintf("%s (depth %d)", label, dep.Depth)})
+		items = append(items, ux.Item{Text: text, Muted: !isNew})
 	}
 	if len(items) > 0 {
 		ux.BulletList(os.Stdout, items)
@@ -1176,35 +1217,53 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 }
 
 // deployedFilesTree groups a single dependency's deployed files by
-// primitive type (skill/agent/instruction/command/prompt/file) and
-// destination directory, as a compact per-dep summary tree. Unlike the
-// former flat "N type(s) -> dir" lines, the type noun is pluralized only
-// when the count actually calls for it (no bare "(s)" suffix).
+// primitive type (skill/agent/instruction/command/prompt/file) into ONE
+// aggregated line per kind (R10b), instead of the former one-line-per-exact
+// subdirectory layout that produced dozens of lines for a dep with many
+// skills. Each line reports the number of distinct primitives of that kind
+// (deduplicated across every target root they were mirrored to, e.g. a
+// skill deployed to both ".agents/skills/" and ".claude/skills/" counts
+// once) and the comma-separated set of target roots they landed in -- e.g.
+// "22 skill(s) -> .agents/skills/, .claude/skills/".
 func deployedFilesTree(label string, files []string) ux.TreeNode {
 	type group struct {
-		kind  string
-		dir   string
-		count int
+		kind      string
+		names     map[string]bool
+		roots     map[string]bool
+		rootOrder []string
 	}
 	order := make([]string, 0)
 	groups := map[string]*group{}
 	for _, f := range files {
 		kind := deployedFileKind(f)
-		dir := f[:strings.LastIndex(f, "/")+1]
-		key := kind + "\x00" + dir
-		g, ok := groups[key]
+		g, ok := groups[kind]
 		if !ok {
-			g = &group{kind: kind, dir: dir}
-			groups[key] = g
-			order = append(order, key)
+			g = &group{kind: kind, names: map[string]bool{}, roots: map[string]bool{}}
+			groups[kind] = g
+			order = append(order, kind)
 		}
-		g.count++
+		root := deployedFileRoot(f, kind)
+		if !g.roots[root] {
+			g.roots[root] = true
+			g.rootOrder = append(g.rootOrder, root)
+		}
+		// The generic "file" kind has no primitive identity shared across
+		// roots (unlike a skill directory mirrored to N roots), so key it by
+		// full path -- two different roots' "config.json" stay two files.
+		name := f
+		if kind != "file" {
+			name = deployedPrimitiveName(f, root)
+		}
+		g.names[name] = true
 	}
 	children := make([]ux.TreeNode, 0, len(order))
-	for _, key := range order {
-		g := groups[key]
+	for _, kind := range order {
+		g := groups[kind]
+		roots := append([]string(nil), g.rootOrder...)
+		sort.Strings(roots)
+		count := len(g.names)
 		children = append(children, ux.TreeNode{
-			Text: fmt.Sprintf("%d %s -> %s", g.count, pluralWord(g.count, g.kind, g.kind+"s"), g.dir),
+			Text: fmt.Sprintf("%d %s -> %s", count, pluralWord(count, g.kind, g.kind+"s"), strings.Join(roots, ", ")),
 		})
 	}
 	return ux.TreeNode{Text: label, Children: children}
@@ -1229,12 +1288,91 @@ func deployedFileKind(f string) string {
 	}
 }
 
+// deployedKindMarkers maps each deployedFileKind result to the directory
+// segment(s) that mark its deploy target root, for deployedFileRoot.
+var deployedKindMarkers = map[string][]string{
+	"skill":       {"/skills/"},
+	"agent":       {"/agents/"},
+	"instruction": {"/rules/", "/instructions/"},
+	"command":     {"/commands/"},
+	"prompt":      {"/prompts/"},
+}
+
+// deployedFileRoot returns the target root directory for a deployed file of
+// the given kind: the path prefix through (and including) the
+// kind-identifying directory segment, e.g. ".claude/skills/foo/SKILL.md" ->
+// ".claude/skills/". Falls back to the file's own parent directory for the
+// generic "file" kind, which has no fixed marker segment.
+func deployedFileRoot(f, kind string) string {
+	for _, marker := range deployedKindMarkers[kind] {
+		if idx := strings.Index(f, marker); idx >= 0 {
+			return f[:idx+len(marker)]
+		}
+	}
+	return f[:strings.LastIndex(f, "/")+1]
+}
+
+// deployedPrimitiveName extracts the distinguishing primitive name from a
+// deployed file path (relative to its already-computed root), so the same
+// primitive mirrored to multiple target roots -- e.g. a skill deployed to
+// both ".agents/skills/foo/SKILL.md" and ".claude/skills/foo/SKILL.md", or
+// an agent written as "foo.md" by one target and "foo.agent.md" by another
+// -- collapses to a single counted entity instead of one per root/target.
+func deployedPrimitiveName(f, root string) string {
+	rest := f[len(root):]
+	if idx := strings.IndexByte(rest, '/'); idx >= 0 {
+		// Directory-based primitive (skills/<name>/..., or an
+		// agents/<name>/agent.md style layout): the first path segment
+		// after root IS the primitive name, shared by all its files/roots.
+		return rest[:idx]
+	}
+	// Flat-file primitive: strip ONE file extension, then ONE known
+	// target-specific type suffix (".agent"/".instructions"/...), so the same
+	// primitive written as "foo.agent.md" (one target) and "foo.md" (another)
+	// collapses to "foo", while unrelated dotted names ("foo.bar.md" vs
+	// "foo.baz.md") stay distinct instead of both being flattened to "foo".
+	rest = strings.TrimSuffix(rest, filepath.Ext(rest))
+	for _, suf := range []string{".agent", ".instructions", ".instruction", ".prompt", ".command"} {
+		if strings.HasSuffix(rest, suf) {
+			return strings.TrimSuffix(rest, suf)
+		}
+	}
+	return rest
+}
+
 // pluralWord returns singular when n == 1, plural otherwise.
 func pluralWord(n int, singular, plural string) string {
 	if n == 1 {
 		return singular
 	}
 	return plural
+}
+
+// shortCommitLen is the number of leading commit-hash characters shown by
+// depVersionLabel's unpinned fallback (R10a).
+const shortCommitLen = 8
+
+// depVersionLabel returns a "@<version>" suffix for dep, preferring the
+// human-readable ResolvedTag, then ResolvedRef; when both are empty (an
+// unpinned dependency resolved straight to a commit) it falls back to the
+// first 8 characters of the resolved commit SHA so the label is never a
+// bare "pkg@" with nothing after it. Returns "" (no suffix at all) when dep
+// has neither a tag/ref nor a resolved commit.
+func depVersionLabel(dep resolver.ResolvedDep) string {
+	switch {
+	case dep.ResolvedTag != "":
+		return "@" + dep.ResolvedTag
+	case dep.ResolvedRef != "":
+		return "@" + dep.ResolvedRef
+	case dep.Commit != "":
+		commit := dep.Commit
+		if len(commit) > shortCommitLen {
+			commit = commit[:shortCommitLen]
+		}
+		return "@" + commit
+	default:
+		return ""
+	}
 }
 
 func toLockDeps(deps []resolver.ResolvedDep) []lockfile.LockedDep {

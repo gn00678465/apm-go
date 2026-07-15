@@ -374,7 +374,7 @@ func marketplaceOutdatedCmd() *cobra.Command {
 }
 
 // outdatedStatusSymbol maps authoring.OutdatedRow.Status's bracket token to
-// the cmd layer's ✓/!/ℹ/✗ symbol set for display. refcheck.go's own Status
+// the cmd layer's +/!/i/x symbol set for display. refcheck.go's own Status
 // field is left as "[+]"/"[!]"/"[*]"/"[i]"/"[x]" -- internal/marketplace/
 // authoring's tests assert those literal values -- so this mapping happens
 // only here, at render time.

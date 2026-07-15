@@ -402,7 +402,7 @@ func TestRunUninstall_SurvivingLocalRootDryRunKeepsSharedTransitive(t *testing.T
 	if !strings.Contains(stdout, "dry-run") {
 		t.Errorf("expected --dry-run output to be the preview/plan style, got:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "✓ Removed") {
+	if strings.Contains(stdout, "+ Removed") {
 		t.Errorf("expected --dry-run output to never contain the real-run success summary, got:\n%s", stdout)
 	}
 

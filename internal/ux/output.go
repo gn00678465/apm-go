@@ -11,9 +11,13 @@ import (
 )
 
 // Item is a single entry in a BulletList, with an indent Level (0 = top).
+// Muted renders Text in ColorMuted (R9/R10c: distinguishing an
+// already-declared/duplicate entry from a genuinely new one) instead of the
+// default unstyled text.
 type Item struct {
 	Level int
 	Text  string
+	Muted bool
 }
 
 // TreeNode is a node in a Tree, used for nested reports such as install
@@ -63,7 +67,21 @@ func BulletList(w io.Writer, items []Item) {
 }
 
 func newBulletList() *list.List {
-	return list.New().Enumerator(list.Bullet).EnumeratorStyle(mutedStyle)
+	// R8a: the SymbolList enumerator is centered in a fixed width-3 column,
+	// same as message symbols (printer.go's printLine), so bullet items and
+	// message lines align and the enumerator always has a visible gap before
+	// the item text (an unstyled/unwidth-ed EnumeratorStyle collapses that
+	// gap). list.Bullet is not used here: it hardcodes "•" (an East-Asian
+	// Ambiguous-width glyph, see colors.go's R8/P4-7 comment) instead of
+	// following the single-source symbol set.
+	return list.New().Enumerator(bulletEnumerator).
+		EnumeratorStyle(mutedStyle.AlignHorizontal(lipgloss.Center).Width(3))
+}
+
+// bulletEnumerator renders SymbolList for every item, in place of
+// list.Bullet's hardcoded "•".
+func bulletEnumerator(list.Items, int) string {
+	return SymbolList
 }
 
 // buildBulletList turns a flat, leveled slice of items into nested
@@ -82,7 +100,11 @@ func buildBulletList(items []Item) *list.List {
 			stack = append(stack, sub)
 		}
 		stack = stack[:level+1]
-		stack[level].Item(it.Text)
+		text := it.Text
+		if it.Muted {
+			text = mutedStyle.Render(text)
+		}
+		stack[level].Item(text)
 	}
 
 	return root

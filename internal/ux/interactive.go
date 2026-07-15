@@ -45,6 +45,25 @@ var runForm = func(f *huh.Form) error {
 	return f.Run()
 }
 
+// runMultiSelectField executes a huh MultiSelect field with its own form
+// wrapping, separate from runField's single-field wrapper. It is a swappable
+// seam so tests can exercise field construction without needing a real
+// interactive terminal.
+//
+// R19: runField's WithShowHelp(false) (added for the accessible-output fix)
+// also silently disabled MultiSelect's toggle/move/confirm keybinding help
+// footer -- MultiSelect alone needs it back, so it gets its own wrapper
+// (WithShowHelp(true)) instead of changing runField for every field kind.
+// WithOutput(os.Stderr) is kept for the same reason as runField (see its
+// doc comment): huh's accessible mode (TERM=dumb) defaults prompts to
+// stdout otherwise.
+var runMultiSelectField = func(f huh.Field) error {
+	return huh.NewForm(huh.NewGroup(f)).
+		WithShowHelp(true).
+		WithOutput(os.Stderr).
+		Run()
+}
+
 // Confirm asks a yes/no question with the given default. When prompting
 // isn't possible (non-TTY stdin/stderr, or CI -- see CanPrompt) it returns
 // def immediately without prompting.
@@ -119,9 +138,13 @@ func MultiSelect(title string, opts []Option) ([]string, error) {
 	field := huh.NewMultiSelect[string]().
 		Title(title).
 		Options(huhOpts...).
+		// R19: force the field's own height to fit its title line plus every
+		// option, so a long option list (e.g. init's >=5 targets) is shown
+		// in full rather than left to the terminal's reported window size.
+		Height(len(opts) + 1).
 		Value(&selected).
 		WithTheme(Theme())
-	err := runField(field)
+	err := runMultiSelectField(field)
 	return selected, err
 }
 

@@ -68,8 +68,8 @@ spinner，建於 bubbletea）。
 
 ### 範圍收斂（方案 A · 已採納：分流）
 盤點（含 `research/full-ab-parity-sweep.md` 實跑）後三分，**本任務（07-14）自此只實作「甲」**：
-- **甲 · 純美化（＝本任務範圍）**：R8 符號統一寬度、R9 既存/重複灰化、R10a hash、R10b 樹聚合、
-  R14 local 標籤（`<project root> (local)`，純文案）。性質是「怎麼呈現既有資料」的樣式層 —— 先做先交付。
+- **甲 · 純美化（＝本任務範圍）**：R8 符號統一寬度（含 ASCII fallback 符號集）、R9 既存/重複灰化、
+  R10a hash、R10b 樹聚合、R14 local 標籤、R19 init 多選（顯示全部 + 鍵位說明）。樣式/互動呈現層 —— 先做先交付。
 - **乙 · 內容 parity（分流 → 新子任務「輸出 parity」）**：R7、R11、R12、R13、R15、R16、R17、R18。
   性質是「補印缺失內容」，presentation-only 但與「美化」不同，獨立規劃驗收。
 - **丙 · 業務 bug（分流 → 新子任務）**：BUG-1（大小寫重複 dep）。F1/F4 為 Python 側問題、apm-go 不需修。
@@ -87,8 +87,17 @@ spinner，建於 bubbletea）。
 - **方案**：`lipgloss.NewStyle().Bold(true).Foreground(<語意色>).AlignHorizontal(lipgloss.Center).Width(3)`
   渲染符號 → `symStyle.Render(sym) + msg`（Width 已含右 padding，**不再另加空格**）→ `lipgloss.Fprintln(w, …)`。
 - a. `ux.BulletList` 的 `•` enumerator 改用 `Width(3).Align(Center)`（現況 `•text` 無空格；改後與訊息符號同寬對齊）。錨點 `internal/ux/output.go`。
-- b. 訊息符號 `✓ ℹ ! ✗ ▸` 全門面（printer/section/spinner）統一走上述 3 格置中，訊息自第 4 格起對齊。錨點 `internal/ux/printer.go`。
-- c. `Background` 不設（透明）；只 Foreground 語意色。**實作期須以實際終端截圖確認 Ambiguous 寬度（`✓ ℹ •`）對齊**，錯位則改符號或 `Width(4)`；決策記錄於 design.md（P4-7）。
+- b. 訊息符號全門面（printer/section/spinner）統一走 3 格置中，訊息自第 4 格起對齊。錨點 `internal/ux/printer.go`。
+- c. **符號集 fallback 定案（2026-07-15，使用者選定）**：`✓ ℹ ✗ ▸ •` 皆 East-Asian Ambiguous（僅 `!` 確定窄），
+  終端字型可能繪成寬 2 而錯位 → **保留 `Width(3)` 對齊，改用確定寬 1 的替代符號**：
+  `+`(success)、`i`(info)、`!`(warn)、`x`(error)、`>`(progress)、`*`(list)；保留語意色 + Bold，`Background` 不設。詳見 design.md P4-7。
+
+**R19. init target 多選：顯示全部選項 + 鍵位說明（甲類 · init 互動）**
+`init` 的「Select targets」huh MultiSelect 需：(a) 一次**顯示全部（≥5）**target 選項、不截斷；
+(b) 顯示操作**鍵位說明**（toggle / ↑↓ 移動 / enter 確認）。**根因**：先前修 huh accessible 輸出時，
+`runField` 加了 `WithShowHelp(false)`，連帶關掉 keybinding help footer。修法：對多選路徑 `WithShowHelp(true)`
++ 設 MultiSelect 高度顯示全部選項（查 huh v2 Height API），保留 `WithOutput(os.Stderr)`。對照 mockup 3.2 已畫的說明行。
+錨點 `internal/ux/interactive.go`（`runField`/`MultiSelect`）、`init.go interactiveTargetSelect`。
 
 **R9. 語意色彩 + 重複/既存項目灰化**（對 Python `[+]` 重複項轉灰）
 - 新增「muted / 已存在」呈現語意：已在 apm.yml 的**既存 dep**、重複項目以 `ColorMuted` 灰色標示。

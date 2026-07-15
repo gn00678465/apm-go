@@ -595,8 +595,8 @@ func TestMarketplaceCheck_RemotePackagePinnedRefMissing_ExitsNonZero(t *testing.
 	if err == nil {
 		t.Fatal("marketplace check with a missing pinned ref returned no error, want exit 1 (mkt-041)")
 	}
-	if !strings.Contains(out, "✗: tool") {
-		t.Errorf("output = %q, want a ✗ failure line naming the package", out)
+	if !strings.Contains(out, "x: tool") {
+		t.Errorf("output = %q, want an x failure line naming the package", out)
 	}
 }
 
@@ -686,8 +686,8 @@ func TestMarketplaceCheck_VerbosePrintsEveryPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace check -v returned error: %v", err)
 	}
-	if !strings.Contains(out, "✓: local-a: ok") {
-		t.Errorf("output = %q, want a per-package ✓ line with -v", out)
+	if !strings.Contains(out, "+: local-a: ok") {
+		t.Errorf("output = %q, want a per-package + line with -v", out)
 	}
 }
 

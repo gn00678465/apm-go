@@ -225,7 +225,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		return errNoDeployTarget()
 	}
 
-	return deployAndFinalize(m, "", nil, nil, nil, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, "", nil, nil, nil, nil, result, newLock, existingLock, existingNode, node)
 }
 
 // runUpdateDryRun resolves --dry-run's plan against a throwaway scratch

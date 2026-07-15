@@ -3,6 +3,7 @@ package ux
 import (
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,16 @@ func stubRunForm(t *testing.T, fn func(*huh.Form) error) {
 	prev := runForm
 	runForm = fn
 	t.Cleanup(func() { runForm = prev })
+}
+
+// stubRunMultiSelectField replaces MultiSelect's own huh field-execution
+// seam with fn for the duration of the test, so its field construction (R19:
+// help footer + Height) can be exercised without a real interactive terminal.
+func stubRunMultiSelectField(t *testing.T, fn func(huh.Field) error) {
+	t.Helper()
+	prev := runMultiSelectField
+	runMultiSelectField = fn
+	t.Cleanup(func() { runMultiSelectField = prev })
 }
 
 // setRichMode overrides the package's richMode decision directly (bypassing
@@ -272,7 +283,7 @@ func TestMultiSelect_RichModePropagatesRunError(t *testing.T) {
 	// Arrange
 	setRichMode(t, true)
 	wantErr := errors.New("aborted")
-	stubRunField(t, func(huh.Field) error { return wantErr })
+	stubRunMultiSelectField(t, func(huh.Field) error { return wantErr })
 	opts := []Option{{Label: "claude", Value: "claude", Selected: true}}
 
 	// Act
@@ -287,7 +298,7 @@ func TestMultiSelect_RichModePropagatesRunError(t *testing.T) {
 func TestMultiSelect_RichModeBuildsOptionsAndPropagatesRunResult(t *testing.T) {
 	// Arrange
 	setRichMode(t, true)
-	stubRunField(t, func(huh.Field) error { return nil })
+	stubRunMultiSelectField(t, func(huh.Field) error { return nil })
 	opts := []Option{
 		{Label: "claude", Value: "claude", Selected: true},
 		{Label: "cursor", Value: "cursor"},
@@ -341,6 +352,73 @@ func TestInputForm_RichModePropagatesRunError(t *testing.T) {
 	// Assert
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("InputForm() err = %v, want %v", err, wantErr)
+	}
+}
+
+// buildTestMultiSelectField mirrors MultiSelect's field construction (title,
+// options, Height(len(opts)+1)) without going through the CanPrompt/
+// runMultiSelectField seam, so tests below can render huh's real Group/Field
+// views directly -- proving R19's actual huh behavior instead of merely
+// exercising a stub.
+func buildTestMultiSelectField(labels []string) *huh.MultiSelect[string] {
+	huhOpts := make([]huh.Option[string], len(labels))
+	for i, l := range labels {
+		huhOpts[i] = huh.NewOption(l, l)
+	}
+	return huh.NewMultiSelect[string]().
+		Title("Select targets for this project").
+		Options(huhOpts...).
+		Height(len(labels) + 1)
+}
+
+// TestMultiSelect_HeightFitsAllOptionsUnclipped is the R19(a) regression:
+// with >=5 options and Height(len(opts)+1) (as MultiSelect sets), rendering
+// the field must show every option, not just the ones a small default
+// viewport would otherwise clip to.
+func TestMultiSelect_HeightFitsAllOptionsUnclipped(t *testing.T) {
+	// Arrange
+	labels := []string{"copilot", "claude", "opencode", "codex", "antigravity"}
+	field := buildTestMultiSelectField(labels)
+
+	// Act
+	out := field.View()
+
+	// Assert
+	for _, label := range labels {
+		if !strings.Contains(out, label) {
+			t.Fatalf("MultiSelect view missing option %q, view was clipped:\n%s", label, out)
+		}
+	}
+}
+
+// TestMultiSelect_GroupShowHelpTrueRendersFooter is the R19(b) regression:
+// a Group wrapping a MultiSelect field, wired into a Form with
+// WithShowHelp(true) (what runMultiSelectField now uses, in place of
+// runField's WithShowHelp(false)), renders a non-empty keybinding help
+// footer; WithShowHelp(false) renders none. The field must go through
+// huh.NewForm (not a bare Group) because that's what applies the default
+// keymap (NewDefaultKeyMap) fields need to have any visible key bindings at
+// all -- a bare Group's fields keep a zero-value keymap with no keys, which
+// would make this test pass/fail for the wrong reason (empty keymap, not
+// respecting showHelp).
+func TestMultiSelect_GroupShowHelpTrueRendersFooter(t *testing.T) {
+	// Arrange
+	withHelpGroup := huh.NewGroup(buildTestMultiSelectField([]string{"a", "b"}))
+	huh.NewForm(withHelpGroup).WithShowHelp(true)
+
+	withoutHelpGroup := huh.NewGroup(buildTestMultiSelectField([]string{"a", "b"}))
+	huh.NewForm(withoutHelpGroup).WithShowHelp(false)
+
+	// Act
+	helpFooter := withHelpGroup.Footer()
+	noHelpFooter := withoutHelpGroup.Footer()
+
+	// Assert
+	if helpFooter == "" {
+		t.Fatal("WithShowHelp(true) group produced an empty footer, want the keybinding help text")
+	}
+	if noHelpFooter != "" {
+		t.Fatalf("WithShowHelp(false) group produced a non-empty footer: %q", noHelpFooter)
 	}
 }
 

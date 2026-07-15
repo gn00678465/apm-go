@@ -33,10 +33,10 @@ func IsRich() bool     // 互動 prompt 是否應呈現（stdin+stderr TTY、無
 func CanPrompt() bool  // 「能否在 stdin 阻塞式互動」（stdin+stderr 皆 TTY 且非 CI；**不含 NO_COLOR**）
 
 // 前綴輸出 —— 每個都接受目標 writer；著色由 lipgloss 依「該 writer」自動決定（見 D2）。
-func Success(w io.Writer, format string, a ...any)  // ✓ 綠
-func Info(w io.Writer, format string, a ...any)     // ℹ 品牌青
+func Success(w io.Writer, format string, a ...any)  // + 綠
+func Info(w io.Writer, format string, a ...any)     // i 品牌青
 func Warn(w io.Writer, format string, a ...any)     // ! 琥珀
-func Error(w io.Writer, format string, a ...any)    // ✗ 紅
+func Error(w io.Writer, format string, a ...any)    // x 紅
 
 // 結構化輸出 —— 同樣接受 writer，per-writer 著色同上。
 type Item struct { Level int; Text string }          // BulletList 縮排項（巢狀 sub-list）
@@ -73,8 +73,9 @@ func SetTTYSeamsForTest(stdinTTY, stdoutTTY, stderrTTY bool) (restore func())
 
 單一色票/符號來源（`internal/ux/colors.go`）：
 `ColorBrand #2dd4bf`、`ColorHeading #8aa0ff`、`ColorSuccess #3fb950`、`ColorWarning #d29922`、
-`ColorError #f85149`、`ColorMuted #8b949e`；`SymbolSuccess ✓`、`SymbolInfo ℹ`、`SymbolWarn !`、
-`SymbolError ✗`、`SymbolProgress ▸`、`SymbolList •`。
+`ColorError #f85149`、`ColorMuted #8b949e`；`SymbolSuccess +`、`SymbolInfo i`、`SymbolWarn !`、
+`SymbolError x`、`SymbolProgress >`、`SymbolList *`（R8/P4-7：原符號集 ✓ ℹ ✗ ▸ • 除 `!` 外皆為
+East-Asian Ambiguous 寬度，換成寬度確定為 1 的 ASCII 等義符號，見 colors.go 註解）。
 
 ---
 

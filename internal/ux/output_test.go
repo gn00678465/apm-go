@@ -122,6 +122,46 @@ func TestBulletList_Golden_NestedLevels(t *testing.T) {
 	}
 }
 
+// TestBulletList_EnumeratorHasGapBeforeText is the R8a regression: the
+// SymbolList enumerator must have a visible gap before the item text (an
+// unstyled or unwidth-ed EnumeratorStyle collapses it to SymbolList+"text",
+// see output.go/newBulletList's comment).
+func TestBulletList_EnumeratorHasGapBeforeText(t *testing.T) {
+	var buf bytes.Buffer
+	BulletList(&buf, []Item{{Text: "hello"}})
+	out := strings.TrimRight(buf.String(), "\n")
+
+	if strings.Contains(out, SymbolList+"hello") {
+		t.Fatalf("bullet enumerator has no gap before text: %q", out)
+	}
+	if !strings.Contains(out, SymbolList+" hello") {
+		t.Fatalf("expected %q (centered 3-column enumerator), got: %q", SymbolList+" hello", out)
+	}
+}
+
+// TestBulletList_MutedItemUsesColorMutedNotPlainText is the R9/R10c
+// regression: a Muted item renders styled (ANSI-colored on a TTY-like
+// writer) while a non-muted item at the same level does not, so muting is a
+// presentation-only concern that never touches Text itself.
+func TestBulletList_MutedItemUsesColorMutedNotPlainText(t *testing.T) {
+	// bytes.Buffer is never a terminal, so ANSI is stripped either way
+	// (see assertNoANSI's doc comment) -- this only verifies the plain text
+	// is unaffected by Muted, i.e. Muted never mutates Item.Text itself.
+	var buf bytes.Buffer
+	BulletList(&buf, []Item{
+		{Text: "new-dep"},
+		{Text: "existing-dep", Muted: true},
+	})
+	out := buf.String()
+
+	assertNoANSI(t, "BulletList muted", out)
+	for _, want := range []string{"new-dep", "existing-dep"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BulletList output missing %q: %q", want, out)
+		}
+	}
+}
+
 func TestTree_Golden_NestedChildren(t *testing.T) {
 	// Arrange
 	var buf bytes.Buffer
