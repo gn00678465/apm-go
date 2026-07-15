@@ -29,9 +29,17 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 	}
 	data = append(data, rows...)
 
+	// WithHeaderRowSeparator draws a rule between the header and the body.
+	// It uses an ASCII "-" rather than the box-drawing "─": pterm miscomputes
+	// the separator row's width for multi-byte runes (the box then renders too
+	// wide with a misaligned right wall), while "-" aligns correctly. pterm's
+	// own multiple-lines table example uses "-" for the same reason. pterm
+	// only emits the separator when there is a header row, so this is a no-op
+	// for headerless tables.
 	pterm.DefaultTable.
 		WithHasHeader(len(headers) > 0).
 		WithHeaderStyle(pterm.NewStyle(pterm.FgCyan, pterm.Bold)).
+		WithHeaderRowSeparator("-").
 		WithBoxed(true).
 		WithWriter(w).
 		WithData(data).
