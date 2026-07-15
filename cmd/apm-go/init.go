@@ -56,14 +56,14 @@ func initCmd() *cobra.Command {
 
 			if apmYmlExists {
 				if yes || force {
-					fmt.Fprintln(os.Stderr, "--yes specified, overwriting apm.yml...")
+					ux.Info(os.Stderr, "--yes specified, overwriting apm.yml...")
 				} else if ux.CanPrompt() {
 					ok, err := ux.Confirm("apm.yml already exists. Continue and overwrite?", false)
 					if err != nil {
 						return fmt.Errorf("confirm overwrite: %w", err)
 					}
 					if !ok {
-						fmt.Fprintln(os.Stderr, "Initialization cancelled.")
+						ux.Info(os.Stderr, "Initialization cancelled.")
 						return nil
 					}
 				} else {
@@ -80,8 +80,9 @@ func initCmd() *cobra.Command {
 				description = fmt.Sprintf("APM project for %s", name)
 				author = manifest.DetectAuthor()
 			} else {
-				fmt.Fprintln(os.Stderr, "\nSetting up your APM project...")
-				fmt.Fprintln(os.Stderr, "Press ^C at any time to quit.")
+				fmt.Fprintln(os.Stderr)
+				ux.Section(os.Stderr, "Setting up your APM project...")
+				ux.Info(os.Stderr, "Press ^C at any time to quit.")
 				fmt.Fprintln(os.Stderr)
 
 				name, err = ux.InputText("Project name", filepath.Base(cwd))
@@ -154,7 +155,7 @@ func initCmd() *cobra.Command {
 					return fmt.Errorf("confirm creation: %w", err)
 				}
 				if !ok {
-					fmt.Fprintln(os.Stderr, "Aborted.")
+					ux.Info(os.Stderr, "Aborted.")
 					return nil
 				}
 			}
@@ -183,8 +184,9 @@ func initCmd() *cobra.Command {
 			// Phase 7: Success output
 			fmt.Fprintln(os.Stderr)
 			ux.Success(os.Stderr, "APM project initialized successfully!")
-			fmt.Fprintln(os.Stderr, "\nNext steps:")
-			fmt.Fprintln(os.Stderr, "  * Install a package:  apm-go install <owner>/<repo>")
+			fmt.Fprintln(os.Stderr)
+			ux.Section(os.Stderr, "Next steps")
+			ux.Info(os.Stderr, "Install a package:  apm-go install <owner>/<repo>")
 			return nil
 		},
 	}

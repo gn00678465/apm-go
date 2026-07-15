@@ -249,7 +249,7 @@ func marketplacePackageRemoveCmd() *cobra.Command {
 					return err
 				}
 				if !proceed {
-					fmt.Fprintln(cmd.ErrOrStderr(), "Aborted.")
+					ux.Info(cmd.ErrOrStderr(), "Aborted.")
 					return nil
 				}
 			}

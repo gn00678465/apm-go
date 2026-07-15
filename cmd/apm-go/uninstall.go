@@ -78,7 +78,7 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	}
 	if len(plan.resolution.APMTargets) == 0 && len(plan.resolution.MCPTargets) == 0 {
 		// un-013: every argument was some flavor of not-found -- no changes.
-		fmt.Println("No packages found in apm.yml to remove")
+		ux.Info(os.Stdout, "No packages found in apm.yml to remove")
 		return nil
 	}
 

@@ -220,7 +220,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	targets, targetDiags := deploy.ResolveTargets("", m.Target, ".")
 	if len(result.Deps) > 0 && len(targets) == 0 {
 		for _, d := range targetDiags {
-			fmt.Fprintln(os.Stderr, d)
+			ux.Error(os.Stderr, "%s", d)
 		}
 		return errNoDeployTarget()
 	}

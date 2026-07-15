@@ -192,7 +192,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// be optional in frozen verify-only mode (integrity is checked from lockfile+disk).
 	if !frozen && lockfile.IsCIEnvironment() {
 		frozen = true
-		fmt.Fprintln(os.Stderr, "CI environment detected, defaulting to frozen install")
+		ux.Info(os.Stderr, "CI environment detected, defaulting to frozen install")
 	}
 
 	// --skill requires an actual package to scope to. Reject up front rather
@@ -534,17 +534,17 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			}
 		}
 
-		fmt.Println("Frozen install: all dependencies pinned and verified")
+		ux.Success(os.Stdout, "Frozen install: all dependencies pinned and verified")
 		return nil
 	}
 
 	// 4. Resolve dependency graph, unless this is a local-only deploy.
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	if !hasAnyDeps {
-		fmt.Println("No dependencies to install")
+		ux.Info(os.Stdout, "No dependencies to install")
 		if len(targets) == 0 {
 			for _, d := range targetDiags {
-				fmt.Fprintln(os.Stderr, d)
+				ux.Error(os.Stderr, "%s", d)
 			}
 			// Local .apm/ primitives with no target to deploy them to is the
 			// same failure as the deps-present zero-target gate below: exit 2
@@ -632,7 +632,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// its "no registered handler" diagnostic (req-tg-004) before we exit.
 	if len(result.Deps) > 0 && len(targets) == 0 {
 		for _, d := range targetDiags {
-			fmt.Fprintln(os.Stderr, d)
+			ux.Error(os.Stderr, "%s", d)
 		}
 		return errNoDeployTarget()
 	}
@@ -719,16 +719,18 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 	} else if !info.HasPackMeta {
 		ux.Warn(os.Stderr, "Bundle has an apm.lock.yaml but no 'pack:' metadata section -- skipping integrity check.")
 	} else if errs := localbundle.VerifyBundleIntegrity(info.SourceDir, info.PackMeta); len(errs) > 0 {
-		fmt.Fprintln(os.Stderr, "Bundle integrity check failed:")
-		for _, e := range errs {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		ux.Error(os.Stderr, "Bundle integrity check failed:")
+		items := make([]ux.Item, len(errs))
+		for i, e := range errs {
+			items[i] = ux.Item{Text: e}
 		}
+		ux.BulletList(os.Stderr, items)
 		return fmt.Errorf("bundle integrity check failed for %s", bundleArg)
 	}
 
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, nil, ".")
 	for _, d := range targetDiags {
-		fmt.Fprintln(os.Stderr, d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 	if len(targets) == 0 {
 		ux.Warn(os.Stdout, "No active targets resolved -- nothing will be deployed. Pass --target to select one explicitly.")
@@ -752,7 +754,7 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 	}
 
 	if len(result.Files) == 0 {
-		fmt.Println("No files deployed from local bundle")
+		ux.Info(os.Stdout, "No files deployed from local bundle")
 		return nil
 	}
 
@@ -1020,7 +1022,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
-		fmt.Fprintln(os.Stderr, d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 	if len(targets) > 0 {
 		targetSource := "auto-detect"
@@ -1124,7 +1126,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 
 	// 7. No-op check
 	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) {
-		fmt.Println("Already up to date")
+		ux.Info(os.Stdout, "Already up to date")
 		return nil
 	}
 

@@ -241,9 +241,11 @@ func marketplaceAddCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			ux.Success(w, "Added marketplace %q (kind: %s)", effectiveName, src.Kind())
 			if verbose {
-				fmt.Fprintf(w, "  source: %s\n", src.URL)
-				fmt.Fprintf(w, "  ref: %s\n", src.Ref)
-				fmt.Fprintf(w, "  plugins: %d\n", len(m.Plugins))
+				ux.BulletList(w, []ux.Item{
+					{Text: fmt.Sprintf("source: %s", src.URL)},
+					{Text: fmt.Sprintf("ref: %s", src.Ref)},
+					{Text: fmt.Sprintf("plugins: %d", len(m.Plugins))},
+				})
 			}
 			return nil
 		},
@@ -357,7 +359,7 @@ func marketplaceListCmd() *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			if len(sources) == 0 {
-				fmt.Fprintln(w, "No marketplaces registered. Add one with: apm-go marketplace add SOURCE")
+				ux.Info(w, "No marketplaces registered. Add one with: apm-go marketplace add SOURCE")
 				return nil
 			}
 			headers := []string{"NAME", "SOURCE", "REF", "PATH"}
@@ -428,7 +430,7 @@ func marketplaceBrowseCmd() *cobra.Command {
 			fmt.Fprintln(w)
 			renderBrowseTable(w, fmt.Sprintf("Plugins in '%s'", name), rows)
 			if verbose {
-				fmt.Fprintf(w, "%d plugin(s) in %q\n", len(m.Plugins), name)
+				ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("%d plugin(s) in %q", len(m.Plugins), name)}})
 			}
 			ux.Info(w, "Install a plugin: apm-go install <plugin-name>@%s", name)
 			return nil
@@ -469,7 +471,7 @@ func marketplaceUpdateCmd() *cobra.Command {
 				}
 				ux.Success(w, "Refreshed marketplace %q (%d plugins)", name, len(m.Plugins))
 				if verbose {
-					fmt.Fprintf(w, "  source: %s\n", src.URL)
+					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", src.URL)}})
 				}
 				return nil
 			}
@@ -487,7 +489,7 @@ func marketplaceUpdateCmd() *cobra.Command {
 				}
 				ux.Success(w, "Refreshed marketplace %q (%d plugins)", s.Name, len(m.Plugins))
 				if verbose {
-					fmt.Fprintf(w, "  source: %s\n", s.URL)
+					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", s.URL)}})
 				}
 			}
 			return nil
@@ -537,7 +539,7 @@ func marketplaceRemoveCmd() *cobra.Command {
 					return err
 				}
 				if !proceed {
-					fmt.Fprintln(cmd.ErrOrStderr(), "Aborted.")
+					ux.Info(cmd.ErrOrStderr(), "Aborted.")
 					return nil
 				}
 			}
@@ -546,7 +548,7 @@ func marketplaceRemoveCmd() *cobra.Command {
 			}
 			ux.Success(cmd.OutOrStdout(), "Removed marketplace %q", name)
 			if verbose {
-				fmt.Fprintf(cmd.OutOrStdout(), "  source: %s\n", src.URL)
+				ux.BulletList(cmd.OutOrStdout(), []ux.Item{{Text: fmt.Sprintf("source: %s", src.URL)}})
 			}
 			return nil
 		},
@@ -590,13 +592,15 @@ func marketplaceValidateCmd() *cobra.Command {
 				// Mirrors Python's validate.py:38-42 per-plugin verbose
 				// detail (source type: dict vs string), printed after the
 				// fetch and before the validation results.
-				for _, p := range m.Plugins {
+				items := make([]ux.Item, len(m.Plugins))
+				for i, p := range m.Plugins {
 					sourceType := "string"
 					if _, ok := p.Source.(map[string]any); ok {
 						sourceType = "dict"
 					}
-					fmt.Fprintf(w, "    %s: source type: %s\n", p.Name, sourceType)
+					items[i] = ux.Item{Text: fmt.Sprintf("%s: source type: %s", p.Name, sourceType)}
 				}
+				ux.BulletList(w, items)
 			}
 
 			findings := marketplace.Validate(m)
@@ -612,7 +616,7 @@ func marketplaceValidateCmd() *cobra.Command {
 				ux.BulletList(w, items)
 			}
 			passed, warnings, errs := summarizeFindings(m, findings)
-			fmt.Fprintf(w, "Summary: %d passed, %d warnings, %d errors\n", passed, warnings, errs)
+			ux.Info(w, "Summary: %d passed, %d warnings, %d errors", passed, warnings, errs)
 			if errs > 0 {
 				return fmt.Errorf("marketplace %q failed validation with %d error(s)", name, errs)
 			}

@@ -133,7 +133,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	// verifiable in stdout, not just the deploy/skip outcome (codex review).
 	targets, targetDiags := deploy.ResolveTargets(opts.TargetFlag, m.Target, ".")
 	for _, d := range targetDiags {
-		fmt.Fprintln(os.Stderr, d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 	if len(targets) > 0 {
 		targetSource := "auto-detect"
@@ -168,8 +168,10 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		return nil
 	}
 	ux.Success(os.Stdout, "%s MCP server %q", verb, opts.Name)
-	fmt.Printf("  transport: %s\n", deployDep.Transport)
-	fmt.Printf("  apm.yml: apm.yml\n")
+	ux.BulletList(os.Stdout, []ux.Item{
+		{Text: fmt.Sprintf("transport: %s", deployDep.Transport)},
+		{Text: "apm.yml: apm.yml"},
+	})
 	return nil
 }
 
@@ -608,7 +610,7 @@ func nodeToValue(n *yamllib.Node) any {
 func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDependency) (deployedTargets, skippedTargets []string, err error) {
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	for _, d := range targetDiags {
-		fmt.Fprintln(os.Stderr, d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 
 	prims := []deploy.Primitive{{Name: dep.Name, Type: deploy.TypeMCP, Source: "local", MCP: dep}}

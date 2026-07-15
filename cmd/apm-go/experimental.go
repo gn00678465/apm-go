@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/apm-go/apm/internal/experimental"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
@@ -40,9 +38,9 @@ func experimentalCmd() *cobra.Command {
 			if err := experimental.Enable(args[0]); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Enabled experimental feature: %s\n", args[0])
+			ux.Success(cmd.OutOrStdout(), "Enabled experimental feature: %s", args[0])
 			if f, ok := experimental.Known(args[0]); ok && f.Hint != "" {
-				fmt.Fprintln(cmd.OutOrStdout(), f.Hint)
+				ux.Info(cmd.OutOrStdout(), "%s", f.Hint)
 			}
 			return nil
 		},
@@ -56,7 +54,7 @@ func experimentalCmd() *cobra.Command {
 			if err := experimental.Disable(args[0]); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Disabled experimental feature: %s\n", args[0])
+			ux.Success(cmd.OutOrStdout(), "Disabled experimental feature: %s", args[0])
 			return nil
 		},
 	})

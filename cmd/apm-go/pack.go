@@ -250,10 +250,10 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		return nil
 	}
 	ux.Success(w, "Packed %d file(s) -> %s", len(result.Files), result.BundleDir)
-	fmt.Fprintln(w, "Plugin bundle ready -- contains plugin.json plus plugin-native directories "+
+	ux.Info(w, "Plugin bundle ready -- contains plugin.json plus plugin-native directories "+
 		"(agents/, skills/, commands/, ...) and an embedded apm.lock.yaml for install-time "+
 		"integrity verification.")
-	fmt.Fprintf(w, "Share with: apm-go install %s\n", result.BundleDir)
+	ux.Info(w, "Share with: apm-go install %s", result.BundleDir)
 	return nil
 }
 
@@ -362,9 +362,11 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
 		ux.Warn(cmd.ErrOrStderr(), "%s", warning)
 	}
 	if opts.verbose {
-		for _, pkg := range resolved {
-			fmt.Fprintf(w, "    %s\n", pkg.Entry.Name)
+		items := make([]ux.Item, len(resolved))
+		for i, pkg := range resolved {
+			items[i] = ux.Item{Text: pkg.Entry.Name}
 		}
+		ux.BulletList(w, items)
 	}
 
 	configPaths, err := build.LoadOutputPathOverrides(".", src)

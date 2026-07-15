@@ -98,7 +98,7 @@ func marketplaceInitCmd() *cobra.Command {
 			if verbose {
 				cwd, cerr := os.Getwd()
 				if cerr == nil {
-					fmt.Fprintf(w, "    Path: %s\n", filepath.Join(cwd, "apm.yml"))
+					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("Path: %s", filepath.Join(cwd, "apm.yml"))}})
 				}
 			}
 
@@ -106,11 +106,14 @@ func marketplaceInitCmd() *cobra.Command {
 				warnIfGitignoreIgnoresMarketplaceJSON(cmd.ErrOrStderr())
 			}
 
-			fmt.Fprintln(w, "\nNext steps:")
-			fmt.Fprintln(w, "  1. Edit the 'marketplace:' block in apm.yml to add your packages")
-			fmt.Fprintln(w, "  2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json")
-			fmt.Fprintln(w, "  3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json")
-			fmt.Fprintln(w, "  4. Commit apm.yml and the generated marketplace file(s)")
+			fmt.Fprintln(w)
+			ux.Section(w, "Next steps")
+			ux.BulletList(w, []ux.Item{
+				{Text: "1. Edit the 'marketplace:' block in apm.yml to add your packages"},
+				{Text: "2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json"},
+				{Text: "3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json"},
+				{Text: "4. Commit apm.yml and the generated marketplace file(s)"},
+			})
 			return nil
 		},
 	}
@@ -349,12 +352,12 @@ func marketplaceOutdatedCmd() *cobra.Command {
 			ux.Table(w, []string{"STATUS", "NAME", "CURRENT", "LATEST-IN-RANGE", "LATEST", "NOTE"}, tableRows)
 
 			if upgradable > 0 {
-				fmt.Fprintf(w, "%d package(s) can be updated\n", upgradable)
+				ux.Info(w, "%d package(s) can be updated", upgradable)
 			} else {
-				fmt.Fprintln(w, "All packages are up to date")
+				ux.Info(w, "All packages are up to date")
 			}
 			if verbose {
-				fmt.Fprintf(w, "    %d upgradable entries\n", upgradable)
+				ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("%d upgradable entries", upgradable)}})
 			}
 
 			if upgradable > 0 {

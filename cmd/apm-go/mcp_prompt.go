@@ -86,7 +86,7 @@ func promptRegistryHeaders(requiredHeaders []string) map[string]string {
 	if len(requiredHeaders) == 0 || !canPromptCreds() {
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, "Credentials needed:")
+	ux.Section(os.Stderr, "Credentials needed")
 	hdrs := collectHeaderValues(requiredHeaders, ttyAsk)
 	if len(hdrs) == 0 {
 		return nil
@@ -119,8 +119,10 @@ func ttyAsk(label string, secret bool) string {
 // only when stdin is interactive.
 func promptReplaceMCP(name string, diff []string) (bool, error) {
 	ux.Warn(os.Stderr, "MCP server %q already exists. Replacement diff:", name)
-	for _, line := range diff {
-		fmt.Fprintf(os.Stderr, "%s\n", line)
+	items := make([]ux.Item, len(diff))
+	for i, line := range diff {
+		items[i] = ux.Item{Text: line}
 	}
+	ux.BulletList(os.Stderr, items)
 	return ux.Confirm(fmt.Sprintf("Replace MCP server %q?", name), false)
 }

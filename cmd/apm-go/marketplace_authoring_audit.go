@@ -49,7 +49,8 @@ func marketplaceAuditCmd() *cobra.Command {
 			reports := authoring.RunAudit(m, name, src.Host, authoring.DefaultApmYMLFetcher)
 			ok, bypassTotal, skipped, unverifiable := printAuditReports(cmd, reports, verbose)
 
-			fmt.Fprintf(cmd.OutOrStdout(), "\nSummary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)\n",
+			fmt.Fprintln(cmd.OutOrStdout())
+			ux.Info(cmd.OutOrStdout(), "Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
 				ok, bypassTotal, skipped, unverifiable)
 
 			if strict && (bypassTotal > 0 || unverifiable > 0) {
