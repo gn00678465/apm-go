@@ -1,7 +1,6 @@
 package ux
 
 import (
-	"fmt"
 	"io"
 	"strings"
 
@@ -30,12 +29,13 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 	}
 	data = append(data, rows...)
 
-	s, _ := pterm.DefaultTable.
+	pterm.DefaultTable.
 		WithHasHeader(len(headers) > 0).
+		WithHeaderStyle(pterm.NewStyle(pterm.FgCyan, pterm.Bold)).
 		WithBoxed(true).
+		WithWriter(w).
 		WithData(data).
-		Srender()
-	fmt.Fprintln(w, renderForWriter(w, s))
+		Render()
 }
 
 // BulletList renders a leveled bullet list to w.
@@ -45,14 +45,12 @@ func BulletList(w io.Writer, items []Item) {
 		list[i] = pterm.BulletListItem{Level: it.Level, Text: it.Text}
 	}
 
-	s, _ := pterm.DefaultBulletList.WithItems(list).Srender()
-	fmt.Fprintln(w, renderForWriter(w, s))
+	pterm.DefaultBulletList.WithItems(list).WithWriter(w).Render()
 }
 
 // Tree renders a nested tree to w.
 func Tree(w io.Writer, root TreeNode) {
-	s, _ := pterm.DefaultTree.WithRoot(toPtermTreeNode(root)).Srender()
-	fmt.Fprintln(w, renderForWriter(w, s))
+	pterm.DefaultTree.WithRoot(toPtermTreeNode(root)).WithWriter(w).Render()
 }
 
 func toPtermTreeNode(n TreeNode) pterm.TreeNode {
@@ -65,7 +63,17 @@ func toPtermTreeNode(n TreeNode) pterm.TreeNode {
 
 // Section renders a section heading to w.
 func Section(w io.Writer, title string) {
-	fmt.Fprint(w, renderForWriter(w, pterm.DefaultSection.Sprintln(title)))
+	pterm.DefaultSection.WithWriter(w).Println(title)
+}
+
+// Box renders title and body (one entry per line) inside a bordered box to
+// w, used for a final confirmation summary (e.g. init's "About to create").
+func Box(w io.Writer, title string, body []string) {
+	pterm.DefaultBox.
+		WithTitle(pterm.NewStyle(pterm.FgCyan, pterm.Bold).Sprint(title)).
+		WithTitleTopLeft().
+		WithWriter(w).
+		Println(strings.Join(body, "\n"))
 }
 
 // Diff renders a unified diff to w: "+"-prefixed lines (other than the
@@ -77,7 +85,7 @@ func Diff(w io.Writer, diffText string) {
 	for i, line := range lines {
 		lines[i] = colorDiffLine(line)
 	}
-	fmt.Fprintln(w, renderForWriter(w, strings.Join(lines, "\n")))
+	pterm.Fprintln(w, strings.Join(lines, "\n"))
 }
 
 func colorDiffLine(line string) string {

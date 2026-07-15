@@ -891,7 +891,7 @@ func TestMarketplaceRemove_InteractiveExplicitNo_AbortsCleanly(t *testing.T) {
 func TestConfirmOrRequireYes_ProductionCanPromptGate_NonTTY_RequiresYes(t *testing.T) {
 	// Arrange: use the real richCheck/confirmFn (no forceRich/stubConfirm),
 	// forcing only the ux-internal TTY seams to look non-interactive.
-	restore := ux.SetTTYSeamsForTest(false, false)
+	restore := ux.SetTTYSeamsForTest(false, false, false)
 	t.Cleanup(restore)
 
 	// Act
@@ -919,7 +919,7 @@ func TestConfirmOrRequireYes_ProductionCanPromptGate_NonTTY_RequiresYes(t *testi
 func TestMarketplaceRemove_ProductionNonTTY_RequiresYesAndDoesNotRemove(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
-	restore := ux.SetTTYSeamsForTest(false, false)
+	restore := ux.SetTTYSeamsForTest(false, false, false)
 	t.Cleanup(restore)
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: "/abs/path", Path: "marketplace.json"}); err != nil {
 		t.Fatal(err)
@@ -980,7 +980,9 @@ func TestMarketplaceList_TableIncludesEveryRegisteredSource(t *testing.T) {
 // Since 07-14-init-tui-beautify Phase B, the box table is rendered by
 // ux.Table (pterm), not the original's rich-parity HEAVY_HEAD box (design.md
 // "browse box table 遷移到 pterm.Table" explicitly accepts this visual
-// difference): "|" verticals and "-"/"+"-family corners instead of "┃"/"│",
+// difference): a "│" outer box border (ux.go sets pterm.DefaultBox.
+// VerticalString to match its Unicode corners/horizontal rule) with a
+// plain " | " column separator inside, instead of the original's "┃"/"│",
 // but the same Plugin/Description/Version/Install columns, `--` placeholders,
 // and a bare `<plugin>@<mkt>` Install cell (no command prefix) survive.
 func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
@@ -1006,8 +1008,8 @@ func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
 	for _, want := range []string{
 		"ℹ: Fetching plugins from 'acme'...",
 		"Plugins in 'acme'",
-		"| Plugin",
-		"| cool-plugin",
+		"│ Plugin",
+		"│ cool-plugin",
 		"cool-plugin@acme",
 		"bare-plugin@acme",
 		"--",

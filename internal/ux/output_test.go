@@ -96,6 +96,25 @@ func TestOutputGolden_NoANSIWhenStylingDisabled(t *testing.T) {
 		}
 	})
 
+	t.Run("Box", func(t *testing.T) {
+		// Arrange
+		var buf bytes.Buffer
+
+		// Act
+		Box(&buf, "About to create", []string{"name:        demo", "version:     1.0.0"})
+		out := buf.String()
+
+		// Assert
+		if ansiEscape.MatchString(out) {
+			t.Fatalf("Box output contains ANSI escape codes: %q", out)
+		}
+		for _, want := range []string{"About to create", "name:        demo", "version:     1.0.0"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("Box output %q missing %q", out, want)
+			}
+		}
+	})
+
 	t.Run("Diff", func(t *testing.T) {
 		// Arrange
 		var buf bytes.Buffer

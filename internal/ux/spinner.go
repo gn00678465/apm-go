@@ -17,9 +17,9 @@ type Spin struct {
 
 // spinnerIsRich decides whether Spinner should animate on w. It is a
 // swappable seam so tests can exercise the live pterm.SpinnerPrinter
-// lifecycle without a real terminal writer; production code always uses
-// isRichWriter.
-var spinnerIsRich = isRichWriter
+// lifecycle without a real terminal writer; production code always checks
+// the process-wide styling decision plus w's own terminal-ness.
+var spinnerIsRich = func(w io.Writer) bool { return styleEnabled && isTerminalWriter(w) }
 
 // Spinner starts a progress spinner with the given text on w. If w is not
 // a rich writer, no animation is shown; text is printed once as an info

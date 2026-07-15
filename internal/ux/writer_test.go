@@ -33,20 +33,30 @@ func TestIsTerminalWriter_NonTerminalFileIsNotATerminal(t *testing.T) {
 	}
 }
 
-// TestPerWriterStyle_NonTerminalWriterStaysPlainEvenWhenGloballyRich guards
-// against the bug where a single process-wide "rich" decision (captured once
-// from stdin at Init time) leaked ANSI styling into any writer, including a
-// redirected/non-terminal one. Styling must be decided per writer, per call
-// - and, unlike an earlier revision, without ever flipping pterm's global
-// styling flag (pterm.RawOutput) to do it: that flag is read, without a
-// lock, by a spinner's background render goroutine (see spinner.go), so
-// toggling it per call raced under `go test -race` whenever a spinner was
-// active concurrently. Success() now renders through pterm once (reflecting
-// whatever Init() decided for the whole process) and strips the result's
-// ANSI escape codes per writer instead.
-func TestPerWriterStyle_NonTerminalWriterStaysPlainEvenWhenGloballyRich(t *testing.T) {
-	// Arrange: simulate a prior rich decision that left pterm's global
-	// styling flag enabled (e.g. Init() ran while stdin/stderr were TTYs).
+// TestOutputFunctions_PinPtermGlobalStyling characterizes -- and thereby
+// makes reviewable -- a KNOWN LIMITATION of the pterm-native design, not a
+// desired behavior: pterm has no per-writer styling of its own (every
+// Sprint*/Print* method renders against the single process-wide
+// pterm.RawOutput flag regardless of which writer the result is written to --
+// confirmed by reading pterm's PrefixPrinter.Sprint/Print source), so
+// Success/Info/Warn/Error render through pterm's native WithWriter(w).Printfln
+// directly, with no per-writer strip. Consequence: if the global flag is on
+// and a caller passes a NON-terminal writer, ANSI leaks into it.
+//
+// Why this is safe in apm-go (see terminal-ux-contract.md "Known limitation"):
+//  1. Init() only turns the global flag on when *both* os.Stdout and os.Stderr
+//     are real terminals; and
+//  2. every ux caller passes exactly those streams (os.Stdout / os.Stderr /
+//     cmd.OutOrStdout() / cmd.ErrOrStderr()), never a divergent file/buffer.
+//
+// So the flag is only ever on for writers that ARE terminals. This test forces
+// the flag on and writes to a buffer purely to pin pterm's mechanical
+// behavior, so that anyone who later assumes per-writer stripping still
+// happens (it does not) fails here first and reads the contract limitation.
+func TestOutputFunctions_PinPtermGlobalStyling(t *testing.T) {
+	// Arrange: force pterm's global flag on (as Init() would when both
+	// std streams are terminals). This is an artificial state -- see the
+	// doc comment: a non-terminal buffer never sees this flag on in real use.
 	wasRaw := pterm.RawOutput
 	pterm.EnableStyling()
 	t.Cleanup(func() {
@@ -58,21 +68,13 @@ func TestPerWriterStyle_NonTerminalWriterStaysPlainEvenWhenGloballyRich(t *testi
 	})
 
 	var buf bytes.Buffer
-
-	// Act: write to a plain in-memory buffer, which stands in for a
-	// redirected file and is never a real terminal regardless of the
-	// global styling flag's state.
 	Success(&buf, "%s done", "task")
-	out := buf.String()
 
-	// Assert
-	if ansiEscape.MatchString(out) {
-		t.Fatalf("Success() leaked ANSI into a non-terminal writer while pterm styling was globally enabled: %q", out)
-	}
-
-	// Assert: Success() must not have touched the global styling flag at
-	// all (it should still read exactly as this test set it up).
-	if pterm.RawOutput {
-		t.Fatal("Success() changed pterm.RawOutput; output functions must render per-writer without mutating pterm's global styling flag")
+	// Assert pterm's documented global behavior (NOT an endorsement of the
+	// leak): with the flag on, ANSI is emitted regardless of the writer,
+	// because there is no per-writer strip. apm-go relies on Init()+contract
+	// (above) to keep this state unreachable for non-terminal writers.
+	if !ansiEscape.MatchString(buf.String()) {
+		t.Fatalf("Success() did not follow pterm's global styling flag: %q", buf.String())
 	}
 }

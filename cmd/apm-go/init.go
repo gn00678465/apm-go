@@ -136,19 +136,18 @@ func initCmd() *cobra.Command {
 			// Phase 5: Confirmation
 			if !yes && ux.CanPrompt() {
 				fmt.Fprintln(os.Stderr)
-				ux.Section(os.Stderr, "About to create")
-				items := []ux.Item{
-					{Text: fmt.Sprintf("name:        %s", name)},
-					{Text: fmt.Sprintf("version:     %s", version)},
-					{Text: fmt.Sprintf("description: %s", description)},
-					{Text: fmt.Sprintf("author:      %s", author)},
+				body := []string{
+					fmt.Sprintf("name:        %s", name),
+					fmt.Sprintf("version:     %s", version),
+					fmt.Sprintf("description: %s", description),
+					fmt.Sprintf("author:      %s", author),
 				}
 				if len(selectedTargets) > 0 {
-					items = append(items, ux.Item{Text: fmt.Sprintf("targets:     %s", strings.Join(selectedTargets, ", "))})
+					body = append(body, fmt.Sprintf("targets:     %s", strings.Join(selectedTargets, ", ")))
 				} else {
-					items = append(items, ux.Item{Text: "targets:     (none — auto-detect at compile time)"})
+					body = append(body, "targets:     (none — auto-detect at compile time)")
 				}
-				ux.BulletList(os.Stderr, items)
+				ux.Box(os.Stderr, "About to create", body)
 
 				ok, err := ux.Confirm("Is this OK?", true)
 				if err != nil {

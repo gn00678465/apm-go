@@ -17,10 +17,9 @@ import (
 // NO_COLOR must not disable prompting.
 //
 // Structured/prefixed output (Success/Info/Warn/Error/Table/BulletList/
-// Tree/Section/Spinner) does NOT use richMode either: each call decides
-// per-writer, via isRichWriter/renderForWriter, whether to keep or strip the
-// ANSI pterm already produced, so redirecting one command's stdout to a file
-// doesn't leak ANSI just because stdin/stderr happen to still be a TTY.
+// Tree/Section/Spinner) does NOT use richMode either: it renders through
+// pterm's own writer-aware Print family (see printer.go/output.go), which is
+// governed solely by styleEnabled below.
 var richMode bool
 
 // styleEnabled is pterm's process-wide styling decision, set exactly once by
@@ -30,16 +29,29 @@ var richMode bool
 // again: doing so per-call (as an earlier revision did, guarded by a mutex)
 // still raced under `go test -race`, because pterm's spinner render
 // goroutine reads the same global flag (pterm.RawOutput) without taking any
-// lock (see spinner.go and pterm.SpinnerPrinter.Start). Fixing your own
-// writer's decision can never be a substitute for not mutating shared global
-// state from multiple goroutines in the first place.
+// lock (see spinner.go and pterm.SpinnerPrinter.Start).
+//
+// pterm has no per-writer styling mechanism of its own (every Style/
+// PrefixPrinter/BoxPrinter/... Sprint* method renders against the single
+// process-wide pterm.RawOutput flag regardless of which writer the caller
+// eventually writes the result to), so styleEnabled is decided once here
+// from *both* of the streams this CLI ever decorates - stdout and stderr -
+// rather than per call: if either one is redirected away from a real
+// terminal, styling stays off for the whole process instead of leaking ANSI
+// into whichever stream is still a TTY.
 var styleEnabled bool
 
 // init defaults pterm to plain-text output before Init() ever runs (e.g.
 // package-level ux.* calls made by tests that never invoke main(), or a
-// caller that forgets to wire Init() in).
+// caller that forgets to wire Init() in). It also fixes pterm.DefaultBox's
+// vertical border to match its own corners/horizontal border: pterm ships
+// DefaultBox.VerticalString as a plain ASCII "|" while every other box glyph
+// (corners, HorizontalString) is a Unicode box-drawing character, which
+// looks inconsistent once rendered (confirmed by inspecting pterm's actual
+// box_printer.go defaults, not assumed).
 func init() {
 	pterm.DisableStyling()
+	pterm.DefaultBox.VerticalString = "│"
 }
 
 // Init detects the current terminal environment (TTY / NO_COLOR / CI) and
@@ -50,7 +62,7 @@ func init() {
 func Init() {
 	richMode = isInteractive() && isStderrInteractive() && !noColorSet() && !isCI()
 
-	styleEnabled = (isInteractive() || isStderrInteractive()) && !noColorSet() && !isCI()
+	styleEnabled = stdoutIsTTY() && stderrIsTTY() && !noColorSet() && !isCI()
 	if styleEnabled {
 		pterm.EnableStyling()
 	} else {
@@ -76,10 +88,11 @@ func CanPrompt() bool {
 	return stdinIsTTY() && stderrIsTTY() && !isCI()
 }
 
-// stdinIsTTY and stderrIsTTY are swappable seams for tests; production
-// code always uses the default* implementations.
+// stdinIsTTY, stdoutIsTTY and stderrIsTTY are swappable seams for tests;
+// production code always uses the default* implementations.
 var (
 	stdinIsTTY  = defaultStdinIsTTY
+	stdoutIsTTY = defaultStdoutIsTTY
 	stderrIsTTY = defaultStderrIsTTY
 )
 
@@ -102,6 +115,10 @@ func defaultStdinIsTTY() bool {
 	return isTerminalFile(os.Stdin)
 }
 
+func defaultStdoutIsTTY() bool {
+	return isTerminalFile(os.Stdout)
+}
+
 func defaultStderrIsTTY() bool {
 	return isTerminalFile(os.Stderr)
 }
@@ -115,41 +132,16 @@ func isTerminalFile(f *os.File) bool {
 }
 
 // isTerminalWriter reports whether w is a real terminal (as opposed to a
-// pipe, redirected file, or in-memory buffer such as bytes.Buffer). Output
-// functions use this, per call, to decide whether a specific writer should
-// receive styled/animated output instead of relying on a single
-// process-wide mode.
+// pipe, redirected file, or in-memory buffer such as bytes.Buffer). Spinner
+// uses this, per call, to decide whether a specific writer can support
+// animation at all: even when styleEnabled is true process-wide, animating a
+// spinner into a non-terminal writer makes no sense.
 func isTerminalWriter(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
 		return false
 	}
 	return isTerminalFile(f)
-}
-
-// isRichWriter reports whether w should receive styled/animated output: the
-// process-wide styling decision made once in Init() must be enabled, and w
-// itself must be a real terminal.
-func isRichWriter(w io.Writer) bool {
-	return styleEnabled && isTerminalWriter(w)
-}
-
-// renderForWriter returns s exactly as pterm rendered it when w is a real
-// terminal, and with ANSI escape codes stripped otherwise (e.g. a redirected
-// file, a pipe, or an in-memory buffer such as bytes.Buffer).
-//
-// This makes styling decisions per-writer without ever touching pterm's
-// global styling flag: s is always rendered the same way (via pterm's
-// Sprint/Srender family, which reflects whatever Init() decided once for the
-// whole process), and only the already-rendered string is adjusted per
-// writer. That is what makes this safe to call concurrently with an active
-// spinner: pterm's spinner render goroutine only ever reads its global
-// styling flag, and nothing here ever writes to it after Init().
-func renderForWriter(w io.Writer, s string) string {
-	if isTerminalWriter(w) {
-		return s
-	}
-	return pterm.RemoveColorFromString(s)
 }
 
 func noColorSet() bool {

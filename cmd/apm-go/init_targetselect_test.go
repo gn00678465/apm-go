@@ -34,7 +34,7 @@ func runWithTimeout(t *testing.T, d time.Duration, fn func()) {
 // the function returns on its first pass with no error.
 func TestInteractiveTargetSelect_NonTTY_ReturnsDetectedDefaultsWithoutError(t *testing.T) {
 	// Arrange
-	restore := ux.SetTTYSeamsForTest(false, false)
+	restore := ux.SetTTYSeamsForTest(false, false, false)
 	t.Cleanup(restore)
 
 	// Act
@@ -61,7 +61,7 @@ func TestInteractiveTargetSelect_NonTTY_ReturnsDetectedDefaultsWithoutError(t *t
 // than looping.
 func TestInteractiveTargetSelect_NonTTY_NoDetectedTargets_ContinuesWithoutPinning(t *testing.T) {
 	// Arrange
-	restore := ux.SetTTYSeamsForTest(false, false)
+	restore := ux.SetTTYSeamsForTest(false, false, false)
 	t.Cleanup(restore)
 
 	// Act

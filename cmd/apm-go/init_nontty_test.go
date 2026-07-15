@@ -22,7 +22,7 @@ func TestInitCmd_NonTTYStdin_NoApmYml_SucceedsWithAutoDetectedDefaults(t *testin
 	os.Chdir(dir)
 	defer os.Chdir(origDir)
 
-	restore := ux.SetTTYSeamsForTest(false, false)
+	restore := ux.SetTTYSeamsForTest(false, false, false)
 	defer restore()
 
 	// Act
@@ -55,7 +55,7 @@ func TestInitCmd_NonTTYStdin_ExistingApmYml_RequiresYes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restore := ux.SetTTYSeamsForTest(false, false)
+	restore := ux.SetTTYSeamsForTest(false, false, false)
 	defer restore()
 
 	// Act

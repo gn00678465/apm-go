@@ -1,7 +1,6 @@
 package ux
 
 import (
-	"fmt"
 	"io"
 
 	"github.com/pterm/pterm"
@@ -27,20 +26,20 @@ var (
 
 // Success prints a "✓ ..." line to w.
 func Success(w io.Writer, format string, a ...any) {
-	fmt.Fprint(w, renderForWriter(w, successPrinter.Sprintfln(format, a...)))
+	successPrinter.WithWriter(w).Printfln(format, a...)
 }
 
 // Info prints an "ℹ ..." line to w.
 func Info(w io.Writer, format string, a ...any) {
-	fmt.Fprint(w, renderForWriter(w, infoPrinter.Sprintfln(format, a...)))
+	infoPrinter.WithWriter(w).Printfln(format, a...)
 }
 
 // Warn prints a "! ..." line to w.
 func Warn(w io.Writer, format string, a ...any) {
-	fmt.Fprint(w, renderForWriter(w, warnPrinter.Sprintfln(format, a...)))
+	warnPrinter.WithWriter(w).Printfln(format, a...)
 }
 
 // Error prints a "✗ ..." line to w.
 func Error(w io.Writer, format string, a ...any) {
-	fmt.Fprint(w, renderForWriter(w, errorPrinter.Sprintfln(format, a...)))
+	errorPrinter.WithWriter(w).Printfln(format, a...)
 }
