@@ -2563,3 +2563,78 @@ func TestResolvedDepCanonicalKey_SelfHostedPreservesCase(t *testing.T) {
 		t.Errorf("resolved-side key was blanket-lowercased: %q", resolvedSide)
 	}
 }
+
+// TestEffectiveSkillSubsets_DuplicateManifestEntries covers rule 4
+// (re-verification codex gate): a pre-BUG-1-fix polluted apm.yml can declare
+// the same repository twice under case/spelling variants. Their persisted
+// subsets must resolve widest-wins -- union when both narrow, NO filter at
+// all when any duplicate is subset-free -- never a silent last-writer
+// overwrite, and never blocking THIS call's explicit CLI narrowing.
+func TestEffectiveSkillSubsets_DuplicateManifestEntries(t *testing.T) {
+	dep := func(spelling string, subset ...string) *manifest.DependencyReference {
+		r, err := manifest.ParseDepString(spelling)
+		if err != nil {
+			t.Fatalf("ParseDepString(%q): %v", spelling, err)
+		}
+		if len(subset) > 0 {
+			r.SkillSubset = subset
+		}
+		return r
+	}
+	identity := deploy.CanonicalDepKey(dep("owner/repo"))
+
+	t.Run("both narrowed: union", func(t *testing.T) {
+		m := &manifest.Manifest{ParsedDeps: []*manifest.DependencyReference{
+			dep("Owner/Repo", "a"), dep("owner/repo", "b"),
+		}}
+		got := effectiveSkillSubsets(m, nil, nil)
+		if want := []string{"a", "b"}; !slicesEqualStr(got[identity], want) {
+			t.Errorf("duplicate subsets = %v, want union %v", got[identity], want)
+		}
+	})
+
+	for name, deps := range map[string][]*manifest.DependencyReference{
+		"bare first, narrowed second": {dep("Owner/Repo"), dep("owner/repo", "b")},
+		"narrowed first, bare second": {dep("Owner/Repo", "a"), dep("owner/repo")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := &manifest.Manifest{ParsedDeps: deps}
+			got := effectiveSkillSubsets(m, nil, nil)
+			if _, exists := got[identity]; exists {
+				t.Errorf("a subset-free duplicate must widen to NO filter entry, got %v", got[identity])
+			}
+		})
+	}
+
+	t.Run("single bare dep still accepts CLI narrowing", func(t *testing.T) {
+		m := &manifest.Manifest{ParsedDeps: []*manifest.DependencyReference{dep("owner/repo")}}
+		requested := map[string]bool{deploy.DepRefKey(dep("owner/repo")): true}
+		got := effectiveSkillSubsets(m, requested, []string{"x"})
+		if want := []string{"x"}; !slicesEqualStr(got[identity], want) {
+			t.Errorf("CLI narrowing on a fresh dep = %v, want %v", got[identity], want)
+		}
+	})
+
+	t.Run("CLI narrowing overrides duplicate widening for the requested dep", func(t *testing.T) {
+		m := &manifest.Manifest{ParsedDeps: []*manifest.DependencyReference{
+			dep("Owner/Repo"), dep("owner/repo", "b"),
+		}}
+		requested := map[string]bool{deploy.DepRefKey(dep("owner/repo")): true}
+		got := effectiveSkillSubsets(m, requested, []string{"x"})
+		if want := []string{"x"}; !slicesEqualStr(got[identity], want) {
+			t.Errorf("explicit CLI narrowing = %v, want %v", got[identity], want)
+		}
+	})
+}
+
+func slicesEqualStr(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

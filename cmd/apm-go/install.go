@@ -1077,36 +1077,79 @@ func containsSkillWildcard(skillSubset []string) bool {
 //     even mixed with concrete names) DELETES that dependency's entry
 //     entirely: "no entry" is the map's only representation of "deploy every
 //     skill" (H6 invariant -- a value is never an empty slice).
+//  4. DUPLICATE manifest entries sharing one canonical identity (a
+//     pre-BUG-1-fix polluted apm.yml, e.g. `Owner/Repo` AND `owner/repo` as
+//     two entries): their persisted subsets are UNION'd, and if ANY of the
+//     duplicates carries no subset at all ("deploy everything"), the whole
+//     identity gets NO filter entry -- the widest reading always wins. A
+//     later entry must never silently OVERWRITE an earlier one's subset
+//     (re-verification codex gate finding): the resolver folds duplicates
+//     onto the first-declared ref, so an overwrite would deploy-filter with
+//     entry B's subset against entry A's content -- worst case deploying
+//     zero files and letting stale reconciliation delete entry A's
+//     still-wanted skills. Widest-wins can never delete anything. A
+//     warning is emitted so the user cleans the duplicate up.
 func effectiveSkillSubsets(m *manifest.Manifest, requestedKeys map[string]bool, cliSubset []string) map[string][]string {
 	result := make(map[string][]string)
 	wildcard := containsSkillWildcard(cliSubset)
 
+	// Pass 1 -- persisted subsets, with rule 4's duplicate handling:
+	// duplicateBare marks identities declared MORE THAN ONCE where at least
+	// one duplicate carries no subset ("deploy everything" outvotes a
+	// sibling's narrowing). A single subset-free entry is just the normal
+	// "no subset" case and must NOT block a CLI narrowing below.
+	occurrences := make(map[string]int)
+	bareSeen := make(map[string]bool)
 	for _, dep := range allDirectDeps(m) {
 		identity := deploy.CanonicalDepKey(dep)
 		if identity == "" {
 			continue
 		}
-		if len(dep.SkillSubset) > 0 {
-			result[identity] = append([]string(nil), dep.SkillSubset...)
+		occurrences[identity]++
+		if occurrences[identity] > 1 {
+			ux.Warn(os.Stderr, "apm.yml declares %q more than once (case/spelling variants of the same repository) -- consider removing the duplicate entry", dep.RepoURL)
 		}
+		if len(dep.SkillSubset) > 0 {
+			result[identity] = unionSortedSkills(result[identity], dep.SkillSubset)
+		} else {
+			bareSeen[identity] = true
+		}
+	}
+	// Widest-wins resolution, deliberately AFTER the whole walk so it is
+	// order-independent: a subset-free duplicate outvotes its siblings'
+	// narrowing whether it appears before or after them. A SINGLE
+	// subset-free entry (occurrences == 1) is just the ordinary "no subset"
+	// case -- no map entry exists for it anyway.
+	for identity := range bareSeen {
+		if occurrences[identity] > 1 {
+			delete(result, identity)
+		}
+	}
 
-		if !requestedKeys[deploy.DepRefKey(dep)] {
+	// Pass 2 -- this call's CLI narrowing on the requested dependencies.
+	// Runs after the duplicate resolution above: an explicit --skill flag
+	// NOW expresses fresh user intent and applies even when a stale
+	// duplicate had widened the persisted state.
+	if len(cliSubset) == 0 {
+		return result
+	}
+	for _, dep := range allDirectDeps(m) {
+		identity := deploy.CanonicalDepKey(dep)
+		if identity == "" || !requestedKeys[deploy.DepRefKey(dep)] {
 			continue
 		}
 		if wildcard {
 			delete(result, identity)
 			continue
 		}
-		if len(cliSubset) > 0 {
-			// Belt-and-braces for the H6 invariant (no empty slice may
-			// enter the filter map): an all-blank cliSubset unions to
-			// empty when nothing was persisted. validateNewSkillNames
-			// rejects that input before any write, so this branch is
-			// unreachable in practice -- but this map must uphold the
-			// invariant on its own, not by trusting a distant caller.
-			if u := unionSortedSkills(result[identity], cliSubset); len(u) > 0 {
-				result[identity] = u
-			}
+		// Belt-and-braces for the H6 invariant (no empty slice may enter
+		// the filter map): an all-blank cliSubset unions to empty when
+		// nothing was persisted. validateNewSkillNames rejects that input
+		// before any write, so this branch is unreachable in practice --
+		// but this map must uphold the invariant on its own, not by
+		// trusting a distant caller.
+		if u := unionSortedSkills(result[identity], cliSubset); len(u) > 0 {
+			result[identity] = u
 		}
 	}
 	return result
