@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,17 @@ type DependencyReference struct {
 	MarketplaceName        string // registered marketplace name (dict "marketplace:" key), case preserved
 	MarketplacePluginName  string // plugin name within that marketplace (dict "name:" key), case preserved
 	MarketplaceVersionSpec string // dict "version:" key verbatim; "" if absent. Parse time performs no semver/format validation (mkt-033)
+
+	// SkillSubset is the persisted per-dep skill whitelist from an apm.yml
+	// dict entry's `skills:` field (BUG-2, prd.md B2-1): nil means "no
+	// subset declared" (install/deploy all skills in the bundle); a
+	// non-nil, non-empty, trimmed/deduplicated/sorted slice restricts
+	// deployment to just those skill names. Only ever populated for the
+	// git dict form (ParseDepDict); every other dict form rejects the key
+	// outright rather than silently discarding it. Not yet consumed by any
+	// caller as of this field's introduction -- ParseDepDict is the only
+	// writer so far.
+	SkillSubset []string
 }
 
 var virtualFileExtensions = []string{
@@ -308,9 +320,13 @@ func parseShorthand(s string) (*DependencyReference, error) {
 func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	kv := make(map[string]string)
 	keys := make(map[string]bool)
+	var skillsNode *yaml.Node
 	for i := 0; i < len(entry.Content)-1; i += 2 {
 		k := entry.Content[i].Value
 		keys[k] = true
+		if k == "skills" {
+			skillsNode = entry.Content[i+1]
+		}
 		if entry.Content[i+1].Kind == yaml.ScalarNode {
 			kv[k] = entry.Content[i+1].Value
 		}
@@ -376,6 +392,9 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	if keys["path"] && !keys["git"] && !keys["id"] && !keys["name"] {
+		if keys["skills"] {
+			return nil, fmt.Errorf("dependency entry %d: 'skills' is only supported for git dependencies", idx)
+		}
 		p := kv["path"]
 		if containsEscape(p) {
 			return nil, fmt.Errorf("dependency path %q escapes project root", p)
@@ -396,6 +415,9 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 			}
 			if keys["type"] {
 				return nil, fmt.Errorf("dependency entry %d: 'type' is not allowed with git: parent", idx)
+			}
+			if keys["skills"] {
+				return nil, fmt.Errorf("dependency entry %d: 'skills' is not allowed with git: parent", idx)
 			}
 			return &DependencyReference{
 				IsParent:    true,
@@ -425,10 +447,20 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 			d.VirtualPath = kv["path"]
 			d.VirtualType = classifyVirtualPath(kv["path"])
 		}
+		if keys["skills"] {
+			subset, err := parseSkillsField(skillsNode, idx)
+			if err != nil {
+				return nil, err
+			}
+			d.SkillSubset = subset
+		}
 		return d, nil
 	}
 
 	if keys["id"] {
+		if keys["skills"] {
+			return nil, fmt.Errorf("dependency entry %d: 'skills' is only supported for git dependencies", idx)
+		}
 		// Registry object form uses `version:` (docs); accept `ref:` as an alias.
 		reference := kv["version"]
 		if reference == "" {
@@ -444,6 +476,9 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	if keys["name"] {
+		if keys["skills"] {
+			return nil, fmt.Errorf("dependency entry %d: 'skills' is only supported for git dependencies", idx)
+		}
 		return &DependencyReference{
 			RepoURL: kv["name"],
 			Alias:   kv["alias"],
@@ -451,6 +486,64 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	return nil, fmt.Errorf("dependency entry %d has no source key (git, id, path, name, or marketplace)", idx)
+}
+
+// parseSkillsField validates and normalizes a dependency dict's `skills:`
+// sequence (BUG-2, prd.md B2-1: SKILL_BUNDLE subset selection), mirroring
+// Python's reference.py:920-940 exactly: the field must be a non-empty
+// YAML sequence of non-empty string scalars; each name is trimmed, then
+// the result is deduplicated and sorted. A skill name later becomes a
+// filesystem path segment during deploy, so names are additionally
+// rejected if they are "." / ".." or contain a path separator ("/" or
+// "\\") -- apm-go's simplified, whole-name traversal guard (Python's
+// validate_path_segments splits on separators and rejects "."/".."
+// per-segment; skill names are never expected to contain a separator at
+// all, so rejecting one outright is at least as strict).
+func parseSkillsField(node *yaml.Node, idx int) ([]string, error) {
+	// An explicit `skills: null` (or bare `skills:` with no value) means
+	// "no subset declared", identical to the key being absent entirely.
+	// This is deliberate Python parity, not fail-open leniency: Python's
+	// reference.py reads the field with entry.get("skills") and skips the
+	// whole validation block when it is None, so a YAML null never errors
+	// there either (codex flagged this as fail-open; parity wins by task
+	// convention and the choice is locked by an explicit test).
+	if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
+		return nil, nil
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("dependency entry %d: 'skills' field must be a list of skill names", idx)
+	}
+	if len(node.Content) == 0 {
+		return nil, fmt.Errorf("dependency entry %d: 'skills' must contain at least one name; remove the field to install all skills in the bundle", idx)
+	}
+
+	seen := make(map[string]bool, len(node.Content))
+	validated := make([]string, 0, len(node.Content))
+	for _, item := range node.Content {
+		if item.Kind != yaml.ScalarNode || item.Tag != "!!str" {
+			return nil, fmt.Errorf("dependency entry %d: each entry in 'skills' must be a non-empty string", idx)
+		}
+		name := strings.TrimSpace(item.Value)
+		if name == "" {
+			return nil, fmt.Errorf("dependency entry %d: each entry in 'skills' must be a non-empty string", idx)
+		}
+		// ":" additionally rejects Windows drive/volume forms ("C:") that
+		// ContainsAny's separator check alone would let through. URL-encoded
+		// forms ("%2e%2e") are deliberately NOT decoded-and-rejected: nothing
+		// in the deploy chain URL-decodes a skill name -- the subset is a
+		// whitelist matched against on-disk skill directory names, never a
+		// path constructor -- so the encoded form is just a name that will
+		// never match anything.
+		if name == "." || name == ".." || strings.ContainsAny(name, `/\:`) {
+			return nil, fmt.Errorf("dependency entry %d: invalid skill name %q", idx, name)
+		}
+		if !seen[name] {
+			seen[name] = true
+			validated = append(validated, name)
+		}
+	}
+	sort.Strings(validated)
+	return validated, nil
 }
 
 // ValidateResolved returns an error if d is still an unresolved marketplace
