@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"sort"
 
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/ux"
@@ -24,6 +26,7 @@ import (
 // pillar -- as an opt-in flag, without touching the bare SHA-256 path.
 func auditCmd() *cobra.Command {
 	var content bool
+	var verbose bool
 
 	cmd := &cobra.Command{
 		Use:   "audit",
@@ -86,6 +89,14 @@ unimplemented subsystems.`,
 			}
 			count += len(lock.LocalDeployedHashes)
 			ux.Success(cmd.OutOrStdout(), "audit: %d deployed files verified", count)
+			// R12c (prd.md/design.md §3): the verified-file paths are
+			// already sitting in lock's DeployedHashes/LocalDeployedHashes
+			// maps (that's what count above was tallying) -- --verbose just
+			// prints them too, without changing the default "audit: %d
+			// deployed files verified" line above at all.
+			if verbose {
+				printAuditVerifiedFiles(cmd.OutOrStdout(), lock)
+			}
 			return nil
 		},
 	}
@@ -93,6 +104,46 @@ unimplemented subsystems.`,
 	cmd.Flags().BoolVar(&content, "content", false,
 		"Scan every deployed file for hidden Unicode characters "+
 			"(does not run SHA re-verification, drift replay, or --ci/--policy/--external/--format/-o/--strip)")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
+		"list every deployed file path verified by a successful bare audit (has no effect with --content)")
 
 	return cmd
+}
+
+// printAuditVerifiedFiles lists every deployed file path a successful bare
+// audit just re-verified, grouped by owning dependency (plus the project's
+// own local deployment) -- R12c: --verbose-only detail behind the unchanged
+// default "audit: %d deployed files verified" summary line.
+func printAuditVerifiedFiles(w io.Writer, lock *lockfile.Lockfile) {
+	var items []ux.Item
+	for i := range lock.Dependencies {
+		dep := &lock.Dependencies[i]
+		if len(dep.DeployedHashes) == 0 {
+			continue
+		}
+		items = append(items, ux.Item{Text: dep.UniqueKey()})
+		paths := make([]string, 0, len(dep.DeployedHashes))
+		for p := range dep.DeployedHashes {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			items = append(items, ux.Item{Level: 1, Text: p})
+		}
+	}
+	if len(lock.LocalDeployedHashes) > 0 {
+		items = append(items, ux.Item{Text: "(project)"})
+		paths := make([]string, 0, len(lock.LocalDeployedHashes))
+		for p := range lock.LocalDeployedHashes {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			items = append(items, ux.Item{Level: 1, Text: p})
+		}
+	}
+	if len(items) == 0 {
+		return
+	}
+	ux.BulletList(w, items)
 }

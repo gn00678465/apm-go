@@ -183,6 +183,22 @@ type Result struct {
 	Wrote            bool
 	InstructionCount int
 	Path             string // "AGENTS.md", relative to projectDir
+	// Sources lists each compiled instruction's display-relative source
+	// path, in the same winner order the AGENTS.md render used. Read-only
+	// exposure of data CollectInstructions already computed (R12e: the
+	// output-parity gap was "sources are known but never surfaced" -- no
+	// compile decision, ordering, or rendering changes ride along).
+	Sources []string
+}
+
+// sourcePaths projects the compiled instructions down to their
+// display-relative source paths for Result.Sources.
+func sourcePaths(instructions []SourcedInstruction) []string {
+	paths := make([]string, 0, len(instructions))
+	for _, ins := range instructions {
+		paths = append(paths, ins.RelPath)
+	}
+	return paths
 }
 
 // Run collects instructions, renders AGENTS.md, stabilizes its Build ID,
@@ -197,5 +213,5 @@ func Run(projectDir string, m *manifest.Manifest) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Wrote: wrote, InstructionCount: len(instructions), Path: "AGENTS.md"}, nil
+	return &Result{Wrote: wrote, InstructionCount: len(instructions), Path: "AGENTS.md", Sources: sourcePaths(instructions)}, nil
 }

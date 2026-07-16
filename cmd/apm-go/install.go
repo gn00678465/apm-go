@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -43,6 +44,11 @@ type installDeps struct {
 	// allowInsecure permits non-TLS http:// git dependencies (--allow-insecure).
 	// Zero value (false) is fail-secure: refuse by default.
 	allowInsecure bool
+	// verbose enables --verbose-only detail in low-priority presentation
+	// paths (R12d, prd.md/design.md §3) -- currently only the frozen-install
+	// success summary. The zero value (false) keeps every default output
+	// byte-identical to before this field existed.
+	verbose bool
 }
 
 func installCmd() *cobra.Command {
@@ -52,6 +58,7 @@ func installCmd() *cobra.Command {
 	var skillFlags []string
 	var maxEntries int
 	var maxArchiveBytes int64
+	var verbose bool
 	var mcpName string
 	var mcpTransport string
 	var mcpURL string
@@ -150,6 +157,7 @@ func installCmd() *cobra.Command {
 				maxEntries:      maxEntries,
 				maxArchiveBytes: maxArchiveBytes,
 				allowInsecure:   allowInsecure,
+				verbose:         verbose,
 			}
 			err := runInstall(deps, frozen, noProvenance, targetFlag, skillFlags, args)
 			// R17 (codex H8): suppress cobra's default usage dump for JUST
@@ -184,6 +192,8 @@ func installCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mcpRegistry, "registry", "", "MCP registry URL for resolving --mcp NAME (requires --mcp; not valid with --url or a stdio command)")
 	cmd.Flags().BoolVar(&mcpForce, "force", false, "overwrite a conflicting existing --mcp entry non-interactively")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "permit direct http:// (non-TLS) dependencies")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
+		"print extra diagnostics (currently: list every pinned dependency after a successful --frozen install)")
 
 	return cmd
 }
@@ -631,6 +641,12 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		}
 
 		ux.Success(os.Stdout, "Frozen install: all dependencies pinned and verified")
+		// R12d (prd.md/design.md §3): existingLock.Dependencies is already
+		// the exact set (A)/(B) above just re-verified -- --verbose just
+		// lists it too, without changing the default success line above.
+		if deps.verbose {
+			printFrozenVerifiedDeps(os.Stdout, existingLock)
+		}
 		return nil
 	}
 
@@ -761,6 +777,23 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
 	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, result, newLock, existingLock, existingNode, node)
+}
+
+// printFrozenVerifiedDeps lists every dependency a successful --frozen
+// install just pinned+verified -- R12d (prd.md/design.md §3): --verbose-only
+// detail behind the unchanged default "Frozen install: all dependencies
+// pinned and verified" summary line. lock is existingLock, the same
+// dependency set steps (A)/(B) above already walked; nothing new is
+// computed here.
+func printFrozenVerifiedDeps(w io.Writer, lock *lockfile.Lockfile) {
+	if lock == nil || len(lock.Dependencies) == 0 {
+		return
+	}
+	items := make([]ux.Item, len(lock.Dependencies))
+	for i := range lock.Dependencies {
+		items[i] = ux.Item{Text: lock.Dependencies[i].UniqueKey()}
+	}
+	ux.BulletList(w, items)
 }
 
 // noDeployTargetError marks errNoDeployTarget's failure so installCmd's RunE
