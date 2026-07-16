@@ -1630,6 +1630,113 @@ func TestInstall_SkillSubsetPollution(t *testing.T) {
 	}
 }
 
+// TestInstall_SkillSubsetThreeRepos is the AC-B2-3 regression: installing a
+// THIRD dependency with its own --skill subset must not re-inflate either of
+// the two earlier dependencies' already-persisted subsets. Before the BUG-2
+// fix, every `apm install` triggers a full-manifest re-resolve/re-deploy of
+// ALL already-declared dependencies (by design), and the deploy-time
+// SkillFilter was built only from the CURRENT call's CLI flags -- so every
+// earlier dependency, having no entry in that call's filter, silently
+// deployed its full, unfiltered skill set on each subsequent install.
+func TestInstall_SkillSubsetThreeRepos(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repoA := gitSkillRepo(t, remotesDir, "repo-a", map[string][]string{
+		"skillA1": {"SKILL.md", "notes.md"},
+		"skillA2": {"SKILL.md", "notes.md"},
+	})
+	repoB := gitSkillRepo(t, remotesDir, "repo-b", map[string][]string{
+		"skillB1": {"SKILL.md", "notes.md"},
+		"skillB2": {"SKILL.md", "notes.md"},
+	})
+	repoC := gitSkillRepo(t, remotesDir, "repo-c", map[string][]string{
+		"skillC1": {"SKILL.md", "notes.md"},
+		"skillC2": {"SKILL.md", "notes.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+	}
+
+	if err := runInstall(deps, false, true, "claude", []string{"skillA1"}, []string{repoA}); err != nil {
+		t.Fatalf("install repo-a --skill skillA1: %v", err)
+	}
+	if err := runInstall(deps, false, true, "claude", []string{"skillB1"}, []string{repoB}); err != nil {
+		t.Fatalf("install repo-b --skill skillB1: %v", err)
+	}
+	if err := runInstall(deps, false, true, "claude", []string{"skillC1"}, []string{repoC}); err != nil {
+		t.Fatalf("install repo-c --skill skillC1: %v", err)
+	}
+
+	assertOnly := func(label string, present, absent []string) {
+		t.Helper()
+		for _, skill := range present {
+			for _, p := range expectedSkillDeployPaths(skill, []string{"SKILL.md", "notes.md"}) {
+				if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+					t.Errorf("%s: expected %s to exist: %v", label, p, err)
+				}
+			}
+		}
+		for _, skill := range absent {
+			for _, p := range expectedSkillDeployPaths(skill, []string{"SKILL.md", "notes.md"}) {
+				if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+					t.Errorf("%s: INFLATION -- %s must NOT exist", label, p)
+				}
+			}
+		}
+	}
+
+	// After the third install, repo-a and repo-b must still be narrowed to
+	// their own originally-selected skill only -- not re-inflated to their
+	// full skill set -- and repo-c must be narrowed to skillC1.
+	assertOnly("after repo-c install", []string{"skillA1", "skillB1", "skillC1"}, []string{"skillA2", "skillB2", "skillC2"})
+
+	m := readManifestParsed(t)
+	subsetByRepo := make(map[string][]string)
+	for _, d := range m.ParsedDeps {
+		subsetByRepo[d.RepoURL] = d.SkillSubset
+	}
+	for repo, want := range map[string]string{repoA: "skillA1", repoB: "skillB1", repoC: "skillC1"} {
+		if got := subsetByRepo[repo]; len(got) != 1 || got[0] != want {
+			t.Errorf("apm.yml: expected %s skills: [%s], got %v", repo, want, got)
+		}
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 3 {
+		t.Fatalf("apm.lock.yaml: expected exactly 3 dependencies, got %d", len(lock.Dependencies))
+	}
+	depByRepo := make(map[string]lockfile.LockedDep)
+	for _, d := range lock.Dependencies {
+		depByRepo[d.RepoURL] = d
+	}
+	for repo, want := range map[string]string{
+		localModulesKey(resolveLocalSourceAbs(repoA)): "skillA1",
+		localModulesKey(resolveLocalSourceAbs(repoB)): "skillB1",
+		localModulesKey(resolveLocalSourceAbs(repoC)): "skillC1",
+	} {
+		d, ok := depByRepo[repo]
+		if !ok {
+			t.Fatalf("apm.lock.yaml: missing dependency %s", repo)
+		}
+		if len(d.SkillSubset) != 1 || d.SkillSubset[0] != want {
+			t.Errorf("apm.lock.yaml: %s skill_subset = %v, want [%s]", repo, d.SkillSubset, want)
+		}
+	}
+}
+
 // TestInstall_SkillSubsetSameRepoUnion is the C3 regression (codex plan
 // review, prd.md B2-2): re-installing the SAME dependency with a different
 // --skill flag must UNION with (not replace, not silently ignore) its
@@ -1974,6 +2081,124 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 	}
 	if len(lock.Dependencies[0].DeployedFiles) != 4 {
 		t.Errorf("apm.lock.yaml deployed_files must be exactly 4 paths (skillA1, 2 files, 2 roots), got %v", lock.Dependencies[0].DeployedFiles)
+	}
+}
+
+// TestInstall_StaleSkillReconciliation_TargetChangeWithoutSkillSubsetKeepsFiles
+// is a codex final-gate HIGH regression: reconcileStaleSkillDeployments must
+// NOT delete a dependency's files just because a LATER install call resolved
+// a different --target set than an EARLIER one did -- that is a target
+// selection change, not a --skill subset narrowing, and this BUG-2
+// convergence mechanism must stay scoped to the latter. Installing to
+// "claude" first (which deploys to BOTH .claude/skills/ and the shared
+// .agents/skills/) and then re-installing the SAME dependency (no --skill
+// either time) to "codex" only (which deploys to the shared .agents/skills/
+// root only, not .claude/skills/) must leave the now-target-unclaimed
+// .claude/skills/ copy on disk untouched, because this dependency's fresh
+// lock entry has no active SkillSubset at all.
+func TestInstall_StaleSkillReconciliation_TargetChangeWithoutSkillSubsetKeepsFiles(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := gitSkillRepo(t, remotesDir, "repo-t", map[string][]string{
+		"skillT": {"SKILL.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	// Step 1: full install (no --skill) targeting claude -- deploys to BOTH
+	// .claude/skills/skillT/ and .agents/skills/skillT/.
+	if err := runInstall(deps, false, true, "claude", nil, []string{repo}); err != nil {
+		t.Fatalf("step 1 (install --target claude): %v", err)
+	}
+	claudeOnlyPath := filepath.Join(dir, ".claude", "skills", "skillT", "SKILL.md")
+	if _, err := os.Stat(claudeOnlyPath); err != nil {
+		t.Fatalf("step1: expected %s to exist: %v", claudeOnlyPath, err)
+	}
+
+	// Step 2: full install (still no --skill) but this time targeting codex
+	// only -- codex's skill deploy root is the shared .agents/skills/, so
+	// .claude/skills/skillT/ is no longer claimed by this run's lockfile.
+	if err := runInstall(deps, false, true, "codex", nil, []string{repo}); err != nil {
+		t.Fatalf("step 2 (install --target codex): %v", err)
+	}
+
+	// The regression check: the claude-only copy must SURVIVE -- this
+	// dependency never had an active --skill subset, so target-selection
+	// drift alone must never trigger a deletion.
+	if _, err := os.Stat(claudeOnlyPath); err != nil {
+		t.Errorf("codex final-gate HIGH regression: %s was deleted after an unrelated --target change (no --skill ever used): %v", claudeOnlyPath, err)
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || len(lock.Dependencies[0].SkillSubset) != 0 {
+		t.Fatalf("expected exactly one lockfile dependency with an empty skill_subset, got %+v", lock.Dependencies)
+	}
+}
+
+// TestInstall_StaleSkillReconciliation_StillSelectedSkillSurvivesTargetChange
+// is a second codex final-gate HIGH regression, distinct from the previous
+// test: even for a dependency that DOES have an active --skill subset, a
+// skill NAME still present in that subset must never be pruned just because
+// one particular --target's copy of it isn't claimed this run. Only a skill
+// name actually ABSENT from the fresh subset is eligible for cleanup.
+func TestInstall_StaleSkillReconciliation_StillSelectedSkillSurvivesTargetChange(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := gitSkillRepo(t, remotesDir, "repo-u2", map[string][]string{
+		"skillX": {"SKILL.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	// Step 1: narrow to --skill skillX, targeting claude -- deploys skillX
+	// to BOTH .claude/skills/skillX/ and .agents/skills/skillX/.
+	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
+		t.Fatalf("step 1 (install --skill skillX --target claude): %v", err)
+	}
+	claudeOnlyPath := filepath.Join(dir, ".claude", "skills", "skillX", "SKILL.md")
+	if _, err := os.Stat(claudeOnlyPath); err != nil {
+		t.Fatalf("step1: expected %s to exist: %v", claudeOnlyPath, err)
+	}
+
+	// Step 2: SAME --skill skillX (still selected, no narrowing), but this
+	// time targeting codex only -- codex's skill deploy root is the shared
+	// .agents/skills/, so .claude/skills/skillX/ is not claimed this run.
+	if err := runInstall(deps, false, true, "codex", []string{"skillX"}, []string{repo}); err != nil {
+		t.Fatalf("step 2 (install --skill skillX --target codex): %v", err)
+	}
+
+	// The regression check: skillX is STILL in the subset -- its
+	// now-unclaimed claude-only copy must survive; only a DESELECTED skill
+	// name is eligible for cleanup.
+	if _, err := os.Stat(claudeOnlyPath); err != nil {
+		t.Errorf("codex final-gate HIGH regression: %s was deleted for a skill still present in the subset (target changed, not the subset): %v", claudeOnlyPath, err)
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || len(lock.Dependencies[0].SkillSubset) != 1 || lock.Dependencies[0].SkillSubset[0] != "skillX" {
+		t.Fatalf("expected exactly one lockfile dependency with skill_subset=[skillX], got %+v", lock.Dependencies)
 	}
 }
 

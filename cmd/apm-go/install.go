@@ -1183,13 +1183,74 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 	return nil
 }
 
+// normalizeDeployPath canonicalizes a deployed-file path purely for the
+// STALE-vs-CLAIMED equality check below -- never used as the key handed to
+// RemoveDeployedFiles/DeployedHashes, which must still receive the path
+// EXACTLY as recorded in the lockfile (that original string is the hash-map
+// key). Guards against the same logical path comparing unequal across two
+// lockfile snapshots due to representational drift alone (redundant "./"
+// segments, or a backslash-separated path from a hand-edited/legacy
+// lockfile) -- codex final-gate finding: without this, a path that is
+// genuinely still claimed could be misread as stale by a raw string
+// comparison. filepath.ToSlash is NOT used here: on a Unix CI runner it is a
+// no-op (backslash is a legal filename byte there, not a separator), so it
+// would silently fail to normalize a legacy Windows-authored lockfile path
+// read on Linux (a second codex final-gate finding) -- replace explicitly
+// instead, unconditionally, regardless of the host OS.
+func normalizeDeployPath(p string) string {
+	return path.Clean(strings.ReplaceAll(p, "\\", "/"))
+}
+
+// skillNameFromDeployPath extracts the skill name from a deploy path shaped
+// like ".agents/skills/<name>/...", ".claude/skills/<name>/...", or
+// "<bundle>/skills/<name>/..." (every skill deploy root deploy.Run
+// produces) -- the segment immediately following a "skills" path segment.
+// ok is false for any path with no "skills" segment (or "skills" as the
+// final segment, which no real deploy ever produces).
+func skillNameFromDeployPath(p string) (name string, ok bool) {
+	segs := strings.Split(normalizeDeployPath(p), "/")
+	for i, seg := range segs {
+		if seg == "skills" && i+1 < len(segs) {
+			return segs[i+1], true
+		}
+	}
+	return "", false
+}
+
 // reconcileStaleSkillDeployments is the pollution-convergence half of BUG-2
-// (design.md §1.2g, codex C1, prd.md B2-3/AC-B2-7): it removes files a
-// PREVIOUS install deployed for a dependency (or the local bucket) that this
-// run's freshly-rebuilt newLock no longer claims for ANY dependency -- the
-// case a --skill subset narrowing (or a pre-fix leftover from BUG-2 itself)
-// leaves behind. Ownership-aware: a stale path is only deleted when its
-// on-disk content still matches the OLD recorded hash (deploy.
+// (design.md §1.2g, codex C1, prd.md B2-3/AC-B2-7): it removes a dependency's
+// skill files that a --skill subset narrowing excluded, deliberately narrow
+// in ways two rounds of codex final-gate review found an earlier draft was
+// not (that draft treated every lockfile-recorded path as fair game for
+// deletion on every install, keyed purely by "is this path claimed by MY
+// dependency's fresh entry" -- both too broad an ELIGIBILITY test and too
+// narrow a CLAIM test):
+//
+//   - Eligibility is decided PER SKILL NAME, not per dependency or per raw
+//     path: a stale path under dependency D is only a deletion CANDIDATE
+//     when (a) it's a skill deploy path (skillNameFromDeployPath) and (b)
+//     that specific skill name is ABSENT from D's fresh SkillSubset. A
+//     dependency with no active subset at all (full install, or a --skill
+//     '*' RESET) never has anything considered here. Critically, a skill
+//     that IS still in the fresh subset is never a candidate even if this
+//     particular path (e.g. one target's copy) momentarily isn't claimed --
+//     that disappearance is a --target selection change between calls, not
+//     a subset narrowing, and this mechanism must not conflate the two.
+//   - The CLAIM check (is this path still wanted by anything) stays GLOBAL
+//     across the WHOLE fresh lockfile, not scoped to the same dependency's
+//     own fresh entry -- an earlier revision that scoped it per-dependency
+//     could delete a path a DIFFERENT dependency has since taken ownership
+//     of (same path, matching old hash, but now serving a new owner).
+//   - Non-skill paths (instructions/agents/commands/hooks) are never
+//     eligible at all -- this mechanism only ever prunes skill deploys.
+//
+// The local bucket (LocalDeployedFiles) is out of scope entirely: --skill
+// only ever applies to a declared git dependency's SkillSubset, never to the
+// project's own local .apm/ content, so pruning "stale" local files here
+// would be scope creep with no --skill-narrowing justification.
+//
+// Ownership-aware on top of all of the above: a stale path is only deleted
+// when its on-disk content still matches the OLD recorded hash (deploy.
 // RemoveDeployedFiles, reused rather than reimplemented) -- a user-modified
 // file, a file some OTHER dependency's NEW deployment has since taken over
 // (its hash won't match the stale entry's old one), or a file that's already
@@ -1201,44 +1262,66 @@ func reconcileStaleSkillDeployments(existingLock, newLock *lockfile.Lockfile, pr
 		return nil
 	}
 
-	// claimedNow is every path ANY dependency (or the local bucket) in the
-	// freshly-rebuilt lockfile still deploys this run -- checked across the
-	// WHOLE lockfile, not just the old owner's own entry, so a path that
-	// shifted ownership between calls is never deleted out from under its
-	// new owner.
-	claimedNow := make(map[string]bool)
+	// newByKey looks up each dependency's FRESH lock entry by its identity
+	// (UniqueKey: RepoURL[/VirtualPath]), to read its fresh SkillSubset.
+	newByKey := make(map[string]*lockfile.LockedDep, len(newLock.Dependencies))
+	for i := range newLock.Dependencies {
+		newByKey[newLock.Dependencies[i].UniqueKey()] = &newLock.Dependencies[i]
+	}
+
+	// claimedAnywhere is every path ANY dependency -- OR the local bucket --
+	// in the freshly-rebuilt lockfile still deploys this run, normalized --
+	// deliberately global (not scoped to the old path's own dependency), so
+	// a path some OTHER dependency or the project's own local content has
+	// since taken ownership of is never deleted out from under its new
+	// owner. The local bucket itself is never a PRUNING candidate (--skill
+	// doesn't apply to it), but it must still count as a claim.
+	claimedAnywhere := make(map[string]bool)
 	for _, d := range newLock.Dependencies {
 		for _, f := range d.DeployedFiles {
-			claimedNow[f] = true
+			claimedAnywhere[normalizeDeployPath(f)] = true
 		}
 	}
 	for _, f := range newLock.LocalDeployedFiles {
-		claimedNow[f] = true
+		claimedAnywhere[normalizeDeployPath(f)] = true
 	}
 
 	var diags []string
 	for _, old := range existingLock.Dependencies {
+		fresh, ok := newByKey[old.UniqueKey()]
+		// A dependency absent from the fresh lock, or present but with no
+		// active skill subset (full install / '*' RESET), is never touched
+		// by this mechanism -- an actually-removed dependency is
+		// uninstall's job, not an automatic side effect of install/update.
+		if !ok || len(fresh.SkillSubset) == 0 {
+			continue
+		}
+		freshSubset := make(map[string]bool, len(fresh.SkillSubset))
+		for _, s := range fresh.SkillSubset {
+			freshSubset[s] = true
+		}
+
 		var stale []string
 		for _, f := range old.DeployedFiles {
-			if !claimedNow[f] {
-				stale = append(stale, f)
+			name, isSkillPath := skillNameFromDeployPath(f)
+			if !isSkillPath {
+				continue // never prune a non-skill deploy path
 			}
+			if freshSubset[name] {
+				// This skill is STILL selected -- its path merely not being
+				// claimed this run reflects a --target change, not a subset
+				// narrowing; never a deletion candidate.
+				continue
+			}
+			if claimedAnywhere[normalizeDeployPath(f)] {
+				continue // some OTHER dependency has since taken this path over
+			}
+			stale = append(stale, f)
 		}
 		if len(stale) == 0 {
 			continue
 		}
 		_, _, keptDiags := deploy.RemoveDeployedFiles(projectDir, stale, old.DeployedHashes)
-		diags = append(diags, keptDiags...)
-	}
-
-	var staleLocal []string
-	for _, f := range existingLock.LocalDeployedFiles {
-		if !claimedNow[f] {
-			staleLocal = append(staleLocal, f)
-		}
-	}
-	if len(staleLocal) > 0 {
-		_, _, keptDiags := deploy.RemoveDeployedFiles(projectDir, staleLocal, existingLock.LocalDeployedHashes)
 		diags = append(diags, keptDiags...)
 	}
 
