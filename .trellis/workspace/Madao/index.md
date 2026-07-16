@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
-- **Last Active**: 2026-07-14
+- **Total Sessions**: 25
+- **Last Active**: 2026-07-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~877 | Active |
+| `journal-1.md` | ~911 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-07-16 | 甲類美化收尾:commit 整合、版本 0.2.0、PR #3、codex 終驗 | `4ebfb5a`, `c9e5f8b` | `feat/init-tui-lipgloss` |
 | 24 | 2026-07-14 | pack/audit 完整 parity 收尾：Phase 6-8 + cmd 目錄改名 | `d1bfad8`, `7c95c48`, `f2453b8`, `276c56b`, `6585876`, `63857c1`, `0766389`, `440857c` | `feat/marketplace-install` |
 | 23 | 2026-07-11 | runtime-parity-gaps 父任務狀態確認與收官 archive | - | `feat/marketplace-install` |
 | 22 | 2026-07-11 | runtime-parity-gaps 父任務確認與 instructions applyTo parity 實作 | `a440b85`, `04f4e58`, `ccc2c9d`, `6556088`, `33bcb24`, `27328d1` | `feat/marketplace-install` |
