@@ -198,6 +198,32 @@ func TestRunPack_DependenciesOnly_BuildsRealBundle(t *testing.T) {
 	}
 }
 
+// TestRunPack_DependenciesOnly_ListsPackedFiles is the R12a regression
+// (prd.md/design.md §3): --dry-run already lists every file result.Produce
+// would pack via ux.BulletList -- the real (non-dry-run) run must print the
+// SAME list, not just the aggregate count, matching its own dry-run preview.
+func TestRunPack_DependenciesOnly_ListsPackedFiles(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "plugin.json") {
+		t.Errorf("output = %q, want the packed file list to include plugin.json", out)
+	}
+	if !strings.Contains(out, filepath.ToSlash(filepath.Join("agents", "foo.md"))) {
+		t.Errorf("output = %q, want the packed file list to include agents/foo.md", out)
+	}
+}
+
 func TestRunPack_TargetClaudeOnly_WritesRealPluginJSON(t *testing.T) {
 	dir := chdirTemp(t)
 	writePackApmYML(t, "name: demo\nversion: 1.0.0\ntarget:\n  - claude\n")

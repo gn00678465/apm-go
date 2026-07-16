@@ -244,7 +244,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		return err
 	}
 
-	removedFiles, _, diags := deploy.RemoveDeployedFiles(".", deployedFiles, deployedHashes)
+	removedFiles, keptFiles, diags := deploy.RemoveDeployedFiles(".", deployedFiles, deployedHashes)
 	for _, d := range diags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
@@ -306,7 +306,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		return err
 	}
 
-	printUninstallSummary(plan.resolution, orphans, removedModuleDirs)
+	printUninstallSummary(plan.resolution, orphans, removedModuleDirs, removedFiles, keptFiles)
 	return nil
 }
 
@@ -616,15 +616,47 @@ func printUninstallDryRunPlan(resolution *uninstallResolution, allRemovalKeys, o
 	ux.Info(os.Stdout, "dry-run: no changes made")
 }
 
-// printUninstallSummary is un-101's closing summary.
-func printUninstallSummary(resolution *uninstallResolution, orphans map[string]bool, removedModuleDirs int) {
+// printUninstallSummary is un-101's closing summary. R7 (prd.md/design.md
+// §3): a non-dry-run uninstall used to compress everything into two bare
+// counts, while --dry-run's preview (printUninstallDryRunPlan) already
+// listed the matched package names -- the real run ended up LESS
+// informative than its own preview. This now also names the removed
+// package(s), reports the apm.yml path that was updated, and reports the
+// integrated-file cleanup count from deploy.RemoveDeployedFiles's ACTUAL
+// removed/kept results (codex M1: not lockfile DeployedFiles length, which
+// is a bookkeeping intent that can diverge from what's really on disk --
+// e.g. a file already missing or hand-modified is silently skipped/kept,
+// never "removed").
+func printUninstallSummary(resolution *uninstallResolution, orphans map[string]bool, removedModuleDirs int, removedFiles, keptFiles []string) {
 	removedPackages := len(resolution.APMTargets) + len(resolution.MCPTargets)
 	if len(orphans) > 0 {
 		ux.Success(os.Stdout, "Removed %d package(s) (+%d transitive orphan(s))", removedPackages, len(orphans))
 	} else {
 		ux.Success(os.Stdout, "Removed %d package(s)", removedPackages)
 	}
+	items := make([]ux.Item, 0, removedPackages)
+	for _, t := range resolution.APMTargets {
+		items = append(items, ux.Item{Text: t.Name})
+	}
+	for _, t := range resolution.MCPTargets {
+		items = append(items, ux.Item{Text: t.Name})
+	}
+	if len(items) > 0 {
+		ux.BulletList(os.Stdout, items)
+	}
+
+	if apmYMLPath, err := filepath.Abs("apm.yml"); err == nil {
+		ux.Info(os.Stdout, "apm.yml updated: %s", apmYMLPath)
+	}
+
 	ux.Success(os.Stdout, "apm_modules: removed %d director%s", removedModuleDirs, pluralYIES(removedModuleDirs))
+
+	switch {
+	case len(keptFiles) > 0:
+		ux.Success(os.Stdout, "cleaned %d integrated file(s) (%d kept -- modified or shared)", len(removedFiles), len(keptFiles))
+	default:
+		ux.Success(os.Stdout, "cleaned %d integrated file(s)", len(removedFiles))
+	}
 }
 
 func pluralYIES(n int) string {

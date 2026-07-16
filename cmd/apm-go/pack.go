@@ -250,6 +250,16 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		return nil
 	}
 	ux.Success(w, "Packed %d file(s) -> %s", len(result.Files), result.BundleDir)
+	// R12a (prd.md/design.md §3): the dry-run branch above already lists
+	// every packed file via ux.BulletList -- the real run used to only
+	// print the count, dropping the exact same result.Files list it had
+	// right here (presentation-only: no new computation, just printing
+	// what --dry-run already demonstrates how to print).
+	items := make([]ux.Item, len(result.Files))
+	for i, f := range result.Files {
+		items[i] = ux.Item{Text: f}
+	}
+	ux.BulletList(w, items)
 	ux.Info(w, "Plugin bundle ready -- contains plugin.json plus plugin-native directories "+
 		"(agents/, skills/, commands/, ...) and an embedded apm.lock.yaml for install-time "+
 		"integrity verification.")

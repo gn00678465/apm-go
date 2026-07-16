@@ -724,6 +724,46 @@ func TestRunMCPInstall_PrintsTargetSource(t *testing.T) {
 	}
 }
 
+// TestRunMCPInstall_SummaryShowsTargetsAndAbsolutePath is the R11 regression
+// (prd.md/design.md §3): runMCPInstall already computes deployMCPEntry's
+// `deployed` target list, but the success summary only ever surfaced it
+// inside the "Skipped MCP config for X" branch (nothing-skipped is the
+// common case), and hardcoded a literal "apm.yml: apm.yml" instead of
+// resolving the real path. Both must now appear in the closing bullet list.
+func TestRunMCPInstall_SummaryShowsTargetsAndAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+	os.MkdirAll(".claude", 0755)
+
+	r, w, _ := os.Pipe()
+	origStdout := os.Stdout
+	os.Stdout = w
+	err := runMCPInstall(mcpInstallOpts{Name: "api", URL: "https://example.com/mcp", Transport: "http"})
+	os.Stdout = origStdout
+	w.Close()
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	stdout := buf.String()
+
+	if err != nil {
+		t.Fatalf("runMCPInstall: %v", err)
+	}
+	if !strings.Contains(stdout, "targets: claude") {
+		t.Errorf("expected the deployed target list in the summary, got:\n%s", stdout)
+	}
+	wantPath, pathErr := filepath.Abs("apm.yml")
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	if !strings.Contains(stdout, "apm.yml: "+wantPath) {
+		t.Errorf("expected the absolute apm.yml path %q in the summary, got:\n%s", wantPath, stdout)
+	}
+}
+
 // TestRunMCPInstall_FilteredByWriter_DoesNotClaimSuccess is a regression
 // test (codex review): a non-https remote URL passes manifest.ValidateMCP
 // (only self-defined stdio/URL structural checks) but is silently dropped
