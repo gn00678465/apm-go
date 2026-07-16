@@ -31,25 +31,44 @@ type DeployResult struct {
 	MCPProvenance []MCPProv
 }
 
-// SkillFilter scopes a --skill name whitelist to the specific dependency
-// key(s) it was requested for (install.go's positional package args). Only
-// primitives whose DepKey is in DepKeys are subject to the Names whitelist;
-// everything else -- local primitives, or any other already-declared
-// dependency -- passes through untouched, regardless of whether its skill
-// names happen to appear in Names.
+// SkillFilter scopes a per-dependency --skill name whitelist (BUG-2, design
+// §1.2b): Subsets maps a dependency's CanonicalDepKey to the list of skill
+// names it may deploy. A dependency whose key is ABSENT from Subsets is
+// unaffected -- "no entry" is the ONLY representation of "deploy every
+// skill" (H6 invariant): a value must never be an empty slice. Only
+// TypeSkills primitives belonging to a dependency present in Subsets are
+// whitelisted; local primitives (no dep key) and any dependency absent from
+// Subsets pass through untouched, regardless of whether their skill names
+// happen to appear in some OTHER dependency's whitelist.
 type SkillFilter struct {
-	Names   []string
-	DepKeys []string
+	Subsets map[string][]string
 }
 
-// hasSkillWildcard reports whether names contains the '*' RESET sentinel
-// (install.md: "--skill '*' resets to install all skills"), mirroring
-// Python's install.py (~1387-1393): any occurrence -- even mixed with other
-// names, e.g. `--skill review --skill '*'` -- means "install ALL skills,"
-// not "whitelist a skill literally named *".
-func hasSkillWildcard(names []string) bool {
-	for _, n := range names {
-		if n == "*" {
+// CanonicalDepKey returns the SkillFilter map key for ref: its
+// manifest.CanonicalRepoIdentity plus a virtual-path suffix when set. A
+// virtual-path sub-package within a monorepo is a distinct filterable
+// dependency from its siblings even though they share a repository
+// identity, so VirtualPath must be included on top of the bare identity
+// (unlike DepRefKey, which composes the same way but from the RAW,
+// case-sensitive RepoURL -- this is the case-fold-safe counterpart used by
+// the --skill subset plumbing so a repo referenced with different case
+// variants across calls resolves to the same filter entry). Returns "" for
+// local/parent references (no stable identity), matching
+// CanonicalRepoIdentity/DepRefKey.
+func CanonicalDepKey(ref *manifest.DependencyReference) string {
+	id := manifest.CanonicalRepoIdentity(ref)
+	if id == "" {
+		return ""
+	}
+	if ref.VirtualPath != "" {
+		return id + "/" + ref.VirtualPath
+	}
+	return id
+}
+
+func skillNameInSubset(subset []string, name string) bool {
+	for _, s := range subset {
+		if s == name {
 			return true
 		}
 	}
@@ -58,17 +77,6 @@ func hasSkillWildcard(names []string) bool {
 
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
 func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter) (*DeployResult, error) {
-	var skillNames, skillDepKeys map[string]bool
-	if filter != nil && len(filter.Names) > 0 && !hasSkillWildcard(filter.Names) {
-		skillNames = make(map[string]bool, len(filter.Names))
-		for _, s := range filter.Names {
-			skillNames[s] = true
-		}
-		skillDepKeys = make(map[string]bool, len(filter.DepKeys))
-		for _, k := range filter.DepKeys {
-			skillDepKeys[k] = true
-		}
-	}
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
 	var mcpDiags []string
@@ -90,13 +98,20 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	directDeps = append(directDeps, m.ParsedDeps...)
 	directDeps = append(directDeps, m.ParsedDevDeps...)
 
+	// depCanonKeys maps each direct dependency's raw DepRefKey (the key every
+	// Primitive.DepKey below actually carries) to its CanonicalDepKey, so the
+	// --skill filter application below can look a primitive's dependency up
+	// in filter.Subsets by canonical (case-fold-safe) identity without
+	// requiring Primitive itself to carry the full DependencyReference.
 	directKeys := make(map[string]bool)
+	depCanonKeys := make(map[string]string, len(directDeps))
 	for _, dep := range directDeps {
 		key := DepRefKey(dep)
 		if key == "" || directKeys[key] {
 			continue
 		}
 		directKeys[key] = true
+		depCanonKeys[key] = CanonicalDepKey(dep)
 		modulePath := filepath.Join(projectDir, "apm_modules", key)
 		prims := CollectDependencyPrimitives(key, modulePath)
 		ordered = append(ordered, prims...)
@@ -124,16 +139,19 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 	}
 
-	// 2. Apply --skill filter before conflict resolution. Scoped to
-	// skillDepKeys so it only suppresses unselected skills belonging to the
-	// dependency (or dependencies) --skill was requested for -- local
-	// primitives (DepKey == "") and any other already-declared dependency
+	// 2. Apply --skill filter before conflict resolution. A skill primitive
+	// is only suppressed when its dependency's CanonicalDepKey has an entry
+	// in filter.Subsets AND its name isn't in that entry's whitelist -- local
+	// primitives (DepKey == "") and any dependency absent from Subsets
+	// (transitive deps, or a direct dep with no persisted/requested subset)
 	// are never affected.
-	if skillNames != nil {
+	if filter != nil && len(filter.Subsets) > 0 {
 		var filtered []Primitive
 		for _, p := range ordered {
-			if p.Type == TypeSkills && skillDepKeys[p.DepKey] && !skillNames[p.Name] {
-				continue
+			if p.Type == TypeSkills {
+				if subset, ok := filter.Subsets[depCanonKeys[p.DepKey]]; ok && !skillNameInSubset(subset, p.Name) {
+					continue
+				}
 			}
 			filtered = append(filtered, p)
 		}

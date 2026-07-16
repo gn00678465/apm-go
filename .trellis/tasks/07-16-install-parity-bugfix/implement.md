@@ -36,16 +36,36 @@
    → verify: `go test ./cmd/apm-go -run TestInstall_SkillSubsetPollution -count=1`
      失敗（現況全量佈署）。
 8. **GREEN（鏈路）**：依 design §1.2b-e 實作——
-   a. `deploy.SkillFilter` 改 `Subsets map[string][]string`（空 slice 不變式）+
-      deploy_test.go 兩支改形狀；prod+dev deps 同走查表；
-   b. `effectiveSkillSubsets()` 唯一計算點（union / 混合 wildcard RESET / identity key）；
-   c. 接線 buildLockfile（含未點名 dep）與 deployAndFinalize；update 路徑同接；
-   d. `persistPackagesToManifest` 既有 entry 原地 union 更新（canonical identity 比對）+
-      `clearPersistedSkillSubset` identity 化。
+   a. `deploy.SkillFilter` 改 `Subsets map[string][]string`（空 slice 不變式，經
+      `deploy.CanonicalDepKey(ref)` = `manifest.CanonicalRepoIdentity` + virtualPath 建鍵）+
+      `deploy_test.go` 兩支改形狀（`TestRun_SkillFilterScopedToDepKey` 保留舊名改新形狀；
+      `TestRun_SkillFilterWildcardDeploysAll` 更名 `TestRun_SkillFilterAbsentKeyDeploysAll`，
+      語意由「'*' 字面值」改為「key 不存在 = 全量」）；prod+dev deps 同走 `depCanonKeys` 查表；
+   b. `cmd/apm-go/install.go` 新增 `effectiveSkillSubsets()` 唯一計算點（union 用
+      `unionSortedSkills` / 混合 wildcard 整條 RESET / key 用 `deploy.CanonicalDepKey`）；
+      `resolvedDepCanonicalKey()` 橋接 `resolver.ResolvedDep` 缺 Owner/Repo 的限制；
+   c. 接線 `buildLockfile`（新增 `effectiveSubsets` 參數，含未點名 dep）與
+      `deployAndFinalize`（新增 `effectiveSubsets` 參數，`SkillFilter{Subsets: effectiveSubsets}`）；
+      `update.go` 同接（`effectiveSkillSubsets(m, nil, nil)`）；
+   d. `persistPackagesToManifest`（簽章改 `effectiveSubsets map[string][]string`）既有 entry
+      原地 union 更新——`entryDepString`/`canonicalIdentityForDepString`（內部呼叫既有
+      `normalizeLocalDep`，讓本地路徑 dep 與 deploy 端算出同一把 key）建 `existingByIdentity`
+      索引，`setEntrySkillSubset` 統一改寫（取代並移除舊 `clearPersistedSkillSubset`，
+      reset 與既有更新走同一路徑，不再是獨立函式）；
+      附帶修復（同一批次發現，非獨立 bug）：`runInstall` 的 `existing` map 現在先對
+      `m.ParsedDeps` 跑一輪 `normalizeLocalDep` 再建立，修正本地路徑 dep 二次 CLI 安裝時
+      key space 不一致造成的重複 entry。
    → verify: 步驟 7 綠；同 repo 三階段測試
      `go test ./cmd/apm-go -run TestInstall_SkillSubsetSameRepoUnion -count=1` 綠（C3 迴歸）；
-     wildcard 迴歸群綠（實作時回填實際 -run pattern）；
-     update 一致性 `go test ./cmd/apm-go -run TestUpdate_RespectsSkillSubset -count=1` 綠。
+     wildcard 迴歸群：
+     `go test ./cmd/apm-go ./internal/deploy -run 'SkillWildcard|SkillFilter' -v -count=1` 綠
+     （`TestRunInstall_SkillWildcardDeploysAllSkills`、
+     `TestPersistPackagesToManifest_SkillWildcard_NewPackageWritesStringForm`、
+     `TestPersistPackagesToManifest_SkillWildcard_ClearsExistingSubset`、
+     `TestBuildLockfile_SkillWildcardDoesNotRecordSubset`、
+     `TestRun_SkillFilterScopedToDepKey`、`TestRun_SkillFilterAbsentKeyDeploysAll`）；
+     update 一致性 `go test ./cmd/apm-go -run TestUpdate_RespectsSkillSubset -count=1` 綠；
+     全量 `go build ./... && go vet ./... && go test ./... -count=1` 全綠。
 9. **unknown skill 政策（H3）**：先驗證後持久化的順序調整 + 新名報錯原子性測試 +
    persisted 消失警告測試。
    → verify: `go test ./cmd/apm-go -run TestInstall_UnknownSkill -count=1` 綠

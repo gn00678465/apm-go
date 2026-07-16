@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/07-16-install-parity-bugfix/verification-checklist.md", "reason": "44 項硬性 PASS/FAIL 驗收（codex 獨立撰寫）——check 的唯一判準"}
+{"file": ".trellis/tasks/07-16-install-parity-bugfix/research/codex-plan-review.md", "reason": "審查陷阱固化清單：只看 stdout、skill 數=檔案數、刪測試規避、文件當驗證均為 FAIL"}
+{"file": ".trellis/spec/backend/install-marketplace-contracts.md", "reason": "exit code 與 persist 契約回歸判準"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "測試覆蓋與品質門檻"}

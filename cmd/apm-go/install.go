@@ -245,6 +245,20 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// genuinely new addition from a dep the user re-requested that was
 	// already declared, so it can mute the latter (R9/R10c) instead of
 	// presenting it as a fresh install.
+	//
+	// A pre-existing local/absolute-path dep MUST be normalized (into its
+	// copy-materialized apm_modules/_local/<hash> key, step 1b-2's job)
+	// BEFORE it's used to key this map: a still-IsLocal ref has no
+	// deploy.DepRefKey at all ("" -- skipped by the guard below), while the
+	// SAME dependency re-requested positionally this call gets normalized
+	// (and keyed) immediately in the loop right below. Without normalizing
+	// here first, that key-space mismatch made `existing` silently miss an
+	// already-declared local-path dependency on every subsequent positional
+	// re-install of it, duplicating its apm.yml/lockfile entry instead of
+	// recognizing it as already declared.
+	for _, d := range m.ParsedDeps {
+		normalizeLocalDep(d)
+	}
 	existing := make(map[string]bool)
 	for _, d := range m.ParsedDeps {
 		if k := deploy.DepRefKey(d); k != "" {
@@ -621,8 +635,12 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		mergeMarketplaceProvenance(marketplaceProvenance, result.MarketplaceProvenance)
 	}
 
-	// 5. Build lockfile
-	newLock, err := buildLockfile(result, existingLock, regLoader, skillSubset, requestedKeys, noProvenance, marketplaceProvenance)
+	// 5. Build lockfile. effectiveSubsets (design.md §1.2c, codex C2) is
+	// computed ONCE here and fed to both buildLockfile and deployAndFinalize
+	// below, so apm.yml, apm.lock.yaml, and the actual deploy filter can
+	// never disagree about which skills a dependency gets (BUG-2).
+	effectiveSubsets := effectiveSkillSubsets(m, requestedKeys, skillSubset)
+	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, skillSubset, requestedKeys, noProvenance, marketplaceProvenance)
 	if err != nil {
 		return err
 	}
@@ -645,7 +663,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, skillSubset, requestedKeys, existing, persistPackages, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, result, newLock, existingLock, existingNode, node)
 }
 
 // errNoDeployTarget is the exit-2 teaching error shared by runInstall's two
@@ -870,6 +888,87 @@ func containsSkillWildcard(skillSubset []string) bool {
 	return false
 }
 
+// effectiveSkillSubsets is BUG-2's single per-dependency skill-subset
+// computation point (design.md §1.2c, codex C2): every consumer that needs
+// to know "which skills does dependency X actually get" -- apm.yml
+// persistence (persistPackagesToManifest), apm.lock.yaml's skill_subset
+// field (buildLockfile), and deploy.Run's SkillFilter (deployAndFinalize) --
+// derives its answer from this SAME map, keyed by deploy.CanonicalDepKey,
+// instead of each independently re-deriving "the effective subset" from
+// this call's raw CLI flags alone (which only ever describes the packages
+// THIS call named, not every other already-declared dependency that may
+// carry its own persisted subset from an earlier install).
+//
+// Rules (mirrors Python issue #1771's normalize_and_merge_skill_subset):
+//  1. Every direct dependency (m.ParsedDeps + m.ParsedDevDeps, F3) that
+//     already carries a persisted SkillSubset seeds the map with it.
+//  2. A dependency requestedKeys marks as targeted by THIS call (keyed the
+//     same way requestedKeys itself is built in runInstall, deploy.DepRefKey)
+//     has cliSubset UNION'd into whatever it already carries -- narrowing is
+//     additive across repeated installs, never destructive.
+//  3. The '*' RESET sentinel anywhere in cliSubset (containsSkillWildcard,
+//     even mixed with concrete names) DELETES that dependency's entry
+//     entirely: "no entry" is the map's only representation of "deploy every
+//     skill" (H6 invariant -- a value is never an empty slice).
+func effectiveSkillSubsets(m *manifest.Manifest, requestedKeys map[string]bool, cliSubset []string) map[string][]string {
+	result := make(map[string][]string)
+	wildcard := containsSkillWildcard(cliSubset)
+
+	for _, dep := range allDirectDeps(m) {
+		identity := deploy.CanonicalDepKey(dep)
+		if identity == "" {
+			continue
+		}
+		if len(dep.SkillSubset) > 0 {
+			result[identity] = append([]string(nil), dep.SkillSubset...)
+		}
+
+		if !requestedKeys[deploy.DepRefKey(dep)] {
+			continue
+		}
+		if wildcard {
+			delete(result, identity)
+			continue
+		}
+		if len(cliSubset) > 0 {
+			result[identity] = unionSortedSkills(result[identity], cliSubset)
+		}
+	}
+	return result
+}
+
+// unionSortedSkills merges add into existing, trimming, deduplicating, and
+// sorting the result (Python parity: normalize_and_merge_skill_subset).
+func unionSortedSkills(existing, add []string) []string {
+	seen := make(map[string]bool, len(existing)+len(add))
+	merged := make([]string, 0, len(existing)+len(add))
+	for _, group := range [][]string{existing, add} {
+		for _, s := range group {
+			s = strings.TrimSpace(s)
+			if s == "" || seen[s] {
+				continue
+			}
+			seen[s] = true
+			merged = append(merged, s)
+		}
+	}
+	sort.Strings(merged)
+	return merged
+}
+
+// resolvedDepCanonicalKey mirrors deploy.CanonicalDepKey for a resolved
+// dependency (resolver.ResolvedDep), which carries only RepoURL/VirtualPath
+// -- no separately-tracked Owner/Repo/Host. Feeding just those two fields
+// into a DependencyReference hits CanonicalRepoIdentity's "bare literal"
+// branch, which case-folds a default-host git RepoURL exactly the same way
+// a fully-populated manifest reference does -- the only shape a --skill
+// subset is ever recorded against (the source matrix rejects skills: for
+// registry/marketplace/local dict forms at parse time).
+func resolvedDepCanonicalKey(dep resolver.ResolvedDep) string {
+	ref := &manifest.DependencyReference{RepoURL: dep.RepoURL, VirtualPath: dep.VirtualPath}
+	return deploy.CanonicalDepKey(ref)
+}
+
 // hasMarketplaceProvenance reports whether any of the four mkt-031
 // marketplace provenance fields are populated on a locked dependency, used by
 // buildLockfile's mkt-032 carry-forward to decide whether an existing
@@ -881,7 +980,7 @@ func hasMarketplaceProvenance(d *lockfile.LockedDep) bool {
 // buildLockfile converts a resolution result into the lockfile that would be
 // written for it, without touching disk (steps 5). Shared by runInstall and
 // runUpdate so both build the same lockfile shape from a resolution result.
-func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, skillSubset []string, requestedKeys map[string]bool, noProvenance bool, marketplaceProvenance map[string]*marketplace.Provenance) (*lockfile.Lockfile, error) {
+func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys map[string]bool, noProvenance bool, marketplaceProvenance map[string]*marketplace.Provenance) (*lockfile.Lockfile, error) {
 	existingVersion := ""
 	if existingLock != nil {
 		existingVersion = existingLock.Version
@@ -952,18 +1051,24 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			}
 		}
 
-		// Record skill_subset only on the dependency this --skill flag was
-		// scoped to this call -- not every dep in the resolved graph (bug
-		// fix: previously stamped every already-declared, unrelated
-		// dependency with the same subset). matchedKeys tracks "this
-		// requested package DID resolve" independently of whether a subset
-		// is actually recorded, so the '*' RESET sentinel (which records no
-		// subset -- install ALL skills) doesn't spuriously fail the
-		// "every requested package resolved" validation below.
+		// matchedKeys tracks "this requested package DID resolve",
+		// independent of whether it ended up with a subset recorded (the '*'
+		// RESET sentinel records none), so the "every requested package
+		// resolved" validation below isn't spuriously failed.
 		if requestedKeys[dep.Key] {
 			matchedKeys[dep.Key] = true
-			if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
-				ld.SkillSubset = skillSubset
+		}
+
+		// BUG-2 fix: skill_subset is stamped for EVERY dependency that has
+		// an entry in effectiveSubsets (the single per-dep computation
+		// point, design.md §1.2c/e) -- not just the dependency THIS call's
+		// --skill flag was scoped to. Previously this only ever considered
+		// requestedKeys, so a bare `apm install`/`apm update` (empty
+		// requestedKeys) silently forgot every already-persisted subset the
+		// very next time the lockfile was rebuilt from scratch.
+		if identity := resolvedDepCanonicalKey(dep); identity != "" {
+			if subset, ok := effectiveSubsets[identity]; ok {
+				ld.SkillSubset = subset
 			}
 		}
 
@@ -1028,7 +1133,11 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // only meaningful for a real `install` call: requestedKeys is nil for
 // `update` (which has no per-call "was this positionally requested"
 // concept), and the R9/R10c muting below is skipped whenever it is.
-func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+// effectiveSubsets is the single per-dependency skill-subset computation
+// point (effectiveSkillSubsets, design.md §1.2c) -- the ONLY source
+// deploy.Run's SkillFilter is built from, so a bare re-deploy honors every
+// already-persisted subset, not just the one this call's --skill flag named.
+func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 
 	// 6. Deploy primitives to targets
@@ -1045,18 +1154,14 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
 
 		var skillFilter *deploy.SkillFilter
-		// The '*' RESET sentinel means "install ALL skills" (install.md):
-		// leave skillFilter nil rather than constructing one with a literal
-		// "*" entry, so this call site never depends on deploy.SkillFilter's
-		// own wildcard handling to no-op it -- and the "Skill subset:" info
-		// line, which only makes sense for an actual narrowing, is skipped.
+		if len(effectiveSubsets) > 0 {
+			skillFilter = &deploy.SkillFilter{Subsets: effectiveSubsets}
+		}
+		// The "Skill subset:" info line only makes sense when THIS call
+		// narrowed something -- an already-persisted subset from an earlier
+		// call being silently re-applied isn't news the user asked for now.
 		if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
 			ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
-			depKeys := make([]string, 0, len(requestedKeys))
-			for k := range requestedKeys {
-				depKeys = append(depKeys, k)
-			}
-			skillFilter = &deploy.SkillFilter{Names: skillSubset, DepKeys: depKeys}
 		}
 
 		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter)
@@ -1167,7 +1272,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []st
 
 	// 9. Persist positional packages to apm.yml
 	if len(packages) > 0 {
-		if err := persistPackagesToManifest(node, packages, skillSubset); err != nil {
+		if err := persistPackagesToManifest(node, packages, effectiveSubsets); err != nil {
 			return fmt.Errorf("update apm.yml: %w", err)
 		}
 		manifestBytes, err := yamlcore.SafeDump(node)
@@ -1383,7 +1488,7 @@ func toLockDeps(deps []resolver.ResolvedDep) []lockfile.LockedDep {
 	return result
 }
 
-func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string) error {
+func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSubsets map[string][]string) error {
 	root := doc
 	if root.Kind == yamllib.DocumentNode && len(root.Content) > 0 {
 		root = root.Content[0]
@@ -1425,58 +1530,49 @@ func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string
 		)
 	}
 
-	// Check which packages already exist in the sequence
+	// Index existing entries two ways: by canonical identity (codex
+	// C3/H2 -- locates the SAME already-declared dependency even across a
+	// pkg string that differs only by case/URL form, so its skills: field
+	// gets updated in place instead of silently `continue`-d past) and by
+	// exact literal string (unchanged fallback for local/parent/unparseable
+	// forms, which never carry a skill subset -- the source matrix only
+	// supports skills: on the git dict form, so an empty identity is never
+	// looked up in effectiveSubsets).
+	existingByIdentity := make(map[string]int)
 	existingPkgs := make(map[string]bool)
 	if apmSeq.Kind == yamllib.SequenceNode {
-		for _, entry := range apmSeq.Content {
-			if entry.Kind == yamllib.ScalarNode {
-				existingPkgs[entry.Value] = true
-			} else if entry.Kind == yamllib.MappingNode {
-				for j := 0; j < len(entry.Content)-1; j += 2 {
-					if entry.Content[j].Value == "git" {
-						existingPkgs[entry.Content[j+1].Value] = true
-					}
-				}
+		for i, entry := range apmSeq.Content {
+			raw := entryDepString(entry)
+			if raw == "" {
+				continue
+			}
+			existingPkgs[raw] = true
+			if id := canonicalIdentityForDepString(raw); id != "" {
+				existingByIdentity[id] = i
 			}
 		}
 	}
 
-	// The '*' RESET sentinel (install.md: "--skill '*' resets to install
-	// all skills") means "install ALL skills," so it must never be
-	// persisted as a literal skills: ['*'] subset -- mirroring Python's
-	// `_skill_subset = None` (no subset persisted = install all).
-	skillReset := containsSkillWildcard(skillSubset)
-
 	appended := false
 	for _, pkg := range packages {
-		if existingPkgs[pkg] {
-			// A '*' reset must also undo a previously narrower skills:
-			// subset persisted by an earlier `apm install pkg --skill x`
-			// for this SAME package -- otherwise a later bare `apm
-			// install` (no --skill) would keep reading that stale subset.
-			if skillReset {
-				clearPersistedSkillSubset(apmSeq, pkg)
+		identity := canonicalIdentityForDepString(pkg)
+
+		if identity != "" {
+			if idx, ok := existingByIdentity[identity]; ok {
+				// C3 fix: rewrite the EXISTING entry in place to the
+				// effective (union'd or reset) subset, instead of the old
+				// `continue` that left a stale apm.yml value behind.
+				setEntrySkillSubset(apmSeq, idx, effectiveSubsets[identity])
+				appended = true
+				continue
 			}
+		} else if existingPkgs[pkg] {
 			continue
 		}
-		if len(skillSubset) > 0 && !skillReset {
-			// Object form: { git: <pkg>, skills: [<skill>...] }
-			entry := &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
-			entry.Content = append(entry.Content,
-				&yamllib.Node{Kind: yamllib.ScalarNode, Value: "git", Tag: "!!str"},
-				&yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"},
-			)
-			skillSeq := &yamllib.Node{Kind: yamllib.SequenceNode, Tag: "!!seq"}
-			for _, s := range skillSubset {
-				skillSeq.Content = append(skillSeq.Content,
-					&yamllib.Node{Kind: yamllib.ScalarNode, Value: s, Tag: "!!str"},
-				)
-			}
-			entry.Content = append(entry.Content,
-				&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
-				skillSeq,
-			)
-			apmSeq.Content = append(apmSeq.Content, entry)
+
+		subset := effectiveSubsets[identity]
+		if len(subset) > 0 {
+			apmSeq.Content = append(apmSeq.Content, newGitSkillEntry(pkg, subset))
 		} else {
 			// String form
 			apmSeq.Content = append(apmSeq.Content,
@@ -1498,35 +1594,81 @@ func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string
 	return nil
 }
 
-// clearPersistedSkillSubset undoes a previously narrower skills: subset
-// recorded for pkg by an earlier `apm install pkg --skill x`: the '*' RESET
-// sentinel (install.md) means "install all skills going forward," so a
-// stale object-form entry `{git: pkg, skills: [...]}` must collapse back to
-// the plain string form -- otherwise a bare `apm install` (no --skill) run
-// afterward would keep reading the stale narrower subset from apm.yml.
-// No-op for a scalar entry or an object-form entry with no skills: key.
-func clearPersistedSkillSubset(apmSeq *yamllib.Node, pkg string) {
-	if apmSeq.Kind != yamllib.SequenceNode {
-		return
+// entryDepString returns the dependency string a dependencies.apm sequence
+// entry carries -- the scalar value itself, or the "git:" key's value for an
+// object-form entry -- or "" if neither shape matches.
+func entryDepString(entry *yamllib.Node) string {
+	if entry.Kind == yamllib.ScalarNode {
+		return entry.Value
 	}
-	for i, entry := range apmSeq.Content {
-		if entry.Kind != yamllib.MappingNode {
-			continue
-		}
-		var gitVal string
-		hasSkills := false
+	if entry.Kind == yamllib.MappingNode {
 		for j := 0; j < len(entry.Content)-1; j += 2 {
-			switch entry.Content[j].Value {
-			case "git":
-				gitVal = entry.Content[j+1].Value
-			case "skills":
-				hasSkills = true
+			if entry.Content[j].Value == "git" {
+				return entry.Content[j+1].Value
 			}
 		}
-		if gitVal == pkg && hasSkills {
-			apmSeq.Content[i] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"}
-		}
 	}
+	return ""
+}
+
+// canonicalIdentityForDepString parses an apm.yml-persisted dependency
+// string and returns its deploy.CanonicalDepKey, or "" if it doesn't parse
+// as a dependency string at all, or parses to a genuinely local/parent
+// reference (which has no stable repository identity -- see
+// CanonicalRepoIdentity). normalizeLocalDep is applied first so a
+// LOCAL-PATH dependency (which ParseDepString alone reports as IsLocal, but
+// which runInstall's own step 1b-2 loop always normalizes into a
+// Source="git" apm_modules/_local/<hash> materialization key before
+// effectiveSkillSubsets/deploy.Run ever see it) computes the SAME identity
+// here that the rest of the --skill subset pipeline uses -- without this,
+// a positional local-path package would parse straight to IsLocal=true and
+// silently fall out of identity-based matching entirely (its subset would
+// never be found OR written).
+func canonicalIdentityForDepString(s string) string {
+	ref, err := manifest.ParseDepString(s)
+	if err != nil {
+		return ""
+	}
+	normalizeLocalDep(ref)
+	return deploy.CanonicalDepKey(ref)
+}
+
+// setEntrySkillSubset rewrites apmSeq.Content[idx] in place to reflect
+// subset: the scalar form when subset is empty (no subset persisted --
+// install all skills, covering both the '*' RESET sentinel and a
+// dependency that never had a subset), or the object form
+// `{git: <original git value>, skills: [...]}` otherwise. The entry's
+// ORIGINAL persisted git value is preserved verbatim (first-declared
+// spelling wins) rather than substituted with whatever case/form this
+// call's pkg argument happened to use.
+func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
+	gitVal := entryDepString(apmSeq.Content[idx])
+	if len(subset) == 0 {
+		apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: gitVal, Tag: "!!str"}
+		return
+	}
+	apmSeq.Content[idx] = newGitSkillEntry(gitVal, subset)
+}
+
+// newGitSkillEntry builds the object-form dependencies.apm entry
+// `{git: gitVal, skills: [subset...]}`.
+func newGitSkillEntry(gitVal string, subset []string) *yamllib.Node {
+	entry := &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
+	entry.Content = append(entry.Content,
+		&yamllib.Node{Kind: yamllib.ScalarNode, Value: "git", Tag: "!!str"},
+		&yamllib.Node{Kind: yamllib.ScalarNode, Value: gitVal, Tag: "!!str"},
+	)
+	skillSeq := &yamllib.Node{Kind: yamllib.SequenceNode, Tag: "!!seq"}
+	for _, s := range subset {
+		skillSeq.Content = append(skillSeq.Content,
+			&yamllib.Node{Kind: yamllib.ScalarNode, Value: s, Tag: "!!str"},
+		)
+	}
+	entry.Content = append(entry.Content,
+		&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
+		skillSeq,
+	)
+	return entry
 }
 
 // resolvePositionalPackage parses a single `apm install` positional package

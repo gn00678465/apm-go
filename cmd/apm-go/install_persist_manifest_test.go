@@ -18,12 +18,12 @@ import (
 // dependencies.apm node) already rendered block correctly.
 func TestPersistPackagesToManifest_FlowStyleNormalization(t *testing.T) {
 	tests := []struct {
-		name        string
-		src         string
-		packages    []string
-		skillSubset []string
-		wantContain []string
-		wantAbsent  []string
+		name             string
+		src              string
+		packages         []string
+		effectiveSubsets map[string][]string
+		wantContain      []string
+		wantAbsent       []string
 	}{
 		{
 			// Reported bug: a scaffolded `apm: []` flow-empty sequence is
@@ -56,12 +56,12 @@ func TestPersistPackagesToManifest_FlowStyleNormalization(t *testing.T) {
 		{
 			// Object form (git+skills) entries must also land under a
 			// normalized block sequence, not a flow one.
-			name:        "object form entry lands under block seq",
-			src:         "name: d\nversion: 1.0.0\ndependencies:\n  apm: []\n",
-			packages:    []string{"acme/foo"},
-			skillSubset: []string{"x"},
-			wantContain: []string{"apm:\n    - git: acme/foo"},
-			wantAbsent:  []string{"apm: [{"},
+			name:             "object form entry lands under block seq",
+			src:              "name: d\nversion: 1.0.0\ndependencies:\n  apm: []\n",
+			packages:         []string{"acme/foo"},
+			effectiveSubsets: map[string][]string{"acme/foo": {"x"}},
+			wantContain:      []string{"apm:\n    - git: acme/foo"},
+			wantAbsent:       []string{"apm: [{"},
 		},
 	}
 
@@ -72,7 +72,7 @@ func TestPersistPackagesToManifest_FlowStyleNormalization(t *testing.T) {
 				t.Fatalf("SafeLoad: %v", err)
 			}
 
-			if err := persistPackagesToManifest(doc, tt.packages, tt.skillSubset); err != nil {
+			if err := persistPackagesToManifest(doc, tt.packages, tt.effectiveSubsets); err != nil {
 				t.Fatalf("persistPackagesToManifest: %v", err)
 			}
 
