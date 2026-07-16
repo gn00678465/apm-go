@@ -1117,6 +1117,84 @@ func TestRunInstall_LocalPrimitivesZeroTarget_ExitsWithTeachingMessage(t *testin
 	}
 }
 
+// TestInstall_NoTargetDiagnostic is the R17 regression: the no-deployment-
+// target error must print a structured diagnostic (the scanned harness
+// marker paths + concrete remediation), and cobra's default 14-line flag
+// usage dump must be suppressed for THIS error specifically -- exercised
+// through cmd.Execute() (not a direct runInstall call) so cobra's own
+// usage-printing behavior is actually in play.
+func TestInstall_NoTargetDiagnostic(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+	os.MkdirAll(filepath.Join(".apm", "instructions"), 0755)
+	os.WriteFile(filepath.Join(".apm", "instructions", "x.instructions.md"), []byte("# x"), 0644)
+
+	cmd := installCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error when local primitives are present but no deployment target resolves")
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+
+	combined := out.String() + err.Error()
+	if !strings.Contains(combined, "no deployment target detected") {
+		t.Errorf("expected the teaching message, got: %s", combined)
+	}
+	for _, sig := range manifest.SignalWhitelist {
+		if !strings.Contains(combined, sig.Path) {
+			t.Errorf("expected scanned marker %q in diagnostic, got: %s", sig.Path, combined)
+		}
+	}
+	if !strings.Contains(combined, "--target") {
+		t.Errorf("expected a concrete --target remediation, got: %s", combined)
+	}
+	if strings.Contains(out.String(), "Flags:") {
+		t.Errorf("cobra's flag usage dump must be suppressed for the no-target diagnostic, got: %s", out.String())
+	}
+}
+
+// TestInstall_UsageStillShownOnFlagError is the reverse guard for R17: an
+// ordinary flag/argument error (an unknown --target token, unrelated to the
+// no-deployment-target diagnostic) must keep showing cobra's usage dump and
+// exit code exactly as before -- SilenceUsage must never be flipped for the
+// command as a whole, only for the one typed no-target error.
+func TestInstall_UsageStillShownOnFlagError(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	cmd := installCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--target", "bogus"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error for --target bogus, got nil")
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+	if !strings.Contains(out.String(), "Flags:") {
+		t.Errorf("cobra's usage dump must still be shown for an ordinary flag error, got: %s", out.String())
+	}
+}
+
 // TestRunInstall_LocalPrimitivesWithTargetSignal_StillDeploys is the
 // over-fire regression for the local-primitives zero-target gate: with a
 // detectable harness signal (.claude/ directory) present, a bare install of

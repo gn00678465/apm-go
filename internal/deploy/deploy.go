@@ -17,11 +17,15 @@ type DepDeployResult struct {
 
 // MCPProv records where one deployed MCP server entry came from (pr-001
 // source attribution), for a merged config file that multiple deps -- or
-// local -- may jointly contribute servers to.
+// local -- may jointly contribute servers to. Target names the adapter
+// (e.g. "claude", "codex") that wrote File, so a caller can aggregate
+// "server -> which targets got it" (R13) without re-deriving the target
+// from File's path shape.
 type MCPProv struct {
 	Server string
 	Source string // "local" or "dependency:<key>"
 	File   string
+	Target string
 }
 
 type DeployResult struct {
@@ -405,6 +409,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 						Server: name,
 						Source: mcpSourceByName[name],
 						File:   f,
+						Target: target,
 					})
 				}
 			}

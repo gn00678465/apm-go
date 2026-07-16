@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -150,7 +151,21 @@ func installCmd() *cobra.Command {
 				maxArchiveBytes: maxArchiveBytes,
 				allowInsecure:   allowInsecure,
 			}
-			return runInstall(deps, frozen, noProvenance, targetFlag, skillFlags, args)
+			err := runInstall(deps, frozen, noProvenance, targetFlag, skillFlags, args)
+			// R17 (codex H8): suppress cobra's default usage dump for JUST
+			// the no-deployment-target diagnostic -- it is a structured,
+			// self-contained teaching message (scanned markers + concrete
+			// fixes), not a flag/argument mistake the 14-line flag usage
+			// dump would help with. Every OTHER install error (bad --target
+			// token, --skill validation, resolve/deploy failures, ...) must
+			// keep showing usage exactly as before, so this only flips
+			// SilenceUsage for THIS specific typed error, never for the
+			// command as a whole.
+			var ndt *noDeployTargetError
+			if errors.As(err, &ndt) {
+				cmd.SilenceUsage = true
+			}
+			return err
 		},
 	}
 
@@ -622,8 +637,19 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// 4. Resolve dependency graph, unless this is a local-only deploy.
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	if !hasAnyDeps {
-		ux.Info(os.Stdout, "No dependencies to install")
 		if len(targets) == 0 {
+			// R16 (prd.md/design.md §3): this message is only printed when
+			// nothing else is about to happen either -- either genuinely
+			// nothing (an empty project) or local .apm/ primitives that
+			// CAN'T be deployed (no target), both cases where "No
+			// dependencies to install" is the complete, accurate story.
+			// When a target DOES resolve below, printing it here would be
+			// immediately contradicted by a deployed-files tree and a
+			// mismatched "Installed 0 dependencies" summary -- deferred
+			// entirely to deployAndFinalize's post-deploy summary instead
+			// (codex M2: decided from the ACTUAL deploy result, not a
+			// second up-front scan).
+			ux.Info(os.Stdout, "No dependencies to install")
 			for _, d := range targetDiags {
 				ux.Error(os.Stderr, "%s", d)
 			}
@@ -737,11 +763,41 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, result, newLock, existingLock, existingNode, node)
 }
 
+// noDeployTargetError marks errNoDeployTarget's failure so installCmd's RunE
+// can selectively suppress cobra's default usage dump for JUST this error
+// (R17, codex H8), via errors.As, without setting SilenceUsage on the
+// command as a whole -- every other install error (bad --target token,
+// --skill validation, resolve/deploy failures, ...) must keep showing usage
+// exactly as before.
+type noDeployTargetError struct {
+	err error
+}
+
+func (e *noDeployTargetError) Error() string { return e.err.Error() }
+func (e *noDeployTargetError) Unwrap() error { return e.err }
+
 // errNoDeployTarget is the exit-2 teaching error shared by runInstall's two
 // zero-target gates (deps present, and local-primitives-only), so their
-// wording and exit code can never drift apart.
+// wording and exit code can never drift apart. R17 (prd.md, design.md §3):
+// apm-go's own signal-detection already scans manifest.SignalWhitelist's
+// marker paths to decide "nothing auto-detected" -- rather than a bare
+// one-line message followed by cobra's 14-flag usage dump, this prints that
+// same scanned list plus concrete remediation (presentation-only: no new
+// scanning is introduced here).
 func errNoDeployTarget() error {
-	return withExitCode(2, fmt.Errorf("no deployment target detected; pass --target <name> or add a target: to apm.yml"))
+	var b strings.Builder
+	b.WriteString("no deployment target detected\n\n")
+	b.WriteString("Scanned for these harness markers (none found):\n")
+	for _, sig := range manifest.SignalWhitelist {
+		b.WriteString("  - " + sig.Path + "\n")
+	}
+	b.WriteString("\nTo fix, do one of the following:\n")
+	b.WriteString("  1. Pass --target <name> (e.g. --target claude)\n")
+	b.WriteString("  2. Add a target: field to apm.yml, e.g.:\n")
+	b.WriteString("       target:\n")
+	b.WriteString("         - claude\n")
+	b.WriteString("  3. Create one of the marker paths above so apm-go can auto-detect a target\n")
+	return withExitCode(2, &noDeployTargetError{err: errors.New(b.String())})
 }
 
 // tryLocalBundleInstall probes bundleArg for a local bundle (a directory,
@@ -859,6 +915,13 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 	}
 
 	ux.Success(os.Stdout, "Installed %d file(s) from local bundle %s", len(result.Files), bundleArg)
+	// R12b (prd.md/design.md §3): an ordinary `apm install` already breaks
+	// down its deployed files by primitive kind and target root
+	// (deployedFilesTree, R10b) -- local-bundle install used to only print
+	// the aggregate count, a regression relative to that. result.Files is
+	// already the exact per-file list deployAndFinalize's tree would
+	// consume; reusing the same helper here needs no new computation.
+	ux.Tree(os.Stdout, deployedFilesTree(bundleArg+" (local bundle)", result.Files))
 	return nil
 }
 
@@ -1351,6 +1414,13 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // already-persisted subset, not just the one this call's --skill flag named.
 func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
+	// localProjectDeployed is R16's post-deploy decision point (design.md
+	// §3, codex M2): whether THIS run's deploy.Run actually deployed at
+	// least one file from the project's own .apm/ tree (deployResult.
+	// PerDep[""], captured BEFORE the MCP-files merge below folds into the
+	// SAME LocalDeployedFiles slice) -- never a second up-front directory
+	// scan just to decide what to print.
+	var localProjectDeployed bool
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
@@ -1430,6 +1500,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 		if dr, ok := deployResult.PerDep[""]; ok {
 			newLock.LocalDeployedFiles = dr.Files
 			newLock.LocalDeployedHashes = dr.Hashes
+			localProjectDeployed = len(dr.Files) > 0
 		}
 
 		// Merged MCP config files (e.g. .mcp.json) are multi-source -- no
@@ -1454,15 +1525,43 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 		// the merged bake from scratch every call, so MCPProvenance already
 		// reflects the complete current state, not just a delta -- dedup by
 		// name since the same server can appear once per target file.
+		//
+		// R13 (prd.md/design.md §3): deployResult.MCPProvenance already
+		// carries which target(s) each server actually landed in (via its
+		// per-entry Target field) -- print a "server -> targets" summary
+		// while building the SAME dedup pass, instead of only ever
+		// persisting the server name list and never surfacing it in stdout.
+		// targetsByServer is aggregated (not just concatenated) so a server
+		// with entries from multiple target files collapses to one line
+		// naming every target it reached (codex M3: no duplicate lines for
+		// the same server, no duplicate targets within a line).
 		if len(deployResult.MCPProvenance) > 0 {
 			seen := make(map[string]bool, len(deployResult.MCPProvenance))
+			targetsByServer := make(map[string]map[string]bool, len(deployResult.MCPProvenance))
 			for _, p := range deployResult.MCPProvenance {
 				if !seen[p.Server] {
 					seen[p.Server] = true
 					newLock.MCPServers = append(newLock.MCPServers, p.Server)
 				}
+				set, ok := targetsByServer[p.Server]
+				if !ok {
+					set = map[string]bool{}
+					targetsByServer[p.Server] = set
+				}
+				if p.Target != "" {
+					set[p.Target] = true
+				}
 			}
 			sort.Strings(newLock.MCPServers)
+
+			mcpItems := make([]ux.Item, 0, len(newLock.MCPServers))
+			for _, server := range newLock.MCPServers {
+				mcpItems = append(mcpItems, ux.Item{
+					Text: fmt.Sprintf("%s -> %s", server, strings.Join(sortedStringSet(targetsByServer[server]), ", ")),
+				})
+			}
+			ux.Info(os.Stdout, "MCP servers configured:")
+			ux.BulletList(os.Stdout, mcpItems)
 		}
 
 		// Pollution convergence (design.md §1.2g, codex C1, prd.md B2-3/
@@ -1510,7 +1609,33 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 	}
 
 	fmt.Println()
-	ux.Success(os.Stdout, "Installed %d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies"))
+	// Closing summary. Built as parts joined with " and " so R15's MCP-count
+	// clause and R16's local-only wording compose independently instead of
+	// each needing their own combinatorial branch:
+	//   - R16 (prd.md/design.md §3): a zero-resolved-dependency run that
+	//     actually deployed at least one file from the project's own .apm/
+	//     tree (localProjectDeployed, decided from the ACTUAL deploy
+	//     result, never a second scan) says "local project" instead of the
+	//     misleading "0 dependencies" -- without pretending local content
+	//     IS a dependency (no lockfile/count semantics change).
+	//   - R15: when this run actually configured MCP server(s), name that
+	//     count too -- silent when there are none, so a project with
+	//     neither MCP nor local-only content keeps today's exact wording.
+	//     newLock.MCPServers is populated ONLY a few lines above from
+	//     deployResult.MCPProvenance's dedup pass (never carried forward
+	//     from existingLock elsewhere in this function), so it already IS
+	//     "this run's actual successful server count" (codex M3), not a
+	//     stale lockfile total.
+	var summaryParts []string
+	if len(result.Deps) == 0 && localProjectDeployed {
+		summaryParts = append(summaryParts, "local project")
+	} else {
+		summaryParts = append(summaryParts, fmt.Sprintf("%d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies")))
+	}
+	if n := len(newLock.MCPServers); n > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("%d %s", n, pluralWord(n, "MCP server", "MCP servers")))
+	}
+	ux.Success(os.Stdout, "Installed %s", strings.Join(summaryParts, " and "))
 	items := make([]ux.Item, 0, len(result.Deps))
 	for _, dep := range result.Deps {
 		label := dep.Key + depVersionLabel(dep)
