@@ -260,9 +260,35 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		normalizeLocalDep(d)
 	}
 	existing := make(map[string]bool)
+	// existingByIdentity indexes m.ParsedDeps by canonical repo identity
+	// (BUG-1, design.md §2/H2/H7): a positional package sharing GitHub
+	// repository identity with an already-declared dependency -- even
+	// spelled with different case ("Owner/Repo" vs "owner/repo") -- must
+	// resolve to that SAME first-declared dep key below, never appended as
+	// a second m.ParsedDeps entry the resolver/deploy would then process as
+	// if it were a genuinely different repository (the root cause of
+	// "Resolved 2" for one physical repo, shadowed-primitive noise, and a
+	// "deployed 0 files" ghost). Local/parent refs have no stable identity
+	// (deploy.CanonicalDepKey returns "") and are intentionally excluded --
+	// they keep relying on the exact-string `existing` map above/below.
+	existingByIdentity := make(map[string]string)
+	// foldedRefByKey remembers which literal ref currently "owns" each
+	// first-declared dep key, purely so a same-identity fold below (either
+	// against a pre-existing apm.yml entry or an earlier positional package
+	// THIS call already processed) can compare selectors (design.md §0/§2:
+	// same identity, different ref/selector must never be silently merged
+	// without at least a warning -- a fold onto a different Reference is
+	// the first-declared ref winning, but the caller is told about it).
+	foldedRefByKey := make(map[string]*manifest.DependencyReference)
 	for _, d := range m.ParsedDeps {
 		if k := deploy.DepRefKey(d); k != "" {
 			existing[k] = true
+			foldedRefByKey[k] = d
+			if id := deploy.CanonicalDepKey(d); id != "" {
+				if _, ok := existingByIdentity[id]; !ok {
+					existingByIdentity[id] = k
+				}
+			}
 		}
 	}
 	// persistPackages mirrors packages 1:1 for the persistPackagesToManifest
@@ -274,6 +300,14 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// broken for the very next `apm install`. Non-marketplace packages are
 	// carried through unchanged, preserving today's exact persisted form.
 	persistPackages := make([]string, 0, len(packages))
+	// appendedThisCall tracks a dep key ALREADY appended to m.ParsedDeps
+	// during THIS loop -- kept separate from `existing` (which must keep
+	// meaning "declared before this call" for the R9/R10c "already in
+	// apm.yml" label below) so a THIRD or later positional package folding
+	// onto the SAME canonical identity as an earlier positional package in
+	// this same call (BUG-1) is still recognized as a duplicate and skipped,
+	// without marking the first, genuinely-new occurrence as pre-existing.
+	appendedThisCall := make(map[string]bool)
 	if len(packages) > 0 {
 		// mi-fix (MI2): key by deploy.DepRefKey (RepoURL, or
 		// RepoURL/VirtualPath) instead of bare RepoURL, matching the identity
@@ -322,15 +356,41 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			// apm_modules verbatim, producing an invalid clone destination).
 			normalizeLocalDep(ref)
 			key := deploy.DepRefKey(ref)
+			// BUG-1: fold this pkg onto the first-declared dep key sharing
+			// its canonical repo identity -- whether that first declaration
+			// came from apm.yml (existingByIdentity was seeded above) or an
+			// EARLIER positional package this same call already processed
+			// (the else-branch below records it as soon as it's seen, so a
+			// third/fourth same-repo case variant in one call folds onto the
+			// first one too, not just a 1:1 pair).
+			if identity := deploy.CanonicalDepKey(ref); identity != "" {
+				if firstKey, ok := existingByIdentity[identity]; ok {
+					if winner := foldedRefByKey[firstKey]; winner != nil && winner.Reference != ref.Reference {
+						ux.Warn(os.Stderr, "%s: ref %q conflicts with already-declared %q (%s#%s) -- keeping the first-declared ref",
+							pkg, ref.Reference, firstKey, firstKey, winner.Reference)
+					}
+					key = firstKey
+				} else {
+					existingByIdentity[identity] = key
+					foldedRefByKey[key] = ref
+				}
+			}
 			requestedKeys[key] = true
 			if provenance != nil {
 				marketplaceProvenance[key] = provenance
 			}
 			// mi-fix (MI2): compare against the same key computed above
-			// (deploy.DepRefKey), not the bare ref.RepoURL.
-			if existing[key] {
+			// (deploy.DepRefKey), not the bare ref.RepoURL. existing itself is
+			// intentionally left untouched here -- it distinguishes "declared
+			// BEFORE this call" (R9/R10c's "already in apm.yml" label) from a
+			// genuinely new addition. appendedThisCall additionally catches a
+			// third/later positional package folding onto an identity a
+			// PRECEDING positional package (not apm.yml) already added this
+			// same call (BUG-1).
+			if existing[key] || appendedThisCall[key] {
 				continue
 			}
+			appendedThisCall[key] = true
 			m.ParsedDeps = append(m.ParsedDeps, ref)
 		}
 	}
@@ -1745,6 +1805,20 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 			)
 		}
 		appended = true
+
+		// BUG-1 (design.md §2): existingByIdentity/existingPkgs are seeded
+		// ONCE from apmSeq before this loop -- without registering the entry
+		// just appended, a SECOND `packages` argument in this SAME call
+		// sharing this pkg's canonical identity (e.g. "Owner/Repo" then
+		// "owner/repo" in one `apm-go install` invocation) would fail this
+		// loop's own existingByIdentity lookup and append a SECOND,
+		// differently-cased apm.yml entry instead of folding onto the one
+		// just written.
+		if identity != "" {
+			existingByIdentity[identity] = len(apmSeq.Content) - 1
+		} else {
+			existingPkgs[pkg] = true
+		}
 	}
 
 	// mi-fix (#2): a reused pre-existing dependencies.apm sequence node

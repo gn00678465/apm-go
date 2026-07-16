@@ -165,6 +165,19 @@ func TestCanonicalRepoIdentity_NonGitSourcesGetOwnNamespace(t *testing.T) {
 	}
 }
 
+// TestCanonicalRepoIdentity_CrossHostNeverCollides pins the property a codex
+// gate round questioned: the same owner/repo path on GitHub and on a
+// self-hosted git server are two different repositories and must never share
+// an identity (the GitHub form drops the host component entirely; the
+// self-hosted form keeps a lowercased host prefix).
+func TestCanonicalRepoIdentity_CrossHostNeverCollides(t *testing.T) {
+	github := &DependencyReference{Owner: "acme", Repo: "repo", RepoURL: "acme/repo", Source: "git"}
+	selfHosted := &DependencyReference{Host: "git.internal", Owner: "acme", Repo: "repo", RepoURL: "acme/repo", Source: "git"}
+	if CanonicalRepoIdentity(github) == CanonicalRepoIdentity(selfHosted) {
+		t.Errorf("github and self-hosted acme/repo collide on identity %q", CanonicalRepoIdentity(github))
+	}
+}
+
 // TestCanonicalRepoIdentity_PrefixedNamespaceIsUnambiguous guards the %q
 // component quoting: a colon inside one component must not re-associate into
 // a different (name, id) split that encodes identically (codex gate finding

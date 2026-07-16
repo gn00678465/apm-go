@@ -119,11 +119,68 @@
 13. **RED**：同 repo 大小寫兩來源 → 斷言 Resolved 1 + apm.yml 單 entry + lockfile 單 dep +
     apm_modules 單目錄 + 無 shadow 噪音（codex M7 全狀態斷言）。
     → verify: `go test ./cmd/apm-go -run TestInstall_CaseFoldDedup -count=1` 失敗。
+    **已完成**：fixture 透過 `GIT_CONFIG_GLOBAL` + `insteadOf`（`caseFoldGitConfig`，
+    `cmd/apm-go/install_casefold_test.go`）把 `Owner/Repo`／`owner/repo` 兩個大小寫
+    positional package 導向同一個本地 git repo（`gitSkillRepo`，多檔多 target），
+    不需真實網路；RED 階段確認在修復前會產生 `Resolved 2`＋apm.yml/lockfile 各兩筆
+    ＋apm_modules 兩目錄＋shadow 噪音。
 14. **GREEN**：resolver 去重 / requestedKeys / lockfile 比對接線 §0 identity。
     → verify: 步驟 13 綠。
+    **已完成**：
+    a. `internal/resolver/resolver.go` 新增 `bfsKey(ref)`（§0 identity + virtualPath
+       後綴，local/parent 落回既有 `depKey` 原始路徑）取代 BFS 記帳用的
+       `key := depKey(entry.ref)`／`childKey := depKey(subDep)`——`constraints`/
+       `pins`/`processed`/`depRefs`/`depOrder`/`childrenOf`/`depDepth` 全部改用
+       `bfsKey`，讓大小寫不同但同 identity 的兩個 queue entry 收斂成同一個 BFS
+       節點（`Resolved 2`→`Resolved 1` 的根本修法，且對 diamond 衝突機制免費適用：
+       同 identity 不同 selector 現在會自然撞上既有 `checkLiteralConflict`）。
+       結果建構迴圈新增 `displayKey := depKey(depRefs[key])`，`ResolvedDep.Key`/
+       `RepoURL` 一律用 displayKey（= first-declared 原始大小寫）而非內部 canonical
+       key，避免外洩 canonical 格式（尤其 registry/marketplace 的 prefixed 格式）
+       到 `regLoader.Resolutions()`／`buildLockfile` 等下游查表點；
+       `result.MarketplaceProvenance` 兩處仍刻意保留 `depKey(resolved)`（raw）作
+       key，因為它是跟 displayKey 對應查找，不能用 canonical bfsKey（曾一度誤改，
+       導致 `TestRunInstall_MarketplaceDictDep_*` 迴歸，已修正回 depKey 並加註解）。
+    b. `cmd/apm-go/install.go` `runInstall`：`existingByIdentity map[string]string`
+       （canonical identity → first-declared `deploy.DepRefKey`）新增於既有
+       `existing` 掃描迴圈；positional package 迴圈內，若這次 pkg 的 `CanonicalDepKey`
+       命中 `existingByIdentity`（apm.yml 既有宣告 **或** 這次呼叫更早的 positional
+       package），`key` 折疊成 first-declared key，並在折疊時比較新舊 ref 的
+       `Reference`（selector）——不同則印 `ux.Warn`（"conflicts with
+       already-declared ... keeping the first-declared ref"，first-declared 規則
+       + 警告，符合 design.md §0/§2 的「不靜默合併」要求）；`appendedThisCall`
+       （與 `existing` 分離，避免污染 R9/R10c 的「already in apm.yml」判定）防止
+       同一次呼叫內第三個大小寫變體重複 append。
+    c. `cmd/apm-go/install.go` `persistPackagesToManifest`：既有的
+       `existingByIdentity`/`existingPkgs`（BUG-2 的 C3 修法）先前只在迴圈**之前**
+       建立一次、迴圈內從未更新——同一次呼叫的第二個大小寫變體因此仍會各自
+       append 成 apm.yml 的第二筆 entry。修正為每次 append 新 entry 後立即登記
+       `existingByIdentity[identity] = len(apmSeq.Content)-1`（或
+       `existingPkgs[pkg]=true`），使同呼叫內第二個變體改為呼叫
+       `setEntrySkillSubset` 就地更新，而非重複新增。
+    d. **附帶修正（同批次發現的獨立既有 bug，非 BUG-1 本體但擋住 AC-B1-3 驗收）**：
+       `internal/lockfile/write.go` `depSemanticEqual` 從未比較 `SkillSubset`
+       欄位——導致「只有 skill_subset 改變、其餘欄位不變」的重佈署（例如
+       `--skill '*'` RESET）被 `IsSemanticEqual` 誤判為 no-op，`deployAndFinalize`
+       在寫入 apm.lock.yaml/apm.yml **之前**就以「Already up to date」提早返回，
+       RESET 结果從未落盤。已加入 `slicesEqual(a.SkillSubset, b.SkillSubset)`。
 15. **守衛**：不同 repo 不受影響；F4 shadowed 仍輸出；混合大小寫舊 lockfile 升級相容；
     BUG-1×BUG-2 交互（`RepoA --skill a → repoa --skill b → REPOA --skill '*'`）。
     → verify: 四支守衛測試綠（實作時回填名稱）。
+    **已完成**，皆位於 `cmd/apm-go/install_casefold_test.go`：
+    - `TestInstall_CaseFoldDedup_DifferentReposNotMerged`（AC-B1-2：不同 owner
+      不同 repo 維持兩筆 apm.yml/lockfile entry，未被過度 case-fold 誤合併）；
+    - `TestInstall_CaseFoldDedup_SelectorConflictNotSilentlyMerged`（同 identity
+      不同 ref/selector：first-declared 勝出 + `ux.Warn` 警告，不靜默）；
+    - `TestInstall_CaseFoldWildcardReset`（BUG-1×BUG-2：`RepoA/x --skill skillA`
+      → `repoa/x --skill skillB`（union）→ `REPOA/x --skill '*'`（RESET）三階段，
+      manifest/lockfile/apm_modules/實際部署檔案全程單一且一致）；
+    - `TestInstall_CaseFoldDedup_LockfileUpgradeCompat`（AC-B1-4：手動注入
+      pre-fix 風格的混合大小寫 lockfile 污染後重跑 install，收斂回單一 dependency、
+      apm_modules 目錄數不增長、first-declared 拼寫保留）。
+    - 另有 `TestInstall_CaseFoldDedup`（步驟 13/14 對應的核心 GREEN 測試，含
+      bare install 與 `runUpdate` 之後仍保持單一的 V1-2 迴歸）。
+    → verify: `go test ./cmd/apm-go -run TestInstall_CaseFold -v -count=1` 五支全綠。
 16. **全量驗證 + 閘門 + commit**（`fix(resolver): dep-key 大小寫正規化`）。
     → verify: 同步驟 12 三條指令；codex 閘門無 CRITICAL/HIGH。
 

@@ -81,11 +81,15 @@ func Resolve(
 				if result.MarketplaceProvenance == nil {
 					result.MarketplaceProvenance = map[string]*MarketplaceProvenance{}
 				}
+				// Keyed by depKey (raw), NOT bfsKey: this map is matched up
+				// downstream against ResolvedDep.Key, which is always the
+				// first-declared literal depKey (see the result-building
+				// loop's displayKey), never the canonical bookkeeping key.
 				result.MarketplaceProvenance[depKey(resolved)] = provenance
 			}
 		}
 
-		key := depKey(entry.ref)
+		key := bfsKey(entry.ref)
 		kind := ClassifyReference(entry.ref)
 
 		ce := ConstraintEntry{
@@ -202,11 +206,13 @@ func Resolve(
 					if result.MarketplaceProvenance == nil {
 						result.MarketplaceProvenance = map[string]*MarketplaceProvenance{}
 					}
+					// See the root-collapse branch above: keyed by depKey
+					// (raw), matching ResolvedDep.Key's displayKey.
 					result.MarketplaceProvenance[depKey(resolved)] = provenance
 				}
 			}
 
-			childKey := depKey(subDep)
+			childKey := bfsKey(subDep)
 			newChildKeys = append(newChildKeys, childKey)
 
 			subChain := make([]string, len(entry.chain))
@@ -228,9 +234,20 @@ func Resolve(
 			continue // invalidated
 		}
 
+		// displayKey (BUG-1): the exposed ResolvedDep.Key/RepoURL is the
+		// FIRST-DECLARED literal ref's depKey (raw case/spelling), never the
+		// canonical bfsKey used for internal dedup above -- first-declared
+		// spelling wins for display/apm_modules materialization (mkt-033
+		// convention), even though a later differently-cased/spelled
+		// reference to the same repository was folded onto this same node.
+		displayKey := key
+		if ref := depRefs[key]; ref != nil {
+			displayKey = depKey(ref)
+		}
+
 		dep := ResolvedDep{
-			Key:     key,
-			RepoURL: key,
+			Key:     displayKey,
+			RepoURL: displayKey,
 			Kind:    kinds[key],
 			Depth:   depDepth[key],
 		}
@@ -238,7 +255,7 @@ func Resolve(
 		if ref := depRefs[key]; ref != nil {
 			dep.VirtualPath = ref.VirtualPath
 			if dep.VirtualPath != "" {
-				dep.RepoURL = strings.TrimSuffix(key, "/"+dep.VirtualPath)
+				dep.RepoURL = strings.TrimSuffix(displayKey, "/"+dep.VirtualPath)
 			}
 		}
 
@@ -375,6 +392,36 @@ func depKey(ref *manifest.DependencyReference) string {
 		key += "/" + ref.VirtualPath
 	}
 	return key
+}
+
+// bfsKey returns the identity Resolve's BFS bookkeeping (constraints, pins,
+// processed, depRefs, depOrder, childrenOf, depDepth) dedupes queue entries
+// on (BUG-1, design.md §2/H7): manifest.CanonicalRepoIdentity plus a
+// virtual-path suffix for any reference that has a stable repository
+// identity, so two refs naming the "same repository" under a different
+// case/URL spelling (e.g. "Owner/Repo" vs "owner/repo") collapse onto ONE
+// BFS node -- fetched once, constrained once, and appearing once in the
+// resolved graph -- instead of the raw, case-sensitive depKey silently
+// treating them as two unrelated dependencies (which is what produced
+// "Resolved 2" for one physical repo, first/second-declared shadow
+// conflicts, and a "deployed 0 files" ghost entry). Falls back to depKey's
+// raw RepoURL/LocalPath for local/parent references, which have no stable
+// repository identity (CanonicalRepoIdentity returns "" for them) and must
+// keep resolving to their own distinct path.
+//
+// This is purely an INTERNAL bookkeeping key -- entry.ref itself (passed to
+// TagLister/PackageLoader unchanged) and the final ResolvedDep.Key/RepoURL
+// (reconstructed from depRefs[key], the first-declared literal ref, in
+// Resolve's result-building loop below) both preserve the original,
+// first-declared case/spelling. Never expose this key directly.
+func bfsKey(ref *manifest.DependencyReference) string {
+	if id := manifest.CanonicalRepoIdentity(ref); id != "" {
+		if ref.VirtualPath != "" {
+			return id + "/" + ref.VirtualPath
+		}
+		return id
+	}
+	return depKey(ref)
 }
 
 func formatChainEntry(parent string, dep *manifest.DependencyReference) string {
