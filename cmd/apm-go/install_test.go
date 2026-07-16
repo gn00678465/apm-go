@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
@@ -2312,5 +2313,28 @@ func TestRunInstall_AllowExecutablesWarning(t *testing.T) {
 
 	if hashWith != hashWithout {
 		t.Errorf("deployed .codex/hooks.json differs with vs without allowExecutables: block (with=%x, without=%x)", hashWith, hashWithout)
+	}
+}
+
+// TestResolvedDepCanonicalKey_SelfHostedPreservesCase is the final codex
+// gate regression: a resolved dep only carries its RepoURL string, and
+// feeding that into CanonicalRepoIdentity's bare-literal branch blanket-
+// lowercased it -- diverging from the manifest-refs side, which preserves
+// owner/repo case on a self-hosted host. Both sides must produce the same
+// key or the lockfile lookup misses the subset the deploy filter applies.
+func TestResolvedDepCanonicalKey_SelfHostedPreservesCase(t *testing.T) {
+	manifestRef, err := manifest.ParseDepString("git.internal/Acme/Repo")
+	if err != nil {
+		t.Fatalf("ParseDepString: %v", err)
+	}
+	manifestSide := deploy.CanonicalDepKey(manifestRef)
+
+	resolvedSide := resolvedDepCanonicalKey(resolver.ResolvedDep{RepoURL: "git.internal/Acme/Repo"})
+
+	if resolvedSide != manifestSide {
+		t.Errorf("resolved-side key %q != manifest-side key %q", resolvedSide, manifestSide)
+	}
+	if resolvedSide == strings.ToLower(resolvedSide) && manifestSide != strings.ToLower(manifestSide) {
+		t.Errorf("resolved-side key was blanket-lowercased: %q", resolvedSide)
 	}
 }

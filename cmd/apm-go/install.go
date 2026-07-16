@@ -1273,6 +1273,18 @@ func unionSortedSkills(existing, add []string) []string {
 // subset is ever recorded against (the source matrix rejects skills: for
 // registry/marketplace/local dict forms at parse time).
 func resolvedDepCanonicalKey(dep resolver.ResolvedDep) string {
+	// Re-parse the RepoURL so a host-qualified spelling
+	// ("git.internal/Acme/Repo") recovers its Host/Owner/Repo structure and
+	// CanonicalRepoIdentity applies its host-aware case rules -- feeding the
+	// raw string into the bare-literal branch would blanket-lowercase it,
+	// which diverges from the manifest-refs side for a case-sensitive
+	// self-hosted repo (final codex gate finding: the lockfile lookup would
+	// miss the subset effectiveSkillSubsets recorded, splitting apm.yml,
+	// apm.lock.yaml, and the deploy filter three ways).
+	if ref, err := manifest.ParseDepString(dep.RepoURL); err == nil {
+		ref.VirtualPath = dep.VirtualPath
+		return deploy.CanonicalDepKey(ref)
+	}
 	ref := &manifest.DependencyReference{RepoURL: dep.RepoURL, VirtualPath: dep.VirtualPath}
 	return deploy.CanonicalDepKey(ref)
 }
@@ -1930,7 +1942,13 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 				continue
 			}
 			existingPkgs[raw] = true
-			if id := canonicalIdentityForDepString(raw); id != "" {
+			// Identity comes from the FULL entry, not just its git value: a
+			// monorepo dict `{git: repo, path: sub}` is a different
+			// dependency from bare `repo` (CanonicalDepKey includes the
+			// virtual path), and keying it by the git string alone would
+			// let a positional base-repo install mis-hit and rewrite the
+			// sub-package entry (final codex gate finding).
+			if id := entryCanonicalIdentity(entry); id != "" {
 				existingByIdentity[id] = i
 			}
 		}
@@ -2030,21 +2048,76 @@ func canonicalIdentityForDepString(s string) string {
 	return deploy.CanonicalDepKey(ref)
 }
 
-// setEntrySkillSubset rewrites apmSeq.Content[idx] in place to reflect
-// subset: the scalar form when subset is empty (no subset persisted --
-// install all skills, covering both the '*' RESET sentinel and a
-// dependency that never had a subset), or the object form
-// `{git: <original git value>, skills: [...]}` otherwise. The entry's
-// ORIGINAL persisted git value is preserved verbatim (first-declared
-// spelling wins) rather than substituted with whatever case/form this
-// call's pkg argument happened to use.
+// entryCanonicalIdentity computes a dependencies.apm sequence entry's
+// canonical identity from the WHOLE entry: a dict entry is parsed with
+// ParseDepDict so its path:/type: selectors participate exactly the way
+// they do everywhere else in the --skill pipeline (CanonicalDepKey includes
+// the virtual path -- `{git: repo, path: sub}` must never share an identity
+// with bare `repo`). Falls back to "" for entries that don't parse (never
+// matched by identity, only by the raw-string existingPkgs index).
+func entryCanonicalIdentity(entry *yamllib.Node) string {
+	if entry.Kind == yamllib.ScalarNode {
+		return canonicalIdentityForDepString(entry.Value)
+	}
+	if entry.Kind == yamllib.MappingNode {
+		ref, err := manifest.ParseDepDict(entry, 0)
+		if err != nil {
+			return ""
+		}
+		normalizeLocalDep(ref)
+		return deploy.CanonicalDepKey(ref)
+	}
+	return ""
+}
+
+// setEntrySkillSubset updates ONLY the skills: key of apmSeq.Content[idx],
+// leaving every other persisted field (ref:, path:, type:, alias:, ...)
+// untouched -- the first draft rebuilt the whole entry as {git, skills} and
+// silently dropped a version pin like `ref: stable` (final codex gate
+// finding). A scalar entry gaining a subset is upgraded to the object form;
+// a mapping whose subset is cleared drops just its skills: pair, and only
+// collapses back to the scalar form when git: was the sole remaining key
+// (preserving the pre-existing wildcard-RESET round-trip shape). The
+// entry's ORIGINAL persisted git value is preserved verbatim
+// (first-declared spelling wins).
 func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
-	gitVal := entryDepString(apmSeq.Content[idx])
-	if len(subset) == 0 {
-		apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: gitVal, Tag: "!!str"}
+	entry := apmSeq.Content[idx]
+
+	if entry.Kind == yamllib.ScalarNode {
+		if len(subset) == 0 {
+			return // scalar form already means "no subset"
+		}
+		apmSeq.Content[idx] = newGitSkillEntry(entry.Value, subset)
 		return
 	}
-	apmSeq.Content[idx] = newGitSkillEntry(gitVal, subset)
+	if entry.Kind != yamllib.MappingNode {
+		return
+	}
+
+	for j := 0; j < len(entry.Content)-1; j += 2 {
+		if entry.Content[j].Value != "skills" {
+			continue
+		}
+		if len(subset) == 0 {
+			entry.Content = append(entry.Content[:j], entry.Content[j+2:]...)
+			// Collapse {git: x} (nothing else left) to the scalar form,
+			// matching how a subset-free dependency is persisted in the
+			// first place; any other surviving key (ref:, path:, ...)
+			// keeps the mapping.
+			if len(entry.Content) == 2 && entry.Content[0].Value == "git" {
+				apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: entry.Content[1].Value, Tag: "!!str"}
+			}
+			return
+		}
+		entry.Content[j+1] = newSkillSeqNode(subset)
+		return
+	}
+	if len(subset) > 0 {
+		entry.Content = append(entry.Content,
+			&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
+			newSkillSeqNode(subset),
+		)
+	}
 }
 
 // newGitSkillEntry builds the object-form dependencies.apm entry
@@ -2054,18 +2127,21 @@ func newGitSkillEntry(gitVal string, subset []string) *yamllib.Node {
 	entry.Content = append(entry.Content,
 		&yamllib.Node{Kind: yamllib.ScalarNode, Value: "git", Tag: "!!str"},
 		&yamllib.Node{Kind: yamllib.ScalarNode, Value: gitVal, Tag: "!!str"},
+		&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
+		newSkillSeqNode(subset),
 	)
+	return entry
+}
+
+// newSkillSeqNode builds the skills: sequence node for subset.
+func newSkillSeqNode(subset []string) *yamllib.Node {
 	skillSeq := &yamllib.Node{Kind: yamllib.SequenceNode, Tag: "!!seq"}
 	for _, s := range subset {
 		skillSeq.Content = append(skillSeq.Content,
 			&yamllib.Node{Kind: yamllib.ScalarNode, Value: s, Tag: "!!str"},
 		)
 	}
-	entry.Content = append(entry.Content,
-		&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
-		skillSeq,
-	)
-	return entry
+	return skillSeq
 }
 
 // resolvePositionalPackage parses a single `apm install` positional package
