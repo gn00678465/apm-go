@@ -1,0 +1,1140 @@
+你是獨立對抗式 plan reviewer。以下是 apm-go 任務「install parity 與業務 bug 修復」的三份規劃文件（prd.md / design.md / implement.md），之後附上相關程式碼現況節錄（apm-go Go 原始碼 + Python apm 參照實作）供你驗證文件主張。
+
+背景：apm-go 是 microsoft/apm（Python CLI）的 Go 重寫。任務包含：
+- BUG-2（最高優先）：`apm-go install repo_a --skill x` 後再 `install repo_b --skill y`，repo_a 被全量重佈署（22 skills 而非 1），污染持續累積。
+- BUG-1：同 repo 大小寫不同被解析成 2 個 dep。
+- 乙類 R7/R11-R18：輸出內容 parity（presentation-only）。
+
+請對抗式審查，找出：
+1. 根因分析錯誤或不完整（文件宣稱的斷鏈是否與程式碼節錄一致？有沒有漏掉的第三個斷點？）
+2. 設計缺陷：SkillFilter 改 per-dep map 的方案有沒有漏洞（update 指令路徑? uninstall? frozen? local-bundle? marketplace dep? registry dep?）。additive union 語意與 '*' RESET 的交互有沒有矛盾？
+3. 遺漏的邊界情境（例：subset 中的 skill 名在 repo 中不存在？同 dep 同時出現在 CLI 與 apm.yml 但大小寫不同（BUG-1×BUG-2 交互）？update 指令會不會繞過 filter？）
+4. 測試策略缺口。
+5. scope 越界風險（乙類是否真的 presentation-only？R7 清理檔案數、R16 summary 是否會動業務層？）
+6. implement.md 步驟順序/verify 判定是否可執行。
+
+輸出格式：依嚴重度列 CRITICAL / HIGH / MEDIUM / LOW finding，各附「文件位置 + 理由 + 具體修正建議」。若無 CRITICAL/HIGH 就明說。用繁體中文回覆。
+=== PRD ===
+# PRD — install 輸出 parity 與業務 bug 修復（乙/丙 + BUG-2 --skill 子集失憶污染）
+
+> 承接 `archive/2026-07/07-14-init-tui-beautify` 的方案 A 分流：該任務只做甲類（純美化，已完成、
+> 已併入 main PR #3）。本任務接手 **乙類**（內容 parity，R7/R11–R18）、**丙類**（業務 bug BUG-1），
+> 並新增 **BUG-2（--skill 子集失憶污染，2026-07-16 實測發現，最高優先）**。
+> 乙類條款全文以移交清單形式收錄於本文件（自舊 prd.md §R7–R18 複製，錨點行號以當時快照為準，
+> 甲類 R8/R9/R10/R14/R19 已完成、不在本任務範圍）。
+
+## 背景
+
+- 甲類美化已上 main（`4b4a9cb` merge PR #3，版本 0.2.0）。
+- A/B 盤點資料：`archive/2026-07/07-14-init-tui-beautify/research/output-parity-audit.md`、
+  `research/full-ab-parity-sweep.md`。
+- Python apm 參照：`uv --project /d/Projects/apm-dev/apm run apm`（v0.21.0）。
+- A/B 測試環境：`evals/`（`test1`、`bundle-demo` 等 fixture）。
+
+## 優先序
+
+1. **BUG-2**（--skill 子集失憶污染）— 嚴重、使用者實測踩到、資料污染型
+2. **BUG-1**（大小寫重複 dep）— resolver/manifest 層
+3. **乙類高優先**：R17（第一次設定必踩、高能見度）、R7、R11、R12a/b、R13、R15、R16
+4. **乙類低優先**：R12c/d、R18；R12e（compile）需業務層新欄位 → 本任務內評估，過大則再分流
+
+---
+
+## BUG-2 ｜ `--skill` 子集失憶：後續 install 重佈署既有 repo 的全部 skill（最高優先）
+
+### 現象（2026-07-16 實測，apm-go 0.2.0）
+
+```
+# 第 1 次
+./apm-go install mattpocock/skills --skill grill-me
+mattpocock/skills
+└── 1 skill -> .agents/skills/, .claude/skills/        ← 正確：只裝 1 個
+
+# 第 2 次（裝另一個 repo 的另一個 skill）
+./apm-go install antfu/skills --skill vue
+mattpocock/skills
+└── 22 skills -> .agents/skills/, .claude/skills/      ← 污染：前一個 repo 的 22 個 skill 全部灌入
+antfu/skills
+└── 1 skill -> .agents/skills/, .claude/skills/
+```
+
+每多裝一個 repo，前面所有以 `--skill` 窄化過的 repo 都會被重新「全量」佈署，
+skill 數量持續膨脹，完全違背 `--skill` 的用意。
+
+### 根因（已定位，2026-07-16 分析）
+
+寫入端有、讀取端無的斷鏈：
+
+1. **寫入端存在**：
+   - `persistPackagesToManifest`（`cmd/apm-go/install.go:1386`）把
+     `{git: <pkg>, skills: [<skill>...]}` 物件形式寫進 apm.yml（`install.go:1463` Object form）。
+   - `buildLockfile`（`install.go:955-966`）把 `skill_subset` 記進 lockfile
+     （`internal/lockfile/types.go:19`、`write.go:204`）。
+2. **讀取端斷鏈**：
+   - `internal/manifest/depref.go:308` `ParseDepDict` 解析 apm.yml dependency 物件時
+     **不讀 `skills:` key**；`DependencyReference` struct（`depref.go:13-38`）**沒有 Skills 欄位**
+     → 子集在 parse 層被靜默丟棄。
+3. **deploy 過濾只看當次 CLI flag**：
+   - `deploy.SkillFilter`（`cmd/apm-go/install.go:1053-1059`）只由**本次** `--skill` flags +
+     `requestedKeys` 建構；未被本次點名的既有 dep 走 `filter == nil` 分支 → 全量佈署。
+
+### 語意釐清（重要，避免修錯方向）
+
+- 「第 2 次 install 重新解析既有 repo」**本身是設計**（full-manifest install，
+  與 Python apm 相同；舊 checklist P4-11 亦守衛此行為），**不是** bug。
+- bug 在於：重佈署既有 dep 時**忽略了它已持久化的 skills 子集**。
+- 正確修法方向：讓 persisted 子集在 parse → resolve → deploy 全鏈路傳遞，
+  deploy filter = 各 dep 自身的 persisted 子集 ∪ 本次 CLI `--skill`（僅作用於 requestedKeys）。
+  **不是**「跳過解析既有 repo」。
+
+### 需求
+
+**B2-1. apm.yml `skills:` 子集讀回**：`ParseDepDict` 解析物件形式的 `skills:` sequence，
+`DependencyReference` 新增對應欄位；scalar 形式（無子集）語意不變。
+
+**B2-2. deploy 佈署時尊重 per-dep persisted 子集**：既有 dep 帶 persisted 子集時，
+重佈署只佈署子集內的 skill。本次 CLI `--skill` 對 requestedKeys 對應 dep 採
+**additive union**（CLI 子集 ∪ persisted 子集，對齊 Python `normalize_and_merge_skill_subset`
+語意，issue #1771，`apm/src/apm_cli/install/package_resolution.py:155-180`）；
+`--skill '*'` RESET 清除子集 → 全量（既有語意不變）。
+注意：apm-go 現況 `buildLockfile`（install.go:965）對 requestedKeys 直接覆寫 `SkillSubset`
+而非 union —— persist 端是否也要對齊 additive 語意，於 design.md 決策並以 A/B 驗證。
+
+**B2-3. 污染修復路徑**：修復後對已被污染的專案再跑一次 `apm-go install`（無參數）時，
+依 apm.yml 的 `skills:` 子集收斂佈署（多餘的 skill 檔案是否主動清除 → design 決策：
+比照 uninstall/re-deploy 既有行為，不得靜默刪使用者自建檔案）。
+
+**B2-4. lockfile `skill_subset` 一致性**：修復後 lockfile 記錄與實際佈署一致；
+不得出現「lockfile 記 1 個 skill、實際佈署 22 個」的帳實不符。
+
+**B2-5. A/B 驗證**：以相同兩步驟（repo_a --skill x → repo_b --skill y）跑 Python apm，
+確認其行為（預期：既有 repo 維持子集）；apm-go 修復後行為對齊（不需逐字對齊輸出措辭）。
+（Python 讀回鏈路已於 2026-07-16 原始碼確認：`models/dependency/reference.py:84`
+`skill_subset` 欄位、`:920-940` `parse_from_dict` 讀 `skills:` key 並驗證
+「必須是 list、每項非空字串」——apm-go 的 B2-1 解析驗證應對齊此規格。）
+
+### 驗收（可獨立執行、二元判定）
+
+- [ ] AC-B2-1：重現使用者兩步驟情境（fixture 或 e2e 測試），第 2 次 install 後
+      repo_a 佈署檔案數 == 子集大小（1），非全量（22）。
+- [ ] AC-B2-2：`--skill '*'` RESET 語意不回歸（既有測試 `install_test.go:1169-1263` 綠）。
+- [ ] AC-B2-3：第 3 次 install（再加 repo_c --skill z）後 repo_a、repo_b 均維持各自子集。
+- [ ] AC-B2-4：lockfile `skill_subset` 與 deployed 檔案清單一致。
+- [ ] AC-B2-5：無 `--skill` 的 bare `apm-go install`（既有專案含子集 dep）依 apm.yml 子集佈署。
+- [ ] AC-B2-6：全測試綠 `go test ./... -count=1`；exit code 語意不變。
+
+---
+
+## BUG-1 ｜ 大小寫重複依賴（丙類，移交自舊任務）
+
+`install chrome-devtools-mcp@…` 解析出 `chromedevtools/chrome-devtools-mcp` 與
+`ChromeDevTools/chrome-devtools-mcp` **兩個** dep（同 repo、大小寫不同）→ `Resolved 2`（實際 1）、
+6 條 `shadowed…first-declared wins`（`internal/deploy/conflict.go`）、第二個 `deployed 0 files`、
+Summary 幽靈 bullet。
+
+- 根因：dep-key 未做 case-fold 正規化（resolver / manifest 層）。
+- 修法方向：dep-key 比對／去重時 case-fold（GitHub owner/repo 大小寫不敏感）；
+  **顯示**保留原大小寫（比照 mkt-033「大小寫保留」慣例：正規化用於比對，非改寫使用者輸入）。
+- ⚠️ 修好後 shadow/0-files/幽靈 bullet 噪音應**自動消失**——不得在 ux 層遮蔽。
+
+### 驗收
+
+- [ ] AC-B1-1：重現情境（大小寫不同、同 repo 的兩個 dep 來源）→ `Resolved 1`、無 shadowed 噪音、
+      lockfile 單一 dep 條目。
+- [ ] AC-B1-2：真正不同的 repo（大小寫相同、名稱不同）不受影響；F4 shadowed 警告
+      （不同 repo 同名 skill 碰撞）仍照常輸出（守衛，見下方 F4）。
+- [ ] AC-B1-3：全測試綠；exit code 不變。
+
+---
+
+## 乙類 ｜ 內容 parity（R7/R11–R18，移交自舊任務 prd.md §R7–R18 全文）
+
+**R7. uninstall 輸出資訊補齊（parity，不需逐字對齊 Python 措辭）**
+現況過度精簡（`uninstall.go:623-627` 僅 `+ Removed N package(s)` + `+ apm_modules: removed N director`），
+相比 Python apm 遺漏：被移除的**套件名**、apm.yml 已更新（**路徑**）、清理的 **integrated 檔案數**。
+需補齊到「關鍵資訊不遺漏」。錨點 `uninstall.go:623-627`（非 verbose 摘要）、`486-506`（module 移除）。
+清理檔案數若非現成資料，可由 deploy 層回傳（屬呈現資料、非邏輯變更）。
+
+**R11. `install --mcp`（mcpinstall）輸出補強（parity，presentation-only）**
+現況 `mcpinstall.go:170-174` 僅印 `+ Added MCP server "X"` + `transport` + `apm.yml: apm.yml`（相對、寫死）。
+- a. **顯示已配置的目標清單**——`deployMCPEntry` 回傳的 `deployed` slice（資料已有、只是沒印）。
+- b. `apm.yml: apm.yml` → **絕對路徑**（`filepath.Abs`）。
+- （c 間隔項已由甲類 R8 完成。）
+
+**R12. 消除「dry-run/錯誤路徑比正式/成功路徑更詳細」的輸出不對稱**
+- a. **pack 正式執行**（`pack.go:252`）：補印檔案清單（dry-run 分支已有）。presentation-only、高優先。
+- b. **local-bundle install**（`install.go:765`）：用既有 `result.Files` 補摘要，**沿用 R10b 聚合樹**。高優先。
+- c. **audit bare 成功**（`audit.go:88`）：細節走 `--verbose`，預設保留數字。低優先。
+- d. **install frozen 成功**（`install.go:537`）：補驗證 dep 數（清單走 `--verbose`）。低優先。
+- e. **compile**（`internal/compile.Result` 需新增欄位暴露 `SourcedInstruction`）：**需業務層變更**
+  → 本任務內評估，過大則再分流。
+
+**R13. install 主流程 MCP 部署摘要（presentation-only）**
+`deployResult.MCPProvenance` 已有 server→targets 資料（`install.go:1115-1124`）但 stdout 沒印。
+在部署摘要區印「配置了哪些 MCP server → 哪些 target」。
+
+**R15. install 摘要含 MCP server 計數（presentation-only）**
+`install.go:1158` `+ Installed N dependencies` → 有 MCP 時 `Installed N dependencies and M MCP server(s)`
+（`len(newLock.MCPServers)`）；無 MCP 時不顯示該子句。
+
+**R16. 空 apm.yml + 有 local 部署時的輸出矛盾（一致性）**
+`dependencies.apm: []` 但有 `.apm/` local primitives 時：先印 `i No dependencies to install`
+（`install.go:544`）、又佈署 local 印樹、最後 `+ Installed 0 dependencies`——三句矛盾。
+- a. 有 local primitives 待佈署時不印/改寫 `No dependencies to install`。
+- b. summary 反映 local 佈署（比照 Python 計 local 為 1，或 `Installed local project`）。
+- 部署邏輯不變，只改「何時印哪句 + summary 描述」。
+
+**R17. install 無 target 偵測失敗的錯誤訊息（F3，高能見度）**
+現況印 `Error: no deployment target detected…` 後接整包 Cobra flag 用法（14 行）。
+對比 Python：列出掃描過的 14 種 harness marker + 3 個具體修法 + apm.yml 範例。
+apm-go 的 signal-detection 本來就掃過這些路徑（資料已算出、只是沒印）。
+- a. 印結構化診斷（掃了哪些、怎麼修）；
+- b. 該錯誤路徑抑制 Cobra usage dump（`SilenceUsage`）；exit code 維持 2。
+錨點 `errNoDeployTarget()`（install.go）。
+
+**R18. 純 local 安裝的 `.gitignore` 訊息（F5，低優先）**
+Python 純 local 安裝也印 `[i] Added apm_modules/ to .gitignore` 並建檔；apm-go 無對應行為。
+先決策「建立 .gitignore（行為）」或「僅訊息」，避免越界；記錄決策即可，可判定不補。
+
+### 守衛（乙類全程有效）
+
+- **F4 守衛**：R7/R12 等輸出精簡/聚合**不得**吞掉 `shadowed`/`deployed 0 files` 衝突警告
+  （apm-go 對 Python 的資料完整性優勢）。
+- **F1 勿抄**：Python MCP runtime auto-detect fallback `["vscode"]` 的錯誤設計不得引入。
+- **F2**：`antigravity` target 為 apm-go 專屬，無 Python 可比，單邊評品質即可。
+- 既有硬性規則不變：exit code 全保留、normalize stdout byte-identical、
+  非互動/CI/重導純文字非阻塞、業務層不 import `internal/ux`。
+
+### 驗收（乙類，沿用舊任務移交清單）
+
+- [ ] R7：uninstall 摘要含套件名 + apm.yml 已更新（路徑）+ 清理檔案數。
+- [ ] R11：`install --mcp` 顯示已配置目標清單 + apm.yml 絕對路徑。
+- [ ] R12a：pack 正式執行印出檔案清單（同 dry-run）；R12b：local-bundle install 用聚合樹補檔案摘要。
+- [ ] R12c/d：audit/frozen 成功細節走 `--verbose`（預設不洗版）；R12e：compile 評估結果已記錄（做或再分流）。
+- [ ] R13：install 主流程印出 MCP 部署摘要（server→targets）。
+- [ ] R15：summary 反映 MCP server 計數。
+- [ ] R16：空 apm.yml + 有 local 部署時消除矛盾訊息。
+- [ ] R17：install 無 target 時印結構化診斷並抑制 Cobra usage dump；exit code 仍 2。
+- [ ] F4 守衛：輸出精簡/聚合未吞掉 `shadowed`/`deployed 0 files` 警告。
+- [ ] R18：`.gitignore` 落差已記錄、決策補或不補。
+
+---
+
+## 流程約束（沿用前任務慣例）
+
+- sonnet 子代理實作、主會話審核；**每個 commit 前 codex 對抗式閘門**
+  （`git diff … | codex exec - -c model_reasoning_effort="medium"`，stdin 餵法）。
+- 原子化 conventional commits、繁體中文、無 attribution。
+- BUG-1/BUG-2 屬業務層修改（resolver/manifest/deploy），**必須 TDD**：先寫重現失敗測試（RED）再修（GREEN）。
+- 乙類為呈現層：只動 cmd 層輸出行與 `internal/ux`，資料須為「已算出、只是沒印」；
+  需新增業務層資料的（R7 清理檔案數、R12e）明確標記並最小化。
+=== DESIGN ===
+# Design — install parity 與業務 bug 修復
+
+> 對應 prd.md。BUG-2 → BUG-1 → 乙類的順序設計；每段標明「動哪層、不動哪層」。
+
+## 1. BUG-2 ｜ --skill 子集失憶（parse → filter → lockfile 全鏈路）
+
+### 1.1 資料流現況 vs 目標
+
+```
+現況：
+  apm.yml {git: pkg, skills: [x]} --ParseDepDict--> DependencyReference（skills 被丟棄）
+  CLI --skill ----------------------------------> deploy.SkillFilter{Names, DepKeys}（全域單一組）
+  未被點名的既有 dep --------------------------> filter 不涵蓋 → 全量佈署 ← bug
+
+目標（對齊 Python reference.py / package_resolution.py）：
+  apm.yml skills: --ParseDepDict--> DependencyReference.SkillSubset（讀回）
+  CLI --skill（requested dep）-----> 與 persisted 子集 additive union（issue #1771）
+  deploy filter = per-dep 子集映射 → 每個 dep 按自己的子集過濾
+```
+
+### 1.2 變更點
+
+**a. `internal/manifest/depref.go`**
+- `DependencyReference` 新增 `SkillSubset []string`（`nil` = 無子集 = 全量）。
+- `ParseDepDict`：git 物件形式讀 `skills:` sequence；驗證對齊 Python
+  `reference.py:920-940`——必須是 list、每項為非空字串，違反即報錯
+  （錯誤訊息語意對齊：`'skills' field must be a list of skill names` /
+  `Each entry in 'skills' must be a non-empty string`）。
+- scalar 形式、marketplace/registry/local 分支不變（Python 亦僅 git 支援 skills）。
+
+**b. `internal/deploy/deploy.go` — SkillFilter 形狀改為 per-dep**
+- 現況 `SkillFilter{Names []string, DepKeys []string}` 是「一組名單套在一組 key 上」。
+- 改為 per-dep 映射：`type SkillFilter struct { Subsets map[string][]string }`
+  （key = dep deploy key；value = 該 dep 的 skill 白名單；沒進 map 的 dep = 全量）。
+- 佈署 skill primitive 時查自己 dep key 的子集；其他 primitive kind 不受影響（現行為）。
+- 既有建構點（cmd 層）同步改；`deploy_test.go` 既有 SkillFilter 測試改寫為新形狀
+  （scoping 與 wildcard 兩支迴歸測試語意保留）。
+
+**c. `cmd/apm-go/install.go` — filter 建構與 persist 的 union 語意**
+- `deployAndFinalize` 建 filter：
+  1. 走訪 `m` 的 dep refs，凡 `SkillSubset != nil` 者放進 map（persisted 子集）。
+  2. 本次 CLI `--skill`（非 `'*'`）對 requestedKeys 對應 dep：
+     `map[key] = union(persisted, cliSubset)`（排序去重，對齊 Python
+     `normalize_and_merge_skill_subset`）。
+  3. `--skill '*'`：requestedKeys 對應 dep 從 map 移除（RESET → 全量），
+     並沿用既有 `clearPersistedSkillSubset` 清 apm.yml（現行為不變）。
+- `persistPackagesToManifest`（install.go:1386）：寫入前同樣做 union
+  （現況直接覆寫 → 改為 persisted ∪ CLI，對齊 issue #1771 additive 語意）。
+- `buildLockfile`（install.go:955-966）：`ld.SkillSubset` 記「有效子集」
+  （= filter map 中該 dep 的值），未被本次點名但有 persisted 子集的 dep
+  也要記（現況只記 requestedKeys → 帳實不符的另一半根因）。
+
+**d. 污染收斂（B2-3）**
+- 不新增「主動刪除多餘 skill 檔案」邏輯——沿用既有 re-deploy/conflict 機制：
+  lockfile `deployed_files` 是佈署帳本，修復後 re-install 產生的新帳本只含子集檔案；
+  舊多餘檔案的清理交由既有 uninstall/re-deploy 差異清理路徑（若既有機制不清理，
+  在輸出提示使用者 `apm-go uninstall <pkg>` + 重裝，不靜默刪檔）。
+  實作時先寫測試觀察既有 re-deploy 是否清 stale 檔，再定案提示文字。
+
+### 1.3 不動的部分
+- full-manifest re-resolve 行為不變（P4-11 守衛延續）。
+- resolver 層不需要新欄位：deploy filter 在 cmd 層由 manifest refs 建構
+  （`deploy.Run` 已收 `m *manifest.Manifest`，但為測試清晰，filter 統一在 cmd 層建好傳入）。
+- `--skill` 的既有 CLI guard（無 positional 報錯、與 --frozen/--mcp 互斥）不變。
+
+## 2. BUG-1 ｜ 大小寫重複 dep（case-fold 比對）
+
+- **正規化位置**：dep 身分比對／去重點（resolver 的 dep-key 建構與 manifest 既有項
+  比對處）使用 case-fold key（`strings.ToLower(owner/repo)`；GitHub 大小寫不敏感）。
+- **顯示與序列化保留原大小寫**（mkt-033 慣例：正規化只用於比對）。
+  首見者的寫法為準（first-declared 的大小寫勝出，與 conflict 慣例一致）。
+- 影響點盤查（實作時逐一確認）：resolver 去重、`requestedKeys`/`existing` map 的 key、
+  lockfile dep 比對、apm.yml 既有項判斷（`manifest_has_different_entry` 對應邏輯）、
+  `apm_modules/` 目錄 key（**注意**：Windows 檔案系統本身大小寫不敏感，
+  但 lockfile/summary 的重複才是主症狀）。
+- host 非 GitHub 的 dep（自架 git 可能大小寫敏感）：僅對 host 為 github.com
+  （含預設）者 case-fold，其他 host 保守不動——design 決策，於測試中固定。
+
+## 3. 乙類（R7/R11–R18）— 呈現層
+
+- 全部走 `internal/ux` 既有門面，無新 ux API 需求（R10b 聚合樹、BulletList、
+  Section 均已存在）。
+- **R7 清理檔案數**：優先用 lockfile `DeployedFiles` 計數（uninstall 已讀 lockfile）；
+  只有在資料真的拿不到時才讓 deploy 層回傳新欄位（最小化業務層改動）。
+- **R17**：`errNoDeployTarget()` 改回結構化診斷字串（signal-detection 掃描清單已在
+  install.go 內可取），該 cmd 設 `SilenceUsage: true`；exit code 2 保留。
+- **R16**：`install.go:543-561` 的「No dependencies」判斷加上 local primitives 條件；
+  summary 行為 prd R16b。
+- **R12e（compile）**：需 `internal/compile.Result` 新欄位 → 實作前評估 diff 大小，
+  超過 ~100 行業務層變更即記錄並分流，不硬塞。
+- **R18**：預設「僅記錄、不補」（無 apm_modules/ 時 .gitignore 條目無作用；
+  若補是行為變更、超出 parity 呈現範疇）。實作時在 prd 勾決策即可。
+
+## 4. 測試策略
+
+- **BUG-2（TDD 硬性）**：
+  1. RED：manifest 層單元測試（ParseDepDict 讀 skills:）+ cmd 層 e2e
+     重現兩步驟污染（fixture 兩個假 repo，斷言第 2 次 install 後 repo_a
+     deployed 檔案數 == 1）。
+  2. GREEN：依 §1.2 修。
+  3. 迴歸：`install_test.go:1169-1263` wildcard RESET 全綠、
+     deploy_test.go SkillFilter 兩支改形狀後語意不變。
+- **BUG-1（TDD 硬性）**：RED 重現 `Resolved 2` → GREEN `Resolved 1`；
+  加「不同 repo 不受影響」與「F4 shadowed 警告仍在」兩支守衛測試。
+- **乙類**：每個 R 一支輸出斷言測試（沿用甲類模式：strings.Contains 新輸出、
+  非 TTY 無 ANSI）；R17 加 exit code == 2 斷言。
+- 全程 `go test ./... -count=1` 綠；`-race` 交 CI。
+
+## 5. 風險與回滾
+
+- SkillFilter 形狀變更觸及 deploy 層公開 API（internal 內，無外部相容問題），
+  但 deploy_test.go 既有測試需同步改——改寫非刪除。
+- BUG-1 case-fold 可能影響既有 lockfile 的 dep 比對（升級路徑）：加一支
+  「舊 lockfile 含混合大小寫 key、新版本讀取後不重複安裝」的相容測試。
+- commit 邊界：BUG-2 / BUG-1 / 乙類各自獨立 commit（可獨立 revert），
+  每個 commit 前 codex stdin 閘門。
+=== IMPLEMENT ===
+# Implement — install parity 與業務 bug 修復
+
+> 執行順序 = 優先序：BUG-2 → BUG-1 → 乙類高 → 乙類低。
+> 每步標 `→ verify:`；業務 bug 必須 TDD（先 RED 後 GREEN）。
+> 每個 commit 前 codex 閘門：`git diff --cached | codex exec - -c model_reasoning_effort="medium"`。
+> 流程：sonnet 子代理（trellis-implement）實作、主會話審核。
+
+## Phase 1 — BUG-2：--skill 子集失憶（最高優先）
+
+1. **A/B 基準**：以 Python apm 跑兩步驟情境（repo_a --skill x → repo_b --skill y），
+   記錄其第 2 次 install 對 repo_a 的佈署行為與 apm.yml/lockfile 內容存底。
+   → verify: 行為紀錄寫入 `research/bug2-python-baseline.md`。
+2. **RED（manifest）**：`internal/manifest` 新增 ParseDepDict `skills:` 讀回測試
+   （合法 list、非 list 報錯、含空字串報錯、scalar 形式不受影響）。
+   → verify: `go test ./internal/manifest/... -run Skill` 失敗（欄位不存在/未讀）。
+3. **RED（e2e 污染重現）**：cmd 層測試重現兩步驟污染，斷言第 2 次 install 後
+   repo_a deployed 檔案數 == 子集大小。
+   → verify: 測試失敗（現況佈署全量）。
+4. **GREEN**：依 design §1.2 實作——
+   a. `DependencyReference.SkillSubset` + ParseDepDict 讀回；
+   b. `deploy.SkillFilter` 改 per-dep map（`Subsets map[string][]string`），
+      deploy_test.go 兩支既有測試改形狀、語意保留；
+   c. cmd 層 filter 建構（persisted map + requestedKeys union + `'*'` RESET 移除）；
+   d. `persistPackagesToManifest` union 語意（issue #1771）；
+   e. `buildLockfile` 記有效子集（含未點名但有 persisted 子集的 dep）。
+   → verify: 步驟 2/3 測試綠；`install_test.go:1169-1263` wildcard RESET 綠。
+5. **B2-3 污染收斂確認**：測試觀察修復後 re-install 對 stale 檔案的處理，
+   依結果定案提示文字（不靜默刪檔）。
+   → verify: 對應測試 + design §1.2d 決策記錄更新。
+6. **全量驗證 + 閘門 + commit**（`fix(deps): --skill 子集持久化與重佈署尊重`）。
+   → verify: `go build ./... && go vet ./... && go test ./... -count=1` 綠；
+     codex 閘門無 CRITICAL/HIGH。
+
+## Phase 2 — BUG-1：大小寫重複 dep
+
+7. **RED**：重現測試——同 repo 大小寫不同的兩個來源 → 現況 `Resolved 2`。
+   → verify: 測試失敗（斷言 Resolved 1）。
+8. **GREEN**：dep-key case-fold（僅 github.com host；顯示保留原大小寫，
+   first-declared 寫法勝出）。盤查 resolver 去重、requestedKeys/existing、
+   lockfile 比對、apm.yml 既有項判斷。
+   → verify: 步驟 7 綠。
+9. **守衛測試**：不同 repo 不受影響；F4 shadowed 警告仍輸出；
+   舊 lockfile 混合大小寫 key 相容（不重複安裝）。
+   → verify: 三支守衛測試綠。
+10. **全量驗證 + 閘門 + commit**（`fix(resolver): dep-key 大小寫正規化`）。
+    → verify: 全測試綠；codex 閘門無 CRITICAL/HIGH。
+
+## Phase 3 — 乙類高優先（R17 / R7 / R11 / R12a/b / R13 / R15 / R16）
+
+> 呈現層批次；每個 R 一支輸出斷言測試；資料必須「已算出、只是沒印」。
+> 可依耦合分 2-3 個 commit（R17 獨立；R7+R11；R12a/b+R13+R15+R16 install/pack 群）。
+
+11. **R17**：errNoDeployTarget 結構化診斷 + SilenceUsage；exit code 2 斷言。
+    → verify: `evals/bundle-demo` 實跑無 Cobra dump；測試綠。
+12. **R7**：uninstall 摘要補套件名 + apm.yml 路徑 + 清理檔案數
+    （資料源優先 lockfile DeployedFiles）。
+    → verify: 測試綠；P4-1~4 舊 checklist 判定邏輯可沿用。
+13. **R11**：mcpinstall 印 deployed 目標清單 + apm.yml 絕對路徑。
+    → verify: 測試綠（P4-22/23 判定）。
+14. **R12a/b**：pack 正式清單 + local-bundle 聚合樹摘要。
+    → verify: 測試綠（P4-26/27 判定）；F4 守衛——警告不被聚合吞掉。
+15. **R13 + R15**：install MCP 部署摘要（MCPProvenance）+ summary MCP 計數。
+    → verify: 測試綠（P4-31/33 判定）。
+16. **R16**：矛盾訊息消除（local primitives 條件 + summary 措辭）。
+    → verify: `evals/test1` 實跑無矛盾三句（P4-36/37 判定）。
+17. **閘門 + commit（分批）**。
+    → verify: 每 commit codex 無 CRITICAL/HIGH；全測試綠。
+
+## Phase 4 — 乙類低優先 + 收尾
+
+18. **R12c/d**：audit/frozen 成功細節走 `--verbose`。
+    → verify: 預設輸出 byte 不變（P4-28 判定）；--verbose 有明細。
+19. **R12e 評估**：compile Result 欄位 diff 估算；>100 行業務層變更則記錄分流。
+    → verify: prd 勾選評估結果。
+20. **R18 決策**：記錄「補/不補 .gitignore」（預設不補，僅記錄）。
+    → verify: prd 勾選。
+21. **最終閘門**：`git diff main...HEAD | codex exec - -c model_reasoning_effort="high"`
+    對抗式審核（聚焦：exit code、normalize byte、串流、業務層越界、F4 守衛）。
+    → verify: 無 CRITICAL/HIGH。
+22. **A/B 終驗**：重跑 BUG-2 兩步驟 + BUG-1 情境 + 乙類主要指令 A/B 對照。
+    → verify: 結果記入 `research/final-ab-verification.md`。
+23. spec 更新（trellis-update-spec，若 SkillFilter 契約/dep-key 正規化屬可沉澱慣例）
+    → commit → finish-work。
+=== CODE: apm-go internal/manifest/depref.go (struct + ParseDepDict 前段) ===
+package manifest
+
+import (
+	"fmt"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"go.yaml.in/yaml/v4"
+)
+
+type DependencyReference struct {
+	RepoURL     string
+	Host        string
+	Owner       string
+	Repo        string
+	Reference   string
+	VirtualPath string
+	VirtualType string // "file" or "subdirectory"
+	Alias       string
+	IsLocal     bool
+	LocalPath   string
+	// LocalSourcePath is a RUNTIME-ONLY materialization detail: for a
+	// dependency that must be vendored into apm_modules by COPYING a local
+	// directory (rather than git-cloning), it holds the real absolute
+	// filesystem source path. RepoURL then carries the sanitized, contained
+	// "_local/<name>" apm_modules KEY (used by the resolver, deploy, and
+	// lockfile), keeping the invalid-path-as-key problem out of every
+	// filepath.Join(apm_modules, key). Empty for git/registry/marketplace
+	// deps. Never serialized to apm.yml or the lockfile.
+	LocalSourcePath string
+	IsParent        bool
+	Port            int
+	Scheme          string // "https", "http", "ssh", "git" (SCP)
+	Source          string // "git", "registry", "local", "marketplace", "" (inferred)
+	RegistryName    string // registry name for source=="registry" (empty = use default)
+
+	// Marketplace* fields (mkt-033) are only ever set for Source=="marketplace"
+	// -- an apm.yml dependencies.apm dict entry of the form {name, marketplace,
+	// version} straight out of ParseDepDict, still unresolved. RepoURL for
+	// such an entry is the "_marketplace/<marketplace>/<name>" placeholder
+	// (mirrors the Python original's DependencyReference.to_apm_yml_entry
+	// dedup key), not a real repository coordinate.
+	MarketplaceName        string // registered marketplace name (dict "marketplace:" key), case preserved
+	MarketplacePluginName  string // plugin name within that marketplace (dict "name:" key), case preserved
+	MarketplaceVersionSpec string // dict "version:" key verbatim; "" if absent. Parse time performs no semver/format validation (mkt-033)
+}
+
+var virtualFileExtensions = []string{
+	".prompt.md", ".instructions.md", ".agent.md", ".chatmode.md",
+}
+
+var (
+	ownerCharRe  = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	repoCharRe   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	hostCharRe   = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+	segmentRe    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	refRe        = regexp.MustCompile(`^[\x21-\x7e]+$`) // 1*VCHAR
+	portRangeMax = 65535
+			return nil, fmt.Errorf("dependency %q: %w", s, err)
+		}
+		d.VirtualPath = vp
+		d.VirtualType = classifyVirtualPath(vp)
+	}
+	return d, nil
+}
+
+func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
+	kv := make(map[string]string)
+	keys := make(map[string]bool)
+	for i := 0; i < len(entry.Content)-1; i += 2 {
+		k := entry.Content[i].Value
+		keys[k] = true
+		if entry.Content[i+1].Kind == yaml.ScalarNode {
+			kv[k] = entry.Content[i+1].Value
+		}
+	}
+
+	// mkt-033: the marketplace branch MUST be checked before every other
+	// branch below, including "name" -- a marketplace dict entry
+	// ({name, marketplace, version}) always carries a "name" key, and the
+	// existing `keys["name"]` branch a few lines down would otherwise
+	// silently swallow it as a plain git-literal RepoURL (see depref.go's
+	// git-literal "name" branch); that shadowing is exactly what the
+	// mkt-033 branch-order regression test below locks down.
+	if keys["marketplace"] {
+		if keys["git"] || keys["path"] || keys["registry"] || keys["id"] {
+			return nil, fmt.Errorf("dependency entry %d: Ambiguous dependency - 'marketplace' cannot be combined with 'git', 'path', 'registry', or 'id'", idx)
+		}
+		for k := range keys {
+			switch k {
+			case "name", "marketplace", "version":
+				// allowed
+			default:
+				return nil, fmt.Errorf("dependency entry %d: unknown key %q for a marketplace dependency (allowed: name, marketplace, version)", idx, k)
+			}
+		}
+
+		// name is required, checked before the regex validation below, with
+		// its own dedicated error message (mirrors reference.py:763-766).
+		name := strings.TrimSpace(kv["name"])
+		if name == "" {
+			return nil, fmt.Errorf("dependency entry %d: Marketplace dependency must have a non-empty 'name' field", idx)
+		}
+		mkt := strings.TrimSpace(kv["marketplace"])
+
+		// name/marketplace are only stripped, never lowercased -- case
+		// insensitivity happens later at plugin-lookup time, not at parse
+		// time (mkt-033: "大小寫保留").
+		if !segmentRe.MatchString(name) {
+			return nil, fmt.Errorf("dependency entry %d: invalid marketplace plugin name %q", idx, name)
+		}
+		if !segmentRe.MatchString(mkt) {
+			return nil, fmt.Errorf("dependency entry %d: invalid marketplace name %q", idx, mkt)
+		}
+
+		// version is optional; when present it must be non-empty, but parse
+		// time performs no format/semver validation at all (range legality
+		// is deferred to resolve time, mirrors reference.py:781-785).
+		version := kv["version"]
+		if keys["version"] && strings.TrimSpace(version) == "" {
+			return nil, fmt.Errorf("dependency entry %d: marketplace dependency 'version' must be a non-empty string when present", idx)
+		}
+
+		return &DependencyReference{
+			RepoURL:                "_marketplace/" + mkt + "/" + name,
+			Source:                 "marketplace",
+			MarketplaceName:        mkt,
+			MarketplacePluginName:  name,
+			MarketplaceVersionSpec: version,
+		}, nil
+	}
+
+	if keys["id"] && keys["git"] {
+		return nil, fmt.Errorf("dependency entry %d has both 'id' and 'git' keys", idx)
+	}
+
+	if keys["path"] && !keys["git"] && !keys["id"] && !keys["name"] {
+		p := kv["path"]
+		if containsEscape(p) {
+			return nil, fmt.Errorf("dependency path %q escapes project root", p)
+		}
+		return &DependencyReference{
+			IsLocal:   true,
+			LocalPath: p,
+			Alias:     kv["alias"],
+			Source:    "local",
+		}, nil
+	}
+
+	if keys["git"] {
+		gitVal := kv["git"]
+		if gitVal == "parent" {
+			if !keys["path"] {
+				return nil, fmt.Errorf("dependency entry %d: git: parent requires a 'path' field", idx)
+			}
+			if keys["type"] {
+				return nil, fmt.Errorf("dependency entry %d: 'type' is not allowed with git: parent", idx)
+			}
+			return &DependencyReference{
+				IsParent:    true,
+				VirtualPath: kv["path"],
+				VirtualType: classifyVirtualPath(kv["path"]),
+				Alias:       kv["alias"],
+			}, nil
+		}
+		d, err := ParseDepString(gitVal)
+		if err != nil {
+			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
+		}
+		// git: key forces source=git even for local filesystem paths
+		if d.IsLocal {
+			d.IsLocal = false
+			d.RepoURL = d.LocalPath
+			d.LocalPath = ""
+			d.Source = "git"
+		}
+		if kv["ref"] != "" {
+			d.Reference = kv["ref"]
+		}
+=== CODE: apm-go internal/deploy/deploy.go (SkillFilter + Run 前段) ===
+}
+
+type DeployResult struct {
+	PerDep        map[string]*DepDeployResult // key="" for local
+	Diags         []string
+	MCPFiles      map[string]string // relative path -> sha256 hash, for merged (multi-source) MCP config files
+	MCPProvenance []MCPProv
+}
+
+// SkillFilter scopes a --skill name whitelist to the specific dependency
+// key(s) it was requested for (install.go's positional package args). Only
+// primitives whose DepKey is in DepKeys are subject to the Names whitelist;
+// everything else -- local primitives, or any other already-declared
+// dependency -- passes through untouched, regardless of whether its skill
+// names happen to appear in Names.
+type SkillFilter struct {
+	Names   []string
+	DepKeys []string
+}
+
+// hasSkillWildcard reports whether names contains the '*' RESET sentinel
+// (install.md: "--skill '*' resets to install all skills"), mirroring
+// Python's install.py (~1387-1393): any occurrence -- even mixed with other
+// names, e.g. `--skill review --skill '*'` -- means "install ALL skills,"
+// not "whitelist a skill literally named *".
+func hasSkillWildcard(names []string) bool {
+	for _, n := range names {
+		if n == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+// Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter) (*DeployResult, error) {
+	var skillNames, skillDepKeys map[string]bool
+	if filter != nil && len(filter.Names) > 0 && !hasSkillWildcard(filter.Names) {
+		skillNames = make(map[string]bool, len(filter.Names))
+		for _, s := range filter.Names {
+			skillNames[s] = true
+		}
+		skillDepKeys = make(map[string]bool, len(filter.DepKeys))
+		for _, k := range filter.DepKeys {
+			skillDepKeys[k] = true
+		}
+	}
+	// 1. Collect primitives in priority order
+	var ordered []Primitive
+	var mcpDiags []string
+
+	// Local primitives first (req-pr-002: always win)
+	locals := CollectLocalPrimitives(projectDir)
+	ordered = append(ordered, locals...)
+
+	localMCP, localMCPDiags := collectMCPPrimitives(m.MCPServers, "local", "")
+	ordered = append(ordered, localMCP...)
+	mcpDiags = append(mcpDiags, localMCPDiags...)
+
+	// Direct deps in manifest declaration order (req-pr-003), deduplicated.
+	// Production dependencies.apm followed by devDependencies.apm (F3): a
+	// dev dependency is a direct (depth-1) dependency exactly like a
+	// production one -- same primitive priority, same MCP auto-trust --
+	// mirroring Python's all_apm_deps = apm_deps + dev_apm_deps.
+	directDeps := make([]*manifest.DependencyReference, 0, len(m.ParsedDeps)+len(m.ParsedDevDeps))
+	directDeps = append(directDeps, m.ParsedDeps...)
+	directDeps = append(directDeps, m.ParsedDevDeps...)
+
+	directKeys := make(map[string]bool)
+	for _, dep := range directDeps {
+		key := DepRefKey(dep)
+		if key == "" || directKeys[key] {
+			continue
+		}
+		directKeys[key] = true
+		modulePath := filepath.Join(projectDir, "apm_modules", key)
+		prims := CollectDependencyPrimitives(key, modulePath)
+		ordered = append(ordered, prims...)
+
+		// direct (depth==1) self-defined MCP servers are auto-trusted.
+		depServers, loadDiags := loadDependencyMCP(key, modulePath)
+		depMCP, depMCPDiags := collectMCPPrimitives(depServers, "dependency:"+key, key)
+		ordered = append(ordered, depMCP...)
+		mcpDiags = append(mcpDiags, loadDiags...)
+		mcpDiags = append(mcpDiags, depMCPDiags...)
+	}
+
+	// Transitive deps in lockfile sorted order (repo_url, virtual_path)
+	if resolved != nil {
+		transitive := sortedTransitiveDeps(resolved.Deps, directKeys)
+		for _, dep := range transitive {
+			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
+			prims := CollectDependencyPrimitives(dep.Key, modulePath)
+			ordered = append(ordered, prims...)
+
+			// transitive (depth>1) MCP servers are never auto-trusted (design §4).
+=== CODE: apm-go cmd/apm-go/install.go (runInstall 入口/skill guard) ===
+func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string, skillSubset []string, packages []string) error {
+	// Local-bundle early-exit (research/pack-parity-findings.md §6; design.md
+	// "install <bundle-path> 消費回路"), mirroring Python's install.py:1260's
+	// placement: checked before EVERYTHING else in this function -- before
+	// apm.yml is even read -- so a bundle path never accidentally falls into
+	// the ordinary dependency-resolution pipeline. Only the sole-positional-
+	// argument shape is probed (Python: `len(packages) == 1`); zero or
+	// multiple positional packages, or an MCP install (already routed to
+	// runMCPInstall before runInstall is ever called), never reach here.
+	if len(packages) == 1 {
+		if handled, err := tryLocalBundleInstall(packages[0], targetFlag, skillSubset, deps.allowInsecure); handled {
+			return err
+		}
+	}
+
+	// Determine frozen mode up front (explicit flag or CI default) so apm.yml can
+	// be optional in frozen verify-only mode (integrity is checked from lockfile+disk).
+	if !frozen && lockfile.IsCIEnvironment() {
+		frozen = true
+		ux.Info(os.Stderr, "CI environment detected, defaulting to frozen install")
+	}
+
+	// --skill requires an actual package to scope to. Reject up front rather
+	// than silently no-op-ing: frozen installs skip resolution/deploy
+	// filtering entirely (nothing for --skill to scope), and with no
+	// positional package, requestedKeys below would stay empty.
+	if len(skillSubset) > 0 {
+		if frozen {
+			return fmt.Errorf("--skill is not supported with a frozen install (frozen installs pin exactly what's locked, with no per-package skill selection)")
+		}
+		if len(packages) == 0 {
+			return fmt.Errorf("--skill requires at least one positional package to install")
+		}
+	}
+
+	// 1. Parse apm.yml — optional in frozen mode.
+	var m *manifest.Manifest
+	var node *yamllib.Node
+	data, err := os.ReadFile("apm.yml")
+	if err != nil {
+		switch {
+		case frozen && os.IsNotExist(err):
+			m = &manifest.Manifest{} // frozen verifies from lockfile + disk alone
+		case len(packages) > 0 && os.IsNotExist(err):
+			return fmt.Errorf("apm.yml not found; run 'apm-go init' first, then 'apm-go install <package>'")
+		default:
+			return fmt.Errorf("read apm.yml: %w", err)
+		}
+	} else {
+		node, err = yamlcore.SafeLoad(data)
+		if err != nil {
+			return fmt.Errorf("parse apm.yml: %w", err)
+		}
+		m, _, err = manifest.ParseManifest(node)
+		if err != nil {
+=== CODE: apm-go cmd/apm-go/install.go (buildLockfile skill_subset 段) ===
+		// marketplaceProvenance's dep.Key, which is call-scoped).
+		if p := marketplaceProvenance[dep.Key]; p != nil {
+			ld.DiscoveredVia = p.DiscoveredVia
+			ld.MarketplacePluginName = p.MarketplacePluginName
+			ld.SourceURL = p.SourceURL
+			ld.SourceDigest = p.SourceDigest
+		} else if existingLock != nil {
+			if existing := existingLock.FindByKey(ld.UniqueKey()); existing != nil && hasMarketplaceProvenance(existing) {
+				ld.DiscoveredVia = existing.DiscoveredVia
+				ld.MarketplacePluginName = existing.MarketplacePluginName
+				ld.SourceURL = existing.SourceURL
+				ld.SourceDigest = existing.SourceDigest
+			}
+		}
+
+		// Record skill_subset only on the dependency this --skill flag was
+		// scoped to this call -- not every dep in the resolved graph (bug
+		// fix: previously stamped every already-declared, unrelated
+		// dependency with the same subset). matchedKeys tracks "this
+		// requested package DID resolve" independently of whether a subset
+		// is actually recorded, so the '*' RESET sentinel (which records no
+		// subset -- install ALL skills) doesn't spuriously fail the
+		// "every requested package resolved" validation below.
+		if requestedKeys[dep.Key] {
+			matchedKeys[dep.Key] = true
+			if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
+				ld.SkillSubset = skillSubset
+			}
+		}
+
+		// req-lk-008: record resolved_at for git-semver entries
+		if dep.Kind == resolver.KindGitSemver && dep.Constraint != "" {
+			ld.ResolvedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+
+		// Resolve commit SHA for git deps that don't have it yet
+		if (dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral) && dep.Commit == "" {
+			installDir := filepath.Join("apm_modules", dep.Key)
+			if commit, err := gitops.ResolveCommit(installDir); err == nil {
+				ld.ResolvedCommit = commit
+			}
+		}
+
+		// req-lk-015: compute tree_sha256 for git-sourced deps (required)
+		if dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral {
+			installDir := filepath.Join("apm_modules", dep.Key)
+			commit := ld.ResolvedCommit
+			if commit != "" {
+				treeHash, hashErr := lockfile.ComputeTreeSHA256(installDir, commit)
+				if hashErr != nil {
+					return nil, fmt.Errorf("tree_sha256 for %s: %w", dep.Key, hashErr)
+				}
+				ld.TreeSHA256 = treeHash
+			}
+		}
+
+		newLock.Dependencies = append(newLock.Dependencies, ld)
+	}
+
+	// Every requested package must have actually resolved into the graph --
+	// fail loud instead of silently doing nothing for it (e.g. it collided
+	// with an already-declared dependency during positional-package dedup
+	// and was never added to m.ParsedDeps). Checking "at least one matched"
+	// is not enough: with multiple positional packages, one valid match
+	// would mask another that silently never resolved.
+	if len(skillSubset) > 0 {
+		if len(requestedKeys) == 0 {
+			return nil, fmt.Errorf("--skill %s requires at least one resolved package to scope to", strings.Join(skillSubset, ", "))
+		}
+		var unmatched []string
+		for key := range requestedKeys {
+			if !matchedKeys[key] {
+				unmatched = append(unmatched, key)
+			}
+		}
+		if len(unmatched) > 0 {
+			sort.Strings(unmatched)
+			return nil, fmt.Errorf("--skill %s: package(s) %s did not resolve into the dependency graph", strings.Join(skillSubset, ", "), strings.Join(unmatched, ", "))
+		}
+	}
+
+	return newLock, nil
+}
+
+// deployAndFinalize runs deploy.Run, prints the deploy summary, checks for a
+// no-op (steps 6-7), then writes apm.lock.yaml and (for positional package
+// installs) apm.yml (steps 8-9). Shared by runInstall and runUpdate.
+// requestedKeys and existing (both dep keys, deploy.DepRefKey identity) are
+// only meaningful for a real `install` call: requestedKeys is nil for
+// `update` (which has no per-call "was this positionally requested"
+// concept), and the R9/R10c muting below is skipped whenever it is.
+=== CODE: apm-go cmd/apm-go/install.go (deployAndFinalize filter 建構) ===
+func deployAndFinalize(m *manifest.Manifest, targetFlag string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
+
+	// 6. Deploy primitives to targets
+	for _, d := range targetDiags {
+		ux.Warn(os.Stderr, "%s", d)
+	}
+	if len(targets) > 0 {
+		targetSource := "auto-detect"
+		if targetFlag != "" {
+			targetSource = "--target"
+		} else if len(m.Target) > 0 {
+			targetSource = "apm.yml"
+		}
+		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
+
+		var skillFilter *deploy.SkillFilter
+		// The '*' RESET sentinel means "install ALL skills" (install.md):
+		// leave skillFilter nil rather than constructing one with a literal
+		// "*" entry, so this call site never depends on deploy.SkillFilter's
+		// own wildcard handling to no-op it -- and the "Skill subset:" info
+		// line, which only makes sense for an actual narrowing, is skipped.
+		if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
+			ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
+			depKeys := make([]string, 0, len(requestedKeys))
+			for k := range requestedKeys {
+				depKeys = append(depKeys, k)
+			}
+			skillFilter = &deploy.SkillFilter{Names: skillSubset, DepKeys: depKeys}
+		}
+
+		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter)
+		if err != nil {
+			return fmt.Errorf("deploy: %w", err)
+		}
+		for _, d := range deployResult.Diags {
+			ux.Warn(os.Stderr, "%s", d)
+		}
+
+		// depsByKey looks up each resolved dependency's tag/ref/commit by its
+		// deploy key, for the R10a short-hash label fallback below --
+		// deployResult.PerDep is keyed by the same dep key, not by a
+		// human-readable version label.
+		depsByKey := make(map[string]resolver.ResolvedDep, len(result.Deps))
+		for _, dep := range result.Deps {
+=== CODE: apm-go cmd/apm-go/install.go (persistPackagesToManifest) ===
+func persistPackagesToManifest(doc *yamllib.Node, packages, skillSubset []string) error {
+	root := doc
+	if root.Kind == yamllib.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+	if root.Kind != yamllib.MappingNode {
+		return fmt.Errorf("manifest root is not a mapping")
+	}
+
+	// Find or create dependencies.apm sequence
+	var depsNode *yamllib.Node
+	for i := 0; i < len(root.Content)-1; i += 2 {
+		if root.Content[i].Value == "dependencies" {
+			depsNode = root.Content[i+1]
+			break
+		}
+	}
+	if depsNode == nil {
+		depsNode = &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content,
+			&yamllib.Node{Kind: yamllib.ScalarNode, Value: "dependencies", Tag: "!!str"},
+			depsNode,
+		)
+	}
+
+	var apmSeq *yamllib.Node
+	if depsNode.Kind == yamllib.MappingNode {
+		for i := 0; i < len(depsNode.Content)-1; i += 2 {
+			if depsNode.Content[i].Value == "apm" {
+				apmSeq = depsNode.Content[i+1]
+				break
+			}
+		}
+	}
+	if apmSeq == nil {
+		apmSeq = &yamllib.Node{Kind: yamllib.SequenceNode, Tag: "!!seq"}
+		depsNode.Content = append(depsNode.Content,
+			&yamllib.Node{Kind: yamllib.ScalarNode, Value: "apm", Tag: "!!str"},
+			apmSeq,
+		)
+	}
+
+	// Check which packages already exist in the sequence
+	existingPkgs := make(map[string]bool)
+	if apmSeq.Kind == yamllib.SequenceNode {
+		for _, entry := range apmSeq.Content {
+			if entry.Kind == yamllib.ScalarNode {
+				existingPkgs[entry.Value] = true
+			} else if entry.Kind == yamllib.MappingNode {
+				for j := 0; j < len(entry.Content)-1; j += 2 {
+					if entry.Content[j].Value == "git" {
+						existingPkgs[entry.Content[j+1].Value] = true
+					}
+				}
+			}
+		}
+	}
+
+	// The '*' RESET sentinel (install.md: "--skill '*' resets to install
+	// all skills") means "install ALL skills," so it must never be
+	// persisted as a literal skills: ['*'] subset -- mirroring Python's
+	// `_skill_subset = None` (no subset persisted = install all).
+	skillReset := containsSkillWildcard(skillSubset)
+
+	appended := false
+	for _, pkg := range packages {
+		if existingPkgs[pkg] {
+			// A '*' reset must also undo a previously narrower skills:
+			// subset persisted by an earlier `apm install pkg --skill x`
+			// for this SAME package -- otherwise a later bare `apm
+			// install` (no --skill) would keep reading that stale subset.
+			if skillReset {
+				clearPersistedSkillSubset(apmSeq, pkg)
+			}
+			continue
+		}
+		if len(skillSubset) > 0 && !skillReset {
+			// Object form: { git: <pkg>, skills: [<skill>...] }
+			entry := &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
+			entry.Content = append(entry.Content,
+				&yamllib.Node{Kind: yamllib.ScalarNode, Value: "git", Tag: "!!str"},
+				&yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"},
+			)
+			skillSeq := &yamllib.Node{Kind: yamllib.SequenceNode, Tag: "!!seq"}
+			for _, s := range skillSubset {
+				skillSeq.Content = append(skillSeq.Content,
+					&yamllib.Node{Kind: yamllib.ScalarNode, Value: s, Tag: "!!str"},
+				)
+			}
+			entry.Content = append(entry.Content,
+				&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
+				skillSeq,
+			)
+			apmSeq.Content = append(apmSeq.Content, entry)
+		} else {
+			// String form
+			apmSeq.Content = append(apmSeq.Content,
+				&yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"},
+			)
+		}
+		appended = true
+	}
+
+	// mi-fix (#2): a reused pre-existing dependencies.apm sequence node
+	// (e.g. a scaffolded `apm: []`) retains its parsed FlowStyle bit, so
+	// SafeDump re-renders it flow after appending. Normalize to block
+	// (matching dependencies.mcp and the Python original) whenever we
+	// actually appended an entry -- leave untouched if nothing changed.
+	if appended {
+		apmSeq.Style &^= yamllib.FlowStyle
+	}
+
+	return nil
+}
+
+// clearPersistedSkillSubset undoes a previously narrower skills: subset
+// recorded for pkg by an earlier `apm install pkg --skill x`: the '*' RESET
+// sentinel (install.md) means "install all skills going forward," so a
+// stale object-form entry `{git: pkg, skills: [...]}` must collapse back to
+// the plain string form -- otherwise a bare `apm install` (no --skill) run
+// afterward would keep reading the stale narrower subset from apm.yml.
+// No-op for a scalar entry or an object-form entry with no skills: key.
+func clearPersistedSkillSubset(apmSeq *yamllib.Node, pkg string) {
+	if apmSeq.Kind != yamllib.SequenceNode {
+		return
+	}
+	for i, entry := range apmSeq.Content {
+		if entry.Kind != yamllib.MappingNode {
+			continue
+		}
+		var gitVal string
+		hasSkills := false
+		for j := 0; j < len(entry.Content)-1; j += 2 {
+			switch entry.Content[j].Value {
+			case "git":
+				gitVal = entry.Content[j+1].Value
+			case "skills":
+				hasSkills = true
+			}
+		}
+		if gitVal == pkg && hasSkills {
+			apmSeq.Content[i] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"}
+		}
+	}
+}
+=== CODE: apm-go cmd/apm-go/update.go (update 走 deployAndFinalize 的呼叫) ===
+149:	// and buildLockfile/deployAndFinalize are disk-writing by design.
+211:	// the oracle's observed stdout ordering -- and before deployAndFinalize,
+214:	// exited 0 after already rewriting the lockfile (deployAndFinalize's
+228:	return deployAndFinalize(m, "", nil, nil, nil, nil, result, newLock, existingLock, existingNode, node)
+234:// calling buildLockfile or deployAndFinalize -- so apm.lock.yaml,
+319:// packages are silent; deployAndFinalize's own no-op check reports "Already
+=== CODE: Python apm reference.py 915-945 (skills 讀回) ===
+        if sub_path:
+            dep.virtual_path = sub_path
+            dep.is_virtual = True
+
+        # Parse skills: field (SKILL_BUNDLE subset selection)
+        skills_raw = entry.get("skills")
+        if skills_raw is not None:
+            if not isinstance(skills_raw, (list,)):
+                raise ValueError("'skills' field must be a list of skill names")
+            if len(skills_raw) == 0:
+                raise ValueError(
+                    "skills: must contain at least one name; "
+                    "remove the field to install all skills in the bundle."
+                )
+            seen: set = set()
+            validated: list = []
+            for name in skills_raw:
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("Each entry in 'skills' must be a non-empty string")
+                name = name.strip()
+                # Path safety: reject traversal sequences
+                validate_path_segments(name, context="skills/<name>")
+                if name not in seen:
+                    seen.add(name)
+                    validated.append(name)
+            dep.skill_subset = sorted(validated)
+
+        return dep
+
+    @staticmethod
+    def _parse_host_type(raw: object) -> str | None:
+=== CODE: Python apm package_resolution.py 132-181 (union 語意) ===
+def get_existing_skill_subset(
+    current_deps: builtins.list,
+    identity: str,
+    *,
+    dependency_reference_cls: Any,
+) -> builtins.list[str] | None:
+    """Return the persisted ``skills:`` list for *identity*, or None."""
+    for dep_entry in current_deps:
+        try:
+            if isinstance(dep_entry, builtins.str):
+                existing_ref = dependency_reference_cls.parse(dep_entry)
+            elif isinstance(dep_entry, builtins.dict):
+                existing_ref = dependency_reference_cls.parse_from_dict(dep_entry)
+            else:
+                continue
+        except (ValueError, TypeError, AttributeError, KeyError):
+            continue
+        if existing_ref.get_identity() == identity:
+            subset = getattr(existing_ref, "skill_subset", None)
+            return list(subset) if subset else None
+    return None
+
+
+def normalize_and_merge_skill_subset(
+    cli_subset: builtins.tuple[str, ...],
+    current_deps: builtins.list,
+    identity: str,
+    *,
+    dependency_reference_cls: Any,
+) -> builtins.list[str]:
+    """Normalize CLI ``--skill`` names and merge with existing manifest skills.
+
+    Strips whitespace, drops empty strings, deduplicates, then unions with
+    the persisted ``skills:`` list from ``apm.yml`` so that repeated
+    ``--skill`` invocations are additive (issue #1771).
+
+    Returns a sorted, deduplicated list ready for ``dep_ref.skill_subset``.
+    """
+    seen: builtins.set[str] = builtins.set()
+    for s in cli_subset:
+        s = s.strip()
+        if s:
+            seen.add(s)
+    existing = get_existing_skill_subset(
+        current_deps, identity, dependency_reference_cls=dependency_reference_cls
+    )
+    if existing:
+        seen.update(existing)
+    return sorted(seen)
+
