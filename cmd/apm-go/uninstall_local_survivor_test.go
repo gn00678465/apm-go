@@ -126,7 +126,7 @@ func captureUninstallStdout(t *testing.T, fn func()) string {
 
 // captureUninstallStderr redirects os.Stderr for the duration of fn and
 // returns everything written to it, so a test can inspect runUninstall's
-// "[!] ..." warnings (e.g. deploy.RemoveDeployedFiles diagnostics, stale-MCP
+// "! ..." warnings (e.g. deploy.RemoveDeployedFiles diagnostics, stale-MCP
 // reverse-removal notices) without those warnings only being eyeballed in a
 // -v transcript.
 func captureUninstallStderr(t *testing.T, fn func()) string {
@@ -399,10 +399,10 @@ func TestRunUninstall_SurvivingLocalRootDryRunKeepsSharedTransitive(t *testing.T
 	// The output must be the preview/plan style, never the success/deletion
 	// style -- proves this is genuinely a --dry-run codepath, not a real run
 	// that happens to have deleted nothing.
-	if !strings.Contains(stdout, "[dry-run]") {
+	if !strings.Contains(stdout, "dry-run") {
 		t.Errorf("expected --dry-run output to be the preview/plan style, got:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "[+] Removed") {
+	if strings.Contains(stdout, "+ Removed") {
 		t.Errorf("expected --dry-run output to never contain the real-run success summary, got:\n%s", stdout)
 	}
 

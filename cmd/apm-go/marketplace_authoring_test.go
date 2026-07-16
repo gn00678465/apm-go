@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // chdirTemp changes the working directory to a fresh t.TempDir() for the
@@ -594,8 +595,8 @@ func TestMarketplaceCheck_RemotePackagePinnedRefMissing_ExitsNonZero(t *testing.
 	if err == nil {
 		t.Fatal("marketplace check with a missing pinned ref returned no error, want exit 1 (mkt-041)")
 	}
-	if !strings.Contains(out, "[x] tool") {
-		t.Errorf("output = %q, want a [x] failure line naming the package", out)
+	if !strings.Contains(out, "x: tool") {
+		t.Errorf("output = %q, want an x failure line naming the package", out)
 	}
 }
 
@@ -685,8 +686,8 @@ func TestMarketplaceCheck_VerbosePrintsEveryPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace check -v returned error: %v", err)
 	}
-	if !strings.Contains(out, "[+] local-a: ok") {
-		t.Errorf("output = %q, want a per-package [+] line with -v", out)
+	if !strings.Contains(out, "+: local-a: ok") {
+		t.Errorf("output = %q, want a per-package + line with -v", out)
 	}
 }
 
@@ -803,8 +804,8 @@ func TestMarketplaceOutdated_UpgradablePackage_ExitsNonZero(t *testing.T) {
 	if err == nil {
 		t.Fatal("marketplace outdated with an upgradable package returned no error, want exit 1 (mkt-042)")
 	}
-	if !strings.Contains(out, "[!] tool") {
-		t.Errorf("output = %q, want an [!] line naming the package", out)
+	if !strings.Contains(out, "tool") || !strings.Contains(out, ux.SymbolWarn) {
+		t.Errorf("output = %q, want a %s row naming the package", out, ux.SymbolWarn)
 	}
 }
 
@@ -832,8 +833,8 @@ func TestMarketplaceOutdated_NoMatchingTags_DoesNotExitNonZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace outdated returned error for \"no matching tags found\": %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "[!] tool") || !strings.Contains(out, "no matching tags") {
-		t.Errorf("output = %q, want an [!] line noting no matching tags", out)
+	if !strings.Contains(out, "tool") || !strings.Contains(out, ux.SymbolWarn) || !strings.Contains(out, "no matching tags") {
+		t.Errorf("output = %q, want a %s row noting no matching tags", out, ux.SymbolWarn)
 	}
 }
 
@@ -863,8 +864,8 @@ func TestMarketplaceOutdated_FetchFailure_DoesNotExitNonZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace outdated returned error for a fetch failure: %v (output: %s), want exit 0 (mkt-042's [x] must not affect exit code)", err, out)
 	}
-	if !strings.Contains(out, "[x] tool") {
-		t.Errorf("output = %q, want an [x] line naming the package", out)
+	if !strings.Contains(out, "tool") || !strings.Contains(out, ux.SymbolError) {
+		t.Errorf("output = %q, want a %s row naming the package", out, ux.SymbolError)
 	}
 }
 
@@ -888,8 +889,8 @@ func TestMarketplaceOutdated_PinnedRefPackage_SkippedIconI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace outdated returned error for a pinned-ref package: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "[i] tool") {
-		t.Errorf("output = %q, want an [i] line naming the pinned package", out)
+	if !strings.Contains(out, "tool") || !strings.Contains(out, ux.SymbolInfo) {
+		t.Errorf("output = %q, want a %s row naming the pinned package", out, ux.SymbolInfo)
 	}
 }
 

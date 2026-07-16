@@ -23,6 +23,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Antigravity Target Contract](./antigravity-target-contract.md) | antigravity deploy target: serverUrl, explicit-only, agents primitive, agy verification gotchas | Active |
 | [Compile Contract](./compile-contract.md) | `apm-go compile`: agents-family AGENTS.md generation, Build ID, idempotency, documented deviations | Active |
 | [CLI Parity Notes](./cli-parity-notes.md) | `audit`/`normalize`/`validate`/`allowExecutables:` same-name and dev-only-extension notes (P0 parity quick wins) | Active |
+| [Terminal UX Contract](./terminal-ux-contract.md) | `internal/ux` 門面：per-writer 著色、CanPrompt vs IsRich、串流保留、TTY 偵測、severity 對應、業務層禁 import ux | Active |
 
 ---
 

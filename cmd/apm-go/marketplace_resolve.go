@@ -8,6 +8,7 @@ import (
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/marketplace"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // newMarketplaceResolveFunc builds the resolver.MarketplaceResolveFunc
@@ -43,7 +44,7 @@ func newMarketplaceResolveFunc() resolver.MarketplaceResolveFunc {
 			return nil, nil, err
 		}
 		for _, w := range res.Warnings {
-			fmt.Fprintf(os.Stderr, "[!] %s\n", w)
+			ux.Warn(os.Stderr, "%s", w)
 		}
 
 		// mkt-027: a structured DepRef always wins over parsing Canonical --

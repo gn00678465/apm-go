@@ -883,7 +883,7 @@ packages:
 // wantLicenseUndeclaredWarning duplicates pack.go's licenseUndeclaredWarning
 // as an independent string literal, matching this file's verbatim-lock
 // convention.
-const wantLicenseUndeclaredWarning = "[warn] No 'license:' field in apm.yml; the SBOM will record NOASSERTION for this package. Add a 'license:' field to apm.yml (an SPDX expression such as MIT or Apache-2.0, or UNLICENSED) to declare it."
+const wantLicenseUndeclaredWarning = "No 'license:' field in apm.yml; the SBOM will record NOASSERTION for this package. Add a 'license:' field to apm.yml (an SPDX expression such as MIT or Apache-2.0, or UNLICENSED) to declare it."
 
 func TestRunPack_NoLicenseField_WarnsEvenOnNothingToPack(t *testing.T) {
 	// The nudge fires before producer routing, independent of whether pack

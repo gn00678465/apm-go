@@ -1,16 +1,16 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
-	"io"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/marketplace"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // ── test helpers ──────────────────────────────────────────────────────────
@@ -730,76 +730,34 @@ func TestMarketplaceValidate_VerboseFlagAccepted(t *testing.T) {
 
 // ── C10: EOF/non-interactive confirm read must never read as "declined" ──
 
-// resetStdinScanner points init.go's shared stdinScanner singleton (used by
-// both readYesNo and init.go's own confirmPrompt) at a fresh scanner
-// wrapping r for the duration of the test, restoring the original
-// afterward -- getScanner() only (re)creates it from the real os.Stdin when
-// nil, so a test-supplied reader would otherwise never be seen.
-func resetStdinScanner(t *testing.T, r io.Reader) {
+// forceRich overrides richCheck (marketplace.go) so confirmOrRequireYes's
+// "genuinely interactive" branch can be driven deterministically,
+// independent of whatever the test process's real stdin/stderr happen to
+// be -- ux.CanPrompt() itself cannot be forced true from outside the ux
+// package, since the underlying TTY seams are unexported there. See
+// TestConfirmOrRequireYes_ProductionCanPromptGate below for a test that
+// drives the real ux.CanPrompt() gate end to end instead of stubbing this
+// var directly.
+func forceRich(t *testing.T, rich bool) {
 	t.Helper()
-	orig := stdinScanner
-	stdinScanner = bufio.NewScanner(r)
-	t.Cleanup(func() { stdinScanner = orig })
+	orig := richCheck
+	richCheck = func() bool { return rich }
+	t.Cleanup(func() { richCheck = orig })
 }
 
-// forceInteractive overrides isInteractiveCheck (marketplace.go) so
-// confirmOrRequireYes's "looks interactive" branch can be driven
-// deterministically, independent of whatever the test process's real stdin
-// happens to be -- this is precisely the condition C10 fixes: a git-bash
-// pipe on Windows can make the real isInteractive() report true for a
-// non-interactive pipe.
-func forceInteractive(t *testing.T, interactive bool) {
+// stubConfirm overrides confirmFn (marketplace.go), the seam
+// confirmOrRequireYes uses in place of a direct ux.Confirm call, so a test
+// can simulate a successful "yes"/"no" read or a failed prompt (the huh
+// equivalent of C10's original EOF case) without a real terminal.
+func stubConfirm(t *testing.T, fn func(prompt string, def bool) (bool, error)) {
 	t.Helper()
-	orig := isInteractiveCheck
-	isInteractiveCheck = func() bool { return interactive }
-	t.Cleanup(func() { isInteractiveCheck = orig })
-}
-
-// TestReadYesNo_EOFReturnsNotOK is C10's core unit-level regression case: an
-// immediately-exhausted reader simulates a git-bash pipe whose write end has
-// already closed. Before the fix, callers could not distinguish this from a
-// genuine "n" -- both collapsed to a zero-value read.
-func TestReadYesNo_EOFReturnsNotOK(t *testing.T) {
-	resetStdinScanner(t, strings.NewReader(""))
-
-	yes, ok := readYesNo("Remove?")
-
-	if ok {
-		t.Fatal("readYesNo() ok = true on EOF, want false -- EOF must never look like a completed read (C10)")
-	}
-	if yes {
-		t.Error("readYesNo() yes = true on EOF, want false")
-	}
-}
-
-func TestReadYesNo_ExplicitNo(t *testing.T) {
-	resetStdinScanner(t, strings.NewReader("n\n"))
-
-	yes, ok := readYesNo("Remove?")
-
-	if !ok {
-		t.Fatal("readYesNo() ok = false for a completed read, want true")
-	}
-	if yes {
-		t.Error(`readYesNo() yes = true for an explicit "n", want false`)
-	}
-}
-
-func TestReadYesNo_ExplicitYes(t *testing.T) {
-	resetStdinScanner(t, strings.NewReader("y\n"))
-
-	yes, ok := readYesNo("Remove?")
-
-	if !ok {
-		t.Fatal("readYesNo() ok = false for a completed read, want true")
-	}
-	if !yes {
-		t.Error(`readYesNo() yes = false for an explicit "y", want true`)
-	}
+	orig := confirmFn
+	confirmFn = fn
+	t.Cleanup(func() { confirmFn = orig })
 }
 
 func TestConfirmOrRequireYes_NonInteractive_RequiresYes(t *testing.T) {
-	forceInteractive(t, false)
+	forceRich(t, false)
 
 	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
 
@@ -811,24 +769,24 @@ func TestConfirmOrRequireYes_NonInteractive_RequiresYes(t *testing.T) {
 	}
 }
 
-// TestConfirmOrRequireYes_LooksInteractiveButEOF is C10's core regression
-// case, reproducing the actual reported bug: a git-bash pipe on Windows can
-// make isInteractive() report true even though stdin is not actually
-// interactive. Before the fix, a failed read here was silently treated as
-// "declined" -- a clean exit 0 -- which reads as success to a CI/script
-// caller despite nothing having been removed. This proves it now requires
-// -y/--yes instead, matching the outright-non-interactive path.
-func TestConfirmOrRequireYes_LooksInteractiveButEOF(t *testing.T) {
-	forceInteractive(t, true)
-	resetStdinScanner(t, strings.NewReader(""))
+// TestConfirmOrRequireYes_RichButPromptFails is C10's core regression case
+// reproduced against the huh-backed confirm: even when the session is
+// genuinely rich, a failed confirmation prompt (huh aborted, equivalent to
+// the original EOF case) must never be silently treated as "declined" -- a
+// clean exit 0 -- which reads as success to a CI/script caller despite
+// nothing having been removed. This proves it now requires -y/--yes
+// instead, matching the outright-non-interactive path.
+func TestConfirmOrRequireYes_RichButPromptFails(t *testing.T) {
+	forceRich(t, true)
+	stubConfirm(t, func(string, bool) (bool, error) { return false, errors.New("prompt aborted") })
 
 	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
 
 	if err == nil {
-		t.Fatal("confirmOrRequireYes() err = nil for a failed (EOF) read even though isInteractive() reported true, want the requires-yes error (C10)")
+		t.Fatal("confirmOrRequireYes() err = nil for a failed prompt even though richCheck() reported true, want the requires-yes error (C10)")
 	}
 	if proceed {
-		t.Error("confirmOrRequireYes() proceed = true for a failed read, want false")
+		t.Error("confirmOrRequireYes() proceed = true for a failed prompt, want false")
 	}
 	if !strings.Contains(err.Error(), "requires -y/--yes") {
 		t.Errorf("err = %v, want it to mention requires -y/--yes", err)
@@ -836,12 +794,12 @@ func TestConfirmOrRequireYes_LooksInteractiveButEOF(t *testing.T) {
 }
 
 // TestConfirmOrRequireYes_InteractiveExplicitNo_CleanDecline proves the
-// fix's boundary: a read that genuinely completes with "n" is still a
-// clean, non-error decline -- only a failed read is now treated as
+// fix's boundary: a prompt that genuinely completes with "no" is still a
+// clean, non-error decline -- only a failed prompt is now treated as
 // requiring -y/--yes.
 func TestConfirmOrRequireYes_InteractiveExplicitNo_CleanDecline(t *testing.T) {
-	forceInteractive(t, true)
-	resetStdinScanner(t, strings.NewReader("n\n"))
+	forceRich(t, true)
+	stubConfirm(t, func(string, bool) (bool, error) { return false, nil })
 
 	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
 
@@ -849,21 +807,21 @@ func TestConfirmOrRequireYes_InteractiveExplicitNo_CleanDecline(t *testing.T) {
 		t.Fatalf("confirmOrRequireYes() err = %v for a genuine explicit decline, want nil (clean Aborted)", err)
 	}
 	if proceed {
-		t.Error(`confirmOrRequireYes() proceed = true for an explicit "n", want false`)
+		t.Error(`confirmOrRequireYes() proceed = true for an explicit "no", want false`)
 	}
 }
 
 func TestConfirmOrRequireYes_InteractiveExplicitYes_Proceeds(t *testing.T) {
-	forceInteractive(t, true)
-	resetStdinScanner(t, strings.NewReader("y\n"))
+	forceRich(t, true)
+	stubConfirm(t, func(string, bool) (bool, error) { return true, nil })
 
 	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
 
 	if err != nil {
-		t.Fatalf(`confirmOrRequireYes() err = %v for an explicit "y", want nil`, err)
+		t.Fatalf(`confirmOrRequireYes() err = %v for an explicit "yes", want nil`, err)
 	}
 	if !proceed {
-		t.Error(`confirmOrRequireYes() proceed = false for an explicit "y", want true`)
+		t.Error(`confirmOrRequireYes() proceed = false for an explicit "yes", want true`)
 	}
 }
 
@@ -875,8 +833,8 @@ func TestConfirmOrRequireYes_InteractiveExplicitYes_Proceeds(t *testing.T) {
 func TestMarketplaceRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
-	forceInteractive(t, true)
-	resetStdinScanner(t, strings.NewReader(""))
+	forceRich(t, true)
+	stubConfirm(t, func(string, bool) (bool, error) { return false, errors.New("prompt aborted") })
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: "/abs/path", Path: "marketplace.json"}); err != nil {
 		t.Fatal(err)
 	}
@@ -886,10 +844,10 @@ func TestMarketplaceRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove(t 
 
 	// Assert
 	if err == nil {
-		t.Fatal("marketplace remove with a failed (EOF) confirmation read returned no error, want the requires -y/--yes error (C10)")
+		t.Fatal("marketplace remove with a failed confirmation prompt returned no error, want the requires -y/--yes error (C10)")
 	}
 	if src, _ := marketplace.FindByName("acme"); src == nil {
-		t.Error("marketplace was removed despite the confirmation read failing (C10 footgun)")
+		t.Error("marketplace was removed despite the confirmation prompt failing (C10 footgun)")
 	}
 }
 
@@ -898,8 +856,8 @@ func TestMarketplaceRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove(t 
 func TestMarketplaceRemove_InteractiveExplicitNo_AbortsCleanly(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
-	forceInteractive(t, true)
-	resetStdinScanner(t, strings.NewReader("n\n"))
+	forceRich(t, true)
+	stubConfirm(t, func(string, bool) (bool, error) { return false, nil })
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: "/abs/path", Path: "marketplace.json"}); err != nil {
 		t.Fatal(err)
 	}
@@ -916,6 +874,66 @@ func TestMarketplaceRemove_InteractiveExplicitNo_AbortsCleanly(t *testing.T) {
 	}
 	if src, _ := marketplace.FindByName("acme"); src == nil {
 		t.Error("marketplace was removed despite an explicit decline")
+	}
+}
+
+// TestConfirmOrRequireYes_ProductionCanPromptGate_NonTTY_RequiresYes drives
+// confirmOrRequireYes through the *real* production gate -- richCheck's
+// actual default (ux.CanPrompt) and confirmFn's actual default (ux.Confirm)
+// -- forcing only the underlying stdin/stderr TTY seams inside internal/ux
+// via ux.SetTTYSeamsForTest. Every other test in this file proves
+// confirmOrRequireYes's own branching by stubbing richCheck/confirmFn
+// (forceRich/stubConfirm) directly, which says nothing about whether
+// ux.CanPrompt() itself is wired to the right TTY signals; this test closes
+// that gap and, since it never reaches ux.Confirm at all when CanPrompt()
+// is false, also demonstrates the non-TTY path returns immediately instead
+// of attempting to read stdin (no hang risk).
+func TestConfirmOrRequireYes_ProductionCanPromptGate_NonTTY_RequiresYes(t *testing.T) {
+	// Arrange: use the real richCheck/confirmFn (no forceRich/stubConfirm),
+	// forcing only the ux-internal TTY seams to look non-interactive.
+	restore := ux.SetTTYSeamsForTest(false, false, false)
+	t.Cleanup(restore)
+
+	// Act
+	proceed, err := confirmOrRequireYes("Remove?", "requires -y/--yes")
+
+	// Assert
+	if err == nil {
+		t.Fatal("confirmOrRequireYes() err = nil with the real CanPrompt gate forced non-TTY, want the requires-yes error")
+	}
+	if !strings.Contains(err.Error(), "requires -y/--yes") {
+		t.Errorf("err = %v, want it to mention requires -y/--yes", err)
+	}
+	if proceed {
+		t.Error("confirmOrRequireYes() proceed = true with the real CanPrompt gate forced non-TTY, want false")
+	}
+}
+
+// TestMarketplaceRemove_ProductionNonTTY_RequiresYesAndDoesNotRemove is the
+// full-CLI counterpart of the test above: `marketplace remove` without -y,
+// run against the real richCheck/confirmFn (not stubbed), with only the
+// ux-internal TTY seams forced non-interactive via ux.SetTTYSeamsForTest.
+// It must fail fast and must not remove the entry -- proving the real
+// integration between marketplace.go's confirmOrRequireYes and ux.CanPrompt
+// works end to end, not just the local var seams other tests stub out.
+func TestMarketplaceRemove_ProductionNonTTY_RequiresYesAndDoesNotRemove(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	restore := ux.SetTTYSeamsForTest(false, false, false)
+	t.Cleanup(restore)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: "/abs/path", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "remove", "acme")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace remove with the real CanPrompt gate forced non-TTY returned no error, want the requires -y/--yes error")
+	}
+	if src, _ := marketplace.FindByName("acme"); src == nil {
+		t.Error("marketplace was removed despite the real CanPrompt gate reporting non-TTY")
 	}
 }
 
@@ -958,16 +976,17 @@ func TestMarketplaceList_TableIncludesEveryRegisteredSource(t *testing.T) {
 
 // ── `browse` (mkt-013) ───────────────────────────────────────────────────
 
-// TestMarketplaceBrowse_RendersPluginTable locks the mkt-013 表格呈現 shape:
-// the Python original renders a rich HEAVY_HEAD box table titled
-// "Plugins in '<name>'" (Plugin/Description/Version/Install columns, `--`
-// placeholders, Install cell = `<plugin>@<mkt>` with NO command prefix)
-// after a "[>] Fetching..." line, then an [i] footer naming this binary
-// (apm-go, not the Python original's `apm`).
+// TestMarketplaceBrowse_RendersPluginTable locks the mkt-013 表格呈現 shape.
+// Since 07-14-init-tui-beautify, the box table is rendered by ux.Table
+// (lipgloss/table), not the original's rich-parity HEAVY_HEAD box (design.md
+// explicitly accepts this visual difference): a rounded "│"/"─" box border
+// with a header/body separator row, instead of the original's "┃"/"│", but
+// the same Plugin/Description/Version/Install columns, `--` placeholders,
+// and a bare `<plugin>@<mkt>` Install cell (no command prefix) survive.
 func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
 	// Arrange -- one fully-described plugin whose description is long enough
-	// that it must word-wrap inside the box, plus one bare plugin exercising
-	// the `--` placeholders.
+	// that it must word-wrap inside the table cell, plus one bare plugin
+	// exercising the `--` placeholders.
 	isolatedMarketplaceRegistry(t)
 	longDesc := strings.TrimSpace(strings.Repeat("behavioral guidelines ", 8))
 	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [`+
@@ -985,29 +1004,36 @@ func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
 		t.Fatalf("marketplace browse returned error: %v", err)
 	}
 	for _, want := range []string{
-		"[>] Fetching plugins from 'acme'...",
+		"i Fetching plugins from 'acme'...",
 		"Plugins in 'acme'",
-		"┃ Plugin",
+		"│ Plugin",
 		"│ cool-plugin",
 		"cool-plugin@acme",
 		"bare-plugin@acme",
 		"--",
-		"[i] Install a plugin: apm-go install <plugin-name>@acme",
+		"i Install a plugin: apm-go install <plugin-name>@acme",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)
 		}
 	}
 	// The Install CELL is bare `<plugin>@<mkt>`; only the footer carries a
-	// command prefix (matching the original's rich table).
+	// command prefix.
 	if strings.Contains(out, "install cool-plugin@acme") {
 		t.Errorf("output = %q, want the Install cell without a command prefix", out)
 	}
-	// The long description wraps instead of blowing the table width.
+	// The long description wraps into a continuation row inside its own
+	// cell (a table line still carrying description text but neither the
+	// plugin name nor its Install cell) instead of a single unbroken line.
+	wrapped := false
 	for _, line := range strings.Split(out, "\n") {
-		if n := len([]rune(line)); n > 120 {
-			t.Errorf("line %q is %d runes wide, want <= 120 (description should wrap)", line, n)
+		if strings.Contains(line, "guidelines") && !strings.Contains(line, "cool-plugin") {
+			wrapped = true
+			break
 		}
+	}
+	if !wrapped {
+		t.Errorf("output = %q, want the long description to word-wrap into a continuation row", out)
 	}
 }
 

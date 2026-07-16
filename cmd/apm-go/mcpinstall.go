@@ -13,6 +13,7 @@ import (
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/mcpregistry"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
@@ -91,7 +92,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		// original too, per source reading during design): re-run `apm
 		// install` (the full pipeline) or delete+re-add the entry to force
 		// redeployment.
-		fmt.Printf("[i] MCP server %q unchanged\n", opts.Name)
+		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
 		return nil
 	}
 
@@ -104,7 +105,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		return err
 	}
 	for _, d := range diags {
-		fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 
 	// This edit only ever touches dependencies.mcp: prefer a surgical patch
@@ -132,7 +133,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	// verifiable in stdout, not just the deploy/skip outcome (codex review).
 	targets, targetDiags := deploy.ResolveTargets(opts.TargetFlag, m.Target, ".")
 	for _, d := range targetDiags {
-		fmt.Fprintln(os.Stderr, d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 	if len(targets) > 0 {
 		targetSource := "auto-detect"
@@ -141,7 +142,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		} else if len(m.Target) > 0 {
 			targetSource = "apm.yml"
 		}
-		fmt.Printf("[i] Targets: %s  (source: %s)\n", strings.Join(targets, ", "), targetSource)
+		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
 	}
 
 	deployed, skipped, err := deployMCPEntry(m, opts.TargetFlag, deployDep)
@@ -154,7 +155,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		verb = "Replaced"
 	}
 	if len(skipped) > 0 {
-		fmt.Printf("[i] Skipped MCP config for %s  (active targets: %s)\n",
+		ux.Info(os.Stdout, "Skipped MCP config for %s  (active targets: %s)",
 			strings.Join(skipped, ", "), strings.Join(deployed, ", "))
 	}
 	// A target adapter can accept the write call yet filter the entry out
@@ -163,12 +164,14 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	// "Added" in that case would be a false success (found by codex review):
 	// apm.yml now carries an entry that is not actually running anywhere.
 	if len(deployed) == 0 {
-		fmt.Printf("[!] MCP server %q declared in apm.yml but not deployed to any target; see diagnostics above\n", opts.Name)
+		ux.Warn(os.Stdout, "MCP server %q declared in apm.yml but not deployed to any target; see diagnostics above", opts.Name)
 		return nil
 	}
-	fmt.Printf("[+] %s MCP server %q\n", verb, opts.Name)
-	fmt.Printf("  transport: %s\n", deployDep.Transport)
-	fmt.Printf("  apm.yml: apm.yml\n")
+	ux.Success(os.Stdout, "%s MCP server %q", verb, opts.Name)
+	ux.BulletList(os.Stdout, []ux.Item{
+		{Text: fmt.Sprintf("transport: %s", deployDep.Transport)},
+		{Text: "apm.yml: apm.yml"},
+	})
 	return nil
 }
 
@@ -607,7 +610,7 @@ func nodeToValue(n *yamllib.Node) any {
 func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDependency) (deployedTargets, skippedTargets []string, err error) {
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	for _, d := range targetDiags {
-		fmt.Fprintln(os.Stderr, d)
+		ux.Warn(os.Stderr, "%s", d)
 	}
 
 	prims := []deploy.Primitive{{Name: dep.Name, Type: deploy.TypeMCP, Source: "local", MCP: dep}}
@@ -623,7 +626,7 @@ func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDe
 		}
 		_, written, diags, werr := mcpAdapter.WriteMCP(prims, ".")
 		for _, d := range diags {
-			fmt.Fprintf(os.Stderr, "[!] %s\n", d)
+			ux.Warn(os.Stderr, "%s", d)
 		}
 		if werr != nil {
 			return deployedTargets, skippedTargets, fmt.Errorf("deploy to %s: %w", t, werr)

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/apm-go/apm/internal/lockfile"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -73,7 +74,7 @@ unimplemented subsystems.`,
 					if observed == "" {
 						observed = "<missing>"
 					}
-					fmt.Fprintf(cmd.ErrOrStderr(), "content-integrity violation: %s expected %s, observed %s\n",
+					ux.Error(cmd.ErrOrStderr(), "content-integrity violation: %s expected %s, observed %s",
 						v.Path, v.Expected, observed)
 				}
 				return fmt.Errorf("audit failed: %d content-integrity violation(s) (first: %s)", len(viol), viol[0].Path)
@@ -84,7 +85,7 @@ unimplemented subsystems.`,
 				count += len(lock.Dependencies[i].DeployedHashes)
 			}
 			count += len(lock.LocalDeployedHashes)
-			fmt.Fprintf(cmd.OutOrStdout(), "audit: %d deployed files verified\n", count)
+			ux.Success(cmd.OutOrStdout(), "audit: %d deployed files verified", count)
 			return nil
 		},
 	}

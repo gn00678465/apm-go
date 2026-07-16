@@ -1,16 +1,15 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
@@ -57,10 +56,14 @@ func initCmd() *cobra.Command {
 
 			if apmYmlExists {
 				if yes || force {
-					fmt.Fprintln(os.Stderr, "--yes specified, overwriting apm.yml...")
-				} else if isInteractive() {
-					if !confirmPrompt("apm.yml already exists. Continue and overwrite?", false) {
-						fmt.Fprintln(os.Stderr, "Initialization cancelled.")
+					ux.Info(os.Stderr, "--yes specified, overwriting apm.yml...")
+				} else if ux.CanPrompt() {
+					ok, err := ux.Confirm("apm.yml already exists. Continue and overwrite?", false)
+					if err != nil {
+						return fmt.Errorf("confirm overwrite: %w", err)
+					}
+					if !ok {
+						ux.Info(os.Stderr, "Initialization cancelled.")
 						return nil
 					}
 				} else {
@@ -71,20 +74,41 @@ func initCmd() *cobra.Command {
 			var name, version, description, author string
 
 			// Phase 3: Metadata collection
-			if yes || !isInteractive() {
+			if yes || !ux.CanPrompt() {
 				name = filepath.Base(cwd)
 				version = "1.0.0"
 				description = fmt.Sprintf("APM project for %s", name)
 				author = manifest.DetectAuthor()
 			} else {
-				fmt.Fprintln(os.Stderr, "\nSetting up your APM project...")
-				fmt.Fprintln(os.Stderr, "Press ^C at any time to quit.")
+				fmt.Fprintln(os.Stderr)
+				ux.Section(os.Stderr, "Setting up your APM project...")
+				ux.Info(os.Stderr, "Press ^C at any time to quit.")
 				fmt.Fprintln(os.Stderr)
 
-				name = promptWithDefault("Project name", filepath.Base(cwd))
-				version = promptWithDefault("Version", "1.0.0")
-				description = promptWithDefault("Description", fmt.Sprintf("APM project for %s", name))
-				author = promptWithDefault("Author", manifest.DetectAuthor())
+				defaultName := filepath.Base(cwd)
+				defaultDesc := fmt.Sprintf("APM project for %s", defaultName)
+				fields := []ux.Field{
+					{Key: "name", Label: "Project name", Default: defaultName},
+					{Key: "version", Label: "Version", Default: "1.0.0"},
+					{Key: "description", Label: "Description", Default: defaultDesc},
+					{Key: "author", Label: "Author", Default: manifest.DetectAuthor()},
+				}
+				vals, formErr := ux.InputForm("Setting up your APM project", fields)
+				if formErr != nil {
+					return fmt.Errorf("read project metadata: %w", formErr)
+				}
+				name = vals["name"]
+				version = vals["version"]
+				description = vals["description"]
+				author = vals["author"]
+				// The grouped form can't recompute the description default
+				// reactively, so if the user changed the name but left the
+				// prefilled description untouched, keep it in sync with the
+				// entered name (avoids silently writing "APM project for <cwd>"
+				// when the project was renamed).
+				if description == defaultDesc && name != defaultName {
+					description = fmt.Sprintf("APM project for %s", name)
+				}
 			}
 
 			// Phase 4: Target selection
@@ -103,7 +127,7 @@ func initCmd() *cobra.Command {
 					}
 					selectedTargets = append(selectedTargets, t)
 				}
-			} else if yes || !isInteractive() {
+			} else if yes || !ux.CanPrompt() {
 				selectedTargets = manifest.DetectTargets(cwd)
 			} else {
 				var existingTargets []string
@@ -111,25 +135,34 @@ func initCmd() *cobra.Command {
 					existingTargets = readExistingTargets()
 				}
 				detected := manifest.DetectTargets(cwd)
-				selectedTargets = interactiveTargetSelect(detected, existingTargets)
+				selectedTargets, err = interactiveTargetSelect(detected, existingTargets)
+				if err != nil {
+					return fmt.Errorf("select targets: %w", err)
+				}
 			}
 
 			// Phase 5: Confirmation
-			if !yes && isInteractive() {
-				fmt.Fprintln(os.Stderr, "\n+--- About to create ---+")
-				fmt.Fprintf(os.Stderr, "  name:        %s\n", name)
-				fmt.Fprintf(os.Stderr, "  version:     %s\n", version)
-				fmt.Fprintf(os.Stderr, "  description: %s\n", description)
-				fmt.Fprintf(os.Stderr, "  author:      %s\n", author)
-				if len(selectedTargets) > 0 {
-					fmt.Fprintf(os.Stderr, "  targets:     %s\n", strings.Join(selectedTargets, ", "))
-				} else {
-					fmt.Fprintf(os.Stderr, "  targets:     (none — auto-detect at compile time)\n")
+			if !yes && ux.CanPrompt() {
+				fmt.Fprintln(os.Stderr)
+				body := []string{
+					fmt.Sprintf("name:        %s", name),
+					fmt.Sprintf("version:     %s", version),
+					fmt.Sprintf("description: %s", description),
+					fmt.Sprintf("author:      %s", author),
 				}
-				fmt.Fprintln(os.Stderr, "+-----------------------+")
+				if len(selectedTargets) > 0 {
+					body = append(body, fmt.Sprintf("targets:     %s", strings.Join(selectedTargets, ", ")))
+				} else {
+					body = append(body, "targets:     (none — auto-detect at compile time)")
+				}
+				ux.Box(os.Stderr, "About to create", body)
 
-				if !confirmPrompt("\nIs this OK?", true) {
-					fmt.Fprintln(os.Stderr, "Aborted.")
+				ok, err := ux.Confirm("Is this OK?", true)
+				if err != nil {
+					return fmt.Errorf("confirm creation: %w", err)
+				}
+				if !ok {
+					ux.Info(os.Stderr, "Aborted.")
 					return nil
 				}
 			}
@@ -156,9 +189,11 @@ func initCmd() *cobra.Command {
 			}
 
 			// Phase 7: Success output
-			fmt.Fprintln(os.Stderr, "\n[*] APM project initialized successfully!")
-			fmt.Fprintln(os.Stderr, "\nNext steps:")
-			fmt.Fprintln(os.Stderr, "  * Install a package:  apm-go install <owner>/<repo>")
+			fmt.Fprintln(os.Stderr)
+			ux.Success(os.Stderr, "APM project initialized successfully!")
+			fmt.Fprintln(os.Stderr)
+			ux.Section(os.Stderr, "Next steps")
+			ux.Info(os.Stderr, "Install a package:  apm-go install <owner>/<repo>")
 			return nil
 		},
 	}
@@ -187,53 +222,19 @@ func buildManifestData(name, version, description, author string, targets []stri
 	return data
 }
 
-func isInteractive() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
-}
-
-var stdinScanner *bufio.Scanner
-
-func getScanner() *bufio.Scanner {
-	if stdinScanner == nil {
-		stdinScanner = bufio.NewScanner(os.Stdin)
-	}
-	return stdinScanner
-}
-
-func promptWithDefault(label, defaultVal string) string {
-	fmt.Fprintf(os.Stderr, "%s [%s]: ", label, defaultVal)
-	scanner := getScanner()
-	if scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			return line
-		}
-	}
-	return defaultVal
-}
-
-func confirmPrompt(label string, defaultYes bool) bool {
-	hint := "[Y/n]"
-	if !defaultYes {
-		hint = "[y/N]"
-	}
-	fmt.Fprintf(os.Stderr, "%s %s: ", label, hint)
-	scanner := getScanner()
-	if scanner.Scan() {
-		line := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		if line == "" {
-			return defaultYes
-		}
-		return line == "y" || line == "yes"
-	}
-	return defaultYes
-}
-
-func interactiveTargetSelect(detected, existing []string) []string {
+// interactiveTargetSelect prompts for the target list via a huh MultiSelect
+// (space to toggle, matching huh's own default keybinding), pre-selecting
+// every already-configured (existing) or auto-detected target. If the user
+// confirms with nothing selected, it asks once more (via ux.Confirm) whether
+// to proceed without pinning any target, looping back to the MultiSelect
+// prompt otherwise.
+//
+// Any error from the underlying MultiSelect/Confirm prompts (e.g. the huh
+// form is aborted with Ctrl-C) is returned to the caller immediately instead
+// of being swallowed: a swallowed error previously left `selected` nil and
+// `cont` at its zero value (false), which re-entered this function
+// recursively on every aborted prompt -- an abort loop with no way out.
+func interactiveTargetSelect(detected, existing []string) ([]string, error) {
 	checked := make(map[string]bool)
 	for _, t := range existing {
 		checked[t] = true
@@ -247,98 +248,38 @@ func interactiveTargetSelect(detected, existing []string) []string {
 		detectedSet[t] = true
 	}
 
+	opts := make([]ux.Option, len(promptTargetsOrdered))
+	for i, t := range promptTargetsOrdered {
+		label := t
+		if detectedSet[t] {
+			for _, sig := range manifest.SignalWhitelist {
+				if sig.Target == t {
+					label = fmt.Sprintf("%s  (detected %s)", t, sig.Path)
+					break
+				}
+			}
+		}
+		opts[i] = ux.Option{Label: label, Value: t, Selected: checked[t]}
+	}
+
 	for {
-		fmt.Fprintln(os.Stderr, "\nSelect targets for this project:")
-		for i, t := range promptTargetsOrdered {
-			mark := "[ ]"
-			if checked[t] {
-				mark = "[x]"
-			}
-			suffix := ""
-			if detectedSet[t] {
-				for _, sig := range manifest.SignalWhitelist {
-					if sig.Target == t {
-						suffix = fmt.Sprintf("  (detected %s)", sig.Path)
-						break
-					}
-				}
-			}
-			fmt.Fprintf(os.Stderr, "  %d. %s %s%s\n", i+1, mark, t, suffix)
+		selected, err := ux.MultiSelect("Select targets for this project", opts)
+		if err != nil {
+			return nil, err
+		}
+		if len(selected) > 0 {
+			return selected, nil
 		}
 
-		fmt.Fprintln(os.Stderr, "\n[i] Type a number to toggle, ranges like '1-3' or '1,3,5',")
-		fmt.Fprintln(os.Stderr, "    'all' / 'none' to flip every entry, or press Enter to confirm.")
-		fmt.Fprintf(os.Stderr, "\nToggle (1-%d, ranges, 'all'/'none', or Enter to confirm): ", len(promptTargetsOrdered))
-
-		scanner := getScanner()
-		if !scanner.Scan() {
-			break
+		ux.Warn(os.Stderr, "No targets selected. APM will auto-detect targets from your filesystem on every compile.")
+		cont, err := ux.Confirm("Continue without pinning targets?", true)
+		if err != nil {
+			return nil, err
 		}
-		input := strings.TrimSpace(scanner.Text())
-
-		if input == "" || input == "done" {
-			break
-		}
-
-		if input == "all" || input == "none" {
-			for _, t := range promptTargetsOrdered {
-				checked[t] = !checked[t]
-			}
-			continue
-		}
-
-		indices := parseToggleInput(input, len(promptTargetsOrdered))
-		for _, idx := range indices {
-			t := promptTargetsOrdered[idx]
-			checked[t] = !checked[t]
+		if cont {
+			return nil, nil
 		}
 	}
-
-	var result []string
-	for _, t := range promptTargetsOrdered {
-		if checked[t] {
-			result = append(result, t)
-		}
-	}
-
-	if len(result) == 0 {
-		fmt.Fprintln(os.Stderr, "\n[!] No targets selected. APM will auto-detect targets from your")
-		fmt.Fprintln(os.Stderr, "    filesystem on every compile.")
-		if confirmPrompt("Continue without pinning targets?", true) {
-			return nil
-		}
-		return interactiveTargetSelect(detected, existing)
-	}
-
-	return result
-}
-
-func parseToggleInput(input string, max int) []int {
-	var indices []int
-	parts := strings.Split(input, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.Contains(part, "-") {
-			bounds := strings.SplitN(part, "-", 2)
-			lo, err1 := strconv.Atoi(strings.TrimSpace(bounds[0]))
-			hi, err2 := strconv.Atoi(strings.TrimSpace(bounds[1]))
-			if err1 != nil || err2 != nil {
-				continue
-			}
-			for i := lo; i <= hi && i <= max; i++ {
-				if i >= 1 {
-					indices = append(indices, i-1)
-				}
-			}
-		} else {
-			n, err := strconv.Atoi(part)
-			if err != nil || n < 1 || n > max {
-				continue
-			}
-			indices = append(indices, n-1)
-		}
-	}
-	return indices
 }
 
 func readExistingTargets() []string {

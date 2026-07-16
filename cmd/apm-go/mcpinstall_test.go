@@ -695,7 +695,7 @@ func TestRunMCPInstall_SelfDefinedURL_E2E(t *testing.T) {
 // TestRunMCPInstall_PrintsTargetSource is a regression test (fourth codex
 // review round): design.md §8 / PRD R7 require the resolved target source
 // (--target > apm.yml targets: > auto-detect) to be verifiable in stdout,
-// matching runInstall's existing "[i] Targets: ...  (source: ...)"
+// matching runInstall's existing "Targets: ...  (source: ...)"
 // convention -- this line was missing entirely from --mcp's output.
 func TestRunMCPInstall_PrintsTargetSource(t *testing.T) {
 	dir := t.TempDir()
@@ -719,7 +719,7 @@ func TestRunMCPInstall_PrintsTargetSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runMCPInstall: %v", err)
 	}
-	if !strings.Contains(stdout, "[i] Targets: claude  (source: auto-detect)") {
+	if !strings.Contains(stdout, "i Targets: claude  (source: auto-detect)") {
 		t.Errorf("expected a target-source line, got:\n%s", stdout)
 	}
 }
@@ -728,7 +728,7 @@ func TestRunMCPInstall_PrintsTargetSource(t *testing.T) {
 // test (codex review): a non-https remote URL passes manifest.ValidateMCP
 // (only self-defined stdio/URL structural checks) but is silently dropped
 // by the existing per-target writer's own https guard at deploy time.
-// runMCPInstall must not print "[+] Added" when nothing actually deployed.
+// runMCPInstall must not print "+ Added" when nothing actually deployed.
 func TestRunMCPInstall_FilteredByWriter_DoesNotClaimSuccess(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -751,7 +751,7 @@ func TestRunMCPInstall_FilteredByWriter_DoesNotClaimSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runMCPInstall: %v", err)
 	}
-	if strings.Contains(stdout, "[+] Added") {
+	if strings.Contains(stdout, "+ Added") {
 		t.Errorf("must not claim success when the writer filtered the entry out, got:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "not deployed to any target") {
