@@ -444,10 +444,26 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	if keys["name"] {
-		return &DependencyReference{
-			RepoURL: kv["name"],
-			Alias:   kv["alias"],
-		}, nil
+		// A bare {name: ...} entry is a git-literal shorthand ("owner/repo").
+		// Validate it as one: this branch previously stored the value
+		// VERBATIM with empty Owner/Repo, so a value like
+		// "ext::sh -c '<cmd>'" flowed through resolveCloneURL unchanged and
+		// reached `git clone` as a remote-helper transport (RCE). Parsing it
+		// as a shorthand rejects any non-owner/repo string outright and, for
+		// legitimate values, populates Owner/Repo/Host so resolveCloneURL
+		// builds a proper https URL instead of cloning the raw string.
+		name := kv["name"]
+		ref, err := ParseDepString(name)
+		if err != nil {
+			return nil, fmt.Errorf("dependency entry %d: invalid name %q: %w", idx, name, err)
+		}
+		if ref.IsLocal || ref.Source != "git" {
+			return nil, fmt.Errorf("dependency entry %d: name %q must be a git repository shorthand (owner/repo)", idx, name)
+		}
+		if kv["alias"] != "" {
+			ref.Alias = kv["alias"]
+		}
+		return ref, nil
 	}
 
 	return nil, fmt.Errorf("dependency entry %d has no source key (git, id, path, name, or marketplace)", idx)

@@ -16,13 +16,13 @@ type RealTagLister struct {
 func (r *RealTagLister) ListTags(repoURL string) ([]semver.TagInfo, error) {
 	cloneURL := r.resolveCloneURL(repoURL)
 
-	cmd := exec.Command("git", "ls-remote", "--tags", "--refs", cloneURL)
+	cmd := cloneCommandFor(cloneURL, "ls-remote", "--tags", "--refs", "--", cloneURL)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("git ls-remote %s: %s", cloneURL, string(ee.Stderr))
+			return nil, fmt.Errorf("git ls-remote %s: %s", SanitizeGitOutput(cloneURL), SanitizeGitOutput(string(ee.Stderr)))
 		}
-		return nil, fmt.Errorf("git ls-remote %s: %w", cloneURL, err)
+		return nil, fmt.Errorf("git ls-remote %s: %w", SanitizeGitOutput(cloneURL), err)
 	}
 
 	return parseTagsOutput(string(out)), nil

@@ -3,7 +3,6 @@ package gitops
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -52,8 +51,11 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 	}
 
 	cloneURL := r.resolveCloneURL(ref)
+	if err := validateCloneURL(cloneURL); err != nil {
+		return nil, err
+	}
 	if err := r.cloneRepo(cloneURL, installDir, resolvedRef); err != nil {
-		return nil, fmt.Errorf("clone %s: %w", cloneURL, err)
+		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
 	}
 
 	return r.parseSubManifest(installDir)
@@ -89,7 +91,7 @@ func checkoutMatchesRef(installDir, resolvedRef string) bool {
 }
 
 func resolveRefLocally(repoDir, ref string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", ref+"^{commit}")
+	cmd := gitCommand("rev-parse", ref+"^{commit}")
 	cmd.Dir = repoDir
 	out, err := cmd.Output()
 	if err != nil {
@@ -104,7 +106,7 @@ func resolveRefLocally(repoDir, ref string) (string, error) {
 // process added content this checkout wouldn't otherwise have -- --ignored
 // surfaces that (plain `git status --porcelain` omits ignored files).
 func worktreeClean(repoDir string) bool {
-	cmd := exec.Command("git", "status", "--porcelain", "--ignored")
+	cmd := gitCommand("status", "--porcelain", "--ignored")
 	cmd.Dir = repoDir
 	out, err := cmd.Output()
 	if err != nil {
@@ -180,12 +182,14 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
 	if ref != "" {
 		args = append(args, "--branch", ref)
 	}
-	args = append(args, url, dir)
+	// "--" terminates option parsing: url and dir can never be mistaken for
+	// git options even if a crafted value begins with "-".
+	args = append(args, "--", url, dir)
 
-	cmd := exec.Command("git", args...)
+	cmd := cloneCommandFor(url, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s\n%s", err, string(out))
+		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
 	}
 	return nil
 }
@@ -197,14 +201,14 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
 // so the commit is guaranteed present if it's reachable from any of them)
 // followed by an explicit checkout instead of the shallow-clone shorthand.
 func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, commit string) error {
-	cloneCmd := exec.Command("git", "clone", url, dir)
+	cloneCmd := cloneCommandFor(url, "clone", "--", url, dir)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s\n%s", err, string(out))
+		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
 	}
-	checkoutCmd := exec.Command("git", "checkout", commit)
+	checkoutCmd := gitCommand("checkout", commit)
 	checkoutCmd.Dir = dir
 	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s\n%s", err, string(out))
+		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
 	}
 	return nil
 }
@@ -225,7 +229,7 @@ func isCommitSHA(ref string) bool {
 
 // ResolveCommit returns the HEAD commit SHA of a cloned repo.
 func ResolveCommit(repoDir string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd := gitCommand("rev-parse", "HEAD")
 	cmd.Dir = repoDir
 	out, err := cmd.Output()
 	if err != nil {

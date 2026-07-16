@@ -397,3 +397,37 @@ func buildMappingNode(kv map[string]string) *yaml.Node {
 	}
 	return n
 }
+
+// TestParseDepDict_NameBranch_RejectsExtTransport is the parse-layer half of
+// the git-ext RCE fix: a bare {name: ...} entry must be validated as a
+// git-repo shorthand, so an "ext::..." remote-helper string is rejected
+// instead of stored verbatim and later handed to `git clone`.
+func TestParseDepDict_NameBranch_RejectsExtTransport(t *testing.T) {
+	bad := []string{
+		"ext::sh -c 'id'",
+		"fd::17/foo",
+		"-oProxyCommand=id",
+		"not a repo",
+	}
+	for _, name := range bad {
+		entry := buildMappingNode(map[string]string{"name": name})
+		if _, err := ParseDepDict(entry, 0); err == nil {
+			t.Errorf("ParseDepDict{name: %q} = nil error, want rejection", name)
+		}
+	}
+}
+
+// TestParseDepDict_NameBranch_AcceptsShorthand confirms a legitimate
+// owner/repo name still parses (now as a proper git ref with Owner/Repo set,
+// so resolveCloneURL builds a real https URL rather than cloning the raw
+// string).
+func TestParseDepDict_NameBranch_AcceptsShorthand(t *testing.T) {
+	entry := buildMappingNode(map[string]string{"name": "owner/repo"})
+	ref, err := ParseDepDict(entry, 0)
+	if err != nil {
+		t.Fatalf("ParseDepDict{name: owner/repo}: %v", err)
+	}
+	if ref.Owner != "owner" || ref.Repo != "repo" || ref.Source != "git" {
+		t.Errorf("got Owner=%q Repo=%q Source=%q, want owner/repo/git", ref.Owner, ref.Repo, ref.Source)
+	}
+}
