@@ -24,6 +24,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Compile Contract](./compile-contract.md) | `apm-go compile`: agents-family AGENTS.md generation, Build ID, idempotency, documented deviations | Active |
 | [CLI Parity Notes](./cli-parity-notes.md) | `audit`/`normalize`/`validate`/`allowExecutables:` same-name and dev-only-extension notes (P0 parity quick wins) | Active |
 | [Terminal UX Contract](./terminal-ux-contract.md) | `internal/ux` 門面：per-writer 著色、CanPrompt vs IsRich、串流保留、TTY 偵測、severity 對應、業務層禁 import ux | Active |
+| [Dep Identity & Skill Subset Contract](./dep-identity-skill-subset-contract.md) | CanonicalRepoIdentity single normalization point (no scattered ToLower), per-dep SkillFilter + H6 invariant, effectiveSkillSubsets single computation point, skills: parse spec (Python parity), stale reconciliation per-skill-name rules, deliberate Python deviations | Active |
 
 ---
 
