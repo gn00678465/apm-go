@@ -640,6 +640,17 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// below, so apm.yml, apm.lock.yaml, and the actual deploy filter can
 	// never disagree about which skills a dependency gets (BUG-2).
 	effectiveSubsets := effectiveSkillSubsets(m, requestedKeys, skillSubset)
+
+	// H3 (design.md §1.2f, prd.md B2-6): a brand-new --skill name THIS call
+	// introduces must be validated against the requested dependency's actual
+	// resolved skills BEFORE any write happens -- apm.lock.yaml, apm.yml, and
+	// deploy.Run's target-directory writes all still lie ahead of this point.
+	// A typo'd name fails the whole install closed with zero partial state,
+	// rather than silently persisting a subset that deploys 0 files.
+	if err := validateNewSkillNames(result, requestedKeys, skillSubset); err != nil {
+		return err
+	}
+
 	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, skillSubset, requestedKeys, noProvenance, marketplaceProvenance)
 	if err != nil {
 		return err
@@ -931,10 +942,151 @@ func effectiveSkillSubsets(m *manifest.Manifest, requestedKeys map[string]bool, 
 			continue
 		}
 		if len(cliSubset) > 0 {
-			result[identity] = unionSortedSkills(result[identity], cliSubset)
+			// Belt-and-braces for the H6 invariant (no empty slice may
+			// enter the filter map): an all-blank cliSubset unions to
+			// empty when nothing was persisted. validateNewSkillNames
+			// rejects that input before any write, so this branch is
+			// unreachable in practice -- but this map must uphold the
+			// invariant on its own, not by trusting a distant caller.
+			if u := unionSortedSkills(result[identity], cliSubset); len(u) > 0 {
+				result[identity] = u
+			}
 		}
 	}
 	return result
+}
+
+// validateNewSkillNames enforces H3's atomicity requirement (design.md
+// §1.2f, prd.md B2-6): a --skill name THIS call introduces must match at
+// least one skill primitive among the dependencies THIS call targeted
+// (requestedKeys), or the whole install fails BEFORE any write (this is
+// called before buildLockfile/deployAndFinalize -- no apm.lock.yaml,
+// apm.yml, or target-directory write has happened yet). "At least one",
+// not "every", targeted dependency, deliberately: a single --skill flag
+// list applies uniformly across every positional package this call names
+// (effectiveSkillSubsets unions the SAME cliSubset into each targeted dep),
+// so installing two DIFFERENT repos together with a shared --skill list
+// naming one skill from each repo must not be treated as a typo just
+// because neither repo happens to have the OTHER repo's skill -- only a
+// name absent from ALL targeted repos is a genuine typo. Only checked
+// against cliSubset (this call's raw --skill flags, not the union'd
+// effective subset) -- an already-persisted name from an earlier install
+// that no longer matches is a separate, non-fatal case (deploy.Run's own
+// skillSubsetDiags warning, not this function). The '*' RESET sentinel
+// never names a real skill, so it's exempt.
+//
+// Scope of "before any write" (codex gate, recorded by-design): resolution
+// has already materialized apm_modules/ by the time this runs -- that's the
+// vendor CACHE, not one of the three account states B2-6's atomicity
+// protects (apm.yml, apm.lock.yaml, deployed target files), and EVERY
+// post-resolution failure path (deploy error, lockfile write error) leaves
+// it refreshed the same way. Moving resolution into a temp dir just for
+// this check would be a cross-cutting architectural change for no
+// account-state benefit.
+func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[string]bool, cliSubset []string) error {
+	if len(cliSubset) == 0 || containsSkillWildcard(cliSubset) {
+		return nil
+	}
+	var names []string
+	for _, s := range cliSubset {
+		trimmed := strings.TrimSpace(s)
+		if trimmed == "" {
+			// A blank name would vanish in unionSortedSkills' trimming; for
+			// a dependency with no persisted subset that union comes out
+			// EMPTY, and an empty slice in SkillFilter.Subsets means
+			// "deploy zero skills" (H6 forbids exactly that state). Reject
+			// loudly instead of silently deploying nothing.
+			return fmt.Errorf("--skill: skill name must be a non-empty string")
+		}
+		names = append(names, trimmed)
+	}
+
+	availableAnywhere := make(map[string]bool)
+	for _, dep := range result.Deps {
+		if !requestedKeys[dep.Key] {
+			continue
+		}
+		modulePath := filepath.Join("apm_modules", dep.Key)
+		for _, p := range deploy.CollectDependencyPrimitives(dep.Key, modulePath) {
+			if p.Type == deploy.TypeSkills {
+				availableAnywhere[p.Name] = true
+			}
+		}
+	}
+
+	var unknown []string
+	for _, name := range names {
+		if !availableAnywhere[name] {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return fmt.Errorf("--skill %s: unknown skill(s) %s", strings.Join(cliSubset, ", "), strings.Join(unknown, ", "))
+	}
+	return nil
+}
+
+// reconcileStaleSkillDeployments is the pollution-convergence half of BUG-2
+// (design.md §1.2g, codex C1, prd.md B2-3/AC-B2-7): it removes files a
+// PREVIOUS install deployed for a dependency (or the local bucket) that this
+// run's freshly-rebuilt newLock no longer claims for ANY dependency -- the
+// case a --skill subset narrowing (or a pre-fix leftover from BUG-2 itself)
+// leaves behind. Ownership-aware: a stale path is only deleted when its
+// on-disk content still matches the OLD recorded hash (deploy.
+// RemoveDeployedFiles, reused rather than reimplemented) -- a user-modified
+// file, a file some OTHER dependency's NEW deployment has since taken over
+// (its hash won't match the stale entry's old one), or a file that's already
+// gone are all left untouched, reported via the returned diagnostics
+// (printed as warnings by the caller) instead of silently vanishing or
+// silently staying forever.
+func reconcileStaleSkillDeployments(existingLock, newLock *lockfile.Lockfile, projectDir string) []string {
+	if existingLock == nil {
+		return nil
+	}
+
+	// claimedNow is every path ANY dependency (or the local bucket) in the
+	// freshly-rebuilt lockfile still deploys this run -- checked across the
+	// WHOLE lockfile, not just the old owner's own entry, so a path that
+	// shifted ownership between calls is never deleted out from under its
+	// new owner.
+	claimedNow := make(map[string]bool)
+	for _, d := range newLock.Dependencies {
+		for _, f := range d.DeployedFiles {
+			claimedNow[f] = true
+		}
+	}
+	for _, f := range newLock.LocalDeployedFiles {
+		claimedNow[f] = true
+	}
+
+	var diags []string
+	for _, old := range existingLock.Dependencies {
+		var stale []string
+		for _, f := range old.DeployedFiles {
+			if !claimedNow[f] {
+				stale = append(stale, f)
+			}
+		}
+		if len(stale) == 0 {
+			continue
+		}
+		_, _, keptDiags := deploy.RemoveDeployedFiles(projectDir, stale, old.DeployedHashes)
+		diags = append(diags, keptDiags...)
+	}
+
+	var staleLocal []string
+	for _, f := range existingLock.LocalDeployedFiles {
+		if !claimedNow[f] {
+			staleLocal = append(staleLocal, f)
+		}
+	}
+	if len(staleLocal) > 0 {
+		_, _, keptDiags := deploy.RemoveDeployedFiles(projectDir, staleLocal, existingLock.LocalDeployedHashes)
+		diags = append(diags, keptDiags...)
+	}
+
+	return diags
 }
 
 // unionSortedSkills merges add into existing, trimming, deduplicating, and
@@ -1251,6 +1403,19 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 				}
 			}
 			sort.Strings(newLock.MCPServers)
+		}
+
+		// Pollution convergence (design.md §1.2g, codex C1, prd.md B2-3/
+		// AC-B2-7): a file a PREVIOUS install deployed that this run's
+		// rebuilt lockfile no longer claims for ANY dependency (e.g. a
+		// --skill subset narrowing what used to be a full install, or a
+		// pre-fix BUG-2 leak of another dependency's whole skill set) is
+		// removed -- but only when its on-disk content still matches the
+		// hash recorded for it. A user-modified file, a file some OTHER
+		// dependency has since taken over, or a file that's already gone are
+		// all left untouched and reported via a warning instead.
+		for _, d := range reconcileStaleSkillDeployments(existingLock, newLock, ".") {
+			ux.Warn(os.Stderr, "%s", d)
 		}
 	}
 

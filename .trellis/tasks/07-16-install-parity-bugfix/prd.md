@@ -143,7 +143,9 @@ fixture 要求：每個 skill 含**多個檔案**、部署到**至少兩個 targ
       → bare `install`，三階段後 manifest（union [x,y]）、lockfile、實際佈署三者一致。
 - [ ] AC-B2-5：bare `apm-go install`（既有專案含子集 dep）依 apm.yml 子集佈署；
       `apm-go update` 路徑同樣尊重子集且 lockfile 一致（C2 迴歸）。
-- [ ] AC-B2-6：不存在的 skill 名（新輸入）報錯且 manifest/lockfile/檔案系統零變更（H3）。
+- [ ] AC-B2-6：不存在的 skill 名（新輸入）報錯且 manifest/lockfile/target 檔案零變更（H3）。
+      原子性範圍註記（codex 閘門 2026-07-16，by-design）：`apm_modules/` 為 vendor 快取、
+      非帳本狀態——resolution 先於驗證 materialize 之，與所有解析後失敗路徑一致，不在零變更範圍。
 - [ ] AC-B2-7：污染收斂（C1）：以「已污染」fixture（target 含 22 個 skill 檔、apm.yml 子集 1）
       跑修復後 bare install，stale 且未被修改的 skill 檔被清除、被使用者修改者保留 + 警告
       （檢查實際檔案系統）。

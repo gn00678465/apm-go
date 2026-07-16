@@ -145,7 +145,53 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// primitives (DepKey == "") and any dependency absent from Subsets
 	// (transitive deps, or a direct dep with no persisted/requested subset)
 	// are never affected.
+	var skillSubsetDiags []string
 	if filter != nil && len(filter.Subsets) > 0 {
+		// H3 (design.md §1.2f): a PERSISTED subset entry naming a skill the
+		// dependency no longer actually has (e.g. an upstream update dropped
+		// it) is a non-fatal drift -- warn instead of silently losing the
+		// name or failing the whole install. A brand-new name this call's
+		// --skill flag introduces is validated separately, BEFORE this
+		// function is ever called (cmd/apm-go's validateNewSkillNames),
+		// which fails the whole install closed with zero writes -- so by the
+		// time Run reaches here, any mismatch left is necessarily an
+		// already-persisted name, never a fresh typo.
+		availableByIdentity := make(map[string]map[string]bool, len(filter.Subsets))
+		for _, p := range ordered {
+			if p.Type != TypeSkills {
+				continue
+			}
+			identity, ok := depCanonKeys[p.DepKey]
+			if !ok || identity == "" {
+				continue
+			}
+			if _, wanted := filter.Subsets[identity]; !wanted {
+				continue
+			}
+			set := availableByIdentity[identity]
+			if set == nil {
+				set = make(map[string]bool)
+				availableByIdentity[identity] = set
+			}
+			set[p.Name] = true
+		}
+		identities := make([]string, 0, len(filter.Subsets))
+		for identity := range filter.Subsets {
+			identities = append(identities, identity)
+		}
+		sort.Strings(identities)
+		for _, identity := range identities {
+			available := availableByIdentity[identity]
+			names := append([]string(nil), filter.Subsets[identity]...)
+			sort.Strings(names)
+			for _, name := range names {
+				if !available[name] {
+					skillSubsetDiags = append(skillSubsetDiags, fmt.Sprintf(
+						"skill %q persisted for %s no longer exists in the dependency -- keeping the persisted subset unchanged", name, identity))
+				}
+			}
+		}
+
 		var filtered []Primitive
 		for _, p := range ordered {
 			if p.Type == TypeSkills {
@@ -182,9 +228,13 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 
 	// 4. Deploy to each target
+	allDiags := make([]string, 0, len(mcpDiags)+len(conflictDiags)+len(skillSubsetDiags))
+	allDiags = append(allDiags, mcpDiags...)
+	allDiags = append(allDiags, conflictDiags...)
+	allDiags = append(allDiags, skillSubsetDiags...)
 	result := &DeployResult{
 		PerDep: make(map[string]*DepDeployResult),
-		Diags:  append(mcpDiags, conflictDiags...),
+		Diags:  allDiags,
 	}
 
 	deployedSkills := make(map[string]bool)

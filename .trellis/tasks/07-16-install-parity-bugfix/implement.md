@@ -67,15 +67,48 @@
      update 一致性 `go test ./cmd/apm-go -run TestUpdate_RespectsSkillSubset -count=1` 綠；
      全量 `go build ./... && go vet ./... && go test ./... -count=1` 全綠。
 9. **unknown skill 政策（H3）**：先驗證後持久化的順序調整 + 新名報錯原子性測試 +
-   persisted 消失警告測試。
+   persisted 消失警告測試。**已完成**（`cmd/apm-go/install.go` 新增
+   `validateNewSkillNames`，在 `effectiveSkillSubsets` 之後、`buildLockfile` 之前
+   呼叫——早於 `deploy.Run` 的任何 target 寫入與 `apm.lock.yaml`/`apm.yml` 寫入；
+   `internal/deploy/deploy.go` 的 `Run` 新增 `skillSubsetDiags`，對「persisted
+   子集內的名稱找不到對應 primitive」發出 warning，而非 error）。
    → verify: `go test ./cmd/apm-go -run TestInstall_UnknownSkill -count=1` 綠
-     （斷言錯誤時 manifest/lockfile/檔案系統 byte 級不變）。
+     （`TestInstall_UnknownSkill_NewNameErrorsAtomically`：純新名/新名+既有名混合，
+     兩者皆報錯且 apm.yml byte 級不變、apm.lock.yaml 未寫入、target 目錄空；
+     `TestInstall_UnknownSkill_PersistedNameDisappearsWarnsAndKeeps`：persisted
+     名稱因上游更新消失時，bare install 不報錯、stderr 含警告、manifest/lockfile
+     子集維持不變）——已跑綠。
 10. **污染收斂（C1）**：先寫觀察測試確認既有 re-deploy 對 stale 檔的行為；
     不足則實作 ownership-aware reconciliation（hash 驗證 + 接管檢查，重用 uninstall helper）。
+    **已完成**（觀察確認舊行為「不收斂」——`deploy.Run` 純加法式部署，縮小
+    subset 後舊檔案永久殘留；`cmd/apm-go/install.go` 新增
+    `reconcileStaleSkillDeployments`，在 deploy 完成、`newLock` 各 dep 的
+    `DeployedFiles`/`LocalDeployedFiles`/MCP 合併檔都填好之後呼叫，比較
+    `existingLock`（舊帳本）與 `newLock`（本次全庫已宣告的路徑集合）的差集，
+    對每個 dep 的 stale 子集重用 `internal/deploy/uninstall.go` 既有的
+    `RemoveDeployedFiles`（hash 驗證 + 已存在性檢查），不重造 wheel）。
     → verify: `go test ./cmd/apm-go -run TestInstall_StaleSkillReconciliation -count=1` 綠
-      （污染 fixture → bare install → stale 未修改檔被清、修改檔保留 + 警告，查實際檔案系統）。
+      （全量安裝兩個 skill 後縮窄到其中一個：3 份未修改的殘留複本被清除，1 份
+      使用者手動修改過的複本被保留並在 stderr 產生警告，查實際檔案系統
+      而非只查 lockfile/DeployResult）——已跑綠。
 11. **邊界批次**：混合 wildcard、參數順序、dev deps、多 positional、寫入失敗原子性注入。
-    → verify: 對應測試群綠（實作時回填 -run pattern）。
+    **已完成**（混合 wildcard 與多 positional 共用 --skill 兩項促成
+    `validateNewSkillNames` 的一處設計修正：驗證語意從「每個 targeted dep 都要有
+    這個名稱」放寬為「至少一個 targeted dep 有這個名稱」——否則兩個不同 repo
+    共用同一組 --skill 清單、各自只占其中一個名稱時會被誤判為 typo 而整體報錯；
+    寫入失敗原子性採**記錄限制**而非 FS 權限注入測試，見 design.md §4 BUG-2
+    小節新增決策段落——`os.Chmod` 唯讀在 CI 常見的 root 執行環境下會被略過，
+    是不可靠的驗證手段）。
+    → verify:
+      `go test ./cmd/apm-go -run TestRunInstall_SkillMixedWildcardResetsToFull -count=1` 綠
+      （narrow 後 `--skill x --skill '*'` 全量重置，apm.yml/apm.lock.yaml 子集皆清空）；
+      `go test ./cmd/apm-go -run TestRunInstall_DevDependency_SkillSubsetHonored -count=1` 綠
+      （devDependencies.apm 持久化子集同樣被 SkillFilter 尊重）；
+      `go test ./cmd/apm-go -run TestRunInstall_MultiplePositionalPackages_SharedSkillFlag -count=1` 綠
+      （兩個不同 repo 共用 --skill 清單，各自只部署自己擁有的名稱，不報錯，
+      並記錄「持久化子集含對方 repo 名稱」的既有行為，非本任務新增缺陷）；
+      既有迴歸不受影響：
+      `go test ./cmd/apm-go ./internal/deploy -run 'SkillWildcard|SkillFilter|SkillSubset' -count=1` 綠。
 12. **全量驗證 + 閘門 + commit**（`fix(deps): --skill 子集持久化與重佈署尊重`；
     Phase 0 的 identity 若無獨立價值可併入此 commit，有則先行獨立 commit）。
     → verify: `go build ./...`、`go vet ./...`、`go test ./... -count=1` 三條各自 exit 0；
