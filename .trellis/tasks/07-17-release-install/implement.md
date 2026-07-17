@@ -16,5 +16,6 @@
    → verify: PR CLEAN;checklist.md 全項核對
 7. **(合併後)推 `v0.2.1` tag** — 使用者執行或授權後執行
    → verify: AC1(7 assets)、AC2(irm 實裝)、AC5 checksum 負路徑、AC6(uninstall 實跑)
+8. **收尾(使用者規則:歸檔/journal 不直接進 main)** — 實測全過後,在分支上 commit「checklist 補齊證據 → task archive → journal」,走 PR 合併,任務才閉合;`/trellis:finish-work` 延到此步執行
 
 回滾點:每步獨立 commit,單步 revert 不影響其他;workflow 檔在 tag 推出前無任何副作用。
