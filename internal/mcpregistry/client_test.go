@@ -410,3 +410,26 @@ func TestGetJSON_NetworkAndHTTPErrors_NeverEchoRequestURL(t *testing.T) {
 		t.Errorf("404 registry error leaked the path token: %v", err)
 	}
 }
+
+// TestGetJSON_SizeCapEnforced covers M1: getJSON must reject an oversized
+// registry response body before decoding, bounding memory use.
+func TestGetJSON_SizeCapEnforced(t *testing.T) {
+	orig := mcpRegistryMaxBytes
+	mcpRegistryMaxBytes = 8
+	t.Cleanup(func() { mcpRegistryMaxBytes = orig })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"servers": [{"server": {"name": "this-is-longer-than-eight-bytes"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.FindServerByReference(context.Background(), "any/server", "")
+	if err == nil {
+		t.Fatal("FindServerByReference returned no error, want a size-cap rejection")
+	}
+	if !strings.Contains(err.Error(), "byte limit") {
+		t.Errorf("error = %v, want it to mention the byte limit", err)
+	}
+}

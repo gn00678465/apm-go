@@ -534,3 +534,25 @@ func TestIsTrustedGitHubHost_GHEFamily(t *testing.T) {
 		}
 	})
 }
+
+// TestFetchGitHub_SizeCapEnforced covers H2: fetchGitHub must reject an
+// oversized response body rather than buffer it all, bounding memory use.
+func TestFetchGitHub_SizeCapEnforced(t *testing.T) {
+	orig := urlFetchMaxBytes
+	urlFetchMaxBytes = 8
+	t.Cleanup(func() { urlFetchMaxBytes = orig })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"name": "this-body-is-way-longer-than-eight-bytes"}`))
+	}))
+	t.Cleanup(srv.Close)
+	withGitHubAPIBase(t, srv.URL)
+	src := &MarketplaceSource{Owner: "o", Repo: "r", Ref: "main", Path: "marketplace.json", Host: "github.com"}
+
+	_, err := fetchGitHub(context.Background(), src)
+	if err == nil {
+		t.Fatal("fetchGitHub() returned no error, want a size-cap rejection")
+	}
+	if !strings.Contains(err.Error(), "byte limit") {
+		t.Errorf("fetchGitHub() error = %v, want it to mention the byte limit", err)
+	}
+}

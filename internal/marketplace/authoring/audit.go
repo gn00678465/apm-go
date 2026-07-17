@@ -429,6 +429,12 @@ const (
 
 const auditGithubFetchTimeout = 30 * time.Second
 
+// auditFetchMaxBytes caps how much of a GitHub raw apm.yml response
+// githubRawFetcher will read, bounding memory use against a hostile or
+// misbehaving host (mirrors marketplace.urlFetchMaxBytes). A var so tests can
+// shrink it instead of allocating a real 10MB+ body.
+var auditFetchMaxBytes int64 = 10 * 1024 * 1024
+
 // auditGithubAPIBaseFor computes the GitHub Contents API root for host,
 // mirroring internal/marketplace/client_github.go's githubAPIBaseFor. A var
 // (not a plain function) so tests can redirect it at an httptest.Server.
@@ -509,9 +515,12 @@ func (githubRawFetcher) FetchRaw(host, owner, repo, path, ref string) ([]byte, e
 		return nil, fmt.Errorf("GitHub returned HTTP %d fetching apm.yml", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, auditFetchMaxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read GitHub response: %w", err)
+	}
+	if int64(len(data)) > auditFetchMaxBytes {
+		return nil, fmt.Errorf("GitHub apm.yml response exceeds %d byte limit", auditFetchMaxBytes)
 	}
 	return data, nil
 }
