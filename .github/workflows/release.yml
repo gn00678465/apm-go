@@ -21,7 +21,8 @@ jobs:
       - name: Verify tag matches version.go
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
-          code_version=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/version/version.go)
+          # [^"]* + 無行尾錨點：對 CRLF 行尾健壯（act 本地驗證會以 CRLF working tree 跑）
+          code_version=$(sed -n 's/^const Version = "\([^"]*\)".*/\1/p' internal/version/version.go)
           if [ -z "$code_version" ]; then
             echo "::error::could not extract Version from internal/version/version.go"
             exit 1
