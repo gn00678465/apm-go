@@ -161,6 +161,7 @@ Phase 3: Finish  → verify, update spec, commit, and wrap up
 - `design.md` — technical design for complex tasks: boundaries, contracts, data flow, tradeoffs, compatibility, rollout / rollback shape.
 - `implement.md` — execution plan for complex tasks: ordered checklist, validation commands, review gates, and rollback points.
 - `implement.jsonl` / `check.jsonl` — spec and research manifests for sub-agent context. They do not replace `implement.md`.
+- `checklist.md` — verifiable checks **derived from** `prd.md`, not hand-picked. Every acceptance criterion, Finding, Decision, and **Deferral** emits ≥1 check; a Deferral's check is "prove this deferral is justified", never a skip. Built during planning, verified in Phase 2.2. See "Verification Checklist & Convergent-Claim Tripwire" below.
 - Lightweight tasks may be PRD-only. Complex tasks must have `prd.md`, `design.md`, and `implement.md` before `task.py start`.
 
 ### Parent / Child Task Trees
@@ -293,6 +294,38 @@ When a user request matches one of these intents inside an active task, route fi
 - Task creation approval is not implementation approval; implementation waits for `task.py start` after artifact review.
 - PRD-only is valid for lightweight tasks; complex tasks need `design.md` + `implement.md`.
 - Planning must be persisted to task artifacts; checks must run before reporting completion.
+
+### Verification Checklist & Convergent-Claim Tripwire (fail-closed)
+
+Two mechanisms close the recurring "unbacked terminal claim to stop work" failure (未完成 / 偷懶 / 遺漏 / 自作主張 are one action — asserting a conclusion so the work can stop). See `AGENTS.md` §5. These are project guardrails, not optional.
+
+**Convergent-claim tripwire.** Any of these words in research / PRD / review / progress report — 延後 · 架構性 · 不可利用 · 不影響 · 已完成 · 完整 · 範圍外 · N/A · 其餘同理 — must carry, in the same place, an **evidence triple**: (1) a `file:line` code path actually read, (2) a threat model / repro / counter-example, (3) a cost estimate when the claim is "defer / needs rework". Adjective without evidence = defect. A deferral is a claim, not a scope decision; when evidence is missing write "未驗證", never "延後".
+
+**Checklist derivation (mechanical).** `checklist.md` is **derived** from `prd.md`, not hand-picked: scan every acceptance criterion, Finding, Decision, and Deferral; each emits ≥1 check. A Deferral emits a "prove this deferral is justified" check — which forces the evidence triple above — never zero checks. A checklist that omits any PRD Finding / Decision / Deferral is itself a defect. Same author may derive it (derivation is mechanical, not judgment).
+
+**Independent audit (judgment).** Reserve an independent adversarial pass (a different model, e.g. `codex exec`) for the judgment layer only — convergent claims like "not exploitable" / "architectural" — **triggered by the tripwire, not run blanket** on every PRD. Cost-order: prompt-level prevention first (≈0 token), cheap same-model self-check second, independent audit last. The expensive, flaky gate is a targeted backstop, never the primary line — it can be unavailable (timeout / offline), so the prevention layer must carry the weight.
+
+**`checklist.md` template** (instantiate per task; every row traces to a `prd.md` line):
+
+```markdown
+# Checklist — <task>
+
+## Acceptance criteria (one row per PRD AC)
+- [ ] AC1 — <check> · evidence: <test name / file:line / command output>
+
+## Findings (one row per PRD Finding)
+- [ ] F1 — <check the finding is addressed> · evidence: …
+
+## Decisions (one row per PRD Decision — justify the choice)
+- [ ] D1 — <decision> holds because … · evidence: file:line + cost
+
+## Deferrals (one row per PRD Deferral — PROVE it is justified, never skip)
+- [ ] X1 — deferral "<claim>" is justified: threat model = …, cost = …,
+      not-reachable-because file:line = …   ← evidence triple mandatory
+
+## Tripwire sweep
+- [ ] No 延後/架構性/不可利用/不影響/完成/範圍外/N/A in artifacts lacks its evidence triple
+```
 
 ### Loading Step Detail
 
@@ -552,6 +585,8 @@ If issues are found → fix → re-check, until green.
 [/codex-inline, Kilo, Antigravity, Devin]
 
 **Final pass (before Phase 3.4 commit)**: the last 2.2 of a task must run full-scope, not just on the latest implement chunk. List all affected packages with `python ./.trellis/scripts/get_context.py --mode packages`, then load each package's spec index Quality Check section. This catches cross-layer / multi-package issues a mid-iteration local 2.2 cannot.
+
+Also verify **every** item in `checklist.md` actually holds — including each Deferral's "prove the deferral is justified" check (see "Verification Checklist & Convergent-Claim Tripwire"). An unproven deferral, or any convergent claim (延後 / 不可利用 / 架構性 …) lacking its evidence triple, is a **blocking finding**, not a skip.
 
 #### 2.3 Rollback `[on demand]`
 
