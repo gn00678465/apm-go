@@ -2,21 +2,21 @@
 
 ## Acceptance criteria
 
-- [ ] AC1 — 推 `v0.2.1` 後 release 含 7 assets(6 二進位 + SHA256SUMS)· evidence: release asset 清單輸出
-- [ ] AC2 — Windows `irm | iex` 實裝後新 shell `apm-go --version` = 0.2.1 · evidence: 命令輸出
-- [ ] AC3 — `sh -n install.sh` 通過;shellcheck/WSL(若可用)· evidence: 命令輸出
-- [ ] AC4 — tag/version 不匹配 → 守門步驟失敗 · evidence: Actions 失敗紀錄或本機等價實測輸出
-- [ ] AC5 — 壞 URL / 壞 checksum → 兩腳本非零退出 + 明確錯誤 · evidence: 實測輸出
-- [ ] R2 — 6 組 GOOS/GOARCH 皆 `CGO_ENABLED=0` 交叉編譯成功,輸出名 `apm-go[-*][.exe]` 非 `apm` · evidence: 本機交叉編譯輸出 + workflow 檔行號
-- [ ] R8 — version bump 為獨立 commit · evidence: git log hash
-- [ ] AC6 — Windows uninstall 實跑:目錄移除 + PATH 剔除 + 冪等重跑 · evidence: 命令輸出
-- [ ] AC7 — `sh -n uninstall.sh` 通過;WSL 實跑(若可用)· evidence: 命令輸出
+- [ ] AC1 — 推 `v0.2.1` 後 release 含 7 assets(6 二進位 + SHA256SUMS)· evidence: 待首次 release
+- [ ] AC2 — Windows `irm | iex` 實裝後新 shell `apm-go --version` = 0.2.1 · evidence: 待首次 release
+- [x] AC3 — `sh -n install.sh` 通過(輸出 sh-n-OK);shellcheck 本機不可用;WSL 實跑至下載階段 · evidence: 2026-07-17 session 實測輸出
+- [x] AC4(本機等價)— 守門 sed+比對邏輯實測:tag=0.2.1→OK exit=0;tag=0.0.0→MISMATCH exit=1 · evidence: guard-test.sh 輸出;Actions 真跑待 release
+- [x] AC5(URL 半)— 兩腳本對 404:sh=RC-NONZERO+明確錯誤;PS=exit 1+明確錯誤 · evidence: WSL/pwsh 實測輸出;checksum-mismatch 半待 release(需真資產)
+- [x] R2 — 6/6 組 CGO_ENABLED=0 交叉編譯成功,產物 apm-go-<os>-<arch>[.exe] · evidence: dist-test ls 輸出;release.yml:45
+- [x] R8 — version bump 獨立 commit · evidence: git log(chore(release): 版本更新至 0.2.1)
+- [ ] AC6 — Windows uninstall 實跑(真安裝後):目錄移除 + PATH 剔除 · evidence: 待 release;未安裝冪等雙跑已過(run1/run2 exit=0)
+- [x] AC7 — `sh -n uninstall.sh` 通過;WSL 冪等雙跑 IDEMPOTENT-OK · evidence: 2026-07-17 實測輸出
 
 ## Decisions(每項:決定仍成立的證據)
 
-- [ ] D1 — `releases/latest/download` URL 實際可 302 到資產(首次 release 後驗證);腳本無 API/jq 依賴 · evidence: curl -I 輸出 + 腳本 grep 無 `api.github.com`
-- [ ] D2 — raw binary 命名與 workflow 產物、兩腳本組 URL 三處一致 · evidence: 三處 file:line 對照
-- [ ] D3 — workflow 未引入 goreleaser;總行數與複雜度可讀(<120 行)· evidence: wc -l
+- [ ] D1 — `releases/latest/download` URL 302(待首次 release);腳本無 API/jq 依賴已驗:grep api.github.com = 0/0 · evidence: grep -c 輸出
+- [x] D2 — 命名三處一致:release.yml:45 `apm-go-$os-$arch$ext`、install.sh `$BINARY_NAME-$os-$arch`、install.ps1:28 `apm-go-windows-$arch.exe` · evidence: grep 輸出
+- [x] D3 — 無 goreleaser;release.yml 共 61 行(<120)· evidence: wc -l 輸出
 
 ## Deferrals(證明延後成立,不是跳過)
 
