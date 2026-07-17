@@ -305,6 +305,8 @@ Two mechanisms close the recurring "unbacked terminal claim to stop work" failur
 
 **Independent audit (judgment).** Reserve an independent adversarial pass (a different model, e.g. `codex exec`) for the judgment layer only — convergent claims like "not exploitable" / "architectural" — **triggered by the tripwire, not run blanket** on every PRD. Cost-order: prompt-level prevention first (≈0 token), cheap same-model self-check second, independent audit last. The expensive, flaky gate is a targeted backstop, never the primary line — it can be unavailable (timeout / offline), so the prevention layer must carry the weight.
 
+The point of this pass is **failure decorrelation**, not "a different model" per se: a same-model re-read fails correlated with the original error (the model that rationalized a deferral will rationalize it again on re-read). So when `codex` is unavailable, the fallback is NOT to skip the audit — it is a **fresh-context same-model agent with an inverted objective** ("refute this claim"): fresh context removes the sunk rationalization, the adversarial framing removes confirmation bias. A plain re-read in the same session does not count as an audit.
+
 **`checklist.md` template** (instantiate per task; every row traces to a `prd.md` line):
 
 ```markdown
