@@ -222,7 +222,7 @@ func TestBuildLockfile_MarketplaceProvenanceAttached(t *testing.T) {
 	}
 
 	// Act
-	lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, nil, true, provenance)
+	lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, nil, nil, true, provenance)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestBuildLockfile_MarketplaceProvenance_SourceURLOnlyForURLKind(t *testing.
 	}
 
 	// Act
-	lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, nil, true, provenance)
+	lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, nil, nil, true, provenance)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestBuildLockfile_ProvenanceCarriesForwardFromExistingLock(t *testing.T) {
 
 	// Act -- NO marketplaceProvenance for this call (nil), simulating a bare
 	// `apm install` that doesn't re-supply the marketplace CLI ref.
-	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, true, nil)
+	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestBuildLockfile_ProvenanceCarryForward_FreshProvenanceWins(t *testing.T) 
 	}
 
 	// Act
-	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, true, freshProvenance)
+	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, freshProvenance)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestBuildLockfile_ProvenanceCarryForward_NoExistingProvenanceStaysEmpty(t *
 	}}
 
 	// Act
-	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, true, nil)
+	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}

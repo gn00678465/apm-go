@@ -345,6 +345,16 @@ func depSemanticEqual(a, b *LockedDep) bool {
 		a.MarketplacePluginName == b.MarketplacePluginName &&
 		a.SourceURL == b.SourceURL &&
 		a.SourceDigest == b.SourceDigest &&
+		// SkillSubset (BUG-2's per-dep --skill filter) must participate in
+		// semantic equality too: without this, a --skill RESET/narrowing
+		// that changes nothing else about the dependency (same commit,
+		// same everything) was invisible to the no-op check above, so
+		// deployAndFinalize returned "Already up to date" BEFORE ever
+		// reaching the apm.yml/apm.lock.yaml write step -- silently
+		// discarding the very subset change the caller just asked for
+		// (found via BUG-1's case-fold RESET regression test, which
+		// exercises exactly this "nothing else changed" shape).
+		slicesEqual(a.SkillSubset, b.SkillSubset) &&
 		slicesEqual(a.DeployedFiles, b.DeployedFiles) &&
 		mapsEqual(a.DeployedHashes, b.DeployedHashes)
 }

@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/install-marketplace-contracts.md", "reason": "install/marketplace 既有契約（dep 解析、persist、exit code）——BUG-1/BUG-2 觸及的核心層"}
+{"file": ".trellis/spec/backend/terminal-ux-contract.md", "reason": "乙類輸出走 internal/ux 門面的 per-writer 契約與符號/串流規則"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R17 typed error + 錯誤路徑 exit code 慣例"}
+{"file": ".trellis/spec/backend/cli-parity-notes.md", "reason": "與 Python apm 的 parity 判準與已知差異"}
+{"file": ".trellis/tasks/07-16-install-parity-bugfix/research/codex-plan-review.md", "reason": "對抗審查 3C/8H/7M/4L findings——實作時的陷阱清單（C2 唯一計算點、C3 既有 entry 更新、H4 路徑集合模型、H6 空 slice 不變式）"}
+{"file": ".trellis/tasks/archive/2026-07/07-14-init-tui-beautify/research/full-ab-parity-sweep.md", "reason": "A/B 實跑盤點：F1/F2/F4 守衛與乙類缺口的原始證據"}
+{"file": ".trellis/tasks/archive/2026-07/07-14-init-tui-beautify/research/output-parity-audit.md", "reason": "R12 dry-run/正式不對稱的一次性稽核結果"}

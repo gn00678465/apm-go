@@ -174,6 +174,40 @@ func TestRunInstall_LocalBundle_DeploysAndWritesLockfile(t *testing.T) {
 	}
 }
 
+// TestRunInstall_LocalBundle_SummaryAggregatesDeployedFilesByKind is the
+// R12b regression (prd.md/design.md §3): an ordinary `apm install` groups
+// its deployed-files summary by primitive kind and target root
+// (deployedFilesTree, R10b) -- local-bundle install used to only print the
+// aggregate file count, dropping that same breakdown even though
+// result.Files (fed to this same helper) already carries everything needed
+// to produce it.
+func TestRunInstall_LocalBundle_SummaryAggregatesDeployedFilesByKind(t *testing.T) {
+	bundleDir := buildInstallTestBundle(t)
+	chdirTemp(t)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+
+	r, w, _ := os.Pipe()
+	origStdout := os.Stdout
+	os.Stdout = w
+	err := runInstall(deps, false, false, "claude", nil, []string{bundleDir})
+	os.Stdout = origStdout
+	w.Close()
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	stdout := buf.String()
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout, "1 agent -> .claude/agents/") {
+		t.Errorf("expected an aggregated agent summary line, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "1 skill -> .claude/skills/") {
+		t.Errorf("expected an aggregated skill summary line, got:\n%s", stdout)
+	}
+}
+
 func TestRunInstall_LocalBundle_TamperedFile_Errors(t *testing.T) {
 	bundleDir := buildInstallTestBundle(t)
 	if err := os.WriteFile(filepath.Join(bundleDir, "agents", "foo.md"), []byte("TAMPERED"), 0o644); err != nil {

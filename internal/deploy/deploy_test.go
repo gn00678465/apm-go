@@ -906,7 +906,7 @@ func TestRun_SkillFilterScopedToDepKey(t *testing.T) {
 		},
 	}
 
-	_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Names: []string{"a1"}, DepKeys: []string{depA}})
+	_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: map[string][]string{depA: {"a1"}}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -925,20 +925,25 @@ func TestRun_SkillFilterScopedToDepKey(t *testing.T) {
 	}
 }
 
-// TestRun_SkillFilterWildcardDeploysAll is a regression test for the
+// TestRun_SkillFilterAbsentKeyDeploysAll is a regression test for the
 // documented `--skill '*'` RESET sentinel (install.md: "--skill '*' resets
-// to install all skills"): SkillFilter used to treat "*" as a literal skill
-// name to whitelist, so a package's skills (none of which are actually
-// named "*") were all suppressed instead of all deployed. Covers both the
-// pure-wildcard case and a mixed list (e.g. `--skill review --skill '*'`),
-// both of which must deploy every skill for the scoped dependency.
-func TestRun_SkillFilterWildcardDeploysAll(t *testing.T) {
+// to install all skills"): the RESET semantics now live entirely above
+// deploy.Run (cmd/apm-go's effectiveSkillSubsets deletes the dependency's
+// entry from the Subsets map on a wildcard), so SkillFilter's own contract
+// is simply "a dependency absent from Subsets deploys every skill" (H6: "no
+// entry" is the ONLY representation of "deploy all" -- a value is never an
+// empty slice). This covers both a SkillFilter with no Subsets at all and
+// one where OTHER dependencies are scoped but depA is not, proving the
+// omission -- not a special-cased wildcard value -- is what deploys
+// everything for depA.
+func TestRun_SkillFilterAbsentKeyDeploysAll(t *testing.T) {
 	tests := []struct {
-		name  string
-		names []string
+		name    string
+		subsets map[string][]string
 	}{
-		{"pure wildcard", []string{"*"}},
-		{"mixed with a concrete name", []string{"a1", "*"}},
+		{"nil Subsets", nil},
+		{"empty Subsets", map[string][]string{}},
+		{"other dependency scoped, depA absent", map[string][]string{"acme/other": {"x"}}},
 	}
 
 	for _, tt := range tests {
@@ -962,16 +967,16 @@ func TestRun_SkillFilterWildcardDeploysAll(t *testing.T) {
 				},
 			}
 
-			_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Names: tt.names, DepKeys: []string{depA}})
+			_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: tt.subsets})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 
 			if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a1/SKILL.md")); err != nil {
-				t.Errorf("a1 should deploy under --skill %v (reset to all): %v", tt.names, err)
+				t.Errorf("a1 should deploy when depA is absent from Subsets (%v): %v", tt.subsets, err)
 			}
 			if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a2/SKILL.md")); err != nil {
-				t.Errorf("a2 should also deploy under --skill %v (reset to all): %v", tt.names, err)
+				t.Errorf("a2 should also deploy when depA is absent from Subsets (%v): %v", tt.subsets, err)
 			}
 		})
 	}

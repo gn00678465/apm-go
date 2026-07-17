@@ -281,6 +281,11 @@ func TestRun_WritesAndIsIdempotent(t *testing.T) {
 	if result.InstructionCount != 1 {
 		t.Errorf("InstructionCount = %d, want 1", result.InstructionCount)
 	}
+	// R12e: Result.Sources surfaces the display-relative source path of
+	// every compiled instruction, in render order.
+	if len(result.Sources) != 1 || result.Sources[0] != ".apm/instructions/a.instructions.md" {
+		t.Errorf("Sources = %v, want [.apm/instructions/a.instructions.md]", result.Sources)
+	}
 
 	agentsPath := filepath.Join(dir, "AGENTS.md")
 	first, err := os.ReadFile(agentsPath)

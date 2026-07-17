@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/semver"
 )
@@ -416,5 +417,78 @@ func TestRunUpdate_NoLockfile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "apm.lock.yaml") {
 		t.Errorf("error should mention apm.lock.yaml: %v", err)
+	}
+}
+
+// TestUpdate_RespectsSkillSubset is BUG-2's `apm update` regression
+// (prd.md AC-B2-5, design.md §1.2c): `update` has no --skill flag and no
+// per-call requested-package concept, but it MUST still respect a
+// dependency's already-persisted apm.yml skills: subset when it re-deploys
+// -- before this fix, `update`'s buildLockfile/deployAndFinalize calls were
+// always passed a nil skillSubset/requestedKeys with no substitute
+// (effectiveSkillSubsets), so a bare `apm update` silently redeployed every
+// skill in the bundle, forgetting the subset an earlier `apm install
+// --skill` call had persisted.
+func TestUpdate_RespectsSkillSubset(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repoR := gitSkillRepo(t, remotesDir, "repo-r", map[string][]string{
+		"skillX": {"SKILL.md", "notes.md"},
+		"skillY": {"SKILL.md", "notes.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+	}
+
+	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repoR}); err != nil {
+		t.Fatalf("install repo-r --skill skillX: %v", err)
+	}
+	for _, p := range expectedSkillDeployPaths("skillX", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+			t.Fatalf("after install: expected %s to exist: %v", p, err)
+		}
+	}
+	for _, p := range expectedSkillDeployPaths("skillY", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+			t.Fatalf("after install: %s must NOT exist (skillY was never selected)", p)
+		}
+	}
+
+	if err := runUpdate(deps, false, false, "", false); err != nil {
+		t.Fatalf("runUpdate: %v", err)
+	}
+
+	// The regression check: a bare `apm update` must not forget the
+	// persisted --skill skillX subset.
+	for _, p := range expectedSkillDeployPaths("skillX", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+			t.Errorf("after update: expected %s to still exist: %v", p, err)
+		}
+	}
+	for _, p := range expectedSkillDeployPaths("skillY", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+			t.Errorf("POLLUTION (BUG-2, update path): %s must NOT exist -- `apm update` must not forget the persisted --skill skillX subset", p)
+		}
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 {
+		t.Fatalf("expected exactly ONE lockfile dependency after update, got %d", len(lock.Dependencies))
+	}
+	if got := lock.Dependencies[0].SkillSubset; len(got) != 1 || got[0] != "skillX" {
+		t.Errorf("apm.lock.yaml skill_subset after update = %v, want [skillX]", got)
 	}
 }

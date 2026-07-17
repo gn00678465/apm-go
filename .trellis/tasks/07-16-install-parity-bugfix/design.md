@@ -171,6 +171,20 @@ func effectiveSkillSubsets(m *manifest.Manifest, requestedKeys map[string]bool,
     多 positional 共用 --skill、requested 未 resolve。
   - 原子性（codex M5）：注入 manifest/lockfile 寫入失敗，斷言舊檔不被部分覆寫；
     若架構無交易能力，在 design 記錄限制與恢復策略。
+    **決策（2026-07-16, Phase 1 step 11 執行時）**：`deployAndFinalize` 依序
+    寫 apm.lock.yaml（step 8）→ apm.yml（step 9），兩者之間**沒有交易/回滾**——
+    若 step 9 寫入失敗（例如 apm.yml 檔案被鎖定/唯讀），apm.lock.yaml 已經
+    落盤成新的 union/reset 結果，但 apm.yml 停留舊值，產生暫時性帳實不符。
+    這是**既有、跨此任務全部檔案寫入路徑共通**的限制（非本任務新增），
+    修復需要真正的兩檔案交易語意（例如先寫暫存檔、確認兩者都成功後才
+    real rename），屬於比本任務範圍更大的架構變更，不在 BUG-2 修復範圍內。
+    **不**用檔案權限（`os.Chmod` 唯讀）做注入測試——CI 常見以 root 執行，
+    Linux 下 root 略過權限檢查會讓測試在該環境下靜默失效（`err==nil`），
+    是不可靠、環境相依的驗證手段；改以本節文字記錄限制，跳過對應的
+    FS-injection 測試。使用者若在 step 9 撞到寫入失敗，會收到
+    `"update apm.yml: %w"` 錯誤（`runInstall` 既有 wrap），可手動比對兩檔案
+    是否一致後重跑 `apm-go install` 收斂（bare install 會重新計算
+    `effectiveSkillSubsets` 並重寫兩者，具備冪等收斂性質）。
 - **BUG-1（TDD 硬性）**：RED `Resolved 2` → GREEN；守衛：不同 repo 不受影響、
   F4 shadowed 仍在、混合大小寫 lockfile 升級相容、BUG-1×BUG-2 交互
   （`RepoA --skill a → repoa --skill b → REPOA --skill '*'`）。

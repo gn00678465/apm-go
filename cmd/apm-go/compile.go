@@ -70,6 +70,17 @@ func runCompile(targetFlag, projectDir string) error {
 		return fmt.Errorf("compile: %w", err)
 	}
 	if result.Wrote {
+		// R12e: surface the compiled sources (Result.Sources, read-only
+		// data the collect pass already had). Instruction counts are small
+		// (single digits typically), so the list prints by default like
+		// Python's compile does -- no --verbose gate needed here.
+		if len(result.Sources) > 0 {
+			items := make([]ux.Item, len(result.Sources))
+			for i, src := range result.Sources {
+				items[i] = ux.Item{Text: src}
+			}
+			ux.BulletList(os.Stdout, items)
+		}
 		ux.Success(os.Stdout, "Compiled %d instruction(s) to %s", result.InstructionCount, result.Path)
 	} else {
 		ux.Info(os.Stdout, "No changes detected; preserving existing AGENTS.md for idempotency")

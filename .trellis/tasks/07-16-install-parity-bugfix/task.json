@@ -3,7 +3,7 @@
   "name": "install-parity-bugfix",
   "title": "install 輸出 parity 與業務 bug 修復（乙/丙 + --skill 子集失憶污染）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

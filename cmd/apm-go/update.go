@@ -196,7 +196,15 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	marketplaceProvenance := make(map[string]*marketplace.Provenance)
 	mergeMarketplaceProvenance(marketplaceProvenance, result.MarketplaceProvenance)
 
-	newLock, err := buildLockfile(result, existingLock, regLoader, nil, nil, false, marketplaceProvenance)
+	// AC-B2-5/C2: `update` has no --skill flag and no per-call requested
+	// package concept, but it must still respect every dependency's
+	// ALREADY-persisted apm.yml skills: subset -- computed via the same
+	// effectiveSkillSubsets single-source-of-truth runInstall uses (with a
+	// nil requestedKeys/cliSubset, since there's nothing to union here),
+	// fed to both buildLockfile and deployAndFinalize so update's lockfile
+	// and deploy filter never disagree.
+	effectiveSubsets := effectiveSkillSubsets(m, nil, nil)
+	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, nil, nil, false, marketplaceProvenance)
 	if err != nil {
 		return err
 	}
@@ -225,7 +233,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		return errNoDeployTarget()
 	}
 
-	return deployAndFinalize(m, "", nil, nil, nil, nil, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, "", effectiveSubsets, nil, nil, nil, nil, result, newLock, existingLock, existingNode, node)
 }
 
 // runUpdateDryRun resolves --dry-run's plan against a throwaway scratch

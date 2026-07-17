@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -168,9 +169,22 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		return nil
 	}
 	ux.Success(os.Stdout, "%s MCP server %q", verb, opts.Name)
+	// R11 (prd.md/design.md §3): deployMCPEntry already returns `deployed`,
+	// the target list it actually configured -- previously only surfaced
+	// when a --force/conflict path ALSO populated `skipped` (the "Skipped
+	// MCP config for X (active targets: ...)" line above); the common case
+	// (nothing skipped) silently dropped it. And "apm.yml: apm.yml" was a
+	// hardcoded, always-relative literal, not the real path -- both are
+	// presentation-only fixes: the data was already computed, just not
+	// printed/resolved.
+	apmYMLPath := "apm.yml"
+	if abs, pathErr := filepath.Abs("apm.yml"); pathErr == nil {
+		apmYMLPath = abs
+	}
 	ux.BulletList(os.Stdout, []ux.Item{
 		{Text: fmt.Sprintf("transport: %s", deployDep.Transport)},
-		{Text: "apm.yml: apm.yml"},
+		{Text: fmt.Sprintf("targets: %s", strings.Join(deployed, ", "))},
+		{Text: fmt.Sprintf("apm.yml: %s", apmYMLPath)},
 	})
 	return nil
 }

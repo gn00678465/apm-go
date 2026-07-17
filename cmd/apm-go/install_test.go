@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
@@ -538,8 +540,9 @@ func TestBuildLockfile_SkillSubsetScopedToRequestedDep(t *testing.T) {
 		},
 	}
 	requestedKeys := map[string]bool{"acme/foo": true}
+	effectiveSubsets := map[string][]string{"acme/foo": {"x"}}
 
-	lock, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, requestedKeys, true, nil)
+	lock, err := buildLockfile(result, nil, &registry.Loader{}, effectiveSubsets, []string{"x"}, requestedKeys, true, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -573,7 +576,7 @@ func TestBuildLockfile_SkillSubsetNoMatch_Errors(t *testing.T) {
 		},
 	}
 
-	_, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, map[string]bool{}, true, nil)
+	_, err := buildLockfile(result, nil, &registry.Loader{}, nil, []string{"x"}, map[string]bool{}, true, nil)
 	if err == nil {
 		t.Fatal("expected an error when --skill's requestedKeys match no resolved dependency")
 	}
@@ -597,7 +600,7 @@ func TestBuildLockfile_SkillSubsetPartialMatch_Errors(t *testing.T) {
 	}
 	requestedKeys := map[string]bool{"acme/good": true, "acme/collided/sub": true}
 
-	_, err := buildLockfile(result, nil, &registry.Loader{}, []string{"x"}, requestedKeys, true, nil)
+	_, err := buildLockfile(result, nil, &registry.Loader{}, nil, []string{"x"}, requestedKeys, true, nil)
 	if err == nil {
 		t.Fatal("expected an error when one of two requested keys never resolved into the graph")
 	}
@@ -1115,6 +1118,84 @@ func TestRunInstall_LocalPrimitivesZeroTarget_ExitsWithTeachingMessage(t *testin
 	}
 }
 
+// TestInstall_NoTargetDiagnostic is the R17 regression: the no-deployment-
+// target error must print a structured diagnostic (the scanned harness
+// marker paths + concrete remediation), and cobra's default 14-line flag
+// usage dump must be suppressed for THIS error specifically -- exercised
+// through cmd.Execute() (not a direct runInstall call) so cobra's own
+// usage-printing behavior is actually in play.
+func TestInstall_NoTargetDiagnostic(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+	os.MkdirAll(filepath.Join(".apm", "instructions"), 0755)
+	os.WriteFile(filepath.Join(".apm", "instructions", "x.instructions.md"), []byte("# x"), 0644)
+
+	cmd := installCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error when local primitives are present but no deployment target resolves")
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+
+	combined := out.String() + err.Error()
+	if !strings.Contains(combined, "no deployment target detected") {
+		t.Errorf("expected the teaching message, got: %s", combined)
+	}
+	for _, sig := range manifest.SignalWhitelist {
+		if !strings.Contains(combined, sig.Path) {
+			t.Errorf("expected scanned marker %q in diagnostic, got: %s", sig.Path, combined)
+		}
+	}
+	if !strings.Contains(combined, "--target") {
+		t.Errorf("expected a concrete --target remediation, got: %s", combined)
+	}
+	if strings.Contains(out.String(), "Flags:") {
+		t.Errorf("cobra's flag usage dump must be suppressed for the no-target diagnostic, got: %s", out.String())
+	}
+}
+
+// TestInstall_UsageStillShownOnFlagError is the reverse guard for R17: an
+// ordinary flag/argument error (an unknown --target token, unrelated to the
+// no-deployment-target diagnostic) must keep showing cobra's usage dump and
+// exit code exactly as before -- SilenceUsage must never be flipped for the
+// command as a whole, only for the one typed no-target error.
+func TestInstall_UsageStillShownOnFlagError(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	cmd := installCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--target", "bogus"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error for --target bogus, got nil")
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+	if !strings.Contains(out.String(), "Flags:") {
+		t.Errorf("cobra's usage dump must still be shown for an ordinary flag error, got: %s", out.String())
+	}
+}
+
 // TestRunInstall_LocalPrimitivesWithTargetSignal_StillDeploys is the
 // over-fire regression for the local-primitives zero-target gate: with a
 // detectable harness signal (.claude/ directory) present, a bare install of
@@ -1192,7 +1273,11 @@ func TestBuildLockfile_SkillWildcardDoesNotRecordSubset(t *testing.T) {
 			}
 			requestedKeys := map[string]bool{"acme/foo": true}
 
-			lock, err := buildLockfile(result, nil, &registry.Loader{}, tt.skillSubset, requestedKeys, true, nil)
+			// The '*' RESET sentinel means effectiveSkillSubsets deletes the
+			// dependency's entry entirely (design.md §1.2c rule 3) -- nil
+			// here simulates exactly that outcome, since this test targets
+			// buildLockfile's OWN stamping logic directly.
+			lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, tt.skillSubset, requestedKeys, true, nil)
 			if err != nil {
 				t.Fatalf("buildLockfile: %v", err)
 			}
@@ -1218,7 +1303,11 @@ func TestPersistPackagesToManifest_SkillWildcard_NewPackageWritesStringForm(t *t
 		t.Fatalf("SafeLoad: %v", err)
 	}
 
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, []string{"*"}); err != nil {
+	// The '*' RESET sentinel is represented upstream (effectiveSkillSubsets)
+	// as "no entry for this identity" -- nil here simulates that outcome
+	// directly, since this test targets persistPackagesToManifest's own
+	// entry-writing logic.
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 
@@ -1249,7 +1338,8 @@ func TestPersistPackagesToManifest_SkillWildcard_ClearsExistingSubset(t *testing
 		t.Fatalf("SafeLoad: %v", err)
 	}
 
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, []string{"*"}); err != nil {
+	// Same RESET-as-absent-entry simulation as the test above.
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 
@@ -1333,6 +1423,989 @@ func TestRunInstall_SkillWildcardDeploysAllSkills(t *testing.T) {
 	for _, d := range lock.Dependencies {
 		if len(d.SkillSubset) != 0 {
 			t.Errorf("expected no skill_subset persisted in apm.lock.yaml for --skill '*', dep %s has %v", d.UniqueKey(), d.SkillSubset)
+		}
+	}
+}
+
+// gitGo runs a git subcommand in repoDir with a deterministic test identity,
+// failing the test on any error. Shared helper for the skill-subset fixture
+// builders below (mirrors the inline `git` closures already used by
+// TestRunInstall_SkillWildcardDeploysAllSkills and gitcheckout_e2e_test.go).
+func gitGo(t *testing.T, repoDir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoDir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %s\n%s", args, err, out)
+	}
+}
+
+// gitSkillRepo creates a local git repository (committed + tagged v1.0.0) at
+// parentDir/name, containing one skill directory per key in skills, each
+// populated with every file listed for it. Deliberately gives each skill
+// MULTIPLE files across MULTIPLE deploy target roots (codex H4: a skill
+// maps to several deployed files -- "skill count" and "deployed file count"
+// must never be conflated) rather than the minimal single-file fixture the
+// pre-existing wildcard test uses.
+func gitSkillRepo(t *testing.T, parentDir, name string, skills map[string][]string) string {
+	t.Helper()
+	repoDir := filepath.Join(parentDir, name)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	gitGo(t, repoDir, "init")
+	gitGo(t, repoDir, "config", "user.name", "test")
+	gitGo(t, repoDir, "config", "user.email", "test@test.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "apm.yml"), []byte("name: "+name+"\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for skill, files := range skills {
+		skillDir := filepath.Join(repoDir, ".apm", "skills", skill)
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if err := os.WriteFile(filepath.Join(skillDir, f), []byte("# "+skill+"/"+f+"\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	gitGo(t, repoDir, "add", ".")
+	gitGo(t, repoDir, "commit", "-m", "v1")
+	gitGo(t, repoDir, "tag", "v1.0.0")
+	return repoDir
+}
+
+// expectedSkillDeployPaths returns the project-root-relative paths a skill's
+// files land at when deployed to the "claude" target, which mirrors both of
+// this fixture's two target roots (.agents/skills/ -- the cross-tool
+// canonical root every target shares -- and .claude/skills/ -- claude's own
+// extra copy, deploySkillClaude). Used to prove a fixture's skill really
+// spans two distinct target roots (H4), not just two files under one root.
+func expectedSkillDeployPaths(skill string, files []string) []string {
+	var paths []string
+	for _, root := range []string{".agents/skills", ".claude/skills"} {
+		for _, f := range files {
+			paths = append(paths, path.Join(root, skill, f))
+		}
+	}
+	return paths
+}
+
+// TestInstall_SkillSubsetPollution is BUG-2's core reproduction (prd.md
+// "BUG-2 ｜ --skill 子集失憶"): installing repo-b with its own --skill
+// subset must NOT forget repo-a's previously-persisted --skill subset and
+// redeploy repo-a's full, unfiltered skill set. Before the fix, deploy's
+// SkillFilter was built ONLY from this call's CLI --skill flags/requested
+// dependency keys (deployAndFinalize), so a bare re-deploy of an
+// already-declared dependency (which every `apm install <other-pkg>` call
+// triggers, by design -- full-manifest re-resolve) ignored any subset an
+// EARLIER call had persisted for it.
+func TestInstall_SkillSubsetPollution(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Absolute paths, not a "./..."-relative one (deliberate -- an existing
+	// apm.yml `git: <relative-path>` entry re-parsed via ParseDepDict is NOT
+	// re-normalized into the same apm_modules/_local/<hash> materialization
+	// key a fresh CLI positional arg gets (normalizeLocalDep's local-path
+	// branch only matches manifest.IsAbsoluteLocalPath); that asymmetry is a
+	// separate, pre-existing gap unrelated to BUG-2, so this fixture sticks
+	// to the form (F1 spec-supported: absolute local paths) both code paths
+	// already agree on, rather than tripping over it here).
+	repoA := gitSkillRepo(t, remotesDir, "repo-a", map[string][]string{
+		"skillA1": {"SKILL.md", "notes.md"},
+		"skillA2": {"SKILL.md", "notes.md"},
+	})
+	repoB := gitSkillRepo(t, remotesDir, "repo-b", map[string][]string{
+		"skillB1": {"SKILL.md", "notes.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+	}
+
+	if err := runInstall(deps, false, true, "claude", []string{"skillA1"}, []string{repoA}); err != nil {
+		t.Fatalf("first install (repo-a --skill skillA1): %v", err)
+	}
+	for _, p := range expectedSkillDeployPaths("skillA1", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+			t.Fatalf("after step 1: expected %s to exist: %v", p, err)
+		}
+	}
+	for _, p := range expectedSkillDeployPaths("skillA2", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+			t.Fatalf("after step 1: %s must NOT exist (skillA2 was never selected)", p)
+		}
+	}
+
+	if err := runInstall(deps, false, true, "claude", []string{"skillB1"}, []string{repoB}); err != nil {
+		t.Fatalf("second install (repo-b --skill skillB1): %v", err)
+	}
+
+	// The pollution check: repo-a's persisted subset must still be honored.
+	for _, p := range expectedSkillDeployPaths("skillA1", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+			t.Errorf("after step 2: expected %s to still exist: %v", p, err)
+		}
+	}
+	for _, p := range expectedSkillDeployPaths("skillA2", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+			t.Errorf("POLLUTION (BUG-2): %s must NOT exist -- installing repo-b must not forget repo-a's --skill skillA1 subset", p)
+		}
+	}
+	for _, p := range expectedSkillDeployPaths("skillB1", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+			t.Errorf("expected %s to exist (repo-b's selected skill): %v", p, err)
+		}
+	}
+
+	// apm.yml: each dependency must carry its OWN persisted subset.
+	m := readManifestParsed(t)
+	subsetByRepo := make(map[string][]string)
+	for _, d := range m.ParsedDeps {
+		subsetByRepo[d.RepoURL] = d.SkillSubset
+	}
+	if got := subsetByRepo[repoA]; len(got) != 1 || got[0] != "skillA1" {
+		t.Errorf("apm.yml: expected %s skills: [skillA1], got %v (all deps: %+v)", repoA, got, subsetByRepo)
+	}
+	if got := subsetByRepo[repoB]; len(got) != 1 || got[0] != "skillB1" {
+		t.Errorf("apm.yml: expected %s skills: [skillB1], got %v (all deps: %+v)", repoB, got, subsetByRepo)
+	}
+
+	// lockfile: skill_subset == effective name set, deployed_files == the
+	// actual managed path set -- NOT the same count (H4: 1 skill maps to 4
+	// deployed files here: 2 files x 2 target roots). The resolved/lockfile
+	// space keys a local dependency by its normalized apm_modules/_local/
+	// <hash> materialization key (localModulesKey), NOT the raw absolute
+	// path apm.yml persists -- unlike the apm.yml assertions above, which
+	// read the un-normalized persisted string.
+	lockKeyA := localModulesKey(resolveLocalSourceAbs(repoA))
+	lock := readLockfile(t)
+	depByRepo := make(map[string]lockfile.LockedDep)
+	for _, d := range lock.Dependencies {
+		depByRepo[d.RepoURL] = d
+	}
+	da, ok := depByRepo[lockKeyA]
+	if !ok {
+		t.Fatalf("apm.lock.yaml: missing dependency %s (key %s)", repoA, lockKeyA)
+	}
+	if len(da.SkillSubset) != 1 || da.SkillSubset[0] != "skillA1" {
+		t.Errorf("apm.lock.yaml: %s skill_subset = %v, want [skillA1]", repoA, da.SkillSubset)
+	}
+	if len(da.DeployedFiles) != 4 {
+		t.Errorf("apm.lock.yaml: %s deployed_files = %v, want exactly 4 paths (1 skill, 2 files, 2 target roots)", repoA, da.DeployedFiles)
+	}
+
+	// apm_modules: exactly one materialized directory per repo, no
+	// duplicates -- both local deps nest under a single apm_modules/_local/
+	// parent (F1's materialization scheme), so the per-repo check happens
+	// one level down.
+	entries, err := os.ReadDir(filepath.Join(dir, "apm_modules", "_local"))
+	if err != nil {
+		t.Fatalf("read apm_modules/_local: %v", err)
+	}
+	if len(entries) != 2 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("apm_modules/_local: expected exactly 2 directories (one per repo), got %d: %v", len(entries), names)
+	}
+}
+
+// TestInstall_SkillSubsetThreeRepos is the AC-B2-3 regression: installing a
+// THIRD dependency with its own --skill subset must not re-inflate either of
+// the two earlier dependencies' already-persisted subsets. Before the BUG-2
+// fix, every `apm install` triggers a full-manifest re-resolve/re-deploy of
+// ALL already-declared dependencies (by design), and the deploy-time
+// SkillFilter was built only from the CURRENT call's CLI flags -- so every
+// earlier dependency, having no entry in that call's filter, silently
+// deployed its full, unfiltered skill set on each subsequent install.
+func TestInstall_SkillSubsetThreeRepos(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repoA := gitSkillRepo(t, remotesDir, "repo-a", map[string][]string{
+		"skillA1": {"SKILL.md", "notes.md"},
+		"skillA2": {"SKILL.md", "notes.md"},
+	})
+	repoB := gitSkillRepo(t, remotesDir, "repo-b", map[string][]string{
+		"skillB1": {"SKILL.md", "notes.md"},
+		"skillB2": {"SKILL.md", "notes.md"},
+	})
+	repoC := gitSkillRepo(t, remotesDir, "repo-c", map[string][]string{
+		"skillC1": {"SKILL.md", "notes.md"},
+		"skillC2": {"SKILL.md", "notes.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+	}
+
+	if err := runInstall(deps, false, true, "claude", []string{"skillA1"}, []string{repoA}); err != nil {
+		t.Fatalf("install repo-a --skill skillA1: %v", err)
+	}
+	if err := runInstall(deps, false, true, "claude", []string{"skillB1"}, []string{repoB}); err != nil {
+		t.Fatalf("install repo-b --skill skillB1: %v", err)
+	}
+	if err := runInstall(deps, false, true, "claude", []string{"skillC1"}, []string{repoC}); err != nil {
+		t.Fatalf("install repo-c --skill skillC1: %v", err)
+	}
+
+	assertOnly := func(label string, present, absent []string) {
+		t.Helper()
+		for _, skill := range present {
+			for _, p := range expectedSkillDeployPaths(skill, []string{"SKILL.md", "notes.md"}) {
+				if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+					t.Errorf("%s: expected %s to exist: %v", label, p, err)
+				}
+			}
+		}
+		for _, skill := range absent {
+			for _, p := range expectedSkillDeployPaths(skill, []string{"SKILL.md", "notes.md"}) {
+				if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+					t.Errorf("%s: INFLATION -- %s must NOT exist", label, p)
+				}
+			}
+		}
+	}
+
+	// After the third install, repo-a and repo-b must still be narrowed to
+	// their own originally-selected skill only -- not re-inflated to their
+	// full skill set -- and repo-c must be narrowed to skillC1.
+	assertOnly("after repo-c install", []string{"skillA1", "skillB1", "skillC1"}, []string{"skillA2", "skillB2", "skillC2"})
+
+	m := readManifestParsed(t)
+	subsetByRepo := make(map[string][]string)
+	for _, d := range m.ParsedDeps {
+		subsetByRepo[d.RepoURL] = d.SkillSubset
+	}
+	for repo, want := range map[string]string{repoA: "skillA1", repoB: "skillB1", repoC: "skillC1"} {
+		if got := subsetByRepo[repo]; len(got) != 1 || got[0] != want {
+			t.Errorf("apm.yml: expected %s skills: [%s], got %v", repo, want, got)
+		}
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 3 {
+		t.Fatalf("apm.lock.yaml: expected exactly 3 dependencies, got %d", len(lock.Dependencies))
+	}
+	depByRepo := make(map[string]lockfile.LockedDep)
+	for _, d := range lock.Dependencies {
+		depByRepo[d.RepoURL] = d
+	}
+	for repo, want := range map[string]string{
+		localModulesKey(resolveLocalSourceAbs(repoA)): "skillA1",
+		localModulesKey(resolveLocalSourceAbs(repoB)): "skillB1",
+		localModulesKey(resolveLocalSourceAbs(repoC)): "skillC1",
+	} {
+		d, ok := depByRepo[repo]
+		if !ok {
+			t.Fatalf("apm.lock.yaml: missing dependency %s", repo)
+		}
+		if len(d.SkillSubset) != 1 || d.SkillSubset[0] != want {
+			t.Errorf("apm.lock.yaml: %s skill_subset = %v, want [%s]", repo, d.SkillSubset, want)
+		}
+	}
+}
+
+// TestInstall_SkillSubsetSameRepoUnion is the C3 regression (codex plan
+// review, prd.md B2-2): re-installing the SAME dependency with a different
+// --skill flag must UNION with (not replace, not silently ignore) its
+// already-persisted subset, and that union must be written back into the
+// EXISTING apm.yml entry in place -- persistPackagesToManifest used to
+// `continue` on any already-declared package, never updating it at all.
+// Exercises the full x -> y -> bare-install sequence prd.md's AC-B2-4
+// requires.
+func TestInstall_SkillSubsetSameRepoUnion(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Absolute path, not "./..."-relative -- see TestInstall_SkillSubsetPollution's
+	// comment on why (avoids an unrelated, pre-existing relative-local-path
+	// re-normalization asymmetry).
+	repoR := gitSkillRepo(t, remotesDir, "repo-r", map[string][]string{
+		"skillX": {"SKILL.md", "notes.md"},
+		"skillY": {"SKILL.md", "notes.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+	}
+
+	assertSelected := func(step string, selected ...string) {
+		t.Helper()
+		all := []string{"skillX", "skillY"}
+		wanted := make(map[string]bool, len(selected))
+		for _, s := range selected {
+			wanted[s] = true
+		}
+		for _, skill := range all {
+			for _, p := range expectedSkillDeployPaths(skill, []string{"SKILL.md", "notes.md"}) {
+				_, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p)))
+				exists := err == nil
+				if wanted[skill] && !exists {
+					t.Errorf("%s: expected %s to exist", step, p)
+				}
+				if !wanted[skill] && exists {
+					t.Errorf("%s: expected %s to NOT exist", step, p)
+				}
+			}
+		}
+	}
+
+	// Step 1: install repo-r --skill skillX.
+	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repoR}); err != nil {
+		t.Fatalf("step 1 (install repo-r --skill skillX): %v", err)
+	}
+	assertSelected("step1", "skillX")
+
+	// Step 2: SAME repo, different --skill -- must UNION, not replace.
+	if err := runInstall(deps, false, true, "claude", []string{"skillY"}, []string{repoR}); err != nil {
+		t.Fatalf("step 2 (install repo-r --skill skillY): %v", err)
+	}
+	assertSelected("step2", "skillX", "skillY")
+
+	m := readManifestParsed(t)
+	if len(m.ParsedDeps) != 1 {
+		t.Fatalf("step2: expected exactly ONE apm.yml entry for repo-r, got %d: %+v", len(m.ParsedDeps), m.ParsedDeps)
+	}
+	if got := m.ParsedDeps[0].SkillSubset; len(got) != 2 || got[0] != "skillX" || got[1] != "skillY" {
+		t.Errorf("step2: apm.yml skills: = %v, want [skillX skillY] (union, sorted)", got)
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 {
+		t.Fatalf("step2: expected exactly ONE lockfile dependency, got %d", len(lock.Dependencies))
+	}
+	if got := lock.Dependencies[0].SkillSubset; len(got) != 2 || got[0] != "skillX" || got[1] != "skillY" {
+		t.Errorf("step2: apm.lock.yaml skill_subset = %v, want [skillX skillY]", got)
+	}
+	if len(lock.Dependencies[0].DeployedFiles) != 8 {
+		t.Errorf("step2: deployed_files = %v, want 8 paths (2 skills, 2 files, 2 target roots)", lock.Dependencies[0].DeployedFiles)
+	}
+
+	// Step 3: bare re-install (no positional package, no --skill) must keep
+	// deploying the union -- not silently reset to full, not silently reset
+	// to empty.
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("step 3 (bare install): %v", err)
+	}
+	assertSelected("step3", "skillX", "skillY")
+
+	m3 := readManifestParsed(t)
+	if len(m3.ParsedDeps) != 1 || len(m3.ParsedDeps[0].SkillSubset) != 2 {
+		t.Errorf("step3: apm.yml union must survive a bare re-install, got deps=%+v", m3.ParsedDeps)
+	}
+	lock3 := readLockfile(t)
+	if len(lock3.Dependencies) != 1 || len(lock3.Dependencies[0].SkillSubset) != 2 {
+		t.Errorf("step3: apm.lock.yaml skill_subset union must survive a bare re-install, got %+v", lock3.Dependencies)
+	}
+}
+
+// TestValidateNewSkillNames_BlankNameRejected guards the H6 invariant at its
+// entry point: a --skill value that trims to empty must be rejected loudly.
+// Left to pass through, it would union to an EMPTY subset for a dependency
+// with nothing persisted, and an empty slice in SkillFilter.Subsets silently
+// deploys zero skills while apm.yml records no narrowing at all.
+func TestValidateNewSkillNames_BlankNameRejected(t *testing.T) {
+	for _, blank := range []string{"", " ", "\t"} {
+		err := validateNewSkillNames(&resolver.ResolutionResult{}, map[string]bool{}, []string{blank})
+		if err == nil {
+			t.Errorf("--skill %q: expected a non-empty-name error, got nil", blank)
+		}
+	}
+}
+
+// TestInstall_UnknownSkill_NewNameErrorsAtomically is H3's "brand-new name"
+// half (design.md §1.2f, prd.md B2-6): a --skill name THIS call introduces
+// that doesn't match any skill the requested, already-resolved dependency
+// actually has must fail the whole install BEFORE any write -- apm.yml,
+// apm.lock.yaml, and every target directory must stay byte-identical to
+// their pre-call state. Both a purely-unknown name and a mix of one real
+// name plus one unknown name must fail the same way (no partial success).
+func TestInstall_UnknownSkill_NewNameErrorsAtomically(t *testing.T) {
+	cases := []struct {
+		name   string
+		skills []string
+	}{
+		{"purely unknown name", []string{"bogus"}},
+		{"one real name mixed with one unknown name", []string{"realSkill", "bogus"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			origDir, _ := os.Getwd()
+			os.Chdir(dir)
+			defer os.Chdir(origDir)
+
+			remotesDir := filepath.Join(dir, "remotes")
+			if err := os.MkdirAll(remotesDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			repo := gitSkillRepo(t, remotesDir, "repo-u", map[string][]string{
+				"realSkill": {"SKILL.md"},
+			})
+
+			const originalManifest = "name: test\nversion: \"1.0.0\"\n"
+			if err := os.WriteFile("apm.yml", []byte(originalManifest), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+			err := runInstall(deps, false, true, "claude", tc.skills, []string{repo})
+			if err == nil {
+				t.Fatal("expected an error for an unknown --skill name, got nil")
+			}
+			if !strings.Contains(err.Error(), "bogus") {
+				t.Errorf("error should name the unknown skill \"bogus\", got: %v", err)
+			}
+
+			gotManifest, readErr := os.ReadFile("apm.yml")
+			if readErr != nil {
+				t.Fatalf("read apm.yml: %v", readErr)
+			}
+			if string(gotManifest) != originalManifest {
+				t.Errorf("apm.yml changed after a failed --skill validation (atomicity broken):\nwant: %q\ngot:  %q", originalManifest, gotManifest)
+			}
+
+			if _, statErr := os.Stat("apm.lock.yaml"); statErr == nil {
+				t.Error("apm.lock.yaml must not be written when --skill validation fails (atomicity broken)")
+			}
+
+			for _, root := range []string{".agents/skills", ".claude/skills"} {
+				if entries, readErr := os.ReadDir(filepath.Join(dir, filepath.FromSlash(root))); readErr == nil && len(entries) > 0 {
+					t.Errorf("%s must be empty when --skill validation fails, found %v", root, entries)
+				}
+			}
+		})
+	}
+}
+
+// TestInstall_UnknownSkill_PersistedNameDisappearsWarnsAndKeeps is H3's
+// "already-persisted name" half: when an upstream package update drops a
+// skill that was already persisted from an EARLIER install (not named by
+// THIS call's --skill flag), the next bare install must NOT fail -- it warns
+// (naming the vanished skill) and keeps the persisted subset unchanged in
+// both apm.yml and apm.lock.yaml (no silent pruning, no hard error).
+func TestInstall_UnknownSkill_PersistedNameDisappearsWarnsAndKeeps(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := gitSkillRepo(t, remotesDir, "repo-v", map[string][]string{
+		"onlySkill": {"SKILL.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	if err := runInstall(deps, false, true, "claude", []string{"onlySkill"}, []string{repo}); err != nil {
+		t.Fatalf("initial install: %v", err)
+	}
+
+	// Simulate an upstream update dropping the skill: a local-path dependency
+	// re-copies its source verbatim on every install (gitops
+	// materializeLocalCopy always replaces the prior materialization with a
+	// fresh copy of the CURRENT source), so removing it from the source repo
+	// makes the next install "see" it gone without needing a real git fetch.
+	if err := os.RemoveAll(filepath.Join(repo, ".apm", "skills", "onlySkill")); err != nil {
+		t.Fatal(err)
+	}
+
+	stderr := captureUninstallStderr(t, func() {
+		if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+			t.Fatalf("bare re-install after upstream skill removal: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "onlySkill") {
+		t.Errorf("expected a warning naming the vanished persisted skill \"onlySkill\", got stderr: %q", stderr)
+	}
+
+	m := readManifestParsed(t)
+	if len(m.ParsedDeps) != 1 || len(m.ParsedDeps[0].SkillSubset) != 1 || m.ParsedDeps[0].SkillSubset[0] != "onlySkill" {
+		t.Errorf("apm.yml persisted subset must be kept unchanged, got %+v", m.ParsedDeps)
+	}
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || len(lock.Dependencies[0].SkillSubset) != 1 || lock.Dependencies[0].SkillSubset[0] != "onlySkill" {
+		t.Errorf("apm.lock.yaml persisted skill_subset must be kept unchanged, got %+v", lock.Dependencies)
+	}
+}
+
+// TestInstall_StaleSkillReconciliation is BUG-2's pollution-convergence test
+// (design.md §1.2g, codex C1, prd.md B2-3/AC-B2-7): narrowing a PREVIOUSLY
+// full install to a --skill subset must not just start filtering future
+// deploys -- it must also clean up files the wider PRIOR install already
+// wrote for the now-excluded skill, as long as they haven't been hand-edited
+// since (an untouched stale file is removed; a hand-edited one is kept, with
+// a warning naming it).
+func TestInstall_StaleSkillReconciliation(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := gitSkillRepo(t, remotesDir, "repo-s", map[string][]string{
+		"skillA1": {"SKILL.md", "notes.md"},
+		"skillA2": {"SKILL.md", "notes.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	// Step 1: full install, no --skill -- deploys BOTH skills.
+	if err := runInstall(deps, false, true, "claude", nil, []string{repo}); err != nil {
+		t.Fatalf("step 1 (full install): %v", err)
+	}
+	for _, skill := range []string{"skillA1", "skillA2"} {
+		for _, p := range expectedSkillDeployPaths(skill, []string{"SKILL.md", "notes.md"}) {
+			if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+				t.Fatalf("step1: expected %s to exist: %v", p, err)
+			}
+		}
+	}
+
+	// Hand-edit ONE of skillA2's four deployed copies BEFORE narrowing -- it
+	// must survive reconciliation (kept + warned), unlike its three untouched
+	// siblings under the same now-excluded skill.
+	skillA2Paths := expectedSkillDeployPaths("skillA2", []string{"SKILL.md", "notes.md"})
+	modifiedRel := skillA2Paths[1] // ".agents/skills/skillA2/notes.md"
+	modifiedPath := filepath.Join(dir, filepath.FromSlash(modifiedRel))
+	const modifiedContent = "hand-edited by the user\n"
+	if err := os.WriteFile(modifiedPath, []byte(modifiedContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 2: narrow to --skill skillA1 (same repo) -- must deploy ONLY
+	// skillA1 files, and clean up skillA2's now-stale, untouched files.
+	stderr := captureUninstallStderr(t, func() {
+		if err := runInstall(deps, false, true, "claude", []string{"skillA1"}, []string{repo}); err != nil {
+			t.Fatalf("step 2 (narrow to skillA1): %v", err)
+		}
+	})
+
+	// skillA1 must still be fully deployed.
+	for _, p := range expectedSkillDeployPaths("skillA1", []string{"SKILL.md", "notes.md"}) {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err != nil {
+			t.Errorf("step2: expected %s to still exist: %v", p, err)
+		}
+	}
+
+	// skillA2's three UNTOUCHED copies must be removed (stale + hash matches).
+	for _, p := range skillA2Paths {
+		if p == modifiedRel {
+			continue
+		}
+		full := filepath.Join(dir, filepath.FromSlash(p))
+		if _, err := os.Stat(full); err == nil {
+			t.Errorf("step2: expected stale untouched %s to be removed", full)
+		}
+	}
+
+	// skillA2's HAND-EDITED copy must be KEPT, byte-unchanged, with a warning.
+	data, err := os.ReadFile(modifiedPath)
+	if err != nil {
+		t.Errorf("step2: expected hand-edited %s to be kept, got: %v", modifiedPath, err)
+	} else if string(data) != modifiedContent {
+		t.Errorf("step2: hand-edited file content changed unexpectedly: %q", data)
+	}
+	if !strings.Contains(stderr, "notes.md") {
+		t.Errorf("expected a warning naming the kept modified file, got stderr: %q", stderr)
+	}
+
+	// apm.yml / lockfile reflect the narrowed subset.
+	m := readManifestParsed(t)
+	if len(m.ParsedDeps) != 1 || len(m.ParsedDeps[0].SkillSubset) != 1 || m.ParsedDeps[0].SkillSubset[0] != "skillA1" {
+		t.Errorf("apm.yml skills: must be [skillA1], got %+v", m.ParsedDeps)
+	}
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 {
+		t.Fatalf("expected exactly one lockfile dependency, got %d", len(lock.Dependencies))
+	}
+	if got := lock.Dependencies[0].SkillSubset; len(got) != 1 || got[0] != "skillA1" {
+		t.Errorf("apm.lock.yaml skill_subset must be [skillA1], got %v", got)
+	}
+	if len(lock.Dependencies[0].DeployedFiles) != 4 {
+		t.Errorf("apm.lock.yaml deployed_files must be exactly 4 paths (skillA1, 2 files, 2 roots), got %v", lock.Dependencies[0].DeployedFiles)
+	}
+}
+
+// TestInstall_StaleSkillReconciliation_TargetChangeWithoutSkillSubsetKeepsFiles
+// is a codex final-gate HIGH regression: reconcileStaleSkillDeployments must
+// NOT delete a dependency's files just because a LATER install call resolved
+// a different --target set than an EARLIER one did -- that is a target
+// selection change, not a --skill subset narrowing, and this BUG-2
+// convergence mechanism must stay scoped to the latter. Installing to
+// "claude" first (which deploys to BOTH .claude/skills/ and the shared
+// .agents/skills/) and then re-installing the SAME dependency (no --skill
+// either time) to "codex" only (which deploys to the shared .agents/skills/
+// root only, not .claude/skills/) must leave the now-target-unclaimed
+// .claude/skills/ copy on disk untouched, because this dependency's fresh
+// lock entry has no active SkillSubset at all.
+func TestInstall_StaleSkillReconciliation_TargetChangeWithoutSkillSubsetKeepsFiles(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := gitSkillRepo(t, remotesDir, "repo-t", map[string][]string{
+		"skillT": {"SKILL.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	// Step 1: full install (no --skill) targeting claude -- deploys to BOTH
+	// .claude/skills/skillT/ and .agents/skills/skillT/.
+	if err := runInstall(deps, false, true, "claude", nil, []string{repo}); err != nil {
+		t.Fatalf("step 1 (install --target claude): %v", err)
+	}
+	claudeOnlyPath := filepath.Join(dir, ".claude", "skills", "skillT", "SKILL.md")
+	if _, err := os.Stat(claudeOnlyPath); err != nil {
+		t.Fatalf("step1: expected %s to exist: %v", claudeOnlyPath, err)
+	}
+
+	// Step 2: full install (still no --skill) but this time targeting codex
+	// only -- codex's skill deploy root is the shared .agents/skills/, so
+	// .claude/skills/skillT/ is no longer claimed by this run's lockfile.
+	if err := runInstall(deps, false, true, "codex", nil, []string{repo}); err != nil {
+		t.Fatalf("step 2 (install --target codex): %v", err)
+	}
+
+	// The regression check: the claude-only copy must SURVIVE -- this
+	// dependency never had an active --skill subset, so target-selection
+	// drift alone must never trigger a deletion.
+	if _, err := os.Stat(claudeOnlyPath); err != nil {
+		t.Errorf("codex final-gate HIGH regression: %s was deleted after an unrelated --target change (no --skill ever used): %v", claudeOnlyPath, err)
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || len(lock.Dependencies[0].SkillSubset) != 0 {
+		t.Fatalf("expected exactly one lockfile dependency with an empty skill_subset, got %+v", lock.Dependencies)
+	}
+}
+
+// TestInstall_StaleSkillReconciliation_StillSelectedSkillSurvivesTargetChange
+// is a second codex final-gate HIGH regression, distinct from the previous
+// test: even for a dependency that DOES have an active --skill subset, a
+// skill NAME still present in that subset must never be pruned just because
+// one particular --target's copy of it isn't claimed this run. Only a skill
+// name actually ABSENT from the fresh subset is eligible for cleanup.
+func TestInstall_StaleSkillReconciliation_StillSelectedSkillSurvivesTargetChange(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := gitSkillRepo(t, remotesDir, "repo-u2", map[string][]string{
+		"skillX": {"SKILL.md"},
+	})
+
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	// Step 1: narrow to --skill skillX, targeting claude -- deploys skillX
+	// to BOTH .claude/skills/skillX/ and .agents/skills/skillX/.
+	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
+		t.Fatalf("step 1 (install --skill skillX --target claude): %v", err)
+	}
+	claudeOnlyPath := filepath.Join(dir, ".claude", "skills", "skillX", "SKILL.md")
+	if _, err := os.Stat(claudeOnlyPath); err != nil {
+		t.Fatalf("step1: expected %s to exist: %v", claudeOnlyPath, err)
+	}
+
+	// Step 2: SAME --skill skillX (still selected, no narrowing), but this
+	// time targeting codex only -- codex's skill deploy root is the shared
+	// .agents/skills/, so .claude/skills/skillX/ is not claimed this run.
+	if err := runInstall(deps, false, true, "codex", []string{"skillX"}, []string{repo}); err != nil {
+		t.Fatalf("step 2 (install --skill skillX --target codex): %v", err)
+	}
+
+	// The regression check: skillX is STILL in the subset -- its
+	// now-unclaimed claude-only copy must survive; only a DESELECTED skill
+	// name is eligible for cleanup.
+	if _, err := os.Stat(claudeOnlyPath); err != nil {
+		t.Errorf("codex final-gate HIGH regression: %s was deleted for a skill still present in the subset (target changed, not the subset): %v", claudeOnlyPath, err)
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || len(lock.Dependencies[0].SkillSubset) != 1 || lock.Dependencies[0].SkillSubset[0] != "skillX" {
+		t.Fatalf("expected exactly one lockfile dependency with skill_subset=[skillX], got %+v", lock.Dependencies)
+	}
+}
+
+// TestRunInstall_SkillMixedWildcardResetsToFull is a boundary regression
+// (implement.md Phase 1 step 11): a PREVIOUSLY-narrowed dependency
+// re-installed with a --skill list that MIXES a concrete name with the '*'
+// RESET sentinel (`--skill skillX --skill '*'`) must reset to a full
+// install exactly like a pure `--skill '*'` would -- covering the full
+// runInstall -> deploy -> apm.yml/apm.lock.yaml chain, not just the unit-level
+// buildLockfile/persistPackagesToManifest checks this mirrors.
+func TestRunInstall_SkillMixedWildcardResetsToFull(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := gitSkillRepo(t, remotesDir, "repo-m", map[string][]string{
+		"skillX": {"SKILL.md"},
+		"skillY": {"SKILL.md"},
+	})
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	// Step 1: narrow to skillX only.
+	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
+		t.Fatalf("step1: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillY", "SKILL.md")); err == nil {
+		t.Fatal("step1: skillY must not be deployed yet")
+	}
+
+	// Step 2: mixed wildcard (a concrete name PLUS '*') resets to full.
+	if err := runInstall(deps, false, true, "claude", []string{"skillX", "*"}, []string{repo}); err != nil {
+		t.Fatalf("step2: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillY", "SKILL.md")); err != nil {
+		t.Errorf("step2: expected skillY to deploy after mixed-wildcard reset: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillX", "SKILL.md")); err != nil {
+		t.Errorf("step2: expected skillX to still be deployed: %v", err)
+	}
+
+	m := readManifestParsed(t)
+	if len(m.ParsedDeps) != 1 || len(m.ParsedDeps[0].SkillSubset) != 0 {
+		t.Errorf("step2: apm.yml skills: must be cleared after wildcard reset, got %+v", m.ParsedDeps)
+	}
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || len(lock.Dependencies[0].SkillSubset) != 0 {
+		t.Errorf("step2: apm.lock.yaml skill_subset must be cleared after wildcard reset, got %+v", lock.Dependencies)
+	}
+}
+
+// TestRunInstall_DevDependency_SkillSubsetHonored is a boundary regression
+// (implement.md Phase 1 step 11, codex M6): a persisted --skill subset on a
+// devDependencies.apm entry must be honored by deploy.Run's SkillFilter
+// exactly like an ordinary dependencies.apm entry -- Run's directDeps walk
+// covers m.ParsedDeps THEN m.ParsedDevDeps (F3), and effectiveSkillSubsets
+// walks the same allDirectDeps helper, so a dev-only persisted subset must
+// not silently fall back to a full install.
+func TestRunInstall_DevDependency_SkillSubsetHonored(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := gitSkillRepo(t, remotesDir, "repo-d", map[string][]string{
+		"skillX": {"SKILL.md"},
+		"skillY": {"SKILL.md"},
+	})
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	// Install once as an ordinary (production) dependency, narrowed to
+	// skillX -- persistPackagesToManifest handles the git-value quoting
+	// correctly (avoids hand-authoring YAML containing a raw Windows
+	// absolute path, which has its own quoting pitfalls).
+	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
+		t.Fatalf("initial install: %v", err)
+	}
+
+	// Move the persisted entry from dependencies.apm to devDependencies.apm
+	// by simple string surgery on the already-correctly-quoted output.
+	manifestBytes, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := strings.Replace(string(manifestBytes), "dependencies:\n  apm:", "devDependencies:\n  apm:", 1)
+	if moved == string(manifestBytes) {
+		t.Fatalf("did not find dependencies.apm block to move in apm.yml:\n%s", manifestBytes)
+	}
+	if err := os.WriteFile("apm.yml", []byte(moved), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove("apm.lock.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		t.Fatalf("bare install after moving to devDependencies: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillX", "SKILL.md")); err != nil {
+		t.Errorf("expected skillX (persisted devDependency subset) to deploy: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillY", "SKILL.md")); err == nil {
+		t.Error("expected skillY to stay filtered out for the devDependency's persisted subset")
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || len(lock.Dependencies[0].SkillSubset) != 1 || lock.Dependencies[0].SkillSubset[0] != "skillX" {
+		t.Errorf("apm.lock.yaml skill_subset for the devDependency must be [skillX], got %+v", lock.Dependencies)
+	}
+}
+
+// TestRunInstall_MultiplePositionalPackages_SharedSkillFlag documents
+// (implement.md Phase 1 step 11) the current, accepted behavior when a
+// single --skill flag list is shared across MULTIPLE positional packages
+// naming DIFFERENT repositories: effectiveSkillSubsets unions the WHOLE
+// cliSubset into EVERY targeted dependency (design.md §1.2c rule 2), not
+// just the name(s) that dependency actually has -- so validateNewSkillNames
+// requires each name to exist in AT LEAST ONE targeted dependency (not
+// every one), letting a shared --skill list name one skill per repo without
+// being rejected as a typo just because neither repo has the OTHER repo's
+// skill. The practical consequence (pinned here, not a bug to fix in this
+// task): each dependency's persisted/locked subset includes the FULL
+// cliSubset, even the name(s) it doesn't actually have, and deploy.Run warns
+// about the name it lacks via the same skillSubsetDiags path an
+// upstream-vanished persisted name uses.
+func TestRunInstall_MultiplePositionalPackages_SharedSkillFlag(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	remotesDir := filepath.Join(dir, "remotes")
+	if err := os.MkdirAll(remotesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	repoA := gitSkillRepo(t, remotesDir, "repo-ma", map[string][]string{
+		"nameA":  {"SKILL.md"},
+		"extraA": {"SKILL.md"},
+	})
+	repoB := gitSkillRepo(t, remotesDir, "repo-mb", map[string][]string{
+		"nameB":  {"SKILL.md"},
+		"extraB": {"SKILL.md"},
+	})
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+
+	stderr := captureUninstallStderr(t, func() {
+		err := runInstall(deps, false, true, "claude", []string{"nameA", "nameB"}, []string{repoA, repoB})
+		if err != nil {
+			t.Fatalf("runInstall: %v", err)
+		}
+	})
+
+	// Each repo deploys only its OWN named skill, never its "extra" one, and
+	// never the OTHER repo's name (which it doesn't actually have).
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "nameA", "SKILL.md")); err != nil {
+		t.Errorf("expected repoA's nameA to deploy: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "extraA", "SKILL.md")); err == nil {
+		t.Error("expected repoA's extraA to stay filtered out")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "nameB", "SKILL.md")); err != nil {
+		t.Errorf("expected repoB's nameB to deploy: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "extraB", "SKILL.md")); err == nil {
+		t.Error("expected repoB's extraB to stay filtered out")
+	}
+
+	// Documented behavior: both repos are warned about the cross-applied
+	// name they don't have (repoA lacks nameB, repoB lacks nameA).
+	if !strings.Contains(stderr, "nameB") || !strings.Contains(stderr, "nameA") {
+		t.Errorf("expected warnings naming the cross-applied skill each repo lacks, got stderr: %q", stderr)
+	}
+
+	m := readManifestParsed(t)
+	if len(m.ParsedDeps) != 2 {
+		t.Fatalf("expected exactly 2 apm.yml entries, got %d: %+v", len(m.ParsedDeps), m.ParsedDeps)
+	}
+	for _, d := range m.ParsedDeps {
+		if got := d.SkillSubset; len(got) != 2 || got[0] != "nameA" || got[1] != "nameB" {
+			t.Errorf("expected each dep's persisted subset to be the full shared --skill list [nameA nameB], got %v for %s", got, d.RepoURL)
 		}
 	}
 }
@@ -1466,4 +2539,102 @@ func TestRunInstall_AllowExecutablesWarning(t *testing.T) {
 	if hashWith != hashWithout {
 		t.Errorf("deployed .codex/hooks.json differs with vs without allowExecutables: block (with=%x, without=%x)", hashWith, hashWithout)
 	}
+}
+
+// TestResolvedDepCanonicalKey_SelfHostedPreservesCase is the final codex
+// gate regression: a resolved dep only carries its RepoURL string, and
+// feeding that into CanonicalRepoIdentity's bare-literal branch blanket-
+// lowercased it -- diverging from the manifest-refs side, which preserves
+// owner/repo case on a self-hosted host. Both sides must produce the same
+// key or the lockfile lookup misses the subset the deploy filter applies.
+func TestResolvedDepCanonicalKey_SelfHostedPreservesCase(t *testing.T) {
+	manifestRef, err := manifest.ParseDepString("git.internal/Acme/Repo")
+	if err != nil {
+		t.Fatalf("ParseDepString: %v", err)
+	}
+	manifestSide := deploy.CanonicalDepKey(manifestRef)
+
+	resolvedSide := resolvedDepCanonicalKey(resolver.ResolvedDep{RepoURL: "git.internal/Acme/Repo"})
+
+	if resolvedSide != manifestSide {
+		t.Errorf("resolved-side key %q != manifest-side key %q", resolvedSide, manifestSide)
+	}
+	if resolvedSide == strings.ToLower(resolvedSide) && manifestSide != strings.ToLower(manifestSide) {
+		t.Errorf("resolved-side key was blanket-lowercased: %q", resolvedSide)
+	}
+}
+
+// TestEffectiveSkillSubsets_DuplicateManifestEntries covers rule 4
+// (re-verification codex gate): a pre-BUG-1-fix polluted apm.yml can declare
+// the same repository twice under case/spelling variants. Their persisted
+// subsets must resolve widest-wins -- union when both narrow, NO filter at
+// all when any duplicate is subset-free -- never a silent last-writer
+// overwrite, and never blocking THIS call's explicit CLI narrowing.
+func TestEffectiveSkillSubsets_DuplicateManifestEntries(t *testing.T) {
+	dep := func(spelling string, subset ...string) *manifest.DependencyReference {
+		r, err := manifest.ParseDepString(spelling)
+		if err != nil {
+			t.Fatalf("ParseDepString(%q): %v", spelling, err)
+		}
+		if len(subset) > 0 {
+			r.SkillSubset = subset
+		}
+		return r
+	}
+	identity := deploy.CanonicalDepKey(dep("owner/repo"))
+
+	t.Run("both narrowed: union", func(t *testing.T) {
+		m := &manifest.Manifest{ParsedDeps: []*manifest.DependencyReference{
+			dep("Owner/Repo", "a"), dep("owner/repo", "b"),
+		}}
+		got := effectiveSkillSubsets(m, nil, nil)
+		if want := []string{"a", "b"}; !slicesEqualStr(got[identity], want) {
+			t.Errorf("duplicate subsets = %v, want union %v", got[identity], want)
+		}
+	})
+
+	for name, deps := range map[string][]*manifest.DependencyReference{
+		"bare first, narrowed second": {dep("Owner/Repo"), dep("owner/repo", "b")},
+		"narrowed first, bare second": {dep("Owner/Repo", "a"), dep("owner/repo")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := &manifest.Manifest{ParsedDeps: deps}
+			got := effectiveSkillSubsets(m, nil, nil)
+			if _, exists := got[identity]; exists {
+				t.Errorf("a subset-free duplicate must widen to NO filter entry, got %v", got[identity])
+			}
+		})
+	}
+
+	t.Run("single bare dep still accepts CLI narrowing", func(t *testing.T) {
+		m := &manifest.Manifest{ParsedDeps: []*manifest.DependencyReference{dep("owner/repo")}}
+		requested := map[string]bool{deploy.DepRefKey(dep("owner/repo")): true}
+		got := effectiveSkillSubsets(m, requested, []string{"x"})
+		if want := []string{"x"}; !slicesEqualStr(got[identity], want) {
+			t.Errorf("CLI narrowing on a fresh dep = %v, want %v", got[identity], want)
+		}
+	})
+
+	t.Run("CLI narrowing overrides duplicate widening for the requested dep", func(t *testing.T) {
+		m := &manifest.Manifest{ParsedDeps: []*manifest.DependencyReference{
+			dep("Owner/Repo"), dep("owner/repo", "b"),
+		}}
+		requested := map[string]bool{deploy.DepRefKey(dep("owner/repo")): true}
+		got := effectiveSkillSubsets(m, requested, []string{"x"})
+		if want := []string{"x"}; !slicesEqualStr(got[identity], want) {
+			t.Errorf("explicit CLI narrowing = %v, want %v", got[identity], want)
+		}
+	})
+}
+
+func slicesEqualStr(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

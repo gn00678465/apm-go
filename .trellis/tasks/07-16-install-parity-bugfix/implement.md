@@ -36,26 +36,79 @@
    → verify: `go test ./cmd/apm-go -run TestInstall_SkillSubsetPollution -count=1`
      失敗（現況全量佈署）。
 8. **GREEN（鏈路）**：依 design §1.2b-e 實作——
-   a. `deploy.SkillFilter` 改 `Subsets map[string][]string`（空 slice 不變式）+
-      deploy_test.go 兩支改形狀；prod+dev deps 同走查表；
-   b. `effectiveSkillSubsets()` 唯一計算點（union / 混合 wildcard RESET / identity key）；
-   c. 接線 buildLockfile（含未點名 dep）與 deployAndFinalize；update 路徑同接；
-   d. `persistPackagesToManifest` 既有 entry 原地 union 更新（canonical identity 比對）+
-      `clearPersistedSkillSubset` identity 化。
+   a. `deploy.SkillFilter` 改 `Subsets map[string][]string`（空 slice 不變式，經
+      `deploy.CanonicalDepKey(ref)` = `manifest.CanonicalRepoIdentity` + virtualPath 建鍵）+
+      `deploy_test.go` 兩支改形狀（`TestRun_SkillFilterScopedToDepKey` 保留舊名改新形狀；
+      `TestRun_SkillFilterWildcardDeploysAll` 更名 `TestRun_SkillFilterAbsentKeyDeploysAll`，
+      語意由「'*' 字面值」改為「key 不存在 = 全量」）；prod+dev deps 同走 `depCanonKeys` 查表；
+   b. `cmd/apm-go/install.go` 新增 `effectiveSkillSubsets()` 唯一計算點（union 用
+      `unionSortedSkills` / 混合 wildcard 整條 RESET / key 用 `deploy.CanonicalDepKey`）；
+      `resolvedDepCanonicalKey()` 橋接 `resolver.ResolvedDep` 缺 Owner/Repo 的限制；
+   c. 接線 `buildLockfile`（新增 `effectiveSubsets` 參數，含未點名 dep）與
+      `deployAndFinalize`（新增 `effectiveSubsets` 參數，`SkillFilter{Subsets: effectiveSubsets}`）；
+      `update.go` 同接（`effectiveSkillSubsets(m, nil, nil)`）；
+   d. `persistPackagesToManifest`（簽章改 `effectiveSubsets map[string][]string`）既有 entry
+      原地 union 更新——`entryDepString`/`canonicalIdentityForDepString`（內部呼叫既有
+      `normalizeLocalDep`，讓本地路徑 dep 與 deploy 端算出同一把 key）建 `existingByIdentity`
+      索引，`setEntrySkillSubset` 統一改寫（取代並移除舊 `clearPersistedSkillSubset`，
+      reset 與既有更新走同一路徑，不再是獨立函式）；
+      附帶修復（同一批次發現，非獨立 bug）：`runInstall` 的 `existing` map 現在先對
+      `m.ParsedDeps` 跑一輪 `normalizeLocalDep` 再建立，修正本地路徑 dep 二次 CLI 安裝時
+      key space 不一致造成的重複 entry。
    → verify: 步驟 7 綠；同 repo 三階段測試
      `go test ./cmd/apm-go -run TestInstall_SkillSubsetSameRepoUnion -count=1` 綠（C3 迴歸）；
-     wildcard 迴歸群綠（實作時回填實際 -run pattern）；
-     update 一致性 `go test ./cmd/apm-go -run TestUpdate_RespectsSkillSubset -count=1` 綠。
+     wildcard 迴歸群：
+     `go test ./cmd/apm-go ./internal/deploy -run 'SkillWildcard|SkillFilter' -v -count=1` 綠
+     （`TestRunInstall_SkillWildcardDeploysAllSkills`、
+     `TestPersistPackagesToManifest_SkillWildcard_NewPackageWritesStringForm`、
+     `TestPersistPackagesToManifest_SkillWildcard_ClearsExistingSubset`、
+     `TestBuildLockfile_SkillWildcardDoesNotRecordSubset`、
+     `TestRun_SkillFilterScopedToDepKey`、`TestRun_SkillFilterAbsentKeyDeploysAll`）；
+     update 一致性 `go test ./cmd/apm-go -run TestUpdate_RespectsSkillSubset -count=1` 綠；
+     全量 `go build ./... && go vet ./... && go test ./... -count=1` 全綠。
 9. **unknown skill 政策（H3）**：先驗證後持久化的順序調整 + 新名報錯原子性測試 +
-   persisted 消失警告測試。
+   persisted 消失警告測試。**已完成**（`cmd/apm-go/install.go` 新增
+   `validateNewSkillNames`，在 `effectiveSkillSubsets` 之後、`buildLockfile` 之前
+   呼叫——早於 `deploy.Run` 的任何 target 寫入與 `apm.lock.yaml`/`apm.yml` 寫入；
+   `internal/deploy/deploy.go` 的 `Run` 新增 `skillSubsetDiags`，對「persisted
+   子集內的名稱找不到對應 primitive」發出 warning，而非 error）。
    → verify: `go test ./cmd/apm-go -run TestInstall_UnknownSkill -count=1` 綠
-     （斷言錯誤時 manifest/lockfile/檔案系統 byte 級不變）。
+     （`TestInstall_UnknownSkill_NewNameErrorsAtomically`：純新名/新名+既有名混合，
+     兩者皆報錯且 apm.yml byte 級不變、apm.lock.yaml 未寫入、target 目錄空；
+     `TestInstall_UnknownSkill_PersistedNameDisappearsWarnsAndKeeps`：persisted
+     名稱因上游更新消失時，bare install 不報錯、stderr 含警告、manifest/lockfile
+     子集維持不變）——已跑綠。
 10. **污染收斂（C1）**：先寫觀察測試確認既有 re-deploy 對 stale 檔的行為；
     不足則實作 ownership-aware reconciliation（hash 驗證 + 接管檢查，重用 uninstall helper）。
+    **已完成**（觀察確認舊行為「不收斂」——`deploy.Run` 純加法式部署，縮小
+    subset 後舊檔案永久殘留；`cmd/apm-go/install.go` 新增
+    `reconcileStaleSkillDeployments`，在 deploy 完成、`newLock` 各 dep 的
+    `DeployedFiles`/`LocalDeployedFiles`/MCP 合併檔都填好之後呼叫，比較
+    `existingLock`（舊帳本）與 `newLock`（本次全庫已宣告的路徑集合）的差集，
+    對每個 dep 的 stale 子集重用 `internal/deploy/uninstall.go` 既有的
+    `RemoveDeployedFiles`（hash 驗證 + 已存在性檢查），不重造 wheel）。
     → verify: `go test ./cmd/apm-go -run TestInstall_StaleSkillReconciliation -count=1` 綠
-      （污染 fixture → bare install → stale 未修改檔被清、修改檔保留 + 警告，查實際檔案系統）。
+      （全量安裝兩個 skill 後縮窄到其中一個：3 份未修改的殘留複本被清除，1 份
+      使用者手動修改過的複本被保留並在 stderr 產生警告，查實際檔案系統
+      而非只查 lockfile/DeployResult）——已跑綠。
 11. **邊界批次**：混合 wildcard、參數順序、dev deps、多 positional、寫入失敗原子性注入。
-    → verify: 對應測試群綠（實作時回填 -run pattern）。
+    **已完成**（混合 wildcard 與多 positional 共用 --skill 兩項促成
+    `validateNewSkillNames` 的一處設計修正：驗證語意從「每個 targeted dep 都要有
+    這個名稱」放寬為「至少一個 targeted dep 有這個名稱」——否則兩個不同 repo
+    共用同一組 --skill 清單、各自只占其中一個名稱時會被誤判為 typo 而整體報錯；
+    寫入失敗原子性採**記錄限制**而非 FS 權限注入測試，見 design.md §4 BUG-2
+    小節新增決策段落——`os.Chmod` 唯讀在 CI 常見的 root 執行環境下會被略過，
+    是不可靠的驗證手段）。
+    → verify:
+      `go test ./cmd/apm-go -run TestRunInstall_SkillMixedWildcardResetsToFull -count=1` 綠
+      （narrow 後 `--skill x --skill '*'` 全量重置，apm.yml/apm.lock.yaml 子集皆清空）；
+      `go test ./cmd/apm-go -run TestRunInstall_DevDependency_SkillSubsetHonored -count=1` 綠
+      （devDependencies.apm 持久化子集同樣被 SkillFilter 尊重）；
+      `go test ./cmd/apm-go -run TestRunInstall_MultiplePositionalPackages_SharedSkillFlag -count=1` 綠
+      （兩個不同 repo 共用 --skill 清單，各自只部署自己擁有的名稱，不報錯，
+      並記錄「持久化子集含對方 repo 名稱」的既有行為，非本任務新增缺陷）；
+      既有迴歸不受影響：
+      `go test ./cmd/apm-go ./internal/deploy -run 'SkillWildcard|SkillFilter|SkillSubset' -count=1` 綠。
 12. **全量驗證 + 閘門 + commit**（`fix(deps): --skill 子集持久化與重佈署尊重`；
     Phase 0 的 identity 若無獨立價值可併入此 commit，有則先行獨立 commit）。
     → verify: `go build ./...`、`go vet ./...`、`go test ./... -count=1` 三條各自 exit 0；
@@ -66,11 +119,68 @@
 13. **RED**：同 repo 大小寫兩來源 → 斷言 Resolved 1 + apm.yml 單 entry + lockfile 單 dep +
     apm_modules 單目錄 + 無 shadow 噪音（codex M7 全狀態斷言）。
     → verify: `go test ./cmd/apm-go -run TestInstall_CaseFoldDedup -count=1` 失敗。
+    **已完成**：fixture 透過 `GIT_CONFIG_GLOBAL` + `insteadOf`（`caseFoldGitConfig`，
+    `cmd/apm-go/install_casefold_test.go`）把 `Owner/Repo`／`owner/repo` 兩個大小寫
+    positional package 導向同一個本地 git repo（`gitSkillRepo`，多檔多 target），
+    不需真實網路；RED 階段確認在修復前會產生 `Resolved 2`＋apm.yml/lockfile 各兩筆
+    ＋apm_modules 兩目錄＋shadow 噪音。
 14. **GREEN**：resolver 去重 / requestedKeys / lockfile 比對接線 §0 identity。
     → verify: 步驟 13 綠。
+    **已完成**：
+    a. `internal/resolver/resolver.go` 新增 `bfsKey(ref)`（§0 identity + virtualPath
+       後綴，local/parent 落回既有 `depKey` 原始路徑）取代 BFS 記帳用的
+       `key := depKey(entry.ref)`／`childKey := depKey(subDep)`——`constraints`/
+       `pins`/`processed`/`depRefs`/`depOrder`/`childrenOf`/`depDepth` 全部改用
+       `bfsKey`，讓大小寫不同但同 identity 的兩個 queue entry 收斂成同一個 BFS
+       節點（`Resolved 2`→`Resolved 1` 的根本修法，且對 diamond 衝突機制免費適用：
+       同 identity 不同 selector 現在會自然撞上既有 `checkLiteralConflict`）。
+       結果建構迴圈新增 `displayKey := depKey(depRefs[key])`，`ResolvedDep.Key`/
+       `RepoURL` 一律用 displayKey（= first-declared 原始大小寫）而非內部 canonical
+       key，避免外洩 canonical 格式（尤其 registry/marketplace 的 prefixed 格式）
+       到 `regLoader.Resolutions()`／`buildLockfile` 等下游查表點；
+       `result.MarketplaceProvenance` 兩處仍刻意保留 `depKey(resolved)`（raw）作
+       key，因為它是跟 displayKey 對應查找，不能用 canonical bfsKey（曾一度誤改，
+       導致 `TestRunInstall_MarketplaceDictDep_*` 迴歸，已修正回 depKey 並加註解）。
+    b. `cmd/apm-go/install.go` `runInstall`：`existingByIdentity map[string]string`
+       （canonical identity → first-declared `deploy.DepRefKey`）新增於既有
+       `existing` 掃描迴圈；positional package 迴圈內，若這次 pkg 的 `CanonicalDepKey`
+       命中 `existingByIdentity`（apm.yml 既有宣告 **或** 這次呼叫更早的 positional
+       package），`key` 折疊成 first-declared key，並在折疊時比較新舊 ref 的
+       `Reference`（selector）——不同則印 `ux.Warn`（"conflicts with
+       already-declared ... keeping the first-declared ref"，first-declared 規則
+       + 警告，符合 design.md §0/§2 的「不靜默合併」要求）；`appendedThisCall`
+       （與 `existing` 分離，避免污染 R9/R10c 的「already in apm.yml」判定）防止
+       同一次呼叫內第三個大小寫變體重複 append。
+    c. `cmd/apm-go/install.go` `persistPackagesToManifest`：既有的
+       `existingByIdentity`/`existingPkgs`（BUG-2 的 C3 修法）先前只在迴圈**之前**
+       建立一次、迴圈內從未更新——同一次呼叫的第二個大小寫變體因此仍會各自
+       append 成 apm.yml 的第二筆 entry。修正為每次 append 新 entry 後立即登記
+       `existingByIdentity[identity] = len(apmSeq.Content)-1`（或
+       `existingPkgs[pkg]=true`），使同呼叫內第二個變體改為呼叫
+       `setEntrySkillSubset` 就地更新，而非重複新增。
+    d. **附帶修正（同批次發現的獨立既有 bug，非 BUG-1 本體但擋住 AC-B1-3 驗收）**：
+       `internal/lockfile/write.go` `depSemanticEqual` 從未比較 `SkillSubset`
+       欄位——導致「只有 skill_subset 改變、其餘欄位不變」的重佈署（例如
+       `--skill '*'` RESET）被 `IsSemanticEqual` 誤判為 no-op，`deployAndFinalize`
+       在寫入 apm.lock.yaml/apm.yml **之前**就以「Already up to date」提早返回，
+       RESET 结果從未落盤。已加入 `slicesEqual(a.SkillSubset, b.SkillSubset)`。
 15. **守衛**：不同 repo 不受影響；F4 shadowed 仍輸出；混合大小寫舊 lockfile 升級相容；
     BUG-1×BUG-2 交互（`RepoA --skill a → repoa --skill b → REPOA --skill '*'`）。
     → verify: 四支守衛測試綠（實作時回填名稱）。
+    **已完成**，皆位於 `cmd/apm-go/install_casefold_test.go`：
+    - `TestInstall_CaseFoldDedup_DifferentReposNotMerged`（AC-B1-2：不同 owner
+      不同 repo 維持兩筆 apm.yml/lockfile entry，未被過度 case-fold 誤合併）；
+    - `TestInstall_CaseFoldDedup_SelectorConflictNotSilentlyMerged`（同 identity
+      不同 ref/selector：first-declared 勝出 + `ux.Warn` 警告，不靜默）；
+    - `TestInstall_CaseFoldWildcardReset`（BUG-1×BUG-2：`RepoA/x --skill skillA`
+      → `repoa/x --skill skillB`（union）→ `REPOA/x --skill '*'`（RESET）三階段，
+      manifest/lockfile/apm_modules/實際部署檔案全程單一且一致）；
+    - `TestInstall_CaseFoldDedup_LockfileUpgradeCompat`（AC-B1-4：手動注入
+      pre-fix 風格的混合大小寫 lockfile 污染後重跑 install，收斂回單一 dependency、
+      apm_modules 目錄數不增長、first-declared 拼寫保留）。
+    - 另有 `TestInstall_CaseFoldDedup`（步驟 13/14 對應的核心 GREEN 測試，含
+      bare install 與 `runUpdate` 之後仍保持單一的 V1-2 迴歸）。
+    → verify: `go test ./cmd/apm-go -run TestInstall_CaseFold -v -count=1` 五支全綠。
 16. **全量驗證 + 閘門 + commit**（`fix(resolver): dep-key 大小寫正規化`）。
     → verify: 同步驟 12 三條指令；codex 閘門無 CRITICAL/HIGH。
 
