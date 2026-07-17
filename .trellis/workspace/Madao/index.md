@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
+- **Total Sessions**: 27
 - **Last Active**: 2026-07-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~952 | Active |
+| `journal-1.md` | ~985 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-07-17 | PR #6/#7 收尾:驗證、ready、審查備援補記與合併 | `6a30d8f` | `main` |
 | 26 | 2026-07-17 | 安全殘留全掃 + HIGH-B 封閉 + 流程護欄落地 + #4/#5 合併 | `a4afe79`, `a8418b6`, `b402605`, `eafab5b`, `f583183`, `b123802`, `ae5bed8`, `8dec1ea`, `6443464` | `main` |
 | 25 | 2026-07-16 | 甲類美化收尾:commit 整合、版本 0.2.0、PR #3、codex 終驗 | `4ebfb5a`, `c9e5f8b` | `feat/init-tui-lipgloss` |
 | 24 | 2026-07-14 | pack/audit 完整 parity 收尾：Phase 6-8 + cmd 目錄改名 | `d1bfad8`, `7c95c48`, `f2453b8`, `276c56b`, `6585876`, `63857c1`, `0766389`, `440857c` | `feat/marketplace-install` |

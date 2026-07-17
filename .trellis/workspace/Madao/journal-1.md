@@ -950,3 +950,36 @@ PR #6 分支修完 C2(deploy 符號連結任意讀)/H2/M1(HTTP body LimitReader)
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: PR #6/#7 收尾:驗證、ready、審查備援補記與合併
+
+**Date**: 2026-07-17
+**Task**: PR #6/#7 收尾:驗證、ready、審查備援補記與合併
+**Branch**: `main`
+
+### Summary
+
+以 Fable 視角重新梳理四個流程問題:確認推導規則為承重牆、詞表僅偵測器;補 #7 缺口 — 獨立審查目的是失效去相關,codex 不可用時 fallback = fresh-context 同模型反駁式 agent(6a30d8f)。#6(安全批次 C2/H2/M1/M2/M3)與 #7(流程護欄)trial-merge 驗證全綠後轉 ready,均已由使用者合併至 main。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6a30d8f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
