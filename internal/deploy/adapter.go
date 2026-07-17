@@ -218,6 +218,14 @@ func copyDirRecursive(srcDir, dstDir, relPrefix string, deployed *[]string) erro
 		return err
 	}
 	for _, e := range entries {
+		// Skip symlink entries: os.ReadFile/copyFile would follow the link and
+		// copy the target's content (a file outside the skill tree, e.g.
+		// /etc/passwd) into the deployed skill -- an arbitrary file read from a
+		// malicious package. Type() reports the entry's own type without
+		// following, matching the symlink guards in plugin.go/codex_agent.go.
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		srcPath := filepath.Join(srcDir, e.Name())
 		dstPath := filepath.Join(dstDir, e.Name())
 		relPath := path.Join(relPrefix, e.Name())
