@@ -183,6 +183,22 @@ func Resolve(
 		// Track and enqueue children
 		var newChildKeys []string
 		for _, subDep := range collectRootDeps(subManifest) {
+			// Supply-chain guard (HIGH-B): a downloaded, transitive package must
+			// not be able to declare a local-filesystem dependency. A
+			// `git: <localpath>` would drive a file-transport git clone, and a
+			// `path: <dir>` a directory copy, of an attacker-chosen path on the
+			// victim's machine -- a local-read primitive the package author
+			// should never control. Every subDep in this loop is transitive
+			// (depth >= 2); a local dependency is legitimate only in the ROOT
+			// project's own apm.yml (depth 1, never routed through here). Checked
+			// BEFORE the marketplace collapse below so a `marketplace:` ref that
+			// legitimately resolves to a user-registered local marketplace is not
+			// caught here (its raw Source is "marketplace", not local).
+			if isLocalFilesystemDep(subDep) {
+				return nil, fmt.Errorf(
+					"transitive dependency of %q resolves to a local filesystem path (%q); local dependencies are only allowed in the root project's apm.yml, not in a downloaded package",
+					key, localDepPathOf(subDep))
+			}
 			// mi-fix (MI1): a transitive marketplace dict dependency must be
 			// collapsed to its real ref HERE, before childKey is computed,
 			// not left for dequeue-time collapse. Otherwise childKey is the
@@ -364,6 +380,35 @@ func collectResolutionRootDeps(m *manifest.Manifest) []*manifest.DependencyRefer
 	all = append(all, m.ParsedDeps...)
 	all = append(all, m.ParsedDevDeps...)
 	return all
+}
+
+// isLocalFilesystemDep reports whether ref points at a local filesystem path
+// rather than a remote repository: either an explicit `path:` dependency
+// (IsLocal) or a `git: <path>` dependency whose value is a local path. The
+// predicate for the latter is EXACTLY gitops.resolveCloneURL's own local
+// branch condition -- a git dependency with no owner/repo whose RepoURL is
+// returned verbatim to `git clone` (Owner=="" && Repo=="" && RepoURL!="").
+// Every real remote form the manifest parser accepts (https/ssh/scp URL,
+// owner/repo shorthand) always populates Owner AND Repo, so this never
+// misclassifies a remote; a scheme is deliberately NOT required, so a value
+// that somehow carried a scheme yet no owner/repo is still caught. Used to
+// refuse such a dependency when it arrives from a transitive (downloaded)
+// package.
+func isLocalFilesystemDep(ref *manifest.DependencyReference) bool {
+	if ref.IsLocal {
+		return true
+	}
+	return ref.Source == "git" && ref.Owner == "" && ref.Repo == "" && ref.RepoURL != ""
+}
+
+// localDepPathOf returns the local filesystem path a local dependency points
+// at, for use in a diagnostic (LocalPath for a `path:` dep, RepoURL for a
+// `git: <path>` dep).
+func localDepPathOf(ref *manifest.DependencyReference) string {
+	if ref.LocalPath != "" {
+		return ref.LocalPath
+	}
+	return ref.RepoURL
 }
 
 func depKey(ref *manifest.DependencyReference) string {
