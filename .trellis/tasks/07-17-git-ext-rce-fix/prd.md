@@ -46,13 +46,25 @@ POSIX 字元合法 → 必中）。
 
 - **H1**（`git: ./path` 本機分支同型注入）：由 validateCloneURL + GIT_ALLOW_PROTOCOL 一併覆蓋。
 
-## 追蹤殘留（本 hotfix 範圍外，需另立）
+## HIGH-B（已評估並封閉可注入切片，commit f583183）
 
-- **HIGH-B（file 依 URL 字串形狀、無 parse 層 trusted-local 邊界）**：一個**本機路徑字串**的
-  marketplace source 仍會取得 file transport。codex 註明「非相較舊版新增讀取面」（舊版**無**
-  任何協定限制，本修復嚴格改善——遠端 source 現不可觸 file）；且 marketplace source 為
-  **root-only** 設定、transitive 不可注入。徹底修法需在解析層攜帶 explicit trusted-local
-  型別/旗標、marketplace 遠端衍生資料一律用不含 file 的 env → 架構變更，另立任務評估。
+原記為「架構性殘留、延後」。實際追程式碼後，威脅模型如下：
+
+- **Marketplace source（won't-fix，結構上不可注入）**：`resolve_plugin.go` mkt-022
+  只查 `~/.apm/marketplaces.json`（使用者親自 `marketplace add`），**絕不**讀專案/相依
+  apm.yml 的 `marketplace:` 區塊。故一個本機路徑 marketplace source 只可能來自使用者
+  自己的註冊，file transport 指向使用者自己的檔案系統——非漏洞。
+- **依賴安裝路徑（實際可注入切片，已修）**：resolver 會遞迴進遞移相依且原本未拒本機 dep。
+  遞移套件 apm.yml 宣告 `git: <本機路徑>`（經 depref 設 IsLocal=false/Source=git，
+  resolveCloneURL 原值返回）→ file transport clone。去毒事實：`git: ../x`（相對逃逸）
+  已被 `containsEscape` 擋、`git: file://` 於 parseShorthand 即拒、clone 無
+  `--recurse-submodules`（submodule `.gitmodules file://` 放大不適用）、內容落在受害者
+  自己的 apm_modules 不回傳攻擊者。實質 MEDIUM。
+- **修法（非架構變更）**：resolver 子相依迴圈（depth≥2）以 `isLocalFilesystemDep` 拒絕
+  本機 dep，判定式採 resolveCloneURL 同一 local 不變式。原以為需要的「parse 層
+  trusted-local 型別系統」是 overkill——depth-based guard 即封閉可注入切片。
+- 驗收：遞移 git-local/path 拒、root local 允許、真實 parser 的 SCP/https/shorthand
+  遠端不誤判、解析層 file:// 拒。codex 對抗閘門 2 輪至無 CRITICAL/HIGH。
 
 ## 其他安全審查發現（另立任務，非本 hotfix）
 
