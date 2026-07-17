@@ -139,8 +139,8 @@ func cloneAtRef(ctx context.Context, cloneURL, ref, dir string) error {
 	safeURL := gitops.SanitizeGitOutput(cloneURL)
 
 	if sha40LowerRe.MatchString(ref) {
-		cloneCmd := exec.CommandContext(ctx, "git", "clone", cloneURL, dir)
-		gitops.ApplySecureGitEnv(cloneCmd)
+		cloneCmd := exec.CommandContext(ctx, "git", "clone", "--", cloneURL, dir)
+		gitops.ApplyCloneEnv(cloneCmd, cloneURL)
 		if out, err := cloneCmd.CombinedOutput(); err != nil {
 			return cloneError(ctx, safeURL, out, err)
 		}
@@ -152,8 +152,8 @@ func cloneAtRef(ctx context.Context, cloneURL, ref, dir string) error {
 		return nil
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ref, cloneURL, dir)
-	gitops.ApplySecureGitEnv(cmd)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", ref, "--", cloneURL, dir)
+	gitops.ApplyCloneEnv(cmd, cloneURL)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return cloneError(ctx, safeURL, out, err)
 	}
