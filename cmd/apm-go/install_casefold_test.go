@@ -1,48 +1,77 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
+	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
-// caseFoldGitConfig writes a temporary git global config (via
-// GIT_CONFIG_GLOBAL) that rewrites each of the given "owner/repo"-shaped
-// literal forms, resolved against host (https://<host>/<form>.git, matching
-// gitops.RealPackageLoader.resolveCloneURL's shorthand-with-no-explicit-
-// scheme branch), to a SINGLE local git repository directory. This lets a
-// BUG-1 case-fold test (design.md §2/§0, prd.md "BUG-1") clone one real,
-// fully-controlled repo under two different-case CLI argument spellings
-// ("Owner/Repo" vs "owner/repo") without any network access or a real
-// GitHub host. Restored automatically via t.Cleanup.
-func caseFoldGitConfig(t *testing.T, host, localRepoDir string, ownerRepoForms ...string) {
-	t.Helper()
-	var b strings.Builder
-	fmt.Fprintf(&b, "[url %q]\n", filepath.ToSlash(localRepoDir))
-	for _, form := range ownerRepoForms {
-		fmt.Fprintf(&b, "    insteadOf = https://%s/%s.git\n", host, form)
+// fixtureLoader materializes a prebuilt skill-repo fixture into apm_modules in
+// place of a real git clone. The BUG-1 case-fold DEPLOY tests need real skill
+// files on disk under the dependency's apm_modules key so deploy can copy them
+// out. A real clone would work only via a `file`-transport clone (git
+// insteadOf redirecting a fake remote host to a local repo), which the git
+// ext:: transport hardening (GIT_ALLOW_PROTOCOL without "file" for a
+// remote-shaped URL) correctly refuses. Copying the fixture reproduces exactly
+// what a clone leaves behind -- installPath is ModulesDir/<RepoURL> -- while
+// still exercising the same resolve -> dedup -> deploy pipeline. resolvedRef is
+// unused: these fixtures are single-commit and never re-checked-out.
+type fixtureLoader struct {
+	modulesDir string
+	fixtureDir string
+}
+
+func (l *fixtureLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
+	key := ref.RepoURL
+	if ref.VirtualPath != "" {
+		key += "/" + ref.VirtualPath
 	}
-	cfgPath := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(cfgPath, []byte(b.String()), 0644); err != nil {
-		t.Fatal(err)
-	}
-	orig, had := os.LookupEnv("GIT_CONFIG_GLOBAL")
-	if err := os.Setenv("GIT_CONFIG_GLOBAL", cfgPath); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if had {
-			os.Setenv("GIT_CONFIG_GLOBAL", orig)
-		} else {
-			os.Unsetenv("GIT_CONFIG_GLOBAL")
+	dest := filepath.Join(l.modulesDir, filepath.FromSlash(key))
+	if _, err := os.Stat(dest); os.IsNotExist(err) {
+		if err := copyTreeSkipGit(l.fixtureDir, dest); err != nil {
+			return nil, err
 		}
+	}
+	data, err := os.ReadFile(filepath.Join(dest, "apm.yml"))
+	if err != nil {
+		return nil, err
+	}
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		return nil, err
+	}
+	m, _, err := manifest.ParseManifest(node)
+	return m, err
+}
+
+// copyTreeSkipGit recursively copies src into dst, skipping any .git directory
+// (a clone's working tree is all deploy needs; the .git metadata is not).
+func copyTreeSkipGit(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(dst, rel), 0755)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), b, 0644)
 	})
 }
 
@@ -105,16 +134,13 @@ func TestInstall_CaseFoldDedup(t *testing.T) {
 		"skillTwo": {"SKILL.md", "notes.md"},
 	})
 
-	const host = "faketest.local"
-	caseFoldGitConfig(t, host, repoDir, "Owner/Repo", "owner/repo")
-
 	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	deps := &installDeps{
 		tags:   &mockInstallTagLister{},
-		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules", DefaultHost: host},
+		loader: &fixtureLoader{modulesDir: "apm_modules", fixtureDir: repoDir},
 	}
 
 	var installErr error
@@ -294,16 +320,13 @@ func TestInstall_CaseFoldWildcardReset(t *testing.T) {
 		"skillB": {"SKILL.md", "notes.md"},
 	})
 
-	const host = "faketest.local"
-	caseFoldGitConfig(t, host, repoDir, "RepoA/x", "repoa/x", "REPOA/x")
-
 	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	deps := &installDeps{
 		tags:   &mockInstallTagLister{},
-		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules", DefaultHost: host},
+		loader: &fixtureLoader{modulesDir: "apm_modules", fixtureDir: repoDir},
 	}
 
 	if err := runInstall(deps, false, true, "claude", []string{"skillA"}, []string{"RepoA/x"}); err != nil {
@@ -378,16 +401,13 @@ func TestInstall_CaseFoldDedup_LockfileUpgradeCompat(t *testing.T) {
 		"skillOne": {"SKILL.md", "notes.md"},
 	})
 
-	const host = "faketest.local"
-	caseFoldGitConfig(t, host, repoDir, "Owner/Repo", "owner/repo")
-
 	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - Owner/Repo\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	deps := &installDeps{
 		tags:   &mockInstallTagLister{},
-		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules", DefaultHost: host},
+		loader: &fixtureLoader{modulesDir: "apm_modules", fixtureDir: repoDir},
 	}
 
 	// Baseline install to get a legitimate, real lockfile for "Owner/Repo".
