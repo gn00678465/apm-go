@@ -729,3 +729,24 @@ func mustParseRootMapping(t *testing.T, doc string) *yaml.Node {
 	t.Helper()
 	return mustParseSingleNode(t, doc)
 }
+
+// TestGithubRawFetcher_SizeCapEnforced covers H2: FetchRaw must reject an
+// oversized apm.yml response body rather than buffer it all.
+func TestGithubRawFetcher_SizeCapEnforced(t *testing.T) {
+	orig := auditFetchMaxBytes
+	auditFetchMaxBytes = 8
+	t.Cleanup(func() { auditFetchMaxBytes = orig })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("name: this-body-is-way-longer-than-eight-bytes\n"))
+	}))
+	t.Cleanup(srv.Close)
+	withAuditGitHubAPIBase(t, srv.URL)
+
+	_, err := (githubRawFetcher{}).FetchRaw("github.com", "acme", "tool", "apm.yml", "v1.0.0")
+	if err == nil {
+		t.Fatal("FetchRaw() returned no error, want a size-cap rejection")
+	}
+	if !strings.Contains(err.Error(), "byte limit") {
+		t.Errorf("FetchRaw() error = %v, want it to mention the byte limit", err)
+	}
+}

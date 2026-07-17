@@ -749,6 +749,66 @@ func TestDeploySkill_BundleWithSiblings(t *testing.T) {
 	}
 }
 
+// TestDeploySkill_SkipsSymlinkEntry is the arbitrary-file-read regression for
+// C2: a malicious skill package whose tree contains a symlink pointing at a
+// file OUTSIDE the tree (e.g. /etc/passwd) must NOT have that target's content
+// copied into the deployed skill. copyDirRecursive must not follow symlinks.
+func TestDeploySkill_SkipsSymlinkEntry(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "secret.txt")
+	if err := os.WriteFile(secret, []byte("TOP-SECRET"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	srcDir := filepath.Join(dir, "skillsrc")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "SKILL.md"), []byte("body"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(srcDir, "leak.md")); err != nil {
+		t.Skipf("symlink creation not permitted in this environment: %v", err)
+	}
+	// A symlink to a DIRECTORY outside the tree: its ModeSymlink type must be
+	// caught before the IsDir() branch, so copyDirRecursive never recurses
+	// through it into the external directory.
+	secretDir := filepath.Join(dir, "secretdir")
+	if err := os.WriteFile(filepath.Join(mkdir(t, secretDir), "inner.txt"), []byte("X"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secretDir, filepath.Join(srcDir, "leakdir")); err != nil {
+		t.Skipf("dir symlink creation not permitted: %v", err)
+	}
+
+	prim := Primitive{Name: "demo", Type: TypeSkills, SrcPath: srcDir}
+	files, err := deploySkill(prim, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, f := range files {
+		if strings.Contains(f, "leak.md") || strings.Contains(f, "leakdir") {
+			t.Errorf("symlink entry was deployed (arbitrary read): %s", f)
+		}
+	}
+	for _, leaked := range []string{
+		filepath.Join(dir, ".agents", "skills", "demo", "leak.md"),
+		filepath.Join(dir, ".agents", "skills", "demo", "leakdir"),
+	} {
+		if _, err := os.Stat(leaked); err == nil {
+			t.Fatalf("symlink target content leaked to %s", leaked)
+		}
+	}
+}
+
+func mkdir(t *testing.T, p string) string {
+	t.Helper()
+	if err := os.MkdirAll(p, 0755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func TestRun_FullPipeline(t *testing.T) {
 	dir := t.TempDir()
 

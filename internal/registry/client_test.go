@@ -144,3 +144,55 @@ func TestClient_CheckRedirect_DropPolicy(t *testing.T) {
 		t.Errorf("same-host retain: Authorization = %q, want kept", got)
 	}
 }
+
+// TestClient_SizeCapEnforced covers H2: Client.get must reject an oversized
+// registry response body rather than buffer it all.
+func TestClient_SizeCapEnforced(t *testing.T) {
+	orig := registryMaxBytes
+	registryMaxBytes = 8
+	t.Cleanup(func() { registryMaxBytes = orig })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"versions": ["this-is-longer-than-eight-bytes"]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(srv.URL, Credential{}, nil, false)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, err = c.ListVersions("acme", "sample")
+	if err == nil {
+		t.Fatal("ListVersions returned no error, want a size-cap rejection")
+	}
+	if !strings.Contains(err.Error(), "byte limit") {
+		t.Errorf("error = %v, want it to mention the byte limit", err)
+	}
+}
+
+// TestClient_SizeCap_ErrorBodyPreservesHTTPError covers the H2 follow-up: an
+// oversized body on a >=400 response must still surface as *HTTPError (status
+// preserved for auth remediation), not a plain error, with a fixed message.
+func TestClient_SizeCap_ErrorBodyPreservesHTTPError(t *testing.T) {
+	orig := registryMaxBytes
+	registryMaxBytes = 8
+	t.Cleanup(func() { registryMaxBytes = orig })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("this-error-body-is-way-longer-than-eight-bytes"))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(srv.URL, Credential{}, nil, false)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, err = c.ListVersions("acme", "sample")
+	he, ok := err.(*HTTPError)
+	if !ok {
+		t.Fatalf("error = %T (%v), want *HTTPError", err, err)
+	}
+	if he.Status != http.StatusForbidden {
+		t.Errorf("HTTPError.Status = %d, want 403", he.Status)
+	}
+	if !strings.Contains(he.Msg, "byte limit") {
+		t.Errorf("HTTPError.Msg = %q, want it to mention the byte limit", he.Msg)
+	}
+}

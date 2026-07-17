@@ -18,6 +18,12 @@ import (
 // composed redirect policy without touching the Phase-5 credsec package.
 var credentialHeaders = []string{"Authorization", "Proxy-Authorization", "Cookie"}
 
+// registryMaxBytes caps how much of a registry HTTP response Client.get will
+// read (both success and error bodies), bounding memory use against a hostile
+// or misbehaving registry. A var so tests can shrink it instead of allocating
+// a real 10MB+ body.
+var registryMaxBytes int64 = 10 * 1024 * 1024
+
 // VersionEntry is one row from GET /versions (registry-http-api.md §3.1).
 type VersionEntry struct {
 	Version     string
@@ -123,16 +129,27 @@ func (c *Client) get(rawURL, accept string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("registry request failed: %s", c.redactor.Redact(err.Error()))
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, registryMaxBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("read registry response: %s", c.redactor.Redact(err.Error()))
 	}
+	// Truncate an oversized body to the cap. For a >=400 response the status
+	// still carries HTTPError semantics the caller relies on (401/403 -> auth
+	// remediation), so preserve the typed error with a fixed message rather
+	// than dropping to a plain error and losing the status.
+	oversize := int64(len(body)) > registryMaxBytes
+	if oversize {
+		body = body[:registryMaxBytes]
+	}
 	if resp.StatusCode >= 400 {
-		return nil, "", &HTTPError{
-			Status: resp.StatusCode,
-			URL:    rawURL,
-			Msg:    c.redactor.Redact(strings.TrimSpace(string(body))),
+		msg := c.redactor.Redact(strings.TrimSpace(string(body)))
+		if oversize {
+			msg = fmt.Sprintf("response exceeds %d byte limit", registryMaxBytes)
 		}
+		return nil, "", &HTTPError{Status: resp.StatusCode, URL: rawURL, Msg: msg}
+	}
+	if oversize {
+		return nil, "", fmt.Errorf("registry response exceeds %d byte limit", registryMaxBytes)
 	}
 	ctype := strings.TrimSpace(strings.SplitN(resp.Header.Get("Content-Type"), ";", 2)[0])
 	return body, ctype, nil

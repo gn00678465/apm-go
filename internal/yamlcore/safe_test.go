@@ -352,3 +352,40 @@ func TestRoundTrip_Deterministic(t *testing.T) {
 		t.Error("round-trip is non-deterministic")
 	}
 }
+
+// TestSafeLoad_RejectsExcessiveNesting covers M3: a pathologically deep
+// document must be rejected rather than drive validateNode (or downstream
+// typed accessors) into stack exhaustion.
+func TestSafeLoad_RejectsExcessiveNesting(t *testing.T) {
+	const depth = 500
+	data := []byte(strings.Repeat("[", depth) + strings.Repeat("]", depth))
+	_, err := SafeLoad(data)
+	if err == nil {
+		t.Fatal("SafeLoad accepted a pathologically deep document; want a depth rejection")
+	}
+	if !strings.Contains(err.Error(), "depth") {
+		t.Errorf("SafeLoad error = %v, want it to mention the depth limit", err)
+	}
+}
+
+// TestSafeLoad_AcceptsNormalNesting guards the depth cap against being so
+// tight it rejects an ordinarily-nested document.
+func TestSafeLoad_AcceptsNormalNesting(t *testing.T) {
+	data := []byte(strings.Repeat("[", 20) + strings.Repeat("]", 20))
+	if _, err := SafeLoad(data); err != nil {
+		t.Errorf("SafeLoad rejected a 20-deep document: %v", err)
+	}
+}
+
+// TestSafeLoad_NestingBoundary locks the exact depth boundary: a document at
+// the cap is accepted, one level deeper is rejected.
+func TestSafeLoad_NestingBoundary(t *testing.T) {
+	atCap := []byte(strings.Repeat("[", maxNodeDepth) + strings.Repeat("]", maxNodeDepth))
+	if _, err := SafeLoad(atCap); err != nil {
+		t.Errorf("SafeLoad rejected a document at the cap (%d): %v", maxNodeDepth, err)
+	}
+	overCap := []byte(strings.Repeat("[", maxNodeDepth+1) + strings.Repeat("]", maxNodeDepth+1))
+	if _, err := SafeLoad(overCap); err == nil {
+		t.Errorf("SafeLoad accepted a document one level over the cap (%d)", maxNodeDepth+1)
+	}
+}

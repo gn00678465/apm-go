@@ -446,3 +446,25 @@ func TestFetchGitLab_NonDefaultPathDoesNotProbe(t *testing.T) {
 		t.Errorf("requests = %d, want 1 (a non-default path must not trigger mkt-003 fallback probing)", requests)
 	}
 }
+
+// TestFetchGitLab_SizeCapEnforced covers H2: fetchGitLab must reject an
+// oversized response body rather than buffer it all.
+func TestFetchGitLab_SizeCapEnforced(t *testing.T) {
+	orig := urlFetchMaxBytes
+	urlFetchMaxBytes = 8
+	t.Cleanup(func() { urlFetchMaxBytes = orig })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"name": "this-body-is-way-longer-than-eight-bytes"}`))
+	}))
+	t.Cleanup(srv.Close)
+	withGitLabAPIBase(t, srv.URL)
+	src := &MarketplaceSource{Owner: "o", Repo: "r", Ref: "main", Path: "marketplace.json", Host: "gitlab.com"}
+
+	_, err := fetchGitLab(context.Background(), src)
+	if err == nil {
+		t.Fatal("fetchGitLab() returned no error, want a size-cap rejection")
+	}
+	if !strings.Contains(err.Error(), "byte limit") {
+		t.Errorf("fetchGitLab() error = %v, want it to mention the byte limit", err)
+	}
+}

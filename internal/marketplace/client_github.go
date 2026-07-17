@@ -117,9 +117,12 @@ func fetchGitHubAtPath(ctx context.Context, s *MarketplaceSource, path, ref stri
 		return nil, false, fmt.Errorf("GitHub returned HTTP %d fetching the marketplace manifest", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, urlFetchMaxBytes+1))
 	if err != nil {
 		return nil, false, fmt.Errorf("read GitHub response: %w", err)
+	}
+	if int64(len(data)) > urlFetchMaxBytes {
+		return nil, false, fmt.Errorf("GitHub marketplace manifest response exceeds %d byte limit", urlFetchMaxBytes)
 	}
 
 	var manifest MarketplaceManifest

@@ -275,7 +275,15 @@ func buildDeployDep(opts mcpInstallOpts) (deployDep *manifest.MCPDependency, dia
 		return dep, nil, err
 	case opts.URL != "":
 		dep, err := buildSelfDefinedURLDep(opts)
-		return dep, nil, err
+		var diags []string
+		if err == nil && len(opts.HeaderPairs) > 0 {
+			// The --header values are persisted into apm.yml verbatim (plaintext).
+			// Warn so a user does not unknowingly commit a token/key to a file
+			// that is typically checked into source control. Never echo the
+			// values themselves (credsec).
+			diags = append(diags, "--header values are stored in apm.yml as plaintext; anyone who can read apm.yml (e.g. via source control) can read them -- avoid putting secrets there")
+		}
+		return dep, diags, err
 	default:
 		return resolveFromRegistry(opts)
 	}

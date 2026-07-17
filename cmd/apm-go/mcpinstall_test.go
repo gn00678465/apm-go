@@ -146,6 +146,35 @@ func TestBuildMCPEntry_SelfDefinedURL(t *testing.T) {
 	}
 }
 
+// TestBuildMCPEntry_SelfDefinedURL_WarnsHeaderPlaintext covers M2: a
+// self-defined URL dep with --header must emit a plaintext-storage warning
+// (that never echoes the header value), while a URL dep without headers stays
+// warning-free.
+func TestBuildMCPEntry_SelfDefinedURL_WarnsHeaderPlaintext(t *testing.T) {
+	_, _, diags, err := buildMCPEntryForTest(mcpInstallOpts{
+		Name: "api", URL: "https://example.com/mcp", HeaderPairs: []string{"Authorization=Bearer super-secret"},
+	})
+	if err != nil {
+		t.Fatalf("buildMCPEntry: %v", err)
+	}
+	joined := strings.Join(diags, "\n")
+	if !strings.Contains(joined, "plaintext") {
+		t.Errorf("diags = %v, want a plaintext-storage warning", diags)
+	}
+	if strings.Contains(joined, "super-secret") || strings.Contains(joined, "Bearer") {
+		t.Errorf("warning leaked the header value: %v", diags)
+	}
+
+	// No --header: no warning.
+	_, _, diags, err = buildMCPEntryForTest(mcpInstallOpts{Name: "api", URL: "https://example.com/mcp"})
+	if err != nil {
+		t.Fatalf("buildMCPEntry: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Errorf("unexpected diags for a header-less URL dep: %v", diags)
+	}
+}
+
 func TestBuildMCPEntry_SelfDefinedURL_InvalidTransport(t *testing.T) {
 	// stdio transport requires 'command', so URL+stdio (which validateMCPConflicts
 	// already forbids at the CLI layer) never reaches buildMCPEntry, but a bogus

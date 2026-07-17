@@ -63,7 +63,22 @@ func SafeDump(doc *yaml.Node) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// maxNodeDepth bounds validateNode's recursion over the parsed node tree.
+// Manifest/lockfile/policy documents are shallow (a handful of levels); a
+// pathologically deep document (e.g. thousands of nested flow sequences) is
+// rejected outright so neither validateNode nor the downstream typed accessors
+// can be driven into stack exhaustion. Generous enough never to reject a real
+// document.
+const maxNodeDepth = 100
+
 func validateNode(n *yaml.Node) error {
+	return validateNodeDepth(n, 0)
+}
+
+func validateNodeDepth(n *yaml.Node, depth int) error {
+	if depth > maxNodeDepth {
+		return fmt.Errorf("YAML nesting exceeds the maximum depth of %d", maxNodeDepth)
+	}
 	if n.Anchor != "" {
 		return fmt.Errorf("YAML anchors are not allowed (line %d)", n.Line)
 	}
@@ -75,7 +90,7 @@ func validateNode(n *yaml.Node) error {
 		return fmt.Errorf("custom YAML tag %q is not allowed (line %d)", tag, n.Line)
 	}
 	for _, c := range n.Content {
-		if err := validateNode(c); err != nil {
+		if err := validateNodeDepth(c, depth+1); err != nil {
 			return err
 		}
 	}

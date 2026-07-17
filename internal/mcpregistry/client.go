@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,6 +24,12 @@ const DefaultBaseURL = "https://api.mcp.github.com"
 const v0_1Prefix = "/v0.1"
 
 const maxBaseURLLength = 2048
+
+// mcpRegistryMaxBytes caps how much of a registry JSON response getJSON will
+// read before decoding, bounding memory use against a hostile or misbehaving
+// registry. A var so tests can shrink it instead of allocating a real 10MB+
+// body.
+var mcpRegistryMaxBytes int64 = 10 * 1024 * 1024
 
 // Client is a minimal MCP Registry v0.1 HTTP client.
 type Client struct {
@@ -275,7 +282,14 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, out any) error {
 		return fmt.Errorf("registry returned HTTP %d", resp.StatusCode)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, mcpRegistryMaxBytes+1))
+	if err != nil {
+		return fmt.Errorf("read registry response: %w", err)
+	}
+	if int64(len(data)) > mcpRegistryMaxBytes {
+		return fmt.Errorf("registry response exceeds %d byte limit", mcpRegistryMaxBytes)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("decode registry response: %w", err)
 	}
 	return nil
