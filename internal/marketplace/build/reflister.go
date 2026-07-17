@@ -79,8 +79,8 @@ func (gitRefLister) ListRemoteRefs(source string) ([]RemoteRef, error) {
 // gitops.ApplySecureGitEnv. Split out from ListRemoteRefs so tests can
 // assert on the constructed command without spawning a subprocess.
 func newListRefsCmd(ctx context.Context, cloneURL string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--tags", "--heads", cloneURL)
-	gitops.ApplySecureGitEnv(cmd)
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--tags", "--heads", "--", cloneURL)
+	gitops.ApplyCloneEnv(cmd, cloneURL)
 	return cmd
 }
 

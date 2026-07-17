@@ -84,8 +84,8 @@ func (gitRefLister) ListRefs(source string) ([]semver.TagInfo, error) {
 // `--tags --heads` alone can never produce a HEAD line: HEAD lives in
 // neither the refs/tags/ nor refs/heads/ namespace those flags filter to.
 func newListRefsCmd(ctx context.Context, cloneURL string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", cloneURL, "HEAD", "refs/tags/*", "refs/heads/*")
-	gitops.ApplySecureGitEnv(cmd)
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--", cloneURL, "HEAD", "refs/tags/*", "refs/heads/*")
+	gitops.ApplyCloneEnv(cmd, cloneURL)
 	return cmd
 }
 

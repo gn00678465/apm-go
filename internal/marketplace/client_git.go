@@ -84,6 +84,15 @@ func newGitCmd(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// newCloneCmd is newGitCmd for a git subprocess that connects to url (clone /
+// ls-remote): it permits the local "file" transport only when url is a local
+// path, keeping a remote source file-blocked (gitops.ApplyCloneEnv).
+func newCloneCmd(ctx context.Context, url string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	gitops.ApplyCloneEnv(cmd, url)
+	return cmd
+}
+
 // shallowCloneGit clones remote into dir at ref. For a branch/tag ref (the
 // common case), this runs `git clone --depth 1 --branch <ref> <remote>
 // <dir>`, mirroring internal/gitops.RealPackageLoader.cloneRepo's shape (a
@@ -97,7 +106,7 @@ func shallowCloneGit(ctx context.Context, remote, ref, dir string) error {
 	if commitSHARe.MatchString(strings.ToLower(ref)) {
 		return cloneAndCheckoutSHA(ctx, remote, ref, dir)
 	}
-	cmd := newGitCmd(ctx, "clone", "--depth", "1", "--branch", ref, remote, dir)
+	cmd := newCloneCmd(ctx, remote, "clone", "--depth", "1", "--branch", ref, "--", remote, dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s\n%s", err, gitops.SanitizeGitOutput(string(out)))
@@ -110,7 +119,7 @@ func shallowCloneGit(ctx context.Context, remote, ref, dir string) error {
 // arbitrary commit SHA that may not be reachable via --depth 1's shallow
 // history from the remote's current branch tip.
 func cloneAndCheckoutSHA(ctx context.Context, remote, ref, dir string) error {
-	cloneCmd := newGitCmd(ctx, "clone", remote, dir)
+	cloneCmd := newCloneCmd(ctx, remote, "clone", "--", remote, dir)
 	out, err := cloneCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s\n%s", err, gitops.SanitizeGitOutput(string(out)))

@@ -624,3 +624,88 @@ func TestResolve_RootOrder_ProdThenDev_DiamondDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestResolve_RejectsTransitiveLocalGitDep is the HIGH-B supply-chain guard:
+// a downloaded (transitive) package must not be able to declare a
+// local-filesystem `git: <path>` dependency, which would drive the installer
+// into a file-transport git clone of an attacker-chosen path on the victim's
+// machine. Local deps are legitimate only in the ROOT project's apm.yml.
+func TestResolve_RejectsTransitiveLocalGitDep(t *testing.T) {
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{"acme/a": makeTags("v1.0.0")}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.0.0": makeManifest("a", &manifest.DependencyReference{RepoURL: "/etc/evil", Source: "git"}),
+	}}
+	root := makeManifest("root", makeDep("acme/a", "^1.0.0"))
+	_, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+	if err == nil {
+		t.Fatal("Resolve accepted a transitive local-filesystem git dependency; want rejection")
+	}
+	if !strings.Contains(err.Error(), "local") {
+		t.Errorf("error = %v, want it to mention the local-dependency restriction", err)
+	}
+}
+
+// TestResolve_RejectsTransitivePathDep is the copy-path half of the same
+// guard: a transitive `path: <dir>` dependency (IsLocal, copied rather than
+// cloned) is the same local-filesystem-read primitive and is equally refused.
+func TestResolve_RejectsTransitivePathDep(t *testing.T) {
+	tags := &mockTagLister{tags: map[string][]semver.TagInfo{"acme/a": makeTags("v1.0.0")}}
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+		"acme/a@v1.0.0": makeManifest("a", &manifest.DependencyReference{IsLocal: true, LocalPath: "vendored", Source: "local"}),
+	}}
+	root := makeManifest("root", makeDep("acme/a", "^1.0.0"))
+	_, err := Resolve(root, nil, tags, loader, ResolverConfig{})
+	if err == nil {
+		t.Fatal("Resolve accepted a transitive path: dependency; want rejection")
+	}
+	if !strings.Contains(err.Error(), "local") {
+		t.Errorf("error = %v, want it to mention the local-dependency restriction", err)
+	}
+}
+
+// TestResolve_AllowsRootLocalDep locks the guard's scope: a ROOT local
+// dependency (depth 1, the developer's own sibling checkout) is still allowed
+// -- only transitive local deps are refused.
+func TestResolve_AllowsRootLocalDep(t *testing.T) {
+	loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{}}
+	root := makeManifest("root", &manifest.DependencyReference{RepoURL: "./sibling", Source: "git"})
+	if _, err := Resolve(root, nil, &mockTagLister{}, loader, ResolverConfig{}); err != nil {
+		t.Errorf("Resolve rejected a ROOT local dependency: %v", err)
+	}
+}
+
+// TestResolve_TransitiveRemoteDepsNotMisclassified proves the HIGH-B guard
+// has no false positive: transitive dependencies built from the REAL manifest
+// parser for genuine remote forms (SCP git@host:o/r, https URL, owner/repo
+// shorthand) are NOT classified local, so the local-dependency rejection never
+// fires for them. Uses manifest.ParseDepString so the test exercises the
+// actual parser output the guard sees in production, not a hand-crafted struct.
+func TestResolve_TransitiveRemoteDepsNotMisclassified(t *testing.T) {
+	remotes := []string{
+		"git@gh.example.com:acme/tool.git", // SCP remote
+		"https://gh.example.com/acme/tool", // https URL remote
+		"acme/tool",                        // owner/repo shorthand
+	}
+	for _, form := range remotes {
+		t.Run(form, func(t *testing.T) {
+			ref, err := manifest.ParseDepString(form)
+			if err != nil {
+				t.Fatalf("ParseDepString(%q): %v", form, err)
+			}
+			if isLocalFilesystemDep(ref) {
+				t.Fatalf("isLocalFilesystemDep(%q) = true (Owner=%q Repo=%q Scheme=%q); a remote must never be classified local",
+					form, ref.Owner, ref.Repo, ref.Scheme)
+			}
+			// End-to-end: as a transitive dep it must resolve without the
+			// local-dependency rejection firing.
+			loader := &mockPackageLoader{packages: map[string]*manifest.Manifest{
+				"acme/a@v1.0.0": makeManifest("a", ref),
+			}}
+			tags := &mockTagLister{tags: map[string][]semver.TagInfo{"acme/a": makeTags("v1.0.0")}}
+			root := makeManifest("root", makeDep("acme/a", "^1.0.0"))
+			if _, err := Resolve(root, nil, tags, loader, ResolverConfig{}); err != nil && strings.Contains(err.Error(), "local dependencies are only allowed") {
+				t.Fatalf("transitive remote dep %q was wrongly rejected as local: %v", form, err)
+			}
+		})
+	}
+}
