@@ -983,3 +983,37 @@ PR #6 分支修完 C2(deploy 符號連結任意讀)/H2/M1(HTTP body LimitReader)
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: release pipeline 全鏈驗證:act 本地 + 真實 tag e2e(裝/測/移除)
+
+**Date**: 2026-07-18
+**Task**: release pipeline 全鏈驗證:act 本地 + 真實 tag e2e(裝/測/移除)
+**Branch**: `feat/release-install`
+
+### Summary
+
+act 本地跑 workflow 抓到守門 sed CRLF 缺陷並健壯化;使用者於分支推 v0.2.1 tag 觸發真實 Actions(run 29616001903 全綠);release 實測全過:AC1 七資產、AC2 irm 實裝 0.2.1、install.sh WSL 實裝、AC5 竄改 SHA256SUMS 拒收、AC6 兩平台 uninstall 實跑+冪等、D1 302;checklist 全項附證據後於分支上歸檔任務(收尾記錄依新規則隨 PR 合併,不直接進 main)。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `038fded` | (see git log) |
+| `e8a6ba9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
