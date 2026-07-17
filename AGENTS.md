@@ -112,3 +112,21 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 <!-- GUIDELINES:END -->
+
+<!-- 專案專屬規則。位於 Trellis 管理區塊之外，`trellis update` 不會覆寫。 -->
+
+## 5. 收斂性斷言禁令（fail-closed）
+
+**背景**：反覆出現的「未完成 / 偷懶 / 遺漏 / 自作主張」是**同一個動作**——用一個沒有證據的終結性結論去停止工作。「延後」「架構性」「不可利用」「完成了」全是同一招：講一個結論，就不用再做了。這條規則把它 fail-closed。
+
+**絆線詞**：寫下「延後 / 架構性 / 不可利用 / 不影響 / 已完成 / 完整 / 範圍外 / N/A / 其餘同理」任一個，**必須在同一處同時附上證據三件套**：
+
+1. `file:line` — 實際讀過的程式碼路徑（不是「應該」，是讀過的位置）。
+2. 威脅模型 / repro / 反例 — 誰可控、可得什麼；或重現步驟；或一個具體反例。
+3. 成本估計 — 若結論是「延後 / 需大改」，估計修復規模。
+
+只有形容詞、沒有證據 = **缺陷，不是結論**。不確定時只能寫「未驗證」，**不能寫「延後」——延後是一個 claim，不是免死的範圍決定**。
+
+**適用範圍**：research、PRD、code review、進度回報，以及任何「我可以停手了」的判斷點。這條規則優先於「趕快收尾」的衝動。
+
+**偵測器**：任何人看到上述絆線詞而旁邊沒有證據三件套，即為缺陷；且它本該被 checklist 推導步驟擋下，不該靠人工抓。驗證面的對應機制（checklist 推導、絆線觸發的獨立審查、成本排序）見 `.trellis/workflow.md` 的「Verification Checklist & Convergent-Claim Tripwire」。
