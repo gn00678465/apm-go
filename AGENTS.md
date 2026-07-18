@@ -10,6 +10,7 @@ Golang 相關指令（於專案根目錄執行）：
 | `go mod tidy` | 整理 `go.mod` / `go.sum` 相依 |
 | `go build ./...` | 編譯整個專案（當前平台） |
 | `go build -o bin/apm-go.exe ./cmd/apm-go`（Windows）/ `go build -o bin/apm-go ./cmd/apm-go`（其他平台） | 編譯二進位，輸出檔名永遠固定為 `apm-go`（不可用 `apm`/`apm.exe`） |
+| `go build -trimpath -ldflags "-s -w" -o bin/apm-go.exe ./cmd/apm-go` | Release 尺寸編譯（去除除錯資訊與路徑，實測約小 29%；與 release workflow 同旗標） |
 | `GOOS=windows GOARCH=amd64 go build -o bin/apm-go.exe ./cmd/apm-go` | 交叉編譯 Windows 二進位（PowerShell：`$env:GOOS='windows'; $env:GOARCH='amd64'; go build -o bin/apm-go.exe ./cmd/apm-go`） |
 | `GOOS=linux GOARCH=amd64 go build -o bin/apm-go ./cmd/apm-go` | 交叉編譯 Linux 二進位（PowerShell：`$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/apm-go ./cmd/apm-go`） |
 | `go run ./cmd/apm-go <args>` | 執行 apm-go CLI |

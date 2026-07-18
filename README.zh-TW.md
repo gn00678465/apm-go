@@ -61,6 +61,12 @@ go build -o bin/apm-go ./cmd/apm-go      # Windows 為 bin/apm-go.exe
 go run ./cmd/apm-go <args>               # 直接執行
 ```
 
+Release 尺寸建置(去除除錯資訊與路徑,約小 29% — 與 release workflow 同旗標):
+
+```sh
+go build -trimpath -ldflags "-s -w" -o bin/apm-go ./cmd/apm-go
+```
+
 ## 快速開始
 
 ```sh

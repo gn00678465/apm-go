@@ -61,6 +61,12 @@ go build -o bin/apm-go ./cmd/apm-go      # bin/apm-go.exe on Windows
 go run ./cmd/apm-go <args>               # run directly
 ```
 
+Release-size build (strips debug info and paths, ~29% smaller — same flags the release workflow uses):
+
+```sh
+go build -trimpath -ldflags "-s -w" -o bin/apm-go ./cmd/apm-go
+```
+
 ## Quick start
 
 ```sh
