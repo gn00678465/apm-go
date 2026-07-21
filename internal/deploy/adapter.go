@@ -194,9 +194,11 @@ func deploySkill(p Primitive, projectDir string) ([]string, error) {
 }
 
 // deploySkillTo recursively copies a skill directory to <root>/<name>/.
-// Extracted from deploySkill so the claude adapter can additionally deploy
-// to .claude/skills/ (Claude Code does not discover skills from the
-// cross-tool .agents/skills/ canonical path -- see claude.go).
+// Extracted from deploySkill so adapters with a target-native skill root can
+// deploy there instead of the canonical path: claude deploys ONLY to
+// .claude/skills/ (Claude Code does not discover skills from the cross-tool
+// .agents/skills/ canonical path -- see claude.go), and antigravity routes
+// dependency skills into per-package bundle directories.
 func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	destDir := path.Join(root, p.Name)
 	absDestDir := filepath.Join(projectDir, filepath.FromSlash(destDir))

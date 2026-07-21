@@ -1412,10 +1412,10 @@ func TestRunInstall_SkillWildcardDeploysAllSkills(t *testing.T) {
 		t.Fatalf("runInstall: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillA", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillA", "SKILL.md")); err != nil {
 		t.Errorf("expected skillA to deploy under --skill '*' (reset to all): %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillB", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillB", "SKILL.md")); err != nil {
 		t.Errorf("expected skillB to deploy under --skill '*' (reset to all): %v", err)
 	}
 
@@ -1482,17 +1482,14 @@ func gitSkillRepo(t *testing.T, parentDir, name string, skills map[string][]stri
 }
 
 // expectedSkillDeployPaths returns the project-root-relative paths a skill's
-// files land at when deployed to the "claude" target, which mirrors both of
-// this fixture's two target roots (.agents/skills/ -- the cross-tool
-// canonical root every target shares -- and .claude/skills/ -- claude's own
-// extra copy, deploySkillClaude). Used to prove a fixture's skill really
-// spans two distinct target roots (H4), not just two files under one root.
+// files land at when deployed to the "claude" target: its native
+// .claude/skills/ root ONLY (issue #10 -- claude is a target-native
+// exception to req-tg-003 convergence and never writes the cross-tool
+// .agents/skills/ canonical root).
 func expectedSkillDeployPaths(skill string, files []string) []string {
 	var paths []string
-	for _, root := range []string{".agents/skills", ".claude/skills"} {
-		for _, f := range files {
-			paths = append(paths, path.Join(root, skill, f))
-		}
+	for _, f := range files {
+		paths = append(paths, path.Join(".claude/skills", skill, f))
 	}
 	return paths
 }
@@ -1609,8 +1606,8 @@ func TestInstall_SkillSubsetPollution(t *testing.T) {
 	if len(da.SkillSubset) != 1 || da.SkillSubset[0] != "skillA1" {
 		t.Errorf("apm.lock.yaml: %s skill_subset = %v, want [skillA1]", repoA, da.SkillSubset)
 	}
-	if len(da.DeployedFiles) != 4 {
-		t.Errorf("apm.lock.yaml: %s deployed_files = %v, want exactly 4 paths (1 skill, 2 files, 2 target roots)", repoA, da.DeployedFiles)
+	if len(da.DeployedFiles) != 2 {
+		t.Errorf("apm.lock.yaml: %s deployed_files = %v, want exactly 2 paths (1 skill, 2 files, native .claude/skills/ root only)", repoA, da.DeployedFiles)
 	}
 
 	// apm_modules: exactly one materialized directory per repo, no
@@ -1820,8 +1817,8 @@ func TestInstall_SkillSubsetSameRepoUnion(t *testing.T) {
 	if got := lock.Dependencies[0].SkillSubset; len(got) != 2 || got[0] != "skillX" || got[1] != "skillY" {
 		t.Errorf("step2: apm.lock.yaml skill_subset = %v, want [skillX skillY]", got)
 	}
-	if len(lock.Dependencies[0].DeployedFiles) != 8 {
-		t.Errorf("step2: deployed_files = %v, want 8 paths (2 skills, 2 files, 2 target roots)", lock.Dependencies[0].DeployedFiles)
+	if len(lock.Dependencies[0].DeployedFiles) != 4 {
+		t.Errorf("step2: deployed_files = %v, want 4 paths (2 skills, 2 files, native .claude/skills/ root only)", lock.Dependencies[0].DeployedFiles)
 	}
 
 	// Step 3: bare re-install (no positional package, no --skill) must keep
@@ -2019,11 +2016,11 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 		}
 	}
 
-	// Hand-edit ONE of skillA2's four deployed copies BEFORE narrowing -- it
-	// must survive reconciliation (kept + warned), unlike its three untouched
-	// siblings under the same now-excluded skill.
+	// Hand-edit ONE of skillA2's deployed files BEFORE narrowing -- it must
+	// survive reconciliation (kept + warned), unlike its untouched sibling
+	// under the same now-excluded skill.
 	skillA2Paths := expectedSkillDeployPaths("skillA2", []string{"SKILL.md", "notes.md"})
-	modifiedRel := skillA2Paths[1] // ".agents/skills/skillA2/notes.md"
+	modifiedRel := skillA2Paths[1] // ".claude/skills/skillA2/notes.md"
 	modifiedPath := filepath.Join(dir, filepath.FromSlash(modifiedRel))
 	const modifiedContent = "hand-edited by the user\n"
 	if err := os.WriteFile(modifiedPath, []byte(modifiedContent), 0644); err != nil {
@@ -2045,7 +2042,7 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 		}
 	}
 
-	// skillA2's three UNTOUCHED copies must be removed (stale + hash matches).
+	// skillA2's UNTOUCHED file must be removed (stale + hash matches).
 	for _, p := range skillA2Paths {
 		if p == modifiedRel {
 			continue
@@ -2079,8 +2076,8 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 	if got := lock.Dependencies[0].SkillSubset; len(got) != 1 || got[0] != "skillA1" {
 		t.Errorf("apm.lock.yaml skill_subset must be [skillA1], got %v", got)
 	}
-	if len(lock.Dependencies[0].DeployedFiles) != 4 {
-		t.Errorf("apm.lock.yaml deployed_files must be exactly 4 paths (skillA1, 2 files, 2 roots), got %v", lock.Dependencies[0].DeployedFiles)
+	if len(lock.Dependencies[0].DeployedFiles) != 2 {
+		t.Errorf("apm.lock.yaml deployed_files must be exactly 2 paths (skillA1, 2 files, native .claude/skills/ root only), got %v", lock.Dependencies[0].DeployedFiles)
 	}
 }
 
@@ -2090,12 +2087,12 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 // a different --target set than an EARLIER one did -- that is a target
 // selection change, not a --skill subset narrowing, and this BUG-2
 // convergence mechanism must stay scoped to the latter. Installing to
-// "claude" first (which deploys to BOTH .claude/skills/ and the shared
-// .agents/skills/) and then re-installing the SAME dependency (no --skill
-// either time) to "codex" only (which deploys to the shared .agents/skills/
-// root only, not .claude/skills/) must leave the now-target-unclaimed
-// .claude/skills/ copy on disk untouched, because this dependency's fresh
-// lock entry has no active SkillSubset at all.
+// "claude" first (which deploys to its native .claude/skills/ root) and
+// then re-installing the SAME dependency (no --skill either time) to
+// "codex" only (which deploys to the shared .agents/skills/ root only, not
+// .claude/skills/) must leave the now-target-unclaimed .claude/skills/ copy
+// on disk untouched, because this dependency's fresh lock entry has no
+// active SkillSubset at all.
 func TestInstall_StaleSkillReconciliation_TargetChangeWithoutSkillSubsetKeepsFiles(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -2116,8 +2113,8 @@ func TestInstall_StaleSkillReconciliation_TargetChangeWithoutSkillSubsetKeepsFil
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 
-	// Step 1: full install (no --skill) targeting claude -- deploys to BOTH
-	// .claude/skills/skillT/ and .agents/skills/skillT/.
+	// Step 1: full install (no --skill) targeting claude -- deploys to
+	// claude's native .claude/skills/skillT/.
 	if err := runInstall(deps, false, true, "claude", nil, []string{repo}); err != nil {
 		t.Fatalf("step 1 (install --target claude): %v", err)
 	}
@@ -2173,7 +2170,7 @@ func TestInstall_StaleSkillReconciliation_StillSelectedSkillSurvivesTargetChange
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 
 	// Step 1: narrow to --skill skillX, targeting claude -- deploys skillX
-	// to BOTH .claude/skills/skillX/ and .agents/skills/skillX/.
+	// to claude's native .claude/skills/skillX/.
 	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
 		t.Fatalf("step 1 (install --skill skillX --target claude): %v", err)
 	}
@@ -2233,7 +2230,7 @@ func TestRunInstall_SkillMixedWildcardResetsToFull(t *testing.T) {
 	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
 		t.Fatalf("step1: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillY", "SKILL.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillY", "SKILL.md")); err == nil {
 		t.Fatal("step1: skillY must not be deployed yet")
 	}
 
@@ -2241,10 +2238,10 @@ func TestRunInstall_SkillMixedWildcardResetsToFull(t *testing.T) {
 	if err := runInstall(deps, false, true, "claude", []string{"skillX", "*"}, []string{repo}); err != nil {
 		t.Fatalf("step2: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillY", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillY", "SKILL.md")); err != nil {
 		t.Errorf("step2: expected skillY to deploy after mixed-wildcard reset: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillX", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillX", "SKILL.md")); err != nil {
 		t.Errorf("step2: expected skillX to still be deployed: %v", err)
 	}
 
@@ -2320,10 +2317,10 @@ func TestRunInstall_DevDependency_SkillSubsetHonored(t *testing.T) {
 		t.Fatalf("bare install after moving to devDependencies: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillX", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillX", "SKILL.md")); err != nil {
 		t.Errorf("expected skillX (persisted devDependency subset) to deploy: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "skillY", "SKILL.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillY", "SKILL.md")); err == nil {
 		t.Error("expected skillY to stay filtered out for the devDependency's persisted subset")
 	}
 
@@ -2380,16 +2377,16 @@ func TestRunInstall_MultiplePositionalPackages_SharedSkillFlag(t *testing.T) {
 
 	// Each repo deploys only its OWN named skill, never its "extra" one, and
 	// never the OTHER repo's name (which it doesn't actually have).
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "nameA", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "nameA", "SKILL.md")); err != nil {
 		t.Errorf("expected repoA's nameA to deploy: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "extraA", "SKILL.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "extraA", "SKILL.md")); err == nil {
 		t.Error("expected repoA's extraA to stay filtered out")
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "nameB", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "nameB", "SKILL.md")); err != nil {
 		t.Errorf("expected repoB's nameB to deploy: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents", "skills", "extraB", "SKILL.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "extraB", "SKILL.md")); err == nil {
 		t.Error("expected repoB's extraB to stay filtered out")
 	}
 

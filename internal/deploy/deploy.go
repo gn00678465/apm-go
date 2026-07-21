@@ -269,14 +269,14 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				continue
 			}
 
-			// Deduplicate skill file writes across targets: most targets
-			// converge on the same canonical .agents/skills/<name>/... path
-			// (req-tg-003), so only count/hash each distinct path once per
-			// primitive. This is file-level rather than "skip the whole
-			// primitive" because claude also writes a target-specific extra
-			// copy under .claude/skills/ that no other target produces --
-			// skipping the call entirely (as before) would drop that extra
-			// copy whenever another skill-supporting target ran first.
+			// Deduplicate skill file writes across targets: convergent
+			// targets (codex/copilot/opencode/...) share the same canonical
+			// .agents/skills/<name>/... path (req-tg-003), so only count/hash
+			// each distinct path once per primitive. This is file-level
+			// rather than "skip the whole primitive" because target-native
+			// roots (claude's .claude/skills/) produce paths no other target
+			// writes -- skipping the call entirely would drop those whenever
+			// a convergent target ran first.
 			if p.Type == TypeSkills {
 				var deduped []string
 				for _, f := range files {

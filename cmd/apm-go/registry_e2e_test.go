@@ -138,8 +138,8 @@ dependencies:
 			t.Errorf("AC3/AC6: lockfile missing %q\n---\n%s", want, ls)
 		}
 	}
-	// deployed skill exists (apm-go routes skills to the cross-tool .agents/skills/).
-	if _, err := os.Stat(filepath.Join(".agents", "skills", "probe", "SKILL.md")); err != nil {
+	// deployed skill exists (claude target routes skills to its native .claude/skills/).
+	if _, err := os.Stat(filepath.Join(".claude", "skills", "probe", "SKILL.md")); err != nil {
 		t.Errorf("expected deployed skill: %v", err)
 	}
 
