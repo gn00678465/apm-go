@@ -3,6 +3,7 @@ package ux
 import (
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -444,5 +445,73 @@ func TestInputForm_RichModeWithValidateFunc(t *testing.T) {
 	}
 	if got["name"] != "apm-go" {
 		t.Fatalf("InputForm() = %v, want default preserved", got)
+	}
+}
+
+// ansiPattern matches the SGR/CSI escape sequences lipgloss emits, so a
+// rendered view can be compared column-by-column as plain text.
+var ansiPattern = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+// leadingSpaces counts the blank columns before the first visible rune of a
+// line whose ANSI sequences have already been stripped.
+func leadingSpaces(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " "))
+}
+
+// confirmButtonIndent builds a Confirm with the given question via the public
+// Confirm() path and reports how many blank columns precede the "Yes" button
+// in the rendered view.
+func confirmButtonIndent(t *testing.T, title string) int {
+	t.Helper()
+
+	var captured huh.Field
+	stubRunField(t, func(f huh.Field) error {
+		captured = f
+		return nil
+	})
+	if _, err := Confirm(title, false); err != nil {
+		t.Fatalf("Confirm() err = %v, want nil", err)
+	}
+
+	confirm, ok := captured.(*huh.Confirm)
+	if !ok {
+		t.Fatalf("Confirm built a %T, want *huh.Confirm", captured)
+	}
+	view := ansiPattern.ReplaceAllString(confirm.View(), "")
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "Yes") {
+			return leadingSpaces(line)
+		}
+	}
+	t.Fatalf("Confirm view has no button row:\n%s", view)
+	return 0
+}
+
+// TestConfirm_ButtonIndentIsIndependentOfQuestionLength is the issue #14
+// regression: huh's NewConfirm defaults buttonAlignment to lipgloss.Center
+// and renders the button row inside a box as wide as
+// max(titleWidth, buttonsWidth), so the buttons drift further right the
+// longer the question gets -- the reported "選項偏右" symptom (a 47-char
+// question indented them 20 columns). With
+// WithButtonAlignment(lipgloss.Left) the buttons sit at the field's left edge
+// no matter how wide the question is, so the indent is identical for a short
+// and a long question.
+//
+// The indent is compared between two questions rather than against the title
+// column because the button's own background block carries
+// buttonPaddingHorizontal=2 (huh theme.go:93,106) -- left-aligned buttons
+// still render their *text* two columns right of the title text.
+func TestConfirm_ButtonIndentIsIndependentOfQuestionLength(t *testing.T) {
+	// Arrange
+	setRichMode(t, true)
+
+	// Act
+	shortIndent := confirmButtonIndent(t, "OK?")
+	longIndent := confirmButtonIndent(t, "apm.yml already exists. Continue and overwrite?")
+
+	// Assert
+	if shortIndent != longIndent {
+		t.Fatalf("button indent = %d for a short question but %d for a long one; "+
+			"buttons are still centered instead of left-aligned", shortIndent, longIndent)
 	}
 }

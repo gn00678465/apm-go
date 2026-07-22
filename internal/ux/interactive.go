@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // Option is a single choice for MultiSelect. Selected marks the option as
@@ -76,6 +77,13 @@ func Confirm(prompt string, def bool) (bool, error) {
 	field := huh.NewConfirm().
 		Title(prompt).
 		Value(&val).
+		// huh defaults buttonAlignment to lipgloss.Center and renders the
+		// button row in a box as wide as max(titleWidth, buttonsWidth), so any
+		// question longer than "Yes  No" pushes the buttons toward the middle,
+		// visually detached from the question (issue #14). Left-align them so
+		// they start in the question's own column. This must be chained before
+		// WithTheme, which returns the Field interface rather than *Confirm.
+		WithButtonAlignment(lipgloss.Left).
 		WithTheme(Theme())
 	err := runField(field)
 	return val, err
