@@ -9,7 +9,7 @@
 |---|---|---|
 | D1 互動引擎 | 續用 huh v2，不引入 go-clack、不手刻 bubbletea | go-clack 為 huh 的完整替代面（8 stars、單一維護者），只為 init 引入會造成雙 prompt 棧並存；huh 已整合且 `mcp_prompt.go` 依賴之 |
 | D2 transcript 產生方式 | **field 完成後**由呼叫端補印 `◇ 標題 / │ 答案` | huh `Form.View()` 於 quitting 回傳 `""`（`form.go:655-657`），bubbletea 將空 view 收合為 0 高度並抹除（`cursed_renderer.go:262-264`）—— prompt 一定會自我清除，沒有原生殘留機制；補印是 huh README 自身建議模式，且**不需任何游標操作**（風險最低） |
-| D3 樣式作用域 | clack 樣式為 **init-local**，全域 `Theme()` 不動邊框 | `ux.Confirm/InputText/Password` 另有 `cmd/apm-go/mcp_prompt.go:103,109,127` 呼叫點（credential prompts），不應被連帶改樣式（PRD R2/AC5） |
+| D3 樣式作用域 | **完全不改 huh 主題**：進行中的 prompt 維持現況（含 `┃` gutter），clack 視覺只由結束後補印的 transcript 承擔 | 使用者決策 2026-07-23「保持目前的樣式，只調整 `WithButtonAlignment`」。同時避免波及 `cmd/apm-go/mcp_prompt.go:103,109,127` 的 credential prompts（PRD AC5），並省掉一整層 init-local theme 的複雜度 |
 | D4 Confirm 按鈕對齊 | `WithButtonAlignment(lipgloss.Left)` 加在**全域** `ux.Confirm` | 這是 bug 修正而非樣式偏好（huh 預設 `lipgloss.Center` 把按鈕推離左緣，`field_confirm.go:52-53`）；theme 無法修正（`WithButtonAlignment` 是 `*Confirm` builder method，`field_confirm.go:361-364`） |
 | D5 glyph 選擇 | 執行期偵測終端 Unicode 支援，二選一符號集 | `colors.go:19-37` 既有政策為避免 East-Asian-Ambiguous 寬度破壞固定寬度欄位對齊；go-clack 上游同樣以 `s(unicode, ascii)` gating。本設計沿用同一取捨 |
 | D6 banner 位置 | art 常數放 `cmd/apm-go/banner.go`，渲染經 `ux` | terminal-ux-contract §1 禁止 cmd 直接呼叫 lipgloss；art 本身是產品資產故留在 cmd |
@@ -77,30 +77,24 @@ func (c *Clack) MultiSelect(title string, opts []Option) ([]string, error)
 
 ### 為何 Clack 帶自己的 prompt 方法（而非讓 init 呼叫全域 `ux.Confirm` 再自行補印）
 
-1. 樣式作用域（D3）需要不同 huh theme，全域函式硬編 `WithTheme(Theme())`；
-2. 「跑 prompt → 補印 transcript」是一組不可分的動作，分散到 cmd 層會被遺漏；
-3. 避免在 cmd 層出現 huh/lipgloss import（契約 §1）。
+1. 「跑 prompt → 補印 transcript」是一組不可分的動作，分散到 cmd 層會被遺漏；
+2. 避免在 cmd 層出現 huh/lipgloss import（契約 §1）。
 
-實作上共用內部函式避免重複：
-`interactive.go` 抽出 `confirmWith(theme huh.Theme, prompt string, def bool)`、
-`formWith(theme, title, fields)`、`multiSelectWith(theme, title, opts)`，
-由全域 `Confirm/InputForm/MultiSelect` 與 `Clack.*` 各自帶入不同 theme 呼叫。
-**`WithButtonAlignment(lipgloss.Left)` 寫在共用的 `confirmWith` 內**，兩條路徑都修好（D4）。
+因 D3 已決定不換主題，`Clack.Confirm/Form/MultiSelect` 內部**直接呼叫既有的全域
+`Confirm/InputForm/MultiSelect`**，成功後再 `Step(title, answer)` 補印 —— 不需要
+`confirmWith`/`formWith`/`multiSelectWith` 這層 theme 參數化重構（YAGNI）。
+`WithButtonAlignment(lipgloss.Left)` 直接加在既有的 `ux.Confirm` 內（D4），
+兩條路徑（init 與 mcp_prompt）自動都修好。
 
 ---
 
-## 3. clack 主題（`internal/ux/theme.go` 新增 `clackTheme()`）
+## 3. 主題：不變（D3）
 
-以現有 `themeFunc` 為基底，只改 `Focused.Base` 的邊框：
+`internal/ux/theme.go` **不修改**。進行中的 huh prompt 維持現有外觀（含 `ThemeBase` 繼承來的
+`┃` 左邊框），只有 `interactive.go` 的 `Confirm` 建構鏈加入按鈕靠左（D4）。
 
-```go
-// clack gutter：把 huh 預設的 ThickBorder "┃"（theme.go:111）換成 clack 的細線 "│"，
-// 並以 muted 色呈現，讓作答中的 prompt 與補印的 transcript gutter 視覺連續。
-base := t.Focused.Base.BorderStyle(clackBorder()).BorderForeground(muted)
-```
-
-`clackBorder()` 回傳 `lipgloss.Border{Left: sym.Bar}`（ASCII 模式為 `|`）。
-`Blurred` 沿用既有的 hidden border 行為。全域 `Theme()` **不變**。
+視覺上的取捨：作答中的 `┃` 與 transcript 的 `│` 不是同一個字元，但 huh 結束時會自我清除
+（D2 引述的 `form.go:655-657`），兩者不會同時停留在畫面上，因此不構成持續性的不一致。
 
 ---
 
@@ -145,7 +139,7 @@ interactive := !yes && ux.CanPrompt()
 | stdout 契約 | 無變更；所有 init 輸出仍走 stderr |
 | exit code | 無變更 |
 | 既有測試 | `init_nontty_test.go` 走非互動路徑，不受影響；`init_targetselect_test.go` 需確認是否斷言 `ux.MultiSelect` 呼叫（改為 `Clack.MultiSelect` 時需同步 seam） |
-| spec | `terminal-ux-contract.md` §2 Signatures 需補 `Clack` 型別與 `supportsUnicode`；§6 補測試要求（Phase 3 更新） |
+| spec | `terminal-ux-contract.md` §2 Signatures 需補 `Clack` 型別與 `supportsUnicode`；§6 補測試要求；§7 補「Confirm 按鈕靠左」的 Wrong/Correct（Phase 3 更新） |
 
 ## 6. 測試策略
 
@@ -154,7 +148,7 @@ interactive := !yes && ux.CanPrompt()
    - 多行答案的 gutter 逐行前綴正確
    - `Note` 的框線寬度以最長行為準、右緣對齊
 2. `supportsUnicode` 決策矩陣測試（`WT_SESSION`/`TERM_PROGRAM`/`TERM=linux`/`NO_COLOR` 不影響），以 env seam + `t.Setenv`
-3. `interactive_test.go` 擴充：`confirmWith` 建構的 Confirm 帶 `Left` 對齊（透過既有 `runField` seam 捕捉 field，斷言其可觀察屬性；若 huh 未暴露 alignment getter，改以「建構不 panic + 呼叫鏈順序正確」的建構測試 + 在 §7 smoke test 目視驗證）
+3. `interactive_test.go` 擴充：`Confirm` 建構帶 `Left` 對齊（透過既有 `runField` seam 捕捉 field，斷言其可觀察屬性；若 huh 未暴露 alignment getter，改以「建構不 panic + 呼叫鏈順序正確」的建構測試 + 在 §7 smoke test 目視驗證）
 4. `Clack.Confirm/Form/MultiSelect` 在非 `CanPrompt` 時回傳預設值、不阻塞、**不印 transcript**（沿用 `runWithTimeout` 守衛）
 5. `cmd/apm-go`：新增測試斷言 `--yes` 與 non-TTY 下 stderr **不含** banner 字元；既有 non-tty 測試維持綠
 
@@ -165,5 +159,7 @@ research 明確標示未在真實 TTY 驗證（`research/huh-clack-style.md` Q3 
 - huh 逐 field 啟停與手動列印交錯是否有閃爍／殘影
 - Windows Terminal 與傳統 conhost 下 `◇ │ └ ╮ ├ ╯` 與 banner block art 的實際渲染寬度
 - `Note` 框在 Ambiguous 寬度被渲染為 2 欄時的右緣對齊（既有 `ux.Box`/`Table` 已承擔同類風險）
+- `WithButtonAlignment(lipgloss.Left)` 的實際視覺結果（huh 未暴露 alignment getter，單元測試無法斷言）
 
-以上三項須在實作階段以 `go run ./cmd/apm-go init` 於真實終端目視確認後，才可視為完成。
+以上四項須在實作階段以 `go run ./cmd/apm-go init` 於真實終端目視確認後，才可視為完成
+（使用者決策 2026-07-23：目視確認為必要門檻）。

@@ -9,9 +9,9 @@
 
 ## Step 1 — Confirm 按鈕對齊修正（獨立 bugfix，可先行）
 
-- `internal/ux/interactive.go`：抽出 `confirmWith(theme huh.Theme, prompt string, def bool) (bool, error)`，
-  在建構鏈加入 `WithButtonAlignment(lipgloss.Left)`（必須在 `.WithTheme(...)` 之前，因其回傳 `*Confirm`
-  而 `WithTheme` 回傳 `Field`）；`Confirm` 改為呼叫它
+- `internal/ux/interactive.go`：既有 `Confirm` 的建構鏈加入 `WithButtonAlignment(lipgloss.Left)`
+  （必須在 `.WithTheme(...)` 之前，因其回傳 `*Confirm` 而 `WithTheme` 回傳 `Field`）
+- **不做 theme 參數化重構**（D3：主題不變，Clack 直接複用全域 prompt 函式）
 - 測試：`interactive_test.go` 以 `runField` seam 捕捉建構出的 field，斷言建構成功且鏈順序不 panic
 - 驗證：`go test ./internal/ux/...`；真實終端目視 `Yes  No` 靠左（併入 Step 7 smoke test）
 
@@ -32,12 +32,11 @@
 - 測試（先寫）：golden 輸出（Unicode / ASCII 兩套）、無 ANSI escape、多行答案 gutter、`Note` 右緣對齊
 - 驗證：`go test ./internal/ux/ -run Clack`
 
-## Step 4 — clack 主題與 Clack 的 prompt 方法
+## Step 4 — Clack 的 prompt 方法
 
-- `theme.go`：新增 `clackTheme()`（`Focused.Base` 邊框改 `│`/`|` + muted），全域 `Theme()` 不動
-- `interactive.go`：抽出 `formWith` / `multiSelectWith`（與 Step 1 的 `confirmWith` 同形），
-  全域函式與 `Clack.*` 共用
-- `Clack.Confirm/Form/MultiSelect`：跑 clack 主題的 prompt → 成功後呼叫 `Step(title, answer)` 補印
+- `theme.go` **不動**（D3）
+- `Clack.Confirm/Form/MultiSelect`：直接呼叫既有的全域 `Confirm/InputForm/MultiSelect`
+  → 成功後呼叫 `Step(title, answer)` 補印
 - 非 `CanPrompt()` 時：回傳預設值、不阻塞、**不印 transcript**
 - 測試（先寫）：非互動回傳預設值 + 不印 transcript（`runWithTimeout` 守衛）；互動 seam 下確認補印格式
 - 驗證：`go test ./internal/ux/...`
@@ -63,7 +62,7 @@
 
 1. banner 渲染正確、無破字
 2. transcript gutter 連續、無閃爍或殘影（huh 逐 field 啟停與手動列印交錯）
-3. `Yes  No` 靠左對齊於問題下方、無 `┃` 粗邊框
+3. `Yes  No` 靠左對齊於問題下方（prompt 進行中的其餘樣式維持現狀，D3）
 4. `Note` 摘要框右緣對齊
 5. 取消路徑（overwrite 選 No）gutter 有正確收尾
 
