@@ -218,7 +218,7 @@ func (c *Clack) Form(title string, fields []Field) (map[string]string, error) {
 	if !CanPrompt() {
 		return InputForm(title, fields)
 	}
-	values, err := inputFormWith(clackTheme(c.sym), title, fields)
+	values, err := inputFormWith(clackTheme(c.sym), title, false, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +235,13 @@ func (c *Clack) Form(title string, fields []Field) (map[string]string, error) {
 	return values, nil
 }
 
+// multiSelectKeyHint replaces huh's keybinding footer for a MultiSelect shown
+// inside a transcript. Toggling with the space bar is the one binding a user
+// cannot guess (R19), and huh's own footer sits below a blank separator line
+// that Group.View hardcodes, off the connecting line; a field description
+// renders inside the field's border, on it.
+const multiSelectKeyHint = "space to toggle, enter to confirm"
+
 // MultiSelect asks the user to toggle options and records the chosen values.
 // When prompting isn't possible it returns the pre-selected defaults without
 // printing anything.
@@ -242,7 +249,7 @@ func (c *Clack) MultiSelect(title string, opts []Option) ([]string, error) {
 	if !CanPrompt() {
 		return MultiSelect(title, opts)
 	}
-	selected, err := multiSelectWith(clackTheme(c.sym), title, opts)
+	selected, err := multiSelectWith(clackTheme(c.sym), title, multiSelectKeyHint, false, opts)
 	if err != nil {
 		return nil, err
 	}

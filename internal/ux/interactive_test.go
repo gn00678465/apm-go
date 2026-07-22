@@ -37,6 +37,15 @@ func stubRunForm(t *testing.T, fn func(*huh.Form) error) {
 func stubRunMultiSelectField(t *testing.T, fn func(huh.Field) error) {
 	t.Helper()
 	prev := runMultiSelectField
+	runMultiSelectField = func(f huh.Field, _ bool) error { return fn(f) }
+	t.Cleanup(func() { runMultiSelectField = prev })
+}
+
+// stubRunMultiSelectFieldWithHelp is stubRunMultiSelectField for tests that
+// need to observe the showHelp argument itself.
+func stubRunMultiSelectFieldWithHelp(t *testing.T, fn func(huh.Field, bool) error) {
+	t.Helper()
+	prev := runMultiSelectField
 	runMultiSelectField = fn
 	t.Cleanup(func() { runMultiSelectField = prev })
 }

@@ -293,6 +293,63 @@ func TestClack_PromptsRecordTheirAnswerOnTheTranscript(t *testing.T) {
 	})
 }
 
+// TestClack_MultiSelectCarriesItsKeyHintInsteadOfHuhsFooter pins how the
+// toggle hint survives inside a transcript. huh renders its keybinding footer
+// below a blank separator line that Group.View hardcodes (group.go:374), so
+// the footer cannot be pulled onto the connecting line by styling; Clack turns
+// it off and puts the hint in the field's description, which is drawn inside
+// the field's border. Dropping the footer without adding the description would
+// leave "space to toggle" undiscoverable -- the regression R19 fixed.
+func TestClack_MultiSelectCarriesItsKeyHintInsteadOfHuhsFooter(t *testing.T) {
+	// Arrange
+	withUnicodeSupport(t, true)
+	setRichMode(t, true)
+	var gotShowHelp bool
+	var view string
+	stubRunMultiSelectFieldWithHelp(t, func(f huh.Field, showHelp bool) error {
+		gotShowHelp = showHelp
+		view = ansiPattern.ReplaceAllString(f.View(), "")
+		return nil
+	})
+	var buf bytes.Buffer
+
+	// Act
+	_, err := NewClack(&buf).MultiSelect("Select targets", []Option{{Label: "claude", Value: "claude"}})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("MultiSelect() err = %v, want nil", err)
+	}
+	if gotShowHelp {
+		t.Fatal("clack MultiSelect asked huh for its footer; it sits off the connecting line")
+	}
+	if !strings.Contains(view, multiSelectKeyHint) {
+		t.Fatalf("field view is missing the %q hint:\n%s", multiSelectKeyHint, view)
+	}
+}
+
+// TestMultiSelect_KeepsHuhsFooterOutsideATranscript is the other half of the
+// boundary: commands that are not drawing a transcript keep huh's own footer.
+func TestMultiSelect_KeepsHuhsFooterOutsideATranscript(t *testing.T) {
+	// Arrange
+	setRichMode(t, true)
+	var gotShowHelp bool
+	stubRunMultiSelectFieldWithHelp(t, func(_ huh.Field, showHelp bool) error {
+		gotShowHelp = showHelp
+		return nil
+	})
+
+	// Act
+	if _, err := MultiSelect("Select targets", []Option{{Label: "claude", Value: "claude"}}); err != nil {
+		t.Fatalf("MultiSelect() err = %v, want nil", err)
+	}
+
+	// Assert
+	if !gotShowHelp {
+		t.Fatal("the plain MultiSelect lost huh's keybinding footer (R19 regression)")
+	}
+}
+
 // TestClack_PromptsWriteNothingWhenTheyCannotRun keeps the transcript honest:
 // a prompt that never reached the user must not leave a step claiming they
 // answered it.

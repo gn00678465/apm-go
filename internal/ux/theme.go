@@ -86,6 +86,14 @@ func clackTheme(sym clackSymbols) huh.Theme {
 		t.Group.Description = onGutter(t.Group.Description, muted).
 			Foreground(muted).PaddingBottom(0)
 
+		// Group.Base is deliberately left unstyled. It wraps only the footer
+		// (group.go:407), and bordering it does not put the help on the line:
+		// Group.View hardcodes a blank separator line before the footer
+		// (group.go:374) that no style can reach, and an empty footer rendered
+		// through a bordered Base comes back as a stray gutter line rather than
+		// "". Clack turns the footer off instead and carries the keybinding
+		// hint in the field's own description, which is inside the border.
+
 		// The default separator is "\n\n", whose blank line carries no gutter.
 		// Putting the bar in the separator instead of in PaddingBottom above is
 		// the obvious alternative but goes wrong twice: lipgloss pads every line
