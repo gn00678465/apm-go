@@ -33,7 +33,13 @@
 
 ### R3 — Confirm 排版修正（全域 bugfix，最小改動）
 - `ux.Confirm` 加上 `WithButtonAlignment(lipgloss.Left)`：`Yes  No` 按鈕靠左對齊在問題正下方，不再置中偏移。此為 bugfix，全域生效（mcp_prompt.go 的 confirm 一併受益）
-- **prompt 進行中的既有樣式一律保留**（使用者決策 2026-07-23）：不換 huh 的 `Focused.Base` 邊框、不加 init-local theme variant。`┃` gutter 維持現狀，clack 視覺由 prompt 結束後補印的 transcript 承擔
+- 全域 `Theme()` 的樣式不變（credential prompts 外觀不受影響）
+
+### R5 — 進行中的 prompt 也要在連接線上（2026-07-23 目視驗證後追加）
+- 初版只改結束後的 transcript，實跑發現 metadata 群組表單同時出現三種左緣：focus 欄位 `┃`（huh `ThemeBase` 粗邊框）、blurred 欄位無邊框（本專案 theme 設為 HiddenBorder）、Group 標題無邊框，整段浮在連接線之外
+- 新增 init-local `clackTheme(sym)`：focus/blurred 欄位、Group 標題／說明一律改為 `│` 邊框 + `PaddingLeft(2)`，與 transcript 的 `│  ` 對齊；ASCII fallback 同步用 `|`
+- 欄位間的 gutter 空行由 `PaddingBottom(1)` 產生，**不可**放進 `FieldSeparator`（lipgloss 多行補寬會造成縮排偏移／雙空行，詳見 design.md 與 spec D6）
+- 全域 `Theme()` 不得受影響
 
 ### R4 — 行為不變性
 - init 的**功能流程**（overwrite 確認 → metadata form → target 選擇 → 摘要確認 → 寫檔）與所有分支邏輯（`--yes`/`--force`/`--target`/non-TTY fallback/取消路徑）完全不變，只改視覺呈現
@@ -51,7 +57,8 @@
 
 - [ ] AC1: 互動模式 `apm-go init` 開頭顯示 APM-GO ASCII banner；`--yes` 與 non-TTY 模式完全不顯示
 - [ ] AC2: 互動流程結束後，終端上留有 clack 風格 transcript（`◇` 步驟標題、`│` 答案、`│` 串接線、`└` 結尾），並包含 clack 風格摘要框
-- [ ] AC3: overwrite 與其餘 Confirm 的 `Yes  No` 按鈕靠左對齊於問題下方（不再右偏）；prompt 進行中的其餘樣式（含 `┃` gutter）與現況一致
+- [ ] AC3: overwrite 與其餘 Confirm 的 `Yes  No` 按鈕靠左對齊於問題下方（不再右偏）
+- [ ] AC8: init 進行中的 prompt（Confirm／群組表單／MultiSelect）每一行都以 gutter 起始，欄位之間恰好一條空 gutter 行；`mcp_prompt.go` 的 prompt 維持 huh 原本外觀
 - [ ] AC4: 不支援 Unicode 的終端輸出 ASCII fallback glyph 且不印 banner，無亂碼；`NO_COLOR` 只去色、不改符號集
 - [ ] AC5: `mcp_prompt.go` 的 prompt 除按鈕對齊修正外樣式不變
 - [ ] AC6: init 全部既有功能測試通過（`go test ./...`），non-TTY stdout/stderr 契約不變

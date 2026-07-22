@@ -83,6 +83,11 @@ func (c *Clack) Confirm(title string, def bool) (bool, error)
 func (c *Clack) Form(title string, fields []Field) (map[string]string, error)
 func (c *Clack) MultiSelect(title string, opts []Option) ([]string, error)
 
+// 主題：Theme() 為全域共用；clackTheme(sym) 為 Clack 專用的 init-local 變體，
+// 讓進行中的 huh 欄位（含 Group 標題、blurred 欄位）也坐在 transcript 的連接線上。
+func Theme() huh.Theme
+// clackTheme(sym clackSymbols) huh.Theme  —— 未匯出，僅供 Clack 使用
+
 // 測試 seam：強制 stdin/stdout/stderr TTY 狀態。
 func SetTTYSeamsForTest(stdinTTY, stdoutTTY, stderrTTY bool) (restore func())
 ```
@@ -306,10 +311,21 @@ huh v2.0.3 原始碼：`Form.View()` 在 quitting 時回傳 `""`（`form.go:655-
 **Decision**：(1) 保留 huh 做輸入，**不引入第二套 prompt 棧**（評估過 `github.com/orochaa/go-clack`：
 它是 huh 的完整替代面而非外掛，只為 init 引入會造成雙棧並存）；(2) transcript 由呼叫端在
 prompt 結束後補印 —— 這也是 huh README 自身的建議模式，且**不需任何游標操作**；(3) 進行中的
-prompt 樣式**完全不改**（不換 `Focused.Base` 邊框、不做 init-local theme），避免波及
-`mcp_prompt.go` 的 credential prompts。
-**代價**：作答中的 huh gutter（`┃`）與 transcript 的 `│` 不是同一字元；因 huh 會自我清除，
-兩者不會同時停留在畫面上。另：不做 clack 原生的「送出後把 `◆` 改寫為 `◇`」，一律直接印 `◇` ——
-跨平台游標操作（Windows console + huh 剛退出 raw mode）的風險高於收益。
+prompt 以 **init-local `clackTheme(sym)`** 讓 huh 的欄位框也坐在同一條連接線上，全域 `Theme()`
+**不變**，`mcp_prompt.go` 的 credential prompts 維持原樣。
+**為何 (3) 必要**：初版曾決定「進行中的樣式完全不改」，實跑 metadata 群組表單後推翻 ——
+huh 一次渲染全部欄位，focus 欄位是 `ThemeBase` 的粗邊框 `┃`、blurred 欄位被本專案 theme 設為
+HiddenBorder（只剩縮排）、Group 標題無邊框，**同一個表單出現三種左緣**，整段浮在連接線之外。
+**代價**：不做 clack 原生的「送出後把 `◆` 改寫為 `◇`」，一律直接印 `◇` —— 跨平台游標操作
+（Windows console + huh 剛退出 raw mode）的風險高於收益。
 **附帶修正**：`Confirm` 的按鈕改 `lipgloss.Left`（huh 預設 `Center`，`field_confirm.go:52-53`），
 此為 bug 修正故**全域生效**，`mcp_prompt.go` 一併受益。
+
+**`clackTheme` 的兩個踩雷點**（改動前必讀）：
+1. 欄位之間的 gutter 空行**必須**來自各欄位的 `PaddingBottom(1)`（padding 在邊框內側，
+   故該行也會畫出 bar），**不可**改成把 bar 放進 `FieldSeparator`：lipgloss 對任何多行
+   render 都會把每行補齊到最寬行（`lipgloss/style.go:489-496`），`"\n<bar>\n"` 的尾行空字串
+   會被補成一個空格而讓下一個欄位縮排一格；且與 `PaddingBottom` 併用時會疊成兩條空行。
+   `FieldSeparator` 只能是單一 `"\n"`（各行皆空、補寬目標為 0，故無副作用）。
+2. `Group.Title` / `Group.Description` 需**單獨**把 `PaddingBottom` 設回 0，否則群組標題
+   下方會多一條空行。
