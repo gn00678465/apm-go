@@ -321,6 +321,12 @@ HiddenBorder（只剩縮排）、Group 標題無邊框，**同一個表單出現
 **附帶修正**：`Confirm` 的按鈕改 `lipgloss.Left`（huh 預設 `Center`，`field_confirm.go:52-53`），
 此為 bug 修正故**全域生效**，`mcp_prompt.go` 一併受益。
 
+**huh 的 keybinding footer 無法拉上連接線**：`Group.View` 在 footer 前**寫死**一行空字串
+（`group.go:374`），任何樣式都碰不到；而 footer 本身雖走 `Group.Base`（`group.go:407`，與
+`Form.Base` 不同），一旦給它邊框，`showHelp=false` 時的 `Base.Render("")` 會回傳一條多餘的
+gutter 空行而非 `""`。故 **Clack 一律 `showHelp=false`**，MultiSelect 改把按鍵提示放進欄位
+的 `Description`（畫在欄位邊框內側，天然在線上）。非 transcript 的指令維持 huh 原本的 footer。
+
 **`clackTheme` 的兩個踩雷點**（改動前必讀）：
 1. 欄位之間的 gutter 空行**必須**來自各欄位的 `PaddingBottom(1)`（padding 在邊框內側，
    故該行也會畫出 bar），**不可**改成把 bar 放進 `FieldSeparator`：lipgloss 對任何多行
