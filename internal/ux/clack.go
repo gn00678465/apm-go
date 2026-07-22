@@ -202,7 +202,7 @@ func (c *Clack) Confirm(title string, def bool) (bool, error) {
 	if !CanPrompt() {
 		return def, nil
 	}
-	val, err := Confirm(title, def)
+	val, err := confirmWith(clackTheme(c.sym), title, def)
 	if err != nil {
 		return val, err
 	}
@@ -218,7 +218,7 @@ func (c *Clack) Form(title string, fields []Field) (map[string]string, error) {
 	if !CanPrompt() {
 		return InputForm(title, fields)
 	}
-	values, err := InputForm(title, fields)
+	values, err := inputFormWith(clackTheme(c.sym), title, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func (c *Clack) MultiSelect(title string, opts []Option) ([]string, error) {
 	if !CanPrompt() {
 		return MultiSelect(title, opts)
 	}
-	selected, err := MultiSelect(title, opts)
+	selected, err := multiSelectWith(clackTheme(c.sym), title, opts)
 	if err != nil {
 		return nil, err
 	}

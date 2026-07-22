@@ -69,6 +69,13 @@ var runMultiSelectField = func(f huh.Field) error {
 // isn't possible (non-TTY stdin/stderr, or CI -- see CanPrompt) it returns
 // def immediately without prompting.
 func Confirm(prompt string, def bool) (bool, error) {
+	return confirmWith(Theme(), prompt, def)
+}
+
+// confirmWith is Confirm with the theme left to the caller, so Clack can put
+// the prompt on its connecting line without restyling every other command's
+// confirmations.
+func confirmWith(theme huh.Theme, prompt string, def bool) (bool, error) {
 	if !CanPrompt() {
 		return def, nil
 	}
@@ -84,7 +91,7 @@ func Confirm(prompt string, def bool) (bool, error) {
 		// they start in the question's own column. This must be chained before
 		// WithTheme, which returns the Field interface rather than *Confirm.
 		WithButtonAlignment(lipgloss.Left).
-		WithTheme(Theme())
+		WithTheme(theme)
 	err := runField(field)
 	return val, err
 }
@@ -127,6 +134,11 @@ func Password(label string) (string, error) {
 // When prompting isn't possible (see CanPrompt) it returns the values of
 // options pre-marked Selected, without prompting.
 func MultiSelect(title string, opts []Option) ([]string, error) {
+	return multiSelectWith(Theme(), title, opts)
+}
+
+// multiSelectWith is MultiSelect with a caller-supplied theme; see confirmWith.
+func multiSelectWith(theme huh.Theme, title string, opts []Option) ([]string, error) {
 	if !CanPrompt() {
 		var defaults []string
 		for _, o := range opts {
@@ -151,7 +163,7 @@ func MultiSelect(title string, opts []Option) ([]string, error) {
 		// in full rather than left to the terminal's reported window size.
 		Height(len(opts) + 1).
 		Value(&selected).
-		WithTheme(Theme())
+		WithTheme(theme)
 	err := runMultiSelectField(field)
 	return selected, err
 }
@@ -163,6 +175,11 @@ func MultiSelect(title string, opts []Option) ([]string, error) {
 // an earlier answer). When prompting isn't possible (see CanPrompt) it
 // returns each field's Default without prompting.
 func InputForm(title string, fields []Field) (map[string]string, error) {
+	return inputFormWith(Theme(), title, fields)
+}
+
+// inputFormWith is InputForm with a caller-supplied theme; see confirmWith.
+func inputFormWith(theme huh.Theme, title string, fields []Field) (map[string]string, error) {
 	values := make(map[string]string, len(fields))
 
 	if !CanPrompt() {
@@ -185,14 +202,14 @@ func InputForm(title string, fields []Field) (map[string]string, error) {
 		if f.Validate != nil {
 			input = input.Validate(f.Validate)
 		}
-		huhFields[i] = input.WithTheme(Theme())
+		huhFields[i] = input.WithTheme(theme)
 	}
 
 	group := huh.NewGroup(huhFields...)
 	if title != "" {
 		group = group.Title(title)
 	}
-	form := huh.NewForm(group).WithTheme(Theme()).WithOutput(os.Stderr)
+	form := huh.NewForm(group).WithTheme(theme).WithOutput(os.Stderr)
 	if err := runForm(form); err != nil {
 		return nil, err
 	}
