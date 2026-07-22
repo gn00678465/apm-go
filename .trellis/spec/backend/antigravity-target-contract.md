@@ -267,7 +267,12 @@ changed for this task**. Carried-over safety lines, unchanged:
 
 - **Cross-target skill duplication**: `.agents/skills/<name>/` is the
   cross-target canonical skill path shared by every adapter that supports
-  skills (req-tg-003). If a project installs antigravity *and* another
+  skills (req-tg-003) — EXCEPT claude, which deploys skills ONLY to its
+  native `.claude/skills/<name>/` (issue #10, task
+  07-22-claude-native-skill-path: matches the Python reference
+  implementation and the targets-matrix registry, which lists `.claude/` as
+  claude's sole deploy root and names claude a target-native exception to
+  skill convergence). If a project installs antigravity *and* another
   `.agents/skills/`-writing target in the same `install --target
   all,agy`-style call, a dependency's skill lands in both the canonical path
   (written by the other target's adapter) and its antigravity plugin bundle

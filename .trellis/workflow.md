@@ -676,6 +676,22 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
 
 After the above, remind the user they can run `/finish-work` to wrap up (archive the task, record the session).
 
+**PR-branch ordering constraint (MUST)**: when the task's work went out as a
+PR branch, `/finish-work` must run ON that branch, BEFORE the PR is merged,
+and its archive + journal commits must be pushed so they ride the same PR
+into main:
+
+```
+review PR → /finish-work (archive+journal commit & push on the branch) → merge   ← 乾淨
+merge → /finish-work                                                              ← 錯誤
+```
+
+Why: `/finish-work` moves `.trellis/tasks/<task>/` into `archive/` and
+appends the workspace journal — both are tracked file changes. Running it
+after the merge strands those changes on local main as uncommitted leftovers,
+forcing a direct-to-main commit that bypasses the PR flow (the #8/#9 conflict
+incident came from exactly this kind of post-merge bookkeeping).
+
 ---
 
 ## Customizing Trellis (for forks)

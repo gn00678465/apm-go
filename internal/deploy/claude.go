@@ -6,7 +6,7 @@ type claudeAdapter struct{}
 
 func (a *claudeAdapter) Name() string { return "claude" }
 
-func (a *claudeAdapter) DeployRoots() []string { return []string{".claude/", ".agents/"} }
+func (a *claudeAdapter) DeployRoots() []string { return []string{".claude/"} }
 
 // SupportedTypes omits hooks: claude hooks are merged into .claude/settings.json
 // at compile time (deferred, alongside CLAUDE.md), not deployed as standalone files.
@@ -14,10 +14,18 @@ func (a *claudeAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands}
 }
 
+// Skills deploy to claude's native .claude/skills/<name>/ ONLY -- not the
+// cross-tool canonical .agents/skills/ (issue #10). The targets-matrix
+// registry lists .claude/ as claude's sole deploy root and names claude a
+// target-native exception to skill convergence, matching the Python
+// reference implementation (integration/targets.py: claude's skills mapping
+// has no deploy_root override). Claude Code only discovers skills under
+// .claude/skills anyway, so the canonical copy served no tool and confused
+// claude-only users with a stray .agents/ directory.
 func (a *claudeAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
 	switch p.Type {
 	case TypeSkills:
-		return deploySkillClaude(p, projectDir)
+		return deploySkillTo(p, projectDir, ".claude/skills")
 	case TypeInstructions:
 		return deployClaudeInstructions(p, projectDir)
 	case TypeAgents:
@@ -27,21 +35,4 @@ func (a *claudeAdapter) DeployPrimitive(p Primitive, projectDir string) ([]strin
 	default:
 		return nil, nil
 	}
-}
-
-// deploySkillClaude deploys a skill to the canonical cross-tool path
-// (.agents/skills/<name>/, req-tg-003) and additionally to
-// .claude/skills/<name>/. Claude Code itself only discovers skills under
-// .claude/skills, not .agents/skills, so the canonical-only deployment left
-// skills invisible to Claude Code even though req-tg-003 was satisfied.
-func deploySkillClaude(p Primitive, projectDir string) ([]string, error) {
-	canonical, err := deploySkill(p, projectDir)
-	if err != nil {
-		return nil, err
-	}
-	extra, err := deploySkillTo(p, projectDir, ".claude/skills")
-	if err != nil {
-		return nil, err
-	}
-	return append(canonical, extra...), nil
 }

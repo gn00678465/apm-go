@@ -291,10 +291,10 @@ func TestDeployClaude_OracleMatch(t *testing.T) {
 	//   .claude/rules/demo.md
 	//   .claude/agents/helper.md
 	//   .claude/commands/hello.md
-	//   .agents/skills/demo/SKILL.md
-	// Plus a Go-specific addition beyond the Python oracle: claude also
-	// copies skills to .claude/skills/<name>/ because Claude Code does not
-	// discover skills from the cross-tool .agents/skills/ canonical path.
+	//   .claude/skills/demo/SKILL.md
+	// Skills land in claude's native root ONLY (issue #10): claude is a
+	// target-native exception to req-tg-003 convergence, matching the Python
+	// reference implementation.
 	dir := t.TempDir()
 
 	// Create .apm/ structure matching oracle _input
@@ -319,8 +319,6 @@ func TestDeployClaude_OracleMatch(t *testing.T) {
 	}
 
 	expected := oracleFileSet(loadOracle(t, "claude"))
-	const extraSkillCopy = ".claude/skills/demo/SKILL.md"
-	expected[extraSkillCopy] = true
 
 	if len(deployed) != len(expected) {
 		t.Fatalf("expected %d files, got %d: %v", len(expected), len(deployed), deployed)
@@ -663,10 +661,11 @@ func TestDeployRootConstraint(t *testing.T) {
 }
 
 func TestSkillConvergence(t *testing.T) {
-	// req-tg-003: all targets deploy skills to .agents/skills/<name>/SKILL.md.
-	// claude additionally deploys to .claude/skills/<name>/SKILL.md because
-	// Claude Code only discovers skills from .claude/skills, not
-	// .agents/skills -- the canonical path alone is invisible to it.
+	// req-tg-003: convergent targets deploy skills to
+	// .agents/skills/<name>/SKILL.md. claude is the target-native exception
+	// (issue #10, matching Python and the targets-matrix registry): it
+	// deploys ONLY to .claude/skills/<name>/SKILL.md, the sole path Claude
+	// Code actually discovers skills from.
 	dir := t.TempDir()
 	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body")
 
@@ -695,17 +694,8 @@ func TestSkillConvergence(t *testing.T) {
 		}
 
 		if adapter.Name() == "claude" {
-			want := map[string]bool{
-				".agents/skills/demo/SKILL.md": true,
-				".claude/skills/demo/SKILL.md": true,
-			}
-			if len(files) != len(want) {
-				t.Errorf("claude should deploy %d files (canonical + Claude Code compat copy), got %v", len(want), files)
-			}
-			for _, f := range files {
-				if !want[f] {
-					t.Errorf("claude: unexpected deployed file %s", f)
-				}
+			if len(files) != 1 || files[0] != ".claude/skills/demo/SKILL.md" {
+				t.Errorf("claude should deploy ONLY to its native .claude/skills/demo/SKILL.md, got %v", files)
 			}
 			continue
 		}
@@ -850,8 +840,7 @@ func TestRun_FullPipeline(t *testing.T) {
 		".claude/rules/demo.md":        true,
 		".claude/agents/helper.md":     true,
 		".claude/commands/hello.md":    true,
-		".agents/skills/demo/SKILL.md": true,
-		".claude/skills/demo/SKILL.md": true, // Claude Code compat copy (req-tg-003 note)
+		".claude/skills/demo/SKILL.md": true, // native-only skill root (issue #10)
 	}
 	for _, f := range localResult.Files {
 		if !localExpected[f] {
@@ -868,8 +857,7 @@ func TestRun_FullPipeline(t *testing.T) {
 		t.Fatal("expected dep deploy result")
 	}
 	depExpected := map[string]bool{
-		".agents/skills/extra/SKILL.md": true,
-		".claude/skills/extra/SKILL.md": true, // Claude Code compat copy (req-tg-003 note)
+		".claude/skills/extra/SKILL.md": true, // native-only skill root (issue #10)
 	}
 	if len(depResult.Files) != len(depExpected) {
 		t.Errorf("expected %d dep files, got %d: %v", len(depExpected), len(depResult.Files), depResult.Files)
@@ -923,7 +911,7 @@ func TestRun_ConflictResolution(t *testing.T) {
 	}
 
 	// Local should win — verify content
-	deployed := filepath.Join(dir, ".agents/skills/demo/SKILL.md")
+	deployed := filepath.Join(dir, ".claude/skills/demo/SKILL.md")
 	content, _ := os.ReadFile(deployed)
 	if string(content) != "local version\n" {
 		t.Errorf("expected local version, got %q", string(content))
@@ -971,16 +959,16 @@ func TestRun_SkillFilterScopedToDepKey(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, ".agents/skills/loc/SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/loc/SKILL.md")); err != nil {
 		t.Errorf("local skill must be unaffected by --skill scoped to %s: %v", depA, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents/skills/b1/SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/b1/SKILL.md")); err != nil {
 		t.Errorf("unrelated dependency %s's skill must be unaffected by --skill scoped to %s: %v", depB, depA, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a1/SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/a1/SKILL.md")); err != nil {
 		t.Errorf("selected skill a1 (in %s) should deploy: %v", depA, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a2/SKILL.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/a2/SKILL.md")); err == nil {
 		t.Errorf("unselected skill a2 (in %s, the --skill target) should not deploy", depA)
 	}
 }
@@ -1032,10 +1020,10 @@ func TestRun_SkillFilterAbsentKeyDeploysAll(t *testing.T) {
 				t.Fatalf("Run: %v", err)
 			}
 
-			if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a1/SKILL.md")); err != nil {
+			if _, err := os.Stat(filepath.Join(dir, ".claude/skills/a1/SKILL.md")); err != nil {
 				t.Errorf("a1 should deploy when depA is absent from Subsets (%v): %v", tt.subsets, err)
 			}
-			if _, err := os.Stat(filepath.Join(dir, ".agents/skills/a2/SKILL.md")); err != nil {
+			if _, err := os.Stat(filepath.Join(dir, ".claude/skills/a2/SKILL.md")); err != nil {
 				t.Errorf("a2 should also deploy when depA is absent from Subsets (%v): %v", tt.subsets, err)
 			}
 		})
@@ -1075,9 +1063,9 @@ func TestRun_SkillDeduplication(t *testing.T) {
 // skipped calling claudeAdapter.DeployPrimitive entirely whenever another
 // skill-supporting target (e.g. codex) had already deployed the canonical
 // .agents/skills/<name>/ path first. That `continue` meant claude's
-// target-specific .claude/skills/<name>/ copy (needed because Claude Code
-// does not discover skills from .agents/skills) was silently dropped
-// whenever claude wasn't the first skill-supporting target to run.
+// target-native .claude/skills/<name>/ deployment (the only path Claude
+// Code discovers skills from) was silently dropped whenever claude wasn't
+// the first skill-supporting target to run.
 func TestRun_SkillDeduplication_ClaudeExtraCopySurvivesTargetOrder(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill\n")
@@ -1114,10 +1102,10 @@ func TestRun_SkillDeduplication_ClaudeExtraCopySurvivesTargetOrder(t *testing.T)
 	}
 }
 
-// TestDeploySkillClaude_BundleWithSiblings verifies the .claude/skills/ extra
-// copy carries the whole skill bundle (not just SKILL.md) -- a skill with
-// scripts/ or references/ siblings must not be truncated in the Claude Code
-// compat copy.
+// TestDeploySkillClaude_BundleWithSiblings verifies claude's native
+// .claude/skills/ deployment carries the whole skill bundle (not just
+// SKILL.md) -- a skill with scripts/ or references/ siblings must not be
+// truncated.
 func TestDeploySkillClaude_BundleWithSiblings(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body")
@@ -1137,9 +1125,6 @@ func TestDeploySkillClaude_BundleWithSiblings(t *testing.T) {
 	}
 
 	expected := map[string]bool{
-		".agents/skills/demo/SKILL.md":            true,
-		".agents/skills/demo/scripts/run.sh":      true,
-		".agents/skills/demo/references/guide.md": true,
 		".claude/skills/demo/SKILL.md":            true,
 		".claude/skills/demo/scripts/run.sh":      true,
 		".claude/skills/demo/references/guide.md": true,
