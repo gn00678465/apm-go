@@ -327,6 +327,11 @@ HiddenBorder（只剩縮排）、Group 標題無邊框，**同一個表單出現
 gutter 空行而非 `""`。故 **Clack 一律 `showHelp=false`**，MultiSelect 改把按鍵提示放進欄位
 的 `Description`（畫在欄位邊框內側，天然在線上）。非 transcript 的指令維持 huh 原本的 footer。
 
+**gutter 顏色語意**：邊框字元統一之後，**顏色是唯一的 focus 提示** —— brand 綠 = 使用者
+正在編輯的欄位，其餘（blurred 欄位、Group 標題／說明）一律 muted。Group 標題永遠不會被
+focus，若也塗成 brand 會出現一條「永遠亮著卻不隨 Tab 移動」的綠線，顏色即失去意義。
+transcript 那側同理：`Bar`/`Step`/`Note` 的直線一律 muted，只有 `◇` 標記用 brand。
+
 **`clackTheme` 的兩個踩雷點**（改動前必讀）：
 1. 欄位之間的 gutter 空行**必須**來自各欄位的 `PaddingBottom(1)`（padding 在邊框內側，
    故該行也會畫出 bar），**不可**改成把 bar 放進 `FieldSeparator`：lipgloss 對任何多行

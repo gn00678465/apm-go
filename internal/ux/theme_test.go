@@ -8,10 +8,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// renderWithTheme builds a grouped form the way inputFormWith does and returns
-// its rendered view with styling stripped, so the gutter can be inspected
-// column by column.
-func renderWithTheme(t *testing.T, theme huh.Theme, title string, labels ...string) string {
+// renderRawWithTheme builds a grouped form the way inputFormWith does and
+// returns its rendered view with styling intact, for tests that inspect
+// colour. The first field is the focused one.
+func renderRawWithTheme(t *testing.T, theme huh.Theme, title string, labels ...string) string {
 	t.Helper()
 
 	fields := make([]huh.Field, len(labels))
@@ -25,7 +25,63 @@ func renderWithTheme(t *testing.T, theme huh.Theme, title string, labels ...stri
 	}
 	form := huh.NewForm(group).WithTheme(theme).WithShowHelp(false)
 	form.Init()
-	return ansiPattern.ReplaceAllString(form.View(), "")
+	return form.View()
+}
+
+// renderWithTheme is renderRawWithTheme with styling stripped, so the gutter
+// can be inspected column by column.
+func renderWithTheme(t *testing.T, theme huh.Theme, title string, labels ...string) string {
+	t.Helper()
+	return ansiPattern.ReplaceAllString(renderRawWithTheme(t, theme, title, labels...), "")
+}
+
+// gutterStyleOf returns the escape sequence a rendered line opens with, i.e.
+// how its leading bar is coloured.
+func gutterStyleOf(line, bar string) string {
+	idx := strings.Index(line, bar)
+	if idx < 0 {
+		return ""
+	}
+	return line[:idx]
+}
+
+// TestClackTheme_OnlyTheFocusedFieldGetsTheBrandBar pins what the bar colour
+// means. Once every field carries the same border glyph, colour is the only
+// remaining cue for which field has focus: the focused field's bar is brand,
+// everything else is muted. A group title is never focused, so giving its bar
+// the brand colour (as the first cut did) lights a second bar that never moves
+// as the user tabs between fields, and the colour stops meaning anything.
+func TestClackTheme_OnlyTheFocusedFieldGetsTheBrandBar(t *testing.T) {
+	// Arrange
+	bar := unicodeClackSymbols.Bar
+	view := renderRawWithTheme(t, clackTheme(unicodeClackSymbols), "Project metadata", "Focused field", "Blurred field")
+	lines := strings.Split(view, "\n")
+	if len(lines) < 5 {
+		t.Fatalf("expected a title plus two fields, got:\n%s", ansiPattern.ReplaceAllString(view, ""))
+	}
+
+	// Act
+	titleStyle := gutterStyleOf(lines[0], bar)
+	focusedStyle := gutterStyleOf(lines[1], bar)
+	var blurredStyle string
+	for _, line := range lines[2:] {
+		if strings.Contains(ansiPattern.ReplaceAllString(line, ""), "Blurred field") {
+			blurredStyle = gutterStyleOf(line, bar)
+			break
+		}
+	}
+
+	// Assert
+	if blurredStyle == "" {
+		t.Fatalf("could not locate the blurred field's line:\n%s", ansiPattern.ReplaceAllString(view, ""))
+	}
+	if focusedStyle == blurredStyle {
+		t.Fatalf("focused and blurred bars render identically (%q); focus has no visible cue", focusedStyle)
+	}
+	if titleStyle != blurredStyle {
+		t.Fatalf("group title bar is styled %q but an unfocused bar is %q; the title must not claim focus",
+			titleStyle, blurredStyle)
+	}
 }
 
 // TestClackTheme_EveryRenderedLineSitsOnTheGutter is the regression for the

@@ -80,8 +80,12 @@ func clackTheme(sym clackSymbols) huh.Theme {
 		t.Blurred.Card = t.Blurred.Base
 
 		// A Group renders its title above the fields with no border of its own,
-		// which would leave the step heading floating off the line.
-		t.Group.Title = onGutter(t.Group.Title, brand).
+		// which would leave the step heading floating off the line. Its bar is
+		// muted, not brand: a brand bar means "this is the field you are
+		// editing" (that is the only focus cue left once the borders are
+		// uniform), and a group title is never focused -- colouring it brand
+		// would light up a second bar that never moves as the user tabs.
+		t.Group.Title = onGutter(t.Group.Title, muted).
 			Foreground(lipgloss.Color(ColorHeading)).Bold(true).PaddingBottom(0)
 		t.Group.Description = onGutter(t.Group.Description, muted).
 			Foreground(muted).PaddingBottom(0)
