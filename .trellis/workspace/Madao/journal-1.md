@@ -1051,3 +1051,38 @@ docs/readme 分支:英文/繁中 README(指令表自 --help 實抄)+ release 尺
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: claude target skill 部署改為原生路徑唯一 (issue #10)
+
+**Date**: 2026-07-23
+**Task**: claude target skill 部署改為原生路徑唯一 (issue #10)
+**Branch**: `main`
+
+### Summary
+
+根因: 06-29 任務誤讀 req-tg-003 literal MUST, 讓 claude target 同時寫 .agents/skills/ 與 .claude/skills/ 雙路徑, 違反 req-tg-002 且與 Python 參考實作 (targets.py:513 native-only) 不符. 修正: claudeAdapter 改為只部署 .claude/skills/<name>/, DeployRoots 移除 .agents/; 更新 19 個測試斷言為 native-only 期望, go test ./... 全數通過. 同步更新 antigravity-target-contract.md §7.7 claude 例外註記與 conformance oracle (local-only, conformance/ 被 gitignore). 已知限制: 舊安裝殘留的 .agents/skills/ 不會自動清除 (stale reconciliation 僅處理 --skill 縮窄). 另將 finish-work 必須於 PR merge 前在 branch 上執行的流程約束寫入 workflow.md Phase 3.5. PR #12 已 merge, 關聯 issue #10.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c1dd7ae` | (see git log) |
+| `005ac5a` | (see git log) |
+| `86f3920` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

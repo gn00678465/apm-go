@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
-- **Last Active**: 2026-07-18
+- **Total Sessions**: 30
+- **Last Active**: 2026-07-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1019 | Active |
+| `journal-1.md` | ~1088 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-07-23 | claude target skill 部署改為原生路徑唯一 (issue #10) | `c1dd7ae`, `005ac5a`, `86f3920` | `main` |
 | 29 | 2026-07-18 | README 雙語 + 編譯指令文件;PR 未經同意開啟之違規記錄 | `e9f4810`, `c0886ac` | `docs/readme` |
 | 28 | 2026-07-18 | release pipeline 全鏈驗證:act 本地 + 真實 tag e2e(裝/測/移除) | `038fded`, `e8a6ba9` | `feat/release-install` |
 | 27 | 2026-07-17 | PR #6/#7 收尾:驗證、ready、審查備援補記與合併 | `6a30d8f` | `main` |
