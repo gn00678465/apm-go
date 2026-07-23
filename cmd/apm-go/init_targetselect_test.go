@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ func TestInteractiveTargetSelect_NonTTY_ReturnsDetectedDefaultsWithoutError(t *t
 	var got []string
 	var err error
 	runWithTimeout(t, time.Second, func() {
-		got, err = interactiveTargetSelect([]string{"claude"}, nil)
+		got, err = interactiveTargetSelect(ux.NewClack(io.Discard), []string{"claude"}, nil)
 	})
 
 	// Assert
@@ -68,7 +69,7 @@ func TestInteractiveTargetSelect_NonTTY_NoDetectedTargets_ContinuesWithoutPinnin
 	var got []string
 	var err error
 	runWithTimeout(t, time.Second, func() {
-		got, err = interactiveTargetSelect(nil, nil)
+		got, err = interactiveTargetSelect(ux.NewClack(io.Discard), nil, nil)
 	})
 
 	// Assert

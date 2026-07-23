@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // Option is a single choice for MultiSelect. Selected marks the option as
@@ -53,13 +54,19 @@ var runForm = func(f *huh.Form) error {
 // R19: runField's WithShowHelp(false) (added for the accessible-output fix)
 // also silently disabled MultiSelect's toggle/move/confirm keybinding help
 // footer -- MultiSelect alone needs it back, so it gets its own wrapper
-// (WithShowHelp(true)) instead of changing runField for every field kind.
+// instead of changing runField for every field kind.
+//
+// showHelp is a parameter rather than a constant because Clack renders the
+// same field inside a connecting line that huh's footer cannot be made to join
+// (see clackTheme's note on Group.Base); it turns the footer off and puts the
+// same keybinding hint in the field's description instead.
+//
 // WithOutput(os.Stderr) is kept for the same reason as runField (see its
 // doc comment): huh's accessible mode (TERM=dumb) defaults prompts to
 // stdout otherwise.
-var runMultiSelectField = func(f huh.Field) error {
+var runMultiSelectField = func(f huh.Field, showHelp bool) error {
 	return huh.NewForm(huh.NewGroup(f)).
-		WithShowHelp(true).
+		WithShowHelp(showHelp).
 		WithOutput(os.Stderr).
 		Run()
 }
@@ -68,6 +75,13 @@ var runMultiSelectField = func(f huh.Field) error {
 // isn't possible (non-TTY stdin/stderr, or CI -- see CanPrompt) it returns
 // def immediately without prompting.
 func Confirm(prompt string, def bool) (bool, error) {
+	return confirmWith(Theme(), prompt, def)
+}
+
+// confirmWith is Confirm with the theme left to the caller, so Clack can put
+// the prompt on its connecting line without restyling every other command's
+// confirmations.
+func confirmWith(theme huh.Theme, prompt string, def bool) (bool, error) {
 	if !CanPrompt() {
 		return def, nil
 	}
@@ -76,7 +90,14 @@ func Confirm(prompt string, def bool) (bool, error) {
 	field := huh.NewConfirm().
 		Title(prompt).
 		Value(&val).
-		WithTheme(Theme())
+		// huh defaults buttonAlignment to lipgloss.Center and renders the
+		// button row in a box as wide as max(titleWidth, buttonsWidth), so any
+		// question longer than "Yes  No" pushes the buttons toward the middle,
+		// visually detached from the question (issue #14). Left-align them so
+		// they start in the question's own column. This must be chained before
+		// WithTheme, which returns the Field interface rather than *Confirm.
+		WithButtonAlignment(lipgloss.Left).
+		WithTheme(theme)
 	err := runField(field)
 	return val, err
 }
@@ -119,6 +140,13 @@ func Password(label string) (string, error) {
 // When prompting isn't possible (see CanPrompt) it returns the values of
 // options pre-marked Selected, without prompting.
 func MultiSelect(title string, opts []Option) ([]string, error) {
+	return multiSelectWith(Theme(), title, "", true, opts)
+}
+
+// multiSelectWith is MultiSelect with the theme, an optional description line
+// under the title, and whether to show huh's keybinding footer left to the
+// caller; see confirmWith and runMultiSelectField.
+func multiSelectWith(theme huh.Theme, title, description string, showHelp bool, opts []Option) ([]string, error) {
 	if !CanPrompt() {
 		var defaults []string
 		for _, o := range opts {
@@ -135,16 +163,20 @@ func MultiSelect(title string, opts []Option) ([]string, error) {
 	}
 
 	var selected []string
+	// Height covers the title line plus every option, and the description line
+	// when there is one, so a long option list (e.g. init's >=5 targets) is
+	// shown in full rather than left to the terminal's reported window size
+	// (R19).
+	height := len(opts) + 1
 	field := huh.NewMultiSelect[string]().
 		Title(title).
 		Options(huhOpts...).
-		// R19: force the field's own height to fit its title line plus every
-		// option, so a long option list (e.g. init's >=5 targets) is shown
-		// in full rather than left to the terminal's reported window size.
-		Height(len(opts) + 1).
-		Value(&selected).
-		WithTheme(Theme())
-	err := runMultiSelectField(field)
+		Value(&selected)
+	if description != "" {
+		field = field.Description(description)
+		height++
+	}
+	err := runMultiSelectField(field.Height(height).WithTheme(theme), showHelp)
 	return selected, err
 }
 
@@ -155,6 +187,12 @@ func MultiSelect(title string, opts []Option) ([]string, error) {
 // an earlier answer). When prompting isn't possible (see CanPrompt) it
 // returns each field's Default without prompting.
 func InputForm(title string, fields []Field) (map[string]string, error) {
+	return inputFormWith(Theme(), title, true, fields)
+}
+
+// inputFormWith is InputForm with the theme and huh's keybinding footer left
+// to the caller; see confirmWith and runMultiSelectField.
+func inputFormWith(theme huh.Theme, title string, showHelp bool, fields []Field) (map[string]string, error) {
 	values := make(map[string]string, len(fields))
 
 	if !CanPrompt() {
@@ -177,14 +215,14 @@ func InputForm(title string, fields []Field) (map[string]string, error) {
 		if f.Validate != nil {
 			input = input.Validate(f.Validate)
 		}
-		huhFields[i] = input.WithTheme(Theme())
+		huhFields[i] = input.WithTheme(theme)
 	}
 
 	group := huh.NewGroup(huhFields...)
 	if title != "" {
 		group = group.Title(title)
 	}
-	form := huh.NewForm(group).WithTheme(Theme()).WithOutput(os.Stderr)
+	form := huh.NewForm(group).WithTheme(theme).WithShowHelp(showHelp).WithOutput(os.Stderr)
 	if err := runForm(form); err != nil {
 		return nil, err
 	}

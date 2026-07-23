@@ -54,19 +54,39 @@ func initCmd() *cobra.Command {
 			_, existsErr := os.Stat("apm.yml")
 			apmYmlExists := existsErr == nil
 
+			// Every prompt of an interactive run is recorded on one clack-style
+			// connecting line (issue #14). ck stays nil for --yes and
+			// non-interactive runs, which keep their plain output verbatim.
+			var ck *ux.Clack
+			if !yes && ux.CanPrompt() {
+				ck = ux.NewClack(os.Stderr)
+				fmt.Fprintln(os.Stderr)
+				ck.Banner(apmGoBanner)
+				ck.Intro("Setting up your APM project")
+				ck.Detail("Press ^C at any time to quit.")
+				ck.Bar()
+			}
+
 			if apmYmlExists {
-				if yes || force {
-					ux.Info(os.Stderr, "--yes specified, overwriting apm.yml...")
-				} else if ux.CanPrompt() {
-					ok, err := ux.Confirm("apm.yml already exists. Continue and overwrite?", false)
+				switch {
+				case yes || force:
+					if ck != nil {
+						ck.Step("apm.yml already exists", "Overwriting (--force)")
+						ck.Bar()
+					} else {
+						ux.Info(os.Stderr, "--yes specified, overwriting apm.yml...")
+					}
+				case ck != nil:
+					ok, err := ck.Confirm("apm.yml already exists. Continue and overwrite?", false)
 					if err != nil {
 						return fmt.Errorf("confirm overwrite: %w", err)
 					}
 					if !ok {
-						ux.Info(os.Stderr, "Initialization cancelled.")
+						ck.Outro("Initialization cancelled.")
 						return nil
 					}
-				} else {
+					ck.Bar()
+				default:
 					return fmt.Errorf("apm.yml already exists; use --yes to overwrite")
 				}
 			}
@@ -80,11 +100,6 @@ func initCmd() *cobra.Command {
 				description = fmt.Sprintf("APM project for %s", name)
 				author = manifest.DetectAuthor()
 			} else {
-				fmt.Fprintln(os.Stderr)
-				ux.Section(os.Stderr, "Setting up your APM project...")
-				ux.Info(os.Stderr, "Press ^C at any time to quit.")
-				fmt.Fprintln(os.Stderr)
-
 				defaultName := filepath.Base(cwd)
 				defaultDesc := fmt.Sprintf("APM project for %s", defaultName)
 				fields := []ux.Field{
@@ -93,10 +108,11 @@ func initCmd() *cobra.Command {
 					{Key: "description", Label: "Description", Default: defaultDesc},
 					{Key: "author", Label: "Author", Default: manifest.DetectAuthor()},
 				}
-				vals, formErr := ux.InputForm("Setting up your APM project", fields)
+				vals, formErr := ck.Form("Project metadata", fields)
 				if formErr != nil {
 					return fmt.Errorf("read project metadata: %w", formErr)
 				}
+				ck.Bar()
 				name = vals["name"]
 				version = vals["version"]
 				description = vals["description"]
@@ -135,15 +151,15 @@ func initCmd() *cobra.Command {
 					existingTargets = readExistingTargets()
 				}
 				detected := manifest.DetectTargets(cwd)
-				selectedTargets, err = interactiveTargetSelect(detected, existingTargets)
+				selectedTargets, err = interactiveTargetSelect(ck, detected, existingTargets)
 				if err != nil {
 					return fmt.Errorf("select targets: %w", err)
 				}
+				ck.Bar()
 			}
 
 			// Phase 5: Confirmation
-			if !yes && ux.CanPrompt() {
-				fmt.Fprintln(os.Stderr)
+			if ck != nil {
 				body := []string{
 					fmt.Sprintf("name:        %s", name),
 					fmt.Sprintf("version:     %s", version),
@@ -155,14 +171,15 @@ func initCmd() *cobra.Command {
 				} else {
 					body = append(body, "targets:     (none — auto-detect at compile time)")
 				}
-				ux.Box(os.Stderr, "About to create", body)
+				ck.Note("About to create", body)
+				ck.Bar()
 
-				ok, err := ux.Confirm("Is this OK?", true)
+				ok, err := ck.Confirm("Is this OK?", true)
 				if err != nil {
 					return fmt.Errorf("confirm creation: %w", err)
 				}
 				if !ok {
-					ux.Info(os.Stderr, "Aborted.")
+					ck.Outro("Aborted.")
 					return nil
 				}
 			}
@@ -189,6 +206,12 @@ func initCmd() *cobra.Command {
 			}
 
 			// Phase 7: Success output
+			if ck != nil {
+				ck.Bar()
+				ck.Step("APM project initialized successfully!", "Install a package:  apm-go install <owner>/<repo>")
+				ck.Outro("Done!")
+				return nil
+			}
 			fmt.Fprintln(os.Stderr)
 			ux.Success(os.Stderr, "APM project initialized successfully!")
 			fmt.Fprintln(os.Stderr)
@@ -234,7 +257,7 @@ func buildManifestData(name, version, description, author string, targets []stri
 // of being swallowed: a swallowed error previously left `selected` nil and
 // `cont` at its zero value (false), which re-entered this function
 // recursively on every aborted prompt -- an abort loop with no way out.
-func interactiveTargetSelect(detected, existing []string) ([]string, error) {
+func interactiveTargetSelect(ck *ux.Clack, detected, existing []string) ([]string, error) {
 	checked := make(map[string]bool)
 	for _, t := range existing {
 		checked[t] = true
@@ -263,7 +286,7 @@ func interactiveTargetSelect(detected, existing []string) ([]string, error) {
 	}
 
 	for {
-		selected, err := ux.MultiSelect("Select targets for this project", opts)
+		selected, err := ck.MultiSelect("Select targets for this project", opts)
 		if err != nil {
 			return nil, err
 		}
@@ -271,8 +294,8 @@ func interactiveTargetSelect(detected, existing []string) ([]string, error) {
 			return selected, nil
 		}
 
-		ux.Warn(os.Stderr, "No targets selected. APM will auto-detect targets from your filesystem on every compile.")
-		cont, err := ux.Confirm("Continue without pinning targets?", true)
+		ck.Warn("No targets selected. APM will auto-detect targets from your filesystem on every compile.")
+		cont, err := ck.Confirm("Continue without pinning targets?", true)
 		if err != nil {
 			return nil, err
 		}

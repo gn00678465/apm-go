@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
+- **Total Sessions**: 31
 - **Last Active**: 2026-07-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1088 | Active |
+| `journal-1.md` | ~1130 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-07-23 | init 互動介面改為 clack 風格 (issue #14) | `1c0b5ee`, `7320d02`, `eef4a34`, `11ea062`, `ebc6c09`, `2bc052b`, `930408e`, `05e0599`, `0c9be8c`, `9485c6e` | `feat/init-clack-style-ui` |
 | 30 | 2026-07-23 | claude target skill 部署改為原生路徑唯一 (issue #10) | `c1dd7ae`, `005ac5a`, `86f3920` | `main` |
 | 29 | 2026-07-18 | README 雙語 + 編譯指令文件;PR 未經同意開啟之違規記錄 | `e9f4810`, `c0886ac` | `docs/readme` |
 | 28 | 2026-07-18 | release pipeline 全鏈驗證:act 本地 + 真實 tag e2e(裝/測/移除) | `038fded`, `e8a6ba9` | `feat/release-install` |
