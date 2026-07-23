@@ -1086,3 +1086,45 @@ docs/readme 分支:英文/繁中 README(指令表自 --help 實抄)+ release 尺
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: init 互動介面改為 clack 風格 (issue #14)
+
+**Date**: 2026-07-23
+**Task**: init 互動介面改為 clack 風格 (issue #14)
+**Branch**: `feat/init-clack-style-ui`
+
+### Summary
+
+實作 issue #14 的三項需求: ASCII banner, clack 連接線 transcript, Confirm 按鈕靠左. 關鍵查證(huh v2.0.3 原始碼): Form.View() 於 quitting 回傳空字串(form.go:655-657), bubbletea 收合為 0 高度並抹除(cursed_renderer.go:262-264), 故 huh 無保留已答步驟的機制, transcript 必須由呼叫端補印; 按鈕對齊只能靠 *Confirm.WithButtonAlignment(field_confirm.go:361-364), theme 改不了. 評估後不引入 go-clack(huh 的完整替代面, 會造成雙 prompt 棧). 三輪目視回饋修正: (1)群組表單作答中出現三種左緣 -> 新增 init-local clackTheme; (2)keybinding footer 浮在線外, 且 Group.Base 加邊框會在 showHelp=false 時產生殘留 gutter 行(group.go:374 寫死空行無法以樣式解決) -> 改為關閉 footer 並把提示放進欄位 Description; (3)Group 標題 gutter 永遠 brand 綠 -> 改 muted, 讓 brand 專指聚焦欄位. 踩雷紀錄: lipgloss 對多行 render 會補寬每行(style.go:489-496), 故 FieldSeparator 不可放 bar, 改由 PaddingBottom(1) 產生. 自我修正: 曾寫下一個無效的迴歸測試(註解宣稱能擋多行分隔線但實測不會失敗), 已改寫並驗證. internal/ux 覆蓋率 89.9% -> 92.3%. PR #15 (draft), Fixes #14.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1c0b5ee` | (see git log) |
+| `7320d02` | (see git log) |
+| `eef4a34` | (see git log) |
+| `11ea062` | (see git log) |
+| `ebc6c09` | (see git log) |
+| `2bc052b` | (see git log) |
+| `930408e` | (see git log) |
+| `05e0599` | (see git log) |
+| `0c9be8c` | (see git log) |
+| `9485c6e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
