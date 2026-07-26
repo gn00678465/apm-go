@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="wtitle wdesc">
+  <title id="wtitle">apm-go compile 如何運作</title>
+  <desc id="wdesc">apm-go compile 讀取分散的 .apm/ primitive — 指令、chat mode、記憶、憲章 — 解析、驗證並合併，寫出各 AI 代理平台啟動時讀取的根 context 檔案：AGENTS.md、CLAUDE.md、GEMINI.md。</desc>
+
+  <defs>
+    <clipPath id="wcard"><rect x="0" y="0" width="1200" height="440" rx="26"/></clipPath>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto">
+      <path d="M1 1 L7 4.5 L1 8" fill="none" stroke="#2dd4bf" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <g clip-path="url(#wcard)">
+    <rect width="1200" height="440" fill="#0d1117"/>
+
+    <g transform="translate(64 0)">
+      <text x="0" y="70" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" fill="#2dd4bf">&#9671;<tspan dx="14" fill="#e6edf3" font-size="30" font-weight="700" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif">如何運作</tspan></text>
+      <text x="2" y="102" font-size="17" fill="#8b949e" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif"><tspan fill="#c9d1d9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.apm/</tspan> 是唯一真實來源 — 編譯成每個代理啟動時讀取的 context 檔案。</text>
+    </g>
+
+    <text x="186" y="156" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="1" fill="#8b949e">.apm/ PRIMITIVE</text>
+    <text x="1016" y="156" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="1" fill="#8b949e">根 CONTEXT</text>
+
+    <g fill="none" stroke="#2dd4bf" stroke-opacity="0.45" stroke-width="1.6">
+      <path d="M308 189 C 410 189, 410 270, 496 270"/>
+      <path d="M308 243 C 400 243, 420 270, 496 270"/>
+      <path d="M308 297 C 400 297, 420 270, 496 270"/>
+      <path d="M308 351 C 410 351, 410 270, 496 270"/>
+    </g>
+    <g fill="none" stroke="#2dd4bf" stroke-opacity="0.55" stroke-width="1.8" marker-end="url(#arrow)">
+      <path d="M706 270 C 800 270, 800 221, 890 221"/>
+      <path d="M706 270 C 800 270, 800 270, 886 270"/>
+      <path d="M706 270 C 800 270, 800 319, 890 319"/>
+    </g>
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+      <g transform="translate(64 165)">
+        <rect width="244" height="48" rx="9" fill="#161b22" stroke="#30363d"/>
+        <rect width="4" height="48" rx="2" fill="#2dd4bf"/>
+        <text x="20" y="30" font-size="16" fill="#e6edf3">.apm/instructions</text>
+      </g>
+      <g transform="translate(64 219)">
+        <rect width="244" height="48" rx="9" fill="#161b22" stroke="#30363d"/>
+        <rect width="4" height="48" rx="2" fill="#2dd4bf"/>
+        <text x="20" y="30" font-size="16" fill="#e6edf3">.apm/chatmodes</text>
+      </g>
+      <g transform="translate(64 273)">
+        <rect width="244" height="48" rx="9" fill="#161b22" stroke="#30363d"/>
+        <rect width="4" height="48" rx="2" fill="#2dd4bf"/>
+        <text x="20" y="30" font-size="16" fill="#e6edf3">.apm/memory</text>
+      </g>
+      <g transform="translate(64 327)">
+        <rect width="244" height="48" rx="9" fill="#161b22" stroke="#30363d"/>
+        <rect width="4" height="48" rx="2" fill="#2dd4bf"/>
+        <text x="20" y="30" font-size="16" fill="#e6edf3">.apm/constitutions</text>
+      </g>
+    </g>
+
+    <g transform="translate(498 224)">
+      <rect width="208" height="92" rx="14" fill="#010409" stroke="#2dd4bf" stroke-width="1.5"/>
+      <text x="104" y="40" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700" fill="#2dd4bf">apm-go compile</text>
+      <text x="104" y="66" text-anchor="middle" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif" font-size="13.5" fill="#8b949e">解析 · 驗證 · 合併</text>
+    </g>
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+      <g transform="translate(894 197)">
+        <rect width="244" height="48" rx="9" fill="#161b22" stroke="#30363d"/>
+        <rect x="240" width="4" height="48" rx="2" fill="#8aa0ff"/>
+        <text x="20" y="30" font-size="16" fill="#e6edf3">AGENTS.md</text>
+        <text x="224" y="30" text-anchor="end" font-size="12.5" fill="#8b949e" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif">根目錄</text>
+      </g>
+      <g transform="translate(894 246)">
+        <rect width="244" height="48" rx="9" fill="#161b22" stroke="#30363d"/>
+        <rect x="240" width="4" height="48" rx="2" fill="#8aa0ff"/>
+        <text x="20" y="30" font-size="16" fill="#e6edf3">CLAUDE.md</text>
+        <text x="224" y="30" text-anchor="end" font-size="12.5" fill="#8b949e" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif">根目錄</text>
+      </g>
+      <g transform="translate(894 295)">
+        <rect width="244" height="48" rx="9" fill="#161b22" stroke="#30363d"/>
+        <rect x="240" width="4" height="48" rx="2" fill="#8aa0ff"/>
+        <text x="20" y="30" font-size="16" fill="#e6edf3">GEMINI.md</text>
+        <text x="224" y="30" text-anchor="end" font-size="12.5" fill="#8b949e" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif">根目錄</text>
+      </g>
+    </g>
+  </g>
+</svg>

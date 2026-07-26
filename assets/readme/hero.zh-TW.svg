@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title desc">
+  <title id="title">apm-go</title>
+  <desc id="desc">apm-go 是 Agent Package Manager 的 Go 重新實作，把分散的 .apm/ primitive 編譯成 AI 代理啟動時讀取的 context 檔案。右側終端機面板以 clack 連接線風格顯示一次 apm-go init 的實際執行。</desc>
+
+  <defs>
+    <linearGradient id="edge" x1="0" y1="0" x2="1200" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="0.55" stop-color="#8aa0ff"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <clipPath id="card"><rect x="0" y="0" width="1200" height="400" rx="26"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="1200" height="400" fill="#0d1117"/>
+    <rect x="0" y="0" width="1200" height="4" fill="url(#edge)"/>
+
+    <!-- ── Title block ───────────────────────────────────────────── -->
+    <g transform="translate(64 0)">
+      <text x="2" y="92" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif" font-size="17" letter-spacing="2" fill="#8b949e">代理套件管理器 · GO 實作</text>
+
+      <text x="0" y="184" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="82" font-weight="700" letter-spacing="-1">
+        <tspan fill="#2dd4bf">&#10095;</tspan><tspan fill="#e6edf3" dx="24">apm-go</tspan>
+      </text>
+
+      <text x="2" y="238" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif" font-size="20" fill="#c9d1d9">把分散的 <tspan fill="#2dd4bf" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">.apm/</tspan> primitive 編譯成 AI 代理</text>
+      <text x="2" y="267" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif" font-size="20" fill="#c9d1d9">啟動時讀取的 context 檔案 — 單一靜態二進位，無 Python。</text>
+
+      <!-- metadata chips -->
+      <g font-size="15" fill="#8b949e" font-family="-apple-system, PingFang TC, Microsoft JhengHei, Noto Sans TC, sans-serif">
+        <g transform="translate(2 300)">
+          <rect x="0" y="0" width="150" height="34" rx="7" fill="#161b22" stroke="#30363d"/>
+          <text x="16" y="22">單一靜態二進位</text>
+        </g>
+        <g transform="translate(166 300)">
+          <rect x="0" y="0" width="158" height="34" rx="7" fill="#161b22" stroke="#30363d"/>
+          <text x="16" y="22">無 Python 執行期</text>
+        </g>
+        <g transform="translate(340 300)">
+          <rect x="0" y="0" width="214" height="34" rx="7" fill="#161b22" stroke="#30363d"/>
+          <text x="16" y="22" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Windows · Linux · macOS</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- ── Terminal proof panel (CLI output is English) ──────────── -->
+    <g transform="translate(672 52)">
+      <rect x="0" y="0" width="464" height="296" rx="12" fill="#010409" stroke="#30363d"/>
+      <rect x="0" y="0" width="464" height="38" rx="12" fill="#161b22"/>
+      <rect x="0" y="26" width="464" height="12" fill="#161b22"/>
+      <circle cx="22" cy="19" r="5" fill="#f85149"/>
+      <circle cx="40" cy="19" r="5" fill="#d29922"/>
+      <circle cx="58" cy="19" r="5" fill="#3fb950"/>
+      <text x="232" y="24" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" fill="#8b949e">apm-go init</text>
+
+      <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">
+        <text x="26" y="76"  fill="#2dd4bf">&#9484;</text><text x="52" y="76" fill="#e6edf3">Setting up your APM project</text>
+        <text x="26" y="100" fill="#6e7681">&#9474;</text>
+        <text x="26" y="124" fill="#2dd4bf">&#9671;</text><text x="52" y="124" fill="#e6edf3">Project metadata</text>
+        <text x="26" y="148" fill="#6e7681">&#9474;</text><text x="52" y="148" fill="#8b949e">name  <tspan fill="#c9d1d9">my-agent</tspan></text>
+        <text x="26" y="172" fill="#6e7681">&#9474;</text><text x="52" y="172" fill="#8b949e">version  <tspan fill="#c9d1d9">0.1.0</tspan></text>
+        <text x="26" y="196" fill="#6e7681">&#9474;</text>
+        <text x="26" y="220" fill="#2dd4bf">&#9671;</text><text x="52" y="220" fill="#e6edf3">Select targets</text>
+        <text x="26" y="244" fill="#6e7681">&#9474;</text><text x="52" y="244" fill="#8aa0ff">AGENTS.md · CLAUDE.md · GEMINI.md</text>
+        <text x="26" y="268" fill="#6e7681">&#9474;</text>
+        <text x="26" y="292" fill="#2dd4bf">&#9492;</text><text x="52" y="292" fill="#3fb950">Done! <tspan fill="#8b949e">apm.yml created.</tspan></text>
+      </g>
+    </g>
+  </g>
+</svg>

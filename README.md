@@ -1,16 +1,28 @@
-# apm-go
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="apm-go — a Go re-implementation of the Agent Package Manager. It compiles scattered .apm/ primitives into the AGENTS.md, CLAUDE.md, and GEMINI.md context files that AI agents read on startup. A terminal panel shows a live apm-go init session.">
+</p>
 
-English | [繁體中文](README.zh-TW.md)
+<p align="center">
+  English&nbsp;·&nbsp;<a href="README.zh-TW.md">繁體中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/gn00678465/apm-go/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/gn00678465/apm-go?style=flat-square&labelColor=161b22&color=2dd4bf&label=release"></a>
+  <img alt="Go 1.26+" src="https://img.shields.io/badge/Go-1.26+-2dd4bf?style=flat-square&labelColor=161b22&logo=go&logoColor=white">
+  <img alt="Platforms: Windows, Linux, macOS" src="https://img.shields.io/badge/platforms-Windows_·_Linux_·_macOS-8aa0ff?style=flat-square&labelColor=161b22">
+</p>
 
 > A Go re-implementation of [microsoft/apm](https://github.com/microsoft/apm) — the Agent Package Manager — as a single static binary with no Python runtime dependency.
 
-## What is this
+<img src="./assets/readme/section-what.svg" width="100%" alt="What it is — APM, re-implemented in Go">
 
-APM is a package manager for AI-native development: it compiles scattered `.apm/` primitives (instructions, chat modes, memories, constitutions) into the root context files that AI agent platforms read on startup (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, ...), and installs/deploys packages and MCP server configurations.
+APM is a package manager for AI-native development. Instead of copy-pasting the same guidance into every agent's config, you keep it once as `.apm/` primitives — instructions, chat modes, memory, constitutions — and **compile** them into the root context files each platform reads on startup: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and more. It also installs and deploys packages and MCP server configurations.
 
-apm-go re-implements the common command surface of upstream `apm` in Go. The binary is deliberately named `apm-go` (`apm-go.exe` on Windows) so it can coexist with the reference `apm` binary for side-by-side comparison.
+apm-go re-implements the common command surface of upstream `apm` in Go, shipped as one static binary. It is deliberately named `apm-go` (`apm-go.exe` on Windows) so it can run side by side with the reference `apm` binary for comparison.
 
-## Install
+<img src="./assets/readme/workflow.svg" width="100%" alt="How apm-go compile works: it reads scattered .apm/ primitives — instructions, chat modes, memory, constitutions — resolves, verifies, and merges them, and writes the root context files AGENTS.md, CLAUDE.md, and GEMINI.md.">
+
+<img src="./assets/readme/section-install.svg" width="100%" alt="Install — one line, checksum-verified, on your PATH">
 
 Pre-built binaries are published on [GitHub Releases](https://github.com/gn00678465/apm-go/releases) for Windows, Linux, and macOS (amd64 / arm64). The installers download the binary for your platform, verify its SHA256 checksum, and add it to your PATH.
 
@@ -67,7 +79,7 @@ Release-size build (strips debug info and paths, ~29% smaller — same flags the
 go build -trimpath -ldflags "-s -w" -o bin/apm-go ./cmd/apm-go
 ```
 
-## Quick start
+<img src="./assets/readme/section-quickstart.svg" width="100%" alt="Quick start — three commands to your first compile">
 
 ```sh
 apm-go init                  # initialize a new APM project (creates apm.yml)
@@ -75,7 +87,9 @@ apm-go install               # install dependencies from apm.yml
 apm-go compile               # compile installed instructions into AGENTS.md
 ```
 
-## Commands
+`apm-go init` walks you through project setup interactively — the session in the hero above is exactly what it looks like.
+
+<img src="./assets/readme/section-commands.svg" width="100%" alt="Commands — the full command surface">
 
 | Command | Description |
 |---|---|
@@ -93,7 +107,7 @@ apm-go compile               # compile installed instructions into AGENTS.md
 
 Run `apm-go <command> --help` for detailed flags.
 
-## Development
+<img src="./assets/readme/section-develop.svg" width="100%" alt="Development — build, test, release">
 
 ```sh
 go build ./...        # build all packages
