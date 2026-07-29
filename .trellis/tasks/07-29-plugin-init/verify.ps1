@@ -15,12 +15,37 @@ function Fail($ac,$m){ $script:fails += "[$ac] $m"; Write-Host "  FAIL [$ac] $m"
 function Block($e,$m){ $script:blocked += "[$e] $m"; Write-Host "  BLOCKED [$e] $m" -ForegroundColor Magenta }
 function Pass($ac){ Write-Host "  ok   [$ac]" -ForegroundColor Green }
 
+# Exec 執行一個 native command 並「立刻」驗 exit code（同 targets-init-shape 的修法：
+# 只看副作用/檔案存不存在會漏掉「指令其實失敗但留下舊產物」的情況）。
+function Exec {
+    param([string]$ac, [string]$what, [scriptblock]$cmd)
+    $out = & $cmd 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:)' } |
+                   Select-Object -First 12) -join "`n      "
+        if (-not $detail) { $detail = ($out -split "`n" | Select-Object -Last 12) -join "`n      " }
+        Fail $ac "$what 失敗（exit $LASTEXITCODE）`n      $detail"
+        return $null
+    }
+    return $out
+}
+
 Write-Host "== Tier 1: plugin-init ==" -ForegroundColor Cyan
 
-& go build ./... 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail 'AC-L1' 'go build 非 0' }
+$before = $script:fails.Count
+$null = Exec 'AC-L1' 'go build ./...' { go build ./... }
+if ($script:fails.Count -eq $before) { Pass 'AC-L1/build' }
+$before = $script:fails.Count
+$null = Exec 'AC-L1' 'go vet ./...' { go vet ./... }
+if ($script:fails.Count -eq $before) { Pass 'AC-L1/vet' }
+
+# binary：先刪舊產物，避免 build 失敗時讀到上一次殘留的 binary（入邊 E2 探測要用到）。
 $bin = Join-Path $repo 'bin/apm-go.exe'
-& go build -o $bin ./cmd/apm-go 2>&1 | Out-Null
+Remove-Item $bin -Force -ErrorAction SilentlyContinue
+$before = $script:fails.Count
+$null = Exec 'AC-L1' "go build -o $bin" { go build -o $bin ./cmd/apm-go }
+if (-not (Test-Path $bin)) { Fail 'AC-L1' "build 後 $bin 不存在" }
+elseif ($script:fails.Count -eq $before) { Pass 'AC-L1/binary' }
 
 # ================= 入邊載荷檢查（模式 4：邊沒被檢查 = 邊不存在） =================
 Write-Host "-- 入邊載荷 --" -ForegroundColor Cyan
@@ -40,7 +65,6 @@ try {
   Push-Location $e2probe
   & $bin init e2-probe --yes --target agent-skills 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 0) { $e2ok = $false }
-  Pop-Location
 } finally { Pop-Location -EA SilentlyContinue; Remove-Item $e2probe -Recurse -Force -EA SilentlyContinue }
 $initSrc = Get-Content "$repo/cmd/apm-go/init.go" -Raw
 if ($initSrc -match 'promptTargetsOrdered') { $e2ok = $false }
@@ -64,6 +88,13 @@ if ($script:blocked.Count -gt 0) {
   Write-Host "先讓 07-29-targets-init-shape 的 verify.ps1 綠燈再回來。" -ForegroundColor Yellow
   Pop-Location; exit 2
 }
+
+# ---- 全套件測試：必須先於任何個別 AC 檢查，且必須驗 exit code ----
+# 個別 AC 的 -run 檢查只覆蓋本 task 相關套件；其他套件轉紅時它們不會動，
+# 這是唯一能擋住「本 task 綠但把別處弄壞了」的閘門。
+$before = $script:fails.Count
+$null = Exec 'AC-L1' 'go test ./... -count=1（全套件）' { go test ./... -count=1 }
+if ($script:fails.Count -eq $before) { Pass 'AC-L1/go-test-all' }
 
 # ================= 本 child 的 AC =================
 Write-Host "-- 本 child AC --" -ForegroundColor Cyan
@@ -180,8 +211,6 @@ try {
   if ($o4 -match 'plugin-native') { Fail 'AC15' '有 .apm/ 時警告仍出現' }
   Pop-Location
   if ($script:fails.Count -eq 0) { Pass 'AC14/15/34/39' }
-
-  Pop-Location -EA SilentlyContinue
 } finally { Pop-Location -EA SilentlyContinue; Remove-Item $probe -Recurse -Force -EA SilentlyContinue }
 
 # AC41: 三個互動分支「各有獨立斷言」—— 模式 9：逐一驗，不是總數 >= 3 就算
@@ -232,11 +261,20 @@ Write-Host "  NOTE [AC52] 「改寫成獨立非互動指令會轉紅」屬 Tier 
 $newReq = @((& git diff -- go.mod); (& git diff --cached -- go.mod)) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
 if ($newReq) { Fail 'AC23' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC23/no-new-deps' }
 
-& go test ./... -coverprofile="$repo/cover.out" 2>&1 | Out-Null
-if (Test-Path "$repo/cover.out") {
-  $t = & go tool cover -func="$repo/cover.out" | Select-Object -Last 1
-  if ($t -match '(\d+\.\d+)%') { if ([double]$Matches[1] -lt 80) { Fail 'AC-L1' "覆蓋率 $($Matches[1])% < 80%" } else { Pass "AC-L1/coverage $($Matches[1])%" } }
-} else { Fail 'AC-L1' '未產生 cover.out' }
+# 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除。
+$cov = "$repo/apmcov-" + [guid]::NewGuid().ToString('N') + ".out"
+$before = $script:fails.Count
+$null = Exec 'AC-L1' 'go test ./... -coverprofile' { go test ./... -count=1 "-coverprofile=$cov" }
+if ($script:fails.Count -eq $before) {
+  if (-not (Test-Path $cov)) {
+    Fail 'AC-L1' 'go test 未產生 coverprofile'
+  } else {
+    $t = (& go tool cover "-func=$cov" | Select-Object -Last 1)
+    if ($t -match '(\d+\.\d+)%') { if ([double]$Matches[1] -lt 80) { Fail 'AC-L1' "覆蓋率 $($Matches[1])% < 80%" } else { Pass "AC-L1/coverage $($Matches[1])%" } }
+    else { Fail 'AC-L1' '無法解析覆蓋率' }
+  }
+}
+Remove-Item $cov -Force -ErrorAction SilentlyContinue
 
 Pop-Location
 Write-Host ""

@@ -8,15 +8,44 @@ $script:fails = @()
 function Fail($ac,$m){ $script:fails += "[$ac] $m"; Write-Host "  FAIL [$ac] $m" -ForegroundColor Red }
 function Pass($ac){ Write-Host "  ok   [$ac]" -ForegroundColor Green }
 
+# Exec 執行一個 native command 並「立刻」驗 exit code（同 targets-init-shape 的修法：
+# 只看副作用/檔案存不存在會漏掉「指令其實失敗但留下舊產物」的情況）。
+function Exec {
+    param([string]$ac, [string]$what, [scriptblock]$cmd)
+    $out = & $cmd 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:)' } |
+                   Select-Object -First 12) -join "`n      "
+        if (-not $detail) { $detail = ($out -split "`n" | Select-Object -Last 12) -join "`n      " }
+        Fail $ac "$what 失敗（exit $LASTEXITCODE）`n      $detail"
+        return $null
+    }
+    return $out
+}
+
 Write-Host "== Tier 1: marketplace-add-fixes ==" -ForegroundColor Cyan
 
-& go build ./... 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail 'AC-L1' 'go build 非 0' } else { Pass 'AC-L1/build' }
-& go vet ./... 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail 'AC-L1' 'go vet 非 0' } else { Pass 'AC-L1/vet' }
+$before = $script:fails.Count
+$null = Exec 'AC-L1' 'go build ./...' { go build ./... }
+if ($script:fails.Count -eq $before) { Pass 'AC-L1/build' }
+$before = $script:fails.Count
+$null = Exec 'AC-L1' 'go vet ./...' { go vet ./... }
+if ($script:fails.Count -eq $before) { Pass 'AC-L1/vet' }
 
+# ---- 全套件測試：必須先於任何個別 AC 檢查，且必須驗 exit code ----
+# 個別 AC 的 -run 檢查只覆蓋本 task 相關套件；其他套件轉紅時它們不會動，
+# 這是唯一能擋住「本 task 綠但把別處弄壞了」的閘門。
+$before = $script:fails.Count
+$null = Exec 'AC-L1' 'go test ./... -count=1（全套件）' { go test ./... -count=1 }
+if ($script:fails.Count -eq $before) { Pass 'AC-L1/go-test-all' }
+
+# ---- binary：先刪舊產物，避免 build 失敗時讀到上一次殘留的 binary ----
 $bin = Join-Path $repo 'bin/apm-go.exe'
-& go build -o $bin ./cmd/apm-go 2>&1 | Out-Null
+Remove-Item $bin -Force -ErrorAction SilentlyContinue
+$before = $script:fails.Count
+$null = Exec 'AC-L1' "go build -o $bin" { go build -o $bin ./cmd/apm-go }
+if (-not (Test-Path $bin)) { Fail 'AC-L1' "build 後 $bin 不存在" }
+elseif ($script:fails.Count -eq $before) { Pass 'AC-L1/binary' }
 
 # ---- AC47 / R10：add 有 --category、set 沒有 ----
 $ha = & $bin marketplace package add --help 2>&1 | Out-String
@@ -33,7 +62,6 @@ try {
   if ($out -notmatch 'marketplace add') { Fail 'AC22' 'audit 未註冊錯誤訊息缺少 `marketplace add` 補救指引' }
   elseif ($out -notmatch 'marketplace list') { Fail 'AC22' 'audit 錯誤訊息缺少 `marketplace list` 提示' }
   else { Pass 'AC22' }
-  Pop-Location
 } finally { Pop-Location -EA SilentlyContinue; Remove-Item $probe -Recurse -Force -EA SilentlyContinue }
 
 # ---- AC18：--no-verify 的 exit code 必須是 2（用 binary，不可用 go run） ----
@@ -55,7 +83,6 @@ marketplace:
 "@ | Set-Content -Path (Join-Path $probe2 'apm.yml') -Encoding utf8
   & $bin marketplace package add owner/repo --no-verify 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 2) { Fail 'AC18' "--no-verify 隱含 HEAD 應 exit 2，實際 $LASTEXITCODE" } else { Pass 'AC18' }
-  Pop-Location
 } finally { Pop-Location -EA SilentlyContinue; Remove-Item $probe2 -Recurse -Force -EA SilentlyContinue }
 
 # ---- AC40：resolveRef 各分支測試存在（-list 先證明非零匹配） ----
@@ -81,8 +108,9 @@ foreach ($b in $localBranches) {
 if ($missingLocal.Count -gt 0) {
   Fail 'AC21' ("local source 的下列情境沒有對應測試（宣稱是『所有情境』，粒度不匹配）：" + ($missingLocal -join '、'))
 } else {
-  & go test ./internal/marketplace/authoring/ -run 'LocalSource' 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) { Fail 'AC21' 'mkt-046 回歸測試轉紅 —— 判定順序可能寫反' } else { Pass 'AC21' }
+  $before = $script:fails.Count
+  $null = Exec 'AC21' "go test -run 'LocalSource'" { go test ./internal/marketplace/authoring/ -run 'LocalSource' }
+  if ($script:fails.Count -eq $before) { Pass 'AC21' }
 }
 
 # ---- AC53：回歸閘門 —— marketplace init 必須維持非互動（D13） ----
@@ -114,19 +142,26 @@ try {
     Fail 'AC53' 'marketplace init 阻塞超過 15 秒 —— 疑似等待互動輸入'
   }
   Remove-Job $job -Force -EA SilentlyContinue
-  Pop-Location
 } finally { Pop-Location -EA SilentlyContinue; Remove-Item $probe3 -Recurse -Force -EA SilentlyContinue }
 
 # ---- AC-L9 ----
 $newReq = @((& git diff -- go.mod); (& git diff --cached -- go.mod)) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
 if ($newReq) { Fail 'AC-L9' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC-L9' }
 
-# ---- 覆蓋率 ----
-& go test ./... -coverprofile="$repo/cover.out" 2>&1 | Out-Null
-if (Test-Path "$repo/cover.out") {
-  $t = & go tool cover -func="$repo/cover.out" | Select-Object -Last 1
-  if ($t -match '(\d+\.\d+)%') { if ([double]$Matches[1] -lt 80) { Fail 'AC-L1' "覆蓋率 $($Matches[1])% < 80%" } else { Pass "AC-L1/coverage $($Matches[1])%" } }
-} else { Fail 'AC-L1' '未產生 cover.out' }
+# ---- 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除 ----
+$cov = "$repo/apmcov-" + [guid]::NewGuid().ToString('N') + ".out"
+$before = $script:fails.Count
+$null = Exec 'AC-L1' 'go test ./... -coverprofile' { go test ./... -count=1 "-coverprofile=$cov" }
+if ($script:fails.Count -eq $before) {
+  if (-not (Test-Path $cov)) {
+    Fail 'AC-L1' 'go test 未產生 coverprofile'
+  } else {
+    $t = (& go tool cover "-func=$cov" | Select-Object -Last 1)
+    if ($t -match '(\d+\.\d+)%') { if ([double]$Matches[1] -lt 80) { Fail 'AC-L1' "覆蓋率 $($Matches[1])% < 80%" } else { Pass "AC-L1/coverage $($Matches[1])%" } }
+    else { Fail 'AC-L1' '無法解析覆蓋率' }
+  }
+}
+Remove-Item $cov -Force -ErrorAction SilentlyContinue
 
 Pop-Location
 Write-Host ""

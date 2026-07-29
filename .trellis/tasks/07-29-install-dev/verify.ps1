@@ -9,15 +9,43 @@ $script:fails = @()
 function Fail($ac,$m){ $script:fails += "[$ac] $m"; Write-Host "  FAIL [$ac] $m" -ForegroundColor Red }
 function Pass($ac){ Write-Host "  ok   [$ac]" -ForegroundColor Green }
 
+# Exec 執行一個 native command 並「立刻」驗 exit code（同 targets-init-shape 的修法：
+# 只看副作用/檔案存不存在會漏掉「指令其實失敗但留下舊產物」的情況）。
+function Exec {
+    param([string]$ac, [string]$what, [scriptblock]$cmd)
+    $out = & $cmd 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:)' } |
+                   Select-Object -First 12) -join "`n      "
+        if (-not $detail) { $detail = ($out -split "`n" | Select-Object -Last 12) -join "`n      " }
+        Fail $ac "$what 失敗（exit $LASTEXITCODE）`n      $detail"
+        return $null
+    }
+    return $out
+}
+
 Write-Host "== Tier 1: install-dev ==" -ForegroundColor Cyan
 
-& go build ./... 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail 'AC-L2' 'go build 非 0' } else { Pass 'AC-L2/build' }
-& go vet ./... 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail 'AC-L2' 'go vet 非 0' } else { Pass 'AC-L2/vet' }
+$before = $script:fails.Count
+$null = Exec 'AC-L2' 'go build ./...' { go build ./... }
+if ($script:fails.Count -eq $before) { Pass 'AC-L2/build' }
+$before = $script:fails.Count
+$null = Exec 'AC-L2' 'go vet ./...' { go vet ./... }
+if ($script:fails.Count -eq $before) { Pass 'AC-L2/vet' }
 
+# ---- 全套件測試：必須先於任何個別 AC 檢查，且必須驗 exit code ----
+# 唯一能擋住「本 task 綠但把別處弄壞了」的閘門（含既有 dev 讀取鏈以外的任何回歸）。
+$before = $script:fails.Count
+$null = Exec 'AC-L2' 'go test ./... -count=1（全套件）' { go test ./... -count=1 }
+if ($script:fails.Count -eq $before) { Pass 'AC-L2/go-test-all' }
+
+# ---- binary：先刪舊產物，避免 build 失敗時讀到上一次殘留的 binary ----
 $bin = Join-Path $repo 'bin/apm-go.exe'
-& go build -o $bin ./cmd/apm-go 2>&1 | Out-Null
+Remove-Item $bin -Force -ErrorAction SilentlyContinue
+$before = $script:fails.Count
+$null = Exec 'AC-L2' "go build -o $bin" { go build -o $bin ./cmd/apm-go }
+if (-not (Test-Path $bin)) { Fail 'AC-L2' "build 後 $bin 不存在" }
+elseif ($script:fails.Count -eq $before) { Pass 'AC-L2/binary' }
 
 # ---- E4 出邊載荷：--dev 旗標存在 ----
 $h = & $bin install --help 2>&1 | Out-String
@@ -61,16 +89,16 @@ scripts: {}
       Fail 'AC43' "devDependencies 鍵序錯：includes=$i_inc dev=$i_dev scripts=$i_scr"
     } else { Pass 'AC43' }
   }
-  Pop-Location
 } finally { Pop-Location -EA SilentlyContinue; Remove-Item $probe -Recurse -Force -EA SilentlyContinue }
 
-# ---- AC-L1 / R9.3：三個既有 dev 測試必須都在且全綠 ----
+# ---- AC-L1 / R9.3：三個既有 dev 測試必須都在且全綠（-list 先證明匹配非空） ----
 $listed = @(& go test ./cmd/apm-go/ -list 'TestRunInstall_DevDependency' 2>&1 | Where-Object { $_ -match '^TestRunInstall_DevDependency' })
 if ($listed.Count -ne 3) {
   Fail 'AC-L1' "-list 匹配到 $($listed.Count) 個，應為 3 個既有 dev 測試"
 } else {
-  & go test ./cmd/apm-go/ -run 'TestRunInstall_DevDependency' 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) { Fail 'AC-L1' '既有 dev 讀取鏈測試轉紅 —— R9.3 被違反' } else { Pass 'AC-L1' }
+  $before = $script:fails.Count
+  $null = Exec 'AC-L1' "go test -run 'TestRunInstall_DevDependency'" { go test ./cmd/apm-go/ -run 'TestRunInstall_DevDependency' }
+  if ($script:fails.Count -eq $before) { Pass 'AC-L1' }
 }
 
 # ---- AC45：lockfile package_type 欄位存在於 Go 端 ----
@@ -81,12 +109,20 @@ if ($hasField -notmatch 'PackageType') { Fail 'AC45' 'internal/lockfile 沒有 P
 $newReq = @((& git diff -- go.mod); (& git diff --cached -- go.mod)) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
 if ($newReq) { Fail 'AC-L9' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC-L9' }
 
-# ---- 覆蓋率 ----
-& go test ./... -coverprofile="$repo/cover.out" 2>&1 | Out-Null
-if (Test-Path "$repo/cover.out") {
-  $t = & go tool cover -func="$repo/cover.out" | Select-Object -Last 1
-  if ($t -match '(\d+\.\d+)%') { if ([double]$Matches[1] -lt 80) { Fail 'AC-L2' "覆蓋率 $($Matches[1])% < 80%" } else { Pass "AC-L2/coverage $($Matches[1])%" } }
-} else { Fail 'AC-L2' '未產生 cover.out' }
+# ---- 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除 ----
+$cov = "$repo/apmcov-" + [guid]::NewGuid().ToString('N') + ".out"
+$before = $script:fails.Count
+$null = Exec 'AC-L2' 'go test ./... -coverprofile' { go test ./... -count=1 "-coverprofile=$cov" }
+if ($script:fails.Count -eq $before) {
+  if (-not (Test-Path $cov)) {
+    Fail 'AC-L2' 'go test 未產生 coverprofile'
+  } else {
+    $t = (& go tool cover "-func=$cov" | Select-Object -Last 1)
+    if ($t -match '(\d+\.\d+)%') { if ([double]$Matches[1] -lt 80) { Fail 'AC-L2' "覆蓋率 $($Matches[1])% < 80%" } else { Pass "AC-L2/coverage $($Matches[1])%" } }
+    else { Fail 'AC-L2' '無法解析覆蓋率' }
+  }
+}
+Remove-Item $cov -Force -ErrorAction SilentlyContinue
 
 Pop-Location
 Write-Host ""
