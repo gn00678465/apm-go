@@ -1,0 +1,32 @@
+{
+  "id": "marketplace-plugin-parity",
+  "name": "marketplace-plugin-parity",
+  "title": "補齊 marketplace/plugin 與上游 docs 的缺口",
+  "description": "補上 apm plugin init，並修正 marketplace 子指令與上游 CLI docs 的旗標/語意落差",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "Madao",
+  "assignee": "Madao",
+  "createdAt": "2026-07-28",
+  "completedAt": null,
+  "branch": "feat/marketplace-plugin-parity",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-29-targets-init-shape",
+    "07-29-plugin-init",
+    "07-29-marketplace-add-fixes",
+    "07-29-install-dev",
+    "07-29-agent-schema-spec"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

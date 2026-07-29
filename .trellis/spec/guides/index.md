@@ -24,6 +24,29 @@ These guides help you **ask the right questions before coding**.
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 | [Oracle Parity Gates](./oracle-parity-gates.md) | Catch same-name-different-behavior CLI defects against the Python `apm` oracle | Adding/changing an apm-go CLI command, subcommand, or flag |
+| [Claim-Evidence Guide](./claim-evidence-guide.md) | 把「用形容詞代替 grep」擋在寫出來之前；取代 `AGENTS.md` §5 的詞表式偵測 | **任何**對程式碼下判斷的時候——research、PRD、review、進度回報、完成宣告 |
+
+---
+
+## When Making ANY Claim About Code（最常被跳過的一關）
+
+- [ ] 你寫下了比較句（較佳／優於／更安全）
+- [ ] 你寫下了等價句（一致／相同／無差異）
+- [ ] 你寫下了化約句（純 X 層／只是／僅為）
+- [ ] 你寫下了充分性句（已覆蓋／足夠／不需要）
+- [ ] 你寫下了不存在句（無缺口／不受影響／沒問題）
+- [ ] 你寫下了量級句（成本大／成本小／一行就好）
+- [ ] 你寫下了時序句（延後／另開／不在此範圍）
+- [ ] 你寫下了**因果歸因**句（根因是 X／是 X 造成的）
+- [ ] 你寫下了**風險接受**句（風險可接受／機率很低／實務上不會發生）
+- [ ] 你要宣告某件事「完成」
+
+→ 讀 [Claim-Evidence Guide](./claim-evidence-guide.md)。
+**先回答一句**：「如果我錯了，哪一段程式碼會證明我錯？我讀過它了嗎？」
+沒讀過就只能寫「未驗證」。
+
+> 這一關是 2026-07-29 從 `07-28-marketplace-plugin-parity` 的四次判斷失效反推出來的。
+> 那四句與 `AGENTS.md` §5 的絆線詞表**零重疊**——偵測器看不到它們。
 
 ---
 
