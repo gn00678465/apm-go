@@ -22,17 +22,30 @@ var TargetAliases = map[string]string{
 	"agy":    "antigravity",
 }
 
-var SupportedTargets = []string{
-	"claude", "codex", "copilot", "opencode", "antigravity",
+// deployTargets is the single source of truth for every target with a
+// deploy adapter (R8): SupportedTargets (init's --target/prompt whitelist),
+// adapterTargets (HasAdapter), and the init MultiSelect prompt options are
+// all derived from this one slice so they cannot drift apart. Order is the
+// order the init/plugin-init MultiSelect prompt shows them in (copilot
+// first, matching the prompt's pre-existing order; agent-skills appended at
+// the end since it was the missing entry, see R8.1).
+var deployTargets = []string{
+	"copilot", "claude", "opencode", "codex", "antigravity", "agent-skills",
 }
 
-var adapterTargets = map[string]bool{
-	"claude":       true,
-	"codex":        true,
-	"copilot":      true,
-	"opencode":     true,
-	"antigravity":  true,
-	"agent-skills": true,
+// SupportedTargets is the whitelist `apm-go init --target` validates
+// against. Derived from deployTargets (R8.3).
+var SupportedTargets = deployTargets
+
+// adapterTargets backs HasAdapter. Derived from deployTargets (R8.3).
+var adapterTargets = targetSet(deployTargets)
+
+func targetSet(targets []string) map[string]bool {
+	m := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		m[t] = true
+	}
+	return m
 }
 
 func ValidateTarget(token string) (string, error) {

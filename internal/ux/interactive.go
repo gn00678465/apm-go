@@ -80,8 +80,12 @@ func Confirm(prompt string, def bool) (bool, error) {
 
 // confirmWith is Confirm with the theme left to the caller, so Clack can put
 // the prompt on its connecting line without restyling every other command's
-// confirmations.
-func confirmWith(theme huh.Theme, prompt string, def bool) (bool, error) {
+// confirmations. It is a swappable seam (like runField/runForm above, and
+// stdinIsTTY/stderrIsTTY in ux.go) so tests in another package (via
+// SetPromptSeamsForTest) can observe or stub the exact field/opts a caller
+// builds -- e.g. cmd/apm-go's init needs to assert MultiSelect's Selected
+// preselection, which only exists in the opts multiSelectWith receives.
+var confirmWith = func(theme huh.Theme, prompt string, def bool) (bool, error) {
 	if !CanPrompt() {
 		return def, nil
 	}
@@ -145,8 +149,9 @@ func MultiSelect(title string, opts []Option) ([]string, error) {
 
 // multiSelectWith is MultiSelect with the theme, an optional description line
 // under the title, and whether to show huh's keybinding footer left to the
-// caller; see confirmWith and runMultiSelectField.
-func multiSelectWith(theme huh.Theme, title, description string, showHelp bool, opts []Option) ([]string, error) {
+// caller; see confirmWith and runMultiSelectField. Swappable seam, see
+// confirmWith's doc comment.
+var multiSelectWith = func(theme huh.Theme, title, description string, showHelp bool, opts []Option) ([]string, error) {
 	if !CanPrompt() {
 		var defaults []string
 		for _, o := range opts {
@@ -191,8 +196,9 @@ func InputForm(title string, fields []Field) (map[string]string, error) {
 }
 
 // inputFormWith is InputForm with the theme and huh's keybinding footer left
-// to the caller; see confirmWith and runMultiSelectField.
-func inputFormWith(theme huh.Theme, title string, showHelp bool, fields []Field) (map[string]string, error) {
+// to the caller; see confirmWith and runMultiSelectField. Swappable seam,
+// see confirmWith's doc comment.
+var inputFormWith = func(theme huh.Theme, title string, showHelp bool, fields []Field) (map[string]string, error) {
 	values := make(map[string]string, len(fields))
 
 	if !CanPrompt() {

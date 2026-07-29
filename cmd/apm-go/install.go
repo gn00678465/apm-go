@@ -826,8 +826,8 @@ func errNoDeployTarget() error {
 	}
 	b.WriteString("\nTo fix, do one of the following:\n")
 	b.WriteString("  1. Pass --target <name> (e.g. --target claude)\n")
-	b.WriteString("  2. Add a target: field to apm.yml, e.g.:\n")
-	b.WriteString("       target:\n")
+	b.WriteString("  2. Add a targets: field to apm.yml, e.g.:\n")
+	b.WriteString("       targets:\n")
 	b.WriteString("         - claude\n")
 	b.WriteString("  3. Create one of the marker paths above so apm-go can auto-detect a target\n")
 	return withExitCode(2, &noDeployTargetError{err: errors.New(b.String())})

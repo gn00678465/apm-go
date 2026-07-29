@@ -6,17 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	yamllib "go.yaml.in/yaml/v4"
-
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
-
-var promptTargetsOrdered = []string{
-	"copilot", "claude", "opencode", "codex", "antigravity",
-}
 
 func initCmd() *cobra.Command {
 	var (
@@ -184,22 +178,28 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			// Phase 6: File generation
-			data := buildManifestData(name, version, description, author, selectedTargets)
-			raw, err := yamllib.Marshal(data)
-			if err != nil {
-				return fmt.Errorf("serialize: %w", err)
-			}
-			node, err := yamlcore.SafeLoad(raw)
-			if err != nil {
-				return fmt.Errorf("generated manifest is invalid: %w", err)
-			}
-			if _, _, err := manifest.ParseManifest(node); err != nil {
-				return fmt.Errorf("generated manifest fails validation: %w", err)
-			}
+			// Phase 6: File generation. buildManifestNode assembles the
+			// document in semantic key order (R2); the validation
+			// pipeline below dumps it FIRST so the bytes it validates
+			// (via a round-trip through SafeLoad/ParseManifest) are
+			// exactly the bytes written to disk (design.md §2).
+			node := buildManifestNode(manifestSpec{
+				Name:        name,
+				Version:     version,
+				Description: description,
+				Author:      author,
+				Targets:     selectedTargets,
+			})
 			out, err := yamlcore.SafeDump(node)
 			if err != nil {
 				return fmt.Errorf("serialize: %w", err)
+			}
+			reloaded, err := yamlcore.SafeLoad(out)
+			if err != nil {
+				return fmt.Errorf("generated manifest is invalid: %w", err)
+			}
+			if _, _, err := manifest.ParseManifest(reloaded); err != nil {
+				return fmt.Errorf("generated manifest fails validation: %w", err)
 			}
 			if err := os.WriteFile("apm.yml", out, 0644); err != nil {
 				return fmt.Errorf("write apm.yml: %w", err)
@@ -226,25 +226,6 @@ func initCmd() *cobra.Command {
 	return cmd
 }
 
-func buildManifestData(name, version, description, author string, targets []string) map[string]any {
-	data := map[string]any{
-		"name":        name,
-		"version":     version,
-		"description": description,
-		"author":      author,
-	}
-	if len(targets) > 0 {
-		data["target"] = targets
-	}
-	data["dependencies"] = map[string]any{
-		"apm": []any{},
-		"mcp": []any{},
-	}
-	data["includes"] = "auto"
-	data["scripts"] = map[string]any{}
-	return data
-}
-
 // interactiveTargetSelect prompts for the target list via a huh MultiSelect
 // (space to toggle, matching huh's own default keybinding), pre-selecting
 // every already-configured (existing) or auto-detected target. If the user
@@ -258,32 +239,7 @@ func buildManifestData(name, version, description, author string, targets []stri
 // `cont` at its zero value (false), which re-entered this function
 // recursively on every aborted prompt -- an abort loop with no way out.
 func interactiveTargetSelect(ck *ux.Clack, detected, existing []string) ([]string, error) {
-	checked := make(map[string]bool)
-	for _, t := range existing {
-		checked[t] = true
-	}
-	for _, t := range detected {
-		checked[t] = true
-	}
-
-	detectedSet := make(map[string]bool)
-	for _, t := range detected {
-		detectedSet[t] = true
-	}
-
-	opts := make([]ux.Option, len(promptTargetsOrdered))
-	for i, t := range promptTargetsOrdered {
-		label := t
-		if detectedSet[t] {
-			for _, sig := range manifest.SignalWhitelist {
-				if sig.Target == t {
-					label = fmt.Sprintf("%s  (detected %s)", t, sig.Path)
-					break
-				}
-			}
-		}
-		opts[i] = ux.Option{Label: label, Value: t, Selected: checked[t]}
-	}
+	opts := targetSelectOptions(detected, existing)
 
 	for {
 		selected, err := ck.MultiSelect("Select targets for this project", opts)
@@ -305,26 +261,68 @@ func interactiveTargetSelect(ck *ux.Clack, detected, existing []string) ([]strin
 	}
 }
 
+// targetSelectOptions builds the MultiSelect option list interactiveTargetSelect
+// prompts with: one entry per manifest.SupportedTargets (R8.3 -- the menu is
+// derived from that slice, not an independent literal), pre-selected when
+// the target is already configured (existing) or auto-detected, and labeled
+// with the detection signal when auto-detected. Split out from
+// interactiveTargetSelect so tests (AC25) can inspect the option set
+// actually offered to the user without driving a live prompt.
+func targetSelectOptions(detected, existing []string) []ux.Option {
+	checked := make(map[string]bool)
+	for _, t := range existing {
+		checked[t] = true
+	}
+	for _, t := range detected {
+		checked[t] = true
+	}
+
+	detectedSet := make(map[string]bool)
+	for _, t := range detected {
+		detectedSet[t] = true
+	}
+
+	opts := make([]ux.Option, len(manifest.SupportedTargets))
+	for i, t := range manifest.SupportedTargets {
+		label := t
+		if detectedSet[t] {
+			for _, sig := range manifest.SignalWhitelist {
+				if sig.Target == t {
+					label = fmt.Sprintf("%s  (detected %s)", t, sig.Path)
+					break
+				}
+			}
+		}
+		opts[i] = ux.Option{Label: label, Value: t, Selected: checked[t]}
+	}
+	return opts
+}
+
+// readExistingTargets reads the target selection out of an already-written
+// apm.yml, so interactiveTargetSelect can pre-select it (AC2/AC3). It goes
+// through the same yamlcore.SafeLoad -> manifest.ParseManifest pipeline
+// install/pack use to produce m.Target, instead of a second, ad hoc parser:
+// a bare type-switch over a raw yaml.Unmarshal decode (the prior
+// implementation) only handled a plain list or a single bare scalar, and
+// silently dropped every other form ParseManifest's parseTargetField/
+// parseTargetsField already accept -- CSV sugar on the singular scalar key
+// ("target: claude,copilot", manifest.go's parseTargetField) and target
+// aliases (e.g. "vscode" normalizing to "copilot" via ValidateTarget),
+// leaving MultiSelect unable to pre-select targets that DO exist in a
+// legal, already-parseable apm.yml. A malformed/unparseable apm.yml simply
+// loses the preselection (nil) rather than guessing.
 func readExistingTargets() []string {
 	data, err := os.ReadFile("apm.yml")
 	if err != nil {
 		return nil
 	}
-	var doc map[string]any
-	if err := yamllib.Unmarshal(data, &doc); err != nil {
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
 		return nil
 	}
-	switch v := doc["target"].(type) {
-	case string:
-		return []string{v}
-	case []any:
-		var result []string
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				result = append(result, s)
-			}
-		}
-		return result
+	m, _, err := manifest.ParseManifest(node)
+	if err != nil {
+		return nil
 	}
-	return nil
+	return m.Target
 }

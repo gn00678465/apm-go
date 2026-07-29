@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -74,8 +75,13 @@ func TestInitCmd_YesMode(t *testing.T) {
 	if strings.Contains(content, "minimal") {
 		t.Error("init output must not contain 'minimal'")
 	}
-	if strings.Contains(content, "targets:") {
-		t.Error("init output must not contain 'targets:' (plural)")
+	// R1/AC1: init must write the plural targets: key, never the singular
+	// target: key (this assertion used to require the opposite).
+	if !strings.Contains(content, "targets:") {
+		t.Error("init output must contain 'targets:' (plural)")
+	}
+	if regexp.MustCompile(`(?m)^target:`).MatchString(content) {
+		t.Error("init output must not contain singular 'target:'")
 	}
 }
 
@@ -238,26 +244,34 @@ func TestValidateCmd_ValidManifest(t *testing.T) {
 
 // ── helper tests ──
 
-func TestBuildManifestData(t *testing.T) {
-	data := buildManifestData("test", "1.0.0", "desc", "author", []string{"claude"})
-	if data["name"] != "test" {
-		t.Error("name mismatch")
+// TestBuildManifestNode_KeyShapeAndContent replaces the old
+// TestBuildManifestData: buildManifestData (a map[string]any, sorted
+// alphabetically by go-yaml on marshal) was replaced by buildManifestNode (an
+// ordered *yaml.Node tree, R2) so the produced apm.yml can have a semantic
+// key order and a HeadComment above targets:. This asserts the node's
+// content still carries the same information the old map-based test did.
+func TestBuildManifestNode_KeyShapeAndContent(t *testing.T) {
+	node := buildManifestNode(manifestSpec{
+		Name: "test", Version: "1.0.0", Description: "desc", Author: "author",
+		Targets: []string{"claude"},
+	})
+
+	out, err := yamlcore.SafeDump(node)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
 	}
-	if data["includes"] != "auto" {
-		t.Error("includes should be 'auto'")
-	}
-	deps, ok := data["dependencies"].(map[string]any)
-	if !ok {
-		t.Fatal("dependencies should be a map")
-	}
-	if _, ok := deps["apm"]; !ok {
-		t.Error("dependencies.apm missing")
-	}
-	if _, ok := deps["mcp"]; !ok {
-		t.Error("dependencies.mcp missing")
+	content := string(out)
+
+	for _, want := range []string{"name: test", "includes: auto", "dependencies:", "apm: []", "mcp: []"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("buildManifestNode output missing %q:\n%s", want, content)
+		}
 	}
 }
 
+// TestReadExistingTargets covers the singular target: key (back-compat).
+// The plural targets: key is covered separately by
+// TestReadExistingTargets_BothKeys (AC2/AC3).
 func TestReadExistingTargets(t *testing.T) {
 	t.Run("sequence form", func(t *testing.T) {
 		dir := t.TempDir()
@@ -298,8 +312,118 @@ func TestReadExistingTargets(t *testing.T) {
 	})
 }
 
+// TestReadExistingTargets_BothKeys is the R1.1/AC2/AC3 regression:
+// readExistingTargets used to only look at the singular target: key, so a
+// project already on the plural targets: key silently lost its MultiSelect
+// preselection (readExistingTargets returned nil for it). Both keys must
+// round-trip; a file declaring both (invalid apm.yml, rejected by
+// manifest.ParseManifest's hasConflictingTargetKeys check) must resolve to
+// nil rather than guessing a winner, since readExistingTargets goes through
+// that same validated parse (see its doc comment) instead of a second,
+// looser ad hoc parser.
+func TestReadExistingTargets_BothKeys(t *testing.T) {
+	t.Run("plural sequence form", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		os.WriteFile("apm.yml", []byte("name: p\nversion: \"1.0.0\"\ntargets:\n  - claude\n  - copilot\n"), 0644)
+		targets := readExistingTargets()
+		if len(targets) != 2 || targets[0] != "claude" || targets[1] != "copilot" {
+			t.Errorf("got %v, want [claude copilot]", targets)
+		}
+	})
+
+	t.Run("plural scalar form", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		os.WriteFile("apm.yml", []byte("name: p\nversion: \"1.0.0\"\ntargets: claude\n"), 0644)
+		targets := readExistingTargets()
+		if len(targets) != 1 || targets[0] != "claude" {
+			t.Errorf("got %v, want [claude]", targets)
+		}
+	})
+
+	t.Run("singular still works after plural support added", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		os.WriteFile("apm.yml", []byte("name: p\nversion: \"1.0.0\"\ntarget:\n  - codex\n"), 0644)
+		targets := readExistingTargets()
+		if len(targets) != 1 || targets[0] != "codex" {
+			t.Errorf("got %v, want [codex]", targets)
+		}
+	})
+
+	t.Run("both keys present is invalid, no preselection guessed", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		// manifest.ParseManifest rejects an apm.yml declaring both keys
+		// (manifest.go's hasConflictingTargetKeys check) -- readExistingTargets
+		// goes through that same validation (it is not a second, ad hoc
+		// parser, see its doc comment), so it must not guess a winner for a
+		// file the real parser would reject; nil (no preselection) is
+		// correct here, not a crash and not a silently-picked key.
+		os.WriteFile("apm.yml", []byte("name: p\nversion: \"1.0.0\"\ntarget:\n  - codex\ntargets:\n  - claude\n"), 0644)
+		targets := readExistingTargets()
+		if targets != nil {
+			t.Errorf("got %v, want nil (conflicting target/targets keys are invalid apm.yml)", targets)
+		}
+	})
+
+	t.Run("CSV sugar on the singular scalar key", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		// manifest.go's parseTargetField splits a singular scalar target:
+		// value on "," and trims each token (CSV sugar). The codex-audit
+		// regression: an earlier readExistingTargets implementation
+		// type-switched on the raw decoded YAML value without this
+		// splitting, so "claude,copilot" round-tripped as one bogus
+		// "claude,copilot" token instead of two real targets, and neither
+		// would be preselected in the MultiSelect prompt (AC2).
+		os.WriteFile("apm.yml", []byte("name: p\nversion: \"1.0.0\"\ntarget: claude,copilot\n"), 0644)
+		targets := readExistingTargets()
+		if len(targets) != 2 || targets[0] != "claude" || targets[1] != "copilot" {
+			t.Errorf("got %v, want [claude copilot]", targets)
+		}
+	})
+
+	t.Run("target alias is normalized", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		// manifest.ValidateTarget normalizes aliases (vscode -> copilot,
+		// TargetAliases in target.go) -- the codex-audit regression: the
+		// prior ad hoc parser returned the alias token verbatim, which
+		// never matches any canonical MultiSelect option value, so it was
+		// never preselected (AC2/AC3).
+		os.WriteFile("apm.yml", []byte("name: p\nversion: \"1.0.0\"\ntargets:\n  - vscode\n"), 0644)
+		targets := readExistingTargets()
+		if len(targets) != 1 || targets[0] != "copilot" {
+			t.Errorf("got %v, want [copilot] (vscode alias normalized)", targets)
+		}
+	})
+}
+
+// TestInitCmd_NonInitTargetRejected covers targets init deliberately doesn't
+// support via --target. agent-skills used to be in this list, but AC24
+// (R8.1) requires init to accept it now that it has a deploy adapter.
 func TestInitCmd_NonInitTargetRejected(t *testing.T) {
-	for _, bad := range []string{"gemini", "cursor", "windsurf", "agent-skills"} {
+	for _, bad := range []string{"gemini", "cursor", "windsurf"} {
 		t.Run(bad, func(t *testing.T) {
 			dir := t.TempDir()
 			origDir, _ := os.Getwd()
@@ -348,9 +472,17 @@ func TestInitCmd_ForceOverwrites(t *testing.T) {
 	}
 }
 
-func TestBuildManifestData_NoTargets(t *testing.T) {
-	data := buildManifestData("test", "1.0.0", "desc", "author", nil)
-	if _, ok := data["target"]; ok {
-		t.Error("target should not be present when no targets selected")
+func TestBuildManifestNode_NoTargets(t *testing.T) {
+	node := buildManifestNode(manifestSpec{Name: "test", Version: "1.0.0", Description: "desc", Author: "author"})
+	out, err := yamlcore.SafeDump(node)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
+	}
+	content := string(out)
+	if regexp.MustCompile(`(?m)^targets:`).MatchString(content) {
+		t.Errorf("targets: should not be present when no targets selected:\n%s", content)
+	}
+	if regexp.MustCompile(`(?m)^target:`).MatchString(content) {
+		t.Errorf("target: should not be present when no targets selected:\n%s", content)
 	}
 }
