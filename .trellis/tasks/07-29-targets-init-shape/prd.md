@@ -45,41 +45,48 @@ parent `implement.md` 的 **Step 3（ux 測試 seam）屬於本 task**，不屬�
 沿用 parent `prd.md` 的 **AC1–AC7、AC24–AC27**。
 各條完整文字（含「驗收紀律」段落）以 parent 為準；此處只列編號與一句話。
 
-- [ ] AC1 — `init --yes` 產出使用複數 `targets:`
-- [ ] AC2 — 單數 `target:` 既有檔案的 MultiSelect 預選不遺失
-- [ ] AC3 — 複數 `targets:` 同上
-- [ ] AC4 — install 的 no-deploy-target 錯誤輸出印複數
-- [ ] AC5 — apm.yml 語意鍵序
-- [ ] AC6 — 三行註解，第三行為六個 target
-- [ ] AC7 — 無 target 時**逐字**五行註解骨架（不可只驗開頭）
-- [ ] AC24 — `init --target agent-skills` 成功
-- [ ] AC25 — 三集合同源的鎖定測試（測試位於 `cmd/apm-go`，**不是** `internal/manifest`）
-- [ ] AC26 — 註解清單為**行為測試**（替換來源切片觀察輸出），不可只 grep
-- [ ] AC27 — `CanonicalTargets` 未動，`targets: [cursor]` 仍解析成功並產生 req-tg-004 warning
+> **勾選依據**：`verify.ps1` 2026-07-30 全綠（32 項），且每一條的閘門檢查都經
+> mutation 測試證明會紅。逐條證據見 `verification-record.md`。
+> **勾選不等於 task 完成** —— 依使用者指示，`task.py finish` 未執行。
+
+- [x] AC1 — `init --yes` 產出使用複數 `targets:`
+- [x] AC2 — 單數 `target:` 既有檔案的 MultiSelect 預選不遺失
+- [x] AC3 — 複數 `targets:` 同上
+- [x] AC4 — install 的 no-deploy-target 錯誤輸出印複數
+- [x] AC5 — apm.yml 語意鍵序
+- [x] AC6 — 三行註解，第三行為六個 target
+- [x] AC7 — 無 target 時**逐字**五行註解骨架（不可只驗開頭）
+- [x] AC24 — `init --target agent-skills` 成功
+- [x] AC25 — 三集合同源的鎖定測試（測試位於 `cmd/apm-go`，**不是** `internal/manifest`）
+- [x] AC26 — 註解清單為**行為測試**（替換來源切片觀察輸出），不可只 grep
+- [x] AC27 — `CanonicalTargets` 未動，`targets: [cursor]` 仍解析成功並產生 req-tg-004 warning
 
 由 `plugin-init` 移入本 task（codex 稽核阻斷 3：分錯 child）：
 
-- [ ] AC29 — 對只有單數 `target:` 的既有 apm.yml，端對端跑 `install` 仍能正確部署。
+- [x] AC29 — 對只有單數 `target:` 的既有 apm.yml，端對端跑 `install` 仍能正確部署。
+      **2026-07-30 補**：parent AC29 要求 install **與 pack** 兩條鏈；
+      pack 有自己的 `SafeLoad → ParseManifest` 進入點（`pack.go:185-189`），
+      原本零覆蓋，已補 `TestPack_LegacySingularTargetKey_StillResolves`。
       **這條對應 R1.4／parent C4**（`internal/manifest` 雙鍵解析不得改壞），
       屬本 task 的 R1，不屬 `plugin-init` 的 R3/R4。
 
 本 task 專屬：
 
-- [ ] AC-L0 — **ux 測試 seam 建立**：`internal/ux/interactive.go:84,149,195` 的
+- [x] AC-L0 — **ux 測試 seam 建立**：`internal/ux/interactive.go:84,149,195` 的
       `confirmWith` / `multiSelectWith` / `inputFormWith` 改為 package-level var
       （函式體不動、簽章不動、不新增相依）。這是 AC2/AC3 的前置。
-- [ ] AC-L3 — **seam 自身在 `internal/ux` 內有測試**，且涵蓋 `restore()` 確實還原。
+- [x] AC-L3 — **seam 自身在 `internal/ux` 內有測試**，且涵蓋 `restore()` 確實還原。
       驗法：`go test ./internal/ux/ -list 'PromptSeam|SeamRestore'` 先證明非零匹配，再 `-run`；
       另檢查 `internal/ux` 覆蓋率不低於 spec 下限 80%。
       理由：消費端（`cmd/apm-go`）用到 seam **不等於** seam 被測到。沒有 restore 測試時，
       一個外洩的 stub 會靜默解除後續所有互動測試的武裝，而且不會有任何紅燈。
       （由主 session 驗證 `07-29-targets-init-shape` 時發現的缺口，2026-07-29）
-- [ ] AC-L1 — `go build ./...`、`go vet ./...` exit 0；
+- [x] AC-L1 — `go build ./...`、`go vet ./...` exit 0；
       覆蓋率 **total** ≥ 80%。
       驗法（PowerShell）：
       `go test ./... -coverprofile=cover.out; go tool cover -func=cover.out | Select-Object -Last 1`
       （不要用 `tail -1`，本專案主要開發環境是 PowerShell）
-- [ ] AC-L2 — **parent C5 的本地閘門**：未新增任何第三方相依。
+- [x] AC-L2 — **parent C5 的本地閘門**：未新增任何第三方相依。
       驗法：`git diff -- go.mod; git diff --cached -- go.mod`
       —— 兩者都不得出現新的 `require` 行。
       （`git status --porcelain` 只給 `M go.mod`，看不出新增了什麼，不足以判定。）
