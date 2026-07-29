@@ -122,17 +122,26 @@ try {
     } else { Pass 'AC5' }
 
     # AC6 三行註解 + Accepted values 六個
+    # 2026-07-30 codex Tier 2 阻斷 B3：原本用 -notmatch 子字串比對，行內多出
+    # 任何字元（尾隨空白、多一個 #）都會通過。改為逐行 -ceq 字面量陣列比對。
     $idx = ($lines | Select-String -Pattern '^targets:').LineNumber
     if (-not $idx) {
       Fail 'AC6' '找不到 targets: 行'
     } else {
       $head = $lines[($idx-4)..($idx-2)]
-      if (($head -join "`n") -notmatch 'Which agent platforms to deploy to') { Fail 'AC6' 'targets 上方缺註解第 1 行' }
-      if (($head -join "`n") -notmatch 'Resolution order')                  { Fail 'AC6' 'targets 上方缺註解第 2 行' }
-      $accepted = 'agent-skills, antigravity, claude, codex, copilot, opencode'
-      if (($head -join "`n") -notmatch [regex]::Escape($accepted)) {
-        Fail 'AC6' "Accepted values 不是預期的六個：$accepted"
-      } else { Pass 'AC6' }
+      $wantHead = @(
+        '# Which agent platforms to deploy to.',
+        '# Resolution order: --target flag > this field > auto-detect from filesystem.',
+        '# Accepted values: agent-skills, antigravity, claude, codex, copilot, opencode'
+      )
+      $headMismatch = $false
+      for ($li = 0; $li -lt $wantHead.Count; $li++) {
+        if (-not ($head[$li] -ceq $wantHead[$li])) {
+          Fail 'AC6' ("第 {0} 行逐字不符。want=[{1}] got=[{2}]" -f ($li+1), $wantHead[$li], $head[$li])
+          $headMismatch = $true
+        }
+      }
+      if (-not $headMismatch) { Pass 'AC6' }
     }
   }
   Pop-Location
@@ -146,11 +155,24 @@ try {
 $acTests = @(
   @{ ac='AC2/AC3'; p='TestInteractiveTargetSelect_PreselectsExistingTargets'; pkg='./cmd/apm-go/' }
   @{ ac='AC2/AC3'; p='TestReadExistingTargets_BothKeys';                      pkg='./cmd/apm-go/' }
+  @{ ac='AC2/AC3'; p='TestReadExistingTargets_LenientOnUnrelatedParseError';   pkg='./cmd/apm-go/' }
+  @{ ac='AC2/AC3'; p='TestReadExistingTargets_LenientDoesNotSplitCSVOnPluralKey'; pkg='./cmd/apm-go/' }
   @{ ac='AC4';     p='TestErrNoDeployTarget_TeachesPluralTargetsKey';          pkg='./cmd/apm-go/' }
+  @{ ac='AC4';     p='TestInstallCmd_NoDeployTarget_PrintsPluralTargetsExample'; pkg='./cmd/apm-go/' }
   @{ ac='AC7';     p='TestBuildManifestNode_NoTargets_CommentedSkeleton';      pkg='./cmd/apm-go/' }
   @{ ac='AC26';    p='TestTargetsCommentLines_DerivedFromInput';               pkg='./cmd/apm-go/' }
   @{ ac='AC27';    p='TestCanonicalTargets_UnchangedAndCursorStillParses';     pkg='./internal/manifest/' }
   @{ ac='AC29';    p='TestInstall_LegacySingularTargetKey_StillDeploys';       pkg='./cmd/apm-go/' }
+  @{ ac='AC29';    p='TestPack_LegacySingularTargetKey_StillResolves';        pkg='./cmd/apm-go/' }
+  @{ ac='M1';      p='TestBuildManifestNode_PluginMode_DevDependenciesKeyOrder'; pkg='./cmd/apm-go/' }
+  @{ ac='M6';      p='TestBuildManifestNode_SpecialCharacterScalars_RoundTrip';  pkg='./cmd/apm-go/' }
+  # lenientReadTargets 的 5 條邊界分支（2026-07-30 第二輪 Tier 2 稽核：跑
+  # go tool cover 後這 5 條為 0 次命中）。沒有這些列，測試被刪掉閘門不會紅。
+  @{ ac='B5-edge'; p='TestReadExistingTargets_SafeLoadFailure_ReturnsNil';        pkg='./cmd/apm-go/' }
+  @{ ac='B5-edge'; p='TestReadExistingTargets_RootNotMapping_ReturnsNil';         pkg='./cmd/apm-go/' }
+  @{ ac='B5-edge'; p='TestReadExistingTargets_NoTargetKey_ReturnsNil';            pkg='./cmd/apm-go/' }
+  @{ ac='B5-edge'; p='TestReadExistingTargets_BlankTokenAfterTrim_IsSkippedNotKept'; pkg='./cmd/apm-go/' }
+  @{ ac='B5-edge'; p='TestLenientReadTargets_NonDocumentGuard_DefenseInDepth';    pkg='./cmd/apm-go/' }
 )
 foreach ($t in $acTests) {
   $m = @(& go test $t.pkg -list $t.p 2>&1 | Where-Object { $_ -match '^Test' })
@@ -168,6 +190,10 @@ foreach ($t in $acTests) {
 $ac25 = @(
   @{ pkg='./cmd/apm-go/';        name='TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu' }
   @{ pkg='./internal/manifest/'; name='TestAdapterTargetsSet_MatchesDeployTargets' }
+  # 2026-07-30 codex Tier 2 阻斷 B2：前兩個測試只比對「彼此的衍生物」，若
+  # SupportedTargets 被單獨改成 deployTargets 的子切片（如 [:5]），兩者仍相符。
+  # 這條直接雙向比對來源 deployTargets 與衍生 SupportedTargets。
+  @{ pkg='./internal/manifest/'; name='TestSupportedTargets_MatchesDeployTargetsExactly' }
 )
 $ac25ok = $true
 foreach ($t in $ac25) {
@@ -176,7 +202,7 @@ foreach ($t in $ac25) {
   & go test $t.pkg -run "^$($t.name)$" -count=1 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 0) { Fail 'AC25' "$($t.name) 紅燈"; $ac25ok = $false }
 }
-if ($ac25ok) { Pass 'AC25（2 個測試實跑）' }
+if ($ac25ok) { Pass 'AC25（3 個測試實跑）' }
 
 # ---- AC-L9 / parent C5：未新增第三方相依 ----
 # git status --porcelain 只給 "M go.mod"，看不出新增什麼，必須看 diff

@@ -247,6 +247,29 @@ func TestRunPack_TargetClaudeOnly_WritesRealPluginJSON(t *testing.T) {
 	}
 }
 
+// TestPack_LegacySingularTargetKey_StillResolves is AC29 (R1.4/C4)'s pack-side
+// companion to install_test.go's TestInstall_LegacySingularTargetKey_
+// StillDeploys (2026-07-30 codex Tier 2 B4): pack.go's loadPackManifest has
+// its own SafeLoad -> ParseManifest entry point, entirely separate from
+// install's -- an apm.yml written with only the pre-existing singular
+// target: key must still resolve through THIS entry point too and produce a
+// real plugin.json, not just through install's.
+func TestPack_LegacySingularTargetKey_StillResolves(t *testing.T) {
+	dir := chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ntarget:\n  - claude\n  - copilot\n")
+
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); statErr != nil {
+		t.Errorf("expected a real plugin.json for claude: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".github", "plugin", "plugin.json")); statErr != nil {
+		t.Errorf("expected a real plugin.json for copilot: %v", statErr)
+	}
+}
+
 func TestRunPack_TargetCodexOnly_ExitsOne_NotPluginManifestEcosystem(t *testing.T) {
 	// codex is a valid target but NOT a plugin-manifest ecosystem
 	// (claude/copilot only) -- with no dependencies:/marketplace: either,

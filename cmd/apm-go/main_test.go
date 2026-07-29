@@ -419,6 +419,70 @@ func TestReadExistingTargets_BothKeys(t *testing.T) {
 	})
 }
 
+// TestReadExistingTargets_LenientOnUnrelatedParseError is the 2026-07-30
+// codex Tier 2 B5 fix: readExistingTargets used to go through
+// manifest.ParseManifest ONLY, so an apm.yml that fails to parse for a
+// reason UNRELATED to targets (e.g. a missing required version: field)
+// silently lost its entire, otherwise-legal target selection -- the user is
+// still running interactive init, but the MultiSelect preselection for an
+// existing, readable target: value vanishes. Before this task introduced
+// the ParseManifest-only pipeline, a bare type-switch read this value fine;
+// this is a behavior regression this task introduced, not a pre-existing
+// gap. version: is deliberately omitted here to trigger the parse failure.
+func TestReadExistingTargets_LenientOnUnrelatedParseError(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: p\ntarget: claude\n"), 0644)
+	targets := readExistingTargets()
+	if len(targets) != 1 || targets[0] != "claude" {
+		t.Errorf("got %v, want [claude] (an unrelated parse error must not drop a legal target selection)", targets)
+	}
+}
+
+// TestReadExistingTargets_LenientDoesNotSplitCSVOnPluralKey is the 2026-07-30
+// codex Tier 2 fix to lenientReadTargets: the singular target: scalar and
+// the plural targets: scalar are NOT parsed the same way by the real parser.
+// manifest.go's parseTargetField (target:, manifest.go:265) splits a scalar
+// on "," -- CSV sugar for a list. manifest.go's parseTargetsField (targets:,
+// manifest.go:312-313) does NOT split a scalar on "," -- the whole scalar is
+// one (here invalid) token. lenientReadTargets used to CSV-split every
+// scalar unconditionally, so a plural "targets: claude,copilot" was
+// silently manufactured into two preselected targets an interactive init()
+// run never actually wrote for that key. version: is omitted from both
+// fixtures to force manifest.ParseManifest to fail and exercise the
+// lenientReadTargets fallback specifically (see
+// TestReadExistingTargets_LenientOnUnrelatedParseError).
+func TestReadExistingTargets_LenientDoesNotSplitCSVOnPluralKey(t *testing.T) {
+	t.Run("plural key CSV-shaped scalar is one invalid token, not split", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		os.WriteFile("apm.yml", []byte("name: p\ntargets: claude,copilot\n"), 0644)
+		targets := readExistingTargets()
+		if targets != nil {
+			t.Errorf("got %v, want nil (targets: scalar is a single token per parseTargetsField, not CSV sugar; \"claude,copilot\" fails ValidateTarget as one token and must be dropped, not split into two)", targets)
+		}
+	})
+
+	t.Run("singular key CSV-shaped scalar is still split", func(t *testing.T) {
+		dir := t.TempDir()
+		origDir, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(origDir)
+
+		os.WriteFile("apm.yml", []byte("name: p\ntarget: claude,copilot\n"), 0644)
+		targets := readExistingTargets()
+		if len(targets) != 2 || targets[0] != "claude" || targets[1] != "copilot" {
+			t.Errorf("got %v, want [claude copilot] (target: scalar is CSV sugar per parseTargetField)", targets)
+		}
+	})
+}
+
 // TestInitCmd_NonInitTargetRejected covers targets init deliberately doesn't
 // support via --target. agent-skills used to be in this list, but AC24
 // (R8.1) requires init to accept it now that it has a deploy adapter.

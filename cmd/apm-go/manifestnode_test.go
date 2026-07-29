@@ -90,6 +90,109 @@ func TestBuildManifestNode_NoTargets_CommentedSkeleton(t *testing.T) {
 	}
 }
 
+// TestBuildManifestNode_PluginMode_DevDependenciesKeyOrder is the 2026-07-30
+// codex Tier 2 M1 fix: the plugin branch (spec.Plugin=true), which inserts a
+// devDependencies section between includes and scripts, had zero test
+// coverage before this. Locks both the key order and the section's content.
+func TestBuildManifestNode_PluginMode_DevDependenciesKeyOrder(t *testing.T) {
+	node := buildManifestNode(manifestSpec{
+		Name: "p", Version: "1.0.0", Description: "d", Author: "a",
+		Targets: []string{"claude"}, Plugin: true,
+	})
+	out, err := yamlcore.SafeDump(node)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
+	}
+	content := string(out)
+
+	want := []string{"name", "version", "description", "author", "targets", "dependencies", "includes", "devDependencies", "scripts"}
+	var got []string
+	for _, line := range strings.Split(content, "\n") {
+		for _, k := range want {
+			if strings.HasPrefix(line, k+":") {
+				got = append(got, k)
+				break
+			}
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("found keys %v, want all of %v in:\n%s", got, want, content)
+	}
+	for i, k := range want {
+		if got[i] != k {
+			t.Fatalf("key order = %v, want %v", got, want)
+		}
+	}
+	if !strings.Contains(content, "devDependencies:\n  apm: []\n") {
+		t.Errorf("output missing devDependencies: {apm: []} content:\n%s", content)
+	}
+}
+
+// TestBuildManifestNode_NoTargets_AuthorImmediatelyPrecedesDependencies is
+// the 2026-07-30 codex Tier 2 M5 fix: buildManifestNode's no-targets branch
+// deliberately attaches the commented-out targets skeleton as a HeadComment
+// on the dependencies key rather than a FootComment on author (see the
+// comment at manifestnode.go's depsKey.HeadComment assignment), because
+// dependencies is assumed to be the very next key after author in this fixed
+// order. This test locks that adjacency assumption: if a future key is ever
+// inserted between author and dependencies, this test goes red as a signal
+// that the HeadComment placement must move with it.
+func TestBuildManifestNode_NoTargets_AuthorImmediatelyPrecedesDependencies(t *testing.T) {
+	node := buildManifestNode(manifestSpec{Name: "p", Version: "1.0.0", Description: "d", Author: "a"})
+
+	authorIdx, depsIdx := -1, -1
+	for i := 0; i < len(node.Content)-1; i += 2 {
+		switch node.Content[i].Value {
+		case "author":
+			authorIdx = i
+		case "dependencies":
+			depsIdx = i
+		}
+	}
+	if authorIdx == -1 || depsIdx == -1 {
+		t.Fatalf("expected both author and dependencies keys present in node.Content")
+	}
+	if depsIdx != authorIdx+2 {
+		t.Errorf("dependencies key is not immediately after author (author pair at index %d, dependencies pair at index %d); "+
+			"the no-targets HeadComment placement in buildManifestNode assumes adjacency", authorIdx, depsIdx)
+	}
+}
+
+// TestBuildManifestNode_SpecialCharacterScalars_RoundTrip is the 2026-07-30
+// codex Tier 2 M6 fix: name/description/author containing YAML-significant
+// characters (colon, quotes, embedded newline) had no test proving the
+// scalar encoding survives the full SafeDump -> SafeLoad -> ParseManifest
+// round trip buildManifestNode's own doc comment requires before writing to
+// disk.
+func TestBuildManifestNode_SpecialCharacterScalars_RoundTrip(t *testing.T) {
+	spec := manifestSpec{
+		Name:        "weird-name",
+		Version:     "1.0.0",
+		Description: "desc: with a colon, \"quotes\", and a\nnewline",
+		Author:      "Jane \"JD\" Doe",
+		Targets:     []string{"claude"},
+	}
+	node := buildManifestNode(spec)
+	out, err := yamlcore.SafeDump(node)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
+	}
+	loaded, err := yamlcore.SafeLoad(out)
+	if err != nil {
+		t.Fatalf("SafeLoad: %v\n%s", err, out)
+	}
+	m, _, err := manifest.ParseManifest(loaded)
+	if err != nil {
+		t.Fatalf("ParseManifest: %v\n%s", err, out)
+	}
+	if m.Description != spec.Description {
+		t.Errorf("Description round-trip = %q, want %q", m.Description, spec.Description)
+	}
+	if m.Author != spec.Author {
+		t.Errorf("Author round-trip = %q, want %q", m.Author, spec.Author)
+	}
+}
+
 // TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu is AC25:
 // manifest.SupportedTargets, manifest.HasAdapter's target set, and the init
 // MultiSelect prompt's actual option set (targetSelectOptions, what the user

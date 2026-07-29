@@ -2,6 +2,17 @@ package ux
 
 import "charm.land/huh/v2"
 
+// Concurrency premise (2026-07-30 codex Tier 2 M3): SetPromptSeamsForTest
+// and SetTTYSeamsForTest mutate package-level vars with no locking. This is
+// safe ONLY because neither internal/ux's own tests nor its consumers
+// (cmd/apm-go) call t.Parallel anywhere in this repo (verified via
+// `grep -rn "t.Parallel()"` across the whole tree, zero matches at the time
+// of this comment) -- go test runs a package's Test* functions sequentially
+// by default, so there is no concurrent access to guard against today. If a
+// future test in either package introduces t.Parallel while these seams are
+// in use, this premise breaks and the swap needs a mutex (or per-goroutine
+// isolation) before that lands, not after a race is observed.
+
 // SetPromptSeamsForTest overrides the confirmWith/multiSelectWith/
 // inputFormWith seams that back Confirm/MultiSelect/InputForm (and Clack's
 // wrappers) for the duration of a test in another package, where the real

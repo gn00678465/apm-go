@@ -132,6 +132,30 @@ func TestAdapterTargetsSet_MatchesDeployTargets(t *testing.T) {
 	}
 }
 
+// TestSupportedTargets_MatchesDeployTargetsExactly is the 2026-07-30 codex
+// Tier 2 B2 fix: TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu
+// (cmd/apm-go) and TestAdapterTargetsSet_MatchesDeployTargets (this package)
+// both only compare two DERIVED vars against each other -- neither compares
+// SupportedTargets directly against its source, deployTargets. Proof: mutate
+// target.go:38 to `SupportedTargets = deployTargets[:5]` and both of those
+// tests stay green, because cmd/apm-go's targetSelectOptions and this
+// package's adapterTargets check are each internally consistent with a
+// SHRUNK SupportedTargets, not with deployTargets itself. This test can only
+// live in package manifest (not cmd/apm-go) because deployTargets is
+// unexported.
+func TestSupportedTargets_MatchesDeployTargetsExactly(t *testing.T) {
+	if len(SupportedTargets) != len(deployTargets) {
+		t.Fatalf("len(SupportedTargets) = %d, len(deployTargets) = %d -- SupportedTargets must be exactly deployTargets, not a subset",
+			len(SupportedTargets), len(deployTargets))
+	}
+	for i, tgt := range deployTargets {
+		if SupportedTargets[i] != tgt {
+			t.Errorf("SupportedTargets[%d] = %q, deployTargets[%d] = %q -- must match exactly (including order)",
+				i, SupportedTargets[i], i, tgt)
+		}
+	}
+}
+
 // TestCanonicalTargets_UnchangedAndCursorStillParses is AC27 (R8.4):
 // unifying SupportedTargets/adapterTargets/the init prompt list around
 // deployTargets must not touch CanonicalTargets, which is a wider apm.yml

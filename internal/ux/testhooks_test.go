@@ -66,6 +66,15 @@ func TestSetPromptSeamsForTest_OverridesAndSeamRestoreRevertsToProduction(t *tes
 			return map[string]string{"stub": "value"}, nil
 		},
 	)
+	// 2026-07-30 codex Tier 2 M4: restore() is also called explicitly below
+	// (this test asserts on behavior both before and after restoring), but
+	// t.Cleanup is registered as a safety net -- any t.Fatalf between here
+	// and the explicit restore() call further down would otherwise skip it
+	// entirely and leak the stubbed seams into every later test in this
+	// package (and, transitively, every cmd/apm-go test that exercises
+	// ux.Confirm/MultiSelect/InputForm), with no red anywhere to point at
+	// the cause.
+	t.Cleanup(restore)
 
 	gotConfirm, err := Confirm("proceed?", true)
 	if err != nil {

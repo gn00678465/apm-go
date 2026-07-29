@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	yamllib "go.yaml.in/yaml/v4"
+
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -299,18 +301,25 @@ func targetSelectOptions(detected, existing []string) []ux.Option {
 }
 
 // readExistingTargets reads the target selection out of an already-written
-// apm.yml, so interactiveTargetSelect can pre-select it (AC2/AC3). It goes
-// through the same yamlcore.SafeLoad -> manifest.ParseManifest pipeline
-// install/pack use to produce m.Target, instead of a second, ad hoc parser:
-// a bare type-switch over a raw yaml.Unmarshal decode (the prior
-// implementation) only handled a plain list or a single bare scalar, and
-// silently dropped every other form ParseManifest's parseTargetField/
-// parseTargetsField already accept -- CSV sugar on the singular scalar key
-// ("target: claude,copilot", manifest.go's parseTargetField) and target
-// aliases (e.g. "vscode" normalizing to "copilot" via ValidateTarget),
-// leaving MultiSelect unable to pre-select targets that DO exist in a
-// legal, already-parseable apm.yml. A malformed/unparseable apm.yml simply
-// loses the preselection (nil) rather than guessing.
+// apm.yml, so interactiveTargetSelect can pre-select it (AC2/AC3). It tries
+// the same yamlcore.SafeLoad -> manifest.ParseManifest pipeline install/pack
+// use to produce m.Target first, instead of a second, ad hoc parser: a bare
+// type-switch over a raw yaml.Unmarshal decode (the prior implementation)
+// only handled a plain list or a single bare scalar, and silently dropped
+// every other form ParseManifest's parseTargetField/parseTargetsField
+// already accept -- CSV sugar on the singular scalar key ("target:
+// claude,copilot", manifest.go's parseTargetField) and target aliases (e.g.
+// "vscode" normalizing to "copilot" via ValidateTarget).
+//
+// 2026-07-30 codex Tier 2 B5: ParseManifest fails the WHOLE document on any
+// schema violation, even one unrelated to targets (e.g. a missing required
+// version: field) -- an apm.yml that is otherwise perfectly readable for its
+// target: value then loses its ENTIRE preselection, which is a regression
+// against the pre-ParseManifest ad hoc parser this function replaced (that
+// one could still read target: out of a version-less file). So a
+// ParseManifest failure now falls back to lenientReadTargets, which reads
+// only the target/targets key directly and drops individual unparseable
+// tokens instead of giving up on the whole file.
 func readExistingTargets() []string {
 	data, err := os.ReadFile("apm.yml")
 	if err != nil {
@@ -320,9 +329,114 @@ func readExistingTargets() []string {
 	if err != nil {
 		return nil
 	}
-	m, _, err := manifest.ParseManifest(node)
-	if err != nil {
+	if m, _, err := manifest.ParseManifest(node); err == nil {
+		return m.Target
+	}
+	return lenientReadTargets(node)
+}
+
+// lenientReadTargets is readExistingTargets' fallback whenever
+// manifest.ParseManifest returns an error -- readExistingTargets (line 335)
+// calls it unconditionally on any ParseManifest failure, not only one
+// unrelated to targets. An earlier version of this comment claimed the
+// opposite ("a reason unrelated to targets"); that claim does not hold: a
+// failure caused BY the target/targets value itself is exactly as fatal to
+// ParseManifest as an unrelated one, because manifest.go's single
+// range-and-return loop (manifest.go:100-196) returns on the first error it
+// hits, before reaching later checks like the required version: field
+// (manifest.go:204). Concretely, `targets: [claude, {foo: bar}]` with a
+// valid version: fails ParseManifest with "unknown target" for the mapping
+// element (targetTokenFromNode/ValidateTarget via parseTargetsField,
+// manifest.go:298-317) -- a targets-related failure -- and this function is
+// still the one that recovers the still-legal "claude" entry (verified
+// directly: readExistingTargets() on that fixture returns [claude]).
+//
+// So this function reads the target/targets key directly off the raw node
+// instead of going through parseTargetField/parseTargetsField (both
+// unexported, and both HARD ERROR on an unparseable/empty targets: block,
+// which is the wrong behavior for a best-effort preselection reader): each
+// token is normalized via manifest.ValidateTarget and a token that fails
+// validation is dropped rather than aborting the whole read -- this is also
+// how a targets-related ParseManifest failure (one bad token) still yields a
+// partial, useful preselection instead of losing it entirely. Both target:
+// and targets: present at once is invalid apm.yml (manifest.go's
+// hasConflictingTargetKeys) -- this does not guess a winner, matching
+// ParseManifest's own refusal.
+//
+// 2026-07-30 codex Tier 2: the singular target: scalar and the plural
+// targets: scalar are NOT parsed the same way by the real parser, so this
+// fallback must not treat them the same either. manifest.go's
+// parseTargetField (target:, manifest.go:265) splits a scalar on "," --
+// "target: claude,copilot" is CSV sugar for two targets. manifest.go's
+// parseTargetsField (targets:, manifest.go:312-313) does NOT split a scalar
+// on "," -- "targets: claude,copilot" is a single-element list whose one
+// element happens to contain a comma, i.e. one (invalid) token, not CSV
+// sugar. An earlier version of this function CSV-split every scalar
+// unconditionally, so a plural "targets: claude,copilot" was silently
+// manufactured into two preselected targets an interactive init() run never
+// actually wrote for that key. Whether to split is now keyed off which of
+// target:/targets: was actually present (isSingular), not the node kind
+// alone.
+func lenientReadTargets(doc *yamllib.Node) []string {
+	if doc.Kind != yamllib.DocumentNode || len(doc.Content) == 0 {
 		return nil
 	}
-	return m.Target
+	root := doc.Content[0]
+	if root.Kind != yamllib.MappingNode {
+		return nil
+	}
+
+	var targetVal, targetsVal *yamllib.Node
+	for i := 0; i < len(root.Content)-1; i += 2 {
+		switch root.Content[i].Value {
+		case "target":
+			targetVal = root.Content[i+1]
+		case "targets":
+			targetsVal = root.Content[i+1]
+		}
+	}
+	if targetVal != nil && targetsVal != nil {
+		return nil
+	}
+	val := targetVal
+	isSingular := true
+	if val == nil {
+		val = targetsVal
+		isSingular = false
+	}
+	if val == nil {
+		return nil
+	}
+
+	var rawTokens []string
+	switch val.Kind {
+	case yamllib.ScalarNode:
+		if raw := strings.TrimSpace(val.Value); raw != "" {
+			if isSingular {
+				rawTokens = strings.Split(raw, ",")
+			} else {
+				rawTokens = []string{raw}
+			}
+		}
+	case yamllib.SequenceNode:
+		for _, item := range val.Content {
+			if item.Kind == yamllib.ScalarNode {
+				rawTokens = append(rawTokens, item.Value)
+			}
+		}
+	}
+
+	var targets []string
+	for _, tok := range rawTokens {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		normalized, err := manifest.ValidateTarget(tok)
+		if err != nil {
+			continue
+		}
+		targets = append(targets, normalized)
+	}
+	return targets
 }
