@@ -54,14 +54,19 @@
 
 沿用 parent `prd.md` 的 **AC42–AC45**（AC46 屬 `07-29-plugin-init`）。
 
-- [ ] AC42 — `install --dev owner/repo` 寫入 `devDependencies.apm`，**不**寫入 `dependencies.apm`
-- [ ] AC43 — apm.yml 原無 `devDependencies` 鍵時自動建立，且鍵序在 `includes` 與 `scripts` 之間
-- [ ] AC44 — **回歸閘門**：不加 `--dev` 時行為與現況完全一致
-- [ ] AC45 — `--dev` 裝進來的套件在 `apm.lock.yaml` 有 `package_type`；非 dev 既有行為不變
+> **勾選依據**：`verify.ps1` 2026-07-30 全綠（13 項），關鍵檢查經 mutation 測試證明會紅。
+> 逐條證據見 `verification-record.md`。**勾選不等於 task 完成** —— `task.py finish` 未執行。
+
+- [x] AC42 — `install --dev owner/repo` 寫入 `devDependencies.apm`，**不**寫入 `dependencies.apm`
+      **2026-07-30 補（Tier 2 阻斷級）**：X 已存在於另一區段時原本會重複寫入兩邊。
+      使用者裁定為**搬家**（npm 慣例）。見 AC42-cross 兩個測試。
+- [x] AC43 — apm.yml 原無 `devDependencies` 鍵時自動建立，且鍵序在 `includes` 與 `scripts` 之間
+- [x] AC44 — **回歸閘門**：不加 `--dev` 時行為與現況完全一致
+- [x] AC45 — `--dev` 裝進來的套件在 `apm.lock.yaml` 有 `package_type`；非 dev 既有行為不變
 
 本 task 專屬：
 
-- [ ] AC-L1 — R9.3 的守門：**三個**既有 dev 測試在 R9 落地後全部維持綠燈 ——
+- [x] AC-L1 — R9.3 的守門：**三個**既有 dev 測試在 R9 落地後全部維持綠燈 ——
       `cmd/apm-go/install_test.go:135` `TestRunInstall_DevDependency_ResolvedDeployedAndLocked`、
       `:193` `TestRunInstall_DevDependency_SecondBareInstallIsNoOp`、
       `:2265` `TestRunInstall_DevDependency_SkillSubsetHonored`。
@@ -69,9 +74,9 @@
       **先跑 `go test ./cmd/apm-go/ -list 'TestRunInstall_DevDependency'` 確認匹配到 3 個**。
       （AC44 的字面只覆蓋「不加 `--dev` 的路徑」，沒有要求既有讀取鏈的測試被重驗，
       這是 checklist 重新推導時發現的缺口 G1。）
-- [ ] AC-L2 — `go build ./...`、`go vet ./...` exit 0；coverprofile total ≥ 80%
+- [x] AC-L2 — `go build ./...`、`go vet ./...` exit 0；coverprofile total ≥ 80%
 
-- [ ] AC-L9 — **parent C5 的本地閘門**：未新增任何第三方相依。
+- [x] AC-L9 — **parent C5 的本地閘門**：未新增任何第三方相依。
       驗法：`git diff -- go.mod; git diff --cached -- go.mod` —— 都不得出現新 `require` 行。
       （`git status --porcelain` 只給 `M go.mod`，看不出新增了什麼，不足以判定。）
 
@@ -85,3 +90,4 @@
 ## 執行步驟
 
 對應 parent `implement.md` 的 **Step 8b**。逐步 codex 閘門規則適用。
+
