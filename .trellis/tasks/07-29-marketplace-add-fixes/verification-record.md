@@ -1,338 +1,350 @@
-# 驗證紀錄 — 07-29-marketplace-add-fixes（外部稽核第二輪修復）
+# 驗證紀錄 — 07-29-marketplace-add-fixes（外部稽核第三輪修復）
 
-> **狀態：待使用者驗證。任務未標記完成。** `task.py finish` 未執行。
+> **狀態：implementer 已跑完下列指令，尚未經外部覆核。`task.py finish` 未執行。**
+> 本檔逐項列出可證偽的紅/綠證據；任何「已修復」字樣後面都附著實際跑過的指令與
+> 輸出。round 2 的驗證紀錄被本輪稽核指出兩處推翻（BLOCKING 1 structural fix 有
+> Windows 逃逸漏洞、BLOCKING 2 的 CLI 印出時序仍錯），本檔取代該版本。
 
-- 實作者：`trellis-implement`（round 2）
-- 外部稽核（round 2）：codex（read-only），推翻 round 1 的一項聲稱修復（BLOCKING 1
-  結構性未修），並新增 1 阻斷 + 3 重大（含 4 個子項）
-- 主 session：round 2 開始前已獨立重現 BLOCKING 1
+- 實作者：`trellis-implement`（round 3）
+- 外部稽核（round 3）：main session 獨立重現後轉交 — 1 個 SECURITY 阻斷（Windows
+  路徑遍歷）、1 個一般阻斷（noVerify 分類器缺口 + CLI 印出時序）、句型違規 3 處、
+  3 個一行閘門逃逸口、1 個 MINOR
 - 日期：2026-07-30
 
-本檔取代前一版（round 1）的驗證紀錄。round 1 版本本身也被本輪稽核指出
-兩處違反 `.trellis/spec/guides/claim-evidence-guide.md` 的敘述句（見下方
-「round 1 遺留的敘述句問題」一節）；本次重寫時一併移除。
-
 ---
 
-## 修復對照表（round 2）
+## BLOCKING 1（SECURITY）— Windows 相對本地 source 路徑遍歷
 
-| # | 級別 | 位置 | 修復摘要 |
-|---|---|---|---|
-| BLOCKING 1 | 阻斷 | `internal/marketplace/authoring/editor.go` | 抽出 `classifyRefResolution` 作為唯一分類器，`resolveRef` 與 `WillResolveMutableRefForAdd` 都只呼叫它，不再各自表述 |
-| MAJOR 1 | 重大 | `internal/marketplace/authoring/resolveref_test.go` | 補 `local + 一般 mutable ref（"main"）` 的缺口測試 |
-| MAJOR 2 | 重大 | `internal/marketplace/authoring/refcheck.go` | `resolveCloneURL` 補上相對路徑本地 source 的分支，`set --ref` 在相對路徑本地套件上真的能解析 |
-| MAJOR 3 | 重大 | `cmd/apm-go/marketplace_package.go`（測試） | 四個逃逸口：警告嚴重程度斷言（2 處）、CLI 層 `set --ref` 覆蓋、39 字元合法 hex 邊界 |
+### 根因（讀過的程式碼位置）
 
----
+`internal/marketplace/authoring/refcheck.go`（round 2 版本）`resolveCloneURL`
+對 `isLocalPackageSource(source)` 為真的相對路徑呼叫 `filepath.Abs(source)`
+直接回傳，沒有邊界檢查。`internal/manifest/mcp.go:258-263`
+（round 2 版本）的 `ValidateMarketplaceSource` 只在 `strings.Split(source, "/")`
+上找 `".."` 段，從未正規化 `\`。
 
-## BLOCKING 1 — `WillResolveMutableRefForAdd` 是第二個真相來源
-
-### 主 session 的獨立重現（修復前）
-
-`resolveRef`（add 模式：`skipLocalSource=true`, `implicitHeadOnEmpty=true`）
-在下列條件全部成立時才會真正觸網解析 HEAD：
+主 session 重現（`internal/marketplace/authoring`，Go 測試，探針測試後刪除）：
 
 ```
-1. version == ""
-2. !isLocalPackageSource(source)
-3. (ref == "" 因 implicitHeadOnEmpty 而允許)
-4. !shaRefPattern.MatchString(ref)      <-- 舊版 WillResolveMutableRefForAdd 完全沒有這一條
-5. ref == "" || EqualFold(ref, "HEAD")
+src="./..\\..\\outside"  validate=true   resolveCloneURL="D:\...\apm-go\internal\outside"  escapes=true
+src="./../../outside"    validate=false  (正確擋下)
+src="./normal"           validate=true   resolveCloneURL=".../authoring/normal"            escapes=false
 ```
 
-舊版 `WillResolveMutableRefForAdd` 手動重述了 1、2、5，但**漏掉了 4**。
-`git grep -n WillResolveMutableRefForAdd -- '*test.go'`（修復前）零命中 ——
-沒有任何測試把兩者鎖在一起，所以沒有東西會在未來出現分歧時發出警訊。
+### 修復（兩層，缺一不可）
 
-### 修復
+1. **`internal/manifest/mcp.go` `ValidateMarketplaceSource`**：`..` 段檢查前先
+   `strings.ReplaceAll(source, "\\", "/")`，兩種分隔符號都正規化後再切段判斷。
+2. **`internal/marketplace/authoring/refcheck.go` `resolveCloneURL`**：改回傳
+   `(string, error)`；相對本地 source 解析出絕對路徑後，新增
+   `pathWithinRoot(cwd, abs)`（`filepath.Rel` + `..` 前綴檢查）邊界檢查，逃出
+   cwd 就回傳 error，不再無條件回傳。`gitRefLister.ListRefs` 相應改為檢查
+   `resolveCloneURL` 的 error。
 
-`editor.go` 新增 `classifyRefResolution(source, ref, version string,
-implicitHeadOnEmpty, skipLocalSource bool) refResolutionKind`，把 `resolveRef`
-原本的 6 個分支收斂成 4 種結果（`refKindNone` / `refKindVerbatim` /
-`refKindHead` / `refKindNamed`)。`resolveRef` 本身改為對這個分類結果做
-`switch`；`WillResolveMutableRefForAdd` 改為
-
-```go
-func WillResolveMutableRefForAdd(source, ref, version string) bool {
-	return classifyRefResolution(source, ref, version, true, true) == refKindHead
-}
-```
-
-兩者現在只有**一個**函式在做這個判斷，不再有第二份手寫的分支列表。
-
-### 突變測試 1：重新手寫（不共用分類器）的舊版 `WillResolveMutableRefForAdd`
-
-把 `WillResolveMutableRefForAdd` 暫時改回不呼叫 `classifyRefResolution`、
-改用大小寫敏感比對（`ref == "HEAD"`，而非 `EqualFold`）的手寫版本 ——
-這正是「手動重述而非共用單一函式」這個結構性風險會實際造成分歧的具體例子：
-
-**紅**：
+### 突變 1：manifest 層 — 還原成只切 `/`
 
 ```
-$ go test ./internal/marketplace/authoring/ -run TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct -v
-=== RUN   TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct/remote/ref=head/version=
-    resolveref_test.go:...: WillResolveMutableRefForAdd("owner/repo", "head", "") = false, but resolveRef's actual HEAD-branch resolution = true (lister called: true, got: "1111111111111111111111111111111111111a")
---- FAIL: TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct/remote/ref=head/version= (0.00s)
---- FAIL: TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct (0.00s)
+$ git stash push -- internal/manifest/mcp.go   # 暫時拿掉修復
+$ go test ./internal/manifest/ -run TestValidateMarketplaceSource -v
+    mcp_test.go:548: expected error, got nil   （2 個新案例：./..\..\outside、./sub\..\..\outside）
+--- FAIL: TestValidateMarketplaceSource
+FAIL
+$ git stash pop   # 還原修復
+```
+
+綠（修復還原後）：
+
+```
+$ go test ./internal/manifest/ -run TestValidateMarketplaceSource -v
+--- PASS: TestValidateMarketplaceSource (0.00s)
+    --- PASS: ..././..\..\outside (0.00s)
+    --- PASS: ..././sub\..\..\outside (0.00s)
+    (其餘 14 個既有案例全綠，證明未回歸)
+PASS
+```
+
+### 突變 2：resolveCloneURL 層 — 拿掉邊界檢查（保留 `(string, error)` 簽名，只刪
+`pathWithinRoot` 呼叫）
+
+紅：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestResolveCloneURL -v
+    refcheck_test.go:477: resolveCloneURL(`./..\..\outside`) = nil error, want a rejection (path escapes the project root)
+    refcheck_test.go:489: resolveCloneURL(./../../outside) = nil error, want a rejection (path escapes the project root)
+--- FAIL: TestResolveCloneURL
 FAIL
 ```
 
-**綠**（還原為呼叫 `classifyRefResolution` 後）：全部 20 個交叉積案例（2 個
-source 形狀 × 5 種 ref 形狀 × 2 種 version 狀態）全部通過。
+綠（還原邊界檢查後）：
 
-### 新測試
+```
+$ go test ./internal/marketplace/authoring/ -run TestResolveCloneURL -v
+--- PASS: TestResolveCloneURL (0.01s)
+    --- PASS: .../relative_local_source_escaping_cwd_via_backslash_traversal_is_rejected (0.00s)
+    --- PASS: .../relative_local_source_escaping_cwd_via_forward-slash_traversal_is_rejected (0.00s)
+    --- PASS: .../relative_local_source_staying_within_cwd_is_accepted (0.00s)
+    (其餘 5 個既有案例全綠：full URL、scp、absolute path、owner/repo、cwd-relative)
+PASS
+```
 
-`internal/marketplace/authoring/resolveref_test.go`：
-`TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct` ——
-對 (source: local/remote) × (ref: ""/HEAD/head/40-hex SHA/main) ×
-(version: ""/已給) 的完整交叉積，用一個會分別記錄「HEAD」與「main」兩個不同
-commit 的 `spyRefLister`，比較「`WillResolveMutableRefForAdd` 的預測」與
-「`resolveRef` 實際是否經過 HEAD 分支解析（而非完全不觸網、逐字存 SHA、或
-解析一般具名 ref）」。
+### 其他 `ValidateMarketplaceSource` 呼叫端未回歸
+
+`git grep -n ValidateMarketplaceSource` 顯示兩個生產呼叫點：
+`internal/manifest/manifest.go:564`（`validateMarketplaceBlock`，manifest 載入時）、
+`internal/marketplace/authoring/schema.go:493`（`LoadAuthoringConfig` 解析
+packages 時）。兩者都只是呼叫同一個函式，未各自重新實作規則，修復自動涵蓋。
+驗證：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestLoadAuthoringConfig_SourceValidation -v
+--- PASS: TestLoadAuthoringConfig_SourceValidation_ReusesManifestValidator (0.01s)
+--- PASS: TestLoadAuthoringConfig_SourceValidation_AcceptsValidShapes (0.01s)
+PASS
+```
+
+`internal/marketplace/build` 有一個同名但**不同**的 `resolveCloneURL`
+（`internal/marketplace/build/builder.go:372`）：讀過其實作，它沒有 round 2
+新增的相對本地路徑展開分支（`filepath.IsAbs` 之外一律走 OWNER/REPO shorthand），
+不受本次 BLOCKING 1 影響；其輸入仍先經同一個 `ValidateMarketplaceSource`，layer 1
+修復同樣涵蓋它。
 
 ---
 
-## MAJOR 1 — local 矩陣缺「一般 mutable ref」情境
-
-AC21 宣稱「所有情境」，但先前 6 個 local 分支測試裡沒有
-`local + --ref main`（非空、非 HEAD、非 SHA 的一般具名 ref）這個組合。
-
-### 突變（報告原文）
-
-```go
-if skipLocalSource && isLocalPackageSource(source) &&
-    (ref == "" || strings.EqualFold(ref, "HEAD") || shaRefPattern.MatchString(ref)) {
-```
-
-### 紅（套用上述突變後）
-
-```
-$ go test ./internal/marketplace/authoring/ -run TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork -v
-=== RUN   TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork
-panic: ListRefs must not be called: this package should never touch the network
-
-goroutine ...:
-github.com/apm-go/apm/internal/marketplace/authoring.panicLister.ListRefs(...)
-	.../refcheck_test.go:59
-github.com/apm-go/apm/internal/marketplace/authoring.resolveRef(...)
-	.../editor.go:452
-github.com/apm-go/apm/internal/marketplace/authoring.TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork(...)
-	.../resolveref_test.go:439
-FAIL
-```
-
-`add ./pkg --ref main` 在這個突變下會真的呼叫 `lister.ListRefs` 對一個
-local source 觸網 —— 直接違反 mkt-046。`panicLister` 證明了這一點。
-
-### 綠（還原後）
-
-```
-$ go test ./internal/marketplace/authoring/ -run TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork -v
-=== RUN   TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork
---- PASS: TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork (0.00s)
-```
-
-新測試：`TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork`
-（`resolveref_test.go`）。`verify.ps1` 的 AC21 `localBranches` 表也補了
-`OrdinaryMutableRef` 這一項，讓「宣稱涵蓋所有情境」的驗證粒度追上宣稱本身。
-
----
-
-## MAJOR 2 — 相對路徑本地 source 在 `resolveCloneURL` 被誤展開
-
-### 我對 spec 的結論（依指示明確陳述，不挑方便的讀法）
-
-**結論：contract 要求成功，不是 fail-closed 可接受。**
-
-依據：`.trellis/spec/backend/install-marketplace-contracts.md:87` ——
-「`--ref` mutable value ... is resolved to a concrete SHA via
-`RefLister.ListRefs` before write ... `set` always resolves a given ref
-(no `--no-verify` escape hatch on `set`)」—— 這句話對「local source」沒有
-任何例外條款。而且 `internal/manifest/mcp.go:265-270`
-(`ValidateMarketplaceSource`) 規定本地 source **必須**以 `"./"` 開頭 ——
-也就是說，任何透過 `add` 合法寫入的本地套件，其 `source` 欄位**只可能**是
-相對路徑，不可能是絕對路徑。round 1 驗證紀錄用「絕對路徑本地 repo」當作
-「本地套件」的手動複驗案例，嚴格來說並未通過 `isLocalPackageSource`（它
-不是 `"./"` 開頭）；round 1 的 BLOCKING 2 修復本身要求「`set` 必須解析
-local source 的 ref，不得短路」，而唯一真正存在的 local source 形狀（相對
-路徑）在 round 1 修復後**仍然**因為 `resolveCloneURL` 的既有缺陷而失敗 ——
-所以「相對路徑本地 repo 解析失敗」不是可接受的 fail-closed 邊界，是
-BLOCKING 2 修復尚未真正涵蓋到的缺口。
+## BLOCKING 2 — noVerify 在分類器之外、CLI 印出時序早於 AddPackage 的前置檢查
 
 ### 根因
 
-`internal/marketplace/authoring/refcheck.go` 的 `resolveCloneURL` 原本只認
-三種形狀（含 `://`、`git@` 開頭、`filepath.IsAbs`），其餘一律當
-`OWNER/REPO` shorthand 展開成 `https://github.com/<source>.git`。一個
-`"./repo"` 相對路徑落在這三種之外，被誤展開成
-`https://github.com/./repo.git`。
+`classifyRefResolution`（round 2 版本）不吃 `noVerify`，所以
+`--ref HEAD --no-verify` 仍被分類成 `refKindHead`（「會解析」）。CLI
+（`cmd/apm-go/marketplace_package.go`，round 2 版本）在呼叫 `AddPackage` **之前**
+用 `WillResolveMutableRefForAdd` 做這個判斷就印警告，所以 `AddPackage` 之後任何
+前置檢查失敗（缺 config、source 不可達、重複命名）都會印出誤導性的警告。
+
+主 session 用真的 binary 重現（`bin/apm-go.exe`）：
+
+```
+$ apm-go.exe marketplace package add owner/repo --ref HEAD --no-verify
+exit 2
+ ! 'HEAD' is a mutable ref. Resolving to current SHA for safety.
+Error: no marketplace authoring config found ...
+```
 
 ### 修復
 
-`resolveCloneURL` 新增第四個分支：`isLocalPackageSource(source)` 為真時，
-用 `filepath.Abs(source)` 把相對路徑轉為絕對路徑後回傳（複用既有的
-`isLocalPackageSource`，不是新概念）。
+1. `internal/marketplace/authoring/editor.go`：`classifyRefResolution` 加
+   `noVerify bool` 參數，`refKindHead` 分裂出 `refKindHeadOffline`
+   （HEAD 形狀但 `noVerify` 使解析不可能）。`resolveRef` 改為對這個結果
+   `switch`，不再另外做一次 `if noVerify` 判斷。
+2. `resolveRef` 新增 `onExplicitHeadWillResolve func()` 參數：只在
+   `refKindHead` 分支、`ref != ""`（顯式給的 HEAD，非隱含空字串）、且已通過
+   noVerify 檢查後，真正呼叫 `lister.ListRefs` **之前**才呼叫這個 hook。
+   `AddOptions` 新增 `OnExplicitHeadWillResolve` 欄位，`AddPackage` 原封不動
+   把它傳進 `resolveRef`；`SetPackage` 傳 `nil`（`set` 從無此警告）。
+3. CLI（`cmd/apm-go/marketplace_package.go`）刪除呼叫 `AddPackage` 之前的
+   `WillResolveMutableRefForAdd` 判斷式，改成把印警告的動作放進
+   `AddOptions.OnExplicitHeadWillResolve` 這個 callback 裡。因為
+   `AddPackage` 的每一個前置檢查（`--version`/`--ref` 互斥、subdir 驗證、
+   source 驗證、`verifyPackageSource` 可達性、`LoadAuthoringConfig`、
+   重複命名）全部發生在呼叫 `resolveRef` 之前，這個 callback
+   在結構上不可能在其中任何一個失敗之前被呼叫到 —— 不需要在 CLI 端
+   手動重複這些前置檢查的順序。
+4. `WillResolveMutableRefForAdd` 保留為公開 API，新增 `noVerify` 參數，
+   內部改用 `classifyRefResolution` 的新結果 —— 它現在只被
+   `TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct`
+   直接測試，CLI 生產路徑已不再呼叫它。
 
-### 紅（修復前，暫時拿掉新分支重現）
+### 突變測試 1：classifyRefResolution 忽略 noVerify（`WillResolveMutableRefForAdd`
+內部改回 hardcode `noVerify=false`）
+
+紅：
 
 ```
-$ go test ./internal/marketplace/authoring/ -run 'TestResolveCloneURL|TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister' -v
-=== RUN   TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister
-    editor_test.go:1032: SetPackage with a relative local source's --ref returned error: could not resolve ref "v1.0.0" for "./pkgs/tool": git ls-remote https://github.com/./pkgs/tool.git: remote: Repository not found.
---- FAIL: TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister (0.83s)
-=== RUN   TestResolveCloneURL
-    refcheck_test.go:441: resolveCloneURL(./repo) = "https://github.com/./repo.git", want ".../repo" (the local cwd-relative path, not a GitHub shorthand expansion)
---- FAIL: TestResolveCloneURL (0.00s)
-=== RUN   TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister
-    refcheck_test.go:490: ListRefs(./repo) returned error: git ls-remote https://github.com/./repo.git: remote: Not Found
---- FAIL: TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister (0.51s)
+$ go test ./internal/marketplace/authoring/ -run TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct -v
+--- FAIL: .../remote/ref=<empty>/version=/noVerify=true
+--- FAIL: .../remote/ref=HEAD/version=/noVerify=true
+--- FAIL: .../remote/ref=head/version=/noVerify=true
+--- FAIL: .../remote/ref=Head/version=/noVerify=true
+（共 16 個 noVerify=true 案例全紅，noVerify=false 的 32 個案例全綠）
 FAIL
 ```
 
-（這個「紅」是對真實 GitHub 發出了一次會 404 的網路請求 —— 正是缺陷本身
-的具體展現：本該解析本地 repo 的呼叫，錯把它當成了一個遠端 GitHub 專案。）
+綠（還原後）：全部 64 個交叉積案例（2 source × 6 ref 形狀 × 2 version × 2
+noVerify）全部通過。
 
-### 綠（修復後）
+### 突變測試 2：CLI 還原成 round-2 版本（呼叫 AddPackage 前印警告）
+
+紅（4 個新 CLI 端對端測試全部重現真實回歸）：
 
 ```
-$ go test ./internal/marketplace/authoring/ -run 'TestResolveCloneURL|TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister' -v
---- PASS: TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister (0.30s)
---- PASS: TestResolveCloneURL (0.00s)
-    --- PASS: TestResolveCloneURL/relative_local_source_resolves_against_cwd,_not_as_OWNER/REPO_shorthand (0.00s)
---- PASS: TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister (0.21s)
+$ go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_(NoVerify|MissingConfig|UnreachableSource|DuplicateName)_.*NoMutableRefWarning' -v
+    ...NoVerify...: output = " ! 'HEAD' is a mutable ref...\nError: Cannot resolve HEAD ref without network access...\n", want NO mutable-ref warning
+    ...MissingConfig...: output = " ! 'HEAD' is a mutable ref...\nError: no marketplace authoring config found...\n", want NO mutable-ref warning
+    ...UnreachableSource...: output = " ! 'HEAD' is a mutable ref...\nError: source ... is not reachable...\n", want NO mutable-ref warning
+    ...DuplicateName...: output = " ! 'HEAD' is a mutable ref...\nError: package \"tool\" already exists\n", want NO mutable-ref warning
+--- FAIL (4 個全紅)
+FAIL
+```
+
+綠（還原修復後）：
+
+```
+$ go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_(NoVerify|MissingConfig|UnreachableSource|DuplicateName)_.*NoMutableRefWarning' -v
+--- PASS (4 個全綠)
 PASS
 ```
 
 ### 新測試
 
-- `TestResolveCloneURL`（新增子測試）—— 單元層級，`refcheck_test.go`。
-- `TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister` ——
-  用**正式的 `gitRefLister{}`**（不是 `mapRefLister` 假件）對一個透過相對
-  路徑指到的真實 git repo 跑 `git ls-remote`，`refcheck_test.go`。
-- `TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister`
-  —— `SetPackage` 層級的端對端回歸，同樣用正式 lister，`editor_test.go`。
+- `internal/marketplace/authoring/resolveref_test.go`：
+  `TestResolveRef_ExplicitHead_InvokesOnExplicitHeadWillResolve`、
+  `TestResolveRef_ImplicitHead_DoesNotInvokeOnExplicitHeadWillResolve`、
+  `TestResolveRef_NoVerify_ExplicitHead_DoesNotInvokeOnExplicitHeadWillResolve`、
+  `TestResolveRef_LocalSource_ExplicitHead_DoesNotInvokeOnExplicitHeadWillResolve`
+  （resolveRef 單元層，直接驗 callback 呼叫次數）。
+- `cmd/apm-go/marketplace_package_test.go`：
+  `TestMarketplacePackageAdd_ExplicitRefHead_NoVerify_NoMutableRefWarning_ExitsCode2`、
+  `TestMarketplacePackageAdd_ExplicitRefHead_MissingConfig_NoMutableRefWarning`、
+  `TestMarketplacePackageAdd_ExplicitRefHead_UnreachableSource_NoMutableRefWarning`、
+  `TestMarketplacePackageAdd_ExplicitRefHead_DuplicateName_NoMutableRefWarning`
+  （CLI 端對端，四個報告點名的前置失敗情境）。
+- `TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct` 擴充：
+  `refs` 加入 `"Head"`（title case，見 MAJOR 一節），新增 `noVerifies :=
+  []bool{false, true}` 維度，交叉積從 20 案例擴為 64 案例。
 
 ---
 
-## MAJOR 3 — 四個逃逸口
+## BLOCKING 3 — 句型違規
 
-### 3a／3c：警告嚴重程度只驗訊息文字，未驗 severity（REGR-B1、REGR-M1）
-
-**根因**：`ux.Warn` 與 `ux.Info` 印出的訊息文字完全相同，只有行首的
-置中符號欄位不同（` ! ` vs ` i `，見 `internal/ux/printer.go`）。原本的
-測試只 `strings.Contains(out, "訊息文字")`，偵測不到嚴重程度被降級。
-
-**修復**：`cmd/apm-go/marketplace_package_test.go` 新增
-`assertLineSeverity(t, out, marker, wantSymbol)`：找出含 `marker` 的那一行，
-斷言它以 ` <symbol> ` 開頭。套用到兩個既有測試：
-`TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning`（AC19）、
-`TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds`
-（AC48）。
-
-**突變 A**：`marketplace_package.go` 的 mutable-ref 警告改
-`ux.Warn` → `ux.Info`
-
-紅：
-```
-$ go test ./cmd/apm-go/ -run TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning -v
-    marketplace_package_test.go:765: line " i 'HEAD' is a mutable ref. Resolving to current SHA for safety.", want it to start with " ! " (severity)
---- FAIL
-```
-綠（還原後）：`--- PASS`
-
-**突變 B**：`marketplace_package.go` 的缺 category 警告改
-`ux.Warn` → `ux.Info`
-
-紅：
-```
-$ go test ./cmd/apm-go/ -run TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds -v
-    marketplace_package_test.go:890: line " i package \"tool\" has no --category; ...", want it to start with " ! " (severity)
---- FAIL
-```
-綠（還原後）：`--- PASS`
-
-### 3b：CLI 層的 `set --ref` 沒有獨立覆蓋（REGR-B2）
-
-**根因**：round 1 的 REGR-B2 測試只呼叫 `authoring.SetPackage`（跳過 CLI 層
-的 cobra `RunE`），所以 `marketplace_package.go` 裡把 `cmd.Flags().Changed
-("ref")` 判斷弄壞（例如意外加上一個恆假條件）不會被任何既有測試看見。
-
-**修復**：新增
-`TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI`
-（`marketplace_package_test.go`），透過 `runMarketplaceCmd` 真的執行
-`package set NAME --ref v1.0.0`（cobra 的 `RunE`，不是直接呼叫 authoring
-函式），對一個真實本地 git repo fixture 斷言解析後的 SHA 被寫入 apm.yml。
-
-**突變**：`marketplace_package.go:229` 附近，
-`if cmd.Flags().Changed("ref")` → `if false && cmd.Flags().Changed("ref")`
-
-紅：
-```
-$ go test ./cmd/apm-go/ -run TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI -v
-    marketplace_package_test.go:290: apm.yml = "...source: C:/.../reporoot...\n", want the resolved SHA 5e000e51ac803d4b39fcdb7e81cc5cd63fd59d18 written for ref: (a --ref mutation at the CLI layer must not be silently ignored)
---- FAIL
-```
-綠（還原後）：`--- PASS`
-
-### 3d：39 字元合法 hex 邊界（REGR-M2）
-
-**根因**：既有邊界測試涵蓋「40 字元但含非 hex」「41 字元」「大寫」三種，
-但沒有「39 個全部合法的小寫 hex 字元」這個邊界 —— `{40}` → `{39,40}` 這種
-放寬長度下限的突變不會被上述三者任何一個抓到。
-
-**修復**：新增 `TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister`
-（`resolveref_test.go`）。
-
-**突變**：`editor.go:334`，`^[0-9a-f]{40}$` → `^[0-9a-f]{39,40}$`
-
-紅：
-```
-$ go test ./internal/marketplace/authoring/ -run TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister -v
-    resolveref_test.go:298: resolveRef = "0123456789abcdef0123456789abcdef0123456", want the resolved commit "0123456789abcdef0123456789abcdef01234567" (a 39-char string must not be treated as a concrete SHA, even if every character is valid hex)
---- FAIL
-```
-綠（還原後）：`--- PASS`
+- `editor.go`（round 2）「a second expression can no longer exist」：本輪已把
+  `noVerify` 納入 `classifyRefResolution`，這句話目前的字面意義已成立，但**不
+  再使用這種絕對收斂語氣**——改寫為客觀描述「round 2 修過一次 drift、round 3
+  又發現另一個不同的 gap（noVerify 未被納入），已修復」，不再宣稱「不可能再有
+  下一個」。見 `editor.go` `classifyRefResolution` 上方新文字。
+- `refcheck.go:98`（round 2）「relative ./ is the only shape a local source
+  takes」：這句話本身就假，`manifest.ValidateMarketplaceSource` 允許絕對路徑
+  （見 `mcp_test.go` 沒有拒絕絕對路徑的案例，以及 `refcheck_test.go` 的
+  "absolute filesystem path passes through unchanged" 案例本身就用絕對路徑
+  當本地 source）。已改寫為列舉「相對 `./...`（isLocalPackageSource 判定的
+  形狀）或絕對路徑（manifest.ValidateMarketplaceSource 同時允許）」，不再宣稱
+  只有一種形狀。
+- 本檔（round 2 版本）`:61`、`:317`、`:383` 的「已修復」「全部修復」：本輪重寫
+  時，每一項「已修復」後面都直接附紅/綠指令輸出（見上方各節），不再有裸的
+  形容詞收尾；本檔本身也不宣告「task 完成」，只宣告「以下指令跑過、結果如上」。
 
 ---
 
-## round 1 遺留的敘述句問題（本輪一併處理）
+## MAJOR — 三個一行閘門逃逸口
 
-round 1 的驗證紀錄本身在下列三處使用了缺乏證據支撐的斷言句型（本輪稽核
-指出）；本次重寫直接刪除/取代這些段落，不再保留：
+### ROUND2-B1：predictor 對 `ref != "Head"`（title case）的例外
 
-- 舊 `:125`「presentational-only concern」刪除理由「不影響理解」——沒有
-  反例佐證。本次重寫不再需要為刪除一段註解本身寫因果性論證，只客觀記錄
-  「已刪除」這件事（見上方修復對照表，不再附加無證據的動機說明）。
-- 舊 `:375`「correct fail-closed」——已被 MAJOR 2 一節推翻並附上
-  `install-marketplace-contracts.md:87` 依據 + 修復。
-- 舊 `:383`「三個阻斷全部修復」——本輪逐項列出可證偽的個別結果（見下方
-  「本輪逐項結果」），不再使用單一籠統斷言。
+修復：`TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct`
+的 `refs` 清單加入 `"Head"`；CLI 層新增
+`TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning`。
+
+突變（`WillResolveMutableRefForAdd` 內部加 `&& ref != "Head"`）：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct -v
+--- FAIL （.../ref=Head/version=.../noVerify=... 各案例全紅）
+FAIL
+```
+
+綠（還原後）：全部通過。
+
+**附註（誠實揭露架構變更的副作用）**：CLI 層現在已改用
+`resolveRef` 的 `onExplicitHeadWillResolve` hook（BLOCKING 2 的修復），
+不再直接呼叫 `WillResolveMutableRefForAdd`。所以對這個特定突變，
+`TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning`
+本身**不會**轉紅（已實測確認：套用同一個突變後這條 CLI 測試仍是綠的），
+真正抓到這個突變的是上面的交叉積測試。這條 CLI 測試存在的目的是
+獨立證明「CLI 端對 title-case Head 的端對端行為正確」，不是作為這個
+特定突變的偵測手段——兩者是不同層次的覆蓋，不應混為一談。
+
+### ROUND2-M3-CLI：CLI `set --ref` 的分支名 fixture 缺口
+
+修復：新增 `TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI`
+（fixture 用 `feature-branch`，不是 `v1.0.0`）。
+
+突變（`marketplace_package.go`：`if cmd.Flags().Changed("ref")` 改成
+`if cmd.Flags().Changed("ref") && strings.HasPrefix(ref, "v")`）：
+
+```
+$ go test ./cmd/apm-go/ -run TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI -v
+    marketplace_package_test.go:...: apm.yml = "...source: .../reporoot...\n", want the resolved SHA ... written for ref:
+--- FAIL
+```
+
+綠（還原後）：`--- PASS`，且既有的 `v1.0.0` fixture 測試同時保持綠燈。
+
+### ROUND2-M3-SEVERITY：嚴重程度閘門只 `-list`、從未 `-run`
+
+修復：`verify.ps1` 的 `ROUND2-M3-SEVERITY` 區塊改成先 `-list` 證明匹配非零，
+再實際 `-run` 兩條宿主測試並驗 exit code（原本只做前半段）。
+
+驗證 `t.Skip` 確實會被新版本抓到（PRD 明講 `t.Skip` 不算通過）：
+
+```
+$ go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning' 2>&1 | grep '^Test'
+TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning
+$ go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning' -v 2>&1 | tail -3
+--- PASS: TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning (0.30s)
+PASS
+```
+
+（`-list` 對一個改成 `t.Skip()` 的測試體一樣會列出名字、非零匹配；只有
+`-run` 才會顯示 `--- SKIP` 而非 `--- PASS`，`Exec` 函式驗的是 exit code，
+`go test` 對只含 skip、沒有失敗的套件仍回傳 exit 0 —— 所以這裡的把關其實
+是「run 起來、看得到 PASS 而非 SKIP」這件事本身在 CI 紀錄裡可稽核，
+而不是單靠 exit code 就能自動擋下 `t.Skip`。這是本輪誠實記錄的限制，
+不誇大這個閘門的偵測力。）
 
 ---
 
-## 本輪逐項結果（可證偽，取代舊版 `:383` 的籠統陳述）
+## MINOR — `filepath.Abs` 綁定 process cwd、不是 `dir` 參數
 
-| 項目 | 狀態 | 證據 |
+**選擇：文件化耦合，不重構簽名。**
+
+`SetPackage`/`AddPackage` 的 `dir` 參數只用來定位/編輯設定檔
+（`locateEditableConfig`/`LoadAuthoringConfig`），ref 解析路徑
+（`lister.ListRefs` → `gitRefLister.ListRefs` → `resolveCloneURL`）解析
+相對本地 source 時一律用 `os.Getwd()`，與 `dir` 無關。
+
+今天唯一安全的原因：兩個生產呼叫點都傳 `"."`
+（`cmd/apm-go/marketplace_package.go:171`、`:251`），且呼叫端從未在呼叫前
+`os.Chdir()` 到別的目錄——`dir` 與 `os.Getwd()` 因此重合，但這只是巧合，
+不是簽名保證的契約。已在 `editor.go` 的 `SetPackage` doc comment 明確寫出
+這個耦合與兩個呼叫點的檔案行號，供未來新增呼叫端時能讀到警告。**未重構
+`resolveRef`/`RefLister` 介面把 `dir` 顯式傳入**——這會牽動
+`internal/marketplace/build` 另一份 `RefLister` 實作與所有既有呼叫端的
+簽名，超出本輪三個阻斷 + 三個逃逸口的範圍，且沒有現存呼叫端會觸發這個
+陷阱；若未來新增一個不在 `"."` 呼叫的呼叫端，這是需要重新評估的時間點。
+
+---
+
+## verify.ps1 新增的閘門（round 3）
+
+- `ROUND3-B1-MANIFEST` — `TestValidateMarketplaceSource`（`-run`，manifest 套件）
+- `ROUND3-B1-RESOLVECLONEURL` — `TestResolveCloneURL`（`-run`，authoring 套件）
+- `ROUND3-B2-UNIT` — 4 個 `onExplicitHeadWillResolve` 單元測試（`-run`）
+- `ROUND3-B2-CLI` — 4 個 CLI 端對端「不早印警告」測試（`-run`）
+- `ROUND3-MAJOR-HEADMIXEDCASE` — CLI 層 title-case Head 測試（`-run`）
+- `ROUND2-M3-CLI` 擴充為 2 個測試（tag fixture + branch fixture），兩者都 `-run`
+- `ROUND2-M3-SEVERITY` 從純 `-list` 改為 `-list` 後再 `-run`
+
+---
+
+## 本輪逐項結果
+
+| 項目 | 狀態 | 證據位置 |
 |---|---|---|
-| BLOCKING 1（分類器共用） | 已修復 | 上方「BLOCKING 1」節：紅/綠 + 交叉積測試 20 案例全綠 |
-| MAJOR 1（local 一般 mutable ref） | 已修復 | 上方「MAJOR 1」節：紅（panic）/綠 |
-| MAJOR 2（相對路徑本地 source） | 已修復 | 上方「MAJOR 2」節：紅（真實 404 網路請求）/綠 + 3 個新測試 |
-| MAJOR 3a（REGR-B1 severity） | 已修復 | 上方「MAJOR 3」節突變 A：紅/綠 |
-| MAJOR 3b（REGR-B2 CLI 層） | 已修復 | 上方「MAJOR 3」節：紅/綠 + CLI 層新測試 |
-| MAJOR 3c（REGR-M1 severity） | 已修復 | 上方「MAJOR 3」節突變 B：紅/綠 |
-| MAJOR 3d（REGR-M2 39 字元） | 已修復 | 上方「MAJOR 3」節：紅/綠 |
-
----
-
-## verify.ps1 新增的閘門
-
-- `ROUND2-B1` — BLOCKING 1 交叉積回歸測試存在且通過
-- `ROUND2-M1` — MAJOR 1 local-ordinary-mutable-ref 回歸測試存在且通過
-- `ROUND2-M2` — MAJOR 2 相對路徑本地 source（production lister）回歸測試存在且通過（2 個）
-- `ROUND2-M3-CLI` — MAJOR 3 CLI 層 `set --ref` 回歸測試存在且通過
-- `ROUND2-M3-39CHAR` — MAJOR 3 39 字元邊界回歸測試存在且通過
-- `ROUND2-M3-SEVERITY` — MAJOR 3 嚴重程度斷言宿主測試存在（-list 非零）
-- `localBranches` 表新增 `OrdinaryMutableRef` 項（AC21 既有迴圈的一部分）
+| BLOCKING 1（Windows 路徑遍歷，兩層） | 已修復，紅/綠證據俱在 | 上方「BLOCKING 1」節 |
+| BLOCKING 2（noVerify 分類器 + CLI 時序） | 已修復，紅/綠證據俱在 | 上方「BLOCKING 2」節 |
+| BLOCKING 3（句型違規 3 處） | 已改寫 | 上方「BLOCKING 3」節 |
+| MAJOR ROUND2-B1（Head title case） | 已修復，紅/綠證據俱在 | 上方「MAJOR」節 |
+| MAJOR ROUND2-M3-CLI（分支名 fixture） | 已修復，紅/綠證據俱在 | 上方「MAJOR」節 |
+| MAJOR ROUND2-M3-SEVERITY（真的 -run） | 已修復 | 上方「MAJOR」節 |
+| MINOR（dir vs cwd 耦合） | 文件化，未重構 | 上方「MINOR」節，理由已附 |
 
 ---
 
@@ -342,7 +354,7 @@ round 1 的驗證紀錄本身在下列三處使用了缺乏證據支撐的斷言
 $ go build ./...   → exit 0
 $ go vet ./...     → exit 0
 $ go test ./... -count=1                    → 全綠（23 個套件）
-$ go test ./... -count=1 -coverprofile=...  → total 87.0%（≥ 80% 門檻）
+$ git diff -- go.mod; git diff --cached -- go.mod   → 皆為空輸出（無新 require）
 ```
 
 ```
@@ -368,6 +380,11 @@ $ pwsh -NoProfile -File .trellis/tasks/07-29-marketplace-add-fixes/verify.ps1
   ok   [ROUND2-M3-CLI]
   ok   [ROUND2-M3-39CHAR]
   ok   [ROUND2-M3-SEVERITY]
+  ok   [ROUND3-B1-MANIFEST]
+  ok   [ROUND3-B1-RESOLVECLONEURL]
+  ok   [ROUND3-B2-UNIT]
+  ok   [ROUND3-B2-CLI]
+  ok   [ROUND3-MAJOR-HEADMIXEDCASE]
   ok   [AC53/no-clack]
   ok   [AC53/no-block]
   ok   [AC-L9]
@@ -380,7 +397,10 @@ TIER 1 GREEN
 
 ## 未處理 / 交由使用者裁定
 
-無新的「延後」項目。BLOCKING 1、MAJOR 1、MAJOR 2、MAJOR 3（四子項）皆已
-修復並附紅/綠證據，且每一項都用報告點名的確切突變驗證過。
+無新的「延後」項目 — MINOR 的處理方式（文件化而非重構）已在上方附成本理由
+（會牽動 `internal/marketplace/build` 的另一份 `RefLister` 實作與所有既有
+呼叫端簽名），不是無證據的擱置。
 
-`task.py finish` 未執行；本輪仍需外部（或使用者）覆核後才算收斂。
+`task.py finish` 未執行；本輪仍需外部（或使用者）覆核後才算收斂 —— 本檔的
+「已修復」只代表 implementer 本地跑過上述指令且輸出如上，**不等於外部驗證
+通過**。

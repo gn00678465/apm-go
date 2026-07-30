@@ -522,6 +522,13 @@ func TestValidateMarketplaceSource(t *testing.T) {
 		{"", "empty"},
 		{"../escape", ".."},
 		{"./packages/../../../etc/passwd", ".."},
+		// BLOCKING 1 (external audit round 3, 2026-07-30): a "\\"-style
+		// traversal segment must be rejected too, not just "/"-style --
+		// the original check only ever split on "/", so this slipped
+		// through and later got resolved to a real, escaping path by
+		// authoring's resolveCloneURL (refcheck.go).
+		{`./..\..\outside`, ".."},
+		{`./sub\..\..\outside`, ".."},
 		{"http://example.com/repo", "https://"},
 		{"ftp://example.com/repo", "https://"},
 		{"https://user@example.com/repo", "userinfo"},

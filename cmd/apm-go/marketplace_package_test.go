@@ -291,6 +291,46 @@ func TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI(t *testing.T)
 	}
 }
 
+// TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI is
+// MAJOR (external audit round 3, 2026-07-30, ROUND2-M3-CLI)'s missing
+// branch-name fixture: every existing CLI `set --ref` fixture used a tag
+// value starting with "v" ("v1.0.0"), so a mutation narrowing the CLI's own
+// `cmd.Flags().Changed("ref")` guard to
+// `cmd.Flags().Changed("ref") && strings.HasPrefix(ref, "v")` (silently
+// ignoring any --ref value that is NOT tag-shaped, e.g. an ordinary branch
+// name) would still pass every existing test here. This drives `package set
+// --ref <branch-name>` (not a tag) through the real CLI against a real git
+// branch.
+func TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	gitCmd(t, repoDir, "branch", "feature-branch")
+	source := filepath.ToSlash(repoDir)
+	wantSHA := gitCmd(t, repoDir, "rev-parse", "feature-branch")
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: " + source + "\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "set", "tool", "--ref", "feature-branch")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package set tool --ref feature-branch returned error: %v", err)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(data), "ref: "+wantSHA) {
+		t.Errorf("apm.yml = %q, want the resolved SHA %s written for ref: (a non-tag-shaped --ref value must not be silently ignored at the CLI layer)", string(data), wantSHA)
+	}
+}
+
 // ── C10: EOF/non-interactive confirm read must never read as "declined" ──
 
 // TestMarketplacePackageRemove_LooksInteractiveButEOF_RequiresYesAndDoesNotRemove
@@ -797,6 +837,143 @@ func TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning(t
 	}
 	if strings.Contains(string(data), "ref:") {
 		t.Errorf("apm.yml = %q, want no ref: written for a local source", string(data))
+	}
+}
+
+// TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning
+// is MAJOR (external audit round 3, 2026-07-30, ROUND2-B1)'s missing
+// mixed-case CLI fixture: every existing CLI mutable-ref-warning test used
+// literal "HEAD" only, so a predictor mutation carving out an exception for
+// title-case "Head" (e.g. `... == refKindHead && ref != "Head"`) would still
+// pass. This drives `--ref Head` (title case) through the real CLI.
+func TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	source := filepath.ToSlash(repoDir)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", source, "--ref", "Head")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add --ref Head returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "'HEAD' is a mutable ref. Resolving to current SHA for safety.") {
+		t.Errorf("output = %q, want the mutable-ref warning for a mixed-case 'Head'", out)
+	}
+}
+
+// ── BLOCKING 2 (external audit round 3, 2026-07-30): the mutable-ref
+// warning must print only immediately before resolveRef's real HEAD
+// resolution, never before AddPackage's other pre-flight checks have run.
+// Each test below combines an explicit --ref HEAD with a reason AddPackage
+// is about to fail (or, for --no-verify, a reason resolution itself is
+// impossible) for a completely unrelated cause, and asserts the warning
+// text is ABSENT from the output -- reproducing the live-binary finding
+// that `add owner/repo --ref HEAD --no-verify` against a directory with no
+// marketplace config printed the warning before erroring on "no marketplace
+// authoring config found". ──────────────────────────────────────────────
+
+func TestMarketplacePackageAdd_ExplicitRefHead_NoVerify_NoMutableRefWarning_ExitsCode2(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", "owner/repo", "--ref", "HEAD", "--no-verify")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected package add --ref HEAD --no-verify to error (HEAD cannot be resolved offline)")
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+	if !strings.Contains(err.Error(), "Cannot resolve HEAD ref without network access. Provide an explicit --ref SHA.") {
+		t.Errorf("err = %v, want the exact upstream-parity offline message", err)
+	}
+	if strings.Contains(out, "mutable ref") {
+		t.Errorf("output = %q, want NO mutable-ref warning: --no-verify makes HEAD resolution impossible, so the warning must never print", out)
+	}
+}
+
+func TestMarketplacePackageAdd_ExplicitRefHead_MissingConfig_NoMutableRefWarning(t *testing.T) {
+	// Arrange: chdirTemp with no apm.yml written at all -- AddPackage must
+	// fail at LoadAuthoringConfig, before ever reaching resolveRef.
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	source := filepath.ToSlash(repoDir)
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", source, "--ref", "HEAD")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected package add with no marketplace config present to error")
+	}
+	if strings.Contains(out, "mutable ref") {
+		t.Errorf("output = %q, want NO mutable-ref warning: the command fails before AddPackage ever reaches ref resolution", out)
+	}
+}
+
+func TestMarketplacePackageAdd_ExplicitRefHead_UnreachableSource_NoMutableRefWarning(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	notARepo := filepath.Join(t.TempDir(), "not-a-repo")
+	if err := os.MkdirAll(notARepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", filepath.ToSlash(notARepo), "--ref", "HEAD")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected package add against an unreachable source to error")
+	}
+	if strings.Contains(out, "mutable ref") {
+		t.Errorf("output = %q, want NO mutable-ref warning: verifyPackageSource fails before AddPackage ever reaches ref resolution", out)
+	}
+}
+
+func TestMarketplacePackageAdd_ExplicitRefHead_DuplicateName_NoMutableRefWarning(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	source := filepath.ToSlash(repoDir)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: --name tool collides with the existing "tool" entry.
+	out, err := runMarketplaceCmd(t, "package", "add", source, "--ref", "HEAD", "--name", "tool")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected a duplicate package name to error")
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+	if strings.Contains(out, "mutable ref") {
+		t.Errorf("output = %q, want NO mutable-ref warning: the duplicate-name check fails before AddPackage ever reaches ref resolution", out)
 	}
 }
 

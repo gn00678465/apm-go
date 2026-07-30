@@ -208,10 +208,10 @@ if ($listed.Count -lt 2) { Fail 'ROUND2-M2' "MAJOR 2 相對路徑回歸測試 -l
 
 # ---- ROUND2-MAJOR3：四個一行逃逸口 -- 警告嚴重程度（非只 grep 訊息文字）、
 # CLI 層的 `set --ref` 覆蓋（非只呼叫 authoring 層）、39 字元合法 hex 邊界 ----
-$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI' 2>&1 | Where-Object { $_ -match '^Test' })
-if ($listed.Count -eq 0) { Fail 'ROUND2-M3-CLI' 'MAJOR 3 的 CLI 層 set --ref 回歸測試不存在（-list 零匹配）' } else {
+$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI|TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 2) { Fail 'ROUND2-M3-CLI' "MAJOR 3 的 CLI 層 set --ref 回歸測試 -list 只匹配 $($listed.Count) 個，需要 2 個（含 round-3 補的分支名 fixture，見 ROUND3-MAJOR-BRANCHFIXTURE 註記）" } else {
   $before = $script:fails.Count
-  $null = Exec 'ROUND2-M3-CLI' "go test -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI' }
+  $null = Exec 'ROUND2-M3-CLI' "go test -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI|TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI|TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI' }
   if ($script:fails.Count -eq $before) { Pass 'ROUND2-M3-CLI' }
 }
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister' 2>&1 | Where-Object { $_ -match '^Test' })
@@ -220,12 +220,64 @@ if ($listed.Count -eq 0) { Fail 'ROUND2-M3-39CHAR' 'MAJOR 3 的 39 字元邊界�
   $null = Exec 'ROUND2-M3-39CHAR' "go test -run 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister' }
   if ($script:fails.Count -eq $before) { Pass 'ROUND2-M3-39CHAR' }
 }
-# 嚴重程度斷言本身就在 TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning
-# 與 TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds
-# 內部（assertLineSeverity），這兩條已經是 AC19/AC48 既有閘門的一部分，
-# 本節只額外用 -list 證明它們仍然存在，避免被誤刪。
+# ROUND3-MAJOR-SEVERITY（外部稽核第三輪，2026-07-30）：PRD 明講 t.Skip 不算
+# 通過，而先前這個閘門只 -list、從不 -run -- 一個把測試體改成 t.Skip() 的突變
+# 會讓 -list 依舊非零、卻永遠不會被本閘門的 exit code 檢查逮到。改成真的 -run。
 $listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning|TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds' 2>&1 | Where-Object { $_ -match '^Test' })
-if ($listed.Count -lt 2) { Fail 'ROUND2-M3-SEVERITY' "MAJOR 3 的嚴重程度斷言宿主測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else { Pass 'ROUND2-M3-SEVERITY' }
+if ($listed.Count -lt 2) { Fail 'ROUND2-M3-SEVERITY' "MAJOR 3 的嚴重程度斷言宿主測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND2-M3-SEVERITY' "go test -run 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning|TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning|TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M3-SEVERITY' }
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# Round 3（外部稽核第三輪，2026-07-30）：BLOCKING 1（Windows 路徑逃逸的兩層
+# 防禦）、BLOCKING 2（noVerify 進分類器 + CLI 警告時序）、MAJOR（Head 混合
+# 大小寫、分支名 fixture、嚴重程度閘門真的 -run）的閘門
+# ════════════════════════════════════════════════════════════════════════
+
+# ---- ROUND3-BLOCKING1-MANIFEST：ValidateMarketplaceSource 必須同時擋
+# "/" 與 "\" 形式的 '..' 逃逸（Windows 相對路徑遍歷） ----
+$listed = @(& go test ./internal/manifest/ -list 'TestValidateMarketplaceSource' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND3-B1-MANIFEST' 'BLOCKING 1 manifest 層回歸測試不存在（-list 零匹配）' } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND3-B1-MANIFEST' "go test -run 'TestValidateMarketplaceSource'" { go test ./internal/manifest/ -run 'TestValidateMarketplaceSource' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND3-B1-MANIFEST' }
+}
+
+# ---- ROUND3-BLOCKING1-RESOLVECLONEURL：resolveCloneURL 自己的第二層邊界
+# 檢查（即使 manifest 層被繞過，解析出的絕對路徑逃出 cwd 也必須被拒絕）----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveCloneURL' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND3-B1-RESOLVECLONEURL' 'BLOCKING 1 resolveCloneURL 回歸測試不存在（-list 零匹配）' } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND3-B1-RESOLVECLONEURL' "go test -run 'TestResolveCloneURL'" { go test ./internal/marketplace/authoring/ -run 'TestResolveCloneURL' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND3-B1-RESOLVECLONEURL' }
+}
+
+# ---- ROUND3-BLOCKING2：mutable-ref 警告必須綁在 resolveRef 實際要解析
+# HEAD 的那一刻（onExplicitHeadWillResolve hook），不得在 AddPackage 任何
+# 前置檢查失敗前就先印 -- 涵蓋 resolveRef 單元層與 CLI 端對端兩層 ----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_ExplicitHead_InvokesOnExplicitHeadWillResolve|TestResolveRef_ImplicitHead_DoesNotInvokeOnExplicitHeadWillResolve|TestResolveRef_NoVerify_ExplicitHead_DoesNotInvokeOnExplicitHeadWillResolve|TestResolveRef_LocalSource_ExplicitHead_DoesNotInvokeOnExplicitHeadWillResolve' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 4) { Fail 'ROUND3-B2-UNIT' "BLOCKING 2 的 resolveRef 單元層回歸測試 -list 只匹配 $($listed.Count) 個，需要 4 個" } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND3-B2-UNIT' "go test -run 'TestResolveRef_.*OnExplicitHeadWillResolve'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_.*OnExplicitHeadWillResolve' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND3-B2-UNIT' }
+}
+$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_ExplicitRefHead_NoVerify_NoMutableRefWarning_ExitsCode2|TestMarketplacePackageAdd_ExplicitRefHead_MissingConfig_NoMutableRefWarning|TestMarketplacePackageAdd_ExplicitRefHead_UnreachableSource_NoMutableRefWarning|TestMarketplacePackageAdd_ExplicitRefHead_DuplicateName_NoMutableRefWarning' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 4) { Fail 'ROUND3-B2-CLI' "BLOCKING 2 的 CLI 端對端回歸測試 -list 只匹配 $($listed.Count) 個，需要 4 個" } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND3-B2-CLI' "go test -run 'TestMarketplacePackageAdd_ExplicitRefHead_(NoVerify|MissingConfig|UnreachableSource|DuplicateName)_.*NoMutableRefWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_(NoVerify|MissingConfig|UnreachableSource|DuplicateName)_.*NoMutableRefWarning' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND3-B2-CLI' }
+}
+
+# ---- ROUND3-MAJOR-HEADMIXEDCASE（ROUND2-B1 的存活突變修補）：CLI 層也要
+# 有一個 title-case "Head" 的 fixture，不只交叉積測試 ----
+$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND3-MAJOR-HEADMIXEDCASE' 'CLI 層 title-case Head 回歸測試不存在（-list 零匹配）' } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND3-MAJOR-HEADMIXEDCASE' "go test -run 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND3-MAJOR-HEADMIXEDCASE' }
+}
 
 # ---- AC53：回歸閘門 —— marketplace init 必須維持非互動（D13） ----
 # 防止實作 plugin-init 時順手把 clack 帶進 marketplace init。

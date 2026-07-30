@@ -255,8 +255,18 @@ func ValidateMarketplaceSource(source string) error {
 		return fmt.Errorf("marketplace source is empty")
 	}
 
-	// (a) reject .. segments
-	for _, seg := range strings.Split(source, "/") {
+	// (a) reject .. segments. Both "/" and "\" are treated as separators
+	// before splitting: a forward-slash-only split lets a Windows-style
+	// "..\" segment (e.g. "./..\\..\\outside") slip through unrejected on
+	// any OS, since Go source-code string literals don't get OS-specific
+	// separator translation the way filepath does (BLOCKING 1, external
+	// audit round 3, 2026-07-30). This is one of two independent layers:
+	// see authoring/refcheck.go's resolveCloneURL for the second (a
+	// resolved-path-stays-within-root check), required because this
+	// segment-level check alone cannot catch every OS-specific escape a
+	// downstream path-joining call might construct.
+	normalizedSource := strings.ReplaceAll(source, "\\", "/")
+	for _, seg := range strings.Split(normalizedSource, "/") {
 		if seg == ".." {
 			return fmt.Errorf("marketplace source %q contains '..' path segment", source)
 		}

@@ -409,7 +409,11 @@ func TestResolveCloneURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveCloneURL(tt.source); got != tt.source {
+			got, err := resolveCloneURL(tt.source)
+			if err != nil {
+				t.Fatalf("resolveCloneURL(%q) returned error: %v", tt.source, err)
+			}
+			if got != tt.source {
 				t.Errorf("resolveCloneURL(%q) = %q, want unchanged", tt.source, got)
 			}
 		})
@@ -417,14 +421,22 @@ func TestResolveCloneURL(t *testing.T) {
 
 	t.Run("absolute filesystem path passes through", func(t *testing.T) {
 		abs := filepath.Join(t.TempDir(), "repo")
-		if got := resolveCloneURL(abs); got != abs {
+		got, err := resolveCloneURL(abs)
+		if err != nil {
+			t.Fatalf("resolveCloneURL(%q) returned error: %v", abs, err)
+		}
+		if got != abs {
 			t.Errorf("resolveCloneURL(%q) = %q, want unchanged", abs, got)
 		}
 	})
 
 	t.Run("owner/repo shorthand expands against github.com", func(t *testing.T) {
 		want := "https://github.com/owner/repo.git"
-		if got := resolveCloneURL("owner/repo"); got != want {
+		got, err := resolveCloneURL("owner/repo")
+		if err != nil {
+			t.Fatalf("resolveCloneURL(owner/repo) returned error: %v", err)
+		}
+		if got != want {
 			t.Errorf("resolveCloneURL(owner/repo) = %q, want %q", got, want)
 		}
 	})
@@ -437,8 +449,57 @@ func TestResolveCloneURL(t *testing.T) {
 		parent := t.TempDir()
 		chdirTo(t, parent)
 		want := filepath.Join(parent, "repo")
-		if got := resolveCloneURL("./repo"); got != want {
+		got, err := resolveCloneURL("./repo")
+		if err != nil {
+			t.Fatalf("resolveCloneURL(./repo) returned error: %v", err)
+		}
+		if got != want {
 			t.Errorf("resolveCloneURL(./repo) = %q, want %q (the local cwd-relative path, not a GitHub shorthand expansion)", got, want)
+		}
+	})
+
+	// BLOCKING 1 (external audit round 3, 2026-07-30): a relative local
+	// source whose "." segments resolve to a path outside the project
+	// root (cwd) must be rejected here too -- layer 2's defense-in-depth
+	// partner to manifest.ValidateMarketplaceSource's segment-level "..'
+	// reject (mcp.go). Regression-tests the exact Windows-style bypass
+	// the audit reproduced: "./..\\..\\outside" used to slip past a
+	// forward-slash-only ".." split and then resolve to a real,
+	// escaping path here.
+	t.Run("relative local source escaping cwd via backslash traversal is rejected", func(t *testing.T) {
+		parent := t.TempDir()
+		project := filepath.Join(parent, "project")
+		if err := os.Mkdir(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		chdirTo(t, project)
+		if _, err := resolveCloneURL(`./..\..\outside`); err == nil {
+			t.Fatal("resolveCloneURL(`./..\\..\\outside`) = nil error, want a rejection (path escapes the project root)")
+		}
+	})
+
+	t.Run("relative local source escaping cwd via forward-slash traversal is rejected", func(t *testing.T) {
+		parent := t.TempDir()
+		project := filepath.Join(parent, "project")
+		if err := os.Mkdir(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		chdirTo(t, project)
+		if _, err := resolveCloneURL("./../../outside"); err == nil {
+			t.Fatal("resolveCloneURL(./../../outside) = nil error, want a rejection (path escapes the project root)")
+		}
+	})
+
+	t.Run("relative local source staying within cwd is accepted", func(t *testing.T) {
+		parent := t.TempDir()
+		chdirTo(t, parent)
+		want := filepath.Join(parent, "normal")
+		got, err := resolveCloneURL("./normal")
+		if err != nil {
+			t.Fatalf("resolveCloneURL(./normal) returned error: %v", err)
+		}
+		if got != want {
+			t.Errorf("resolveCloneURL(./normal) = %q, want %q", got, want)
 		}
 	})
 }

@@ -125,25 +125,6 @@ func marketplacePackageAddCmd() *cobra.Command {
 			if cmd.Flags().Changed("version") && cmd.Flags().Changed("ref") {
 				return withExitCode(2, errVersionRefMutuallyExclusive)
 			}
-			// R5/AC19: an explicit `--ref HEAD` (any case) additionally
-			// warns that HEAD is a mutable ref, printed before resolution
-			// is even attempted -- mirroring upstream's plugin/__init__.py
-			// _resolve_ref ordering. authoring.WillResolveMutableRefForAdd
-			// mirrors resolveRef's own early-return branches (a --version
-			// range, or mkt-046's local-source short-circuit) so this
-			// warning only prints when AddPackage's resolveRef call will
-			// actually reach the network-resolving HEAD branch.
-			//
-			// BLOCKING 1 (external audit, 2026-07-30): before this fix, the
-			// warning printed off of `ref == "HEAD"` alone --
-			// `marketplace package add ./localpkg --ref HEAD` printed
-			// "Resolving to current SHA for safety" even though a local
-			// source is never resolved at all (see
-			// TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning).
-			if cmd.Flags().Changed("ref") && strings.EqualFold(ref, "HEAD") &&
-				authoring.WillResolveMutableRefForAdd(args[0], ref, version) {
-				ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
-			}
 			// R10/AC48: outputs: codex without --category would otherwise
 			// leave the added package unable to ever `pack` a codex
 			// output (mkt-053's CategoryRequiredError) with no CLI-level
@@ -161,6 +142,31 @@ func marketplacePackageAddCmd() *cobra.Command {
 				IncludePrerelease: includePrerelease,
 				NoVerify:          noVerify,
 				Category:          category,
+				// R5/AC19: an explicit `--ref HEAD` (any case) additionally
+				// warns that HEAD is a mutable ref, printed right before
+				// resolution is actually attempted -- mirroring upstream's
+				// plugin/__init__.py _resolve_ref ordering. resolveRef only
+				// invokes this hook once every other AddPackage pre-flight
+				// step has already passed and classifyRefResolution has
+				// confirmed noVerify does not block resolution (see
+				// resolveRef's own doc comment).
+				//
+				// BLOCKING 2 (external audit round 3, 2026-07-30): this used
+				// to be decided by calling authoring.WillResolveMutableRefForAdd
+				// BEFORE ever invoking AddPackage at all, so it printed even
+				// when AddPackage was about to fail outright for an
+				// unrelated reason (a missing config, an unreachable
+				// source, a duplicate name), or when --no-verify made HEAD
+				// resolution impossible (reproduced live: `add owner/repo
+				// --ref HEAD --no-verify` against a directory with no
+				// marketplace config printed the warning, then exited 2 on
+				// "no marketplace authoring config found"). Wiring the
+				// warning through this hook instead makes that
+				// structurally impossible, without hand-duplicating
+				// AddPackage's pre-flight order here.
+				OnExplicitHeadWillResolve: func() {
+					ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
+				},
 			}
 			resolved, fallbackUsed, err := authoring.AddPackage(".", args[0], opts, authoring.DefaultRefLister)
 			if err != nil {

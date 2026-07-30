@@ -356,9 +356,24 @@ const (
 	// SHA) -- stored as-is, no lister call.
 	refKindVerbatim
 	// refKindHead: ref is "" (implicit) or case-insensitively "HEAD"
-	// (explicit) -- resolveRef must call lister.ListRefs and search its
-	// result for a "HEAD" entry (or fail offline under --no-verify).
+	// (explicit), and network resolution is actually possible (noVerify is
+	// false) -- resolveRef must call lister.ListRefs and search its result
+	// for a "HEAD" entry.
 	refKindHead
+	// refKindHeadOffline: same ref shape as refKindHead, but noVerify is
+	// true -- resolution is impossible without a network call that
+	// --no-verify explicitly forbids, so resolveRef must fail with
+	// errCannotResolveHeadOffline instead of ever reaching the lister.
+	// Split out as its own kind (rather than a noVerify check the caller
+	// performs after seeing refKindHead) so this is decided in exactly one
+	// place: BLOCKING 2 (external audit round 3, 2026-07-30) found that
+	// classifyRefResolution not taking noVerify into account at all let an
+	// explicit `--ref HEAD --no-verify` be classified as refKindHead (i.e.
+	// "will resolve"), which caused a caller predicting off of that
+	// classification (WillResolveMutableRefForAdd) to say a mutable-ref
+	// warning should print even though resolveRef was about to hard-fail
+	// offline instead.
+	refKindHeadOffline
 	// refKindNamed: ref is an ordinary tag/branch name -- resolveRef must
 	// call lister.ListRefs and search its result for an exact name match.
 	refKindNamed
@@ -369,19 +384,20 @@ const (
 // never touches the network" contract breaks), extracted into its own pure
 // function with no lister I/O.
 //
-// BLOCKING 1 (external audit round 2, 2026-07-30): before this refactor,
-// WillResolveMutableRefForAdd hand-restated resolveRef's first two
-// early-return branches (a --version range, and mkt-046's local-source
-// short-circuit) as a second, independent expression of this same decision,
-// instead of calling into resolveRef's own logic -- and it had already
-// silently omitted the concrete-SHA branch (originally branch 4) entirely.
-// The two answers still happened to agree only because a 40-hex SHA is
-// never case-insensitively equal to "" or "HEAD" (`git grep -n
-// WillResolveMutableRefForAdd -- '*test.go'` found zero hits: nothing
-// locked the two decisions together, so nothing would have caught a future
-// drift). classifyRefResolution is now the one function resolveRef and
-// WillResolveMutableRefForAdd both call -- a second restatement of this
-// decision can no longer exist. See resolveref_test.go's
+// classifyRefResolution is the one function resolveRef and
+// WillResolveMutableRefForAdd both call, rather than each restating this
+// decision by hand -- BLOCKING 1 (external audit round 2, 2026-07-30) found
+// WillResolveMutableRefForAdd had drifted from resolveRef's actual branches
+// once before (it silently omitted the concrete-SHA branch), and nothing
+// caught that drift because nothing locked the two decisions together. This
+// does not make future drift impossible in an absolute sense -- BLOCKING 2
+// (external audit round 3, 2026-07-30) found a second, different gap here:
+// this function did not take noVerify as an input at all, so an explicit
+// `--ref HEAD --no-verify` was classified as refKindHead ("will resolve")
+// when resolveRef would actually hard-fail offline before ever reaching the
+// lister. Fixed by adding noVerify as a parameter and a dedicated
+// refKindHeadOffline result (see that constant's own doc comment). See
+// resolveref_test.go's
 // TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct for
 // the cross-product test this enables.
 //
@@ -393,17 +409,18 @@ const (
 //     set)" with no local-source exemption -- SetPackage passes
 //     skipLocalSource=false so an explicit `set --ref` on a local package
 //     still resolves via lister.ListRefs like any other source (BLOCKING 2,
-//     external audit 2026-07-30: the add-only short-circuit used to apply
-//     unconditionally here, silently clearing an explicitly-given --ref on
-//     a local package back to "").
+//     external audit round 2, 2026-07-30: the add-only short-circuit used to
+//     apply unconditionally here, silently clearing an explicitly-given
+//     --ref on a local package back to "").
 //  3. implicitHeadOnEmpty == false and ref == "" -> refKindNone (SetPackage's
 //     call, which only ever resolves a ref the caller explicitly gave, and
 //     must not treat an unrelated field update as an implicit-HEAD pin).
 //  4. ref is already a concrete 40-hex SHA -> refKindVerbatim.
-//  5. ref == "" (implicit) or ref case-insensitively "HEAD" (explicit) ->
-//     refKindHead.
-//  6. otherwise (a tag/branch name) -> refKindNamed.
-func classifyRefResolution(source, ref, version string, implicitHeadOnEmpty, skipLocalSource bool) refResolutionKind {
+//  5. ref == "" (implicit) or ref case-insensitively "HEAD" (explicit), and
+//     noVerify is false -> refKindHead.
+//  6. same ref shape as 5, but noVerify is true -> refKindHeadOffline.
+//  7. otherwise (a tag/branch name) -> refKindNamed.
+func classifyRefResolution(source, ref, version string, noVerify, implicitHeadOnEmpty, skipLocalSource bool) refResolutionKind {
 	if version != "" {
 		return refKindNone
 	}
@@ -417,6 +434,9 @@ func classifyRefResolution(source, ref, version string, implicitHeadOnEmpty, ski
 		return refKindVerbatim
 	}
 	if ref == "" || strings.EqualFold(ref, "HEAD") {
+		if noVerify {
+			return refKindHeadOffline
+		}
 		return refKindHead
 	}
 	return refKindNamed
@@ -427,15 +447,35 @@ func classifyRefResolution(source, ref, version string, implicitHeadOnEmpty, ski
 // applies, then this function performs the corresponding lister I/O (if
 // any) and returns the resolved ref (or an error, per AC18's exit-2 offline
 // case, or a lister/not-found failure).
-func resolveRef(source, ref, version string, lister RefLister, noVerify, implicitHeadOnEmpty, skipLocalSource bool) (string, error) {
-	switch classifyRefResolution(source, ref, version, implicitHeadOnEmpty, skipLocalSource) {
+//
+// onExplicitHeadWillResolve, when non-nil, is invoked immediately before (and
+// only immediately before) the refKindHead branch performs its actual
+// lister.ListRefs call for an EXPLICITLY-given "HEAD"/"head" ref (ref != "").
+// It is add's own R5/AC19 mutable-ref-warning hook (AddPackage wires
+// AddOptions.OnExplicitHeadWillResolve here; SetPackage passes nil, since
+// `set` prints no such warning). BLOCKING 2 (external audit round 3,
+// 2026-07-30): the CLI used to decide whether to print this warning BEFORE
+// ever calling AddPackage at all (via a standalone WillResolveMutableRefForAdd
+// prediction), so it printed even when AddPackage was about to fail for an
+// unrelated reason entirely -- a missing config, an unreachable source, a
+// duplicate name, or (compounding classifyRefResolution's own noVerify gap
+// above) an offline HEAD resolution that was about to hard-fail anyway.
+// Invoking the warning from exactly the call site that is about to perform
+// the real resolution -- after every one of AddPackage's other pre-flight
+// checks has already run and succeeded -- makes it structurally impossible
+// for the warning to print on any of those paths, without hand-duplicating
+// AddPackage's own pre-flight order in the CLI.
+func resolveRef(source, ref, version string, lister RefLister, noVerify, implicitHeadOnEmpty, skipLocalSource bool, onExplicitHeadWillResolve func()) (string, error) {
+	switch classifyRefResolution(source, ref, version, noVerify, implicitHeadOnEmpty, skipLocalSource) {
 	case refKindNone:
 		return "", nil
 	case refKindVerbatim:
 		return ref, nil
+	case refKindHeadOffline:
+		return "", errCannotResolveHeadOffline
 	case refKindHead:
-		if noVerify {
-			return "", errCannotResolveHeadOffline
+		if ref != "" && onExplicitHeadWillResolve != nil {
+			onExplicitHeadWillResolve()
 		}
 		refs, err := lister.ListRefs(source)
 		if err != nil {
@@ -462,20 +502,29 @@ func resolveRef(source, ref, version string, lister RefLister, noVerify, implici
 }
 
 // WillResolveMutableRefForAdd reports whether AddPackage's own resolveRef
-// call (skipLocalSource=true, implicitHeadOnEmpty=true) will actually enter
-// the network-resolving HEAD branch for the given source/ref/version --
-// i.e. whether the CLI's "mutable ref" warning (R5/AC19) should print at
-// all for `package add`. Calls classifyRefResolution directly (see that
-// function's doc comment for why this is the only place this decision is
-// expressed) rather than restating any of resolveRef's branches by hand.
+// call (skipLocalSource=true, implicitHeadOnEmpty=true) would enter the
+// network-resolving refKindHead branch for the given source/ref/version/
+// noVerify combination, with no I/O of its own. Calls classifyRefResolution
+// directly (see that function's doc comment for why this is the only place
+// this decision is expressed) rather than restating any of resolveRef's
+// branches by hand.
 //
-// BLOCKING 1 (external audit, 2026-07-30): the CLI used to print this
-// warning off of `ref == "HEAD"` alone, before knowing whether resolution
-// would ever run -- reproduced with `marketplace package add ./localpkg
-// --ref HEAD`, which printed "Resolving to current SHA for safety" while
-// resolveRef's local short-circuit resolved nothing at all.
-func WillResolveMutableRefForAdd(source, ref, version string) bool {
-	return classifyRefResolution(source, ref, version, true, true) == refKindHead
+// This is a static predictor, not the CLI's actual warning trigger: BLOCKING
+// 2 (external audit round 3, 2026-07-30) found that deciding the CLI's
+// mutable-ref warning from a call to this function BEFORE ever invoking
+// AddPackage prints the warning even when AddPackage is about to fail for a
+// reason this function cannot see (a missing config, an unreachable source,
+// a duplicate name) -- since those are AddPackage-internal pre-flight steps
+// this function has no access to. The CLI now wires its warning through
+// resolveRef's own onExplicitHeadWillResolve hook (AddOptions.
+// OnExplicitHeadWillResolve) instead, which fires only once every one of
+// those steps has already passed. This function remains exported and is
+// still regression-tested against resolveRef's actual behavior (see
+// resolveref_test.go's
+// TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct) as a
+// no-I/O predictor for any other caller that wants one.
+func WillResolveMutableRefForAdd(source, ref, version string, noVerify bool) bool {
+	return classifyRefResolution(source, ref, version, noVerify, true, true) == refKindHead
 }
 
 // defaultNameFromSource derives a package name from source's final path
@@ -542,6 +591,17 @@ type AddOptions struct {
 	// packageEntryNode omits the category: key entirely (see its own
 	// `if entry.Category != ""` guard).
 	Category string
+	// OnExplicitHeadWillResolve, when non-nil, is invoked by resolveRef
+	// immediately before (and only immediately before) it performs the real
+	// lister.ListRefs call for an explicitly-given "--ref HEAD"/"head" --
+	// i.e. only once every other AddPackage pre-flight step (the --version/
+	// --ref guard, subdir validation, source validation, reachability check,
+	// config load, and duplicate-name check) has already passed, and only
+	// once classifyRefResolution has confirmed noVerify does not make
+	// resolution impossible. The CLI wires this to print R5/AC19's
+	// mutable-ref warning (see resolveRef's own doc comment for the
+	// BLOCKING 2 fix this hook exists for).
+	OnExplicitHeadWillResolve func()
 }
 
 // AddPackage implements `apm marketplace package add SOURCE` (mkt-045):
@@ -587,7 +647,7 @@ func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name str
 		return "", false, fmt.Errorf("package %q already exists", name)
 	}
 
-	resolvedRef, err := resolveRef(source, opts.Ref, opts.Version, lister, opts.NoVerify, true, true)
+	resolvedRef, err := resolveRef(source, opts.Ref, opts.Version, lister, opts.NoVerify, true, true, opts.OnExplicitHeadWillResolve)
 	if err != nil {
 		return "", false, err
 	}
@@ -677,7 +737,7 @@ func SetPackage(dir, name string, opts SetOptions, lister RefLister) (fallbackUs
 		// (BLOCKING 2, external audit 2026-07-30) -- fixed by threading a
 		// dedicated skipLocalSource argument through resolveRef instead of
 		// letting it infer add-vs-set from implicitHeadOnEmpty alone.
-		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, "", lister, false, false, false)
+		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, "", lister, false, false, false, nil)
 		if rerr != nil {
 			return false, rerr
 		}
