@@ -25,6 +25,58 @@ function Exec {
     return $out
 }
 
+# ExecTestJSON（MAJOR 2，外部稽核第四輪，2026-07-30）：`go test -run <pattern>`
+# 只驗 exit code 擋不住 t.Skip -- 把測試本體改成 t.Skip(...) 之後，Go 對
+# 「每個測試都跳過、沒有任何 FAIL」仍回傳 exit 0，Exec 因此把它當通過。
+# 改用 `go test -json`：對 pattern 匹配到的每一個測試名稱（含子測試），
+# 要求它「有出現 Action=pass」且「從未出現 Action=skip」。任何一個測試
+# 一次都沒 pass、或曾經 skip，都判定失敗 -- 除非它的名稱匹配 $allowSkip
+# （例如 BLOCKING 2 的 symlink 測試本身設計為在無法建立 symlink 的環境
+# "可見地" t.Skip，這是環境限制、不是本閘門要抓的突變，見該測試自身註解）；
+# 對這種例外，skip 只記錄一行提示、不算失敗，但仍要求它至少「跑過」
+# （出現在 $seen 裡），不能是 -list 零匹配那種「根本沒跑到」。
+function ExecTestJSON {
+    param([string]$ac, [string]$what, [string]$pkg, [string]$pattern, [string[]]$allowSkip = @())
+    $out = & go test -json -run $pattern $pkg 2>&1
+    $seen = @{}
+    $skipped = @()
+    $allowedSkipped = @()
+    foreach ($line in ($out -split "`n")) {
+        if ($line -notmatch '^\{') { continue }
+        try { $ev = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        if (-not $ev.Test) { continue }
+        switch ($ev.Action) {
+            'pass' { $seen[$ev.Test] = 'pass' }
+            'skip' {
+                if ($seen[$ev.Test] -ne 'pass') { $seen[$ev.Test] = 'skip' }
+                $isAllowed = $false
+                foreach ($p in $allowSkip) { if ($ev.Test -match $p) { $isAllowed = $true } }
+                if ($isAllowed) { $allowedSkipped += $ev.Test } else { $skipped += $ev.Test }
+            }
+            'fail' { if ($seen[$ev.Test] -ne 'pass') { $seen[$ev.Test] = 'fail' } }
+        }
+    }
+    if ($seen.Count -eq 0) {
+        Fail $ac "${what}: -json 沒有產生任何逐測試事件（pattern 可能零匹配）"
+        return
+    }
+    if ($skipped.Count -gt 0) {
+        Fail $ac "${what}: 下列測試回報 Action=skip（t.Skip 不算通過）: $($skipped -join ', ')"
+        return
+    }
+    if ($allowedSkipped.Count -gt 0) {
+        Write-Host "  note [$ac] 環境限制導致以下測試可見地 skip（非本閘門失敗）: $($allowedSkipped -join ', ')" -ForegroundColor Yellow
+        # 從 $seen 移除，讓下面的「必須 pass」檢查不對它們誤判失敗。
+        foreach ($t in $allowedSkipped) { if ($seen[$t] -eq 'skip') { $seen.Remove($t) } }
+    }
+    $notPassed = @($seen.GetEnumerator() | Where-Object { $_.Value -ne 'pass' })
+    if ($notPassed.Count -gt 0) {
+        Fail $ac "${what}: 下列測試從未回報 Action=pass: $((($notPassed | ForEach-Object { $_.Key })) -join ', ')"
+        return
+    }
+    Pass $ac
+}
+
 Write-Host "== Tier 1: marketplace-add-fixes ==" -ForegroundColor Cyan
 
 $before = $script:fails.Count
@@ -222,12 +274,15 @@ if ($listed.Count -eq 0) { Fail 'ROUND2-M3-39CHAR' 'MAJOR 3 的 39 字元邊界�
 }
 # ROUND3-MAJOR-SEVERITY（外部稽核第三輪，2026-07-30）：PRD 明講 t.Skip 不算
 # 通過，而先前這個閘門只 -list、從不 -run -- 一個把測試體改成 t.Skip() 的突變
-# 會讓 -list 依舊非零、卻永遠不會被本閘門的 exit code 檢查逮到。改成真的 -run。
+# 會讓 -list 依舊非零、卻永遠不會被本閘門的 exit code 檢查逮到。
+# MAJOR 2（外部稽核第四輪，2026-07-30）：光是「改成真的 -run」仍不夠 -- `go
+# test -run <pattern>` 對「pattern 匹配到的測試全部 t.Skip、沒有任何 FAIL」
+# 一樣回傳 exit 0，Exec 只驗 exit code 一樣會誤判過關。改用 ExecTestJSON：
+# 直接讀 `go test -json` 逐測試的 Action 欄位，要求每個匹配到的測試都出現過
+# Action=pass、且從未出現 Action=skip。
 $listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning|TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -lt 2) { Fail 'ROUND2-M3-SEVERITY' "MAJOR 3 的嚴重程度斷言宿主測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND2-M3-SEVERITY' "go test -run 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning|TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning|TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M3-SEVERITY' }
+  ExecTestJSON 'ROUND2-M3-SEVERITY' "go test -json -run '...'" './cmd/apm-go/' 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning|TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds'
 }
 
 # ════════════════════════════════════════════════════════════════════════
@@ -237,21 +292,20 @@ if ($listed.Count -lt 2) { Fail 'ROUND2-M3-SEVERITY' "MAJOR 3 的嚴重程度斷
 # ════════════════════════════════════════════════════════════════════════
 
 # ---- ROUND3-BLOCKING1-MANIFEST：ValidateMarketplaceSource 必須同時擋
-# "/" 與 "\" 形式的 '..' 逃逸（Windows 相對路徑遍歷） ----
+# "/" 與 "\" 形式的 '..' 逃逸（Windows 相對路徑遍歷），round-4 起也含絕對/UNC
+# 路徑案例（BLOCKING 1，外部稽核第四輪）。改用 ExecTestJSON（MAJOR 2，第四
+# 輪）：table-driven 的每個 t.Run 子測試都個別要求 Action=pass、不得 skip。
 $listed = @(& go test ./internal/manifest/ -list 'TestValidateMarketplaceSource' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'ROUND3-B1-MANIFEST' 'BLOCKING 1 manifest 層回歸測試不存在（-list 零匹配）' } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND3-B1-MANIFEST' "go test -run 'TestValidateMarketplaceSource'" { go test ./internal/manifest/ -run 'TestValidateMarketplaceSource' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND3-B1-MANIFEST' }
+  ExecTestJSON 'ROUND3-B1-MANIFEST' "go test -json -run 'TestValidateMarketplaceSource'" './internal/manifest/' 'TestValidateMarketplaceSource'
 }
 
 # ---- ROUND3-BLOCKING1-RESOLVECLONEURL：resolveCloneURL 自己的第二層邊界
-# 檢查（即使 manifest 層被繞過，解析出的絕對路徑逃出 cwd 也必須被拒絕）----
+# 檢查（即使 manifest 層被繞過，解析出的絕對路徑逃出 cwd 也必須被拒絕；
+# round-4 起也含 symlink 逃逸案例，BLOCKING 2）。同樣改用 ExecTestJSON。
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveCloneURL' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'ROUND3-B1-RESOLVECLONEURL' 'BLOCKING 1 resolveCloneURL 回歸測試不存在（-list 零匹配）' } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND3-B1-RESOLVECLONEURL' "go test -run 'TestResolveCloneURL'" { go test ./internal/marketplace/authoring/ -run 'TestResolveCloneURL' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND3-B1-RESOLVECLONEURL' }
+  ExecTestJSON 'ROUND3-B1-RESOLVECLONEURL' "go test -json -run 'TestResolveCloneURL'" './internal/marketplace/authoring/' 'TestResolveCloneURL' -allowSkip @('directory_symlink')
 }
 
 # ---- ROUND3-BLOCKING2：mutable-ref 警告必須綁在 resolveRef 實際要解析
@@ -278,6 +332,58 @@ if ($listed.Count -eq 0) { Fail 'ROUND3-MAJOR-HEADMIXEDCASE' 'CLI 層 title-case
   $null = Exec 'ROUND3-MAJOR-HEADMIXEDCASE' "go test -run 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning' }
   if ($script:fails.Count -eq $before) { Pass 'ROUND3-MAJOR-HEADMIXEDCASE' }
 }
+
+# ════════════════════════════════════════════════════════════════════════
+# Round 4（外部稽核第四輪，2026-07-30）：BLOCKING 1（絕對/UNC 路徑、symlink
+# 逃逸）、BLOCKING 3（`set --ref HEAD` 警告）、MAJOR 1（cross-product 直接
+# 斷言）、MAJOR 3（add 端 mixed-case 的次數/嚴重程度）、MAJOR 5（未知
+# refResolutionKind fail-closed）的閘門
+# ════════════════════════════════════════════════════════════════════════
+
+# ---- ROUND4-BLOCKING1-ABSOLUTE：ValidateMarketplaceSource 必須擋絕對/UNC
+# 路徑（不只 '..' 段），resolveCloneURL 對「已驗證合法的相對本地路徑」逃出
+# cwd 也要擋（既有 ROUND3-B1 兩個閘門已覆蓋 resolveCloneURL 本身；這裡只需
+# 新增 manifest 層絕對/UNC 案例本身有沒有跑到，沿用 ROUND3-B1-MANIFEST 的
+# -run 即可，已含新案例，不必新增獨立閘門）----
+
+# ---- ROUND4-BLOCKING1-SYMLINK：resolveCloneURL 對「本地路徑內的 symlink
+# 指到專案根外」也要擋 -- 沿用既有 TestResolveCloneURL，該閘門已在上方
+# ROUND3-B1-RESOLVECLONEURL 升級為 ExecTestJSON（含 -allowSkip，容許此
+# 環境無法建立 symlink 時可見地 t.Skip，但不容許真的 FAIL 或悄悄零匹配），
+# 新子測試自動被涵蓋，不必重複一個獨立閘門。
+
+# ---- ROUND4-BLOCKING3：`set --ref HEAD` 必須印出與 add 相同的 mutable-ref
+# 警告（SetPackage 過去對 onExplicitHeadWillResolve 硬寫 nil）----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestSetPackage_ExplicitRefHead_InvokesOnExplicitHeadWillResolve|TestSetPackage_NonHeadRef_DoesNotInvokeOnExplicitHeadWillResolve' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 2) { Fail 'ROUND4-B3-UNIT' "BLOCKING 3 單元層回歸測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else {
+  ExecTestJSON 'ROUND4-B3-UNIT' "go test -json -run '...'" './internal/marketplace/authoring/' 'TestSetPackage_ExplicitRefHead_InvokesOnExplicitHeadWillResolve|TestSetPackage_NonHeadRef_DoesNotInvokeOnExplicitHeadWillResolve'
+}
+$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageSet_RefFlagHead_PrintsMutableRefWarning|TestMarketplacePackageSet_RefFlagHead_MixedCase_PrintsMutableRefWarningOnce' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 2) { Fail 'ROUND4-B3-CLI' "BLOCKING 3 CLI 端對端回歸測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else {
+  ExecTestJSON 'ROUND4-B3-CLI' "go test -json -run '...'" './cmd/apm-go/' 'TestMarketplacePackageSet_RefFlagHead_PrintsMutableRefWarning|TestMarketplacePackageSet_RefFlagHead_MixedCase_PrintsMutableRefWarningOnce'
+}
+
+# ---- ROUND4-MAJOR1：cross-product 的直接 spec oracle（不共用
+# classifyRefResolution 這個分類器，避免與 predictor 同一個根因一起錯）----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_CrossProduct_MatchesDirectSpecOracle' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND4-MAJOR1' 'MAJOR 1 直接斷言回歸測試不存在（-list 零匹配）' } else {
+  ExecTestJSON 'ROUND4-MAJOR1' "go test -json -run 'TestResolveRef_CrossProduct_MatchesDirectSpecOracle'" './internal/marketplace/authoring/' 'TestResolveRef_CrossProduct_MatchesDirectSpecOracle'
+}
+
+# ---- ROUND4-MAJOR3：add 端 mixed-case "Head" 警告也要驗次數與嚴重程度
+# （既有 ROUND3-MAJOR-HEADMIXEDCASE 只驗子字串，已就地加強斷言，這裡確認
+# 加強後的版本本身可跑、可過）----
+ExecTestJSON 'ROUND4-MAJOR3' "go test -json -run 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning'" './cmd/apm-go/' 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning'
+
+# ---- ROUND4-MAJOR5：resolveRefForKind 對未知 kind 必須 fail-closed，不得
+# 落到 refKindNamed 的網路解析分支 ----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRefForKind_UnrecognizedKind_FailsClosed_NeverTouchesLister' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND4-MAJOR5' 'MAJOR 5 fail-closed 回歸測試不存在（-list 零匹配）' } else {
+  ExecTestJSON 'ROUND4-MAJOR5' "go test -json -run 'TestResolveRefForKind_UnrecognizedKind_FailsClosed_NeverTouchesLister'" './internal/marketplace/authoring/' 'TestResolveRefForKind_UnrecognizedKind_FailsClosed_NeverTouchesLister'
+}
+
+# ---- ROUND4-MAJOR4：AC-L9 不得只驗工作樹/暫存區 diff -- 已於下方 AC-L9
+# 區塊本身修正為對照 task base commit（7ddd410^），見該區塊註解 ----
 
 # ---- AC53：回歸閘門 —— marketplace init 必須維持非互動（D13） ----
 # 防止實作 plugin-init 時順手把 clack 帶進 marketplace init。
@@ -313,13 +419,21 @@ try {
 # ---- AC-L9 ----
 # 2026-07-30 round-4：git diff 本身失敗時先前會被無聲吞掉，見
 # 07-29-install-dev/verify.ps1 同段註解。
-$d1 = & git diff -- go.mod 2>&1; $d1Exit = $LASTEXITCODE
-$d2 = & git diff --cached -- go.mod 2>&1; $d2Exit = $LASTEXITCODE
-if ($d1Exit -ne 0 -or $d2Exit -ne 0) {
-  Fail 'AC-L9' "git diff -- go.mod（exit $d1Exit）或 --cached（exit $d2Exit）本身失敗，無法判定是否新增相依"
+#
+# MAJOR 4（外部稽核第四輪，2026-07-30）：上一版只驗工作樹/暫存區 diff，在一棵
+# 乾淨的已 commit 樹上是空閘門 -- commit 之後才新增的一行 require 完全不會被
+# 這兩個 diff 看到（工作樹和暫存區此時都是空的）。改成對照本 task 的 base
+# commit（`7ddd410^`，本 task 系列第一個 commit `7ddd410` 的父提交，即本 task
+# 開始改動前的狀態）：`git diff <base> -- go.mod go.sum` 同時涵蓋「已經
+# commit 的每一輪修復」與「目前尚未 commit 的變更」（因為只給一個 ref 時，
+# git diff 是拿該 ref 與目前工作目錄比較，未 commit 的部分也算在內）。
+$taskBase = '7ddd410^'
+$d1 = & git diff $taskBase -- go.mod go.sum 2>&1; $d1Exit = $LASTEXITCODE
+if ($d1Exit -ne 0) {
+  Fail 'AC-L9' "git diff $taskBase -- go.mod go.sum（exit $d1Exit）本身失敗，無法判定是否新增相依`n      $($d1 -join "``n      ")"
 } else {
-  $newReq = @($d1; $d2) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
-  if ($newReq) { Fail 'AC-L9' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC-L9' }
+  $newReq = @($d1) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
+  if ($newReq) { Fail 'AC-L9' ("go.mod/go.sum 相對 task base（$taskBase）新增 require：" + ($newReq -join '; ')) } else { Pass 'AC-L9' }
 }
 
 # ---- 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除 ----

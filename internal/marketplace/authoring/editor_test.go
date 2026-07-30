@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -919,6 +920,59 @@ func TestSetPackage_UnresolvableRef_Errors(t *testing.T) {
 	}
 }
 
+// ── BLOCKING 3 (external audit round 4, 2026-07-30): `set --ref HEAD` must
+// invoke SetOptions.OnExplicitHeadWillResolve, the same as AddOptions'
+// equivalent hook -- SetPackage used to hardcode nil for resolveRef's
+// onExplicitHeadWillResolve parameter, so `set` never printed upstream's
+// mutable-ref warning at all. ────────────────────────────────────────────
+
+// TestSetPackage_ExplicitRefHead_InvokesOnExplicitHeadWillResolve proves the
+// callback actually fires for an explicit "HEAD" --ref.
+func TestSetPackage_ExplicitRefHead_InvokesOnExplicitHeadWillResolve(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n")
+	lister := mapRefLister{refs: []semver.TagInfo{{Name: "HEAD", Commit: testResolvedSHA}}}
+	ref := "HEAD"
+	called := 0
+
+	// Act
+	_, err := SetPackage(dir, "foo", SetOptions{Ref: &ref, OnExplicitHeadWillResolve: func() { called++ }}, lister)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetPackage returned error resolving --ref HEAD: %v", err)
+	}
+	if called != 1 {
+		t.Errorf("OnExplicitHeadWillResolve called %d times, want exactly 1", called)
+	}
+}
+
+// TestSetPackage_NonHeadRef_DoesNotInvokeOnExplicitHeadWillResolve is the
+// negative control: an ordinary tag ref must never fire the HEAD-specific
+// hook.
+func TestSetPackage_NonHeadRef_DoesNotInvokeOnExplicitHeadWillResolve(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n")
+	lister := mapRefLister{refs: []semver.TagInfo{{Name: "v1.0.0", Commit: testResolvedSHA}}}
+	ref := "v1.0.0"
+	called := 0
+
+	// Act
+	_, err := SetPackage(dir, "foo", SetOptions{Ref: &ref, OnExplicitHeadWillResolve: func() { called++ }}, lister)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetPackage returned error: %v", err)
+	}
+	if called != 0 {
+		t.Errorf("OnExplicitHeadWillResolve called %d times for a non-HEAD ref, want 0", called)
+	}
+}
+
 // ── BLOCKING 2 (external audit, 2026-07-30): `package set --ref` on a
 // local package must still resolve the given ref via lister, not silently
 // clear it to "". Reported repro: an entry with both `version:` and a
@@ -1057,8 +1111,12 @@ func TestAddPackage_RefHEAD_ResolvesToConcreteSHA(t *testing.T) {
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
 	wantSHA := gitCmd(t, repoDir, "rev-parse", "HEAD")
 
-	// Act
-	_, _, err := AddPackage(dir, repoDir, AddOptions{Ref: "HEAD"}, gitRefLister{})
+	// Act: AddPackage's own source argument must be req-mf-017-compliant
+	// (BLOCKING 1, external audit round 4, 2026-07-30:
+	// manifest.ValidateMarketplaceSource now rejects an absolute filesystem
+	// path outright), so realRepoLister decouples that string from the real
+	// repository fixture the lister actually queries.
+	_, _, err := AddPackage(dir, "owner/repo", AddOptions{Ref: "HEAD"}, realRepoLister{dir: repoDir})
 
 	// Assert
 	if err != nil {
@@ -1074,6 +1132,28 @@ func TestAddPackage_RefHEAD_ResolvesToConcreteSHA(t *testing.T) {
 }
 
 // ── test doubles ──────────────────────────────────────────────────────────
+
+// realRepoLister is a RefLister test double used when the source argument
+// reaching AddPackage/SetPackage must itself be a req-mf-017-compliant
+// shape (e.g. "owner/repo", so manifest.ValidateMarketplaceSource accepts
+// it -- BLOCKING 1, external audit round 4, 2026-07-30: an absolute
+// filesystem path is now rejected outright) while the underlying git target
+// actually queried is a real local repository fixture at dir. Reuses
+// newListRefsCmd/parseRefsOutput directly, skipping resolveCloneURL's
+// source-string translation entirely, since dir is already a literal
+// filesystem path `git ls-remote` accepts as-is.
+type realRepoLister struct{ dir string }
+
+func (r realRepoLister) ListRefs(string) ([]semver.TagInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), listRefsTimeout)
+	defer cancel()
+	cmd := newListRefsCmd(ctx, r.dir)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseRefsOutput(string(out)), nil
+}
 
 // stubLister is a RefLister test double that records whether it was called
 // and returns a canned error (or success with no refs).

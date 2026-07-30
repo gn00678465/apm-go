@@ -529,6 +529,19 @@ func TestValidateMarketplaceSource(t *testing.T) {
 		// authoring's resolveCloneURL (refcheck.go).
 		{`./..\..\outside`, ".."},
 		{`./sub\..\..\outside`, ".."},
+		// BLOCKING 1 (external audit round 4, 2026-07-30): an absolute or UNC
+		// filesystem path has no "." prefix and no "://", so it used to fall
+		// straight through to the "shorthand form -- accepted" branch
+		// unrejected -- reproduced live against authoring.resolveCloneURL,
+		// which then returned it unchanged with no boundary check at all
+		// (filepath.IsAbs short-circuits before that function's own
+		// pathWithinRoot guard ever runs), a path-traversal bypass needing no
+		// ".." segment whatsoever.
+		{`D:\outside\repo`, "absolute or UNC"},
+		{`C:\Windows\Temp\evil`, "absolute or UNC"},
+		{`\\server\share\repo`, "absolute or UNC"},
+		{"/etc/passwd", "absolute or UNC"},
+		{"//server/share/repo", "absolute or UNC"},
 		{"http://example.com/repo", "https://"},
 		{"ftp://example.com/repo", "https://"},
 		{"https://user@example.com/repo", "userinfo"},

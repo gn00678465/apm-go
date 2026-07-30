@@ -161,9 +161,15 @@ func marketplacePackageAddCmd() *cobra.Command {
 				// --ref HEAD --no-verify` against a directory with no
 				// marketplace config printed the warning, then exited 2 on
 				// "no marketplace authoring config found"). Wiring the
-				// warning through this hook instead makes that
-				// structurally impossible, without hand-duplicating
-				// AddPackage's pre-flight order here.
+				// warning through this hook instead avoids that -- for
+				// every pre-flight check AddPackage currently runs before
+				// its resolveRef call (see authoring/editor.go's AddPackage
+				// body) -- without hand-duplicating AddPackage's pre-flight
+				// order here. See
+				// TestMarketplacePackageAdd_ExplicitRefHead_NoVerify_NoMutableRefWarning_ExitsCode2/
+				// _MissingConfig_/_UnreachableSource_/_DuplicateName_NoMutableRefWarning
+				// (marketplace_package_test.go) for the four pre-flight
+				// failures this is regression-tested against.
 				OnExplicitHeadWillResolve: func() {
 					ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
 				},
@@ -246,6 +252,19 @@ func marketplacePackageSetCmd() *cobra.Command {
 			}
 			if cmd.Flags().Changed("include-prerelease") {
 				opts.IncludePrerelease = &includePrerelease
+			}
+			// BLOCKING 3 (external audit round 4, 2026-07-30): upstream
+			// warns on `set --ref HEAD` too (commands/marketplace/plugin/
+			// set.py:80 calls the same _resolve_ref plugin/__init__.py:
+			// 120-137 warns from), but SetPackage used to hardcode nil for
+			// this hook, so `set` never printed the warning at all. Wired
+			// identically to `add`'s own hook above: resolveRef only invokes
+			// it immediately before the real lister.ListRefs call for an
+			// explicitly-given "HEAD"/"head" ref, once noVerify (`set` has no
+			// --no-verify escape hatch, so this never applies) and the
+			// mutual-exclusion/no-op guards above have already passed.
+			opts.OnExplicitHeadWillResolve = func() {
+				ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
 			}
 
 			fallbackUsed, err := authoring.SetPackage(".", args[0], opts, authoring.DefaultRefLister)

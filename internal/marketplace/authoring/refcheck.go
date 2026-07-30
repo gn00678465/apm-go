@@ -96,36 +96,58 @@ func newListRefsCmd(ctx context.Context, cloneURL string) *exec.Cmd {
 // resolveCloneURL turns a marketplace.packages[].source string (already
 // req-mf-017-validated by schema.go's parsePackages) into a URL `git
 // ls-remote` can use directly: a full URL or an SCP-style remote passes
-// through unchanged; an already-absolute filesystem path (accepted by
-// manifest.ValidateMarketplaceSource alongside the "./"-prefixed relative
-// form -- this package's own test fixtures, and a manually authored
-// self-hosted-git checkout, both use an absolute path; see
-// TestResolveCloneURL's "absolute filesystem path passes through unchanged"
-// case) also passes through unchanged; a relative "./..." local source
-// (isLocalPackageSource's own prefix check) is resolved to an absolute path
-// against the process's current working directory via filepath.Abs, then
-// checked against that same cwd as a traversal boundary (BLOCKING 1, below),
-// so `set --ref` on one still reaches a real, existing git repository
-// instead of being misread as an OWNER/REPO shorthand; every other
-// (non-"./", non-absolute) string is an OWNER/REPO or HOST/OWNER/REPO
-// shorthand, expanded against github.com, mirroring
+// through unchanged; a relative "./..." local source (isLocalPackageSource's
+// own prefix check) is resolved to an absolute path against the process's
+// current working directory via filepath.Abs, then checked against that
+// same cwd as a traversal boundary (BLOCKING 1 below), so `set --ref` on one
+// still reaches a real, existing git repository instead of being misread as
+// an OWNER/REPO shorthand; every other (non-"./") string is an OWNER/REPO or
+// HOST/OWNER/REPO shorthand, expanded against github.com, mirroring
 // internal/marketplace/source.go's defaultSourceHost default.
+//
+// The `filepath.IsAbs(source)` branch below is UNREACHABLE for any source
+// that has actually passed manifest.ValidateMarketplaceSource: BLOCKING 1
+// (external audit round 4, 2026-07-30) found that validator accepted an
+// absolute or UNC filesystem path outright (it fell through to the
+// "shorthand form -- accepted" branch there, since it is neither
+// "."-prefixed nor "://"-schemed), and this function then returned that
+// path unchanged with NO boundary check at all -- a path-traversal bypass
+// needing no ".." segment whatsoever. The validator now rejects every
+// absolute/UNC source, which closes this for all three of this package's
+// production callers (manifest.go's validateMarketplaceBlock, schema.go's
+// LoadAuthoringConfig, editor.go's AddPackage -- every one of which is
+// gated by that same validator before a source ever reaches this function).
+// This branch is deliberately left as-is (not removed, not boundary-checked)
+// rather than tightened further: this package's own tests
+// (TestResolveCloneURL's "absolute filesystem path passes through
+// unchanged" case, and refcheck_test.go/editor_test.go's many CheckPackages/
+// OutdatedPackages/AddPackage/SetPackage unit tests that build an
+// AuthoringConfig's PackageEntry.Source directly in memory, bypassing
+// ValidateMarketplaceSource on purpose) rely on this function accepting an
+// absolute path unchanged as a stand-in "real remote" fixture. Tightening
+// this branch too (e.g. reusing pathWithinRoot below) would need converting
+// dozens of those in-memory-struct unit tests, for no additional
+// production-reachable protection: the validator is the only path any
+// caller has to reach PackageEntry.Source or a CLI source argument at all.
+// If a future caller ever constructs an AuthoringConfig/PackageEntry without
+// going through LoadAuthoringConfig (or calls AddPackage/SetPackage with an
+// unvalidated source some other way), this residual gap would apply to it
+// too -- see this function's own BLOCKING 1 (round 3) doc below for why the
+// relative-path branch gets an independent boundary check instead: that
+// check was cheap to add because it does not require changing what "valid"
+// looks like for the branch's own callers.
 //
 // MAJOR 2 (external audit round 2, 2026-07-30): before this fix, a relative
 // local source fell through to the OWNER/REPO branch untouched --
 // resolveCloneURL("./x") produced "https://github.com/./x.git" -- so
 // `package set NAME --ref <mutable ref>` on any local package (a local
-// package's source is normally a relative "./..." path, though
-// manifest.ValidateMarketplaceSource also accepts an absolute one -- see
-// this function's "absolute filesystem path passes through unchanged"
-// branch above, and TestResolveCloneURL's own absolute-path case) failed
-// with a bogus GitHub 404 rather than resolving against the real local
-// repository. Reading install-marketplace-contracts.md:87 ("set always
-// resolves a given ref (no --no-verify escape hatch on set)", no
-// local-source exemption) together with BLOCKING 2's fix (SetPackage must
-// resolve a local source's ref, not short-circuit it): the contract
-// requires this to succeed, not fail closed. See
-// TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister
+// package's source is normally a relative "./..." path) failed with a bogus
+// GitHub 404 rather than resolving against the real local repository.
+// Reading install-marketplace-contracts.md:87 ("set always resolves a given
+// ref (no --no-verify escape hatch on set)", no local-source exemption)
+// together with BLOCKING 2's fix (SetPackage must resolve a local source's
+// ref, not short-circuit it): the contract requires this to succeed, not
+// fail closed. See TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister
 // (refcheck_test.go) for the real-repo, production-lister proof, and
 // TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister
 // (editor_test.go) for the SetPackage-level end-to-end regression.
@@ -176,7 +198,41 @@ func resolveCloneURL(source string) (string, error) {
 // filepath.Rel's own ".." prefix on its result is the standard way to detect
 // an escape, since target has already been filepath.Clean-ed by
 // filepath.Abs by the time this is called.
+//
+// BLOCKING 2 (external audit round 4, 2026-07-30): the check above is purely
+// LEXICAL -- it never touches the filesystem. A directory symlink (or
+// Windows junction) physically located inside root but pointing at a real
+// directory outside it produces a target string containing no ".."
+// whatsoever (e.g. root="/project", target="/project/linked", and
+// "/project/linked" is a symlink to "/somewhere/else"): filepath.Abs/Rel
+// both operate on the string only, so the lexical check above reports
+// "within root" -- but `git ls-remote` (or any real filesystem access)
+// follows the symlink at the OS level and actually reaches "/somewhere/
+// else". pathWithinRootLexical alone is therefore necessary but not
+// sufficient. This resolves both root and target through
+// filepath.EvalSymlinks (which walks every path component, following any
+// symlink it finds) and re-checks containment on that resolved pair too --
+// closing the gap for an EXISTING symlink target (the only kind `git
+// ls-remote` could ever reach anything real through). If root or target does
+// not exist yet, EvalSymlinks errors and this falls back to the lexical
+// result alone: there is no symlink for a nonexistent path to have followed,
+// and any subsequent `git ls-remote` against a nonexistent local path fails
+// on its own regardless. See TestResolveCloneURL's
+// "relative local source escaping cwd via a directory symlink is rejected"
+// subtest.
 func pathWithinRoot(root, target string) bool {
+	if !pathWithinRootLexical(root, target) {
+		return false
+	}
+	realRoot, rootErr := filepath.EvalSymlinks(root)
+	realTarget, targetErr := filepath.EvalSymlinks(target)
+	if rootErr != nil || targetErr != nil {
+		return true
+	}
+	return pathWithinRootLexical(realRoot, realTarget)
+}
+
+func pathWithinRootLexical(root, target string) bool {
 	rel, err := filepath.Rel(root, target)
 	if err != nil {
 		return false

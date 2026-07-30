@@ -7,10 +7,14 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/apm-go/apm/internal/marketplace/build"
 )
 
 // runPackCmd executes `pack <args...>` against a fresh packCmd() tree,
@@ -699,6 +703,43 @@ marketplace:
 
 // ── remote package resolution against a real local git fixture ──────────
 
+// fixtureRemoteBuildLister is a build.RefLister test double, mirroring
+// cmd/apm-go/marketplace_authoring_test.go's fixtureRemoteLister: it ignores
+// the marketplace source string it is given and instead runs a real `git
+// ls-remote` against a fixed local directory, so this test can drive
+// ResolvePackages' genuine remote-resolution code path against a real
+// repository fixture without touching the network -- now that
+// manifest.ValidateMarketplaceSource rejects an absolute filesystem path as
+// a marketplace source outright (BLOCKING 1, external audit round 4,
+// 2026-07-30), so the source string in apm.yml must itself be
+// req-mf-017-compliant (e.g. "owner/repo").
+type fixtureRemoteBuildLister struct{ dir string }
+
+func (f fixtureRemoteBuildLister) ListRemoteRefs(string) ([]build.RemoteRef, error) {
+	// build.RemoteRef keeps each ref's full "refs/tags/..."/"refs/heads/..."
+	// name intact (see reflister.go's own package doc comment: unlike
+	// authoring's RefLister, ResolvePackages needs the untouched prefix to
+	// tell a tag from a same-named branch) -- so, unlike
+	// fixtureRemoteLister above, this does NOT strip the prefix.
+	cmd := exec.Command("git", "ls-remote", "--tags", "--heads", "--", f.dir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-remote %s: %s", f.dir, strings.TrimSpace(string(out)))
+	}
+	var refs []build.RemoteRef
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		refs = append(refs, build.RemoteRef{Name: parts[1], Commit: parts[0]})
+	}
+	return refs, nil
+}
+
 func TestPackCmd_RemotePackage_ResolvesAgainstRealGitTags(t *testing.T) {
 	// Arrange: a "remote" package whose Source points at a real local git
 	// repo fixture (mirroring internal/marketplace/build/builder_test.go's
@@ -709,13 +750,17 @@ func TestPackCmd_RemotePackage_ResolvesAgainstRealGitTags(t *testing.T) {
 	initGitRepoWithTags(t, remoteDir, "v1.0.0", "v1.1.0")
 	wantSHA := packRevParse(t, remoteDir, "v1.1.0")
 
+	origLister := build.DefaultRefLister
+	build.DefaultRefLister = fixtureRemoteBuildLister{dir: remoteDir}
+	t.Cleanup(func() { build.DefaultRefLister = origLister })
+
 	writePackApmYML(t, `name: demo
 marketplace:
   owner:
     name: Acme
   packages:
     - name: remote-tool
-      source: `+filepath.ToSlash(remoteDir)+`
+      source: owner/repo
       version: "^1.0.0"
 `)
 

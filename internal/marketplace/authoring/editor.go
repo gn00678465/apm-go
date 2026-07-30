@@ -451,22 +451,48 @@ func classifyRefResolution(source, ref, version string, noVerify, implicitHeadOn
 // onExplicitHeadWillResolve, when non-nil, is invoked immediately before (and
 // only immediately before) the refKindHead branch performs its actual
 // lister.ListRefs call for an EXPLICITLY-given "HEAD"/"head" ref (ref != "").
-// It is add's own R5/AC19 mutable-ref-warning hook (AddPackage wires
-// AddOptions.OnExplicitHeadWillResolve here; SetPackage passes nil, since
-// `set` prints no such warning). BLOCKING 2 (external audit round 3,
-// 2026-07-30): the CLI used to decide whether to print this warning BEFORE
-// ever calling AddPackage at all (via a standalone WillResolveMutableRefForAdd
-// prediction), so it printed even when AddPackage was about to fail for an
-// unrelated reason entirely -- a missing config, an unreachable source, a
-// duplicate name, or (compounding classifyRefResolution's own noVerify gap
-// above) an offline HEAD resolution that was about to hard-fail anyway.
-// Invoking the warning from exactly the call site that is about to perform
-// the real resolution -- after every one of AddPackage's other pre-flight
-// checks has already run and succeeded -- makes it structurally impossible
-// for the warning to print on any of those paths, without hand-duplicating
-// AddPackage's own pre-flight order in the CLI.
+// It is the mutable-ref-warning hook for both `add` (R5/AC19,
+// AddOptions.OnExplicitHeadWillResolve) and `set` (BLOCKING 3, external
+// audit round 4, 2026-07-30: SetOptions.OnExplicitHeadWillResolve --
+// upstream warns on `set --ref HEAD` too, commands/marketplace/plugin/
+// set.py:80 calling the same _resolve_ref plugin/__init__.py:120-137 warns
+// from; SetPackage used to hardcode nil here, so `set` never warned at
+// all). BLOCKING 2 (external audit round 3, 2026-07-30): the CLI used to
+// decide whether to print `add`'s warning BEFORE ever calling AddPackage at
+// all (via a standalone WillResolveMutableRefForAdd prediction), so it
+// printed even when AddPackage was about to fail for an unrelated reason
+// entirely -- a missing config, an unreachable source, a duplicate name, or
+// (compounding classifyRefResolution's own noVerify gap above) an offline
+// HEAD resolution that was about to hard-fail anyway. Invoking the warning
+// from exactly the call site that is about to perform the real resolution --
+// after every one of AddPackage's other pre-flight checks has already run
+// and succeeded -- avoids the warning printing on any of those paths without
+// hand-duplicating AddPackage's own pre-flight order in the CLI: this
+// depends on every AddPackage pre-flight check before this call site
+// actually returning before resolveRef is reached (true as of this file's
+// current AddPackage body, editor.go's AddPackage function, verified by
+// TestMarketplacePackageAdd_ExplicitRefHead_NoVerify_NoMutableRefWarning_ExitsCode2/
+// _MissingConfig_/_UnreachableSource_/_DuplicateName_NoMutableRefWarning in
+// cmd/apm-go/marketplace_package_test.go) -- a future pre-flight check added
+// AFTER this resolveRef call, or reordered before it without adding a
+// regression test for it, is not covered by this reasoning and would need
+// its own test.
 func resolveRef(source, ref, version string, lister RefLister, noVerify, implicitHeadOnEmpty, skipLocalSource bool, onExplicitHeadWillResolve func()) (string, error) {
-	switch classifyRefResolution(source, ref, version, noVerify, implicitHeadOnEmpty, skipLocalSource) {
+	kind := classifyRefResolution(source, ref, version, noVerify, implicitHeadOnEmpty, skipLocalSource)
+	return resolveRefForKind(kind, source, ref, lister, onExplicitHeadWillResolve)
+}
+
+// resolveRefForKind performs kind's corresponding lister I/O (if any) and
+// returns the resolved ref. Split out from resolveRef so a test can drive
+// the kind-dispatch switch directly with a kind value classifyRefResolution
+// itself could never actually return today (MAJOR 5, external audit round
+// 4, 2026-07-30's fail-closed `default` case below), without needing to
+// contrive a (source, ref, version, noVerify, ...) input tuple that reaches
+// it through classifyRefResolution -- there is no such tuple today, by
+// construction, since every kind classifyRefResolution can return has its
+// own explicit case.
+func resolveRefForKind(kind refResolutionKind, source, ref string, lister RefLister, onExplicitHeadWillResolve func()) (string, error) {
+	switch kind {
 	case refKindNone:
 		return "", nil
 	case refKindVerbatim:
@@ -487,7 +513,7 @@ func resolveRef(source, ref, version string, lister RefLister, noVerify, implici
 			}
 		}
 		return "", fmt.Errorf("ref %q not found on %q", "HEAD", source)
-	default: // refKindNamed
+	case refKindNamed:
 		refs, err := lister.ListRefs(source)
 		if err != nil {
 			return "", fmt.Errorf("could not resolve ref %q for %q: %w", ref, source, err)
@@ -498,6 +524,23 @@ func resolveRef(source, ref, version string, lister RefLister, noVerify, implici
 			}
 		}
 		return "", fmt.Errorf("ref %q not found on %q", ref, source)
+	default:
+		// MAJOR 5 (external audit round 4, 2026-07-30): classifyRefResolution
+		// is a closed, exhaustive enum today (refKindNone/Verbatim/Head/
+		// HeadOffline/Named), but this switch used to fall back to
+		// refKindNamed's own network-resolving branch for anything it didn't
+		// recognize by name (a bare `default:` with a "// refKindNamed"
+		// comment, not an explicit `case refKindNamed:`). A future kind added
+		// to the enum without updating this switch would silently touch the
+		// network with whatever `ref` happens to hold, instead of failing
+		// closed -- the exact "fail open on an unrecognized case" shape this
+		// function's own callers (AddPackage/SetPackage) are fixed elsewhere
+		// in this file to never do. Every currently-defined kind now has its
+		// own explicit case above; this default only exists for a future kind
+		// that has NOT yet been wired to a case here, and now fails closed
+		// with an explicit error naming the unrecognized value instead of
+		// guessing "named ref" for it.
+		return "", fmt.Errorf("resolveRef: unrecognized ref resolution kind for ref %q on %q", ref, source)
 	}
 }
 
@@ -687,6 +730,23 @@ type SetOptions struct {
 	TagPattern        *string
 	Tags              []string
 	IncludePrerelease *bool
+	// OnExplicitHeadWillResolve, when non-nil, is invoked by resolveRef
+	// immediately before (and only immediately before) it performs the real
+	// lister.ListRefs call for an explicitly-given "--ref HEAD"/"head" --
+	// `set`'s own R5/AC19-equivalent mutable-ref-warning hook, mirroring
+	// AddOptions.OnExplicitHeadWillResolve (see that field's own doc comment
+	// for why the warning is wired through resolveRef's hook rather than
+	// predicted before calling SetPackage).
+	//
+	// BLOCKING 3 (external audit round 4, 2026-07-30): SetPackage used to
+	// pass a hardcoded nil for this parameter, so `apm marketplace package
+	// set NAME --ref HEAD` never printed the mutable-ref warning at all --
+	// contradicting upstream, which warns on `set` too (Python's
+	// commands/marketplace/plugin/set.py:80 calls the same `_resolve_ref`
+	// plugin/__init__.py:120-137 warns from). Every existing `set --ref` CLI
+	// test only ever used a tag/branch ref, never HEAD, so nothing caught
+	// this gap.
+	OnExplicitHeadWillResolve func()
 }
 
 // SetPackage implements `apm marketplace package set NAME` (mkt-045):
@@ -737,7 +797,7 @@ func SetPackage(dir, name string, opts SetOptions, lister RefLister) (fallbackUs
 		// (BLOCKING 2, external audit 2026-07-30) -- fixed by threading a
 		// dedicated skipLocalSource argument through resolveRef instead of
 		// letting it infer add-vs-set from implicitHeadOnEmpty alone.
-		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, "", lister, false, false, false, nil)
+		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, "", lister, false, false, false, opts.OnExplicitHeadWillResolve)
 		if rerr != nil {
 			return false, rerr
 		}

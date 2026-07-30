@@ -645,11 +645,143 @@ func TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct(t *test
 	}
 }
 
+// TestResolveRef_CrossProduct_MatchesDirectSpecOracle is MAJOR 1 (external
+// audit round 4, 2026-07-30)'s fix for the cross-product test above being a
+// COUPLED ORACLE: WillResolveMutableRefForAdd and resolveRef both call the
+// exact same classifyRefResolution, so a mutation to that shared classifier
+// (the report's own example: adding `&& ref != "Head"` to the noVerify
+// check inside classifyRefResolution) makes both the predictor and
+// resolveRef's actual behavior wrong IN THE SAME WAY -- predicted still
+// equals actuallyResolvedViaHead, so the test above stays green even though
+// production behavior is broken for `--ref Head --no-verify`.
+//
+// This test computes its expected outcome (was the lister called at all,
+// what value/error resolveRef returns) directly from add's documented
+// decision table (this file's own package doc comment, and editor.go's
+// classifyRefResolution doc comment) -- WITHOUT calling
+// classifyRefResolution, WillResolveMutableRefForAdd, or any other
+// production helper to derive the expectation -- so a bug inside the shared
+// classifier itself has nowhere left to hide from both sides of the
+// comparison agreeing.
+func TestResolveRef_CrossProduct_MatchesDirectSpecOracle(t *testing.T) {
+	const headSHA = "1111111111111111111111111111111111111a"
+	const mainSHA = "2222222222222222222222222222222222222b"
+	concreteSHARef := strings.Repeat("3", 39) + "c"
+	if len(concreteSHARef) != 40 {
+		t.Fatalf("test fixture bug: concreteSHARef has length %d, want 40", len(concreteSHARef))
+	}
+
+	sources := []struct {
+		name    string
+		source  string
+		isLocal bool
+	}{
+		{"remote", "owner/repo", false},
+		{"local", "./pkgs/tool", true},
+	}
+	refs := []string{"", "HEAD", "head", "Head", concreteSHARef, "main"}
+	versions := []string{"", "^1.0.0"}
+	noVerifies := []bool{false, true}
+	isHeadShaped := func(ref string) bool {
+		return ref == "" || strings.EqualFold(ref, "HEAD")
+	}
+
+	for _, s := range sources {
+		for _, ref := range refs {
+			for _, version := range versions {
+				for _, noVerify := range noVerifies {
+					name := s.name + "/ref=" + ref + "/version=" + version + "/noVerify=" + strconvBool(noVerify)
+					if ref == "" {
+						name = s.name + "/ref=<empty>/version=" + version + "/noVerify=" + strconvBool(noVerify)
+					}
+					t.Run(name, func(t *testing.T) {
+						spy := &spyRefLister{inner: mapRefLister{refs: []semver.TagInfo{
+							{Name: "HEAD", Commit: headSHA},
+							{Name: "main", Commit: mainSHA},
+						}}}
+
+						// Directly-computed oracle -- add's own call shape is
+						// implicitHeadOnEmpty=true, skipLocalSource=true.
+						var wantListerCalled, wantErr bool
+						var wantResult string
+						switch {
+						case version != "":
+							// AC40 branch 3: a version range pins nothing here.
+							wantResult, wantListerCalled, wantErr = "", false, false
+						case s.isLocal:
+							// mkt-046: add never resolves a local source's ref,
+							// regardless of what ref/noVerify says.
+							wantResult, wantListerCalled, wantErr = "", false, false
+						case ref == concreteSHARef:
+							// AC40 branch 5: an already-concrete SHA is stored
+							// verbatim, no lister call.
+							wantResult, wantListerCalled, wantErr = concreteSHARef, false, false
+						case isHeadShaped(ref):
+							if noVerify {
+								// AC18: HEAD cannot be resolved offline.
+								wantResult, wantListerCalled, wantErr = "", false, true
+							} else {
+								wantResult, wantListerCalled, wantErr = headSHA, true, false
+							}
+						case ref == "main":
+							wantResult, wantListerCalled, wantErr = mainSHA, true, false
+						default:
+							t.Fatalf("test fixture bug: unhandled ref %q", ref)
+						}
+
+						got, err := resolveRef(s.source, ref, version, spy, noVerify, true, true, nil)
+
+						if spy.called != wantListerCalled {
+							t.Errorf("lister called = %v, want %v (source=%q, ref=%q, version=%q, noVerify=%v)", spy.called, wantListerCalled, s.source, ref, version, noVerify)
+						}
+						if wantErr {
+							if err == nil {
+								t.Errorf("resolveRef(%q, %q, %q, noVerify=%v) returned no error, want one", s.source, ref, version, noVerify)
+							}
+							return
+						}
+						if err != nil {
+							t.Errorf("resolveRef(%q, %q, %q, noVerify=%v) returned error %v, want none", s.source, ref, version, noVerify, err)
+						}
+						if got != wantResult {
+							t.Errorf("resolveRef(%q, %q, %q, noVerify=%v) = %q, want %q", s.source, ref, version, noVerify, got, wantResult)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
 func strconvBool(b bool) string {
 	if b {
 		return "true"
 	}
 	return "false"
+}
+
+// TestResolveRefForKind_UnrecognizedKind_FailsClosed_NeverTouchesLister is
+// MAJOR 5 (external audit round 4, 2026-07-30): resolveRef's kind-dispatch
+// switch used to fall back to refKindNamed's own network-resolving branch
+// for anything it didn't recognize by name (a bare `default:` with a
+// "// refKindNamed" comment). A future refResolutionKind value added to the
+// enum without also adding an explicit case to that switch would silently
+// touch the network with whatever ref happens to hold, instead of failing
+// closed. Drives resolveRefForKind directly with a kind value
+// classifyRefResolution can never actually produce today, proving the
+// `default` case (a) returns an error and (b) never calls the lister at
+// all -- panicLister enforces (b).
+func TestResolveRefForKind_UnrecognizedKind_FailsClosed_NeverTouchesLister(t *testing.T) {
+	const unrecognizedKind = refResolutionKind(999)
+
+	got, err := resolveRefForKind(unrecognizedKind, "owner/repo", "some-ref", panicLister{}, nil)
+
+	if err == nil {
+		t.Fatal("resolveRefForKind with an unrecognized kind returned no error, want a fail-closed error")
+	}
+	if got != "" {
+		t.Errorf("resolveRefForKind = %q, want empty on the fail-closed path", got)
+	}
 }
 
 // spyRefLister wraps another RefLister and records whether ListRefs was

@@ -263,14 +263,22 @@ func TestMarketplacePackageSet_WithVersionFlag_StillWorks(t *testing.T) {
 // written -- not just that authoring.SetPackage can do it when called
 // in-process.
 func TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI(t *testing.T) {
-	// Arrange
-	chdirTemp(t)
-	repoDir := t.TempDir()
+	// Arrange: the fixture repo must be a relative "./..." source (BLOCKING
+	// 1, external audit round 4, 2026-07-30: manifest.ValidateMarketplaceSource
+	// now rejects an absolute filesystem path as a marketplace source
+	// outright) -- `set` still resolves an explicit --ref via the real
+	// lister for a local source regardless (skipLocalSource=false, unlike
+	// `add`), so this keeps exercising the genuine gitRefLister/git
+	// ls-remote path, just against a relative fixture.
+	dir := chdirTemp(t)
+	repoDir := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
 	wantSHA := gitCmd(t, repoDir, "rev-parse", "v1.0.0")
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
-		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: " + source + "\n"
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./repo\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -302,15 +310,18 @@ func TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI(t *testing.T)
 // --ref <branch-name>` (not a tag) through the real CLI against a real git
 // branch.
 func TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI(t *testing.T) {
-	// Arrange
-	chdirTemp(t)
-	repoDir := t.TempDir()
+	// Arrange: relative "./..." fixture, same BLOCKING 1 reasoning as
+	// TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI above.
+	dir := chdirTemp(t)
+	repoDir := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
 	gitCmd(t, repoDir, "branch", "feature-branch")
-	source := filepath.ToSlash(repoDir)
 	wantSHA := gitCmd(t, repoDir, "rev-parse", "feature-branch")
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
-		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: " + source + "\n"
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./repo\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -329,6 +340,77 @@ func TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI(t 
 	if !strings.Contains(string(data), "ref: "+wantSHA) {
 		t.Errorf("apm.yml = %q, want the resolved SHA %s written for ref: (a non-tag-shaped --ref value must not be silently ignored at the CLI layer)", string(data), wantSHA)
 	}
+}
+
+// TestMarketplacePackageSet_RefFlagHead_PrintsMutableRefWarning is BLOCKING
+// 3 (external audit round 4, 2026-07-30): `set --ref HEAD` must print the
+// same mutable-ref warning `add --ref HEAD` does -- upstream warns on `set`
+// too (commands/marketplace/plugin/set.py:80 calls the same _resolve_ref
+// plugin/__init__.py:120-137 warns from), but SetPackage used to hardcode
+// nil for resolveRef's onExplicitHeadWillResolve hook, so `set` never
+// warned at all. Every existing `set --ref` CLI test used a tag/branch ref,
+// never HEAD, so nothing caught this gap.
+func TestMarketplacePackageSet_RefFlagHead_PrintsMutableRefWarning(t *testing.T) {
+	// Arrange
+	dir := chdirTemp(t)
+	repoDir := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./repo\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "set", "tool", "--ref", "HEAD")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package set tool --ref HEAD returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "'HEAD' is a mutable ref. Resolving to current SHA for safety.") {
+		t.Errorf("output = %q, want the mutable-ref warning (BLOCKING 3)", out)
+	}
+	assertLineSeverity(t, out, "'HEAD' is a mutable ref", ux.SymbolWarn)
+}
+
+// TestMarketplacePackageSet_RefFlagHead_MixedCase_PrintsMutableRefWarningOnce
+// is MAJOR 3 (external audit round 4, 2026-07-30)'s exact-count-and-severity
+// discipline applied to `set`: a mutation firing the callback twice for a
+// mixed-case "Head", or downgrading its severity to ux.Info for "Head"
+// only, would pass a test that merely substring-matches the message text
+// once (a plain t.Contains check cannot distinguish 1 occurrence from 2).
+// Asserts BOTH the exact occurrence count and the line's own severity
+// symbol in the same test.
+func TestMarketplacePackageSet_RefFlagHead_MixedCase_PrintsMutableRefWarningOnce(t *testing.T) {
+	// Arrange
+	dir := chdirTemp(t)
+	repoDir := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./repo\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "set", "tool", "--ref", "Head")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package set tool --ref Head returned error: %v (output: %s)", err, out)
+	}
+	count := strings.Count(out, "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
+	if count != 1 {
+		t.Errorf("output = %q, want the mutable-ref warning printed exactly once, got %d", out, count)
+	}
+	assertLineSeverity(t, out, "'HEAD' is a mutable ref", ux.SymbolWarn)
 }
 
 // ── C10: EOF/non-interactive confirm read must never read as "declined" ──
@@ -433,11 +515,16 @@ func TestMarketplacePackageAdd_LocalSource_NoFlags_SucceedsEndToEnd(t *testing.T
 // marketplace_authoring_test.go's own initGitRepoWithTags convention --
 // no real network access needed) -- and a nonexistent one fails the add.
 func TestMarketplacePackageAdd_RemoteSource_GoesThroughLsRemote_RealGitFixture(t *testing.T) {
-	// Arrange
+	// Arrange: source must be req-mf-017-compliant (BLOCKING 1, external
+	// audit round 4, 2026-07-30: manifest.ValidateMarketplaceSource now
+	// rejects an absolute filesystem path outright), so the real repo
+	// fixture is wired in via withFixtureRemoteLister instead of being named
+	// directly as the source.
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
+	source := "owner/repo"
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
@@ -470,13 +557,14 @@ func TestMarketplacePackageAdd_UnreachableRemoteSource_Fails(t *testing.T) {
 	if err := os.MkdirAll(notARepo, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	withFixtureRemoteLister(t, notARepo)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Act
-	_, err := runMarketplaceCmd(t, "package", "add", filepath.ToSlash(notARepo))
+	_, err := runMarketplaceCmd(t, "package", "add", "owner/repo")
 
 	// Assert
 	if err == nil {
@@ -724,7 +812,8 @@ func TestMarketplacePackageAdd_ZeroFlags_RemoteSource_WritesResolvedHeadSHA(t *t
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
+	source := "owner/repo"
 	wantSHA := gitCmd(t, repoDir, "rev-parse", "HEAD")
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
@@ -782,7 +871,8 @@ func TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning(t *testin
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
+	source := "owner/repo"
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
@@ -851,7 +941,8 @@ func TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
+	source := "owner/repo"
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
@@ -864,9 +955,16 @@ func TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning
 	if err != nil {
 		t.Fatalf("package add --ref Head returned error: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "'HEAD' is a mutable ref. Resolving to current SHA for safety.") {
-		t.Errorf("output = %q, want the mutable-ref warning for a mixed-case 'Head'", out)
+	// MAJOR 3 (external audit round 4, 2026-07-30): a plain substring match
+	// cannot distinguish the callback firing once from firing twice, and
+	// cannot catch a severity downgrade (ux.Warn -> ux.Info) specific to
+	// "Head" -- both would still contain this substring. Assert the exact
+	// occurrence count AND the line's own severity symbol.
+	count := strings.Count(out, "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
+	if count != 1 {
+		t.Errorf("output = %q, want the mutable-ref warning for a mixed-case 'Head' printed exactly once, got %d", out, count)
 	}
+	assertLineSeverity(t, out, "'HEAD' is a mutable ref", ux.SymbolWarn)
 }
 
 // ── BLOCKING 2 (external audit round 3, 2026-07-30): the mutable-ref
@@ -912,7 +1010,8 @@ func TestMarketplacePackageAdd_ExplicitRefHead_MissingConfig_NoMutableRefWarning
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
+	source := "owner/repo"
 
 	// Act
 	out, err := runMarketplaceCmd(t, "package", "add", source, "--ref", "HEAD")
@@ -933,13 +1032,14 @@ func TestMarketplacePackageAdd_ExplicitRefHead_UnreachableSource_NoMutableRefWar
 	if err := os.MkdirAll(notARepo, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	withFixtureRemoteLister(t, notARepo)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Act
-	out, err := runMarketplaceCmd(t, "package", "add", filepath.ToSlash(notARepo), "--ref", "HEAD")
+	out, err := runMarketplaceCmd(t, "package", "add", "owner/repo", "--ref", "HEAD")
 
 	// Assert
 	if err == nil {
@@ -955,7 +1055,8 @@ func TestMarketplacePackageAdd_ExplicitRefHead_DuplicateName_NoMutableRefWarning
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
+	source := "owner/repo"
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
@@ -987,7 +1088,8 @@ func TestMarketplacePackageAdd_VersionGiven_DoesNotWriteRef(t *testing.T) {
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
+	source := "owner/repo"
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)

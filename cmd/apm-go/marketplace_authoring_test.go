@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/semver"
 	"github.com/apm-go/apm/internal/ux"
 )
 
@@ -487,6 +489,59 @@ func initGitRepoWithTags(t *testing.T, dir string, tags ...string) {
 	}
 }
 
+// fixtureRemoteLister is an authoring.RefLister test double that ignores
+// the marketplace source string it is given and instead runs a real `git
+// ls-remote` against a fixed local directory. It exists so a CLI-level test
+// can drive the genuine "remote" (non-local) verification/resolution code
+// path -- authoring.verifyPackageSource and resolveRef's refKindHead/
+// refKindNamed branches only ever call the lister for a source that is NOT
+// "./"-prefixed -- against a real repository fixture, with no network
+// access, now that manifest.ValidateMarketplaceSource rejects an absolute
+// filesystem path as a marketplace source outright (BLOCKING 1, external
+// audit round 4, 2026-07-30). Before that fix, these tests used the
+// fixture repo's own absolute path AS the marketplace source string, relying
+// on authoring.resolveCloneURL's now-closed absolute-path passthrough to
+// reach it; the source string reaching AddPackage/SetPackage/
+// LoadAuthoringConfig must now itself be a req-mf-017-compliant shape (e.g.
+// "owner/repo"), so this lister is wired in via authoring.DefaultRefLister
+// instead, decoupling "which source string satisfies validation" from
+// "which real repository the lister actually queries".
+type fixtureRemoteLister struct{ dir string }
+
+func (f fixtureRemoteLister) ListRefs(string) ([]semver.TagInfo, error) {
+	cmd := exec.Command("git", "ls-remote", "--", f.dir, "HEAD", "refs/tags/*", "refs/heads/*")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-remote %s: %s", f.dir, strings.TrimSpace(string(out)))
+	}
+	var refs []semver.TagInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.TrimPrefix(parts[1], "refs/tags/")
+		name = strings.TrimPrefix(name, "refs/heads/")
+		refs = append(refs, semver.TagInfo{Name: name, Commit: parts[0]})
+	}
+	return refs, nil
+}
+
+// withFixtureRemoteLister swaps authoring.DefaultRefLister -- the CLI's real
+// lister wiring (cmd/apm-go/marketplace_package.go,
+// cmd/apm-go/marketplace_authoring.go) -- for a fixtureRemoteLister pointed
+// at dir, for the duration of the calling test, restoring the original
+// afterward.
+func withFixtureRemoteLister(t *testing.T, dir string) {
+	t.Helper()
+	orig := authoring.DefaultRefLister
+	authoring.DefaultRefLister = fixtureRemoteLister{dir: dir}
+	t.Cleanup(func() { authoring.DefaultRefLister = orig })
+}
+
 func TestMarketplaceCheckCmd_FlagsWired(t *testing.T) {
 	cmd := marketplaceCheckCmd()
 	for _, name := range []string{"offline", "verbose"} {
@@ -551,14 +606,16 @@ func TestMarketplaceCheck_RemotePackagePinnedRefFound_RealGitFixture(t *testing.
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	// YAML backslashes in Windows paths must be escaped for a double-quoted
-	// scalar; forward-slash the fixture path so this apm.yml stays a plain
-	// unquoted scalar regardless of platform.
-	source := filepath.ToSlash(repoDir)
+	// The marketplace source string must itself be req-mf-017-compliant
+	// (manifest.ValidateMarketplaceSource rejects an absolute filesystem
+	// path outright, BLOCKING 1, external audit round 4, 2026-07-30); the
+	// real repository fixture is wired in via withFixtureRemoteLister
+	// instead of being named directly as the source.
+	withFixtureRemoteLister(t, repoDir)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      ref: v1.0.0\n"
+		"    - name: tool\n      source: owner/repo\n      ref: v1.0.0\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -579,11 +636,11 @@ func TestMarketplaceCheck_RemotePackagePinnedRefMissing_ExitsNonZero(t *testing.
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      ref: v9.9.9\n"
+		"    - name: tool\n      source: owner/repo\n      ref: v9.9.9\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -788,11 +845,11 @@ func TestMarketplaceOutdated_UpgradablePackage_ExitsNonZero(t *testing.T) {
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0", "v1.1.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      version: \"^1.0.0\"\n"
+		"    - name: tool\n      source: owner/repo\n      version: \"^1.0.0\"\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -817,11 +874,11 @@ func TestMarketplaceOutdated_NoMatchingTags_DoesNotExitNonZero(t *testing.T) {
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "release-1")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      version: \"^1.0.0\"\n"
+		"    - name: tool\n      source: owner/repo\n      version: \"^1.0.0\"\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -848,11 +905,11 @@ func TestMarketplaceOutdated_FetchFailure_DoesNotExitNonZero(t *testing.T) {
 	if err := os.MkdirAll(notARepo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	source := filepath.ToSlash(notARepo)
+	withFixtureRemoteLister(t, notARepo)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      version: \"^1.0.0\"\n"
+		"    - name: tool\n      source: owner/repo\n      version: \"^1.0.0\"\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}

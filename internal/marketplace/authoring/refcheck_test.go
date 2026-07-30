@@ -490,6 +490,37 @@ func TestResolveCloneURL(t *testing.T) {
 		}
 	})
 
+	// BLOCKING 2 (external audit round 4, 2026-07-30): a directory symlink
+	// physically located inside the project root but pointing at a real
+	// directory outside it must be rejected too -- the string
+	// "<project>/linked" contains no ".." segment at all, so the purely
+	// lexical filepath.Rel check pathWithinRoot used to rely on exclusively
+	// reports it as "within root", while `git ls-remote` (or any real
+	// filesystem access) follows the symlink at the OS level and actually
+	// reaches the outside directory. Skipped (visibly, not silently) when
+	// this process cannot create a directory symlink -- e.g. Windows
+	// without Developer Mode or SeCreateSymbolicLinkPrivilege -- since that
+	// is an environment limitation, not a test failure.
+	t.Run("relative local source escaping cwd via a directory symlink is rejected", func(t *testing.T) {
+		parent := t.TempDir()
+		project := filepath.Join(parent, "project")
+		outside := filepath.Join(parent, "outside")
+		if err := os.Mkdir(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(project, "linked")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Skipf("SKIPPED: cannot create a directory symlink in this environment (%v); BLOCKING 2's symlink-escape guard is untested by this run", err)
+		}
+		chdirTo(t, project)
+		if _, err := resolveCloneURL("./linked"); err == nil {
+			t.Fatal("resolveCloneURL(./linked) = nil error, want a rejection (symlink resolves outside the project root)")
+		}
+	})
+
 	t.Run("relative local source staying within cwd is accepted", func(t *testing.T) {
 		parent := t.TempDir()
 		chdirTo(t, parent)

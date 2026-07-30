@@ -255,6 +255,29 @@ func ValidateMarketplaceSource(source string) error {
 		return fmt.Errorf("marketplace source is empty")
 	}
 
+	// (a0) reject absolute filesystem paths and UNC paths outright: req-mf-017
+	// recognizes only a "./"-prefixed relative path as a local marketplace
+	// source (openapm-v0.1.md req-mf-017: "local 必須 './' 開頭") -- nothing
+	// else is a valid local shape. Before this check existed, a POSIX
+	// absolute path ("/etc/passwd"), a Windows drive-letter absolute path
+	// ("D:\outside\repo", "C:\Windows\Temp\evil"), or a UNC path
+	// ("\\server\share\repo") matched none of the branches below (none of
+	// them is "."-prefixed, and none contains "://") and fell straight
+	// through to the final "shorthand form -- accepted" branch unchecked;
+	// authoring/refcheck.go's resolveCloneURL then treated any such string as
+	// an already-resolved local filesystem path with NO boundary check at
+	// all (filepath.IsAbs short-circuits there before the "./"-relative
+	// branch's own pathWithinRoot guard ever runs) -- a path-traversal bypass
+	// that needed no ".." segment whatsoever (BLOCKING 1, external audit
+	// round 4, 2026-07-30). Checked with portable string prefixes/patterns,
+	// not filepath.IsAbs (which is OS-native and would silently miss a
+	// Windows-shaped source string when this validator runs on a
+	// non-Windows CI runner) -- the same portable-check philosophy the
+	// ".."-segment guard below already uses.
+	if isAbsoluteOrUNCSource(source) {
+		return fmt.Errorf("marketplace source %q must not be an absolute or UNC filesystem path; a local source must start with './'", source)
+	}
+
 	// (a) reject .. segments. Both "/" and "\" are treated as separators
 	// before splitting: a forward-slash-only split lets a Windows-style
 	// "..\" segment (e.g. "./..\\..\\outside") slip through unrejected on
@@ -307,4 +330,31 @@ func ValidateMarketplaceSource(source string) error {
 
 	// shorthand form (host/owner/repo or owner/repo) — accepted
 	return nil
+}
+
+// isAbsoluteOrUNCSource reports whether source is shaped like a POSIX
+// absolute path ("/..."), a Windows drive-letter absolute path
+// ("C:\..." / "C:/..."), or a Windows UNC path ("\\server\share\..." /
+// "//server/share/..."). Deliberately string-pattern-based rather than
+// filepath.IsAbs (see ValidateMarketplaceSource's own doc comment on this
+// check, above) so it rejects a Windows-shaped source consistently
+// regardless of which OS this validator happens to run on.
+func isAbsoluteOrUNCSource(source string) bool {
+	if strings.HasPrefix(source, "/") || strings.HasPrefix(source, "\\") {
+		return true
+	}
+	// Drive-letter absolute path: a single ASCII letter, ":", then a "/" or
+	// "\" separator (e.g. "C:\foo", "D:/foo"). A bare "C:foo" (no separator
+	// after the colon) is not a filesystem path shape any marketplace source
+	// would legitimately take, so it is left to the existing shorthand/URL
+	// branches below.
+	if len(source) >= 3 && isASCIILetter(source[0]) && source[1] == ':' &&
+		(source[2] == '/' || source[2] == '\\') {
+		return true
+	}
+	return false
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
