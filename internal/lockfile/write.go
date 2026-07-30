@@ -167,6 +167,7 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 		"version":                 dep.Version,
 		"virtual_path":            dep.VirtualPath,
 		"tree_sha256":             dep.TreeSHA256,
+		"package_type":            dep.PackageType,
 		"content_hash":            "",
 		"local_path":              "",
 	}
@@ -345,6 +346,11 @@ func depSemanticEqual(a, b *LockedDep) bool {
 		a.MarketplacePluginName == b.MarketplacePluginName &&
 		a.SourceURL == b.SourceURL &&
 		a.SourceDigest == b.SourceDigest &&
+		// PackageType (R9.4/AC45) is content, not advisory: a change from ""
+		// to "marketplace_plugin" (e.g. a dependency moving from
+		// dependencies.apm to devDependencies.apm) must not be treated as a
+		// no-op that skips rewriting apm.lock.yaml.
+		a.PackageType == b.PackageType &&
 		// SkillSubset (BUG-2's per-dep --skill filter) must participate in
 		// semantic equality too: without this, a --skill RESET/narrowing
 		// that changes nothing else about the dependency (same commit,
@@ -491,9 +497,12 @@ func extractEntryKey(entry *yaml.Node) string {
 
 // knownEntryFields lists fields that the serializer explicitly handles.
 // Fields NOT listed here are preserved verbatim from the original node (passthrough).
-// Deliberately excludes: host, port, is_virtual, package_type, skill_subset,
-// is_dev, content_hash, local_path — these are spec-recognized optional fields
-// that the serializer does not yet model but must survive round-trip (req-lk-011).
+// Deliberately excludes: host, port, is_virtual, is_dev, content_hash,
+// local_path — these are spec-recognized optional fields that the serializer
+// does not yet model but must survive round-trip (req-lk-011). package_type
+// (R9.4/AC45) IS modeled via LockedDep.PackageType/the fields map above, so
+// it is listed here (previously it was in the excluded list above, per
+// design.md §11.3: declared in the whitelist but never emitted).
 var knownEntryFields = map[string]bool{
 	"repo_url": true, "source": true,
 	"resolved_commit": true, "resolved_ref": true, "resolved_tag": true,
@@ -503,6 +512,7 @@ var knownEntryFields = map[string]bool{
 	"constraint": true, "resolved_at": true, "resolved_by": true,
 	"version": true, "virtual_path": true,
 	"tree_sha256": true, "depth": true,
+	"package_type":   true,
 	"skill_subset":   true,
 	"deployed_files": true, "deployed_file_hashes": true,
 }

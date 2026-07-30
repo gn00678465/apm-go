@@ -1307,7 +1307,7 @@ func TestPersistPackagesToManifest_SkillWildcard_NewPackageWritesStringForm(t *t
 	// as "no entry for this identity" -- nil here simulates that outcome
 	// directly, since this test targets persistPackagesToManifest's own
 	// entry-writing logic.
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 
@@ -1339,7 +1339,7 @@ func TestPersistPackagesToManifest_SkillWildcard_ClearsExistingSubset(t *testing
 	}
 
 	// Same RESET-as-absent-entry simulation as the test above.
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 

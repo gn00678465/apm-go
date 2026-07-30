@@ -29,7 +29,19 @@ type LockedDep struct {
 	MarketplacePluginName string // plugin name within that marketplace (manifest casing preserved)
 	SourceURL             string // only set when the marketplace is kind=url
 	SourceDigest          string // only set when the marketplace is kind=url
+
+	// PackageType classifies a dependency declared under devDependencies.apm
+	// (R9.4/AC45, design.md §11.3): apm-go's install --dev sets this to
+	// PackageTypeMarketplacePlugin for every direct devDependencies.apm
+	// entry, mirroring the upstream lockfile's package_type marker
+	// (research/eval-real-run-20260728.md §D5). Empty for a regular
+	// dependencies.apm entry.
+	PackageType string
 }
+
+// PackageTypeMarketplacePlugin is the package_type value apm-go writes for a
+// devDependencies.apm entry (the only classification currently produced).
+const PackageTypeMarketplacePlugin = "marketplace_plugin"
 
 // UniqueKey returns the dedup/lookup key for a locked dependency.
 func (d *LockedDep) UniqueKey() string {

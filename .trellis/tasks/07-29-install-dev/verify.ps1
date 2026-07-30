@@ -78,7 +78,13 @@ scripts: {}
     if ($y -notmatch '(?ms)devDependencies:\s*\n\s+apm:\s*\n\s+-\s*pbakaus/impeccable') {
       Fail 'AC42' '套件未寫入 devDependencies.apm'
     } else { Pass 'AC42' }
-    if ($y -match '(?ms)dependencies:\s*\n\s+apm:\s*\n\s+-\s*pbakaus/impeccable') {
+    # 反向斷言必須 (a) 行首錨定、(b) 大小寫敏感。PowerShell 的 -match 預設
+    # 不分大小寫，而 "devDependencies:" 含有子字串 "Dependencies:"，
+    # 所以未錨定的 -match 會在正確產物上誤報。實測三種寫法：
+    #   只有 devDependencies 的正確產物 → -match=True(誤報) / ^+-cmatch=False
+    #   真的被重複寫入 dependencies      → -match=True        / ^+-cmatch=True
+    # 即加上錨定與大小寫敏感後仍抓得到真缺陷，只是不再誤報。
+    if ($y -cmatch '(?ms)^dependencies:\s*\n\s+apm:\s*\n\s+-\s*pbakaus/impeccable') {
       Fail 'AC42' '套件被誤寫入 dependencies.apm'
     }
     # AC43 鍵序：devDependencies 必須在 includes 與 scripts 之間
@@ -99,6 +105,23 @@ if ($listed.Count -ne 3) {
   $before = $script:fails.Count
   $null = Exec 'AC-L1' "go test -run 'TestRunInstall_DevDependency'" { go test ./cmd/apm-go/ -run 'TestRunInstall_DevDependency' }
   if ($script:fails.Count -eq $before) { Pass 'AC-L1' }
+}
+
+# ---- AC42-cross：跨區段搬家（2026-07-30 Tier 2 阻斷級）----
+# 「已宣告」判定原本只看 m.ParsedDeps，persistPackagesToManifest 也只掃它要寫的
+# 那一個區段，兩層都是單區段視野 → install --dev X 在 X 已存在於 dependencies 時
+# 會把 X 重複寫進兩個區段，且情境 B 連帶讓 lockfile 的 package_type 變空字串。
+# 使用者裁定（2026-07-30）：搬家，不是重複也不是報錯。
+$xTests = @(
+  'TestRunInstall_Dev_ExistingDevDependency_BareInstall_MovesToNonDev'
+  'TestRunInstall_Dev_ExistingDependency_DevInstall_MovesToDev'
+)
+foreach ($n in $xTests) {
+  $m = @(& go test ./cmd/apm-go/ -list "^$n$" 2>&1 | Where-Object { $_ -match '^Test' })
+  if ($m.Count -ne 1) { Fail 'AC42-cross' "-list 未精確匹配到 $n（得到 $($m.Count) 個）"; continue }
+  $before = $script:fails.Count
+  $null = Exec 'AC42-cross' "go test -run $n" { go test ./cmd/apm-go/ -run "^$n$" -count=1 }
+  if ($script:fails.Count -eq $before) { Pass "AC42-cross/$n" }
 }
 
 # ---- AC45：lockfile package_type 欄位存在於 Go 端 ----

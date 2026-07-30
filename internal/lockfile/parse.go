@@ -230,6 +230,8 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 			d.SourceURL = val.Value
 		case "source_digest":
 			d.SourceDigest = val.Value
+		case "package_type":
+			d.PackageType = val.Value
 		}
 	}
 
