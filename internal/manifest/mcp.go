@@ -250,111 +250,103 @@ func RecognizePlaceholders(s string) []Placeholder {
 
 // ── Marketplace source validation (mf-017) ──
 
+// marketplaceHostPattern/marketplaceSegmentPattern/marketplaceOwnerRepoPattern
+// mirror upstream's _HOST_PAT/_SEGMENT_PAT/_OWNER_REPO_PAT exactly
+// (apm/src/apm_cli/marketplace/yml_schema.py:93-97, external audit round 5,
+// 2026-07-30): the host segment must look like an FQDN (one or more dotted
+// labels, then a final label starting with a letter) to disambiguate
+// "host/owner/repo" from plain "owner/repo"; each owner/repo segment is
+// restricted to [A-Za-z0-9._-] -- i.e. it cannot contain "@", ":", "?", or
+// "/", the exact characters a userinfo, port, query string, or SCP-style SSH
+// remote ("git@host:path") would need to embed.
+const (
+	marketplaceHostPattern      = `(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]*`
+	marketplaceSegmentPattern   = `[A-Za-z0-9._-]+`
+	marketplaceOwnerRepoPattern = marketplaceSegmentPattern + `/` + marketplaceSegmentPattern
+)
+
+// marketplaceSourceRe mirrors upstream's SOURCE_RE (yml_schema.py:100-107):
+// exactly four accepted shapes -- 'owner/repo', 'host.tld/owner/repo',
+// 'https://host.tld/owner/repo[.git]', or './...' (a local path, matching
+// anything after the "./" prefix). Everything else is rejected.
+//
+// BLOCKING 1 (external audit round 5, 2026-07-30): the previous
+// implementation was a hand-picked blocklist (absolute/UNC paths, ".."
+// segments) followed by a hand-picked allowlist (a "://"-containing URL,
+// anything starting with ".") that fell through to an unconditional
+// "shorthand form -- accepted" for anything else -- a fail-OPEN default.
+// That silently accepted an SCP-style SSH remote ("git@host:path" never
+// contains "://", so the https-only branch never saw it), an arbitrary SSH
+// destination ("git@evil.example.com:x/y"), and a Windows drive-relative
+// path with no separator after the colon ("C:foo", "c:foo", "C:" --
+// isAbsoluteOrUNCSource's own doc comment used to explicitly exclude this
+// shape as "not a filesystem path shape ... left to the existing
+// shorthand/URL branches", which was exactly the bug). Matching against
+// this fixed four-shape grammar instead is fail-CLOSED: nothing reaches an
+// implicit accept branch, since there is no such branch left. This one
+// regex closes all three of the above without any additional prefix
+// special-case: none of "git@" (no "/" between "git@host" and ":path" in a
+// way SEGMENT_PAT would accept), "ssh://" (not the literal "https://"
+// prefix), or "C:foo" (contains ":" -- not a SEGMENT_PAT character, and no
+// "/" at all) can match any of the four alternatives below.
+var marketplaceSourceRe = regexp.MustCompile(
+	`^(?:https://` + marketplaceHostPattern + `/` + marketplaceOwnerRepoPattern + `(?:\.git)?` +
+		`|` + marketplaceHostPattern + `/` + marketplaceOwnerRepoPattern +
+		`|` + marketplaceOwnerRepoPattern +
+		`|\./.*` +
+		`)$`,
+)
+
 func ValidateMarketplaceSource(source string) error {
 	if source == "" {
 		return fmt.Errorf("marketplace source is empty")
 	}
 
-	// (a0) reject absolute filesystem paths and UNC paths outright: req-mf-017
-	// recognizes only a "./"-prefixed relative path as a local marketplace
-	// source (openapm-v0.1.md req-mf-017: "local 必須 './' 開頭") -- nothing
-	// else is a valid local shape. Before this check existed, a POSIX
-	// absolute path ("/etc/passwd"), a Windows drive-letter absolute path
-	// ("D:\outside\repo", "C:\Windows\Temp\evil"), or a UNC path
-	// ("\\server\share\repo") matched none of the branches below (none of
-	// them is "."-prefixed, and none contains "://") and fell straight
-	// through to the final "shorthand form -- accepted" branch unchecked;
-	// authoring/refcheck.go's resolveCloneURL then treated any such string as
-	// an already-resolved local filesystem path with NO boundary check at
-	// all (filepath.IsAbs short-circuits there before the "./"-relative
-	// branch's own pathWithinRoot guard ever runs) -- a path-traversal bypass
-	// that needed no ".." segment whatsoever (BLOCKING 1, external audit
-	// round 4, 2026-07-30). Checked with portable string prefixes/patterns,
-	// not filepath.IsAbs (which is OS-native and would silently miss a
-	// Windows-shaped source string when this validator runs on a
-	// non-Windows CI runner) -- the same portable-check philosophy the
-	// ".."-segment guard below already uses.
-	if isAbsoluteOrUNCSource(source) {
-		return fmt.Errorf("marketplace source %q must not be an absolute or UNC filesystem path; a local source must start with './'", source)
+	if !marketplaceSourceRe.MatchString(source) {
+		return fmt.Errorf("marketplace source %q must be one of 'owner/repo', 'host.tld/owner/repo', 'https://host.tld/owner/repo[.git]', or './path'", source)
 	}
 
-	// (a) reject .. segments. Both "/" and "\" are treated as separators
-	// before splitting: a forward-slash-only split lets a Windows-style
-	// "..\" segment (e.g. "./..\\..\\outside") slip through unrejected on
-	// any OS, since Go source-code string literals don't get OS-specific
-	// separator translation the way filepath does (BLOCKING 1, external
-	// audit round 3, 2026-07-30). This is one of two independent layers:
-	// see authoring/refcheck.go's resolveCloneURL for the second (a
-	// resolved-path-stays-within-root check), required because this
-	// segment-level check alone cannot catch every OS-specific escape a
-	// downstream path-joining call might construct.
+	// The grammar match above already makes a userinfo ("user@"), a port
+	// (":8080"), a query string ("?x=1"), an SCP-style SSH remote
+	// ("git@host:path"), an absolute filesystem path, or a UNC path
+	// structurally impossible in anything that reaches this point: none of
+	// "@", ":", or "?" is a marketplaceSegmentPattern/marketplaceHostPattern
+	// character, so a source containing any of them already failed the check
+	// above -- no separate URL-parsing branch is needed for those cases
+	// anymore (BLOCKING 1, external audit round 5, 2026-07-30).
+	isLocal := strings.HasPrefix(source, "./")
+
+	// '..' (and, for a non-local source, a bare '.') segment check: mirrors
+	// upstream's validate_path_segments(source, allow_current_dir=is_local)
+	// (path_security.py), run unconditionally once the shape match succeeds
+	// -- marketplaceSegmentPattern's character class permits a literal "."
+	// or ".." as an ordinary segment (e.g. "owner/.." matches the grammar's
+	// owner/repo shape structurally), so the grammar match alone is not
+	// sufficient; this second stage is what actually rejects those. Both "/"
+	// and "\" are treated as separators before splitting: a forward-slash-
+	// only split lets a Windows-style "..\" segment (e.g.
+	// "./..\\..\\outside") slip through unrejected on any OS, since Go
+	// source-code string literals don't get OS-specific separator
+	// translation the way filepath does (BLOCKING 1, external audit round 3,
+	// 2026-07-30). This is one of two independent layers: see
+	// authoring/refcheck.go's resolveCloneURL for the second (a
+	// resolved-path-stays-within-root check).
+	reject := map[string]bool{"..": true}
+	if !isLocal {
+		// A bare "." segment is only meaningful for a local path (e.g.
+		// "./foo/./bar"); upstream rejects it for a non-local (remote
+		// shorthand or URL) source too (path_security.py's
+		// allow_current_dir=False default), even though
+		// marketplaceSegmentPattern's character class would otherwise accept
+		// a single "." character as an ordinary segment.
+		reject["."] = true
+	}
 	normalizedSource := strings.ReplaceAll(source, "\\", "/")
 	for _, seg := range strings.Split(normalizedSource, "/") {
-		if seg == ".." {
-			return fmt.Errorf("marketplace source %q contains '..' path segment", source)
+		if reject[seg] {
+			return fmt.Errorf("marketplace source %q contains %q path segment", source, seg)
 		}
 	}
 
-	// local path must start with ./
-	if strings.HasPrefix(source, ".") {
-		if !strings.HasPrefix(source, "./") {
-			return fmt.Errorf("local marketplace source must start with './'")
-		}
-		return nil
-	}
-
-	// remote URL
-	if strings.Contains(source, "://") {
-		u, err := url.Parse(source)
-		if err != nil {
-			return fmt.Errorf("marketplace source %q is not a valid URL", source)
-		}
-		// (c) https only for remote
-		if u.Scheme != "https" {
-			return fmt.Errorf("remote marketplace source must use https://, got %q", u.Scheme)
-		}
-		// (b) no userinfo
-		if u.User != nil {
-			return fmt.Errorf("marketplace source %q must not contain userinfo", source)
-		}
-		// (b) no port
-		if u.Port() != "" {
-			return fmt.Errorf("marketplace source %q must not contain a port", source)
-		}
-		// (b) no query
-		if u.RawQuery != "" {
-			return fmt.Errorf("marketplace source %q must not contain a query string", source)
-		}
-		return nil
-	}
-
-	// shorthand form (host/owner/repo or owner/repo) — accepted
 	return nil
-}
-
-// isAbsoluteOrUNCSource reports whether source is shaped like a POSIX
-// absolute path ("/..."), a Windows drive-letter absolute path
-// ("C:\..." / "C:/..."), or a Windows UNC path ("\\server\share\..." /
-// "//server/share/..."). Deliberately string-pattern-based rather than
-// filepath.IsAbs (see ValidateMarketplaceSource's own doc comment on this
-// check, above) so it rejects a Windows-shaped source consistently
-// regardless of which OS this validator happens to run on.
-func isAbsoluteOrUNCSource(source string) bool {
-	if strings.HasPrefix(source, "/") || strings.HasPrefix(source, "\\") {
-		return true
-	}
-	// Drive-letter absolute path: a single ASCII letter, ":", then a "/" or
-	// "\" separator (e.g. "C:\foo", "D:/foo"). A bare "C:foo" (no separator
-	// after the colon) is not a filesystem path shape any marketplace source
-	// would legitimately take, so it is left to the existing shorthand/URL
-	// branches below.
-	if len(source) >= 3 && isASCIILetter(source[0]) && source[1] == ':' &&
-		(source[2] == '/' || source[2] == '\\') {
-		return true
-	}
-	return false
-}
-
-func isASCIILetter(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }

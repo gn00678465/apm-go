@@ -517,6 +517,20 @@ func TestValidateMarketplaceSource(t *testing.T) {
 		{"https://example.com/owner/repo.git", ""},
 		{"owner/repo", ""},
 		{"github.com/owner/repo", ""},
+		// BLOCKING 1 (external audit round 5, 2026-07-30): mirroring
+		// upstream's SOURCE_RE/_SEGMENT_PAT exactly means a segment
+		// merely STARTING with "." (as opposed to being exactly "." or
+		// "..") is an ordinary owner/repo character, not a traversal
+		// marker -- so this is a genuine "owner/repo" shorthand (owner
+		// ".packages", repo "foo"), not a local path (it does not start
+		// with "./"). This used to be rejected by apm-go's own
+		// hand-written "anything starting with '.' must be './'" rule,
+		// which upstream's grammar has no equivalent of; moved here from
+		// the invalid table to match upstream's actual accept/reject
+		// boundary (yml_schema.py's SOURCE_RE + path_security.py's
+		// validate_path_segments, which only rejects an EXACT "." or ".."
+		// segment, never a segment that just starts with one).
+		{".packages/foo", ""},
 
 		// invalid
 		{"", "empty"},
@@ -529,6 +543,19 @@ func TestValidateMarketplaceSource(t *testing.T) {
 		// authoring's resolveCloneURL (refcheck.go).
 		{`./..\..\outside`, ".."},
 		{`./sub\..\..\outside`, ".."},
+		// A bare ".." segment on a non-local (remote shorthand) source was
+		// always rejected (the ".." check ran unconditionally before this
+		// round's rewrite too) -- kept as explicit coverage now that the
+		// check is reached via the grammar-match-then-segment-check path.
+		{"owner/..", ".."},
+		// BLOCKING 1 (external audit round 5, 2026-07-30): mirroring
+		// upstream's validate_path_segments(allow_current_dir=is_local) --
+		// a bare "." segment is rejected for a NON-local source (it is
+		// only meaningful, and only allowed, on a "./..."-prefixed local
+		// path). marketplaceSegmentPattern's character class would
+		// otherwise accept "." as an ordinary segment character, so this
+		// is a real behavior this round adds, not just re-tested.
+		{"example.com/./repo", `contains "." path segment`},
 		// BLOCKING 1 (external audit round 4, 2026-07-30): an absolute or UNC
 		// filesystem path has no "." prefix and no "://", so it used to fall
 		// straight through to the "shorthand form -- accepted" branch
@@ -536,18 +563,60 @@ func TestValidateMarketplaceSource(t *testing.T) {
 		// which then returned it unchanged with no boundary check at all
 		// (filepath.IsAbs short-circuits before that function's own
 		// pathWithinRoot guard ever runs), a path-traversal bypass needing no
-		// ".." segment whatsoever.
-		{`D:\outside\repo`, "absolute or UNC"},
-		{`C:\Windows\Temp\evil`, "absolute or UNC"},
-		{`\\server\share\repo`, "absolute or UNC"},
-		{"/etc/passwd", "absolute or UNC"},
-		{"//server/share/repo", "absolute or UNC"},
-		{"http://example.com/repo", "https://"},
-		{"ftp://example.com/repo", "https://"},
-		{"https://user@example.com/repo", "userinfo"},
-		{"https://example.com:8080/repo", "port"},
-		{"https://example.com/repo?q=1", "query"},
-		{".packages/foo", "start with './'"},
+		// ".." segment whatsoever. Round 5 replaced the hand-written
+		// "isAbsoluteOrUNCSource" prefix check with the grammar match below:
+		// none of these shapes contains a "/" at all (Windows paths use "\"),
+		// so none can match marketplaceOwnerRepoPattern's mandatory "/"
+		// separator, and they are rejected by the same generic "must be one
+		// of" message every other grammar mismatch produces.
+		{`D:\outside\repo`, "must be one of"},
+		{`C:\Windows\Temp\evil`, "must be one of"},
+		{`\\server\share\repo`, "must be one of"},
+		{"/etc/passwd", "must be one of"},
+		{"//server/share/repo", "must be one of"},
+		// BLOCKING 1 (external audit round 5, 2026-07-30): a Windows
+		// drive-relative path with NO separator after the colon --
+		// isAbsoluteOrUNCSource's own doc comment used to explicitly leave
+		// this shape unrejected ("not a filesystem path shape ... left to
+		// the existing shorthand/URL branches"), which was itself the bug:
+		// it silently fell through to the old fail-open "shorthand form --
+		// accepted" default. The ":" character is not a
+		// marketplaceSegmentPattern character, so this is now rejected
+		// structurally like every other non-conforming shape.
+		{"C:foo", "must be one of"},
+		{"c:foo", "must be one of"},
+		{"C:", "must be one of"},
+		// BLOCKING 1 (external audit round 5, 2026-07-30): an SCP-style SSH
+		// remote ("git@host:path") never contains "://", so the old
+		// https-only URL-parse branch never saw it and it fell through to
+		// the fail-open shorthand default too. "@" and ":" are not
+		// marketplaceSegmentPattern/marketplaceHostPattern characters, so
+		// this now fails the grammar match structurally.
+		{"git@github.com:owner/repo.git", "must be one of"},
+		{"git@evil.example.com:x/y", "must be one of"},
+		// An arbitrary "scheme://" other than "https://" (including another
+		// SSH form) was already rejected pre-round-5 (the https-only
+		// URL-parse branch caught anything containing "://"); still
+		// rejected post-round-5, now via the same grammar-mismatch path
+		// instead of a scheme-specific message.
+		{"ssh://git@evil/x", "must be one of"},
+		{"http://example.com/repo", "must be one of"},
+		{"ftp://example.com/repo", "must be one of"},
+		// Userinfo/port/query embedded in an https:// URL are now rejected
+		// by the SAME grammar mismatch as everything else above: "@", ":",
+		// and "?" are not valid marketplaceHostPattern/
+		// marketplaceSegmentPattern characters, so these can never match any
+		// of the four accepted shapes in the first place (no separate
+		// url.Parse-based check is needed anymore).
+		{"https://user@example.com/repo", "must be one of"},
+		{"https://example.com:8080/repo", "must be one of"},
+		{"https://example.com/repo?q=1", "must be one of"},
+		// A "."-prefixed source that is not "./..." and does not otherwise
+		// match the owner/repo shape (single segment, no "/") is rejected
+		// generically -- there is no more "must start with './'"-specific
+		// message; see the ".packages/foo" case above (moved to valid) for
+		// why a "." prefix alone is not what disqualifies a source.
+		{".hidden", "must be one of"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.source, func(t *testing.T) {

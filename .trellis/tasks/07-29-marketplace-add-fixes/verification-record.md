@@ -857,14 +857,567 @@ TIER 1 GREEN
 - BLOCKING 1 的殘留邊界：`resolveCloneURL` 的 `filepath.IsAbs` 分支本身
   未加邊界檢查，只靠上游驗證層堵住——已在上方「決定」小節寫明是刻意選擇、
   附成本理由（會牽動數十個既有單元測試 fixture），不是無證據的擱置。
-- `internal/marketplace/build/builder.go` 有一份同名但獨立的
-  `resolveCloneURL`，同樣有 `filepath.IsAbs` 直接放行的分支——讀過其
-  呼叫鏈，輸入一樣先經同一個 `ValidateMarketplaceSource`，round 4 的修復
-  同樣涵蓋它，未單獨修改（out of scope：本輪報告的四個阻斷都沒有點名
-  這個檔案）。
+- `internal/marketplace/build/builder.go:372-384` 有一份同名但獨立的
+  `resolveCloneURL`，同樣有 `filepath.IsAbs`（`:376-378`）與 `git@`
+  （`:373`）直接放行、無邊界檢查的分支——結構上與
+  `internal/marketplace/authoring/refcheck.go` 的 `resolveCloneURL`
+  幾乎一致，但這是完全獨立的第二份實作，本輪（round 4/5）都沒有碰它。
+  **反例（round 5 稽核點名的具體疑慮）**：`builder.go:372` 本身沒有
+  `ValidateMarketplaceSource` 呼叫，是否安全完全取決於呼叫端有沒有先驗證
+  過——讀過呼叫鏈：唯二的生產呼叫點是 `internal/marketplace/build/
+  metadata.go:100`（`FetchMetadata`）與 `internal/marketplace/build/
+  reflister.go:57`（`ListRefs`），兩者的 `source` 參數都上溯到
+  `cmd/apm-go/pack.go:327` 的 `authoring.LoadAuthoringConfig(".")` 回傳的
+  `cfg.Packages[].Source`——這條路徑必經
+  `internal/marketplace/authoring/schema.go:493` 的
+  `manifest.ValidateMarketplaceSource` 呼叫，所以本輪（round 5）在
+  `internal/manifest/mcp.go` 對該函式的文法重寫，同樣涵蓋了
+  `pack` 這條生產路徑餵給 `build.resolveCloneURL` 的每一個 source。
+  **成本估計（若仍要收緊 `build.resolveCloneURL` 本身，不只依賴上游驗證
+  層）**：`internal/marketplace/build/builder_test.go` 與
+  `internal/marketplace/build/metadata_test.go` 合計約 15 處測試（`grep -c
+  'Source: dir\|Source:.*filepath.Join\|Source:.*TempDir'` 實測數字）直接
+  在記憶體建構 `PackageEntry{Source: <絕對路徑>}` 當作「一個真的遠端」的
+  替身，繞過 `ValidateMarketplaceSource`（與 `authoring` 套件自己的既有
+  慣例相同），依賴這個分支原樣接受絕對路徑；收緊它需要逐一改成真的本地
+  git repo fixture 或改走 `ResolvePackages` 的公開介面重寫，估計
+  50-100 LOC 的測試改動，且不會增加生產路徑上的防護（因為 `pack` 這條
+  生產入口已經被上游驗證層堵住）。維持現狀（未單獨修改）。
 - `ExecTestJSON` 只套用到本輪新增/受影響的閘門與 `ROUND2-M3-SEVERITY`
   （報告明確點名的那一條），沒有回頭把 round 1-3 既有的所有 `Exec` 型
   閘門全部改寫成 JSON 版本——那些閘門仍只驗 exit code，理論上仍有同樣的
   t.Skip 逃逸口，只是本輪報告點名的具體逃逸口（ROUND2-M3-SEVERITY）已關閉。
   這是明確的殘留範圍，不是聲稱「全部閘門都已加固」。
+  **round 5 更正**：這條殘留範圍已由 round 5 的 BLOCKING 4 全部清償——見
+  下方「Round 5」節，剩下所有還在用 `-list` 存在性檢查 + 純 `Exec`（只驗
+  exit code）的閘門（`AC21`、`REGR-B1/B2/M1/M2`、`ROUND2-B1/M1/M2/M3-CLI/
+  M3-39CHAR`、`ROUND3-B2-UNIT/B2-CLI/MAJOR-HEADMIXEDCASE`，共 13 個）已全部
+  遷移為 `ExecTestJSON`。這條紀錄保留在此只是為了如實呈現「round 4 當下」
+  的殘留範圍描述，不再是本檔目前的實際狀態。
+- `task.py finish` 未執行；本輪同上，仍需外部（或使用者）覆核後才算收斂。
+  **round 5 同上，仍未執行**。
+
+---
+
+# Round 5（外部稽核第五輪，2026-07-30）
+
+> main session 用 Go 探針獨立重現了 BLOCKING 1（SCP/SSH 形式繞過、
+> drive-relative 路徑繞過）；4 個阻斷（BLOCKING 1-4）+ 2 個一般
+> （MAJOR 1-2）+ 3 個 MINOR。以下逐項紅/綠證據；**同上，implementer 本地
+> 跑過不等於外部驗證通過，`task.py finish` 未執行。**
+
+## BLOCKING 1 — source 文法 fail-open，SCP/SSH 形式繞過傳輸層限制
+
+根因：`internal/manifest/mcp.go` 的 `ValidateMarketplaceSource`（round 4
+版本）是「手寫黑名單（絕對/UNC 路徑、`..` 段）+ 手寫白名單（含 `://` 的
+URL、`.` 開頭的字串）」，兩者都不中的字串一律落到最後「shorthand form --
+accepted」分支被接受——這是 fail-OPEN 的預設值。main session 重現（探針，
+之後刪除）：
+
+```
+??????(accepted)  "git@github.com:owner/repo.git"     <- SCP 形式，從不含 "://"，https-only 檢查看不到它
+??????(accepted)  "git@evil.example.com:x/y"          <- 任意 SSH 目的地
+???銝?(rejected)  "ssh://git@evil/x"                  <- 有 "://"，被 https-only 擋下（本來就對）
+??????(accepted)  "C:foo" / "c:foo" / "C:"             <- drive-relative，冒號後無分隔符
+???銝?(rejected)  "http://insecure.example.com/x/y"    <- 對
+??????(accepted)  "owner/repo", "host/owner/repo", "https://...", "./local"  <- 對
+```
+
+### 修復：改用與上游同構的文法比對，取代黑名單/白名單
+
+讀過 `D:/Projects/apm-dev/apm/src/apm_cli/marketplace/yml_schema.py:88-114`
+的 `_HOST_PAT`/`_SEGMENT_PAT`/`_OWNER_REPO_PAT`/`SOURCE_RE`，在
+`internal/manifest/mcp.go` 用同構的 Go regexp 常數
+`marketplaceHostPattern`/`marketplaceSegmentPattern`/
+`marketplaceOwnerRepoPattern`/`marketplaceSourceRe` 逐一鏡射：
+
+```
+^(?:https://HOST/OWNER_REPO(?:\.git)?|HOST/OWNER_REPO|OWNER_REPO|\./.*)$
+```
+
+`ValidateMarketplaceSource` 先做這個文法比對，不符合就整體拒絕（單一
+generic 訊息，鏡射上游 `_source_error`）；符合之後才做第二階段的
+`..`（以及非 local 來源的 bare `.`）路徑段檢查（鏡射上游
+`path_security.validate_path_segments(allow_current_dir=is_local)`——這條
+是本輪新發現的行為缺口：`marketplaceSegmentPattern` 的字元類別本身允許
+單一 `.` 當作一般 segment 字元，遠端 shorthand 若含 bare `.` 段
+（例如 `example.com/./repo`）過去從未被擋過，見下方測試）。原本手寫的
+`isAbsoluteOrUNCSource`/`isASCIILetter` 輔助函式整段移除——絕對/UNC/
+drive-relative 形狀在新文法下結構性地無法匹配任何一種形狀，不需要
+再手寫一次。
+
+**移除的 3 個既有 URL-parse 專屬檢查**（https-only / userinfo / port /
+query）：文法比對本身已經讓這些形狀不可能出現（`@`、`:`、`?` 都不是
+`marketplaceHostPattern`/`marketplaceSegmentPattern` 的合法字元），
+所以 `url.Parse` 之後那段程式碼變成不可觸達的死碼，一併移除；
+`internal/manifest/mcp.go` 的 `net/url` import 仍保留，因為 `ValidateMCP`
+（同檔案另一個函式）仍在用。
+
+### 必須更動的既有測試 fixture（逐一列出）
+
+- `internal/manifest/mcp_test.go` 的 `TestValidateMarketplaceSource`：
+  - `.packages/foo`：**從「invalid，訊息含 `start with './'`」移到
+    「valid」**——這是鏡射上游文法後的真實行為變化，不是誤刪：
+    `.packages`（owner）/`foo`（repo）兩個 segment 都合法匹配
+    `marketplaceSegmentPattern`（`.` 是被允許的一般字元，不是路徑意義上的
+    特殊符號），且不是 exact `.` 或 `..` 段，upstream 的
+    `validate_path_segments` 也不會擋它。
+  - `http://example.com/repo`、`ftp://example.com/repo`、
+    `https://user@example.com/repo`、`https://example.com:8080/repo`、
+    `https://example.com/repo?q=1`：wantErr 從各自的專屬訊息
+    （`https://`/`userinfo`/`port`/`query`）改成統一的 `must be one of`
+    （因為專屬的 URL-parse 分支已移除，這些形狀現在走與其他任何文法不符
+    案例相同的拒絕路徑）。
+  - `D:\outside\repo`、`C:\Windows\Temp\evil`、`\\server\share\repo`、
+    `/etc/passwd`、`//server/share/repo`：wantErr 從 `absolute or UNC`
+    改成 `must be one of`（`isAbsoluteOrUNCSource` 移除後，這些形狀改走
+    統一的文法不符拒絕路徑，仍然被拒絕，只是訊息文字統一了）。
+  - 新增：`owner/..`（非 local 的 `..` 段）、
+    `example.com/./repo`（非 local 的 bare `.` 段，round 5 新發現的行為
+    缺口）、`C:foo`/`c:foo`/`C:`（round 5 重現的 drive-relative 繞過）、
+    `git@github.com:owner/repo.git`/`git@evil.example.com:x/y`（round 5
+    重現的 SCP 繞過）、`ssh://git@evil/x`（任意 SSH 目的地，文法比對下與
+    其他非 https scheme 一樣被拒絕）、`.hidden`（`.` 開頭但不匹配任何
+    形狀的一般情境）。
+  - 總計 30 個子測試案例（原 23 個 + 本輪新增 7 個 -1 個從 invalid 移到
+    valid 不增加總數變動之外的淨新增；用
+    `go test -v -run TestValidateMarketplaceSource | grep -c '"--- PASS"'`
+    實測確認為 30；`go test -json` 逐測試事件數為 31，含頂層測試自己的
+    1 個事件）。
+- `internal/marketplace/authoring/schema_test.go` 的
+  `TestLoadAuthoringConfig_SourceValidation_ReusesManifestValidator`/
+  `_AcceptsValidShapes`：同步套用上面的訊息文字變更與 `.packages/foo`
+  遷移，另加一個非 local bare `.` 段案例
+  （`example.com/./repo`）。
+
+### 紅/綠證據
+
+紅（暫時還原成 round 4 版本，`git stash push -- internal/manifest/mcp.go`）：
+
+```
+$ go test ./internal/manifest/ -run TestValidateMarketplaceSource -v
+    --- FAIL: TestValidateMarketplaceSource/D:\outside\repo
+    --- FAIL: TestValidateMarketplaceSource/C:\Windows\Temp\evil
+    --- FAIL: TestValidateMarketplaceSource/\\server\share\repo
+    --- FAIL: TestValidateMarketplaceSource//etc/passwd
+    --- FAIL: TestValidateMarketplaceSource///server/share/repo
+    --- FAIL: TestValidateMarketplaceSource/https://user@example.com/repo
+    --- FAIL: TestValidateMarketplaceSource/https://example.com:8080/repo
+    --- FAIL: TestValidateMarketplaceSource/https://example.com/repo?q=1
+    --- FAIL: TestValidateMarketplaceSource/.packages/foo   (expected error, got nil -- 這條驗證的是「新測試期待新行為，舊實作給不出來」，不是安全案例)
+FAIL
+$ git stash pop
+```
+
+綠（還原修復後，全部 30 個子測試）：
+
+```
+$ go test ./internal/manifest/ -run TestValidateMarketplaceSource -v
+--- PASS: TestValidateMarketplaceSource (0.00s)
+    (30 個子測試全綠，含本輪新增的 git@/ssh:///C:foo/"."-segment 等)
+PASS
+```
+
+全套件：
+
+```
+$ go build ./...   → exit 0
+$ go vet ./...     → exit 0
+$ go test ./... -count=1   → 全綠
+```
+
+---
+
+## BLOCKING 2 — `ExecTestJSON` 可能在套件層級失敗時仍回報綠燈
+
+根因：`verify.ps1` 的 `ExecTestJSON`（round 4 版本）從未讀過
+`$LASTEXITCODE`，也從未檢查「沒有 `Test` 欄位」的套件層級事件——`if
+(-not $ev.Test) { continue }` 直接跳過它們，包括 `Action=fail` 的套件層級
+事件（例如 `TestMain` 在 `m.Run()` 之後回傳非 0、或所有測試跑完後才
+panic，這兩種都不會產生任何 per-test 的 fail 事件，只會在套件層級留下
+一個 fail）。序列「TestX pass -> 套件 fail」因此會一路綠燈到底。
+
+main session 用一個獨立 scratch Go module 重現（`TestMain` 在 `m.Run()`
+回傳 0 之後又 `os.Exit(1)`）：
+
+```
+$ go test -json -run TestAlwaysPasses . 2>&1
+{"Action":"pass","Test":"TestAlwaysPasses",...}     <- 個別測試 pass
+{"Action":"fail","Package":"pkgfailtest",...}        <- 套件層級 fail，無 Test 欄位
+$ echo exit=$?
+exit=1
+```
+
+紅（用 round 4 版 `ExecTestJSON` 邏輯跑這個 scratch 套件）：
+
+```
+OLD: FAIL (per-test 全 pass，函式從未檢查套件層級事件或 exit code)
+VERDICT: GREEN (bug) -- 舊邏輯誤判為通過
+```
+
+### 修復
+
+`ExecTestJSON` 新增：
+1. `$exitCode = $LASTEXITCODE`，緊接在 `go test -json` 呼叫之後立刻存。
+2. 沒有 `Test` 欄位但 `Action=fail` 的事件記為 `$packageFailed`，若為真則
+   直接判定失敗（不論個別測試是否全 pass）。
+3. 看起來像 JSON（以 `{` 開頭）卻解析失敗的行記為 `$malformed`，不再靜默
+   `continue`；有任何一行進了 `$malformed` 就判定失敗。
+4. 每個測試都 pass、也沒有套件層級 fail、也沒有解析失敗行之後，最後仍
+   檢查一次 `$exitCode`，非 0 就判定失敗（涵蓋前三項檢查都沒命中、但
+   `go test` 本身仍以非 0 結束的任何其他情況）。
+
+綠（同一個 scratch 套件，套用修復後的 `ExecTestJSON`）：
+
+```
+FAIL [PROBE] ...: 套件層級回報 Action=fail（例如 TestMain 在 m.Run() 之後回傳非 0，或測試後發生 panic）
+VERDICT: RED (correctly caught)
+```
+
+---
+
+## BLOCKING 3 — table-driven 子測試被刪除時，`-list` 存在性檢查測不出來
+
+根因：`-list` 只列出頂層測試函式名稱（例如 `TestValidateMarketplaceSource`
+本身），不論其內部用 `t.Run` 包了幾個子測試案例，`-list` 回報的數量永遠
+不變（頂層名稱本身存在就是 1）。`ROUND3-B1-MANIFEST`/
+`ROUND3-B1-RESOLVECLONEURL` 過去用「`-list` 非零 -> `ExecTestJSON`」的組合
+把關，但 `-list` 這一半形同虛設。main session 逐一刪除案例重現：
+
+刪掉 `mcp_test.go` 裡 round 4 新增的 5 個絕對/UNC 案例後：
+```
+OLD: -list count = 1 (nonzero -> guard passes trivially)
+OLD: exit code = 0 (0 -> Exec reports PASS even though 5 security cases were deleted)
+```
+
+刪掉 `refcheck_test.go` 裡 round 4 新增的 symlink 子測試後：
+```
+OLD style: -list count = 1
+OLD style: exit code = 0
+```
+
+### 修復
+
+`ExecTestJSON` 新增 `-minCount` 參數：直接對觀察到的相異測試/子測試事件數
+（`$seen.Count`，在 `-allowSkip` 移除環境限制型 skip **之前**採樣，這樣
+被容許的環境限制 skip 仍計入總數，只有真的被刪除的案例才會讓數字下降）
+設下限。套用到兩個被點名的閘門：
+
+- `ROUND3-B1-MANIFEST`（`TestValidateMarketplaceSource`）：`-minCount 31`
+  （30 個子測試 + 1 個頂層事件，用
+  `go test -json -run TestValidateMarketplaceSource ./internal/manifest/ |
+  grep -oE '"Test":"[^"]+"' | sort -u | wc -l` 實測確認）。
+- `ROUND3-B1-RESOLVECLONEURL`（`TestResolveCloneURL`）：`-minCount 11`
+  （10 個子測試，含本輪 MAJOR 1 新增的 dangling-leaf 案例，+ 1 個頂層
+  事件，同樣方式實測確認）。
+
+### 刪掉案例 -> 閘門轉紅的證明（PRD 明確要求）
+
+`TestValidateMarketplaceSource`：暫時刪掉上面 5 個絕對/UNC 案例
+（`git diff` 可見，之後還原）：
+
+```
+$ ExecTestJSON 'ROUND3-B1-MANIFEST' ... -minCount 31
+FAIL [ROUND3-B1-MANIFEST] ...: 只觀察到 26 個測試/子測試事件，至少需要 31 個（子測試可能被刪除，BLOCKING 3 外部稽核第五輪）
+VERDICT: RED (correctly caught)
+```
+
+`TestResolveCloneURL`：暫時刪掉 symlink 子測試（之後還原）：
+
+```
+$ ExecTestJSON 'ROUND3-B1-RESOLVECLONEURL' ... -minCount 11
+FAIL [ROUND3-B1-RESOLVECLONEURL] ...: 只觀察到 9 個測試/子測試事件，至少需要 11 個（子測試可能被刪除，BLOCKING 3 外部稽核第五輪）
+VERDICT: RED (correctly caught)
+```
+
+兩者還原後都恢復綠燈（見下方 Round 5 全套件輸出）。
+
+### 自查：修復 `ExecTestJSON` 本身時發現的第二個 bug（PowerShell 字典大小寫）
+
+驗證 `-minCount 31` 這個數字時，第一次量出的是 30，不是預期的 31。追查
+發現 `$seen = @{}`（PowerShell 原生 hashtable）對字串鍵預設「不分大小寫」
+比對：
+
+```
+$ pwsh -c '$h=@{}; $h["C:foo"]="x"; $h["c:foo"]="y"; $h.Count'
+1   <- 應該是 2，Go 的測試名稱是大小寫敏感的
+```
+
+round 5 新增的 `C:foo`/`c:foo` 兩個獨立測試案例因此在 `$seen` 裡撞成同一個
+鍵，讓 `-minCount` 少算 1。改用
+`[System.Collections.Generic.Dictionary[string,string]]`（字串鍵預設
+Ordinal、大小寫敏感比較）：
+
+```
+$ pwsh -c '$h=[System.Collections.Generic.Dictionary[string,string]]::new(); $h["C:foo"]="x"; $h["c:foo"]="y"; $h.Count'
+2
+```
+
+修好後 `-minCount 31` 對 `TestValidateMarketplaceSource` 正確算出 31，
+`ROUND3-B1-MANIFEST` 恢復綠燈；重新跑一次「刪 5 個案例」的轉紅證明，
+`-minCount 31` 下降到 26（不是修復前誤算的情況），一樣正確轉紅。
+
+---
+
+## BLOCKING 4 — 13 個閘門仍走 `-list` + 純 `Exec`（t.Skip 逃逸口）
+
+`verify.ps1` 裡 `AC21`、`REGR-B1/B2/M1/M2`、
+`ROUND2-B1/M1/M2/M3-CLI/M3-39CHAR`、
+`ROUND3-B2-UNIT/B2-CLI/MAJOR-HEADMIXEDCASE`（共 13 個）過去只用
+`-list` 存在性檢查 + 純 `Exec`（只驗 exit code）把關，理論上仍有
+round 4 已修好的同一種 `t.Skip` 逃逸口（`go test -run` 對「pattern 匹配到
+的測試全部 t.Skip、沒有任何 FAIL」一樣回傳 exit 0）。全部 13 個改為呼叫
+`ExecTestJSON`（保留原有的 `-list` 存在性檢查當作「至少有東西可以跑」的
+前置條件，實際把關全部交給 `ExecTestJSON`）。
+
+驗證：全部 13 個閘門在 `pwsh -NoProfile -File verify.ps1` 的完整跑一次
+（見下方全套件輸出）都回報 `ok`，且函式本身（`ExecTestJSON`）已在
+BLOCKING 2/3 節個別證明過會正確攔截 t.Skip / 套件層級 fail / 子測試刪除。
+
+---
+
+## MAJOR 1 — `pathWithinRoot` 的 `EvalSymlinks` 在任何錯誤下都 fail-open
+
+根因：`internal/marketplace/authoring/refcheck.go` 的 `pathWithinRoot`
+（round 4 版本）對 `filepath.EvalSymlinks` 回傳的任何錯誤都
+`return true`（接受），不只是「路徑不存在」。殘留風險：一個**已存在**的
+symlink 父目錄（指向專案根外）加上一個**尚未存在**的葉節點，
+`EvalSymlinks` 會在葉節點那一步失敗（`IsNotExist`），但父目錄的逃逸
+在那之前就已經解析完成——TOCTOU 視窗：另一個行程可以在這次檢查與後續
+`git ls-remote` 呼叫之間，把那個葉節點建立起來，讓 `git ls-remote`
+真的跟著已經逃逸的父目錄 symlink 走出專案根。main session 用 Go 探針
+驗證這個場景下 `EvalSymlinks` 確實回傳 `IsNotExist`-分類的錯誤（見下方
+「決定」小節），證實「只擋非 IsNotExist 錯誤」這個候選修法**不會**真的
+關掉這個洞——它會繼續對 IsNotExist 的錯誤 fall back 到接受。
+
+### 決定：不分 IsNotExist / 其他，任何 `EvalSymlinks` 錯誤都拒絕
+
+Go 探針（之後刪除）證實 dangling-leaf-under-escaping-symlinked-parent
+場景下 `EvalSymlinks` 回傳的錯誤確實被 `os.IsNotExist` 分類為真：
+
+```
+EvalSymlinks("<project>/linked-parent/not-yet-created") = "", err=...The system cannot find the file specified., IsNotExist=true
+```
+
+這代表「只拒絕非 IsNotExist 錯誤」這個較保守的候選修法對這個具體場景
+**沒有效果**——依然會落回「IsNotExist -> 接受」。既然
+`resolveCloneURL` 的生產呼叫鏈本來就預期本地 source 是一個真實存在的
+git repo（`ValidateMarketplaceSource`/`isLocalPackageSource` 已經把它
+分類為 local），任何 `EvalSymlinks` 錯誤（不存在、權限不足，或其他）
+都直接拒絕，不再 fall back 到字面檢查的結果。
+
+### 副作用：兩個既有測試 fixture 改成真的建立目錄
+
+`TestResolveCloneURL` 的「resolves against cwd」與「staying within cwd is
+accepted」兩個既有子測試過去用一個**從未真的建立**的路徑
+（`filepath.Join(parent, "repo")`/`"normal"`）當作 fixture——這是測試
+慣例，不是生產需求，但套用「任何錯誤都拒絕」後，這兩個 fixture 因為
+目標不存在而先紅了（見下方紅/綠證據）。修法：兩處都補上
+`os.Mkdir(want, 0o755)`，讓 fixture 符合生產呼叫鏈本來就有的前提（本地
+source 是一個真實存在的目錄）。
+
+紅（先套用 MAJOR 1 修復，還沒補測試 fixture）：
+
+```
+$ go test ./... -count=1
+--- FAIL: TestResolveCloneURL/relative_local_source_resolves_against_cwd,_not_as_OWNER/REPO_shorthand
+    refcheck_test.go:454: resolveCloneURL(./repo) returned error: local marketplace source "./repo" resolves outside the project root
+--- FAIL: TestResolveCloneURL/relative_local_source_staying_within_cwd_is_accepted
+    refcheck_test.go:530: resolveCloneURL(./normal) returned error: local marketplace source "./normal" resolves outside the project root
+FAIL
+```
+
+綠（補上 `os.Mkdir` 之後）：
+
+```
+$ go test ./... -count=1
+ok  	github.com/apm-go/apm/... (全綠)
+```
+
+### 新測試：dangling leaf under an escaping symlinked parent
+
+新增 `TestResolveCloneURL` 的
+"relative local source with a dangling leaf under an escaping symlinked
+parent is rejected" 子測試：建立一個真實存在、指向專案根外的 symlink
+父目錄，但**刻意不建立**其下的葉節點，驗證 `resolveCloneURL` 仍然拒絕。
+無法建立 symlink 的環境（例如 Windows 無 Developer Mode）會可見地
+`t.Skip`，`verify.ps1` 的 `-allowSkip @('directory_symlink',
+'dangling_leaf')` 明確容許這兩條子測試 skip，不算失敗。
+
+紅（暫時把 `pathWithinRoot` 還原成 round 4 版本，`git stash`）：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestResolveCloneURL -v
+    refcheck_test.go:583: resolveCloneURL(./linked-parent/not-yet-created) = nil error, want a rejection (parent symlink already resolves outside the project root, even though the leaf itself doesn't exist yet)
+--- FAIL: TestResolveCloneURL
+    (其餘 9 個既有子測試仍全綠，證明修復本身沒有牽動其他行為)
+FAIL
+$ git stash pop
+```
+
+綠（還原修復後）：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestResolveCloneURL -v
+--- PASS: TestResolveCloneURL (0.01s)
+    (全部 10 個子測試全綠，含新增的 dangling-leaf 案例)
+PASS
+```
+
+---
+
+## MAJOR 2 — 記錄相容性破壞（給使用者可查的 file:line 進入點）
+
+`apm.yml` 的 `marketplace.packages[].source` 若是絕對路徑/UNC 路徑，
+自 round 4（BLOCKING 1）起就會被 `install --mcp`、`install`、`compile`、
+`validate`、`pack` 拒絕；round 5（本輪 BLOCKING 1）額外收緊到也拒絕
+SCP/SSH 形式（`git@host:path`）、任意非-https scheme 的 URL、Windows
+drive-relative 路徑（`C:foo` 形式）、以及任何不是恰好四種形狀
+（`owner/repo`、`host.tld/owner/repo`、`https://host.tld/owner/repo[.git]`、
+`./path`）之一的字串——這些先前都會被 fail-open 的舊實作靜默接受。
+
+**這是刻意的 req-mf-017 收緊，但確實是一個可觀察的相容性變化**，逐一列出
+進入點（皆呼叫 `manifest.ParseManifest`，內部在
+`internal/manifest/manifest.go:180` 呼叫 `validateMarketplaceBlock`，
+再於 `:564` 呼叫 `ValidateMarketplaceSource`）：
+
+| 進入點 | file:line |
+|---|---|
+| `install --mcp` | `cmd/apm-go/mcpinstall.go:56` |
+| `install` | `cmd/apm-go/install.go:281` |
+| `compile` | `cmd/apm-go/compile.go:108` |
+| `validate`（`apm.yml` 語法檢查子指令） | `cmd/apm-go/main.go:71` |
+| `pack` | `cmd/apm-go/pack.go:189` |
+
+另外 `internal/marketplace/authoring/schema.go:493`
+（`LoadAuthoringConfig`，`marketplace package add/set/check/outdated`
+與 `pack` 讀取 authoring config 時都會走到）與
+`internal/marketplace/authoring/editor.go:673`（`AddPackage`，
+`marketplace package add` 寫入新 source 時）也呼叫同一個驗證器，
+同樣適用本次收緊。
+
+**使用者影響**：一個過去可以用絕對路徑、SCP 形式、或任何「看起來像路徑」
+字串當 `marketplace.packages[].source` 的 `apm.yml`，upgrade 到本輪之後
+上述任一指令都會直接報錯（`marketplace source "..." must be one of
+'owner/repo', 'host.tld/owner/repo', 'https://host.tld/owner/repo[.git]',
+or './path'`），需要把 source 改寫成四種合法形狀之一。這是
+`req-mf-017`/上游 `SOURCE_RE` 本來就要求的形狀，過去 apm-go 的實作是
+（有安全漏洞的）過度寬鬆，不是反過來收斂了原本就合法的用法。
+
+---
+
+## MINOR 1 — `editor.go:541` 的註解與 `:543` 的訊息不一致
+
+根因：`resolveRefForKind` 的 `default` 分支（round 4 新增）的註解說
+「fails closed with an explicit error naming the unrecognized value」，
+但當時的錯誤訊息 `fmt.Errorf("resolveRef: unrecognized ref resolution
+kind for ref %q on %q", ref, source)` 只帶了 `ref`/`source`，從未把
+`kind`（那個未知的列舉值本身）格式化進訊息裡。
+
+修復：訊息改為
+`fmt.Errorf("resolveRef: unrecognized ref resolution kind %d for ref %q on %q", kind, ref, source)`，
+讓註解的字面主張成立。
+
+驗證：`TestResolveRefForKind_UnrecognizedKind_FailsClosed_NeverTouchesLister`
+只斷言「有錯誤、回傳空字串」，不斷言訊息字面內容，改動後仍綠：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestResolveRefForKind_UnrecognizedKind
+ok  	github.com/apm-go/apm/internal/marketplace/authoring
+```
+
+---
+
+## MINOR 2 — `refcheck.go` 把「驗證器的呼叫端」誤稱為「`resolveCloneURL` 的呼叫端」
+
+根因：`resolveCloneURL` 文件註解（round 4 新增）寫「this package's ...
+production callers (manifest.go's validateMarketplaceBlock, schema.go's
+LoadAuthoringConfig, editor.go's AddPackage -- every one of which is gated
+by that same validator before a source ever reaches this function)」——這
+三者其實是 `manifest.ValidateMarketplaceSource`（驗證器）的生產呼叫點，
+不是 `resolveCloneURL` 本身的呼叫點。`resolveCloneURL` 唯一的直接呼叫端
+是同檔案的 `gitRefLister.ListRefs`（`refcheck.go:53`）。
+
+修復：改寫該段註解，明確區分「這個函式的唯一直接呼叫端」與「驗證器的
+三個生產呼叫點」，不再把兩者混為一談。純文件修訂，無行為變化，
+`go build`/`go vet` 通過即可確認未破壞任何東西。
+
+---
+
+## MINOR 3 — `verification-record.md:863`（round 4 版本）「out of scope」只給檔名
+
+見上方（round 4 節之後、round 5 節之前）「round 4 未處理事項」小節裡
+`internal/marketplace/build/builder.go` 那一條——已重寫為附
+file:line（`builder.go:372-384`）、一個具體反例（讀過呼叫鏈：
+`metadata.go:100`/`reflister.go:57` 唯二生產呼叫點，都上溯到
+`cmd/apm-go/pack.go:327` 的 `LoadAuthoringConfig`，因此同樣被本輪驗證器
+收緊涵蓋）、以及一個成本估計（收緊該函式自己的邊界檢查需改動
+`builder_test.go`/`metadata_test.go` 合計約 15 處測試 fixture，估計
+50-100 LOC，且不增加生產路徑防護）。
+
+---
+
+## Round 5 全套件與 Tier 1 閘門輸出
+
+```
+$ go build ./...   → exit 0
+$ go vet ./...     → exit 0
+$ go test ./... -count=1   → 全綠
+$ git diff -- go.mod go.sum; git diff 7ddd410^ -- go.mod go.sum   → 皆為空輸出（無新 require）
+```
+
+```
+$ pwsh -NoProfile -File .trellis/tasks/07-29-marketplace-add-fixes/verify.ps1
+== Tier 1: marketplace-add-fixes ==
+  ok   [AC-L1/build]
+  ok   [AC-L1/vet]
+  ok   [AC-L1/go-test-all]
+  ok   [AC-L1/binary]
+  ok   [AC47/flag]
+  ok   [AC49]
+  ok   [AC22]
+  ok   [AC18]
+  ok   [AC40]
+  ok   [AC21]
+  ok   [REGR-B1]
+  ok   [REGR-B2]
+  ok   [REGR-M1]
+  ok   [REGR-M2]
+  ok   [ROUND2-B1]
+  ok   [ROUND2-M1]
+  ok   [ROUND2-M2]
+  ok   [ROUND2-M3-CLI]
+  ok   [ROUND2-M3-39CHAR]
+  ok   [ROUND2-M3-SEVERITY]
+  ok   [ROUND3-B1-MANIFEST]
+  ok   [ROUND3-B1-RESOLVECLONEURL]
+  ok   [ROUND3-B2-UNIT]
+  ok   [ROUND3-B2-CLI]
+  ok   [ROUND3-MAJOR-HEADMIXEDCASE]
+  ok   [ROUND4-B3-UNIT]
+  ok   [ROUND4-B3-CLI]
+  ok   [ROUND4-MAJOR1]
+  ok   [ROUND4-MAJOR3]
+  ok   [ROUND4-MAJOR5]
+  ok   [AC53/no-clack]
+  ok   [AC53/no-block]
+  ok   [AC-L9]
+  ok   [AC-L1/coverage 87.0%]
+
+TIER 1 GREEN
+```
+
+---
+
+## round 5 未處理事項
+
+- `internal/marketplace/build/builder.go:372` 的 `resolveCloneURL`（獨立的
+  第二份實作）未收緊——理由與成本估計見上方 MINOR 3 節，是附證據的刻意
+  範圍決定，不是無證據的擱置。
+- `ExecTestJSON` 的 `-allowSkip`/一般字串比對（`-match`）在 PowerShell
+  裡預設不分大小寫——這對「允許哪些測試可見地 skip」這個用途是良性的
+  過度寬鬆（頂多多允許幾個原本沒打算允許的名稱去 skip，不會讓真正的
+  安全案例被誤判為過關），未特別修正；已修正的是 `$seen` 這個用來判斷
+  「每個測試是否 pass」與 `-minCount` 計數的字典，是量測正確性的關鍵
+  路徑,已經改為大小寫敏感的 `Dictionary[string,string]`。
 - `task.py finish` 未執行；本輪同上，仍需外部（或使用者）覆核後才算收斂。

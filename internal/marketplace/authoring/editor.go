@@ -540,7 +540,12 @@ func resolveRefForKind(kind refResolutionKind, source, ref string, lister RefLis
 		// that has NOT yet been wired to a case here, and now fails closed
 		// with an explicit error naming the unrecognized value instead of
 		// guessing "named ref" for it.
-		return "", fmt.Errorf("resolveRef: unrecognized ref resolution kind for ref %q on %q", ref, source)
+		//
+		// MINOR (external audit round 5, 2026-07-30): this comment already
+		// promised "an explicit error naming the unrecognized value", but the
+		// message below did not actually interpolate kind -- only ref and
+		// source. Formatted in now so the comment's own claim holds.
+		return "", fmt.Errorf("resolveRef: unrecognized ref resolution kind %d for ref %q on %q", kind, ref, source)
 	}
 }
 

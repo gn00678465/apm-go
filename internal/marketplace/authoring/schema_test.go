@@ -240,11 +240,21 @@ func TestLoadAuthoringConfig_SourceValidation_ReusesManifestValidator(t *testing
 	}{
 		{"dotdot segment", "../escape", ".."},
 		{"dotdot deep in local path", "./packages/../../../etc/passwd", ".."},
-		{"non-https scheme", "http://example.com/repo", "https://"},
-		{"userinfo in URL", "https://user@example.com/repo", "userinfo"},
-		{"port in URL", "https://example.com:8080/repo", "port"},
-		{"query string in URL", "https://example.com/repo?q=1", "query"},
-		{"local without leading ./", ".packages/foo", "start with './'"},
+		// BLOCKING 1 (external audit round 5, 2026-07-30): these four used to
+		// get their own specific rejection message from a URL-parse-based
+		// branch; that branch is gone (see mcp.go's ValidateMarketplaceSource
+		// doc comment) since none of these shapes can match the grammar's
+		// four accepted forms in the first place (userinfo/port/query/
+		// non-https-scheme characters are not valid host/segment
+		// characters), so they now share the same generic "must be one of"
+		// message every other grammar mismatch produces.
+		{"non-https scheme", "http://example.com/repo", "must be one of"},
+		{"userinfo in URL", "https://user@example.com/repo", "must be one of"},
+		{"port in URL", "https://example.com:8080/repo", "must be one of"},
+		{"query string in URL", "https://example.com/repo?q=1", "must be one of"},
+		// bare "." segment on a non-local (remote shorthand) source: see
+		// mcp_test.go's TestValidateMarketplaceSource for the full rationale.
+		{"bare dot segment in host-prefixed shorthand", "example.com/./repo", `contains "." path segment`},
 	}
 
 	for _, tt := range tests {
@@ -274,6 +284,11 @@ func TestLoadAuthoringConfig_SourceValidation_AcceptsValidShapes(t *testing.T) {
 		"https://example.com/owner/repo",
 		"owner/repo",
 		"github.com/owner/repo",
+		// BLOCKING 1 (external audit round 5, 2026-07-30): see
+		// mcp_test.go's TestValidateMarketplaceSource for why this is a
+		// genuine "owner/repo" shorthand under upstream's grammar, not a
+		// local-path-that-forgot-its-leading-"./".
+		".packages/foo",
 	}
 
 	for _, source := range tests {

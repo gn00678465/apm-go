@@ -35,16 +35,49 @@ function Exec {
 # "可見地" t.Skip，這是環境限制、不是本閘門要抓的突變，見該測試自身註解）；
 # 對這種例外，skip 只記錄一行提示、不算失敗，但仍要求它至少「跑過」
 # （出現在 $seen 裡），不能是 -list 零匹配那種「根本沒跑到」。
+#
+# BLOCKING 2（外部稽核第五輪，2026-07-30）：這個函式從來沒有讀過
+# $LASTEXITCODE，也從沒檢查過「沒有 Test 欄位」的套件層級事件 -- 舊迴圈的
+# `if (-not $ev.Test) { continue }` 直接跳過它們，包括 Action=fail 的套件層
+# 級事件（例如 TestMain 在 m.Run() 之後回傳非 0、或所有測試跑完後才 panic，
+# 這兩種都不會產生任何 per-test 的 fail 事件，只會在套件層級留下一個
+# fail）。序列「TestX pass -> 套件 fail」因此會一路綠燈到底。修法：
+# (1) 呼叫後立刻存 $LASTEXITCODE；(2) 沒有 Test 欄位但 Action=fail 的事件
+# 記為 $packageFailed；(3) 看起來像 JSON（以 "{" 開頭）卻解析失敗的行記為
+# $malformed，不再靜默 continue；(4) 每一個測試都 pass、也沒有套件層級
+# fail、也沒有解析失敗行之後，最後仍檢查一次 exit code，非 0 就不算過。
+#
+# BLOCKING 3（外部稽核第五輪，2026-07-30）：`-list` 只列頂層測試函式名稱，
+# 對 table-driven 測試（每個案例用 `t.Run(name, ...)` 包成子測試）刪掉幾個
+# case 之後，`-list` 回報的數量完全不會變（還是同一個頂層函式名稱）--
+# 這裡新增 `-minCount` 參數，直接對 `go test -json` 逐測試事件觀察到的
+# **相異測試/子測試名稱數**設下限；刪掉子測試會讓這個數字低於 $minCount
+# 而轉紅，不再只看「有沒有東西通過」。
 function ExecTestJSON {
-    param([string]$ac, [string]$what, [string]$pkg, [string]$pattern, [string[]]$allowSkip = @())
+    param([string]$ac, [string]$what, [string]$pkg, [string]$pattern, [string[]]$allowSkip = @(), [int]$minCount = 0)
     $out = & go test -json -run $pattern $pkg 2>&1
-    $seen = @{}
+    $exitCode = $LASTEXITCODE
+    # 找到過程中的 bug（外部稽核第五輪修復自查，2026-07-30）：PowerShell 的
+    # `@{}` 對字串鍵預設「不分大小寫」比對 -- `$h=@{}; $h["C:foo"]="x";
+    # $h["c:foo"]="y"; $h.Count` 回傳 1，不是 2。Go 的測試名稱是大小寫敏感
+    # 的（round 5 新增的 `C:foo`/`c:foo` 兩個獨立測試案例就撞在一起，曾讓
+    # -minCount 的計數少算 1，本檔自查時發現）。改用
+    # System.Collections.Generic.Dictionary[string,string]，其字串鍵預設用
+    # Ordinal（大小寫敏感）比較，兩個只差大小寫的測試名稱不會被誤判成同一個
+    # 鍵而互相覆蓋，也不會讓 -minCount 因此少算。
+    $seen = [System.Collections.Generic.Dictionary[string,string]]::new()
     $skipped = @()
     $allowedSkipped = @()
+    $packageFailed = $false
+    $malformed = @()
     foreach ($line in ($out -split "`n")) {
-        if ($line -notmatch '^\{') { continue }
-        try { $ev = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
-        if (-not $ev.Test) { continue }
+        if ($line -eq '') { continue }
+        if ($line -notmatch '^\{') { $malformed += $line; continue }
+        try { $ev = $line | ConvertFrom-Json -ErrorAction Stop } catch { $malformed += $line; continue }
+        if (-not $ev.Test) {
+            if ($ev.Action -eq 'fail') { $packageFailed = $true }
+            continue
+        }
         switch ($ev.Action) {
             'pass' { $seen[$ev.Test] = 'pass' }
             'skip' {
@@ -60,6 +93,19 @@ function ExecTestJSON {
         Fail $ac "${what}: -json 沒有產生任何逐測試事件（pattern 可能零匹配）"
         return
     }
+    if ($malformed.Count -gt 0) {
+        Fail $ac "${what}: 輸出含看起來像 JSON 卻無法解析的行（可能截斷或摻雜非 JSON 內容，BLOCKING 2 外部稽核第五輪），前幾行: $((($malformed | Select-Object -First 5)) -join ' | ')"
+        return
+    }
+    $totalSeen = $seen.Count
+    if ($minCount -gt 0 -and $totalSeen -lt $minCount) {
+        Fail $ac "${what}: 只觀察到 $totalSeen 個測試/子測試事件，至少需要 $minCount 個（子測試可能被刪除，BLOCKING 3 外部稽核第五輪）"
+        return
+    }
+    if ($packageFailed) {
+        Fail $ac "${what}: 套件層級回報 Action=fail（例如 TestMain 在 m.Run() 之後回傳非 0，或測試後發生 panic）-- 即使每個個別測試都 pass 也算失敗（BLOCKING 2 外部稽核第五輪）"
+        return
+    }
     if ($skipped.Count -gt 0) {
         Fail $ac "${what}: 下列測試回報 Action=skip（t.Skip 不算通過）: $($skipped -join ', ')"
         return
@@ -72,6 +118,10 @@ function ExecTestJSON {
     $notPassed = @($seen.GetEnumerator() | Where-Object { $_.Value -ne 'pass' })
     if ($notPassed.Count -gt 0) {
         Fail $ac "${what}: 下列測試從未回報 Action=pass: $((($notPassed | ForEach-Object { $_.Key })) -join ', ')"
+        return
+    }
+    if ($exitCode -ne 0) {
+        Fail $ac "${what}: 每個測試都回報 pass、也沒有套件層級 fail 事件，但 go test 本身以非 0 結束（exit $exitCode，BLOCKING 2 外部稽核第五輪）"
         return
     }
     Pass $ac
@@ -182,27 +232,25 @@ foreach ($b in $localBranches) {
 if ($missingLocal.Count -gt 0) {
   Fail 'AC21' ("local source 的下列情境沒有對應測試（宣稱是『所有情境』，粒度不匹配）：" + ($missingLocal -join '、'))
 } else {
-  $before = $script:fails.Count
-  $null = Exec 'AC21' "go test -run 'LocalSource'" { go test ./internal/marketplace/authoring/ -run 'LocalSource' }
-  if ($script:fails.Count -eq $before) { Pass 'AC21' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON，不再只驗
+  # exit code -- t.Skip 逃逸口見該函式自身文件註解。
+  ExecTestJSON 'AC21' "go test -json -run 'LocalSource'" './internal/marketplace/authoring/' 'LocalSource'
 }
 
 # ---- REGR-BLOCKING1（外部稽核，2026-07-30）：local source + --ref HEAD
 # 不得印出「resolving」訊息（resolveRef 對 local source 從不解析任何東西）----
 $listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'REGR-B1' 'BLOCKING 1 回歸測試不存在（-list 零匹配）' } else {
-  $before = $script:fails.Count
-  $null = Exec 'REGR-B1' "go test -run 'TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning' }
-  if ($script:fails.Count -eq $before) { Pass 'REGR-B1' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'REGR-B1' "go test -json -run 'TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning'" './cmd/apm-go/' 'TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning'
 }
 
 # ---- REGR-BLOCKING2（外部稽核，2026-07-30）：`package set --ref` 在 local
 # source 上必須仍經 lister 解析，不得被 add-only 的 mkt-046 短路清空 ----
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestSetPackage_LocalSource_MutableRef_ResolvesToConcreteSHA|TestSetPackage_LocalSource_UnrelatedFieldChange_PreservesVersion|TestResolveRef_LocalSource_SetMode_DoesNotShortCircuit_ResolvesViaLister|TestResolveRef_LocalSource_SetMode_ConcreteSHA_StoredVerbatim_NoListerCall' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -lt 4) { Fail 'REGR-B2' "BLOCKING 2 回歸測試 -list 只匹配 $($listed.Count) 個，需要 4 個" } else {
-  $before = $script:fails.Count
-  $null = Exec 'REGR-B2' "go test -run 'TestSetPackage_LocalSource|TestResolveRef_LocalSource_SetMode'" { go test ./internal/marketplace/authoring/ -run 'TestSetPackage_LocalSource|TestResolveRef_LocalSource_SetMode' }
-  if ($script:fails.Count -eq $before) { Pass 'REGR-B2' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'REGR-B2' "go test -json -run 'TestSetPackage_LocalSource|TestResolveRef_LocalSource_SetMode'" './internal/marketplace/authoring/' 'TestSetPackage_LocalSource|TestResolveRef_LocalSource_SetMode'
 }
 
 # ---- REGR-MAJOR1（外部稽核，2026-07-30）：codex-category 警告的兩個否定
@@ -210,18 +258,16 @@ if ($listed.Count -lt 4) { Fail 'REGR-B2' "BLOCKING 2 回歸測試 -list 只匹�
 # 不含 codex → 不警告），各自單獨能抓到報告中指出的那個突變 ----
 $listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning|TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -lt 2) { Fail 'REGR-M1' "MAJOR 1 回歸測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else {
-  $before = $script:fails.Count
-  $null = Exec 'REGR-M1' "go test -run 'TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning|TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning|TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning' }
-  if ($script:fails.Count -eq $before) { Pass 'REGR-M1' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'REGR-M1' "go test -json -run 'TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning|TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning'" './cmd/apm-go/' 'TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning|TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning'
 }
 
 # ---- REGR-MAJOR2（外部稽核，2026-07-30）：resolveRef 的 SHA/HEAD 邊界情境
 # （40 字元非 hex、41 字元、大寫 SHA、混合大小寫 Head、refs/heads/HEAD）----
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_ShaPattern_40CharNonHex_ResolvesViaLister|TestResolveRef_ShaPattern_41Char_ResolvesViaLister|TestResolveRef_ShaPattern_UppercaseSHA_ResolvesViaLister|TestResolveRef_ExplicitHead_MixedCase_TitleCase|TestResolveRef_RefsHeadsHEAD_NotTreatedAsHeadKeyword' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -lt 5) { Fail 'REGR-M2' "MAJOR 2 邊界測試 -list 只匹配 $($listed.Count) 個，需要 5 個" } else {
-  $before = $script:fails.Count
-  $null = Exec 'REGR-M2' "go test -run 'TestResolveRef_ShaPattern|TestResolveRef_ExplicitHead_MixedCase|TestResolveRef_RefsHeadsHEAD'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_ShaPattern|TestResolveRef_ExplicitHead_MixedCase|TestResolveRef_RefsHeadsHEAD' }
-  if ($script:fails.Count -eq $before) { Pass 'REGR-M2' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'REGR-M2' "go test -json -run 'TestResolveRef_ShaPattern|TestResolveRef_ExplicitHead_MixedCase|TestResolveRef_RefsHeadsHEAD'" './internal/marketplace/authoring/' 'TestResolveRef_ShaPattern|TestResolveRef_ExplicitHead_MixedCase|TestResolveRef_RefsHeadsHEAD'
 }
 
 # ════════════════════════════════════════════════════════════════════════
@@ -233,9 +279,8 @@ if ($listed.Count -lt 5) { Fail 'REGR-M2' "MAJOR 2 邊界測試 -list 只匹配 
 # 「預測會不會解析」與「resolveRef 實際有沒有走到 HEAD 解析分支」----
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'ROUND2-B1' 'BLOCKING 1 交叉積回歸測試不存在（-list 零匹配）' } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND2-B1' "go test -run 'TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct'" { go test ./internal/marketplace/authoring/ -run 'TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND2-B1' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'ROUND2-B1' "go test -json -run 'TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct'" './internal/marketplace/authoring/' 'TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct'
 }
 
 # ---- ROUND2-MAJOR1：local + 一般 mutable ref（如 "main"）的缺口測試（見
@@ -243,9 +288,8 @@ if ($listed.Count -eq 0) { Fail 'ROUND2-B1' 'BLOCKING 1 交叉積回歸測試不
 # 額外確認它實際能跑且通過）----
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'ROUND2-M1' 'MAJOR 1 回歸測試不存在（-list 零匹配）' } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND2-M1' "go test -run 'TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M1' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'ROUND2-M1' "go test -json -run 'TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork'" './internal/marketplace/authoring/' 'TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork'
 }
 
 # ---- ROUND2-MAJOR2：`set --ref` 在「相對路徑」本地 source 上必須透過正式
@@ -253,24 +297,21 @@ if ($listed.Count -eq 0) { Fail 'ROUND2-M1' 'MAJOR 1 回歸測試不存在（-li
 # 不得被 resolveCloneURL 誤展開成 OWNER/REPO shorthand ----
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -lt 2) { Fail 'ROUND2-M2' "MAJOR 2 相對路徑回歸測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND2-M2' "go test -run 'TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister'" { go test ./internal/marketplace/authoring/ -run 'TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M2' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'ROUND2-M2' "go test -json -run 'TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister'" './internal/marketplace/authoring/' 'TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister'
 }
 
 # ---- ROUND2-MAJOR3：四個一行逃逸口 -- 警告嚴重程度（非只 grep 訊息文字）、
 # CLI 層的 `set --ref` 覆蓋（非只呼叫 authoring 層）、39 字元合法 hex 邊界 ----
 $listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI|TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -lt 2) { Fail 'ROUND2-M3-CLI' "MAJOR 3 的 CLI 層 set --ref 回歸測試 -list 只匹配 $($listed.Count) 個，需要 2 個（含 round-3 補的分支名 fixture，見 ROUND3-MAJOR-BRANCHFIXTURE 註記）" } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND2-M3-CLI' "go test -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI|TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI|TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M3-CLI' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'ROUND2-M3-CLI' "go test -json -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI|TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI'" './cmd/apm-go/' 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI|TestMarketplacePackageSet_RefFlag_BranchName_ResolvesViaListerThroughCLI'
 }
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'ROUND2-M3-39CHAR' 'MAJOR 3 的 39 字元邊界測試不存在（-list 零匹配）' } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND2-M3-39CHAR' "go test -run 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M3-39CHAR' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'ROUND2-M3-39CHAR' "go test -json -run 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister'" './internal/marketplace/authoring/' 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister'
 }
 # ROUND3-MAJOR-SEVERITY（外部稽核第三輪，2026-07-30）：PRD 明講 t.Skip 不算
 # 通過，而先前這個閘門只 -list、從不 -run -- 一個把測試體改成 t.Skip() 的突變
@@ -295,17 +336,44 @@ if ($listed.Count -lt 2) { Fail 'ROUND2-M3-SEVERITY' "MAJOR 3 的嚴重程度斷
 # "/" 與 "\" 形式的 '..' 逃逸（Windows 相對路徑遍歷），round-4 起也含絕對/UNC
 # 路徑案例（BLOCKING 1，外部稽核第四輪）。改用 ExecTestJSON（MAJOR 2，第四
 # 輪）：table-driven 的每個 t.Run 子測試都個別要求 Action=pass、不得 skip。
+#
+# BLOCKING 3（外部稽核第五輪，2026-07-30）：`-list` 只列頂層測試函式名稱
+# （這裡永遠是 1，不論表格裡刪掉幾個 t.Run 子測試案例都不會變），所以上面
+# 那個「$listed.Count -eq 0」存在性檢查完全擋不住「刪掉 mcp_test.go 裡的
+# 幾個 case」這種突變（main session 實測：刪掉 round 4 新增的 5 個絕對/UNC
+# 案例後，TestValidateMarketplaceSource 剩下的 25 個案例仍全數通過，舊式
+# 「-list 存在性 + Exec 只驗 exit code」閘門依舊回報綠燈——已用
+# `git stash`/`git stash pop` 實際刪除又還原這 5 個案例驗證過）。改用
+# -minCount：round 5 的 TestValidateMarketplaceSource 目前 ExecTestJSON
+# 觀察到的相異測試/子測試事件數是 31（30 個子測試 + 1 個頂層 TestXxx 自己
+# 的事件），用
+# `go test -json -run TestValidateMarketplaceSource ./internal/manifest/ |
+#  grep -oE '"Test":"[^"]+"' | sort -u | wc -l` 實測確認為 31；刪掉任何一個
+# 案例都會讓這個數字低於 31 而轉紅（已用同樣的刪除-還原方式對 ExecTestJSON
+# 本身重現過：25 個子測試 + 1 個頂層事件 = 26 < 31，正確轉紅）。
 $listed = @(& go test ./internal/manifest/ -list 'TestValidateMarketplaceSource' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'ROUND3-B1-MANIFEST' 'BLOCKING 1 manifest 層回歸測試不存在（-list 零匹配）' } else {
-  ExecTestJSON 'ROUND3-B1-MANIFEST' "go test -json -run 'TestValidateMarketplaceSource'" './internal/manifest/' 'TestValidateMarketplaceSource'
+  ExecTestJSON 'ROUND3-B1-MANIFEST' "go test -json -run 'TestValidateMarketplaceSource'" './internal/manifest/' 'TestValidateMarketplaceSource' -minCount 31
 }
 
 # ---- ROUND3-BLOCKING1-RESOLVECLONEURL：resolveCloneURL 自己的第二層邊界
 # 檢查（即使 manifest 層被繞過，解析出的絕對路徑逃出 cwd 也必須被拒絕；
 # round-4 起也含 symlink 逃逸案例，BLOCKING 2）。同樣改用 ExecTestJSON。
+#
+# BLOCKING 3（外部稽核第五輪，2026-07-30）：同上，TestResolveCloneURL 也是
+# table-driven（部分案例用 for 迴圈裡的 t.Run，部分是獨立 t.Run 區塊），
+# `-list` 一樣測不出刪掉子測試 -- main session 實測：刪掉 round 4 新增的
+# symlink 子測試後，其餘 8 個子測試仍全綠，舊式「-list 存在性 + Exec 只驗
+# exit code」閘門依舊回報通過（exit 0）。加上 -minCount：ExecTestJSON 觀察
+# 到的相異測試/子測試事件數（含本輪 MAJOR 1 新增的 dangling-leaf 案例）目前
+# 是 11（10 個子測試 + 1 個頂層 TestXxx 自己的事件），用
+# `go test -json -run TestResolveCloneURL ./internal/marketplace/authoring/ |
+#  grep -oE '"Test":"[^"]+"' | sort -u | wc -l` 實測確認為 11；main session
+# 對「刪掉 symlink 子測試」這個突變用同樣方式重現過：降到 10（9 個子測試 +
+# 1 個頂層事件）< 11，正確轉紅。
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveCloneURL' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'ROUND3-B1-RESOLVECLONEURL' 'BLOCKING 1 resolveCloneURL 回歸測試不存在（-list 零匹配）' } else {
-  ExecTestJSON 'ROUND3-B1-RESOLVECLONEURL' "go test -json -run 'TestResolveCloneURL'" './internal/marketplace/authoring/' 'TestResolveCloneURL' -allowSkip @('directory_symlink')
+  ExecTestJSON 'ROUND3-B1-RESOLVECLONEURL' "go test -json -run 'TestResolveCloneURL'" './internal/marketplace/authoring/' 'TestResolveCloneURL' -allowSkip @('directory_symlink', 'dangling_leaf') -minCount 11
 }
 
 # ---- ROUND3-BLOCKING2：mutable-ref 警告必須綁在 resolveRef 實際要解析
@@ -313,24 +381,21 @@ if ($listed.Count -eq 0) { Fail 'ROUND3-B1-RESOLVECLONEURL' 'BLOCKING 1 resolveC
 # 前置檢查失敗前就先印 -- 涵蓋 resolveRef 單元層與 CLI 端對端兩層 ----
 $listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_ExplicitHead_InvokesOnExplicitHeadWillResolve|TestResolveRef_ImplicitHead_DoesNotInvokeOnExplicitHeadWillResolve|TestResolveRef_NoVerify_ExplicitHead_DoesNotInvokeOnExplicitHeadWillResolve|TestResolveRef_LocalSource_ExplicitHead_DoesNotInvokeOnExplicitHeadWillResolve' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -lt 4) { Fail 'ROUND3-B2-UNIT' "BLOCKING 2 的 resolveRef 單元層回歸測試 -list 只匹配 $($listed.Count) 個，需要 4 個" } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND3-B2-UNIT' "go test -run 'TestResolveRef_.*OnExplicitHeadWillResolve'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_.*OnExplicitHeadWillResolve' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND3-B2-UNIT' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'ROUND3-B2-UNIT' "go test -json -run 'TestResolveRef_.*OnExplicitHeadWillResolve'" './internal/marketplace/authoring/' 'TestResolveRef_.*OnExplicitHeadWillResolve'
 }
 $listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_ExplicitRefHead_NoVerify_NoMutableRefWarning_ExitsCode2|TestMarketplacePackageAdd_ExplicitRefHead_MissingConfig_NoMutableRefWarning|TestMarketplacePackageAdd_ExplicitRefHead_UnreachableSource_NoMutableRefWarning|TestMarketplacePackageAdd_ExplicitRefHead_DuplicateName_NoMutableRefWarning' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -lt 4) { Fail 'ROUND3-B2-CLI' "BLOCKING 2 的 CLI 端對端回歸測試 -list 只匹配 $($listed.Count) 個，需要 4 個" } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND3-B2-CLI' "go test -run 'TestMarketplacePackageAdd_ExplicitRefHead_(NoVerify|MissingConfig|UnreachableSource|DuplicateName)_.*NoMutableRefWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_(NoVerify|MissingConfig|UnreachableSource|DuplicateName)_.*NoMutableRefWarning' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND3-B2-CLI' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'ROUND3-B2-CLI' "go test -json -run 'TestMarketplacePackageAdd_ExplicitRefHead_(NoVerify|MissingConfig|UnreachableSource|DuplicateName)_.*NoMutableRefWarning'" './cmd/apm-go/' 'TestMarketplacePackageAdd_ExplicitRefHead_(NoVerify|MissingConfig|UnreachableSource|DuplicateName)_.*NoMutableRefWarning'
 }
 
 # ---- ROUND3-MAJOR-HEADMIXEDCASE（ROUND2-B1 的存活突變修補）：CLI 層也要
 # 有一個 title-case "Head" 的 fixture，不只交叉積測試 ----
 $listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($listed.Count -eq 0) { Fail 'ROUND3-MAJOR-HEADMIXEDCASE' 'CLI 層 title-case Head 回歸測試不存在（-list 零匹配）' } else {
-  $before = $script:fails.Count
-  $null = Exec 'ROUND3-MAJOR-HEADMIXEDCASE' "go test -run 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning' }
-  if ($script:fails.Count -eq $before) { Pass 'ROUND3-MAJOR-HEADMIXEDCASE' }
+  # BLOCKING 4（外部稽核第五輪，2026-07-30）：改用 ExecTestJSON。
+  ExecTestJSON 'ROUND3-MAJOR-HEADMIXEDCASE' "go test -json -run 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning'" './cmd/apm-go/' 'TestMarketplacePackageAdd_ExplicitRefHead_MixedCase_PrintsMutableRefWarning'
 }
 
 # ════════════════════════════════════════════════════════════════════════

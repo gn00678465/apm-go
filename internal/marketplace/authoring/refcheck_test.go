@@ -449,6 +449,15 @@ func TestResolveCloneURL(t *testing.T) {
 		parent := t.TempDir()
 		chdirTo(t, parent)
 		want := filepath.Join(parent, "repo")
+		// MAJOR 1 (external audit round 5, 2026-07-30): pathWithinRoot's
+		// boundary check now calls filepath.EvalSymlinks on target and
+		// rejects on ANY error (including "does not exist"), so this fixture
+		// must be a real, existing directory -- exactly like every
+		// production caller: resolveCloneURL's local-source branch is only
+		// ever reached for a package a caller expects to be a real git repo.
+		if err := os.Mkdir(want, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		got, err := resolveCloneURL("./repo")
 		if err != nil {
 			t.Fatalf("resolveCloneURL(./repo) returned error: %v", err)
@@ -525,12 +534,53 @@ func TestResolveCloneURL(t *testing.T) {
 		parent := t.TempDir()
 		chdirTo(t, parent)
 		want := filepath.Join(parent, "normal")
+		// MAJOR 1 (external audit round 5, 2026-07-30): see the "resolves
+		// against cwd" subtest above for why this must now be a real,
+		// existing directory.
+		if err := os.Mkdir(want, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		got, err := resolveCloneURL("./normal")
 		if err != nil {
 			t.Fatalf("resolveCloneURL(./normal) returned error: %v", err)
 		}
 		if got != want {
 			t.Errorf("resolveCloneURL(./normal) = %q, want %q", got, want)
+		}
+	})
+
+	// MAJOR 1 (external audit round 5, 2026-07-30): a dangling leaf under an
+	// EXISTING symlinked parent that already points outside the project
+	// root -- the leaf itself does not exist, so filepath.EvalSymlinks fails
+	// with an IsNotExist-classified error while the parent's escape has
+	// already happened. The pre-round-5 code fell back to the lexical result
+	// (which reports "within root", since the string "<project>/linked-
+	// parent/not-yet-created" contains no ".." segment) on ANY EvalSymlinks
+	// error, accepting this case -- a TOCTOU window: a second process could
+	// create the missing leaf between this check and the subsequent `git
+	// ls-remote` invocation, which would then genuinely follow the
+	// already-escaping parent symlink out of root. Skipped (visibly, not
+	// silently) when this process cannot create a directory symlink, same as
+	// the sibling symlink subtest above.
+	t.Run("relative local source with a dangling leaf under an escaping symlinked parent is rejected", func(t *testing.T) {
+		parent := t.TempDir()
+		project := filepath.Join(parent, "project")
+		outside := filepath.Join(parent, "outside")
+		if err := os.Mkdir(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		linkedParent := filepath.Join(project, "linked-parent")
+		if err := os.Symlink(outside, linkedParent); err != nil {
+			t.Skipf("SKIPPED: cannot create a directory symlink in this environment (%v); MAJOR 1's dangling-leaf guard is untested by this run", err)
+		}
+		chdirTo(t, project)
+		// Deliberately do NOT create "not-yet-created": that is the point of
+		// this test -- the leaf must not exist yet.
+		if _, err := resolveCloneURL("./linked-parent/not-yet-created"); err == nil {
+			t.Fatal("resolveCloneURL(./linked-parent/not-yet-created) = nil error, want a rejection (parent symlink already resolves outside the project root, even though the leaf itself doesn't exist yet)")
 		}
 	})
 }

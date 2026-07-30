@@ -105,6 +105,21 @@ func newListRefsCmd(ctx context.Context, cloneURL string) *exec.Cmd {
 // HOST/OWNER/REPO shorthand, expanded against github.com, mirroring
 // internal/marketplace/source.go's defaultSourceHost default.
 //
+// The `strings.HasPrefix(source, "git@")` branch immediately below is, like
+// the `filepath.IsAbs(source)` branch a few lines down, UNREACHABLE for any
+// source that has actually passed manifest.ValidateMarketplaceSource as of
+// BLOCKING 1 (external audit round 5, 2026-07-30): that validator's grammar
+// rewrite mirrors upstream's SOURCE_RE exactly (four accepted shapes --
+// 'owner/repo', 'host.tld/owner/repo', 'https://host.tld/owner/repo[.git]',
+// './path' -- nothing else), which structurally rejects any SCP-style
+// "git@host:path" string before it ever reaches this function in a
+// production call. It is kept here (not removed) for the same reason the
+// `filepath.IsAbs` branch is kept, below: this package's own
+// TestResolveCloneURL directly calls this function with an unvalidated
+// "git@..." string as one of its fixtures, bypassing the validator on
+// purpose (this file's own long-standing test convention, not a round-5
+// addition).
+//
 // The `filepath.IsAbs(source)` branch below is UNREACHABLE for any source
 // that has actually passed manifest.ValidateMarketplaceSource: BLOCKING 1
 // (external audit round 4, 2026-07-30) found that validator accepted an
@@ -113,10 +128,14 @@ func newListRefsCmd(ctx context.Context, cloneURL string) *exec.Cmd {
 // "."-prefixed nor "://"-schemed), and this function then returned that
 // path unchanged with NO boundary check at all -- a path-traversal bypass
 // needing no ".." segment whatsoever. The validator now rejects every
-// absolute/UNC source, which closes this for all three of this package's
-// production callers (manifest.go's validateMarketplaceBlock, schema.go's
-// LoadAuthoringConfig, editor.go's AddPackage -- every one of which is
-// gated by that same validator before a source ever reaches this function).
+// absolute/UNC source, which closes this for every production path that
+// reaches this function: this function's own only direct caller is
+// gitRefLister.ListRefs (this file, below), which manifest.go's
+// validateMarketplaceBlock, schema.go's LoadAuthoringConfig, and editor.go's
+// AddPackage all sit upstream of, by way of that same validator -- MINOR
+// (external audit round 5, 2026-07-30): those three are production callers
+// of manifest.ValidateMarketplaceSource, not of this function directly; the
+// wording here used to conflate the two.
 // This branch is deliberately left as-is (not removed, not boundary-checked)
 // rather than tightened further: this package's own tests
 // (TestResolveCloneURL's "absolute filesystem path passes through
@@ -213,21 +232,40 @@ func resolveCloneURL(source string) (string, error) {
 // filepath.EvalSymlinks (which walks every path component, following any
 // symlink it finds) and re-checks containment on that resolved pair too --
 // closing the gap for an EXISTING symlink target (the only kind `git
-// ls-remote` could ever reach anything real through). If root or target does
-// not exist yet, EvalSymlinks errors and this falls back to the lexical
-// result alone: there is no symlink for a nonexistent path to have followed,
-// and any subsequent `git ls-remote` against a nonexistent local path fails
-// on its own regardless. See TestResolveCloneURL's
-// "relative local source escaping cwd via a directory symlink is rejected"
-// subtest.
+// ls-remote` could ever reach anything real through). See
+// TestResolveCloneURL's "relative local source escaping cwd via a directory
+// symlink is rejected" subtest.
+//
+// MAJOR 1 (external audit round 5, 2026-07-30): this used to fall back to
+// the lexical result (i.e. ACCEPT) on ANY EvalSymlinks error, not just "the
+// leaf does not exist yet". That is unsafe even for the "doesn't exist yet"
+// case: EvalSymlinks fails as soon as it cannot stat the target's FINAL
+// component, but every component BEFORE the final one has already been
+// resolved by then -- an existing symlinked parent directory that already
+// points outside root (e.g. target="<root>/linked-parent/not-yet-created",
+// where "linked-parent" is a symlink to somewhere outside root) makes
+// EvalSymlinks fail on the missing leaf while the parent's escape has
+// already happened. Falling back to "accept" here left a TOCTOU window: a
+// second process could create the missing leaf between this check and the
+// subsequent `git ls-remote` invocation, which would then genuinely follow
+// the already-escaping parent symlink out of root. Since resolveCloneURL's
+// only production callers ever reach a local source that is expected to be
+// a real, existing git repository (ValidateMarketplaceSource/isLocalPackage
+// Source having already classified it as local), there is no legitimate
+// case where target does not exist at this point either -- so any
+// EvalSymlinks error (missing path, permission denied, or otherwise) now
+// rejects outright instead of falling back to the lexical result.
 func pathWithinRoot(root, target string) bool {
 	if !pathWithinRootLexical(root, target) {
 		return false
 	}
 	realRoot, rootErr := filepath.EvalSymlinks(root)
+	if rootErr != nil {
+		return false
+	}
 	realTarget, targetErr := filepath.EvalSymlinks(target)
-	if rootErr != nil || targetErr != nil {
-		return true
+	if targetErr != nil {
+		return false
 	}
 	return pathWithinRootLexical(realRoot, realTarget)
 }
