@@ -48,18 +48,34 @@ pwsh -NoProfile -File .trellis/tasks/07-29-targets-init-shape/verify.ps1
 
 ## 2. Tier 2 — 外部對抗性稽核
 
-### codex 不可用（記錄事實，非藉口）
+### ⚠️ 2026-07-30 更正：我先前寫的「codex 不可用」是錯的
 
-`codex exec -s read-only` 完全跑不了：
+原文宣稱 codex 完全跑不了。**該結論不成立**，使用者指出後重驗。
+
+事實：codex 的 **PowerShell exec 路徑**確實壞掉：
 
 ```
 setup refresh failed to launch helper:
 helper=codex-windows-sandbox-setup.exe, error=program not found
 ```
 
-`C:\Users\gn006\.codex\.sandbox-bin` 只有 `codex.exe` 與 `codex-command-runner`，
-sandbox setup 執行檔遺失。**未以 `--sandbox danger-full-access` 繞過** —— 那會拿掉
-稽核提示裡承諾的唯讀保證。改用 `AGENTS.md` §5 明列的替代方案：fresh-context subagent。
+（`.sandbox-bin` 只有 `codex.exe` 與 `codex-command-runner`，setup 執行檔確實遺失。）
+
+**但 codex 有 `node_repl/js` fallback 並能正常工作** —— 實測它用該路徑成功跑出
+`git rev-parse --abbrev-ref HEAD` → `feat/marketplace-plugin-parity`。
+
+第一次嘗試沒有產出的真正原因是**它卡在問我要不要建 Trellis task**。
+我把「它問了一個問題就結束」誤讀成「它無法執行」。
+
+**這是本 session 中「因為沒有查證就下結論」的又一個實例**，與
+`claim-evidence-guide.md` 要防的是同一種錯：一個不存在句（「codex 不可用」）
+沒有附上反向檢查（「如果我錯了，哪一段輸出會證明我錯？」）。
+
+**正確用法**：prompt 開頭明寫「不要建立 Trellis task」與「exec 失敗改用 node_repl」。
+照這樣跑，codex 對本分支交出了 4 阻斷 + 2 重大 + 3 次要，其中 3 個阻斷經主 session
+實測複現屬實。
+
+本 task 的兩輪稽核使用 `AGENTS.md` §5 同樣認可的 fresh-context subagent，結論仍有效。
 
 ### 第一輪：1 個阻斷級
 

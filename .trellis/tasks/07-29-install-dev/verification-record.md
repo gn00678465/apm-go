@@ -53,10 +53,22 @@ pwsh -NoProfile -File .trellis/tasks/07-29-install-dev/verify.ps1
 
 ## Tier 2 — 外部對抗性稽核
 
-`codex exec -s read-only` 不可用（`codex-windows-sandbox-setup.exe` 遺失，
-`.sandbox-bin` 只有 `codex.exe` 與 `codex-command-runner`）。
-**未以 `--sandbox danger-full-access` 繞過** —— 那會拿掉唯讀保證。
-改用 `AGENTS.md` §5 認可的 fresh-context subagent。
+> **2026-07-30 更正**：我先前在此寫「codex 不可用」是**錯的**，使用者指出後重驗。
+>
+> 事實是：codex 的 **PowerShell exec 路徑**確實壞掉
+> （`codex-windows-sandbox-setup.exe` 遺失，`.sandbox-bin` 只有 `codex.exe`
+> 與 `codex-command-runner`），但 codex **有 `node_repl/js` 的 fallback 並能正常工作** ——
+> 實測它用該路徑跑出 `git rev-parse --abbrev-ref HEAD` → `feat/marketplace-plugin-parity`。
+>
+> 第一次嘗試之所以沒有產出，是**它卡在問我要不要建 Trellis task**，
+> 不是它跑不了。我把「它問了一個問題就結束」誤讀成「它無法執行」，
+> 然後把這個錯誤結論寫進了兩份 verification-record。
+>
+> **正確用法**：在 prompt 開頭明確寫「不要建立 Trellis task」與
+> 「exec 失敗就改用 node_repl」。照這樣跑，codex 交出了 4 阻斷 + 2 重大 + 3 次要
+> （見下方「第四輪」），品質高於兩輪 fresh-context subagent。
+
+第一輪與第二輪的外部稽核使用 `AGENTS.md` §5 同樣認可的 fresh-context subagent。
 
 ### 阻斷級：跨區段重複宣告
 
