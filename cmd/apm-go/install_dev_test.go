@@ -307,3 +307,176 @@ func TestPersistPackagesToManifest_DevSection_NoIncludesKey_AppendsAtEnd(t *test
 		t.Errorf("expected devDependencies.apm entry; got:\n%s", got)
 	}
 }
+
+// TestRunInstall_Dev_CrossSectionMove_PreservesEntryMetadata is the
+// 2026-07-30 Tier-2 regression: moving an already-declared dependency across
+// dependencies.apm/devDependencies.apm previously rebuilt a FRESH
+// {git, skills}/scalar entry from just the bare pkg string (removeMatchingEntry
+// only ever returned whether something was removed, discarding the removed
+// node itself), silently dropping every other persisted field the original
+// entry carried -- e.g. `{git: acme/foo, ref: stable}` became a bare
+// `acme/foo` scalar after `install --dev acme/foo`. The fix transplants the
+// original entry node instead of rebuilding one.
+func TestRunInstall_Dev_CrossSectionMove_PreservesEntryMetadata(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: acme/foo\n      ref: stable\n"), 0644)
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &mockInstallLoader{},
+		dev:    true,
+	}
+	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	manifestBytes, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(manifestBytes)
+	if !strings.Contains(got, "ref: stable") {
+		t.Errorf("expected ref: stable to survive the cross-section move, got:\n%s", got)
+	}
+
+	node, err := yamlcore.SafeLoad(manifestBytes)
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+	m, _, err := manifest.ParseManifest(node)
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	if len(m.ParsedDeps) != 0 {
+		t.Errorf("expected zero dependencies.apm entries after move, got %+v", m.ParsedDeps)
+	}
+	if len(m.ParsedDevDeps) != 1 || m.ParsedDevDeps[0].RepoURL != "acme/foo" || m.ParsedDevDeps[0].Reference != "stable" {
+		t.Errorf("expected exactly one devDependencies.apm entry acme/foo@stable, got %+v", m.ParsedDevDeps)
+	}
+}
+
+// TestRunInstall_Dev_MoveOutOfDevWithLegacyLock_StillPersistsManifestMove is
+// the 2026-07-30 Tier-2 regression for the OTHER half of the same finding:
+// deployAndFinalize's no-op check (lockfile.IsSemanticEqual alone) can be
+// fooled by a LEGACY lockfile whose package_type was never populated by an
+// apm-go build predating R9.4 -- moving a dependency OUT of devDependencies
+// recomputes package_type as "", which happens to equal the legacy lock's
+// (incorrectly blank) existing value too, so IsSemanticEqual reports "no
+// change" even though the manifest section move genuinely needs to be
+// written. manifestSectionMoved must gate the no-op check independently of
+// lockfile equality.
+func TestRunInstall_Dev_MoveOutOfDevWithLegacyLock_StillPersistsManifestMove(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndevDependencies:\n  apm:\n    - acme/foo\n"), 0644)
+
+	// Seed a REAL lockfile via a --dev install, so its content (resolved
+	// ref, deployed files/hashes, etc.) is exactly what a second, identical
+	// resolve/deploy will reproduce -- the only field this test then
+	// deliberately corrupts is package_type, to simulate a pre-R9.4 binary
+	// that never wrote it at all.
+	seedDeps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &mockInstallLoader{},
+		dev:    true,
+	}
+	if err := runInstall(seedDeps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+		t.Fatalf("seed runInstall: %v", err)
+	}
+
+	lockBytes, err := os.ReadFile("apm.lock.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(string(lockBytes), "    package_type: marketplace_plugin\n", "", 1)
+	if legacy == string(lockBytes) {
+		t.Fatalf("fixture setup: expected package_type: marketplace_plugin in seeded apm.lock.yaml, got:\n%s", string(lockBytes))
+	}
+	if err := os.WriteFile("apm.lock.yaml", []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run, WITHOUT --dev, on the SAME already-declared dependency:
+	// existingIsDev[key]=true (apm.yml still says devDependencies) !=
+	// deps.dev=false triggers the section move.
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &mockInstallLoader{},
+	}
+	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+		t.Fatalf("second runInstall: %v", err)
+	}
+
+	manifestBytes, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := yamlcore.SafeLoad(manifestBytes)
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+	m, _, err := manifest.ParseManifest(node)
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	// The 2026-07-30 decision (install.go's persistPackagesToManifest) keeps
+	// an emptied-out section as a normal `devDependencies: {apm: []}`
+	// skeleton rather than deleting the key -- assert on the PARSED
+	// structure, not string absence of "devDependencies:".
+	if len(m.ParsedDevDeps) != 0 {
+		t.Errorf("expected zero devDependencies.apm entries after the move, got %+v", m.ParsedDevDeps)
+	}
+	if len(m.ParsedDeps) != 1 || m.ParsedDeps[0].RepoURL != "acme/foo" {
+		t.Errorf("expected exactly one dependencies.apm entry acme/foo (the persisted move), got %+v", m.ParsedDeps)
+	}
+}
+
+// TestRunInstall_DevWithFrozen_Errors is the 2026-07-30 Tier-2 regression
+// mirroring TestRunInstall_SkillWithFrozen_Errors: frozen installs return
+// from the separate "3. Frozen install" branch well before
+// persistPackagesToManifest is ever reached, so `--frozen --dev X` against
+// an already-declared dependency previously printed a misleading "moved
+// from ... to devDependencies.apm" message (moveDependencyBetweenSections'
+// pure in-memory mutation, made before frozen mode is checked) and then
+// silently discarded it.
+func TestRunInstall_DevWithFrozen_Errors(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo\n"), 0644)
+	os.WriteFile("apm.lock.yaml", []byte("version: \"1\"\ndependencies: []\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}, dev: true}
+	err := runInstall(deps, true, true, "", nil, []string{"acme/foo"})
+	if err == nil || !strings.Contains(err.Error(), "--dev") || !strings.Contains(err.Error(), "frozen") {
+		t.Fatalf("expected a --dev+frozen error, got %v", err)
+	}
+}
+
+// TestRunInstall_DevWithoutPackages_Errors mirrors
+// TestRunInstall_SkillWildcardWithoutPackages_Errors: --dev alone (no
+// positional package to route into devDependencies.apm) is rejected up
+// front rather than silently no-op-ing.
+func TestRunInstall_DevWithoutPackages_Errors(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}, dev: true}
+	err := runInstall(deps, false, true, "", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "--dev") {
+		t.Fatalf("expected a --dev error for --dev with no positional package, got %v", err)
+	}
+}

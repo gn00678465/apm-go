@@ -241,6 +241,25 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		}
 	}
 
+	// --dev requires an actual package to route into devDependencies.apm,
+	// and frozen installs never reach the manifest-write path at all: a
+	// frozen run returns from the "3. Frozen install" branch below (well
+	// before persistPackagesToManifest), so `--frozen --dev X` against an
+	// already-declared dependency previously printed
+	// moveDependencyBetweenSections' "moved from ... to devDependencies.apm"
+	// info message (a pure in-memory mutation of m, made before frozen mode
+	// is even checked) and then silently discarded it -- a misleading
+	// success-shaped message for a change that was never persisted. Reject
+	// up front, mirroring the --skill guard immediately above.
+	if deps.dev {
+		if frozen {
+			return fmt.Errorf("--dev is not supported with a frozen install (frozen installs pin exactly what's locked, with no section changes)")
+		}
+		if len(packages) == 0 {
+			return fmt.Errorf("--dev requires at least one positional package to install")
+		}
+	}
+
 	// 1. Parse apm.yml — optional in frozen mode.
 	var m *manifest.Manifest
 	var node *yamllib.Node
@@ -365,6 +384,19 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// this same call (BUG-1) is still recognized as a duplicate and skipped,
 	// without marking the first, genuinely-new occurrence as pre-existing.
 	appendedThisCall := make(map[string]bool)
+	// manifestSectionMoved is set whenever moveDependencyBetweenSections
+	// below actually relocates an already-declared dependency between
+	// dependencies.apm/devDependencies.apm THIS call. It must gate the
+	// no-op check in deployAndFinalize alongside lockfile.IsSemanticEqual:
+	// a section move can leave the LOCKFILE content unchanged (e.g. a
+	// legacy lock entry whose package_type was never populated by an
+	// earlier version of apm-go reads as "" both before and after moving
+	// the dependency OUT of devDependencies.apm, since the post-move value
+	// is also ""), in which case IsSemanticEqual alone would report a false
+	// no-op and persistPackagesToManifest -- the only place the actual
+	// apm.yml section move gets written -- would never run (2026-07-30
+	// Tier-2 finding).
+	manifestSectionMoved := false
 	if len(packages) > 0 {
 		// mi-fix (MI2): key by deploy.DepRefKey (RepoURL, or
 		// RepoURL/VirtualPath) instead of bare RepoURL, matching the identity
@@ -455,7 +487,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 				// THIS call already placed is always already in the correct
 				// section (deps.dev is constant for the whole call).
 				if existing[key] && !appendedThisCall[key] && existingIsDev[key] != deps.dev {
-					moveDependencyBetweenSections(m, key, deps.dev)
+					if moveDependencyBetweenSections(m, key, deps.dev) {
+						manifestSectionMoved = true
+					}
 					existingIsDev[key] = deps.dev
 					appendedThisCall[key] = true
 				}
@@ -854,7 +888,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node)
 }
 
 // printFrozenVerifiedDeps lists every dependency a successful --frozen
@@ -1663,7 +1697,7 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // already-persisted subset, not just the one this call's --skill flag named.
 // dev (R9/AC42) selects which apm.yml section packages is persisted into --
 // always false for `update`, which never persists positional packages.
-func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	// localProjectDeployed is R16's post-deploy decision point (design.md
 	// §3, codex M2): whether THIS run's deploy.Run actually deployed at
@@ -1829,8 +1863,18 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 		}
 	}
 
-	// 7. No-op check
-	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) {
+	// 7. No-op check. manifestSectionMoved must gate this alongside lockfile
+	// equality (2026-07-30 Tier-2 finding): a dependencies.apm/
+	// devDependencies.apm section move can leave the lockfile's own
+	// comparison fields unchanged -- notably PackageType, which reads "" on
+	// BOTH sides of a move-out-of-dev when the pre-move lock predates the
+	// package_type feature and was never marked -- while the manifest still
+	// genuinely needs the write that only happens below/in
+	// persistPackagesToManifest. Without this, IsSemanticEqual alone would
+	// report a false "Already up to date" and the section move's apm.yml
+	// write would silently never happen, despite the "moved from ..."
+	// info message already printed above.
+	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) && !manifestSectionMoved {
 		ux.Info(os.Stdout, "Already up to date")
 		return nil
 	}
@@ -2212,14 +2256,27 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 		// Not declared in the target section. If it's declared in the OTHER
 		// section, relocate it here instead of writing a second, duplicate
 		// entry (external Tier-2 audit finding, scenario A/B).
-		if removeMatchingEntry(otherApmSeq, pkg, identity) {
+		movedEntry := removeMatchingEntry(otherApmSeq, pkg, identity)
+		if movedEntry != nil {
 			movedOut = true
 		}
 
 		subset := effectiveSubsets[identity]
-		if len(subset) > 0 {
+		switch {
+		case movedEntry != nil:
+			// 2026-07-30 Tier-2 finding: transplant the ORIGINAL entry node
+			// removed from the other section instead of rebuilding a fresh
+			// {git, skills}/scalar entry from just pkg -- rebuilding here
+			// silently dropped every other persisted field (ref:, alias:,
+			// path:, ...) a cross-section move carried, e.g. `{git: acme/foo,
+			// ref: stable}` became a bare `acme/foo` scalar. Only the
+			// skills: field is adjusted, via the SAME setEntrySkillSubset
+			// helper the same-section update path above already uses.
+			apmSeq.Content = append(apmSeq.Content, movedEntry)
+			setEntrySkillSubset(apmSeq, len(apmSeq.Content)-1, subset)
+		case len(subset) > 0:
 			apmSeq.Content = append(apmSeq.Content, newGitSkillEntry(pkg, subset))
-		} else {
+		default:
 			// String form
 			apmSeq.Content = append(apmSeq.Content,
 				&yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"},
@@ -2304,11 +2361,15 @@ func findApmSeq(root *yamllib.Node, sectionKey string) *yamllib.Node {
 // already-declared dependency out of the section this call's --dev flag did
 // NOT target (external Tier-2 audit finding, scenario A/B: this call's flag
 // is the final word on section ownership, npm `npm i [-D] X` parity).
-// Returns whether an entry was actually removed; a no-op (false, unchanged)
-// for a nil seq (the other section doesn't exist at all).
-func removeMatchingEntry(seq *yamllib.Node, pkg, identity string) bool {
+// Returns the removed entry NODE itself (nil for a nil/non-sequence seq, or
+// when nothing matches) -- not just whether something was removed -- so the
+// caller can transplant its original fields (ref:, alias:, path:, skills:,
+// ...) into the target section instead of rebuilding a fresh entry from just
+// pkg, which would silently drop everything but the git value (2026-07-30
+// Tier-2 finding).
+func removeMatchingEntry(seq *yamllib.Node, pkg, identity string) *yamllib.Node {
 	if seq == nil || seq.Kind != yamllib.SequenceNode {
-		return false
+		return nil
 	}
 	for i, entry := range seq.Content {
 		if identity != "" {
@@ -2319,9 +2380,9 @@ func removeMatchingEntry(seq *yamllib.Node, pkg, identity string) bool {
 			continue
 		}
 		seq.Content = append(seq.Content[:i], seq.Content[i+1:]...)
-		return true
+		return entry
 	}
-	return false
+	return nil
 }
 
 // entryDepString returns the dependency string a dependencies.apm sequence
@@ -2573,26 +2634,31 @@ func localPathForManifest(abs string) string {
 // targeting the OTHER section than where it's currently declared, must MOVE
 // it there -- mirroring npm's `npm i [-D] X` behavior of relocating an
 // already-declared dependency between sections -- instead of leaving a
-// duplicate entry behind in both. A no-op (returns without changing
-// anything) if key isn't actually found in the expected source section.
-func moveDependencyBetweenSections(m *manifest.Manifest, key string, toDev bool) {
+// duplicate entry behind in both. A no-op (returns false, changing nothing)
+// if key isn't actually found in the expected source section. The returned
+// bool tells the caller whether a move actually happened, so it can force a
+// write even when the resulting lockfile happens to compare equal to the
+// existing one (manifestSectionMoved, install.go's runInstall -- see its
+// declaration for why lockfile equality alone isn't sufficient).
+func moveDependencyBetweenSections(m *manifest.Manifest, key string, toDev bool) bool {
 	if toDev {
 		ref, rest := extractDepByKey(m.ParsedDeps, key)
 		if ref == nil {
-			return
+			return false
 		}
 		m.ParsedDeps = rest
 		m.ParsedDevDeps = append(m.ParsedDevDeps, ref)
 		ux.Info(os.Stdout, "%s: moved from dependencies.apm to devDependencies.apm (--dev)", key)
-		return
+		return true
 	}
 	ref, rest := extractDepByKey(m.ParsedDevDeps, key)
 	if ref == nil {
-		return
+		return false
 	}
 	m.ParsedDevDeps = rest
 	m.ParsedDeps = append(m.ParsedDeps, ref)
 	ux.Info(os.Stdout, "%s: moved from devDependencies.apm to dependencies.apm", key)
+	return true
 }
 
 // extractDepByKey removes and returns the FIRST dependency reference in refs

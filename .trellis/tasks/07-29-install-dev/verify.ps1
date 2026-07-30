@@ -124,6 +124,26 @@ foreach ($n in $xTests) {
   if ($script:fails.Count -eq $before) { Pass "AC42-cross/$n" }
 }
 
+# ---- 2026-07-30 第二輪根因分析（同一 session 的 codex 對抗性稽核）：問題 1
+# （跨區段搬家丟失 ref:/alias: 等 metadata，removeMatchingEntry 只回傳 bool
+# 不回傳被移除的節點）與問題 3（`--frozen --dev X` 印出 moved 訊息卻從未真正
+# 持久化，因為 frozen 分支在 persistPackagesToManifest 之前就 return）。
+# 教訓（本檔自己的 verification-record.md 已記錄過三次）：子代理常常忘記把
+# 新測試接進這支閘門 -- 沒接進來，測試存在也不會有紅燈保護。
+$followupTests = @(
+  'TestRunInstall_Dev_CrossSectionMove_PreservesEntryMetadata'
+  'TestRunInstall_Dev_MoveOutOfDevWithLegacyLock_StillPersistsManifestMove'
+  'TestRunInstall_DevWithFrozen_Errors'
+  'TestRunInstall_DevWithoutPackages_Errors'
+)
+foreach ($n in $followupTests) {
+  $m = @(& go test ./cmd/apm-go/ -list "^$n$" 2>&1 | Where-Object { $_ -match '^Test' })
+  if ($m.Count -ne 1) { Fail 'AC42-followup' "-list 未精確匹配到 $n（得到 $($m.Count) 個）"; continue }
+  $before = $script:fails.Count
+  $null = Exec 'AC42-followup' "go test -run $n" { go test ./cmd/apm-go/ -run "^$n$" -count=1 }
+  if ($script:fails.Count -eq $before) { Pass "AC42-followup/$n" }
+}
+
 # ---- AC45：lockfile package_type 欄位存在於 Go 端 ----
 $hasField = (& git grep -n 'PackageType' -- 'internal/lockfile/*.go' 2>&1 | Out-String)
 if ($hasField -notmatch 'PackageType') { Fail 'AC45' 'internal/lockfile 沒有 PackageType 欄位（目前只有字串字面量）' } else { Pass 'AC45' }
