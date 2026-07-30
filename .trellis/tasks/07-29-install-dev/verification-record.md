@@ -233,3 +233,89 @@ git diff -- go.mod / git diff --cached -- go.mod → 皆空（無新相依）
 若需要更高信賴度，建議下一輪由 fresh-context subagent 對本次 diff
 （`git diff cmd/apm-go/install.go cmd/apm-go/update.go cmd/apm-go/install_dev_test.go`）
 再做一次反向稽核。**`task.py finish` 未執行，狀態仍為待驗證。**
+
+---
+
+## 第五輪 — 2026-07-30 codex 稽核殘留四項的收尾
+
+第四輪把 codex 稽核的四項判為「跨 task 範圍」而未處理。主 session 明確授權後補做。
+
+### 項目 1（重大）— 既有污染狀態不會收斂
+
+**主 session 端對端實測（修復前）**
+
+apm.yml 兩個區段都有 `acme/foo`（第三輪缺陷造成的資料形狀），跑
+`runInstall` 帶 `--dev` 與不帶 `--dev`：
+
+```
+dev=true   err=<nil>  deps含=true  dev含=true    未收斂
+dev=false  err=<nil>  deps含=true  dev含=true    未收斂
+```
+
+**根因**：`persistPackagesToManifest` 在**目標區段**找到該套件後直接 `continue`，
+而「移除另一區段」的邏輯位在該 `continue` **之後**，永遠不會執行。
+**兩個 early-continue 分支都有這個問題**（identity 命中與純字串命中）。
+
+**後果**：跑過修復前版本的使用者，apm.yml 已是污染狀態，
+**再跑 install 也修不好**，必須手動編輯。
+
+**修復**：把另一區段的清理移到兩個 early-continue **之前**。
+
+**主 session 端對端複驗（修復後）**
+
+```
+dev=true   deps含=false dev含=true   已收斂（dependencies 留 apm: []）
+dev=false  deps含=true  dev含=false  已收斂（devDependencies 留 apm: []）
+```
+
+**Mutation（主 session 自行執行，非採信子代理回報）**：把兩處
+`removeMatchingEntry(otherApmSeq, ...)` 都拿掉還原成裸 `continue` →
+
+```
+--- FAIL: TestPersistPackagesToManifest_PackageInBothSections_DevInstall_ConvergesToDevOnly
+    install_dev_test.go:594: expected zero dependencies.apm entries (converged out)
+--- FAIL: TestPersistPackagesToManifest_PackageInBothSections_BareInstall_ConvergesToNonDevOnly
+    install_dev_test.go:618: expected zero devDependencies.apm entries (converged out)
+```
+
+還原後綠。兩個測試已加進 `verify.ps1` 的 `$followupTests`。
+
+### 項目 2（阻斷）— plugin-init 閘門的 absence-only 斷言吞掉 exit 1
+
+`plugin-init/verify.ps1` 的 AC12、AC15 原本不驗 `$LASTEXITCODE`：
+指令根本失敗時，「沒有 plugin.json」「沒有 devDependencies」兩條反向斷言
+**反而全綠**。已修，該檔現有 17 處 `$LASTEXITCODE` 檢查。
+
+### 項目 3（重大）— Exec 的錯誤 regex 吃掉編譯錯誤
+
+五支閘門的 `$detail` regex 原本只匹配 `^(FAIL|--- FAIL|\s+\S+_test\.go:)`，
+遇到 go 編譯失敗時只留下 `FAIL <pkg> [build failed]`，真正的
+`file.go:12:3: undefined: X` 被丟掉，閘門紅了無法診斷。
+
+已擴充為含 `^#`、`\S+\.go:\d+:`、`panic:`。**五支都已確認含 `^#`。**
+
+> **本輪的一個實證**：我自己的臨時探針寫錯（`orig` 宣告未使用），
+> `go test` 只回 `FAIL ... [build failed]`。改用 `go vet` 才看到
+> `zz_m1_test.go:12:3: declared and not used: orig`。
+> 這正是項目 3 要解決的那個資訊遺失，當場又發生了一次。
+
+### 項目 4（次要）— 句型違規四處
+
+| 位置 | 處理 |
+|---|---|
+| `install.go` 的「uniformly…no other change is needed」 | 查證**為真**：`resolver.go:389-400` 的 `collectResolutionRootDeps` 獨立合併 `ParsedDeps`+`ParsedDevDeps`，且確實接進 BFS（`resolver.go:46`）。補上 file:line 證據，不改程式 |
+| `manifestnode.go` 的「exact required bytes」 | **找到缺口並補**：既有 AC7 測試用 `strings.Contains`，抓不到退回 `FootComment`（會多一個空行）。新增 `TestBuildManifestNode_NoTargets_SkeletonHasNoBlankLineBeforeDependencies`，mutation 驗證：改回 `FootComment` 後舊測試仍綠、新測試轉紅 |
+| 兩支閘門的「所有 native 呼叫一律走 Exec」 | **字面為假**。選擇改寫該句而非全部改走 Exec：`-list` 探測呼叫即使整體 exit 非 0 仍會把匹配的測試名印在 stdout，既有 `.Count` 判斷不會假綠。**唯一真有假綠風險的是 `git diff -- go.mod`**（在非 git 目錄回 exit 129 時舊邏輯回報假 ok），已在**五支**補上 exit code 檢查 |
+| `internal/ux/testhooks.go` 的「safe ONLY because」 | 重新 grep 驗證為真（全 repo 零 `t.Parallel()`，唯一命中是註解自己引用的 grep pattern），並確認兩個 seam setter 只被 `_test.go` 呼叫 |
+
+### 流程問題：派工提示亂碼
+
+第五輪第一次派工時，子代理回報**提示的中段出現亂碼**（CJK 字元被替換），
+它從殘存片段重建了四個問題 —— 結果**項目 1 被理解成另一個 bug**
+（`{name: owner/repo}` dict 形式的重複，那是真缺陷也修好了，但不是我指定的那個）。
+
+主 session 事後用端對端探針發現項目 1 仍未修，改用**短提示、關鍵事實用
+程式碼區塊承載**重派，才修對。
+
+**教訓**：子代理回報「已完成」時，必須用**自己的重現方式**驗證，
+而不是核對它的敘述。這一輪如果只讀回報，項目 1 會被當成已修。
