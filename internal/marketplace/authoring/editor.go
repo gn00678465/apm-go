@@ -248,12 +248,14 @@ func atomicWriteFile(path string, data []byte) error {
 // yamlcore.SpliceSequenceElement/PatchMappingPath's newNode: field order
 // and presence mirror Python apm's add_plugin_entry/update_plugin_entry
 // (yml_editor.py) -- name, source, whichever of version/ref is set,
-// subdir, tag_pattern, include_prerelease (only when true), tags (only
-// when non-empty). description/category are carried through as-is (needed
-// for `set`'s "unspecified fields keep their existing value" contract),
-// but neither add nor set exposes a flag to change them -- design.md's
-// flag table has no --description/--category (mkt-053's codex `category`
-// gate belongs to the not-yet-landed `apm pack` sub-task).
+// subdir, tag_pattern, include_prerelease (only when true), category (only
+// when non-empty), tags (only when non-empty). description and category
+// are both carried through as-is (needed for `set`'s "unspecified fields
+// keep their existing value" contract). `add` has R10's --category flag
+// (marketplace_package.go); `set` does not (upstream set.py has no
+// --category/--description -- TestMarketplacePackageSetCmd_HasNoAddOnlyFlags
+// locks this), so on an existing entry, category can only ever be carried
+// through unchanged by `set`, never written by it.
 func packageEntryNode(entry PackageEntry) *yaml.Node {
 	n := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	putStr := func(key, value string) {
@@ -331,33 +333,149 @@ func verifyPackageSource(source string, lister RefLister, noVerify bool) error {
 // concrete and is stored as-is, with no lister call.
 var shaRefPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// resolveRef mirrors Python's plugin/__init__.py _resolve_ref: a ref is
-// only resolved when one was actually given -- an empty ref short-circuits
-// before ever calling lister, preserving mkt-046's "zero-flag local add
-// must never touch the network" contract -- and it isn't already a
-// concrete SHA. Otherwise lister.ListRefs(source) (the same RefLister
-// abstraction verifyPackageSource and `check`/`outdated` already use) is
-// queried for an exact name match (tag or branch head -- refcheck.go's
-// ListRefs merges both into one list) and its commit SHA is returned; no
-// match, or a lister error, surfaces as a clear error rather than silently
-// falling back to storing the mutable ref verbatim (the bug this fixes).
-func resolveRef(source, ref string, lister RefLister) (string, error) {
-	if ref == "" {
-		return "", nil
+// errCannotResolveHeadOffline is R5/AC18's exact upstream message
+// (commands/marketplace/plugin/__init__.py:127-132's sys.exit(2) path):
+// HEAD (implicit or explicit) cannot be pinned to a concrete SHA without a
+// network call, and --no-verify explicitly forbids that call -- so this is
+// a hard failure, not a silent fall-back to storing the mutable ref
+// verbatim.
+var errCannotResolveHeadOffline = fmt.Errorf("Cannot resolve HEAD ref without network access. Provide an explicit --ref SHA.")
+
+// refResolutionKind is classifyRefResolution's output: which of resolveRef's
+// branches a given (source, ref, version, ...) combination takes, computed
+// with no lister I/O at all.
+type refResolutionKind int
+
+const (
+	// refKindNone: nothing to resolve -- a --version range was given, the
+	// source is local and skipLocalSource applies (mkt-046, add-only), or
+	// resolveRef was not asked to treat a missing ref as implicit HEAD
+	// (SetPackage's call shape).
+	refKindNone refResolutionKind = iota
+	// refKindVerbatim: ref already matches shaRefPattern (a concrete 40-hex
+	// SHA) -- stored as-is, no lister call.
+	refKindVerbatim
+	// refKindHead: ref is "" (implicit) or case-insensitively "HEAD"
+	// (explicit) -- resolveRef must call lister.ListRefs and search its
+	// result for a "HEAD" entry (or fail offline under --no-verify).
+	refKindHead
+	// refKindNamed: ref is an ordinary tag/branch name -- resolveRef must
+	// call lister.ListRefs and search its result for an exact name match.
+	refKindNamed
+)
+
+// classifyRefResolution is resolveRef's decision tree (design.md §6 --
+// local must be checked before implicit-HEAD, or mkt-046's "local source
+// never touches the network" contract breaks), extracted into its own pure
+// function with no lister I/O.
+//
+// BLOCKING 1 (external audit round 2, 2026-07-30): before this refactor,
+// WillResolveMutableRefForAdd hand-restated resolveRef's first two
+// early-return branches (a --version range, and mkt-046's local-source
+// short-circuit) as a second, independent expression of this same decision,
+// instead of calling into resolveRef's own logic -- and it had already
+// silently omitted the concrete-SHA branch (originally branch 4) entirely.
+// The two answers still happened to agree only because a 40-hex SHA is
+// never case-insensitively equal to "" or "HEAD" (`git grep -n
+// WillResolveMutableRefForAdd -- '*test.go'` found zero hits: nothing
+// locked the two decisions together, so nothing would have caught a future
+// drift). classifyRefResolution is now the one function resolveRef and
+// WillResolveMutableRefForAdd both call -- a second restatement of this
+// decision can no longer exist. See resolveref_test.go's
+// TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct for
+// the cross-product test this enables.
+//
+//  1. version != "" -> refKindNone (a version range pins nothing here).
+//  2. skipLocalSource is true (add only, mkt-046) and source is a local
+//     ("./") source -> refKindNone, never touches lister. This rule must
+//     NOT apply to `set`: install-marketplace-contracts.md:87 documents
+//     "`set` always resolves a given ref (no --no-verify escape hatch on
+//     set)" with no local-source exemption -- SetPackage passes
+//     skipLocalSource=false so an explicit `set --ref` on a local package
+//     still resolves via lister.ListRefs like any other source (BLOCKING 2,
+//     external audit 2026-07-30: the add-only short-circuit used to apply
+//     unconditionally here, silently clearing an explicitly-given --ref on
+//     a local package back to "").
+//  3. implicitHeadOnEmpty == false and ref == "" -> refKindNone (SetPackage's
+//     call, which only ever resolves a ref the caller explicitly gave, and
+//     must not treat an unrelated field update as an implicit-HEAD pin).
+//  4. ref is already a concrete 40-hex SHA -> refKindVerbatim.
+//  5. ref == "" (implicit) or ref case-insensitively "HEAD" (explicit) ->
+//     refKindHead.
+//  6. otherwise (a tag/branch name) -> refKindNamed.
+func classifyRefResolution(source, ref, version string, implicitHeadOnEmpty, skipLocalSource bool) refResolutionKind {
+	if version != "" {
+		return refKindNone
+	}
+	if skipLocalSource && isLocalPackageSource(source) {
+		return refKindNone
+	}
+	if ref == "" && !implicitHeadOnEmpty {
+		return refKindNone
 	}
 	if shaRefPattern.MatchString(ref) {
+		return refKindVerbatim
+	}
+	if ref == "" || strings.EqualFold(ref, "HEAD") {
+		return refKindHead
+	}
+	return refKindNamed
+}
+
+// resolveRef mirrors Python's plugin/__init__.py _resolve_ref (R5's
+// implicit-HEAD parity fix): classifyRefResolution decides which branch
+// applies, then this function performs the corresponding lister I/O (if
+// any) and returns the resolved ref (or an error, per AC18's exit-2 offline
+// case, or a lister/not-found failure).
+func resolveRef(source, ref, version string, lister RefLister, noVerify, implicitHeadOnEmpty, skipLocalSource bool) (string, error) {
+	switch classifyRefResolution(source, ref, version, implicitHeadOnEmpty, skipLocalSource) {
+	case refKindNone:
+		return "", nil
+	case refKindVerbatim:
 		return ref, nil
-	}
-	refs, err := lister.ListRefs(source)
-	if err != nil {
-		return "", fmt.Errorf("could not resolve ref %q for %q: %w", ref, source, err)
-	}
-	for _, r := range refs {
-		if r.Name == ref {
-			return r.Commit, nil
+	case refKindHead:
+		if noVerify {
+			return "", errCannotResolveHeadOffline
 		}
+		refs, err := lister.ListRefs(source)
+		if err != nil {
+			return "", fmt.Errorf("could not resolve ref %q for %q: %w", "HEAD", source, err)
+		}
+		for _, r := range refs {
+			if strings.EqualFold(r.Name, "HEAD") {
+				return r.Commit, nil
+			}
+		}
+		return "", fmt.Errorf("ref %q not found on %q", "HEAD", source)
+	default: // refKindNamed
+		refs, err := lister.ListRefs(source)
+		if err != nil {
+			return "", fmt.Errorf("could not resolve ref %q for %q: %w", ref, source, err)
+		}
+		for _, r := range refs {
+			if r.Name == ref {
+				return r.Commit, nil
+			}
+		}
+		return "", fmt.Errorf("ref %q not found on %q", ref, source)
 	}
-	return "", fmt.Errorf("ref %q not found on %q", ref, source)
+}
+
+// WillResolveMutableRefForAdd reports whether AddPackage's own resolveRef
+// call (skipLocalSource=true, implicitHeadOnEmpty=true) will actually enter
+// the network-resolving HEAD branch for the given source/ref/version --
+// i.e. whether the CLI's "mutable ref" warning (R5/AC19) should print at
+// all for `package add`. Calls classifyRefResolution directly (see that
+// function's doc comment for why this is the only place this decision is
+// expressed) rather than restating any of resolveRef's branches by hand.
+//
+// BLOCKING 1 (external audit, 2026-07-30): the CLI used to print this
+// warning off of `ref == "HEAD"` alone, before knowing whether resolution
+// would ever run -- reproduced with `marketplace package add ./localpkg
+// --ref HEAD`, which printed "Resolving to current SHA for safety" while
+// resolveRef's local short-circuit resolved nothing at all.
+func WillResolveMutableRefForAdd(source, ref, version string) bool {
+	return classifyRefResolution(source, ref, version, true, true) == refKindHead
 }
 
 // defaultNameFromSource derives a package name from source's final path
@@ -419,6 +537,11 @@ type AddOptions struct {
 	Tags              []string
 	IncludePrerelease bool
 	NoVerify          bool
+	// Category is R10's add-only field (mkt-053's compose-time codex
+	// category gate): stored as-is when non-empty; when empty,
+	// packageEntryNode omits the category: key entirely (see its own
+	// `if entry.Category != ""` guard).
+	Category string
 }
 
 // AddPackage implements `apm marketplace package add SOURCE` (mkt-045):
@@ -464,7 +587,7 @@ func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name str
 		return "", false, fmt.Errorf("package %q already exists", name)
 	}
 
-	resolvedRef, err := resolveRef(source, opts.Ref, lister)
+	resolvedRef, err := resolveRef(source, opts.Ref, opts.Version, lister, opts.NoVerify, true, true)
 	if err != nil {
 		return "", false, err
 	}
@@ -478,6 +601,7 @@ func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name str
 		TagPattern:        opts.TagPattern,
 		Tags:              opts.Tags,
 		IncludePrerelease: opts.IncludePrerelease,
+		Category:          opts.Category,
 	})
 
 	fallbackUsed, err = editPackagesFile(dir, yamlcore.SeqAdd, -1, newNode, func(seq *yaml.Node) {
@@ -539,7 +663,21 @@ func SetPackage(dir, name string, opts SetOptions, lister RefLister) (fallbackUs
 		merged.Ref = ""
 	}
 	if opts.Ref != nil {
-		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, lister)
+		// version="" (set never bundles this resolveRef call with a
+		// simultaneous --version) and implicitHeadOnEmpty=false (`set`
+		// only ever resolves a ref explicitly given via cmd.Flags().
+		// Changed("ref"); it must not treat an unrelated update as an
+		// implicit-HEAD pin -- R5's implicit-HEAD default is `add`-only,
+		// design.md §6). noVerify=false: `set` has no --no-verify escape
+		// hatch (mirrors Python's set.py). skipLocalSource=false: unlike
+		// `add`'s mkt-046 rule, `set` always resolves an explicitly-given
+		// ref regardless of source (install-marketplace-contracts.md:87);
+		// passing true here silently cleared Ref (and, via the branch
+		// below, Version too) back to "" for a local package's `set --ref`
+		// (BLOCKING 2, external audit 2026-07-30) -- fixed by threading a
+		// dedicated skipLocalSource argument through resolveRef instead of
+		// letting it infer add-vs-set from implicitHeadOnEmpty alone.
+		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, "", lister, false, false, false)
 		if rerr != nil {
 			return false, rerr
 		}

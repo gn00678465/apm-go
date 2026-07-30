@@ -67,10 +67,20 @@ func TestAddPackage_RemoteSource_VerifiesViaListerAndCanFail(t *testing.T) {
 	}
 }
 
-// TestAddPackage_RemoteSource_NoVerifySkipsLister proves --no-verify skips
-// the lister call for a remote source (design.md: "remote source 才走
-// git ls-remote 驗證(--no-verify 跳過)").
-func TestAddPackage_RemoteSource_NoVerifySkipsLister(t *testing.T) {
+// TestAddPackage_RemoteSource_NoVerify_ImplicitHead_Errors is R5/AC18's
+// corrected contract, replacing this test's former assertion (that
+// --no-verify with no --ref at all silently succeeded with no `ref:`
+// written): design.md's decision tree makes a missing --ref an *implicit*
+// HEAD pin for a remote source, and resolving HEAD to a concrete SHA
+// requires a network call -- exactly the one --no-verify forbids. So
+// --no-verify only ever skips *reachability* verification
+// (verifyPackageSource, still proven by TestAddPackage_ShaRef_
+// StoredVerbatim_NoListerCall below), never HEAD resolution: this
+// combination must now fail with the exact upstream-parity message, not
+// silently write an unpinned entry. panicLister here additionally proves
+// the failure itself never touches the network either (the error fires
+// before any lister call).
+func TestAddPackage_RemoteSource_NoVerify_ImplicitHead_Errors(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
@@ -79,8 +89,11 @@ func TestAddPackage_RemoteSource_NoVerifySkipsLister(t *testing.T) {
 	_, _, err := AddPackage(dir, "owner/repo", AddOptions{NoVerify: true}, panicLister{})
 
 	// Assert
-	if err != nil {
-		t.Fatalf("AddPackage --no-verify returned error: %v", err)
+	if err == nil {
+		t.Fatal("expected AddPackage to fail: --no-verify cannot resolve an implicit HEAD ref without network access (AC18)")
+	}
+	if !strings.Contains(err.Error(), "Cannot resolve HEAD ref without network access. Provide an explicit --ref SHA.") {
+		t.Errorf("error = %v, want the exact upstream-parity HEAD/--no-verify message", err)
 	}
 }
 
@@ -903,6 +916,127 @@ func TestSetPackage_UnresolvableRef_Errors(t *testing.T) {
 	}
 	if string(data) != original {
 		t.Errorf("apm.yml was modified despite an unresolvable --ref;\ngot:\n%s\nwant unchanged:\n%s", string(data), original)
+	}
+}
+
+// ── BLOCKING 2 (external audit, 2026-07-30): `package set --ref` on a
+// local package must still resolve the given ref via lister, not silently
+// clear it to "". Reported repro: an entry with both `version:` and a
+// stale `ref:` already set, `set foo --ref main` on a `./localpkg` source
+// used to leave BOTH fields empty and report success -- resolveRef's local
+// short-circuit (mkt-046, add-only) was applying unconditionally. Fixed by
+// threading skipLocalSource=false through SetPackage's own resolveRef call
+// (editor.go). install-marketplace-contracts.md:87 documents `set` as
+// always resolving a given ref with no local-source exemption. ──────────
+
+// TestSetPackage_LocalSource_MutableRef_ResolvesToConcreteSHA is the "ref
+// preserved/resolved" half of BLOCKING 2's regression: --ref on a local
+// package must come back as the lister-resolved SHA, not "".
+func TestSetPackage_LocalSource_MutableRef_ResolvesToConcreteSHA(t *testing.T) {
+	// Arrange: mirrors the reported repro's odd dual-pinned fixture (both
+	// version: and a stale ref: already present on one entry).
+	dir := t.TempDir()
+	staleSHA := "abcdef1234567890abcdef1234567890abcdef12"
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: ./localpkg\n"+
+		"      version: ^1.0.0\n      ref: "+staleSHA+"\n")
+	lister := mapRefLister{refs: []semver.TagInfo{{Name: "main", Commit: testResolvedSHA}}}
+	ref := "main"
+
+	// Act
+	_, err := SetPackage(dir, "foo", SetOptions{Ref: &ref}, lister)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetPackage returned error: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if cfg.Packages[0].Ref != testResolvedSHA {
+		t.Errorf("Ref = %q, want the resolved SHA %q (a local package's explicitly-given --ref must still resolve, not silently clear to empty)", cfg.Packages[0].Ref, testResolvedSHA)
+	}
+	// version is expected to clear here -- opts.Ref != nil always clears the
+	// other of version/ref in storage (mirrors Python's update_plugin_entry,
+	// see TestSetPackage_SettingVersionClearsExistingRef above); the bug was
+	// that Ref ALSO silently became "", not that Version stayed.
+	if cfg.Packages[0].Version != "" {
+		t.Errorf("Version = %q, want cleared (giving --ref clears the other of version/ref in storage)", cfg.Packages[0].Version)
+	}
+}
+
+// TestSetPackage_LocalSource_UnrelatedFieldChange_PreservesVersion is the
+// "version: NOT clobbered" half of BLOCKING 2's regression: a `set` call
+// that does not touch --ref at all (SetOptions.Ref == nil, so resolveRef is
+// never invoked) must leave a local package's existing version: untouched,
+// exactly like the pre-existing remote-source contract
+// (TestSetPackage_IncludePrereleaseNotGiven_LeavesExistingValueUnchanged)
+// -- proving the resolveRef signature change did not introduce a new way to
+// touch fields an unrelated `set` call never mentioned.
+func TestSetPackage_LocalSource_UnrelatedFieldChange_PreservesVersion(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: ./localpkg\n"+
+		"      version: ^1.0.0\n")
+	subdir := "skills"
+
+	// Act: change --subdir only, panicLister proves no network I/O at all.
+	_, err := SetPackage(dir, "foo", SetOptions{Subdir: &subdir}, panicLister{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetPackage returned error: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if cfg.Packages[0].Version != "^1.0.0" {
+		t.Errorf("Version = %q, want ^1.0.0 preserved (an unrelated set must not clobber it)", cfg.Packages[0].Version)
+	}
+	if cfg.Packages[0].Subdir != "skills" {
+		t.Errorf("Subdir = %q, want skills", cfg.Packages[0].Subdir)
+	}
+}
+
+// TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister
+// is MAJOR 2's SetPackage-level end-to-end regression (external audit round
+// 2, 2026-07-30): the config's own package source is a relative "./..."
+// path (the only shape a real local package's source ever takes -- see
+// manifest.ValidateMarketplaceSource), and this uses gitRefLister{} (the
+// real production RefLister, not mapRefLister) against a real git repo
+// fixture. Before MAJOR 2's resolveCloneURL fix, this failed with a bogus
+// "git ls-remote https://github.com/./pkgs/tool.git: remote: Not Found"
+// instead of resolving against the real local repository.
+func TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	repoDir := filepath.Join(dir, "pkgs", "tool")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	wantSHA := gitCmd(t, repoDir, "rev-parse", "v1.0.0")
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: ./pkgs/tool\n")
+	chdirTo(t, dir)
+	ref := "v1.0.0"
+
+	// Act
+	_, err := SetPackage(".", "tool", SetOptions{Ref: &ref}, gitRefLister{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("SetPackage with a relative local source's --ref returned error: %v", err)
+	}
+	cfg, _, lerr := LoadAuthoringConfig(".")
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if cfg.Packages[0].Ref != wantSHA {
+		t.Errorf("Ref = %q, want the resolved SHA %q (a relative local source's --ref must resolve through the real production lister, not fail closed)", cfg.Packages[0].Ref, wantSHA)
 	}
 }
 

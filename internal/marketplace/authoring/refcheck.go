@@ -93,15 +93,44 @@ func newListRefsCmd(ctx context.Context, cloneURL string) *exec.Cmd {
 // req-mf-017-validated by schema.go's parsePackages) into a URL `git
 // ls-remote` can use directly: a full URL, an SCP-style remote, or an
 // already-absolute filesystem path (this package's own test fixtures, and a
-// manually authored self-hosted-git checkout) pass through unchanged; an
-// OWNER/REPO or HOST/OWNER/REPO shorthand is expanded against github.com,
-// mirroring internal/marketplace/source.go's defaultSourceHost default.
+// manually authored self-hosted-git checkout) pass through unchanged; a
+// relative "./..." local source (manifest.ValidateMarketplaceSource's own
+// "local path must start with './'" rule -- the only shape a local package's
+// source ever actually takes, since `add` rejects any other local-looking
+// path) is resolved to an absolute path against the process's current
+// working directory via isLocalPackageSource + filepath.Abs, so `set --ref`
+// on one still reaches a real, existing git repository instead of being
+// misread as an OWNER/REPO shorthand; every other (non-"./", non-absolute)
+// string is an OWNER/REPO or HOST/OWNER/REPO shorthand, expanded against
+// github.com, mirroring internal/marketplace/source.go's defaultSourceHost
+// default.
+//
+// MAJOR 2 (external audit round 2, 2026-07-30): before this fix, a relative
+// local source fell through to the OWNER/REPO branch untouched --
+// resolveCloneURL("./x") produced "https://github.com/./x.git" -- so
+// `package set NAME --ref <mutable ref>` on any local package (every local
+// package's source is a relative "./..." path; see
+// manifest.ValidateMarketplaceSource) failed with a bogus GitHub 404 rather
+// than resolving against the real local repository. Reading
+// install-marketplace-contracts.md:87 ("set always resolves a given ref (no
+// --no-verify escape hatch on set)", no local-source exemption) together
+// with BLOCKING 2's fix (SetPackage must resolve a local source's ref, not
+// short-circuit it): the contract requires this to succeed, not fail
+// closed. See TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister
+// (refcheck_test.go) for the real-repo, production-lister proof, and
+// TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister
+// (editor_test.go) for the SetPackage-level end-to-end regression.
 func resolveCloneURL(source string) string {
 	if strings.Contains(source, "://") || strings.HasPrefix(source, "git@") {
 		return source
 	}
 	if filepath.IsAbs(source) {
 		return source
+	}
+	if isLocalPackageSource(source) {
+		if abs, err := filepath.Abs(source); err == nil {
+			return abs
+		}
 	}
 	return "https://github.com/" + source + ".git"
 }

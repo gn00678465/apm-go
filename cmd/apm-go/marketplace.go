@@ -87,27 +87,35 @@ func confirmOrRequireYes(label, errMsg string) (proceed bool, err error) {
 // browse/update/validate/remove/audit's NAME lookup miss (mkt-013/014/015/
 // 016, plus mkt-043 修訂版's audit). It keeps the original callers' exact
 // "is not registered" substring (existing tests assert on it verbatim with
-// strings.Contains), then layers on two best-effort UX aids the bare message
-// never had: `marketplace add OWNER/REPO` registers under a *derived* alias
-// (resolveMarketplaceAlias/fallbackMarketplaceAlias), never the raw
-// OWNER/REPO string itself, so a user who later queries with that same raw
-// string gets an unhelpful "not registered" with no hint of what name it
-// actually registered under.
+// strings.Contains), then layers on three best-effort UX aids the bare
+// message never had: `marketplace add OWNER/REPO` registers under a
+// *derived* alias (resolveMarketplaceAlias/fallbackMarketplaceAlias), never
+// the raw OWNER/REPO string itself, so a user who later queries with that
+// same raw string gets an unhelpful "not registered" with no hint of what
+// name it actually registered under.
 //   - if name looks like a copy-pasted "OWNER/REPO" (it contains a "/"),
 //     the part after the last "/" is compared case-insensitively against
 //     every registered name; a match appends a "Did you mean" hint.
 //   - the full, sorted list of registered names is appended, or -- when
 //     nothing is registered at all -- a pointer at `marketplace add` instead.
+//   - R6's fix: every case additionally names the concrete remedy commands
+//     (`apm-go marketplace add SOURCE` to register one, `apm-go marketplace
+//     list` to see what is registered) -- this used to be missing whenever
+//     at least one marketplace *was* already registered (the "Registered:
+//     ..." branch above named the list but never the commands themselves),
+//     which is exactly the gap `marketplace audit`'s callers hit (R6/AC22).
 //
-// Both aids are best-effort: a LoadRegistry failure here must not replace an
-// already-correct "not registered" error with a different, confusing one, so
-// it silently falls back to the plain message instead of propagating.
+// All three aids are best-effort: a LoadRegistry failure here must not
+// replace an already-correct "not registered" error with a different,
+// confusing one, so it silently falls back to the plain message (plus the
+// static remedy line, which needs no registry data) instead of propagating.
 func marketplaceNotRegisteredErr(name string) error {
 	msg := fmt.Sprintf("marketplace %q is not registered", name)
+	const remedy = "\nRun `apm-go marketplace list` to see registered marketplaces, or `apm-go marketplace add SOURCE` to register a new one."
 
 	sources, err := marketplace.LoadRegistry()
 	if err != nil {
-		return fmt.Errorf("%s", msg)
+		return fmt.Errorf("%s%s", msg, remedy)
 	}
 
 	names := make([]string, 0, len(sources))
@@ -131,6 +139,7 @@ func marketplaceNotRegisteredErr(name string) error {
 	} else {
 		msg += "\nRegistered: " + strings.Join(names, ", ")
 	}
+	msg += remedy
 	return fmt.Errorf("%s", msg)
 }
 

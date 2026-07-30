@@ -428,6 +428,79 @@ func TestResolveCloneURL(t *testing.T) {
 			t.Errorf("resolveCloneURL(owner/repo) = %q, want %q", got, want)
 		}
 	})
+
+	// MAJOR 2 (external audit round 2, 2026-07-30): a relative "./..."
+	// local source must resolve against the process's cwd, not fall
+	// through to the OWNER/REPO shorthand branch (which used to produce
+	// the bogus "https://github.com/./repo.git").
+	t.Run("relative local source resolves against cwd, not as OWNER/REPO shorthand", func(t *testing.T) {
+		parent := t.TempDir()
+		chdirTo(t, parent)
+		want := filepath.Join(parent, "repo")
+		if got := resolveCloneURL("./repo"); got != want {
+			t.Errorf("resolveCloneURL(./repo) = %q, want %q (the local cwd-relative path, not a GitHub shorthand expansion)", got, want)
+		}
+	})
+}
+
+// chdirTo temporarily changes the process's working directory to dir for
+// the duration of the test, restoring the original directory in cleanup.
+// Needed for MAJOR 2's relative-local-source tests: resolveCloneURL's (and
+// gitRefLister's) filepath.Abs resolution of a "./..." source depends on
+// cwd, same as a real `apm marketplace package set` invocation running from
+// the project root.
+func chdirTo(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+}
+
+// TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister is MAJOR
+// 2's real-repo, production-lister proof (external audit round 2,
+// 2026-07-30): the audit correctly pointed out that REGR-B2's tests only
+// ever injected mapRefLister, so they proved "SetPackage no longer silently
+// clears a local source's ref" but never proved "a *relative* local repo's
+// ref actually resolves" through the real `git ls-remote` codepath (a
+// relative source is the only shape a real local package's source ever
+// takes -- see manifest.ValidateMarketplaceSource). This runs gitRefLister{}
+// (the production RefLister, no fake) against a real git repo reached via a
+// relative "./..." path.
+func TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister(t *testing.T) {
+	// Arrange
+	parent := t.TempDir()
+	repoDir := filepath.Join(parent, "repo")
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	wantSHA := gitCmd(t, repoDir, "rev-parse", "v1.0.0")
+	chdirTo(t, parent)
+
+	// Act
+	refs, err := gitRefLister{}.ListRefs("./repo")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("ListRefs(./repo) returned error: %v", err)
+	}
+	found := false
+	for _, r := range refs {
+		if r.Name == "v1.0.0" {
+			found = true
+			if r.Commit != wantSHA {
+				t.Errorf("tag v1.0.0 commit = %q, want %q", r.Commit, wantSHA)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("refs = %+v, want tag v1.0.0 present (a relative local source must resolve against cwd, not be misread as an OWNER/REPO shorthand)", refs)
+	}
 }
 
 func TestParseRefsOutput(t *testing.T) {

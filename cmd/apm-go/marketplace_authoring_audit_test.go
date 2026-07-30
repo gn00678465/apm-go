@@ -72,6 +72,56 @@ func TestMarketplaceAudit_NotRegisteredErrors(t *testing.T) {
 	}
 }
 
+// TestMarketplaceAudit_NotRegistered_MentionsAddAndListRemedies is R6/AC22:
+// the error must name the concrete remedy commands (`marketplace add` to
+// register a source, `marketplace list` to see what is registered), not
+// just say "is not registered" and stop -- both with and without any other
+// marketplace already registered, since before this fix the "Registered:
+// ..." branch (at least one other marketplace registered) named the list
+// but never the commands themselves.
+func TestMarketplaceAudit_NotRegistered_MentionsAddAndListRemedies(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "foo", URL: "/abs/foo", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "audit", "does-not-exist")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace audit for an unregistered name returned no error")
+	}
+	if !strings.Contains(err.Error(), "marketplace add") {
+		t.Errorf("error = %q, want it to mention the `marketplace add` remedy", err.Error())
+	}
+	if !strings.Contains(err.Error(), "marketplace list") {
+		t.Errorf("error = %q, want it to mention the `marketplace list` remedy", err.Error())
+	}
+}
+
+// TestMarketplaceAudit_NotRegistered_EmptyRegistry_MentionsAddAndListRemedies
+// covers the other branch: nothing at all registered yet.
+func TestMarketplaceAudit_NotRegistered_EmptyRegistry_MentionsAddAndListRemedies(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+
+	// Act
+	_, err := runMarketplaceCmd(t, "audit", "does-not-exist")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace audit for an unregistered name returned no error")
+	}
+	if !strings.Contains(err.Error(), "marketplace add") {
+		t.Errorf("error = %q, want it to mention the `marketplace add` remedy", err.Error())
+	}
+	if !strings.Contains(err.Error(), "marketplace list") {
+		t.Errorf("error = %q, want it to mention the `marketplace list` remedy", err.Error())
+	}
+}
+
 // ── happy path: clean marketplace, no --strict needed ────────────────────
 
 func TestMarketplaceAudit_AllCleanDeps_Succeeds(t *testing.T) {

@@ -88,13 +88,32 @@ func parseTagsFlagGiven(raw string) []string {
 	return []string{}
 }
 
+// marketplaceOutputsIncludeCodex reports whether dir's active marketplace
+// authoring config declares a "codex" entry in its `outputs:` block. It is
+// a best-effort, read-only check (R10's add-time codex-category warning):
+// a config that fails to load here (e.g. `marketplace init` was never run)
+// simply reports false, exactly like marketplaceNotRegisteredErr's own
+// best-effort registry lookup.
+func marketplaceOutputsIncludeCodex(dir string) bool {
+	cfg, _, err := authoring.LoadAuthoringConfig(dir)
+	if err != nil {
+		return false
+	}
+	for _, o := range cfg.Outputs {
+		if strings.EqualFold(o, "codex") {
+			return true
+		}
+	}
+	return false
+}
+
 // marketplacePackageAddCmd implements `apm marketplace package add SOURCE`
-// (mkt-045/046). --name and -s/--subdir's shorthand and --no-verify are
-// add-only, per design.md's flag table.
+// (mkt-045/046). --name and -s/--subdir's shorthand, --no-verify and
+// --category are add-only, per design.md's flag table.
 func marketplacePackageAddCmd() *cobra.Command {
 	var (
-		name, version, ref, subdir, tagPattern, tags string
-		includePrerelease, noVerify, verbose         bool
+		name, version, ref, subdir, tagPattern, tags, category string
+		includePrerelease, noVerify, verbose                   bool
 	)
 
 	cmd := &cobra.Command{
@@ -106,6 +125,32 @@ func marketplacePackageAddCmd() *cobra.Command {
 			if cmd.Flags().Changed("version") && cmd.Flags().Changed("ref") {
 				return withExitCode(2, errVersionRefMutuallyExclusive)
 			}
+			// R5/AC19: an explicit `--ref HEAD` (any case) additionally
+			// warns that HEAD is a mutable ref, printed before resolution
+			// is even attempted -- mirroring upstream's plugin/__init__.py
+			// _resolve_ref ordering. authoring.WillResolveMutableRefForAdd
+			// mirrors resolveRef's own early-return branches (a --version
+			// range, or mkt-046's local-source short-circuit) so this
+			// warning only prints when AddPackage's resolveRef call will
+			// actually reach the network-resolving HEAD branch.
+			//
+			// BLOCKING 1 (external audit, 2026-07-30): before this fix, the
+			// warning printed off of `ref == "HEAD"` alone --
+			// `marketplace package add ./localpkg --ref HEAD` printed
+			// "Resolving to current SHA for safety" even though a local
+			// source is never resolved at all (see
+			// TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning).
+			if cmd.Flags().Changed("ref") && strings.EqualFold(ref, "HEAD") &&
+				authoring.WillResolveMutableRefForAdd(args[0], ref, version) {
+				ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
+			}
+			// R10/AC48: outputs: codex without --category would otherwise
+			// leave the added package unable to ever `pack` a codex
+			// output (mkt-053's CategoryRequiredError) with no CLI-level
+			// way to fix it -- design.md §13's "刻意不做" keeps this a
+			// warning, not a block, so `pack -m claude` still succeeds
+			// regardless.
+			warnMissingCategory := category == "" && marketplaceOutputsIncludeCodex(".")
 			opts := authoring.AddOptions{
 				Name:              name,
 				Version:           version,
@@ -115,6 +160,7 @@ func marketplacePackageAddCmd() *cobra.Command {
 				Tags:              parseTagsFlag(tags),
 				IncludePrerelease: includePrerelease,
 				NoVerify:          noVerify,
+				Category:          category,
 			}
 			resolved, fallbackUsed, err := authoring.AddPackage(".", args[0], opts, authoring.DefaultRefLister)
 			if err != nil {
@@ -122,6 +168,9 @@ func marketplacePackageAddCmd() *cobra.Command {
 			}
 			if fallbackUsed {
 				ux.Warn(cmd.ErrOrStderr(), "packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
+			}
+			if warnMissingCategory {
+				ux.Warn(cmd.ErrOrStderr(), "package %q has no --category; marketplace.outputs includes 'codex', which requires one at `pack` time", resolved)
 			}
 			ux.Success(cmd.OutOrStdout(), "Added package %q from %s", resolved, args[0])
 			return nil
@@ -136,6 +185,7 @@ func marketplacePackageAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tags, "tags", "", "Comma-separated tags")
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "Include prerelease versions")
 	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "Skip the remote reachability check")
+	cmd.Flags().StringVar(&category, "category", "", "Package category (required for Codex output at `pack` time)")
 	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
 	// subcommand; `package add` was missing it entirely (an unknown-flag
 	// hard error). Python's own add.py accepts it with no observable

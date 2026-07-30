@@ -56,15 +56,31 @@ if ($ha -notmatch '--category') { Fail 'AC47' '`package add --help` 沒有 --cat
 if ($hs -match  '--category')   { Fail 'AC49' '`package set` 不該有 --category（上游旗標集合）' } else { Pass 'AC49' }
 
 # ---- AC22 / R6：audit 錯誤訊息含補救指引 ----
+# 2026-07-30：APM_CONFIG_DIR 隔離成獨立臨時目錄，讓這個探針讀到的是一個
+# 已知的、空的 marketplaces.json 狀態，而不是耦合到開發機當下
+# ~/.apm/marketplaces.json 裡實際登記了哪些 marketplace。
 $probe = Join-Path $env:TEMP ("apm-mkt-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $probe -Force | Out-Null
+$probeConfigDir = Join-Path $env:TEMP ("apm-mkt-cfg-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $probeConfigDir -Force | Out-Null
+# MINOR 1（外部稽核，2026-07-30）：finally 區塊過去無條件 Remove-Item
+# Env:\APM_CONFIG_DIR，若呼叫者本來就設有這個環境變數會被本探針清掉。
+# 先存下「呼叫前是否存在」與其舊值，finally 精準還原。
+$hadConfigDirEnv = Test-Path Env:\APM_CONFIG_DIR
+if ($hadConfigDirEnv) { $prevConfigDirEnv = $env:APM_CONFIG_DIR }
 try {
   Push-Location $probe
+  $env:APM_CONFIG_DIR = $probeConfigDir
   $out = & $bin marketplace audit no-such-marketplace 2>&1 | Out-String
   if ($out -notmatch 'marketplace add') { Fail 'AC22' 'audit 未註冊錯誤訊息缺少 `marketplace add` 補救指引' }
   elseif ($out -notmatch 'marketplace list') { Fail 'AC22' 'audit 錯誤訊息缺少 `marketplace list` 提示' }
   else { Pass 'AC22' }
-} finally { Pop-Location -EA SilentlyContinue; Remove-Item $probe -Recurse -Force -EA SilentlyContinue }
+} finally {
+  if ($hadConfigDirEnv) { $env:APM_CONFIG_DIR = $prevConfigDirEnv } else { Remove-Item Env:\APM_CONFIG_DIR -EA SilentlyContinue }
+  Pop-Location -EA SilentlyContinue
+  Remove-Item $probe -Recurse -Force -EA SilentlyContinue
+  Remove-Item $probeConfigDir -Recurse -Force -EA SilentlyContinue
+}
 
 # ---- AC18：--no-verify 的 exit code 必須是 2（用 binary，不可用 go run） ----
 # go run 會把子行程的 2 變成 1 —— 已實測，見 review/codex-audit-checklist.md 阻斷 4
@@ -100,7 +116,11 @@ $localBranches = @(
   @{ n='Version';      p='LocalSource.*Version|LocalVersion' },
   @{ n='NoVerify';     p='LocalSource.*NoVerify|LocalNoVerify' },
   @{ n='ConcreteSHA';  p='LocalSource.*SHA|LocalSHA' },
-  @{ n='ZeroFlag';     p='LocalSource.*ZeroFlag|LocalZeroFlag|RemoteSource_ZeroFlag' }
+  @{ n='ZeroFlag';     p='LocalSource.*ZeroFlag|LocalZeroFlag|RemoteSource_ZeroFlag' },
+  # ROUND2-MAJOR1（外部稽核第二輪，2026-07-30）：AC21 宣稱「所有情境」，但先前
+  # 6 個分支裡沒有「local + 一般 mutable ref（非空、非 HEAD、非 SHA，例如
+  # "main"）」這個組合 -- 這正是報告點名、能存活於前 6 條測試之下的突變。
+  @{ n='OrdinaryMutableRef'; p='LocalSource_OrdinaryMutableRef' }
 )
 $missingLocal = @()
 foreach ($b in $localBranches) {
@@ -114,6 +134,98 @@ if ($missingLocal.Count -gt 0) {
   $null = Exec 'AC21' "go test -run 'LocalSource'" { go test ./internal/marketplace/authoring/ -run 'LocalSource' }
   if ($script:fails.Count -eq $before) { Pass 'AC21' }
 }
+
+# ---- REGR-BLOCKING1（外部稽核，2026-07-30）：local source + --ref HEAD
+# 不得印出「resolving」訊息（resolveRef 對 local source 從不解析任何東西）----
+$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'REGR-B1' 'BLOCKING 1 回歸測試不存在（-list 零匹配）' } else {
+  $before = $script:fails.Count
+  $null = Exec 'REGR-B1' "go test -run 'TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning' }
+  if ($script:fails.Count -eq $before) { Pass 'REGR-B1' }
+}
+
+# ---- REGR-BLOCKING2（外部稽核，2026-07-30）：`package set --ref` 在 local
+# source 上必須仍經 lister 解析，不得被 add-only 的 mkt-046 短路清空 ----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestSetPackage_LocalSource_MutableRef_ResolvesToConcreteSHA|TestSetPackage_LocalSource_UnrelatedFieldChange_PreservesVersion|TestResolveRef_LocalSource_SetMode_DoesNotShortCircuit_ResolvesViaLister|TestResolveRef_LocalSource_SetMode_ConcreteSHA_StoredVerbatim_NoListerCall' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 4) { Fail 'REGR-B2' "BLOCKING 2 回歸測試 -list 只匹配 $($listed.Count) 個，需要 4 個" } else {
+  $before = $script:fails.Count
+  $null = Exec 'REGR-B2' "go test -run 'TestSetPackage_LocalSource|TestResolveRef_LocalSource_SetMode'" { go test ./internal/marketplace/authoring/ -run 'TestSetPackage_LocalSource|TestResolveRef_LocalSource_SetMode' }
+  if ($script:fails.Count -eq $before) { Pass 'REGR-B2' }
+}
+
+# ---- REGR-MAJOR1（外部稽核，2026-07-30）：codex-category 警告的兩個否定
+# 測試（category 有給 + outputs 含 codex → 不警告；category 沒給 + outputs
+# 不含 codex → 不警告），各自單獨能抓到報告中指出的那個突變 ----
+$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning|TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 2) { Fail 'REGR-M1' "MAJOR 1 回歸測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else {
+  $before = $script:fails.Count
+  $null = Exec 'REGR-M1' "go test -run 'TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning|TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning|TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning' }
+  if ($script:fails.Count -eq $before) { Pass 'REGR-M1' }
+}
+
+# ---- REGR-MAJOR2（外部稽核，2026-07-30）：resolveRef 的 SHA/HEAD 邊界情境
+# （40 字元非 hex、41 字元、大寫 SHA、混合大小寫 Head、refs/heads/HEAD）----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_ShaPattern_40CharNonHex_ResolvesViaLister|TestResolveRef_ShaPattern_41Char_ResolvesViaLister|TestResolveRef_ShaPattern_UppercaseSHA_ResolvesViaLister|TestResolveRef_ExplicitHead_MixedCase_TitleCase|TestResolveRef_RefsHeadsHEAD_NotTreatedAsHeadKeyword' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 5) { Fail 'REGR-M2' "MAJOR 2 邊界測試 -list 只匹配 $($listed.Count) 個，需要 5 個" } else {
+  $before = $script:fails.Count
+  $null = Exec 'REGR-M2' "go test -run 'TestResolveRef_ShaPattern|TestResolveRef_ExplicitHead_MixedCase|TestResolveRef_RefsHeadsHEAD'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_ShaPattern|TestResolveRef_ExplicitHead_MixedCase|TestResolveRef_RefsHeadsHEAD' }
+  if ($script:fails.Count -eq $before) { Pass 'REGR-M2' }
+}
+
+# ════════════════════════════════════════════════════════════════════════
+# Round 2（外部稽核第二輪，2026-07-30）：BLOCKING 1/2、MAJOR 1/2/3 的閘門
+# ════════════════════════════════════════════════════════════════════════
+
+# ---- ROUND2-BLOCKING1：resolveRef 與 WillResolveMutableRefForAdd 必須共用
+# 同一個分類器（classifyRefResolution），不得各自表述 -- 交叉積測試逐一比較
+# 「預測會不會解析」與「resolveRef 實際有沒有走到 HEAD 解析分支」----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND2-B1' 'BLOCKING 1 交叉積回歸測試不存在（-list 零匹配）' } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND2-B1' "go test -run 'TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct'" { go test ./internal/marketplace/authoring/ -run 'TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND2-B1' }
+}
+
+# ---- ROUND2-MAJOR1：local + 一般 mutable ref（如 "main"）的缺口測試（見
+# 上方 localBranches 的 OrdinaryMutableRef 項目已涵蓋 -list 存在性檢查，這裡
+# 額外確認它實際能跑且通過）----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND2-M1' 'MAJOR 1 回歸測試不存在（-list 零匹配）' } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND2-M1' "go test -run 'TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M1' }
+}
+
+# ---- ROUND2-MAJOR2：`set --ref` 在「相對路徑」本地 source 上必須透過正式
+# 的 production lister（gitRefLister，非 mapRefLister 假件）真的解析成功，
+# 不得被 resolveCloneURL 誤展開成 OWNER/REPO shorthand ----
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 2) { Fail 'ROUND2-M2' "MAJOR 2 相對路徑回歸測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND2-M2' "go test -run 'TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister'" { go test ./internal/marketplace/authoring/ -run 'TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister|TestSetPackage_RelativeLocalSource_MutableRef_ResolvesViaProductionLister' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M2' }
+}
+
+# ---- ROUND2-MAJOR3：四個一行逃逸口 -- 警告嚴重程度（非只 grep 訊息文字）、
+# CLI 層的 `set --ref` 覆蓋（非只呼叫 authoring 層）、39 字元合法 hex 邊界 ----
+$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND2-M3-CLI' 'MAJOR 3 的 CLI 層 set --ref 回歸測試不存在（-list 零匹配）' } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND2-M3-CLI' "go test -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI'" { go test ./cmd/apm-go/ -run 'TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M3-CLI' }
+}
+$listed = @(& go test ./internal/marketplace/authoring/ -list 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) { Fail 'ROUND2-M3-39CHAR' 'MAJOR 3 的 39 字元邊界測試不存在（-list 零匹配）' } else {
+  $before = $script:fails.Count
+  $null = Exec 'ROUND2-M3-39CHAR' "go test -run 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister'" { go test ./internal/marketplace/authoring/ -run 'TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister' }
+  if ($script:fails.Count -eq $before) { Pass 'ROUND2-M3-39CHAR' }
+}
+# 嚴重程度斷言本身就在 TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning
+# 與 TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds
+# 內部（assertLineSeverity），這兩條已經是 AC19/AC48 既有閘門的一部分，
+# 本節只額外用 -list 證明它們仍然存在，避免被誤刪。
+$listed = @(& go test ./cmd/apm-go/ -list 'TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning|TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -lt 2) { Fail 'ROUND2-M3-SEVERITY' "MAJOR 3 的嚴重程度斷言宿主測試 -list 只匹配 $($listed.Count) 個，需要 2 個" } else { Pass 'ROUND2-M3-SEVERITY' }
 
 # ---- AC53：回歸閘門 —— marketplace init 必須維持非互動（D13） ----
 # 防止實作 plugin-init 時順手把 clack 帶進 marketplace init。

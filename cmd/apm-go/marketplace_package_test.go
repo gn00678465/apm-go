@@ -6,13 +6,38 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/apm-go/apm/internal/ux"
 )
+
+// assertLineSeverity finds the line in out containing marker and asserts it
+// starts with wantSymbol's centered 3-rune column (ux/printer.go's
+// printLine convention: " <symbol> ") -- MAJOR 3 (external audit round 2,
+// 2026-07-30, REGR-B1/REGR-M1): checking for the message text or for
+// ux.SymbolWarn's bare presence anywhere in out does not catch a mutation
+// that swaps ux.Warn for ux.Info, since the message text is identical
+// either way and ux.SymbolWarn ("!") could coincidentally appear elsewhere
+// in the same combined output. This checks the specific line's own leading
+// symbol column.
+func assertLineSeverity(t *testing.T, out, marker, wantSymbol string) {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, marker) {
+			want := " " + wantSymbol + " "
+			if !strings.HasPrefix(line, want) {
+				t.Errorf("line %q, want it to start with %q (severity)", line, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("no output line contains %q: %q", marker, out)
+}
 
 // ── flag wiring (mkt-045 修訂版's "並非完全共用" table) ───────────────────
 
 func TestMarketplacePackageAddCmd_FlagsWired(t *testing.T) {
 	cmd := marketplacePackageAddCmd()
-	for _, name := range []string{"name", "version", "ref", "subdir", "tag-pattern", "tags", "include-prerelease", "no-verify"} {
+	for _, name := range []string{"name", "version", "ref", "subdir", "tag-pattern", "tags", "include-prerelease", "no-verify", "category"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("package add is missing --%s", name)
 		}
@@ -32,8 +57,8 @@ func TestMarketplacePackageSetCmd_FlagsWired(t *testing.T) {
 }
 
 // TestMarketplacePackageSetCmd_HasNoAddOnlyFlags locks mkt-045 修訂版's
-// explicit "並非完全共用": --name and -s/--subdir's shorthand, and
-// --no-verify, belong only to `add`.
+// explicit "並非完全共用": --name and -s/--subdir's shorthand, --no-verify,
+// and (R10/AC49) --category, belong only to `add`.
 func TestMarketplacePackageSetCmd_HasNoAddOnlyFlags(t *testing.T) {
 	cmd := marketplacePackageSetCmd()
 	if cmd.Flags().Lookup("name") != nil {
@@ -41,6 +66,9 @@ func TestMarketplacePackageSetCmd_HasNoAddOnlyFlags(t *testing.T) {
 	}
 	if cmd.Flags().Lookup("no-verify") != nil {
 		t.Error("package set must not have an add-only --no-verify flag")
+	}
+	if cmd.Flags().Lookup("category") != nil {
+		t.Error("package set must not have an add-only --category flag (R10/AC49; upstream set.py has no --category)")
 	}
 	if cmd.Flags().ShorthandLookup("s") != nil {
 		t.Error("package set's --subdir must not have add's -s shorthand")
@@ -220,6 +248,46 @@ func TestMarketplacePackageSet_WithVersionFlag_StillWorks(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "version: ^1.0.0") {
 		t.Errorf("apm.yml = %q, want the new version recorded", string(data))
+	}
+}
+
+// TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI is MAJOR 3's
+// REGR-B2 fix (external audit round 2, 2026-07-30): the previous round's
+// REGR-B2 regression tests only ever called authoring.SetPackage directly,
+// so a CLI-layer mutation like `if false && cmd.Flags().Changed("ref")`
+// (marketplace_package.go, guarding the opts.Ref assignment) -- which would
+// make `package set --ref` silently do nothing at the CLI layer -- went
+// undetected. This drives the real `package set NAME --ref ...` command
+// (marketplacePackageSetCmd's RunE, through runMarketplaceCmd) against a
+// real local git repo fixture, asserting the ref was actually resolved and
+// written -- not just that authoring.SetPackage can do it when called
+// in-process.
+func TestMarketplacePackageSet_RefFlag_ResolvesViaListerThroughCLI(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	source := filepath.ToSlash(repoDir)
+	wantSHA := gitCmd(t, repoDir, "rev-parse", "v1.0.0")
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages:\n    - name: tool\n      source: " + source + "\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "set", "tool", "--ref", "v1.0.0")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package set tool --ref v1.0.0 returned error: %v", err)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(data), "ref: "+wantSHA) {
+		t.Errorf("apm.yml = %q, want the resolved SHA %s written for ref: (a --ref mutation at the CLI layer must not be silently ignored)", string(data), wantSHA)
 	}
 }
 
@@ -602,5 +670,318 @@ func TestMarketplacePackageSet_VersionAndRefBothGiven_ExitsCode2(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Errorf("err = %v, want a mutually-exclusive message", err)
+	}
+}
+
+// ── R5: implicit/explicit HEAD resolution through the CLI (AC17-20) ──────
+
+// TestMarketplacePackageAdd_ZeroFlags_RemoteSource_WritesResolvedHeadSHA is
+// AC17: a zero-flag add against a remote source now resolves the implicit
+// HEAD ref and pins it, unlike the pre-fix behavior of writing no `ref:` at
+// all (design.md §9's "唯一的行為破壞").
+func TestMarketplacePackageAdd_ZeroFlags_RemoteSource_WritesResolvedHeadSHA(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	source := filepath.ToSlash(repoDir)
+	wantSHA := gitCmd(t, repoDir, "rev-parse", "HEAD")
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "add", source)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add with zero flags against a real remote-like source returned error: %v", err)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(data), "ref: "+wantSHA) {
+		t.Errorf("apm.yml = %q, want ref: %s written (AC17: implicit HEAD resolved and pinned)", string(data), wantSHA)
+	}
+}
+
+// TestMarketplacePackageAdd_NoVerify_ImplicitHead_ExitsCode2 is AC18's
+// Go-level complement to verify.ps1's binary-based exit-code probe: the
+// exact upstream message plus exit code 2 (via withExitCode, unaffected by
+// go test's own process boundary the way `go run` would be).
+func TestMarketplacePackageAdd_NoVerify_ImplicitHead_ExitsCode2(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "add", "owner/repo", "--no-verify")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected package add --no-verify with an implicit HEAD ref to error (AC18)")
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2 (AC18)", got)
+	}
+	if !strings.Contains(err.Error(), "Cannot resolve HEAD ref without network access. Provide an explicit --ref SHA.") {
+		t.Errorf("err = %v, want the exact upstream-parity message (AC18)", err)
+	}
+}
+
+// TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning is
+// AC19: `--ref HEAD` prints the mutable-ref warning and still resolves
+// normally (proven by the successful add below).
+func TestMarketplacePackageAdd_ExplicitRefHead_PrintsMutableRefWarning(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	source := filepath.ToSlash(repoDir)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", source, "--ref", "HEAD")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add --ref HEAD returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "'HEAD' is a mutable ref. Resolving to current SHA for safety.") {
+		t.Errorf("output = %q, want the mutable-ref warning (AC19)", out)
+	}
+	// MAJOR 3 (external audit round 2, 2026-07-30, REGR-B1): a mutation from
+	// ux.Warn to ux.Info at this call site leaves the message text
+	// unchanged, so it must be caught by checking the line's own severity
+	// symbol, not just the message substring above.
+	assertLineSeverity(t, out, "'HEAD' is a mutable ref", ux.SymbolWarn)
+}
+
+// TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning
+// is BLOCKING 1's regression (external audit, 2026-07-30): a local source
+// never resolves any ref at all (mkt-046), so `--ref HEAD` on one must NOT
+// print the "'HEAD' is a mutable ref..." warning -- printing it claims a
+// resolution that never happens. Reported repro:
+// `apm-go marketplace package add ./localpkg --name loc2 --ref HEAD`
+// printed the warning despite resolveRef's local short-circuit resolving
+// nothing.
+func TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", "./localpkg", "--name", "loc2", "--ref", "HEAD")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add ./localpkg --ref HEAD returned error: %v (output: %s)", err, out)
+	}
+	if strings.Contains(out, "mutable ref") {
+		t.Errorf("output = %q, want NO mutable-ref warning for a local source (nothing is ever resolved for one, BLOCKING 1)", out)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if strings.Contains(string(data), "ref:") {
+		t.Errorf("apm.yml = %q, want no ref: written for a local source", string(data))
+	}
+}
+
+// TestMarketplacePackageAdd_VersionGiven_DoesNotWriteRef is AC20: a
+// --version range never resolves or writes a ref, even against a
+// reachable remote source (a reachability check still happens per
+// verifyPackageSource/add.py's ordering -- only ref *resolution* is
+// skipped).
+func TestMarketplacePackageAdd_VersionGiven_DoesNotWriteRef(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	source := filepath.ToSlash(repoDir)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "add", source, "--version", "^1.0.0")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add --version returned error: %v", err)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if strings.Contains(string(data), "ref:") {
+		t.Errorf("apm.yml = %q, want no ref: written when --version is given (AC20)", string(data))
+	}
+	if !strings.Contains(string(data), "version: ^1.0.0") {
+		t.Errorf("apm.yml = %q, want version: ^1.0.0 written", string(data))
+	}
+}
+
+// ── R10: --category (AC47/AC48/AC50) ──────────────────────────────────────
+
+// TestMarketplacePackageAdd_CategoryFlag_WritesCategory is AC47.
+func TestMarketplacePackageAdd_CategoryFlag_WritesCategory(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool", "--category", "Productivity")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add --category returned error: %v", err)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(data), "category: Productivity") {
+		t.Errorf("apm.yml = %q, want category: Productivity written (AC47)", string(data))
+	}
+}
+
+// TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds
+// is AC48: design.md §13's deliberate divergence from upstream (which
+// blocks add entirely here) -- add must still succeed, only warning.
+func TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  outputs:\n    codex: {}\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add without --category (outputs includes codex) returned error, want success with a warning (AC48): %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "category") {
+		t.Errorf("output = %q, want a warning mentioning the missing category (AC48)", out)
+	}
+	// MAJOR 3 (external audit round 2, 2026-07-30, REGR-M1): a mutation
+	// from ux.Warn to ux.Info at this call site leaves the message text
+	// unchanged, so severity must be checked via the line's own leading
+	// symbol, not just the "category" substring above.
+	assertLineSeverity(t, out, "no --category", ux.SymbolWarn)
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(data), "name: tool") {
+		t.Errorf("apm.yml = %q, want the package added despite the missing category", string(data))
+	}
+}
+
+// TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning is
+// MAJOR 1's first negative test (external audit, 2026-07-30): giving
+// --category must NOT print the missing-category warning even when
+// outputs: includes codex -- catches the mutation
+// `warnMissingCategory := marketplaceOutputsIncludeCodex(".")` (dropping
+// the `category == ""` half of the condition), which would warn here even
+// though --category was given.
+func TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  outputs:\n    codex: {}\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool", "--category", "Productivity")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add --category returned error: %v (output: %s)", err, out)
+	}
+	if strings.Contains(out, "no --category") {
+		t.Errorf("output = %q, want NO missing-category warning when --category was given", out)
+	}
+}
+
+// TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning is
+// MAJOR 1's second negative test: no --category and outputs: does NOT
+// include codex must NOT print the warning either -- catches the mutation
+// `warnMissingCategory := category == ""` (dropping the
+// `marketplaceOutputsIncludeCodex` half), which would warn here even
+// though outputs never mentions codex at all.
+func TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add returned error: %v (output: %s)", err, out)
+	}
+	if strings.Contains(out, "no --category") {
+		t.Errorf("output = %q, want NO missing-category warning when outputs does not include codex", out)
+	}
+}
+
+// TestMarketplacePackageAdd_CategoryFlag_ThenPackCodex_Succeeds is AC50:
+// the end-to-end proof that --category removes upstream's dead end
+// (research/eval-real-run-20260728.md §C4: with outputs: codex configured
+// and no --category on add, upstream's own `add` is permanently blocked).
+func TestMarketplacePackageAdd_CategoryFlag_ThenPackCodex_Succeeds(t *testing.T) {
+	// Arrange
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  outputs:\n    codex: {}\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, addErr := runMarketplaceCmd(t, "package", "add", "./pkgs/a", "--name", "tool-a", "--category", "utility")
+	if addErr != nil {
+		t.Fatalf("package add --category returned error: %v", addErr)
+	}
+	_, packErr := runPackCmd(t)
+
+	// Assert
+	if packErr != nil {
+		t.Fatalf("pack returned error after add --category (AC50): %v", packErr)
+	}
+	codexPath := filepath.Join(dir, ".agents", "plugins", "marketplace.json")
+	data, rerr := os.ReadFile(codexPath)
+	if rerr != nil {
+		t.Fatalf("codex output not written: %v", rerr)
+	}
+	if !strings.Contains(string(data), `"category": "utility"`) {
+		t.Errorf("codex output = %s, want category=utility present", data)
 	}
 }
