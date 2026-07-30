@@ -17,12 +17,20 @@ function Pass($ac){ Write-Host "  ok   [$ac]" -ForegroundColor Green }
 # `t.Errorf("MUTATION")` 後，`go test ./...` exit 1，但 coverprofile 照樣寫出
 # total 86.9%，於是 `AS7/coverage` 那一行印成 `ok`——閘門犯了它自己要防的錯，
 # 且本檔案原本完全沒有「全套件測試」這一道獨立於 AS1–AS6 的把關。
-# 所有 native 呼叫一律走這裡。
+# 所有「決定通過/失敗」的 native 呼叫一律走這裡。
+# 2026-07-30 round-4 更正：這句話原本寫成「所有 native 呼叫」，不精確 ——
+# 本檔下面仍有幾處 `& go test ./... -list ...` 探測性呼叫沒有走 Exec（實測：
+# `-list` 在有其他套件建置失敗時整體 exit 非 0，但仍會把匹配到的測試名稱印在
+# stdout，既有的 `.Count -eq 0` 判斷依然能正確依匹配數判定，不會因此假綠）；
+# `git diff -- go.mod` 才是唯一真的有假綠風險的例外，已在 AC-L9 那段獨立補上
+# exit code 檢查。
 function Exec {
     param([string]$ac, [string]$what, [scriptblock]$cmd)
     $out = & $cmd 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
-        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:)' } |
+        # 2026-07-30 round-4：regex 擴充以涵蓋 go 編譯失敗（`# pkg [pkg.test]` +
+        # 未縮排的 `path/file.go:12:3: ...`，見 07-29-install-dev/verify.ps1 同段註解）。
+        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:|^#|\S+\.go:\d+:|panic:)' } |
                    Select-Object -First 12) -join "`n      "
         if (-not $detail) { $detail = ($out -split "`n" | Select-Object -Last 12) -join "`n      " }
         Fail $ac "$what 失敗（exit $LASTEXITCODE）`n      $detail"
@@ -101,8 +109,16 @@ if ($listedDrift.Count -eq 0) {
 }
 
 # ---- AC-L9：未新增第三方相依（本 task 風險最高：JSON Schema validator 可能誘使加相依） ----
-$newReq = @((& git diff -- go.mod); (& git diff --cached -- go.mod)) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
-if ($newReq) { Fail 'AC-L9' ("go.mod 新增 require：" + ($newReq -join '; ') + " —— 需先取得使用者裁定") } else { Pass 'AC-L9' }
+# 2026-07-30 round-4：git diff 本身失敗時先前會被無聲吞掉，見
+# 07-29-install-dev/verify.ps1 同段註解。
+$d1 = & git diff -- go.mod 2>&1; $d1Exit = $LASTEXITCODE
+$d2 = & git diff --cached -- go.mod 2>&1; $d2Exit = $LASTEXITCODE
+if ($d1Exit -ne 0 -or $d2Exit -ne 0) {
+  Fail 'AC-L9' "git diff -- go.mod（exit $d1Exit）或 --cached（exit $d2Exit）本身失敗，無法判定是否新增相依"
+} else {
+  $newReq = @($d1; $d2) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
+  if ($newReq) { Fail 'AC-L9' ("go.mod 新增 require：" + ($newReq -join '; ') + " —— 需先取得使用者裁定") } else { Pass 'AC-L9' }
+}
 
 # ---- 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除 ----
 $cov = "$repo/apmcov-" + [guid]::NewGuid().ToString('N') + ".out"

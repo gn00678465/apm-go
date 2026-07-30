@@ -21,14 +21,21 @@ function Pass($ac)       { Write-Host "  ok   [$ac]" -ForegroundColor Green }
 # 2026-07-29 codex Tier 2 阻斷 1：本腳本原本多處只看副作用（檔案存不存在）而不看
 # exit code。實測反證：改壞 internal/lockfile 的一個測試後，`go test ./...` exit 1，
 # 但 coverprofile 照樣寫出 total 86.7%，於是整份閘門回報 TIER 1 GREEN / exit 0 ——
-# 閘門犯了它自己要防的那個錯。所有 native 呼叫一律走這裡。
+# 閘門犯了它自己要防的那個錯。所有「決定通過/失敗」的 native 呼叫一律走這裡。
+# 2026-07-30 round-4 更正：這句話原本寫成「所有 native 呼叫」，不精確 —— 本檔
+# 仍有幾處 `& go test ... -list ...` 探測性呼叫沒有走 Exec（實測：`-list` 在
+# 有其他套件建置失敗時整體 exit 非 0，但仍會把匹配到的測試名稱印在 stdout，
+# 既有的 `.Count` 判斷依然能正確依匹配數判定，不會因此假綠）；`git diff --
+# go.mod` 才是唯一真的有假綠風險的例外，已在 AC-L9 那段獨立補上 exit code 檢查。
 function Exec {
     param([string]$ac, [string]$what, [scriptblock]$cmd)
     $out = & $cmd 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         # 失敗時必須印出實際原因。原本只回報 exit code，讓「閘門紅了」變成
         # 一個無法診斷的黑箱 —— 升級給人時對方也拿不到可行動的資訊。
-        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:)' } |
+        # 2026-07-30 round-4：regex 擴充以涵蓋 go 編譯失敗（`# pkg [pkg.test]` +
+        # 未縮排的 `path/file.go:12:3: ...`，見 07-29-install-dev/verify.ps1 同段註解）。
+        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:|^#|\S+\.go:\d+:|panic:)' } |
                    Select-Object -First 12) -join "`n      "
         if (-not $detail) { $detail = ($out -split "`n" | Select-Object -Last 12) -join "`n      " }
         Fail $ac "$what 失敗（exit $LASTEXITCODE）`n      $detail"
@@ -206,10 +213,17 @@ if ($ac25ok) { Pass 'AC25（3 個測試實跑）' }
 
 # ---- AC-L9 / parent C5：未新增第三方相依 ----
 # git status --porcelain 只給 "M go.mod"，看不出新增什麼，必須看 diff
-$d1 = & git diff -- go.mod
-$d2 = & git diff --cached -- go.mod
-$newReq = @($d1; $d2) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
-if ($newReq) { Fail 'AC-L9' ("go.mod 新增了 require：" + ($newReq -join '; ')) } else { Pass 'AC-L9' }
+# 2026-07-30 round-4：git diff 本身失敗時先前會被無聲吞掉（同類「native 呼叫
+# 失敗被靜默吃掉變假綠」已在這輪的重複 Pop-Location 案例中真實發生過一次，見
+# 07-29-install-dev/verification-record.md）。
+$d1 = & git diff -- go.mod 2>&1; $d1Exit = $LASTEXITCODE
+$d2 = & git diff --cached -- go.mod 2>&1; $d2Exit = $LASTEXITCODE
+if ($d1Exit -ne 0 -or $d2Exit -ne 0) {
+  Fail 'AC-L9' "git diff -- go.mod（exit $d1Exit）或 --cached（exit $d2Exit）本身失敗，無法判定是否新增相依"
+} else {
+  $newReq = @($d1; $d2) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
+  if ($newReq) { Fail 'AC-L9' ("go.mod 新增了 require：" + ($newReq -join '; ')) } else { Pass 'AC-L9' }
+}
 
 # ---- 覆蓋率 total ----
 # 覆蓋率：用唯一檔名，避免讀到上一次殘留的結果；並驗 exit code。

@@ -15,7 +15,13 @@ function Exec {
     param([string]$ac, [string]$what, [scriptblock]$cmd)
     $out = & $cmd 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
-        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:)' } |
+        # 2026-07-30 round-4：原 regex 只認 `FAIL`/`--- FAIL`/縮排的 `_test.go:`，
+        # 抓不到 go 編譯失敗（`go test` 對建置失敗的套件只印 `# pkg [pkg.test]` +
+        # `path/file.go:12:3: ...` 這種未縮排、非 _test.go 的行，接著才是
+        # `FAIL pkg [build failed]`）。單靠那行 [build failed] 訊息缺診斷用的檔案/
+        # 行號與錯誤內容。新增 `^#`（編譯失敗標頭）、`\.go:\d+:`（含編譯錯誤位置，
+        # 涵蓋非 _test.go 檔）、`panic:`（測試期間 panic 的堆疊輸出）。
+        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:|^#|\S+\.go:\d+:|panic:)' } |
                    Select-Object -First 12) -join "`n      "
         if (-not $detail) { $detail = ($out -split "`n" | Select-Object -Last 12) -join "`n      " }
         Fail $ac "$what 失敗（exit $LASTEXITCODE）`n      $detail"
@@ -135,6 +141,8 @@ $followupTests = @(
   'TestRunInstall_Dev_MoveOutOfDevWithLegacyLock_StillPersistsManifestMove'
   'TestRunInstall_DevWithFrozen_Errors'
   'TestRunInstall_DevWithoutPackages_Errors'
+  'TestPersistPackagesToManifest_PackageInBothSections_DevInstall_ConvergesToDevOnly'
+  'TestPersistPackagesToManifest_PackageInBothSections_BareInstall_ConvergesToNonDevOnly'
 )
 foreach ($n in $followupTests) {
   $m = @(& go test ./cmd/apm-go/ -list "^$n$" 2>&1 | Where-Object { $_ -match '^Test' })
@@ -149,8 +157,19 @@ $hasField = (& git grep -n 'PackageType' -- 'internal/lockfile/*.go' 2>&1 | Out-
 if ($hasField -notmatch 'PackageType') { Fail 'AC45' 'internal/lockfile 沒有 PackageType 欄位（目前只有字串字面量）' } else { Pass 'AC45' }
 
 # ---- AC-L9：未新增第三方相依 ----
-$newReq = @((& git diff -- go.mod); (& git diff --cached -- go.mod)) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
-if ($newReq) { Fail 'AC-L9' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC-L9' }
+# 2026-07-30 round-4：git diff 本身失敗（非 git repo、索引損毀等）先前會被無聲
+# 吞掉 —— $newReq 只看擷取到的 stdout，若指令整個失敗（exit 非 0）兩次呼叫都
+# 回傳空字串，被誤判成「沒有新增相依」而顯示綠燈。同類「native 呼叫失敗被靜默
+# 吃掉變假綠」已在這輪的重複 Pop-Location 案例中真實發生過一次（見
+# verification-record.md）。
+$d1 = & git diff -- go.mod 2>&1; $d1Exit = $LASTEXITCODE
+$d2 = & git diff --cached -- go.mod 2>&1; $d2Exit = $LASTEXITCODE
+if ($d1Exit -ne 0 -or $d2Exit -ne 0) {
+  Fail 'AC-L9' "git diff -- go.mod（exit $d1Exit）或 --cached（exit $d2Exit）本身失敗，無法判定是否新增相依"
+} else {
+  $newReq = @($d1; $d2) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
+  if ($newReq) { Fail 'AC-L9' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC-L9' }
+}
 
 # ---- 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除 ----
 $cov = "$repo/apmcov-" + [guid]::NewGuid().ToString('N') + ".out"

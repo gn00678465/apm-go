@@ -462,6 +462,88 @@ func TestRunInstall_DevWithFrozen_Errors(t *testing.T) {
 	}
 }
 
+// TestPersistPackagesToManifest_NameDictEntry_NotDuplicated is the
+// 2026-07-30 round-4 regression: persistPackagesToManifest's existing-entry
+// index (existingByIdentity/existingPkgs) was seeded by first calling
+// entryDepString(entry) and `continue`-ing past the whole entry whenever it
+// returned "" -- which it does for any dependencies.apm dict entry that
+// carries no "git:" key, including the legacy `{name: owner/repo}` shorthand
+// (ParseDepDict's "name" branch, apm.yml-legal and still git-form Source, so
+// its canonical identity is the SAME as the plain scalar "owner/repo").
+// entryCanonicalIdentity(entry) -- which DOES handle the dict form via
+// ParseDepDict -- was therefore never reached for it, so re-running install
+// against an already-declared `{name: ...}` entry fell all the way through
+// to the "not declared in target section" branch and appended a SECOND,
+// duplicate entry instead of recognizing (and refreshing) the existing one.
+func TestPersistPackagesToManifest_NameDictEntry_NotDuplicated(t *testing.T) {
+	src := "name: d\nversion: 1.0.0\nincludes: auto\ndependencies:\n  apm:\n    - name: acme/foo\nscripts: {}\n"
+	doc, err := yamlcore.SafeLoad([]byte(src))
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil, false); err != nil {
+		t.Fatalf("persistPackagesToManifest: %v", err)
+	}
+	out, err := yamlcore.SafeDump(doc)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
+	}
+	got := string(out)
+
+	if n := strings.Count(got, "acme/foo"); n != 1 {
+		t.Errorf("acme/foo appears %d times, want 1 (no duplicate entry); got:\n%s", n, got)
+	}
+}
+
+// TestRunInstall_Dev_NameDictEntry_CrossSectionMove_NotDuplicated is the
+// end-to-end counterpart: an already-declared `{name: acme/foo}` entry in
+// dependencies.apm must be MOVED into devDependencies.apm by `install --dev
+// acme/foo` (not left behind as a stale duplicate in dependencies.apm while
+// a second entry is also written into devDependencies.apm), matching the
+// scalar-entry cross-section-move behavior already covered by
+// TestRunInstall_Dev_ExistingDependency_DevInstall_MovesToDev.
+func TestRunInstall_Dev_NameDictEntry_CrossSectionMove_NotDuplicated(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(origDir)
+
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - name: acme/foo\n"), 0644)
+
+	deps := &installDeps{
+		tags:   &mockInstallTagLister{},
+		loader: &mockInstallLoader{},
+		dev:    true,
+	}
+	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+		t.Fatalf("runInstall: %v", err)
+	}
+
+	manifestBytes, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := yamlcore.SafeLoad(manifestBytes)
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+	m, _, err := manifest.ParseManifest(node)
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	if len(m.ParsedDeps) != 0 {
+		t.Errorf("expected zero dependencies.apm entries after move (moved out, not duplicated), got %+v", m.ParsedDeps)
+	}
+	if len(m.ParsedDevDeps) != 1 || m.ParsedDevDeps[0].RepoURL != "acme/foo" {
+		t.Errorf("expected exactly one devDependencies.apm entry acme/foo (moved, not duplicated), got %+v", m.ParsedDevDeps)
+	}
+
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 {
+		t.Fatalf("expected exactly 1 locked dependency (no duplicate), got %d: %+v", len(lock.Dependencies), lock.Dependencies)
+	}
+}
+
 // TestRunInstall_DevWithoutPackages_Errors mirrors
 // TestRunInstall_SkillWildcardWithoutPackages_Errors: --dev alone (no
 // positional package to route into devDependencies.apm) is rejected up
@@ -478,5 +560,64 @@ func TestRunInstall_DevWithoutPackages_Errors(t *testing.T) {
 	err := runInstall(deps, false, true, "", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "--dev") {
 		t.Fatalf("expected a --dev error for --dev with no positional package, got %v", err)
+	}
+}
+
+// TestPersistPackagesToManifest_PackageInBothSections_DevInstall_ConvergesToDevOnly
+// and its --dev=false sibling below are the 2026-07-30 round-N regression for
+// an apm.yml where the SAME package is ALREADY declared in BOTH
+// dependencies.apm and devDependencies.apm (e.g. left behind by a pre-fix
+// apm-go build, or a hand-edited manifest -- every cross-section-move test
+// above starts from the package declared in exactly ONE section, never
+// both). persistPackagesToManifest's identity/exact-string match on the
+// TARGET section hit an early `continue` before the "remove from the OTHER
+// section" cleanup further down the loop ever ran, so a package already
+// present in the target section stayed duplicated in the other section
+// forever -- re-running install never healed a polluted apm.yml. Fixed
+// behavior: exactly one section -- the one this call's --dev flag names --
+// keeps the package; the other is left as an empty `apm: []` skeleton.
+func TestPersistPackagesToManifest_PackageInBothSections_DevInstall_ConvergesToDevOnly(t *testing.T) {
+	src := "name: p\nversion: 1.0.0\ntargets:\n  - claude\ndependencies:\n  apm:\n    - acme/foo\n  mcp: []\nincludes: auto\ndevDependencies:\n  apm:\n    - acme/foo\nscripts: {}\n"
+	doc, err := yamlcore.SafeLoad([]byte(src))
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil, true); err != nil {
+		t.Fatalf("persistPackagesToManifest: %v", err)
+	}
+
+	m, _, err := manifest.ParseManifest(doc)
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	if len(m.ParsedDeps) != 0 {
+		t.Errorf("expected zero dependencies.apm entries (converged out), got %+v", m.ParsedDeps)
+	}
+	if len(m.ParsedDevDeps) != 1 || m.ParsedDevDeps[0].RepoURL != "acme/foo" {
+		t.Errorf("expected exactly one devDependencies.apm entry acme/foo, got %+v", m.ParsedDevDeps)
+	}
+}
+
+// TestPersistPackagesToManifest_PackageInBothSections_BareInstall_ConvergesToNonDevOnly
+// is the dev=false direction of the same polluted-fixture scenario above.
+func TestPersistPackagesToManifest_PackageInBothSections_BareInstall_ConvergesToNonDevOnly(t *testing.T) {
+	src := "name: p\nversion: 1.0.0\ntargets:\n  - claude\ndependencies:\n  apm:\n    - acme/foo\n  mcp: []\nincludes: auto\ndevDependencies:\n  apm:\n    - acme/foo\nscripts: {}\n"
+	doc, err := yamlcore.SafeLoad([]byte(src))
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil, false); err != nil {
+		t.Fatalf("persistPackagesToManifest: %v", err)
+	}
+
+	m, _, err := manifest.ParseManifest(doc)
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	if len(m.ParsedDevDeps) != 0 {
+		t.Errorf("expected zero devDependencies.apm entries (converged out), got %+v", m.ParsedDevDeps)
+	}
+	if len(m.ParsedDeps) != 1 || m.ParsedDeps[0].RepoURL != "acme/foo" {
+		t.Errorf("expected exactly one dependencies.apm entry acme/foo, got %+v", m.ParsedDeps)
 	}
 }

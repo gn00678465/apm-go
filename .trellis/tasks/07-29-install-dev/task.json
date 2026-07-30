@@ -3,7 +3,7 @@
   "name": "install-dev",
   "title": "install --dev 與 devDependencies 寫入",
   "description": "R9：--dev 旗標、持久化區段參數化、lockfile package_type",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

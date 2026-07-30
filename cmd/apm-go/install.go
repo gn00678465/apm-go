@@ -2206,15 +2206,25 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 	// forms, which never carry a skill subset -- the source matrix only
 	// supports skills: on the git dict form, so an empty identity is never
 	// looked up in effectiveSubsets).
+	//
+	// The two indexes are populated INDEPENDENTLY (2026-07-30 round-4 fix):
+	// entryDepString only recognizes a ScalarNode or a MappingNode carrying
+	// a "git:" key, so it returns "" for any other dict shape ParseDepDict
+	// still accepts -- notably the legacy `{name: owner/repo}` shorthand,
+	// whose canonical identity is the SAME git identity as the plain scalar
+	// form. An earlier version `continue`-d past the WHOLE entry whenever
+	// entryDepString returned "", which skipped entryCanonicalIdentity too
+	// and left such an entry out of existingByIdentity entirely -- so
+	// re-declaring it (same section, no cross-section move involved)
+	// silently appended a second, duplicate entry instead of being
+	// recognized as already-present.
 	existingByIdentity := make(map[string]int)
 	existingPkgs := make(map[string]bool)
 	if apmSeq.Kind == yamllib.SequenceNode {
 		for i, entry := range apmSeq.Content {
-			raw := entryDepString(entry)
-			if raw == "" {
-				continue
+			if raw := entryDepString(entry); raw != "" {
+				existingPkgs[raw] = true
 			}
-			existingPkgs[raw] = true
 			// Identity comes from the FULL entry, not just its git value: a
 			// monorepo dict `{git: repo, path: sub}` is a different
 			// dependency from bare `repo` (CanonicalDepKey includes the
@@ -2247,9 +2257,22 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 				// `continue` that left a stale apm.yml value behind.
 				setEntrySkillSubset(apmSeq, idx, effectiveSubsets[identity])
 				appended = true
+				// 2026-07-30 round-5 fix: the package can ALSO be declared in
+				// the OTHER section (a pre-existing polluted apm.yml, or a
+				// prior run that appended before this cleanup existed). The
+				// early `continue` below used to skip straight past the
+				// cross-section relocation logic further down this loop,
+				// leaving the duplicate in the other section forever --
+				// re-running install never healed it. Clean it up here too.
+				if removeMatchingEntry(otherApmSeq, pkg, identity) != nil {
+					movedOut = true
+				}
 				continue
 			}
 		} else if existingPkgs[pkg] {
+			if removeMatchingEntry(otherApmSeq, pkg, identity) != nil {
+				movedOut = true
+			}
 			continue
 		}
 

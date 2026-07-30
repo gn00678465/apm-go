@@ -21,7 +21,9 @@ function Exec {
     param([string]$ac, [string]$what, [scriptblock]$cmd)
     $out = & $cmd 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
-        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:)' } |
+        # 2026-07-30 round-4：regex 擴充以涵蓋 go 編譯失敗（`# pkg [pkg.test]` +
+        # 未縮排的 `path/file.go:12:3: ...`，見 07-29-install-dev/verify.ps1 同段註解）。
+        $detail = ($out -split "`n" | Where-Object { $_ -match '^(FAIL|--- FAIL|\s+\S+_test\.go:|^#|\S+\.go:\d+:|panic:)' } |
                    Select-Object -First 12) -join "`n      "
         if (-not $detail) { $detail = ($out -split "`n" | Select-Object -Last 12) -join "`n      " }
         Fail $ac "$what 失敗（exit $LASTEXITCODE）`n      $detail"
@@ -172,9 +174,17 @@ try {
   New-Item -ItemType Directory -Path $d2 -Force | Out-Null
   Pop-Location; Push-Location $d2
   & $bin init c-probe --yes --target claude 2>&1 | Out-Null
-  if (Test-Path (Join-Path $d2 'c-probe/plugin.json')) { Fail 'AC12' 'consumer init 產生了 plugin.json' } else { Pass 'AC12/no-plugin-json' }
-  $cy = Get-Content (Join-Path $d2 'c-probe/apm.yml') -Raw -EA SilentlyContinue
-  if ($cy -and $cy -match 'devDependencies') { Fail 'AC12' 'consumer init 產生了 devDependencies' } else { Pass 'AC12/no-devDeps' }
+  # 2026-07-30 round-4 修復：absence-only 斷言（「沒有 plugin.json / devDependencies」）
+  # 先前沒驗 $LASTEXITCODE —— 若 init 指令本身失敗（例如殘留目錄衝突），c-probe/
+  # 底下什麼檔案都不會產生，兩個「不存在」斷言會在指令根本沒跑成功的情況下雙雙
+  # 假綠通過。exit code 非 0 時直接 Fail，不讓下面的 absence 檢查頂替它。
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'AC12' "consumer \`init c-probe\` 本身失敗（exit $LASTEXITCODE），absence 斷言不成立"
+  } else {
+    if (Test-Path (Join-Path $d2 'c-probe/plugin.json')) { Fail 'AC12' 'consumer init 產生了 plugin.json' } else { Pass 'AC12/no-plugin-json' }
+    $cy = Get-Content (Join-Path $d2 'c-probe/apm.yml') -Raw -EA SilentlyContinue
+    if ($cy -and $cy -match 'devDependencies') { Fail 'AC12' 'consumer init 產生了 devDependencies' } else { Pass 'AC12/no-devDeps' }
+  }
 
   # AC13 / AC46: Next Steps
   Pop-Location; Push-Location $d
@@ -208,7 +218,10 @@ try {
   # AC15: 有 .apm/ 時警告消失
   New-Item -ItemType Directory -Path (Join-Path $wj '.apm') -Force | Out-Null
   $o4 = & $bin init w-hj2 --yes --target claude 2>&1 | Out-String
-  if ($o4 -match 'plugin-native') { Fail 'AC15' '有 .apm/ 時警告仍出現' }
+  # 2026-07-30 round-4：同 AC12 的 absence-only 缺口 —— 若 init 本身失敗，
+  # 錯誤輸出通常也不含 'plugin-native'，先前會被誤判成「警告消失」的正確案例。
+  if ($LASTEXITCODE -ne 0) { Fail 'AC15' "init w-hj2 本身失敗（exit $LASTEXITCODE），absence 斷言不成立" }
+  elseif ($o4 -match 'plugin-native') { Fail 'AC15' '有 .apm/ 時警告仍出現' }
   Pop-Location
   if ($script:fails.Count -eq 0) { Pass 'AC14/15/34/39' }
 } finally { Pop-Location -EA SilentlyContinue; Remove-Item $probe -Recurse -Force -EA SilentlyContinue }
@@ -258,8 +271,16 @@ if ($pluginSrc) {
 Write-Host "  NOTE [AC52] 「改寫成獨立非互動指令會轉紅」屬 Tier 2 反向驗證，本閘門不代替" -ForegroundColor Yellow
 
 # AC23 / AC-L2: 未新增相依
-$newReq = @((& git diff -- go.mod); (& git diff --cached -- go.mod)) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
-if ($newReq) { Fail 'AC23' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC23/no-new-deps' }
+# 2026-07-30 round-4：git diff 本身失敗時先前會被無聲吞掉，見
+# 07-29-install-dev/verify.ps1 同段註解。
+$d1 = & git diff -- go.mod 2>&1; $d1Exit = $LASTEXITCODE
+$d2 = & git diff --cached -- go.mod 2>&1; $d2Exit = $LASTEXITCODE
+if ($d1Exit -ne 0 -or $d2Exit -ne 0) {
+  Fail 'AC23' "git diff -- go.mod（exit $d1Exit）或 --cached（exit $d2Exit）本身失敗，無法判定是否新增相依"
+} else {
+  $newReq = @($d1; $d2) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
+  if ($newReq) { Fail 'AC23' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC23/no-new-deps' }
+}
 
 # 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除。
 $cov = "$repo/apmcov-" + [guid]::NewGuid().ToString('N') + ".out"

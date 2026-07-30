@@ -90,6 +90,30 @@ func TestBuildManifestNode_NoTargets_CommentedSkeleton(t *testing.T) {
 	}
 }
 
+// TestBuildManifestNode_NoTargets_SkeletonHasNoBlankLineBeforeDependencies is
+// the 2026-07-30 round-4 claim-evidence regression for manifestnode.go's
+// HeadComment-on-dependencies choice (see its comment: a FootComment on
+// author was rejected because it "forces the yaml dumper to emit a blank
+// line between the comment block and the next key"). The prior AC7 test
+// above uses strings.Contains on just the 5-line comment block, which would
+// NOT notice an extra blank line appended after it (Contains only requires
+// the substring to appear somewhere) -- so a future regression back to
+// FootComment could silently reintroduce the artifact undetected. This test
+// asserts the skeleton's last line is immediately followed by "dependencies:"
+// with no intervening blank line.
+func TestBuildManifestNode_NoTargets_SkeletonHasNoBlankLineBeforeDependencies(t *testing.T) {
+	node := buildManifestNode(manifestSpec{Name: "p", Version: "1.0.0", Description: "d", Author: "a"})
+	out, err := yamlcore.SafeDump(node)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
+	}
+	content := string(out)
+
+	if !strings.Contains(content, "#   - claude\ndependencies:\n") {
+		t.Errorf("expected the commented-out skeleton's last line to be followed IMMEDIATELY by dependencies: (no blank line); got:\n%s", content)
+	}
+}
+
 // TestBuildManifestNode_PluginMode_DevDependenciesKeyOrder is the 2026-07-30
 // codex Tier 2 M1 fix: the plugin branch (spec.Plugin=true), which inserts a
 // devDependencies section between includes and scripts, had zero test
