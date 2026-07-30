@@ -32,6 +32,87 @@ function Exec {
     return $out
 }
 
+# ExecTestJSON（移植自 07-29-marketplace-add-fixes/verify.ps1，外部稽核第四、五輪
+# 修復；完整推導過程與逐輪 bug 見該檔同名函式註解，這裡只保留行為必要的說明）：
+# `go test -run <pattern>` 只驗 exit code 擋不住 t.Skip -- 每個測試都跳過、沒有
+# 任何 FAIL 時 Go 仍回傳 exit 0。改用 `go test -json`：對 pattern 匹配到的每一個
+# 測試名稱（含子測試），要求它「有出現 Action=pass」且「從未出現 Action=skip」。
+#
+# 同時修了三個曾經在對抗性稽核中被抓到的假綠：
+# (1) 沒有 Test 欄位但 Action=fail 的套件層級事件（例如 TestMain 在 m.Run() 之後
+#     回傳非 0）過去被直接 continue 跳過 -- 現在記為 $packageFailed 並轉紅。
+# (2) 看起來像 JSON（以 "{" 開頭）卻解析失敗的行過去被靜默 continue -- 現在記為
+#     $malformed 並轉紅，不再假設「解析失敗 = 不重要」。
+# (3) `-list` 只列頂層測試函式名稱，對 table-driven 測試刪掉幾個 t.Run case 之後
+#     `-list` 的數量完全不會變 -- 新增 `-minCount` 對 `-json` 逐測試事件觀察到的
+#     相異測試/子測試名稱數設下限，刪案例會讓這個數字低於 $minCount 而轉紅。
+# 另外 $seen 用 case-SENSITIVE 的 Dictionary，而非 PowerShell `@{}`（後者對字串鍵
+# 預設不分大小寫，會讓只差大小寫的兩個測試名稱互相覆蓋、讓 -minCount 少算）。
+function ExecTestJSON {
+    param([string]$ac, [string]$what, [string]$pkg, [string]$pattern, [string[]]$allowSkip = @(), [int]$minCount = 0)
+    $out = & go test -json -run $pattern $pkg 2>&1
+    $exitCode = $LASTEXITCODE
+    $seen = [System.Collections.Generic.Dictionary[string,string]]::new()
+    $skipped = @()
+    $allowedSkipped = @()
+    $packageFailed = $false
+    $malformed = @()
+    foreach ($line in ($out -split "`n")) {
+        if ($line -eq '') { continue }
+        if ($line -notmatch '^\{') { $malformed += $line; continue }
+        try { $ev = $line | ConvertFrom-Json -ErrorAction Stop } catch { $malformed += $line; continue }
+        if (-not $ev.Test) {
+            if ($ev.Action -eq 'fail') { $packageFailed = $true }
+            continue
+        }
+        switch ($ev.Action) {
+            'pass' { $seen[$ev.Test] = 'pass' }
+            'skip' {
+                if ($seen[$ev.Test] -ne 'pass') { $seen[$ev.Test] = 'skip' }
+                $isAllowed = $false
+                foreach ($p in $allowSkip) { if ($ev.Test -match $p) { $isAllowed = $true } }
+                if ($isAllowed) { $allowedSkipped += $ev.Test } else { $skipped += $ev.Test }
+            }
+            'fail' { if ($seen[$ev.Test] -ne 'pass') { $seen[$ev.Test] = 'fail' } }
+        }
+    }
+    if ($seen.Count -eq 0) {
+        Fail $ac "${what}: -json 沒有產生任何逐測試事件（pattern 可能零匹配）"
+        return
+    }
+    if ($malformed.Count -gt 0) {
+        Fail $ac "${what}: 輸出含看起來像 JSON 卻無法解析的行（可能截斷或摻雜非 JSON 內容），前幾行: $((($malformed | Select-Object -First 5)) -join ' | ')"
+        return
+    }
+    $totalSeen = $seen.Count
+    if ($minCount -gt 0 -and $totalSeen -lt $minCount) {
+        Fail $ac "${what}: 只觀察到 $totalSeen 個測試/子測試事件，至少需要 $minCount 個（子測試可能被刪除）"
+        return
+    }
+    if ($packageFailed) {
+        Fail $ac "${what}: 套件層級回報 Action=fail（例如 TestMain 在 m.Run() 之後回傳非 0，或測試後發生 panic）-- 即使每個個別測試都 pass 也算失敗"
+        return
+    }
+    if ($skipped.Count -gt 0) {
+        Fail $ac "${what}: 下列測試回報 Action=skip（t.Skip 不算通過）: $($skipped -join ', ')"
+        return
+    }
+    if ($allowedSkipped.Count -gt 0) {
+        Write-Host "  note [$ac] 環境限制導致以下測試可見地 skip（非本閘門失敗）: $($allowedSkipped -join ', ')" -ForegroundColor Yellow
+        foreach ($t in $allowedSkipped) { if ($seen[$t] -eq 'skip') { $seen.Remove($t) } }
+    }
+    $notPassed = @($seen.GetEnumerator() | Where-Object { $_.Value -ne 'pass' })
+    if ($notPassed.Count -gt 0) {
+        Fail $ac "${what}: 下列測試從未回報 Action=pass: $((($notPassed | ForEach-Object { $_.Key })) -join ', ')"
+        return
+    }
+    if ($exitCode -ne 0) {
+        Fail $ac "${what}: 每個測試都回報 pass、也沒有套件層級 fail 事件，但 go test 本身以非 0 結束（exit $exitCode）"
+        return
+    }
+    Pass $ac
+}
+
 Write-Host "== Tier 1: plugin-init ==" -ForegroundColor Cyan
 
 $before = $script:fails.Count
@@ -228,6 +309,10 @@ try {
 
 # AC41: 三個互動分支「各有獨立斷言」—— 模式 9：逐一驗，不是總數 >= 3 就算
 # （總數判斷會被三個 MultiSelect 測試滿足，Form/Confirm 一個都沒有也照樣過）
+# 2026-07-30：原本這條只用 `-list` 確認「有名稱匹配的測試存在」，從不執行它。
+# 一個整支 t.Skip() 或什麼都不斷言的測試同樣能滿足它 —— 這正是
+# marketplace-add-fixes 第五輪稽核抓到的同一種假綠（13 條閘門受影響）。
+# 改為存在性檢查通過後，用 ExecTestJSON 實跑並要求 Action=pass、不得有 skip。
 $branchMissing = @()
 foreach ($b in @('Form','MultiSelect','Confirm')) {
   $m = @(& go test ./cmd/apm-go/ -list $b 2>&1 | Where-Object { $_ -match '^Test' })
@@ -235,11 +320,18 @@ foreach ($b in @('Form','MultiSelect','Confirm')) {
 }
 if ($branchMissing.Count -gt 0) {
   Fail 'AC41' ("互動分支缺獨立斷言：" + ($branchMissing -join '、') + "（不可用總數 >= 3 代替逐一）")
-} else { Pass 'AC41' }
+} else {
+  $before41 = $script:fails.Count
+  foreach ($b in @('Form','MultiSelect','Confirm')) {
+    ExecTestJSON 'AC41' "go test -json -run $b" './cmd/apm-go/' $b
+  }
+  if ($script:fails.Count -eq $before41) { Pass 'AC41' }
+}
 
 # AC38: 互動模式下 plugin 與 consumer 的版本表單預設值「皆為」1.0.0
 # 模式 9：宣稱是「兩個模式皆」，必須兩邊各驗一次。原本 verify.ps1 完全沒有這條 ——
 # 由全稱量詞掃描抓到（PRD 有 AC38，閘門卻是 0 處檢查）。
+# 2026-07-30：與 AC41 同一個修法 —— 原本只 `-list` 不執行。
 $acc = @()
 foreach ($mode in @('Init','PluginInit')) {
   $m = @(& go test ./cmd/apm-go/ -list "${mode}.*InteractiveVersionDefault|${mode}.*VersionDefault" 2>&1 | Where-Object { $_ -match '^Test' })
@@ -247,7 +339,13 @@ foreach ($mode in @('Init','PluginInit')) {
 }
 if ($acc.Count -gt 0) {
   Fail 'AC38' ("互動模式版本預設值 1.0.0 缺測試的模式：" + ($acc -join '、'))
-} else { Pass 'AC38' }
+} else {
+  $before38 = $script:fails.Count
+  foreach ($mode in @('Init','PluginInit')) {
+    ExecTestJSON 'AC38' "go test -json -run ${mode}VersionDefault" './cmd/apm-go/' "${mode}.*InteractiveVersionDefault|${mode}.*VersionDefault"
+  }
+  if ($script:fails.Count -eq $before38) { Pass 'AC38' }
+}
 
 # AC52: plugin init 走 clack 互動路徑，呼叫序列與 consumer init 相同（D12）
 # 這條不能只 grep 原始碼有沒有 ux.NewClack —— 那會被「有引用但沒走到」滿足。
@@ -256,8 +354,10 @@ $seqTests = @(& go test ./cmd/apm-go/ -list 'ClackSequence|InteractiveParity|Cla
 if ($seqTests.Count -eq 0) {
   Fail 'AC52' '-list 零匹配：找不到「clack 呼叫序列 plugin init vs init 一致」的測試'
 } else {
-  & go test ./cmd/apm-go/ -run 'ClackSequence|InteractiveParity|ClackParity' 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) { Fail 'AC52' 'clack 序列一致性測試紅燈' } else { Pass 'AC52/test' }
+  # 2026-07-30：改用 ExecTestJSON（移植自 marketplace-add-fixes），不再只驗
+  # exit code -- 原本的手動 -run + $LASTEXITCODE 檢查一樣會被「每個匹配到的
+  # 測試全部 t.Skip」騙過（Go 仍回傳 exit 0），見該函式定義處註解。
+  ExecTestJSON 'AC52/test' "go test -json -run 'ClackSequence|InteractiveParity|ClackParity'" './cmd/apm-go/' 'ClackSequence|InteractiveParity|ClackParity'
 }
 # 輔助（非充分）：pluginInitCmd 必須實際走到共用本體，不得自成一套非互動流程
 $pluginSrc = Get-ChildItem "$repo/cmd/apm-go" -Filter 'plugin*.go' -EA SilentlyContinue |
@@ -271,15 +371,19 @@ if ($pluginSrc) {
 Write-Host "  NOTE [AC52] 「改寫成獨立非互動指令會轉紅」屬 Tier 2 反向驗證，本閘門不代替" -ForegroundColor Yellow
 
 # AC23 / AC-L2: 未新增相依
-# 2026-07-30 round-4：git diff 本身失敗時先前會被無聲吞掉，見
-# 07-29-install-dev/verify.ps1 同段註解。
-$d1 = & git diff -- go.mod 2>&1; $d1Exit = $LASTEXITCODE
-$d2 = & git diff --cached -- go.mod 2>&1; $d2Exit = $LASTEXITCODE
-if ($d1Exit -ne 0 -or $d2Exit -ne 0) {
-  Fail 'AC23' "git diff -- go.mod（exit $d1Exit）或 --cached（exit $d2Exit）本身失敗，無法判定是否新增相依"
+# 2026-07-30：改為對照本分支的 base commit（3e450dd，`git merge-base HEAD main`
+# 實測得出），而非只驗工作樹/暫存區 diff -- 在一棵乾淨的已 commit 樹上，工作樹
+# 和暫存區 diff 都是空的，commit 之後才新增的一行 require 完全看不到（MAJOR 4，
+# 外部稽核第四輪，見 07-29-install-dev/verify.ps1 同段註解的完整推導）。
+# `git diff <base> -- go.mod go.sum` 對單一 ref 是拿該 ref 與目前工作目錄比較，
+# 未 commit 的部分也算在內，同時涵蓋已 commit 與尚未 commit 的變更。
+$taskBase = '3e450dd'
+$d1 = & git diff $taskBase -- go.mod go.sum 2>&1; $d1Exit = $LASTEXITCODE
+if ($d1Exit -ne 0) {
+  Fail 'AC23' "git diff $taskBase -- go.mod go.sum（exit $d1Exit）本身失敗，無法判定是否新增相依`n      $($d1 -join "``n      ")"
 } else {
-  $newReq = @($d1; $d2) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
-  if ($newReq) { Fail 'AC23' ("go.mod 新增 require：" + ($newReq -join '; ')) } else { Pass 'AC23/no-new-deps' }
+  $newReq = @($d1) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
+  if ($newReq) { Fail 'AC23' ("go.mod/go.sum 相對 task base（$taskBase）新增 require：" + ($newReq -join '; ')) } else { Pass 'AC23/no-new-deps' }
 }
 
 # 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除。
