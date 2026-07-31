@@ -586,6 +586,33 @@ func TestValidateMarketplaceSource(t *testing.T) {
 		{"C:foo", "must be one of"},
 		{"c:foo", "must be one of"},
 		{"C:", "must be one of"},
+		// MAJOR 1 (external audit, 2026-07-30): a percent-encoded ".."
+		// segment must be rejected the same as a literal one -- the segment
+		// check above used to compare the raw, un-decoded segment string
+		// against "..", so "%2e%2e" (a single percent-decode round) slipped
+		// through untouched.
+		{"./%2e%2e/%2e%2e/outside", "percent-encoded"},
+		// Double percent-encoding needs two decode rounds to reach ".."
+		// ("%252e%252e" -> "%2e%2e" -> ".."); a fix that only decodes once
+		// would miss this.
+		{"./%252e%252e/outside", "percent-encoded"},
+		// Upper-case hex digits in the escape (net/url.PathUnescape handles
+		// hex case-insensitively) must be rejected too, not just lower-case.
+		{"./%2E%2E/outside", "percent-encoded"},
+		// "%" is not a marketplaceSegmentPattern character at all, so a
+		// percent-encoded segment on a non-local (remote shorthand) source
+		// never reaches the percent-decode check below -- it is rejected
+		// earlier, by the same grammar mismatch as any other disallowed
+		// character. The percent-decode check above is therefore only
+		// reachable through the "\./.*" (local source) branch, which is
+		// exactly what the "./%2e%2e/..." cases above exercise.
+		{"owner/%2e%2e", "must be one of"},
+		// A literal "%" that is not part of a traversal escape must NOT be
+		// rejected: "50%25off" percent-decodes to "50%off" in one round
+		// (only "%25" is a valid escape), and "%of" is not a valid hex
+		// escape so a second round leaves it unchanged -- the segment never
+		// equals "." or ".." at any point, so this must stay valid.
+		{"./pkgs/50%25off", ""},
 		// BLOCKING 1 (external audit round 5, 2026-07-30): an SCP-style SSH
 		// remote ("git@host:path") never contains "://", so the old
 		// https-only URL-parse branch never saw it and it fell through to

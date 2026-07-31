@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -450,6 +451,207 @@ marketplace:
 	}
 	if strings.Contains(string(data), "from local apm.yml") {
 		t.Errorf("output = %s, must not contain the local apm.yml's own description", data)
+	}
+}
+
+// TestPack_LocalSourceBecomesJunctionAfterAdd_Rejected is B-BLOCKING-1's
+// (external audit round 6, 2026-07-31) end-to-end TOCTOU regression:
+// mkt-046 lets `package add` reference a local source before its directory
+// exists on disk, so `add`'s own containment check (verifyPackageSource,
+// authoring/editor.go) only ever walks the longest EXISTING ancestor -- here,
+// the project root itself -- and has nothing to reject. This reproduces the
+// audit's own repro steps exactly: add a not-yet-existing local source, then
+// replace it with a directory junction pointing outside the project root,
+// then pack -- and asserts pack itself refuses to read (and therefore never
+// embeds) the escaping target's apm.yml, rather than trusting the add-time
+// check that already happened once against a path that didn't exist yet.
+func TestPack_LocalSourceBecomesJunctionAfterAdd_Rejected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+
+	// Arrange: `package add ./later` while "later" does not exist yet.
+	dir := chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runMarketplaceCmd(t, "package", "add", "./later"); err != nil {
+		t.Fatalf("package add ./later (not yet on disk, legitimate per mkt-046) returned error: %v (output: %s)", err, out)
+	}
+
+	// The path becomes a directory junction pointing outside the project
+	// root strictly AFTER add -- this is the TOCTOU window B-BLOCKING-1
+	// names; nothing in `add` itself could have seen this coming.
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "apm.yml"), []byte("name: leak\ndescription: SECRET-LEAK\nversion: 9.9.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	later := filepath.Join(dir, "later")
+	mklink := exec.Command("cmd", "/c", "mklink", "/J", later, outside)
+	if out, err := mklink.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the junction-escape guard is untested by this run", err, out)
+	}
+
+	// Act
+	out, err := runPackCmd(t)
+
+	// Assert
+	if err == nil {
+		t.Fatalf("pack succeeded, want rejection of a local source that became a junction escaping the project root after add (output: %s)", out)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(dir, ".claude-plugin", "marketplace.json")); rerr == nil && strings.Contains(string(data), "SECRET-LEAK") {
+		t.Errorf("marketplace.json = %s, must never contain the escaping target's apm.yml contents", data)
+	}
+}
+
+// TestPack_HandEditedEscapingLocalSource_Rejected is B-BLOCKING-1's second
+// named regression: a curator can hand-edit apm.yml directly (bypassing
+// `package add` and its own containment check entirely) to reference a
+// local source that, by the time `pack` runs, is already a directory
+// junction pointing outside the project root. This proves `pack`'s own
+// containment check (localApmYMLPath/authoring.ResolveLocalSourceAgainstRoot,
+// internal/marketplace/build/metadata.go) is the one actually enforcing the
+// boundary at read time -- not merely relying on whatever `add` may or may
+// not have checked earlier.
+func TestPack_HandEditedEscapingLocalSource_Rejected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+
+	// Arrange
+	dir := chdirTemp(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "apm.yml"), []byte("name: leak\ndescription: SECRET-LEAK\nversion: 9.9.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	escaping := filepath.Join(dir, "escaping")
+	mklink := exec.Command("cmd", "/c", "mklink", "/J", escaping, outside)
+	if out, err := mklink.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the junction-escape guard is untested by this run", err, out)
+	}
+	writePackApmYML(t, `name: demo
+marketplace:
+  owner:
+    name: Acme
+  packages:
+    - name: leak
+      source: ./escaping
+`)
+
+	// Act
+	out, err := runPackCmd(t)
+
+	// Assert
+	if err == nil {
+		t.Fatalf("pack succeeded, want rejection of a hand-edited local source that is already a junction escaping the project root (output: %s)", out)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(dir, ".claude-plugin", "marketplace.json")); rerr == nil && strings.Contains(string(data), "SECRET-LEAK") {
+		t.Errorf("marketplace.json = %s, must never contain the escaping target's apm.yml contents", data)
+	}
+}
+
+// TestPack_NestedJunctionEscape_Rejected is B-BLOCKING-1's end-to-end
+// "SECRET-NESTED" regression (external audit round 7, 2026-07-31
+// follow-up): a package source that is a junction physically inside the
+// project root, whose OWN target names a path through a SECOND, separate
+// junction that escapes root, must be rejected by `pack` -- not accepted
+// just because the literal (unresolved) target string happens to look
+// contained. This is the exact end-to-end shape the audit's own repro used
+// (a nested/chained junction, not a single-hop one already covered by
+// TestPack_HandEditedEscapingLocalSource_Rejected above).
+func TestPack_NestedJunctionEscape_Rejected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+
+	dir := chdirTemp(t)
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "pkg", "apm.yml"), []byte("name: leak\ndescription: SECRET-NESTED\nversion: 9.9.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inner := filepath.Join(dir, "inner")
+	mklinkInner := exec.Command("cmd", "/c", "mklink", "/J", inner, outside)
+	if out, err := mklinkInner.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the nested-junction-escape guard is untested by this run", err, out)
+	}
+	outer := filepath.Join(dir, "outer")
+	mklinkOuter := exec.Command("cmd", "/c", "mklink", "/J", outer, filepath.Join(dir, "inner", "pkg"))
+	if out, err := mklinkOuter.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create the second (nested-target) directory junction in this environment (%v: %s); the nested-junction-escape guard is untested by this run", err, out)
+	}
+
+	writePackApmYML(t, `name: demo
+marketplace:
+  owner:
+    name: Acme
+  packages:
+    - name: leak
+      source: ./outer
+`)
+
+	// Act
+	out, err := runPackCmd(t)
+
+	// Assert
+	if err == nil {
+		t.Fatalf("pack succeeded, want rejection of a nested-junction local source escaping the project root (output: %s)", out)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(dir, ".claude-plugin", "marketplace.json")); rerr == nil && strings.Contains(string(data), "SECRET-NESTED") {
+		t.Errorf("marketplace.json = %s, must never contain the escaping target's apm.yml contents", data)
+	}
+}
+
+// TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected is B-BLOCKING-2's
+// named regression (external audit round 7, 2026-07-31 follow-up): a local
+// package's OWN DIRECTORY can be an entirely ordinary, in-root directory
+// (nothing to reject there), while its "apm.yml" leaf file is itself a FILE
+// symlink pointing outside the project root. localApmYMLPath's pre-fix
+// containment check only ever validated the directory, never the leaf file
+// it goes on to os.Stat/read -- so this used to slip straight through and
+// have the escaping target's apm.yml contents embedded into
+// marketplace.json. Skipped (visibly, not silently) when this process
+// cannot create a file symlink -- e.g. Windows without Developer Mode or
+// SeCreateSymbolicLinkPrivilege.
+func TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected(t *testing.T) {
+	dir := chdirTemp(t)
+	outside := t.TempDir()
+	secretApmYml := filepath.Join(outside, "apm.yml")
+	if err := os.WriteFile(secretApmYml, []byte("name: leak\ndescription: SECRET-LEAF\nversion: 9.9.9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pkgDir := filepath.Join(dir, "pkgs", "tool")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	leafLink := filepath.Join(pkgDir, "apm.yml")
+	if err := os.Symlink(secretApmYml, leafLink); err != nil {
+		t.Skipf("SKIPPED: cannot create a file symlink in this environment (%v); the apm.yml-leaf-symlink-escape guard is untested by this run", err)
+	}
+
+	writePackApmYML(t, `name: demo
+marketplace:
+  owner:
+    name: Acme
+  packages:
+    - name: tool-a
+      source: ./pkgs/tool
+`)
+
+	// Act
+	out, err := runPackCmd(t)
+
+	// Assert
+	if err == nil {
+		t.Fatalf("pack succeeded, want rejection of a local package whose apm.yml leaf is a symlink escaping the project root (output: %s)", out)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(dir, ".claude-plugin", "marketplace.json")); rerr == nil && strings.Contains(string(data), "SECRET-LEAF") {
+		t.Errorf("marketplace.json = %s, must never contain the escaping target's apm.yml contents", data)
 	}
 }
 

@@ -346,7 +346,42 @@ func ValidateMarketplaceSource(source string) error {
 		if reject[seg] {
 			return fmt.Errorf("marketplace source %q contains %q path segment", source, seg)
 		}
+		// MAJOR 1 (external audit, 2026-07-30): upstream's
+		// validate_path_segments (path_security.py:64) percent-decodes each
+		// segment (up to 8 rounds) before comparing it against "."/"..", so a
+		// percent-encoded (or multiply percent-encoded) traversal marker --
+		// e.g. "%2e%2e", "%252e%252e" (needs 2 rounds), "%2E%2E" -- cannot
+		// bypass the literal check above. This mirrors that: a segment
+		// containing an ordinary "%" that is not part of a traversal escape
+		// (e.g. "50%25off") simply fails to decode further and is left
+		// untouched, so it is never rejected.
+		if decoded := decodePercentEncodedSegment(seg); decoded != seg && reject[decoded] {
+			return fmt.Errorf("marketplace source %q contains a percent-encoded %q path segment", source, decoded)
+		}
 	}
 
 	return nil
+}
+
+// maxPercentDecodeRounds bounds decodePercentEncodedSegment's iterative
+// percent-decode, mirroring upstream path_security.py's own decode budget.
+const maxPercentDecodeRounds = 8
+
+// decodePercentEncodedSegment iteratively percent-decodes seg (as
+// net/url.PathUnescape would) up to maxPercentDecodeRounds times, stopping
+// as soon as a round leaves the string unchanged or fails to decode further.
+// It never returns an error: a segment that cannot be fully decoded is
+// simply returned as far as decoding got, since the only thing the caller
+// checks is whether the fully-decoded result is an exact "." or ".."
+// traversal marker.
+func decodePercentEncodedSegment(seg string) string {
+	decoded := seg
+	for i := 0; i < maxPercentDecodeRounds; i++ {
+		next, err := url.PathUnescape(decoded)
+		if err != nil || next == decoded {
+			break
+		}
+		decoded = next
+	}
+	return decoded
 }

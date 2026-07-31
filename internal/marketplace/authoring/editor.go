@@ -306,14 +306,36 @@ func packageEntryNode(entry PackageEntry) *yaml.Node {
 // ── mkt-046: source verification / naming helpers ───────────────────────
 
 // verifyPackageSource implements mkt-046's fix for `package add`: a local
-// (./) source is always OK without ever touching the network -- regardless
-// of noVerify -- reusing refcheck.go's own isLocalPackageSource rule so
-// `check`/`outdated`/`package add` all agree on what counts as local. A
-// remote source is checked with a single lister.ListRefs call unless
-// noVerify skips it.
-func verifyPackageSource(source string, lister RefLister, noVerify bool) error {
+// (./) source never touches the network -- regardless of noVerify -- reusing
+// refcheck.go's own isLocalPackageSource rule so `check`/`outdated`/`package
+// add` all agree on what counts as local. A remote source is checked with a
+// single lister.ListRefs call unless noVerify skips it.
+//
+// dir is AddPackage's own project-root parameter (NOT the process's cwd --
+// AddPackage's callers, including its own unit tests, are not guaranteed to
+// have os.Chdir-ed into dir): a local source is resolved and containment-
+// checked against dir directly, via resolveLocalSourceAgainstRoot
+// (refcheck.go).
+//
+// BLOCKING 2 (2026-07-31 follow-up, live end-to-end reproduction): a local
+// source used to be waved through here with an unconditional `return nil`
+// and NO path check at all -- resolveRef's mkt-046 short-circuit
+// (classifyRefResolution's skipLocalSource branch) also never resolves or
+// validates a local source's path, so `package add ./linked`, where "linked"
+// is a directory symlink or Windows junction (the latter needs no special
+// privilege to create) pointing outside the project root, was accepted
+// outright: no call anywhere in AddPackage ever ran resolveCloneURL's
+// containment check for it. A subsequent `pack` then faithfully read the
+// escaping target's apm.yml contents into the marketplace.json output --
+// mkt-046's "no network access" contract does not mean "no path check": it
+// only exempts a local source from the `lister.ListRefs` reachability call,
+// not from proving its resolved path stays inside the project root. This now
+// reuses resolveCloneURL's shared resolveLocalSourceAgainstRoot (refcheck.go)
+// instead of a second, hand-rolled copy of that check.
+func verifyPackageSource(dir, source string, lister RefLister, noVerify bool) error {
 	if isLocalPackageSource(source) {
-		return nil
+		_, err := resolveLocalSourceAgainstRoot(dir, source)
+		return err
 	}
 	if noVerify {
 		return nil
@@ -678,7 +700,7 @@ func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name str
 	if err := manifest.ValidateMarketplaceSource(source); err != nil {
 		return "", false, err
 	}
-	if err := verifyPackageSource(source, lister, opts.NoVerify); err != nil {
+	if err := verifyPackageSource(dir, source, lister, opts.NoVerify); err != nil {
 		return "", false, err
 	}
 

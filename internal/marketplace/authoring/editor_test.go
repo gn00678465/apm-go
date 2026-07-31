@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -330,6 +332,116 @@ func TestAddPackage_SubdirLegitimateRelative_Succeeds(t *testing.T) {
 	}
 	if len(cfg.Packages) != 1 || cfg.Packages[0].Subdir != "src/skills" {
 		t.Errorf("Packages = %+v, want a single entry with subdir 'src/skills'", cfg.Packages)
+	}
+}
+
+// ── BLOCKING 2 (2026-07-31 follow-up, live end-to-end reproduction):
+// `package add`'s local-source path-containment check ─────────────────────
+//
+// verifyPackageSource's local branch used to unconditionally `return nil`
+// with NO path check at all: `package add ./linked`, where "linked" is a
+// directory symlink or Windows junction (the latter needs no special
+// privilege to create) physically inside the project directory but pointing
+// outside it, was accepted outright -- no call anywhere in AddPackage's
+// pipeline ever resolved or containment-checked the local source's actual
+// path. A subsequent `pack` then faithfully read the escaping target's
+// apm.yml contents into the marketplace.json output. This drives AddPackage
+// through its real pipeline (manifest.ValidateMarketplaceSource, then
+// verifyPackageSource) rather than isolating either check alone, since a
+// percent-encoded traversal (e.g. "./%2e%2e/outside") is rejected at the
+// manifest layer -- it is a literal, non-decoded "%2e%2e" path segment at
+// the OS/filesystem level, so it is NOT itself a filesystem escape for
+// verifyPackageSource's own containment check to catch -- while a symlink or
+// junction escape is invisible to the manifest layer's string-only check and
+// is only caught by verifyPackageSource's new containment check. Together
+// the two layers close every angle; testing either in isolation would miss
+// the other's case entirely, and is not how AddPackage's callers ever invoke
+// them anyway (none of AddPackage's other tests call verifyPackageSource
+// directly either -- it is unexported and always exercised through
+// AddPackage, the same convention this test follows).
+func TestVerifyPackageSource_LocalSourceEscapingRoot_Rejected(t *testing.T) {
+	t.Run("backslash traversal", func(t *testing.T) {
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "project")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+		_, _, err := AddPackage(dir, `./..\..\outside`, AddOptions{}, panicLister{})
+		if err == nil {
+			t.Fatal("AddPackage(`./..\\..\\outside`) = nil error, want a rejection (path escapes the project root)")
+		}
+	})
+
+	t.Run("percent-encoded traversal", func(t *testing.T) {
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "project")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+		_, _, err := AddPackage(dir, "./%2e%2e/outside", AddOptions{}, panicLister{})
+		if err == nil {
+			t.Fatal(`AddPackage("./%2e%2e/outside") = nil error, want a rejection (percent-encoded ".." path segment)`)
+		}
+	})
+
+	t.Run("junction escape", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("directory junctions are a Windows-only concept")
+		}
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "project")
+		outside := filepath.Join(parent, "outside")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+		writeFile(t, outside, "apm.yml", "name: outside-secret\nversion: 9.9.9\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+		link := filepath.Join(dir, "linked")
+		cmd := exec.Command("cmd", "/c", "mklink", "/J", link, outside)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the junction-escape guard is untested by this run", err, out)
+		}
+
+		_, _, err := AddPackage(dir, "./linked", AddOptions{}, panicLister{})
+		if err == nil {
+			t.Fatal(`AddPackage("./linked" via a junction) = nil error, want a rejection (junction resolves outside the project root)`)
+		}
+	})
+}
+
+// TestAddPackage_LocalSource_LegitimateNestedExistingPath_Succeeds is the
+// regression companion to TestVerifyPackageSource_LocalSourceEscapingRoot_
+// Rejected above: the new containment check in verifyPackageSource must not
+// reject an ordinary, legitimate local source that genuinely stays within
+// the project root, whether or not its directory already exists on disk
+// (TestAddPackage_LocalSource_NoFlags_NeverTouchesNetwork already covers the
+// "doesn't exist yet" case; this one uses a real, existing nested directory
+// to prove the other half).
+func TestAddPackage_LocalSource_LegitimateNestedExistingPath_Succeeds(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "tool-a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+	// Act
+	name, _, err := AddPackage(dir, "./pkgs/tool-a", AddOptions{}, panicLister{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("AddPackage rejected a legitimate, existing local source: %v", err)
+	}
+	if name != "tool-a" {
+		t.Errorf("name = %q, want %q", name, "tool-a")
 	}
 }
 

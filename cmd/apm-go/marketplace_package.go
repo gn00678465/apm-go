@@ -197,7 +197,16 @@ func marketplacePackageAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tags, "tags", "", "Comma-separated tags")
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "Include prerelease versions")
 	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "Skip the remote reachability check")
-	cmd.Flags().StringVar(&category, "category", "", "Package category (required for Codex output at `pack` time)")
+	// B-MINOR-2 (external audit round 8, 2026-07-31 follow-up): a backtick
+	// pair anywhere in a pflag usage string is not just decoration --
+	// pflag's UnquoteUsage treats the FIRST backtick-quoted substring as the
+	// flag's help metavar override, replacing the default "string" type name
+	// shown in `--help` output. The original "at `pack` time" wording made
+	// `--help` print "--category pack" (implying pack takes a literal
+	// argument named "pack") instead of "--category string". Single quotes
+	// (the convention already used by --version/--tag-pattern above) avoid
+	// triggering that behavior.
+	cmd.Flags().StringVar(&category, "category", "", "Package category (required for Codex output at 'pack' time)")
 	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
 	// subcommand; `package add` was missing it entirely (an unknown-flag
 	// hard error). Python's own add.py accepts it with no observable

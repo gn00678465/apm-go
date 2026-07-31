@@ -224,19 +224,63 @@ func enrichRemoteMetadata(entry authoring.PackageEntry, ref, subdir, source stri
 }
 
 // localApmYMLPath resolves a local package's own apm.yml path within
-// projectRoot, or ok=false when entry.Source (already req-mf-017-validated
-// to start with "./" and contain no ".." segment, so it can never traverse
-// outside projectRoot) resolves to projectRoot itself -- that file is the
-// marketplace's own apm.yml, not a package manifest, mirroring the Python
-// original's identical "package_root == project_root" skip in
-// _fetch_local_metadata (builder.py).
-func localApmYMLPath(projectRoot, source string) (path string, ok bool) {
-	root := filepath.Clean(projectRoot)
-	packageRoot := filepath.Clean(filepath.Join(projectRoot, source))
-	if packageRoot == root {
-		return "", false
+// projectRoot, or ok=false when entry.Source resolves to projectRoot itself
+// -- that file is the marketplace's own apm.yml, not a package manifest,
+// mirroring the Python original's identical "package_root == project_root"
+// skip in _fetch_local_metadata (builder.py).
+//
+// B-BLOCKING-1 (external audit round 6, 2026-07-31): this used to
+// filepath.Join(projectRoot, source) directly, trusting that
+// manifest.ValidateMarketplaceSource's parse-time "no '..' segment" check --
+// already applied once, whenever `package add`/`LoadAuthoringConfig` accepted
+// this source -- makes an escape impossible here too. That is a TOCTOU, not a
+// proof: mkt-046 explicitly lets `add` reference a source before its
+// directory exists on disk yet, so nothing stops that path from later
+// becoming a symlink or Windows junction pointing outside projectRoot --
+// entirely valid on disk, entirely invisible to a string-only ".." check --
+// before this function runs at a subsequent `pack` and reads whatever apm.yml
+// that escaping target actually resolves to into marketplace.json. This now
+// re-runs authoring.ResolveLocalSourceAgainstRoot's live, symlink/junction-
+// aware containment check at read time instead of trusting the add-time
+// check alone -- see verifyPackageSource (authoring/editor.go) for the
+// symmetric add-time check this mirrors, and
+// TestResolvePackages_LocalPackage_SourceBecomesJunctionAfterAdd_Rejected /
+// TestResolvePackages_LocalPackage_HandEditedEscapingSource_Rejected.
+func localApmYMLPath(projectRoot, source string) (path string, ok bool, err error) {
+	absRoot, err := filepath.Abs(filepath.Clean(projectRoot))
+	if err != nil {
+		return "", false, fmt.Errorf("resolve project root %q: %w", projectRoot, err)
 	}
-	return filepath.Join(packageRoot, "apm.yml"), true
+	packageRoot, err := authoring.ResolveLocalSourceAgainstRoot(projectRoot, source)
+	if err != nil {
+		return "", false, err
+	}
+	if filepath.Clean(packageRoot) == absRoot {
+		return "", false, nil
+	}
+	// B-BLOCKING-2 (external audit round 7, 2026-07-31 follow-up): the
+	// packageRoot check above only proves the package's DIRECTORY resolves
+	// within projectRoot -- apm.yml itself, the actual file this function's
+	// caller goes on to os.Stat/readCapped (which both follow symlinks), is
+	// one more path component that has never been through the same
+	// symlink/junction-aware containment check. An entirely ordinary,
+	// in-root package directory can still contain a single leaf file,
+	// "apm.yml", that is itself a FILE symlink pointing outside projectRoot
+	// -- the directory-level check has nothing to say about that, since it
+	// only ever resolved packageRoot itself, never packageRoot's own
+	// children. Re-running the exact same containment check one path
+	// component deeper, against "<source>/apm.yml" rather than just
+	// <source>, catches a symlinked leaf via the identical lexical + real
+	// symlink/junction-aware logic already applied to the directory (a file
+	// symlink sets fi.Mode()&os.ModeSymlink just like a directory symlink
+	// does; resolveRealPathJunctionAware does not care whether the reparse
+	// point being resolved names a file or a directory). See
+	// TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected.
+	apmYmlPath, err := authoring.ResolveLocalSourceAgainstRoot(projectRoot, filepath.Join(source, "apm.yml"))
+	if err != nil {
+		return "", false, err
+	}
+	return apmYmlPath, true, nil
 }
 
 // enrichLocalMetadata implements F1: a local package (source: "./...") is
@@ -251,19 +295,31 @@ func localApmYMLPath(projectRoot, source string) (path string, ok bool) {
 // read/parse error (over the size cap, unreadable, not valid YAML)
 // downgrades to a warning -- either way enrichment is skipped rather than
 // failing the build.
-func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (description, version, warning string) {
+//
+// B-BLOCKING-1 (external audit round 6, 2026-07-31): a local source
+// resolving outside projectRoot (localApmYMLPath's containment check) is NOT
+// treated as a soft "nothing to enrich from" case -- unlike a merely missing
+// or malformed apm.yml, it means the project's own configuration is no
+// longer trustworthy (its source now points somewhere the curator never
+// authored), so this returns a hard error that fails the whole build,
+// mirroring verifyPackageSource's identical fail-closed behavior for
+// `package add` on the very same violation.
+func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (description, version, warning string, err error) {
 	description = entry.Description
 	version = entry.Version
 	if description != "" && version != "" {
-		return description, version, ""
+		return description, version, "", nil
 	}
 
-	apmYmlPath, ok := localApmYMLPath(projectRoot, entry.Source)
+	apmYmlPath, ok, resolveErr := localApmYMLPath(projectRoot, entry.Source)
+	if resolveErr != nil {
+		return description, version, "", fmt.Errorf("package %q: %w", entry.Name, resolveErr)
+	}
 	if !ok {
-		return description, version, ""
+		return description, version, "", nil
 	}
 	if _, statErr := os.Stat(apmYmlPath); statErr != nil {
-		return description, version, ""
+		return description, version, "", nil
 	}
 
 	data, err := readCapped(apmYmlPath, localMetadataMaxBytes)
@@ -271,7 +327,7 @@ func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (desc
 		return description, version, fmt.Sprintf(
 			"package %q: could not read local apm.yml metadata, continuing without it: %s",
 			entry.Name, err,
-		)
+		), nil
 	}
 
 	doc, err := yamlcore.SafeLoad(data)
@@ -279,10 +335,10 @@ func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (desc
 		return description, version, fmt.Sprintf(
 			"package %q: could not parse local apm.yml metadata, continuing without it: %s",
 			entry.Name, err,
-		)
+		), nil
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return description, version, ""
+		return description, version, "", nil
 	}
 	root := doc.Content[0]
 	if description == "" {
@@ -291,7 +347,7 @@ func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (desc
 	if version == "" {
 		version = metadataScalarString(root, "version")
 	}
-	return description, version, ""
+	return description, version, "", nil
 }
 
 // isDisplayVersion mirrors Python's output_mappers._is_display_version

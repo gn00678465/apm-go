@@ -323,6 +323,34 @@ func TestRemoveSource_NotFoundReturnsError(t *testing.T) {
 	}
 }
 
+// TestRemoveSource_UnregisteredError_IncludesRemediation covers B-MAJOR-2
+// (external audit): PRD R6 requires registry.go's own "is not registered"
+// error -- not only the richer helper cmd/apm-go/marketplace.go layers on
+// top for its own CLI callers -- to point at the remedy commands. Any caller
+// that invokes RemoveSource directly, skipping that CLI-layer check, must
+// still get actionable guidance instead of a bare, unhelpful message.
+func TestRemoveSource_UnregisteredError_IncludesRemediation(t *testing.T) {
+	// Arrange
+	writeRegistryFixture(t, existingUnrelatedFixture())
+
+	// Act
+	err := RemoveSource("missing")
+
+	// Assert
+	if err == nil {
+		t.Fatalf("RemoveSource() returned no error, want one for an unregistered name")
+	}
+	if !strings.Contains(err.Error(), `marketplace "missing" is not registered`) {
+		t.Errorf("error = %q, want it to contain the unregistered-name message verbatim", err.Error())
+	}
+	if !strings.Contains(err.Error(), "marketplace list") {
+		t.Errorf("error = %q, want it to mention `marketplace list`", err.Error())
+	}
+	if !strings.Contains(err.Error(), "marketplace add") {
+		t.Errorf("error = %q, want it to mention `marketplace add`", err.Error())
+	}
+}
+
 // TestSaveRegistry_WritesWrappingObjectShape covers A1 (mkt-002): the
 // on-disk registry format must be a wrapping {"marketplaces": [...]} object,
 // not a bare top-level array, so apm-go and the Python original can share a

@@ -3,6 +3,7 @@ package authoring
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -521,8 +522,8 @@ func TestResolveCloneURL(t *testing.T) {
 			t.Fatal(err)
 		}
 		link := filepath.Join(project, "linked")
-		if err := os.Symlink(outside, link); err != nil {
-			t.Skipf("SKIPPED: cannot create a directory symlink in this environment (%v); BLOCKING 2's symlink-escape guard is untested by this run", err)
+		if ok, symErr := createDirSymlinkOrJunction(t, outside, link); !ok {
+			t.Skipf("SKIPPED: cannot create a directory symlink or junction in this environment (%v); BLOCKING 2's symlink-escape guard is untested by this run", symErr)
 		}
 		chdirTo(t, project)
 		if _, err := resolveCloneURL("./linked"); err == nil {
@@ -573,8 +574,8 @@ func TestResolveCloneURL(t *testing.T) {
 			t.Fatal(err)
 		}
 		linkedParent := filepath.Join(project, "linked-parent")
-		if err := os.Symlink(outside, linkedParent); err != nil {
-			t.Skipf("SKIPPED: cannot create a directory symlink in this environment (%v); MAJOR 1's dangling-leaf guard is untested by this run", err)
+		if ok, symErr := createDirSymlinkOrJunction(t, outside, linkedParent); !ok {
+			t.Skipf("SKIPPED: cannot create a directory symlink or junction in this environment (%v); MAJOR 1's dangling-leaf guard is untested by this run", symErr)
 		}
 		chdirTo(t, project)
 		// Deliberately do NOT create "not-yet-created": that is the point of
@@ -583,6 +584,249 @@ func TestResolveCloneURL(t *testing.T) {
 			t.Fatal("resolveCloneURL(./linked-parent/not-yet-created) = nil error, want a rejection (parent symlink already resolves outside the project root, even though the leaf itself doesn't exist yet)")
 		}
 	})
+}
+
+// TestResolveCloneURL_JunctionEscape_Rejected is a dedicated regression test
+// (2026-07-31 follow-up) that forces the junction branch directly -- via
+// `mklink /J`, bypassing os.Symlink entirely -- rather than relying on
+// os.Symlink failing first (as the fallback in TestResolveCloneURL's own
+// symlink subtests does). This matters because a real symlink and a
+// junction are NOT equivalent from pathWithinRoot's point of view: as of Go
+// 1.23, os.Lstat no longer reports ModeSymlink for a junction by default, so
+// filepath.EvalSymlinks (which decides whether to follow a path component
+// solely by that bit) silently returns a path through a junction UNCHANGED
+// instead of resolving or rejecting it -- verified directly against this Go
+// toolchain (a prior version of this test, run against the pre-fix
+// pathWithinRoot with only the lexical + EvalSymlinks layers, failed with
+// "resolveCloneURL(./linked) via a junction = nil error, want rejection").
+// A machine where os.Symlink itself happens to succeed (e.g. Developer Mode
+// enabled) would never exercise the junction branch at all through the
+// fallback alone, silently leaving this gap uncovered -- hence a test that
+// always uses a junction regardless of symlink privilege.
+func TestResolveCloneURL_JunctionEscape_Rejected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+	parent := t.TempDir()
+	project := filepath.Join(parent, "project")
+	outside := filepath.Join(parent, "outside")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(project, "linked")
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", link, outside)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the junction-escape guard is untested by this run", err, out)
+	}
+	chdirTo(t, project)
+	if _, err := resolveCloneURL("./linked"); err == nil {
+		t.Fatal("resolveCloneURL(./linked) via a junction = nil error, want a rejection (junction resolves outside the project root)")
+	}
+}
+
+// TestResolveCloneURL_JunctionWithinRoot_Accepted is B-MAJOR-1's first named
+// regression (external audit round 6, 2026-07-31 follow-up): a junction
+// physically inside the project root that points to somewhere ELSE also
+// inside the project root (an ordinary, non-escaping layout -- e.g. a
+// monorepo sharing one real package directory under two names) must be
+// ACCEPTED, not rejected. A prior version of pathWithinRoot's third layer
+// (hasUnresolvableReparsePoint) rejected ANY existing reparse point along
+// the path unconditionally, without ever checking where it actually
+// pointed -- a false positive this test would have caught turning red.
+func TestResolveCloneURL_JunctionWithinRoot_Accepted(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+	project := t.TempDir()
+	actual := filepath.Join(project, "actual-target")
+	if err := os.Mkdir(actual, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(project, "linked")
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", link, actual)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); this regression is untested by this run", err, out)
+	}
+	chdirTo(t, project)
+	// resolveCloneURL returns the literal (unresolved) joined path -- the OS
+	// itself transparently follows the junction when git actually opens it,
+	// the same way it would for any other reparse point; the junction
+	// resolution above is used only internally, to verify containment.
+	want := link
+	got, err := resolveCloneURL("./linked")
+	if err != nil {
+		t.Fatalf("resolveCloneURL(./linked) via a junction pointing WITHIN the project root returned error: %v, want acceptance", err)
+	}
+	if got != want {
+		t.Errorf("resolveCloneURL(./linked) = %q, want the literal joined path %q", got, want)
+	}
+}
+
+// TestResolveCloneURL_ProjectRootBehindJunction_LocalSourceWithinRoot_Accepted
+// is B-MAJOR-1's second named regression: the project root itself (cwd)
+// being reached through a junction (e.g. the checkout sits behind a Windows
+// Dev Drive mapping, `subst`, or a parent-directory junction) must not, by
+// itself, cause every local source under that project to be rejected. A
+// prior version of hasUnresolvableReparsePoint special-cased
+// isUnresolvableReparsePoint(root) as an automatic, unconditional rejection
+// -- root's own path shape has nothing to do with whether target escapes
+// it, and this test's local source (a perfectly ordinary subdirectory of the
+// SAME real project) would have been wrongly rejected by that bug.
+func TestResolveCloneURL_ProjectRootBehindJunction_LocalSourceWithinRoot_Accepted(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+	parent := t.TempDir()
+	realProject := filepath.Join(parent, "real-project")
+	pkgDir := filepath.Join(realProject, "pkgs", "tool")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	aliasProject := filepath.Join(parent, "alias-project")
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", aliasProject, realProject)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); this regression is untested by this run", err, out)
+	}
+	chdirTo(t, aliasProject)
+	// resolveCloneURL returns the literal (unresolved) joined path, exactly
+	// like TestResolveCloneURL_JunctionWithinRoot_Accepted above -- the
+	// junction resolution is used only internally, to verify containment.
+	want := filepath.Join(aliasProject, "pkgs", "tool")
+	got, err := resolveCloneURL("./pkgs/tool")
+	if err != nil {
+		t.Fatalf("resolveCloneURL(./pkgs/tool) with a project root reached through a junction returned error: %v, want acceptance (the local source itself never escapes the real project)", err)
+	}
+	if got != want {
+		t.Errorf("resolveCloneURL(./pkgs/tool) = %q, want the literal joined path %q", got, want)
+	}
+}
+
+// TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected is
+// B-BLOCKING-1's named regression (external audit round 7, 2026-07-31
+// follow-up, "SECRET-NESTED" repro): a junction physically inside the
+// project root ("outer") that points at a path ("<root>/inner/pkg") whose
+// OWN intermediate component ("inner") is a SEPARATE junction pointing
+// outside root must be rejected -- not accepted just because the literal
+// target string "<root>/inner/pkg" happens to look contained. Uses the
+// exported ResolveLocalSourceAgainstRoot directly (rather than
+// resolveCloneURL) since that is the entry point other marketplace packages
+// (internal/marketplace/build/metadata.go) call to re-run this same
+// containment check at their own read time.
+func TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected(t *testing.T) {
+	t.Run("nested junction chain escapes through an intermediate component", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("directory junctions are a Windows-only concept")
+		}
+		parent := t.TempDir()
+		root := filepath.Join(parent, "proj")
+		outside := filepath.Join(parent, "outside")
+		if err := os.MkdirAll(filepath.Join(outside, "pkg"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		// "inner" is a junction pointing entirely outside root.
+		inner := filepath.Join(root, "inner")
+		mklinkInner := exec.Command("cmd", "/c", "mklink", "/J", inner, outside)
+		if out, err := mklinkInner.CombinedOutput(); err != nil {
+			t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the nested-junction-escape guard is untested by this run", err, out)
+		}
+
+		// "outer" is a SECOND junction, physically inside root, whose target
+		// is "<root>/inner/pkg" -- a path that is only reachable at all
+		// because the OS transparently follows "inner" (itself a junction)
+		// while validating this second mklink's target.
+		outer := filepath.Join(root, "outer")
+		mklinkOuter := exec.Command("cmd", "/c", "mklink", "/J", outer, filepath.Join(root, "inner", "pkg"))
+		if out, err := mklinkOuter.CombinedOutput(); err != nil {
+			t.Skipf("SKIPPED: cannot create the second (nested-target) directory junction in this environment (%v: %s); the nested-junction-escape guard is untested by this run", err, out)
+		}
+
+		if _, err := ResolveLocalSourceAgainstRoot(root, "./outer"); err == nil {
+			t.Fatal("ResolveLocalSourceAgainstRoot(root, ./outer) = nil error, want a rejection: \"outer\" resolves (via \"inner\", itself a junction) to a real location OUTSIDE root, even though the literal target string \"<root>/inner/pkg\" looks contained")
+		}
+	})
+
+	// B-BLOCKING-1's own fail-closed requirement: a reparse-point cycle
+	// (two directory entries each pointing at the other) must be rejected
+	// outright rather than looping forever or silently accepting one side.
+	// Uses real directory symlinks (not junctions): a Windows junction's
+	// target must already exist at mklink time, which makes a genuine
+	// two-node cycle impossible to construct via mklink at all (whichever
+	// side is created second would need the first side's target -- itself
+	// dangling until the second side exists -- to already resolve).
+	// Symlinks carry no such existence requirement, so they can form a real
+	// cycle, and pathWithinRoot's isReparsePoint treats a real symlink and a
+	// junction identically (fi.Mode()&os.ModeSymlink, true for either
+	// reparse kind once resolveReparsePointTarget reads it via
+	// os.Readlink).
+	t.Run("cycle A->B->A fails closed", func(t *testing.T) {
+		root := t.TempDir()
+		a := filepath.Join(root, "a")
+		b := filepath.Join(root, "b")
+		if err := os.Symlink(b, a); err != nil {
+			t.Skipf("SKIPPED: cannot create a directory symlink in this environment (%v); the reparse-point-cycle fail-closed guard is untested by this run", err)
+		}
+		if err := os.Symlink(a, b); err != nil {
+			t.Skipf("SKIPPED: cannot create the second directory symlink completing the cycle in this environment (%v); the reparse-point-cycle fail-closed guard is untested by this run", err)
+		}
+
+		done := make(chan struct{})
+		var err error
+		go func() {
+			defer close(done)
+			_, err = ResolveLocalSourceAgainstRoot(root, "./a")
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("ResolveLocalSourceAgainstRoot(root, ./a) did not return within 5s against a genuine A->B->A reparse-point cycle -- maxReparseResolutionHops did not bound the walk")
+		}
+		if err == nil {
+			t.Fatal("ResolveLocalSourceAgainstRoot(root, ./a) = nil error, want a fail-closed rejection of the A->B->A cycle (possible-cycle hop limit)")
+		}
+	})
+}
+
+// TestIsNameSurrogateReparseTag is B-MINOR-1's pure-logic regression
+// (external audit round 7, 2026-07-31 follow-up): isJunctionOrUnknownReparse
+// Point (reparse_windows.go) must resolve/reject only "name surrogate"
+// reparse points (a real symlink or directory junction/mount point -- the
+// only kinds that can make a path actually resolve somewhere other than its
+// literal string), and must NOT treat a non-name-surrogate reparse point
+// (e.g. a OneDrive/Cloud Files placeholder, NTFS deduplication, or an
+// AppExecLink) the same way -- those attach alternate data at the SAME
+// name, and rejecting them outright (the pre-round-7 behavior: any reparse
+// point that os.Readlink could not resolve was treated as fail-closed)
+// falsely broke every ordinary file inside a OneDrive-synced project
+// directory. Runs on every platform (isNameSurrogateReparseTag has no OS
+// dependency) so this exact bit-test is verified against Microsoft's own
+// documented tag catalog even where a live Windows reparse point cannot be
+// constructed.
+func TestIsNameSurrogateReparseTag(t *testing.T) {
+	tests := []struct {
+		name string
+		tag  uint32
+		want bool
+	}{
+		{"IO_REPARSE_TAG_SYMLINK", 0xA000000C, true},
+		{"IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003, true},
+		{"IO_REPARSE_TAG_CLOUD (OneDrive/Cloud Files placeholder)", 0x9000001A, false},
+		{"IO_REPARSE_TAG_APPEXECLINK", 0x8000001B, false},
+		{"IO_REPARSE_TAG_DEDUP", 0x80000013, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isNameSurrogateReparseTag(tt.tag); got != tt.want {
+				t.Errorf("isNameSurrogateReparseTag(0x%08X) = %v, want %v", tt.tag, got, tt.want)
+			}
+		})
+	}
 }
 
 // chdirTo temporarily changes the process's working directory to dir for
@@ -601,6 +845,35 @@ func chdirTo(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chdir(orig) })
+}
+
+// createDirSymlinkOrJunction creates a directory symlink at link pointing to
+// target, falling back to a Windows directory junction (`mklink /J`) when a
+// real symlink cannot be created (2026-07-31, external audit follow-up: a
+// plain Windows account without Developer Mode or
+// SeCreateSymbolicLinkPrivilege can never create a directory symlink, so
+// BLOCKING 2's and MAJOR 1's symlink-escape guards were silently t.Skip-ped
+// on every such machine -- an untested-in-practice regression gate, not a
+// passing one). A junction needs no special privilege on Windows, and Go's
+// filepath.EvalSymlinks (which pathWithinRoot relies on) follows a junction
+// the same way it follows a symlink, so the fallback exercises the exact
+// same production code path. Returns ok=false only when both mechanisms
+// fail, so the caller can still visibly t.Skip as a last resort.
+func createDirSymlinkOrJunction(t *testing.T, target, link string) (ok bool, lastErr error) {
+	t.Helper()
+	if err := os.Symlink(target, link); err == nil {
+		return true, nil
+	} else {
+		lastErr = err
+	}
+	if runtime.GOOS != "windows" {
+		return false, lastErr
+	}
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", link, target)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("mklink /J fallback also failed: %w: %s", err, bytes.TrimSpace(out))
+	}
+	return true, nil
 }
 
 // TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister is MAJOR

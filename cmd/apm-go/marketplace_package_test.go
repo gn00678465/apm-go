@@ -3,11 +3,14 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/ux"
+	"github.com/spf13/pflag"
 )
 
 // assertLineSeverity finds the line in out containing marker and asserts it
@@ -1141,6 +1144,29 @@ func TestMarketplacePackageAdd_CategoryFlag_WritesCategory(t *testing.T) {
 	}
 }
 
+// TestMarketplacePackageAdd_CategoryFlagHelp_MetavarIsString is B-MINOR-2
+// (external audit round 8, 2026-07-31 follow-up): the --category flag's
+// pflag Usage string used to read `...at `pack` time)` -- a backtick pair
+// anywhere in a pflag Usage string is not decoration, it is parsed by
+// pflag's UnquoteUsage as an explicit metavar override, so `--help` printed
+// "--category pack" (implying the flag's argument is a fixed literal named
+// "pack") instead of "--category string". Locks the metavar directly via
+// pflag's own Flag.Value.Type()-based unquoting helper rather than
+// substring-matching the rendered help text, so it fails for the right
+// reason (a stray backtick pair) rather than any other incidental wording
+// change.
+func TestMarketplacePackageAdd_CategoryFlagHelp_MetavarIsString(t *testing.T) {
+	cmd := marketplacePackageAddCmd()
+	f := cmd.Flags().Lookup("category")
+	if f == nil {
+		t.Fatal("package add is missing --category")
+	}
+	name, _ := pflag.UnquoteUsage(f)
+	if name != "string" {
+		t.Errorf("--category metavar = %q, want %q (a stray backtick pair in the Usage string overrides pflag's default type-derived metavar, AC47 help text)", name, "string")
+	}
+}
+
 // TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds
 // is AC48: design.md §13's deliberate divergence from upstream (which
 // blocks add entirely here) -- add must still succeed, only warning.
@@ -1262,5 +1288,72 @@ func TestMarketplacePackageAdd_CategoryFlag_ThenPackCodex_Succeeds(t *testing.T)
 	}
 	if !strings.Contains(string(data), `"category": "utility"`) {
 		t.Errorf("codex output = %s, want category=utility present", data)
+	}
+}
+
+// TestMarketplacePackageAdd_LocalSourceEscapingRoot_Rejected is BLOCKING 2's
+// (2026-07-31 follow-up) live end-to-end reproduction, at the CLI layer:
+// `package add ./linked`, where "linked" is a Windows directory junction
+// (needs no special privilege to create, unlike a real symlink) physically
+// inside the project directory but pointing at a real directory OUTSIDE it,
+// used to be accepted outright (verifyPackageSource's local branch never
+// containment-checked the resolved path), and a subsequent `pack` would
+// faithfully read the escaping "outside" directory's apm.yml into the
+// marketplace.json output. Asserts both that the add itself fails (non-zero
+// exit, via a returned error) and that apm.yml is left byte-for-byte
+// unchanged -- the escaping entry must never be spliced in at all.
+func TestMarketplacePackageAdd_LocalSourceEscapingRoot_Rejected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+
+	// Arrange
+	parent := t.TempDir()
+	project := filepath.Join(parent, "project")
+	outside := filepath.Join(parent, "outside")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideYML := "name: outside-secret\nversion: 9.9.9\ndescription: leaked\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile(filepath.Join(outside, "apm.yml"), []byte(outsideYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := filepath.Join(project, "linked")
+	mklink := exec.Command("cmd", "/c", "mklink", "/J", link, outside)
+	if out, err := mklink.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the junction-escape guard is untested by this run", err, out)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, addErr := runMarketplaceCmd(t, "package", "add", "./linked")
+
+	// Assert
+	if addErr == nil {
+		t.Fatalf("package add ./linked (a junction escaping the project root) succeeded, want rejection (output: %s)", out)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != apmYML {
+		t.Errorf("apm.yml was modified despite the rejected add;\ngot:\n%s\nwant unchanged:\n%s", string(data), apmYML)
 	}
 }

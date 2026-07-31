@@ -11,7 +11,9 @@ package authoring
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,20 +198,89 @@ func resolveCloneURL(source string) (string, error) {
 		return source, nil
 	}
 	if isLocalPackageSource(source) {
-		abs, err := filepath.Abs(source)
-		if err != nil {
-			return "", fmt.Errorf("resolve local source %q: %w", source, err)
-		}
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", fmt.Errorf("resolve local source %q: %w", source, err)
-		}
-		if !pathWithinRoot(cwd, abs) {
-			return "", fmt.Errorf("local marketplace source %q resolves outside the project root", source)
-		}
-		return abs, nil
+		return validateLocalSourceWithinRoot(source)
 	}
 	return "https://github.com/" + source + ".git", nil
+}
+
+// validateLocalSourceWithinRoot implements mkt-046's local-source path-
+// containment check for resolveCloneURL: resolves a "./"-prefixed source
+// against the process's cwd (resolveCloneURL has no directory parameter of
+// its own -- every production caller that reaches it, via gitRefLister.
+// ListRefs, relies on the CLI's own dir="." convention, cmd/apm-go/
+// marketplace_package.go) and rejects it if the resolved path escapes that
+// root. Delegates to resolveLocalSourceAgainstRoot, below, for the actual
+// containment logic -- see that function's doc comment for why this exists
+// as a separate, root-parameterized function rather than folding cwd lookup
+// directly into the shared logic.
+func validateLocalSourceWithinRoot(source string) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve local source %q: %w", source, err)
+	}
+	return resolveLocalSourceAgainstRoot(cwd, source)
+}
+
+// resolveLocalSourceAgainstRoot resolves a "./"-prefixed local source
+// against an explicit project root and rejects it if the resolved path
+// escapes that root, via pathWithinRoot's three layers (lexical, real
+// symlink, Windows junction/reparse point). It performs NO network I/O,
+// preserving mkt-046's "a local source never touches the network" contract
+// -- this is a pure filesystem/path check.
+//
+// root is a parameter (rather than always being the process's cwd, as
+// validateLocalSourceWithinRoot above assumes) so verifyPackageSource
+// (editor.go) can check a local source against AddPackage's own dir
+// parameter directly, instead of relying on the caller having already
+// os.Chdir-ed into it -- AddPackage/SetPackage's unit tests construct a
+// fixture directory via t.TempDir() and pass it as dir without chdir-ing the
+// test process into it, and dir is the actual, correct project root for
+// that call regardless of the process's cwd.
+//
+// Shared by resolveCloneURL (above, via validateLocalSourceWithinRoot) and
+// verifyPackageSource (editor.go), rather than each hand-rolling its own
+// copy (the same "one decision function" principle classifyRefResolution
+// already applies to ref resolution): BLOCKING 2 (2026-07-31 follow-up, live
+// end-to-end reproduction) found that verifyPackageSource's local branch
+// used to unconditionally `return nil` with NO path check at all.
+// resolveRef's mkt-046 short-circuit (classifyRefResolution's
+// skipLocalSource branch) ALSO never resolves or validates a local source's
+// path for `add` -- so `package add ./linked`, where "linked" is a
+// privilege-free junction (or symlink) pointing outside the project root,
+// was accepted outright with no rejection anywhere in AddPackage, and a
+// subsequent `pack` faithfully read the escaping target's apm.yml contents
+// into the marketplace.json output. See
+// TestVerifyPackageSource_LocalSourceEscapingRoot_Rejected and
+// TestMarketplacePackageAdd_LocalSourceEscapingRoot_Rejected.
+// ResolveLocalSourceAgainstRoot exports resolveLocalSourceAgainstRoot for use
+// by other marketplace packages that need this same containment check
+// performed again at their own point in time, rather than trusting that a
+// check `package add` already ran once still holds true (B-BLOCKING-1,
+// external audit round 6, 2026-07-31 follow-up): mkt-046 lets `add` reference
+// a source before its directory exists on disk, so nothing stops that path
+// from later becoming a symlink or Windows junction pointing outside root --
+// entirely valid on disk, invisible to a string-only ".." check -- before a
+// subsequent read (e.g. `apm pack`'s local-package metadata enrichment,
+// internal/marketplace/build/metadata.go's localApmYMLPath) resolves whatever
+// that escaping target actually points to. Every caller must re-run this at
+// its own read time instead of caching an earlier call's result.
+func ResolveLocalSourceAgainstRoot(root, source string) (string, error) {
+	return resolveLocalSourceAgainstRoot(root, source)
+}
+
+func resolveLocalSourceAgainstRoot(root, source string) (string, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root %q: %w", root, err)
+	}
+	abs, err := filepath.Abs(filepath.Join(root, source))
+	if err != nil {
+		return "", fmt.Errorf("resolve local source %q: %w", source, err)
+	}
+	if !pathWithinRoot(absRoot, abs) {
+		return "", fmt.Errorf("local marketplace source %q resolves outside the project root", source)
+	}
+	return abs, nil
 }
 
 // pathWithinRoot reports whether target is root itself or a descendant of
@@ -255,19 +326,352 @@ func resolveCloneURL(source string) (string, error) {
 // case where target does not exist at this point either -- so any
 // EvalSymlinks error (missing path, permission denied, or otherwise) now
 // rejects outright instead of falling back to the lexical result.
+//
+// Third layer, Windows-junction-aware (2026-07-31 follow-up): the
+// EvalSymlinks-based layer above is itself blind to a Windows directory
+// junction. As of Go 1.23, os.Lstat no longer reports ModeSymlink for a
+// junction by default, and filepath.EvalSymlinks decides whether to follow a
+// path component solely by that bit -- so it silently returns a path through
+// a junction UNCHANGED, with a nil error, instead of resolving or rejecting
+// it. A junction physically inside root but pointing outside it therefore
+// used to slip past both layers above with no error at all: the lexical
+// check sees no ".." segment, and EvalSymlinks reports "no change" rather
+// than following it out of root. Creating a junction needs no special
+// Windows privilege (unlike a real symlink), making this a LOWER-privilege
+// bypass than the plain symlink escape the second layer defends against.
+//
+// B-MAJOR-1 (external audit round 6, 2026-07-31 follow-up): an earlier
+// version of this third layer (hasUnresolvableReparsePoint) rejected ANY
+// existing reparse point along the path from root to target outright,
+// without ever checking where it actually pointed. That has two distinct
+// bugs, not one:
+//  1. A junction physically inside root that points to somewhere ELSE also
+//     inside root (a perfectly ordinary, non-escaping local package layout --
+//     e.g. a monorepo using junctions/symlinks to share a package directory)
+//     was rejected as a false positive, since the old code never resolved the
+//     junction's target to check it.
+//  2. root ITSELF being reached through a reparse point (e.g. the project
+//     checkout sits behind a Windows Dev Drive mapping, `subst`, or a parent
+//     directory symlink) made isUnresolvableReparsePoint(root) unconditionally
+//     true, rejecting EVERY local source under that project -- root's own
+//     path shape has nothing to do with whether target escapes it.
+//
+// resolveRealPathJunctionAware (below) replaces both the EvalSymlinks calls
+// above and hasUnresolvableReparsePoint: it walks every path component of
+// both root and target from the volume root down, and whenever the path
+// built so far names an existing reparse point of ANY kind (a real symlink
+// OR a junction), replaces that prefix with its actual resolved target via
+// os.Readlink (which -- unlike filepath.EvalSymlinks -- DOES resolve a
+// junction on this Go toolchain, since it reads the reparse point's target
+// buffer directly rather than gating on Lstat's ModeSymlink bit) and keeps
+// walking from there. This closes both directions at once: a junction
+// resolving within root is accepted (bug 1, fixed), root itself being behind
+// a junction no longer matters because root gets the exact same resolution
+// treatment as target before they are compared (bug 2, fixed), and a
+// junction resolving outside root is still rejected exactly as before (no
+// regression on the escape case BLOCKING 2/MAJOR 1 already covered). See
+// TestResolveCloneURL_JunctionEscape_Rejected (escape, still rejected),
+// TestResolveCloneURL_JunctionWithinRoot_Accepted (bug 1),
+// TestResolveCloneURL_ProjectRootBehindJunction_LocalSourceWithinRoot_Accepted
+// (bug 2).
+//
+// Fourth refinement, missing-leaf tolerant (2026-07-31, `package add`
+// follow-up): resolveCloneURL's own callers only ever reach an already-
+// existing local git repository (MAJOR 1's reasoning above), but this
+// function is also now used by verifyPackageSource (editor.go) to
+// containment-check a NOT-YET-CREATED `package add` local source -- mkt-046
+// explicitly lets `add` reference a source before its directory exists (see
+// e.g. TestAddPackage_LocalSource_NoFlags_NeverTouchesNetwork, which never
+// creates "./pkgs/tool" on disk). Requiring the full path to already exist
+// (as layers 2/3 above did pre-2026-07-31, correctly, for resolveCloneURL's
+// own "must already be a real repo" callers) would reject every such
+// legitimate add. Instead, resolveRealPathJunctionAware below is run against
+// longestExistingAncestor(target) rather than target itself: a path
+// component that does not exist cannot itself be a symlink or junction an
+// attacker could have used to escape root (there is nothing there to escape
+// through), while an EXISTING ancestor that already escapes root -- e.g.
+// MAJOR 1's own "symlinked parent, dangling/not-yet-created leaf" TOCTOU
+// scenario -- is still rejected exactly as before, since that ancestor is
+// still what gets checked. See
+// TestVerifyPackageSource_LocalSourceEscapingRoot_Rejected and
+// TestMarketplacePackageAdd_LocalSourceEscapingRoot_Rejected.
+//
+// B-BLOCKING-1 (external audit round 7, 2026-07-31 follow-up, "SECRET-NESTED"
+// repro): resolveRealPathJunctionAware's PRE-round-7 version walked only the
+// ORIGINAL path's own components; each time it substituted a resolved
+// reparse-point target in for "current", it re-checked whether that whole
+// substituted STRING was itself a reparse point (via a second os.Lstat on
+// the full "current" path) before advancing to the original path's next
+// component. That re-check can never observe a reparse point buried in one
+// of the TARGET's own INTERMEDIATE components: Windows itself transparently
+// resolves an intermediate junction as an ordinary part of parsing any
+// longer path string handed to Lstat/CreateFile, so a target like
+// "<root>/inner/pkg" -- where "inner" (not the final component "pkg") is
+// itself a junction pointing outside root -- reports as an ordinary,
+// non-reparse directory when Lstat-ed as a whole string, even though the OS
+// silently followed "inner" out of root to get there. Concretely: a junction
+// "<root>/outer" pointing at "<root>/inner/pkg", where "<root>/inner" is
+// itself a SEPARATE junction pointing outside root, used to resolve as
+// "<root>/inner/pkg" (lexically still under root) with no error at all --
+// the true, OS-followed location (outside root, via "inner") was never
+// checked, only the fact that the SUBSTITUTED STRING happened to look
+// contained. This is fixed by never comparing "is the whole substituted
+// string a reparse point" again: every reparse-point target, the moment it
+// is read via os.Readlink, is immediately decomposed back into its own
+// volume + path components and pushed onto the SAME pending-component queue
+// the rest of the walk consumes from -- so "inner" (an intermediate
+// component of a just-substituted target) gets its own, independent
+// Lstat/reparse check exactly like any other component, at the point the
+// walk actually reaches it, regardless of whether it came from the original
+// path or a substitution. See
+// TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected (the
+// nested-junction-escape case above) and its "cycle A->B->A fails closed"
+// subtest (two junctions/symlinks each pointing at the other, guarded by
+// maxReparseResolutionHops below, which counts substitutions the same way
+// regardless of this rewrite).
 func pathWithinRoot(root, target string) bool {
 	if !pathWithinRootLexical(root, target) {
 		return false
 	}
-	realRoot, rootErr := filepath.EvalSymlinks(root)
+	existing, ancestorErr := longestExistingAncestor(target)
+	if ancestorErr != nil || existing == "" {
+		return false
+	}
+	realRoot, rootErr := resolveRealPathJunctionAware(root)
 	if rootErr != nil {
 		return false
 	}
-	realTarget, targetErr := filepath.EvalSymlinks(target)
-	if targetErr != nil {
+	realExisting, existingErr := resolveRealPathJunctionAware(existing)
+	if existingErr != nil {
 		return false
 	}
-	return pathWithinRootLexical(realRoot, realTarget)
+	// B-MINOR-1 (external audit round 8, 2026-07-31 follow-up): the same
+	// directory can be spelled multiple distinct ways on Windows (an 8.3
+	// short name like "C:\PROGRA~1", a "\\?\Volume{GUID}\..." path, a UNC
+	// loopback path) that a plain string comparison cannot be trusted to
+	// line up against root's own (possibly differently-spelled) string.
+	// canonicalizeRealPathFn resolves each side to Windows' own single
+	// canonical form first (a no-op on non-Windows); any failure to do so
+	// fails closed rather than falling back to comparing the
+	// un-canonicalized strings.
+	canonicalRoot, rootCanonErr := canonicalizeRealPathFn(realRoot)
+	if rootCanonErr != nil {
+		return false
+	}
+	canonicalExisting, existingCanonErr := canonicalizeRealPathFn(realExisting)
+	if existingCanonErr != nil {
+		return false
+	}
+	return pathWithinRootLexical(canonicalRoot, canonicalExisting)
+}
+
+// canonicalizeRealPathFn is canonicalizeRealPath behind a package-level var
+// so tests can substitute a fake (e.g. one that maps a known 8.3 short-name
+// string to its long-name equivalent) without depending on an 8.3-short-name-
+// enabled NTFS volume being available in the test environment -- see
+// canonicalize_windows.go/canonicalize_other.go for the real implementation
+// and TestPathWithinRoot_8dot3AliasedTarget_StillDetectedAsContained /
+// TestPathWithinRoot_CanonicalizationFailure_FailsClosed for the fake-backed
+// unit tests, and TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained
+// (Windows-only, visibly t.Skip when the temp volume has 8.3 name generation
+// disabled) for a live repro.
+var canonicalizeRealPathFn = canonicalizeRealPath
+
+// longestExistingAncestor returns the longest prefix of path (path itself
+// included) that currently exists on disk (per os.Lstat, so a symlink or
+// junction counts as existing without following it), or "" if not even the
+// path's root/volume prefix does.
+//
+// B-MAJOR-1 (external audit round 8, 2026-07-31 follow-up): an os.Lstat
+// failure that is NOT "this component doesn't exist" (an ACL/permission
+// error, or any other I/O failure) used to be treated identically to "does
+// not exist" -- silently walking up to the parent and potentially skipping
+// straight past the very component that could not be inspected (e.g. an
+// ACL-protected reparse point this process lacks permission to Lstat), never
+// positively determining what is actually there. That case is now returned
+// as an error instead, so callers fail closed (reject the path as unverified
+// rather than silently walking past it and treating the shorter,
+// successfully-Lstat-able ancestor as if it were the whole story).
+func longestExistingAncestor(path string) (string, error) {
+	cur := path
+	for {
+		_, err := osLstat(cur)
+		if err == nil {
+			return cur, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("stat %q: %w", cur, err)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", nil
+		}
+		cur = parent
+	}
+}
+
+// osLstat is os.Lstat behind a package-level var so tests can substitute a
+// fake that returns a non-fs.ErrNotExist error (e.g. an ACL/permission
+// denial), without requiring a live, environment-dependent ACL setup for
+// every test that exercises B-MAJOR-1's fail-closed branch (external audit
+// round 8, 2026-07-31 follow-up) -- see TestLongestExistingAncestor_
+// NonNotExistLstatError_FailsClosed and TestResolveRealPathJunctionAware_
+// NonNotExistLstatError_FailsClosed. A real, live ACL-denial repro also
+// exists (TestPathWithinRoot_ACLDeniedComponent_FailsClosed, Windows-only,
+// visibly t.Skip when this process cannot manipulate its own ACLs) for
+// end-to-end confidence beyond the injected-fake unit tests.
+var osLstat = os.Lstat
+
+// maxReparseResolutionHops bounds resolveRealPathJunctionAware's symlink/
+// junction-following loop, guarding against a reparse-point cycle (e.g. two
+// junctions pointing at each other) that would otherwise loop forever.
+const maxReparseResolutionHops = 40
+
+// isReparsePoint reports whether the file at path is ANY kind of reparse
+// point -- a real symlink (fi.Mode()&os.ModeSymlink, true on every OS) or a
+// Windows directory junction/other reparse kind Go's ModeSymlink bit does
+// not cover (isJunctionOrUnknownReparsePoint, reparse_windows.go/
+// reparse_other.go), deliberately including "cannot positively rule it out"
+// as true (fail closed) -- see that function's own doc comment. path is
+// passed alongside fi (rather than relying on fi alone) because
+// isJunctionOrUnknownReparsePoint's B-MINOR-1 tag-reading (reparse_windows.go)
+// needs to open the file by name; os.FileInfo's Sys() (a
+// syscall.Win32FileAttributeData, populated by Lstat) carries no reparse tag
+// of its own.
+func isReparsePoint(path string, fi os.FileInfo) bool {
+	return fi.Mode()&os.ModeSymlink != 0 || isJunctionOrUnknownReparsePoint(path, fi)
+}
+
+// resolveReparsePointTarget resolves the single reparse point at path (a
+// real symlink or a Windows junction) to its target via os.Readlink --
+// unlike filepath.EvalSymlinks, which only follows a path component when
+// Lstat reports ModeSymlink, os.Readlink reads the reparse point's target
+// buffer directly and resolves a junction just as well as a symlink on this
+// Go toolchain (verified directly, see reparse_windows.go). A relative
+// target (as a symlink's target commonly is; a junction's is normally
+// already absolute) is resolved against path's own parent directory,
+// mirroring how the OS itself would interpret it. ok is false when Readlink
+// fails -- path is not a reparse point Go can resolve this way, or some
+// other read error -- callers must treat that as "cannot positively
+// resolve," i.e. fail closed.
+func resolveReparsePointTarget(path string) (target string, ok bool) {
+	linked, err := os.Readlink(path)
+	if err != nil {
+		return "", false
+	}
+	if !filepath.IsAbs(linked) {
+		linked = filepath.Join(filepath.Dir(path), linked)
+	}
+	return filepath.Clean(linked), true
+}
+
+// resolveRealPathJunctionAware resolves path the way filepath.EvalSymlinks
+// does -- following every real symlink component -- but ALSO follows a
+// Windows directory junction the same way, which filepath.EvalSymlinks does
+// not (isReparsePoint's doc comment above). It walks path one component at a
+// time from the volume root down, and each time the prefix built so far
+// names an EXISTING reparse point of any kind, replaces that prefix with
+// resolveReparsePointTarget's resolved target and keeps resolving from
+// there (a junction may itself point at another junction or symlink, so
+// this loops until an ordinary, non-reparse-point component is reached, up
+// to maxReparseResolutionHops times). A component that does not exist yet
+// stops the walk there rather than erroring: callers only ever invoke this
+// on an existing path (pathWithinRoot passes root and
+// longestExistingAncestor's result, never a raw possibly-nonexistent
+// target), so this only matters for a component that vanishes mid-walk
+// (TOCTOU) -- treated as "nothing further to resolve," not a caller-visible
+// error, mirroring filepath.EvalSymlinks' own not-found short-circuit.
+// Returns an error -- fail closed -- only when an existing reparse point's
+// target cannot be read (resolveReparsePointTarget failure) or the walk
+// exceeds maxReparseResolutionHops (only a reparse-point cycle could ever
+// trigger that).
+func resolveRealPathJunctionAware(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %q: %w", path, err)
+	}
+	vol, pending := splitAbsPathComponents(abs)
+
+	current := vol + string(filepath.Separator)
+	hops := 0
+	for len(pending) > 0 {
+		part := pending[0]
+		pending = pending[1:]
+		if part == "" || part == "." {
+			continue
+		}
+		candidate := filepath.Join(current, part)
+		fi, statErr := osLstat(candidate)
+		if statErr != nil {
+			if errors.Is(statErr, fs.ErrNotExist) {
+				// Doesn't exist (yet, or vanished mid-walk) -- nothing left
+				// to resolve at or below this point. Any components still
+				// pending (whether from the original path or a
+				// just-substituted reparse-point target) are simply
+				// subdirectories of a location that does not exist, so
+				// they cannot themselves be a symlink or junction to
+				// resolve -- dropping them here does not change
+				// pathWithinRootLexical's later verdict either way, since
+				// containment is prefix-based (a subdirectory of a
+				// location inside root is inside root; a subdirectory of a
+				// location outside root is outside root).
+				return candidate, nil
+			}
+			// B-MAJOR-1 (external audit round 8, 2026-07-31 follow-up):
+			// any OTHER Lstat failure (ACL/permission denied, a locked
+			// file, or any other I/O error) means this component's true
+			// nature -- ordinary directory, symlink, or junction -- could
+			// not be positively determined. Silently treating that the
+			// same as "doesn't exist" (the pre-round-8 behavior) would let
+			// an ACL-protected reparse point slip past this walk
+			// undetected, on the theory that "we couldn't see it, so
+			// nothing more to resolve." Fail closed instead.
+			return "", fmt.Errorf("resolve %q: cannot stat %q: %w", path, candidate, statErr)
+		}
+		if !isReparsePoint(candidate, fi) {
+			current = candidate
+			continue
+		}
+		hops++
+		if hops > maxReparseResolutionHops {
+			return "", fmt.Errorf("resolve %q: too many reparse-point hops (possible cycle)", path)
+		}
+		target, ok := resolveReparsePointTarget(candidate)
+		if !ok {
+			return "", fmt.Errorf("resolve %q: cannot read reparse point target at %q", path, candidate)
+		}
+		// B-BLOCKING-1 (external audit round 7, 2026-07-31 follow-up): push
+		// the resolved target's OWN components onto the SAME pending queue
+		// -- rather than substituting "current" wholesale and only
+		// re-checking the resulting string as a whole -- so a reparse point
+		// buried in one of the target's own intermediate components (e.g.
+		// target="<root>/inner/pkg", where "inner" is itself a junction
+		// pointing outside root) gets its own independent Lstat/reparse
+		// check when the walk reaches it, exactly like any other component.
+		// See this function's own "SECRET-NESTED" doc comment above
+		// (pathWithinRoot) and TestResolveLocalSourceAgainstRoot_
+		// NestedJunctionEscape_Rejected.
+		targetVol, targetParts := splitAbsPathComponents(target)
+		current = targetVol + string(filepath.Separator)
+		pending = append(append([]string{}, targetParts...), pending...)
+	}
+	return current, nil
+}
+
+// splitAbsPathComponents splits an already-filepath.Abs-ed path into its
+// volume name (e.g. "C:" on Windows, "" elsewhere) and its remaining path
+// components, in walk order. Shared by resolveRealPathJunctionAware for both
+// the path it is originally called with and every reparse-point target it
+// substitutes in along the way (B-BLOCKING-1, external audit round 7,
+// 2026-07-31 follow-up), so a target's own intermediate components are
+// walked and reparse-checked exactly the same way the original path's are.
+func splitAbsPathComponents(abs string) (vol string, parts []string) {
+	vol = filepath.VolumeName(abs)
+	rest := strings.TrimPrefix(abs[len(vol):], string(filepath.Separator))
+	if rest == "" {
+		return vol, nil
+	}
+	return vol, strings.Split(rest, string(filepath.Separator))
 }
 
 func pathWithinRootLexical(root, target string) bool {

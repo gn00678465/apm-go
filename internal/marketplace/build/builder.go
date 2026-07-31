@@ -161,7 +161,10 @@ func resolvePackage(cfg *authoring.AuthoringConfig, entry authoring.PackageEntry
 		// package -- previously local packages were never enriched at all,
 		// leaving description/version permanently blank whenever the
 		// curator's own entry omitted them.
-		description, version, warning := enrichLocalMetadata(entry, opts.projectRoot())
+		description, version, warning, err := enrichLocalMetadata(entry, opts.projectRoot())
+		if err != nil {
+			return ResolvedPackage{}, "", err
+		}
 		return ResolvedPackage{
 			Entry:             entry,
 			IsLocal:           true,

@@ -245,7 +245,17 @@ func RemoveSource(name string) error {
 		}
 	}
 	if idx < 0 {
-		return fmt.Errorf("marketplace %q is not registered", name)
+		// B-MAJOR-2 (external audit): PRD R6 requires the "is not
+		// registered" message itself (not only the CLI helper layered on
+		// top in cmd/apm-go/marketplace.go's marketplaceNotRegisteredErr)
+		// to point at the remedy commands. cmd/apm-go's `marketplace
+		// remove` checks FindByName first and uses the richer helper, but
+		// any caller that invokes RemoveSource directly -- skipping that
+		// CLI-layer check -- previously got this bare, unhelpful message
+		// with no hint of what to run next. The "is not registered"
+		// substring is preserved verbatim; existing callers assert on it
+		// with strings.Contains.
+		return fmt.Errorf("marketplace %q is not registered\nRun `apm-go marketplace list` to see registered marketplaces, or `apm-go marketplace add SOURCE` to register a new one.", name)
 	}
 	sources = append(sources[:idx], sources[idx+1:]...)
 	return SaveRegistry(sources)
