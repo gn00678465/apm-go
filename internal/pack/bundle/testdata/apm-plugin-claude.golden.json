@@ -1,0 +1,26 @@
+{
+  "name": "demo-plugin",
+  "version": "1.0.0",
+  "description": "A demo plugin for schema testing.",
+  "author": {
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "url": "https://example.com/jane"
+  },
+  "license": "MIT",
+  "homepage": "https://example.com/demo-plugin",
+  "repository": "https://github.com/acme/demo-plugin",
+  "keywords": [
+    "demo",
+    "schema"
+  ],
+  "mcpServers": {
+    "demo": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "demo-mcp-server"
+      ]
+    }
+  }
+}

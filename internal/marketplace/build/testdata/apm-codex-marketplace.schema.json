@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apm-go.dev/schemas/apm-codex-marketplace.schema.json",
+  "title": "apm-go Codex marketplace.json (.agents/plugins/marketplace.json)",
+  "description": "Self-authored schema for apm-go's own CodexMapper output (internal/marketplace/build/codexmapper.go). A materially different shape from the Claude document -- no owner/description/version/metadata, and category is required (CategoryRequiredError). source.source can be \"url\" even when its \"url\" value is actually an owner/repo shorthand rather than a real URL on the default host -- a deliberate upstream-aligned quirk (see .trellis/spec/conformance/agent-schema.md). remoteSource is split into per-variant oneOf branches (url / git-subdir) whose required fields are read directly off composeCodexSource (codexmapper.go:129-155): both variants always set url, and git-subdir additionally always sets path. Neither branch declares 'repo': composeCodexSource never sets RemoteSource.Repo in either branch (unlike Claude's composeRemoteSource, which has a dedicated github/repo variant) -- this is a Go-only field (schema_sync_test.go's TestSchemaDrift_GoTypesMatchSchemaProperties/RemoteSource(codex) documents it via an explicit goOnlyAllowed whitelist, not a schema-declared-but-unused property), and a document with 'repo' present on either codex remoteSource branch is rejected by additionalProperties:false.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string" },
+    "interface": { "$ref": "#/$defs/interface" },
+    "plugins": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/plugin" }
+    }
+  },
+  "required": ["name", "interface", "plugins"],
+  "$defs": {
+    "interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "displayName": { "type": "string" }
+      },
+      "required": ["displayName"]
+    },
+    "plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "source": {
+          "oneOf": [
+            { "$ref": "#/$defs/localSource" },
+            { "$ref": "#/$defs/remoteSource" }
+          ]
+        },
+        "policy": { "$ref": "#/$defs/policy" },
+        "category": { "type": "string" }
+      },
+      "required": ["name", "source", "policy", "category"]
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "codexmapper.go:103: every plugin gets this exact fixed pair, never derived from input.",
+      "properties": {
+        "installation": { "type": "string", "enum": ["AVAILABLE"] },
+        "authentication": { "type": "string", "enum": ["ON_INSTALL"] }
+      },
+      "required": ["installation", "authentication"]
+    },
+    "localSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "type": "string", "enum": ["local"] },
+        "path": { "type": "string" }
+      },
+      "required": ["source", "path"]
+    },
+    "remoteSource": {
+      "oneOf": [
+        { "$ref": "#/$defs/remoteSourceUrl" },
+        { "$ref": "#/$defs/remoteSourceGitSubdir" }
+      ]
+    },
+    "remoteSourceUrl": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "composeCodexSource's plain-url variant (codexmapper.go:144-146): source/url are always both set (url falls back to pkg.SourceRepo verbatim on the default host -- the AS2 shorthand quirk -- but the KEY is always present).",
+      "properties": {
+        "source": { "type": "string", "enum": ["url"] },
+        "url": { "type": "string" },
+        "ref": { "type": "string" },
+        "sha": { "type": "string" }
+      },
+      "required": ["source", "url"]
+    },
+    "remoteSourceGitSubdir": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "composeCodexSource's git-subdir variant (codexmapper.go:141-143): source/url/path are always all three set.",
+      "properties": {
+        "source": { "type": "string", "enum": ["git-subdir"] },
+        "url": { "type": "string" },
+        "path": { "type": "string" },
+        "ref": { "type": "string" },
+        "sha": { "type": "string" }
+      },
+      "required": ["source", "url", "path"]
+    }
+  }
+}

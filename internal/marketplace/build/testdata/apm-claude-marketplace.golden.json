@@ -1,0 +1,64 @@
+{
+  "name": "my-marketplace",
+  "description": "A demo marketplace for schema testing.",
+  "version": "2.0.0",
+  "owner": {
+    "name": "acme-org",
+    "email": "owner@example.com",
+    "url": "https://github.com/acme-org"
+  },
+  "metadata": {
+    "pluginRoot": "./pkgs"
+  },
+  "plugins": [
+    {
+      "name": "local-tool",
+      "description": "a local tool",
+      "version": "0.1.0",
+      "author": {
+        "name": "Jane Doe"
+      },
+      "license": "MIT",
+      "repository": "https://github.com/acme/tool-a",
+      "tags": [
+        "local",
+        "demo"
+      ],
+      "homepage": "https://example.com/tool-a",
+      "source": "./tool-a"
+    },
+    {
+      "name": "impeccable",
+      "description": "The design language that makes your AI harness better at design.",
+      "version": "1.0.0",
+      "tags": [
+        "remote"
+      ],
+      "source": {
+        "source": "github",
+        "repo": "pbakaus/impeccable",
+        "ref": "fc2e694afca1ac0cc384b4fe56bab3335fea7912",
+        "sha": "fc2e694afca1ac0cc384b4fe56bab3335fea7912"
+      }
+    },
+    {
+      "name": "subdir-tool",
+      "source": {
+        "source": "git-subdir",
+        "url": "owner/mono",
+        "path": "packages/tool-c",
+        "ref": "v2.0.0",
+        "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "name": "ghe-tool",
+      "source": {
+        "source": "url",
+        "url": "https://ghe.example.com/owner/repo-d",
+        "ref": "v3.0.0",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc"
+      }
+    }
+  ]
+}
