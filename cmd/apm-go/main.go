@@ -25,6 +25,7 @@ func main() {
 	root.AddCommand(validateCmd())
 	root.AddCommand(normalizeCmd())
 	root.AddCommand(initCmd())
+	root.AddCommand(pluginCmd())
 	root.AddCommand(installCmd())
 	root.AddCommand(updateCmd())
 	root.AddCommand(uninstallCmd())

@@ -4,15 +4,84 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/pluginjson"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
 )
+
+// initMode captures the behavioral deltas between `apm-go init` (consumer
+// mode) and `apm-go plugin init` (plugin mode, cmd/apm-go/plugin.go): both
+// commands share the same runInitCore body below (design.md §3), differing
+// only in these fields.
+type initMode struct {
+	// plugin toggles the plugin-specific behavior: devDependencies in
+	// apm.yml (manifestSpec.Plugin, R3.3.c), writing plugin.json (R3.3.d),
+	// and validateName's kebab-case rule (R3.3.a).
+	plugin bool
+	// defaultYesVer is the version written when --yes/non-interactive picks
+	// a default (R3.3.b). The interactive form's default is always "1.0.0"
+	// for both modes, independent of this field.
+	defaultYesVer string
+	// validateName validates the resolved project name: the explicit
+	// PROJECT-NAME arg, or (plugin mode only, R3.2/AC31) the current
+	// directory's basename when the arg is omitted.
+	validateName func(string) error
+	introTitle   string
+	successTitle string
+	// nextSteps is printed verbatim, one line per element, by both the
+	// clack and plain-text output paths (R3.3.e/R3.4).
+	nextSteps []string
+}
+
+var consumerMode = initMode{
+	plugin:        false,
+	defaultYesVer: "1.0.0",
+	validateName:  consumerValidateName,
+	introTitle:    "Setting up your APM project",
+	successTitle:  "APM project initialized successfully!",
+	nextSteps:     []string{"Install a package:  apm-go install <owner>/<repo>"},
+}
+
+var pluginMode = initMode{
+	plugin:        true,
+	defaultYesVer: "0.1.0",
+	validateName:  pluginValidateName,
+	introTitle:    "Setting up your APM plugin project",
+	successTitle:  "APM plugin initialized successfully!",
+	nextSteps: []string{
+		"Install a dev dependency:  apm-go install --dev <owner>/<repo>",
+		"Pack as plugin:  apm-go pack",
+	},
+}
+
+// pluginNameRe is R3.3.a's kebab-case validation, matching upstream's
+// commands/_helpers.py:610-617 exactly: lowercase letters/digits/hyphens,
+// starting with a lowercase letter, 1-64 characters total.
+var pluginNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+
+// consumerValidateName is consumer init's existing, unchanged name check
+// (R3.3.a: this must not become stricter or looser as a side effect of
+// plugin mode's kebab-case rule, AC32/AC37).
+func consumerValidateName(pn string) error {
+	if strings.ContainsAny(pn, "/\\") || pn == ".." {
+		return fmt.Errorf("invalid project name %q", pn)
+	}
+	return nil
+}
+
+func pluginValidateName(pn string) error {
+	if !pluginNameRe.MatchString(pn) {
+		return fmt.Errorf("invalid plugin name %q: must be lowercase letters, digits, and hyphens, starting with a lowercase letter (max 64 characters)", pn)
+	}
+	return nil
+}
 
 func initCmd() *cobra.Command {
 	var (
@@ -27,205 +96,269 @@ func initCmd() *cobra.Command {
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Phase 1: Project name resolution
-			if len(args) > 0 && args[0] != "." {
-				pn := args[0]
-				if strings.ContainsAny(pn, "/\\") || pn == ".." {
-					return fmt.Errorf("invalid project name %q", pn)
-				}
-				if err := os.MkdirAll(pn, 0755); err != nil {
-					return fmt.Errorf("create directory: %w", err)
-				}
-				if err := os.Chdir(pn); err != nil {
-					return fmt.Errorf("chdir: %w", err)
-				}
-			}
-
-			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("cannot determine directory: %w", err)
-			}
-
-			// Phase 2: Existing apm.yml check
-			_, existsErr := os.Stat("apm.yml")
-			apmYmlExists := existsErr == nil
-
-			// Every prompt of an interactive run is recorded on one clack-style
-			// connecting line (issue #14). ck stays nil for --yes and
-			// non-interactive runs, which keep their plain output verbatim.
-			var ck *ux.Clack
-			if !yes && ux.CanPrompt() {
-				ck = ux.NewClack(os.Stderr)
-				fmt.Fprintln(os.Stderr)
-				ck.Banner(apmGoBanner)
-				ck.Intro("Setting up your APM project")
-				ck.Detail("Press ^C at any time to quit.")
-				ck.Bar()
-			}
-
-			if apmYmlExists {
-				switch {
-				case yes || force:
-					if ck != nil {
-						ck.Step("apm.yml already exists", "Overwriting (--force)")
-						ck.Bar()
-					} else {
-						ux.Info(os.Stderr, "--yes specified, overwriting apm.yml...")
-					}
-				case ck != nil:
-					ok, err := ck.Confirm("apm.yml already exists. Continue and overwrite?", false)
-					if err != nil {
-						return fmt.Errorf("confirm overwrite: %w", err)
-					}
-					if !ok {
-						ck.Outro("Initialization cancelled.")
-						return nil
-					}
-					ck.Bar()
-				default:
-					return fmt.Errorf("apm.yml already exists; use --yes to overwrite")
-				}
-			}
-
-			var name, version, description, author string
-
-			// Phase 3: Metadata collection
-			if yes || !ux.CanPrompt() {
-				name = filepath.Base(cwd)
-				version = "1.0.0"
-				description = fmt.Sprintf("APM project for %s", name)
-				author = manifest.DetectAuthor()
-			} else {
-				defaultName := filepath.Base(cwd)
-				defaultDesc := fmt.Sprintf("APM project for %s", defaultName)
-				fields := []ux.Field{
-					{Key: "name", Label: "Project name", Default: defaultName},
-					{Key: "version", Label: "Version", Default: "1.0.0"},
-					{Key: "description", Label: "Description", Default: defaultDesc},
-					{Key: "author", Label: "Author", Default: manifest.DetectAuthor()},
-				}
-				vals, formErr := ck.Form("Project metadata", fields)
-				if formErr != nil {
-					return fmt.Errorf("read project metadata: %w", formErr)
-				}
-				ck.Bar()
-				name = vals["name"]
-				version = vals["version"]
-				description = vals["description"]
-				author = vals["author"]
-				// The grouped form can't recompute the description default
-				// reactively, so if the user changed the name but left the
-				// prefilled description untouched, keep it in sync with the
-				// entered name (avoids silently writing "APM project for <cwd>"
-				// when the project was renamed).
-				if description == defaultDesc && name != defaultName {
-					description = fmt.Sprintf("APM project for %s", name)
-				}
-			}
-
-			// Phase 4: Target selection
-			var selectedTargets []string
-
-			if targetFlag != "" {
-				supported := make(map[string]bool)
-				for _, s := range manifest.SupportedTargets {
-					supported[s] = true
-				}
-				for _, t := range strings.Split(targetFlag, ",") {
-					t = strings.TrimSpace(t)
-					if !supported[t] {
-						return fmt.Errorf("target %q is not supported by init; allowed: %s",
-							t, strings.Join(manifest.SupportedTargets, ", "))
-					}
-					selectedTargets = append(selectedTargets, t)
-				}
-			} else if yes || !ux.CanPrompt() {
-				selectedTargets = manifest.DetectTargets(cwd)
-			} else {
-				var existingTargets []string
-				if apmYmlExists {
-					existingTargets = readExistingTargets()
-				}
-				detected := manifest.DetectTargets(cwd)
-				selectedTargets, err = interactiveTargetSelect(ck, detected, existingTargets)
-				if err != nil {
-					return fmt.Errorf("select targets: %w", err)
-				}
-				ck.Bar()
-			}
-
-			// Phase 5: Confirmation
-			if ck != nil {
-				body := []string{
-					fmt.Sprintf("name:        %s", name),
-					fmt.Sprintf("version:     %s", version),
-					fmt.Sprintf("description: %s", description),
-					fmt.Sprintf("author:      %s", author),
-				}
-				if len(selectedTargets) > 0 {
-					body = append(body, fmt.Sprintf("targets:     %s", strings.Join(selectedTargets, ", ")))
-				} else {
-					body = append(body, "targets:     (none — auto-detect at compile time)")
-				}
-				ck.Note("About to create", body)
-				ck.Bar()
-
-				ok, err := ck.Confirm("Is this OK?", true)
-				if err != nil {
-					return fmt.Errorf("confirm creation: %w", err)
-				}
-				if !ok {
-					ck.Outro("Aborted.")
-					return nil
-				}
-			}
-
-			// Phase 6: File generation. buildManifestNode assembles the
-			// document in semantic key order (R2); the validation
-			// pipeline below dumps it FIRST so the bytes it validates
-			// (via a round-trip through SafeLoad/ParseManifest) are
-			// exactly the bytes written to disk (design.md §2).
-			node := buildManifestNode(manifestSpec{
-				Name:        name,
-				Version:     version,
-				Description: description,
-				Author:      author,
-				Targets:     selectedTargets,
-			})
-			out, err := yamlcore.SafeDump(node)
-			if err != nil {
-				return fmt.Errorf("serialize: %w", err)
-			}
-			reloaded, err := yamlcore.SafeLoad(out)
-			if err != nil {
-				return fmt.Errorf("generated manifest is invalid: %w", err)
-			}
-			if _, _, err := manifest.ParseManifest(reloaded); err != nil {
-				return fmt.Errorf("generated manifest fails validation: %w", err)
-			}
-			if err := os.WriteFile("apm.yml", out, 0644); err != nil {
-				return fmt.Errorf("write apm.yml: %w", err)
-			}
-
-			// Phase 7: Success output
-			if ck != nil {
-				ck.Bar()
-				ck.Step("APM project initialized successfully!", "Install a package:  apm-go install <owner>/<repo>")
-				ck.Outro("Done!")
-				return nil
-			}
-			fmt.Fprintln(os.Stderr)
-			ux.Success(os.Stderr, "APM project initialized successfully!")
-			fmt.Fprintln(os.Stderr)
-			ux.Section(os.Stderr, "Next steps")
-			ux.Info(os.Stderr, "Install a package:  apm-go install <owner>/<repo>")
-			return nil
+			return runInitCore(args, consumerMode, yes, targetFlag, force, false)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive prompts and use auto-detected defaults")
 	cmd.Flags().StringVar(&targetFlag, "target", "", "Comma-separated target list (skip prompt)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing apm.yml (alias for --yes on overwrite)")
 	return cmd
+}
+
+// runInitCore is the shared body `initCmd` and `pluginInitCmd` (plugin.go)
+// both run (design.md §3), parameterized by mode. verbose is currently
+// accepted but unused by the shared body -- plugin init's own -v/--verbose
+// flag (R3.3.f) exists for upstream CLI-surface parity; wiring it to extra
+// output is not required by any AC in this task.
+func runInitCore(args []string, mode initMode, yes bool, targetFlag string, force bool, verbose bool) error {
+	// originalCwd is the directory the command was invoked from, captured
+	// before Phase 1 possibly creates and enters a new project
+	// subdirectory. R4's plugin-native-root warning inspects THIS
+	// directory, not the freshly created (necessarily empty) project
+	// subdirectory -- "project root" means the directory that already has
+	// agents/skills/etc., which is where the user ran the command.
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot determine directory: %w", err)
+	}
+
+	// Phase 1: Project name resolution
+	if len(args) > 0 && args[0] != "." {
+		pn := args[0]
+		if err := mode.validateName(pn); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(pn, 0755); err != nil {
+			return fmt.Errorf("create directory: %w", err)
+		}
+		if err := os.Chdir(pn); err != nil {
+			return fmt.Errorf("chdir: %w", err)
+		}
+	} else if mode.plugin {
+		// R3.2/AC31: PROJECT-NAME is optional; when omitted, plugin mode
+		// still validates the implied name (the current directory's
+		// basename) against the kebab-case rule.
+		if err := mode.validateName(filepath.Base(originalCwd)); err != nil {
+			return err
+		}
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot determine directory: %w", err)
+	}
+
+	// Phase 2: Existing apm.yml check
+	_, existsErr := os.Stat("apm.yml")
+	apmYmlExists := existsErr == nil
+
+	// Every prompt of an interactive run is recorded on one clack-style
+	// connecting line (issue #14). ck stays nil for --yes and
+	// non-interactive runs, which keep their plain output verbatim.
+	var ck *ux.Clack
+	if !yes && ux.CanPrompt() {
+		ck = ux.NewClack(os.Stderr)
+		fmt.Fprintln(os.Stderr)
+		ck.Banner(apmGoBanner)
+		ck.Intro(mode.introTitle)
+		ck.Detail("Press ^C at any time to quit.")
+		ck.Bar()
+	}
+
+	// R4: plugin-native root directory warning, shared by both modes
+	// (R4.1). Purely informational -- it never blocks (R4.3, AC14 requires
+	// exit 0).
+	if sources := detectPluginNativeRoot(originalCwd); len(sources) > 0 {
+		msg := fmt.Sprintf("Found plugin-native content (%s) in this directory with no .apm/ -- `apm-go pack` will bundle it directly.", strings.Join(sources, ", "))
+		if ck != nil {
+			ck.Warn("%s", msg)
+			ck.Bar()
+		} else {
+			ux.Warn(os.Stderr, "%s", msg)
+		}
+	}
+
+	if apmYmlExists {
+		switch {
+		case yes || force:
+			if ck != nil {
+				ck.Step("apm.yml already exists", "Overwriting (--force)")
+				ck.Bar()
+			} else {
+				ux.Info(os.Stderr, "--yes specified, overwriting apm.yml...")
+			}
+		case ck != nil:
+			ok, err := ck.Confirm("apm.yml already exists. Continue and overwrite?", false)
+			if err != nil {
+				return fmt.Errorf("confirm overwrite: %w", err)
+			}
+			if !ok {
+				ck.Outro("Initialization cancelled.")
+				return nil
+			}
+			ck.Bar()
+		default:
+			return fmt.Errorf("apm.yml already exists; use --yes to overwrite")
+		}
+	}
+
+	var name, version, description, author string
+
+	// Phase 3: Metadata collection
+	if yes || !ux.CanPrompt() {
+		name = filepath.Base(cwd)
+		version = mode.defaultYesVer
+		description = fmt.Sprintf("APM project for %s", name)
+		author = manifest.DetectAuthor()
+	} else {
+		defaultName := filepath.Base(cwd)
+		defaultDesc := fmt.Sprintf("APM project for %s", defaultName)
+		fields := []ux.Field{
+			{Key: "name", Label: "Project name", Default: defaultName},
+			{Key: "version", Label: "Version", Default: "1.0.0"},
+			{Key: "description", Label: "Description", Default: defaultDesc},
+			{Key: "author", Label: "Author", Default: manifest.DetectAuthor()},
+		}
+		vals, formErr := ck.Form("Project metadata", fields)
+		if formErr != nil {
+			return fmt.Errorf("read project metadata: %w", formErr)
+		}
+		ck.Bar()
+		name = vals["name"]
+		version = vals["version"]
+		description = vals["description"]
+		author = vals["author"]
+		// A-MAJOR-1 (external audit): Phase 1 only validates the name when
+		// it comes from the explicit PROJECT-NAME arg, or (plugin mode)
+		// the current directory's basename when the arg is omitted. It
+		// never validated a name the user typed into THIS interactive
+		// form, so `apm-go plugin init my-plugin` (a valid arg) followed by
+		// editing the form's prefilled "my-plugin" to "My_Plugin" wrote an
+		// invalid plugin name straight into apm.yml/plugin.json with no
+		// error. Validate the form's final value the same way Phase 1
+		// validates the arg/cwd-basename path.
+		if err := mode.validateName(name); err != nil {
+			return err
+		}
+		// The grouped form can't recompute the description default
+		// reactively, so if the user changed the name but left the
+		// prefilled description untouched, keep it in sync with the
+		// entered name (avoids silently writing "APM project for <cwd>"
+		// when the project was renamed).
+		if description == defaultDesc && name != defaultName {
+			description = fmt.Sprintf("APM project for %s", name)
+		}
+	}
+
+	// Phase 4: Target selection
+	var selectedTargets []string
+
+	if targetFlag != "" {
+		supported := make(map[string]bool)
+		for _, s := range manifest.SupportedTargets {
+			supported[s] = true
+		}
+		for _, t := range strings.Split(targetFlag, ",") {
+			t = strings.TrimSpace(t)
+			if !supported[t] {
+				return fmt.Errorf("target %q is not supported by init; allowed: %s",
+					t, strings.Join(manifest.SupportedTargets, ", "))
+			}
+			selectedTargets = append(selectedTargets, t)
+		}
+	} else if yes || !ux.CanPrompt() {
+		selectedTargets = manifest.DetectTargets(cwd)
+	} else {
+		var existingTargets []string
+		if apmYmlExists {
+			existingTargets = readExistingTargets()
+		}
+		detected := manifest.DetectTargets(cwd)
+		selectedTargets, err = interactiveTargetSelect(ck, detected, existingTargets)
+		if err != nil {
+			return fmt.Errorf("select targets: %w", err)
+		}
+		ck.Bar()
+	}
+
+	// Phase 5: Confirmation
+	if ck != nil {
+		body := []string{
+			fmt.Sprintf("name:        %s", name),
+			fmt.Sprintf("version:     %s", version),
+			fmt.Sprintf("description: %s", description),
+			fmt.Sprintf("author:      %s", author),
+		}
+		if len(selectedTargets) > 0 {
+			body = append(body, fmt.Sprintf("targets:     %s", strings.Join(selectedTargets, ", ")))
+		} else {
+			body = append(body, "targets:     (none — auto-detect at compile time)")
+		}
+		ck.Note("About to create", body)
+		ck.Bar()
+
+		ok, err := ck.Confirm("Is this OK?", true)
+		if err != nil {
+			return fmt.Errorf("confirm creation: %w", err)
+		}
+		if !ok {
+			ck.Outro("Aborted.")
+			return nil
+		}
+	}
+
+	// Phase 6: File generation. buildManifestNode assembles the
+	// document in semantic key order (R2); the validation
+	// pipeline below dumps it FIRST so the bytes it validates
+	// (via a round-trip through SafeLoad/ParseManifest) are
+	// exactly the bytes written to disk (design.md §2).
+	node := buildManifestNode(manifestSpec{
+		Name:        name,
+		Version:     version,
+		Description: description,
+		Author:      author,
+		Targets:     selectedTargets,
+		Plugin:      mode.plugin,
+	})
+	out, err := yamlcore.SafeDump(node)
+	if err != nil {
+		return fmt.Errorf("serialize: %w", err)
+	}
+	reloaded, err := yamlcore.SafeLoad(out)
+	if err != nil {
+		return fmt.Errorf("generated manifest is invalid: %w", err)
+	}
+	if _, _, err := manifest.ParseManifest(reloaded); err != nil {
+		return fmt.Errorf("generated manifest fails validation: %w", err)
+	}
+	if err := os.WriteFile("apm.yml", out, 0644); err != nil {
+		return fmt.Errorf("write apm.yml: %w", err)
+	}
+
+	// R3.3.d: plugin mode additionally scaffolds a root plugin.json
+	// template (distinct from `apm pack`'s apm.yml-synthesized one, see
+	// internal/pluginjson's doc comment).
+	if mode.plugin {
+		if err := pluginjson.Scaffold(cwd, name, version, description, author); err != nil {
+			return err
+		}
+	}
+
+	// Phase 7: Success output
+	if ck != nil {
+		ck.Bar()
+		ck.Step(mode.successTitle, strings.Join(mode.nextSteps, "\n"))
+		ck.Outro("Done!")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr)
+	ux.Success(os.Stderr, "%s", mode.successTitle)
+	fmt.Fprintln(os.Stderr)
+	ux.Section(os.Stderr, "Next steps")
+	for _, line := range mode.nextSteps {
+		ux.Info(os.Stderr, "%s", line)
+	}
+	return nil
 }
 
 // interactiveTargetSelect prompts for the target list via a huh MultiSelect
