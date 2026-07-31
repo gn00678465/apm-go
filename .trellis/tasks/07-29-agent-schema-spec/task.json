@@ -3,7 +3,7 @@
   "name": "agent-schema-spec",
   "title": "各 target agent 的 marketplace/plugin schema：spec 文件 + 可執行定義",
   "description": "U8：建立獨立 spec 文件與可執行 schema 定義，兩者必須有防漂移機制",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
