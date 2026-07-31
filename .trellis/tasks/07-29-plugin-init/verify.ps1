@@ -49,8 +49,17 @@ function Exec {
 # 另外 $seen 用 case-SENSITIVE 的 Dictionary，而非 PowerShell `@{}`（後者對字串鍵
 # 預設不分大小寫，會讓只差大小寫的兩個測試名稱互相覆蓋、讓 -minCount 少算）。
 function ExecTestJSON {
-    param([string]$ac, [string]$what, [string]$pkg, [string]$pattern, [string[]]$allowSkip = @(), [int]$minCount = 0)
-    $out = & go test -json -run $pattern $pkg 2>&1
+    param([string]$ac, [string]$what, [string]$pkg, [string]$pattern, [string[]]$allowSkip = @(), [int]$minCount = 0, [string]$tags = '', [string[]]$requireTests = @())
+    # A-MINOR-1（外部稽核第七輪，2026-07-31）：新增 $tags 參數，讓呼叫端能對
+    # 走 apm_test_hooks build tag 隔離的測試（TestInitVsPluginInit_
+    # ClackSequenceParity）實際加上 -tags -- 先前只在 $what 這個純文字說明
+    # 參數裡寫「go test -tags ...」，從沒真的傳給下面這行實際執行的指令，
+    # 是文字說明跟實際行為脫節的假閘門（本檔自查時發現，未經外部稽核點名）。
+    if ($tags) {
+        $out = & go test -tags $tags -json -run $pattern $pkg 2>&1
+    } else {
+        $out = & go test -json -run $pattern $pkg 2>&1
+    }
     $exitCode = $LASTEXITCODE
     $seen = [System.Collections.Generic.Dictionary[string,string]]::new()
     $skipped = @()
@@ -91,6 +100,14 @@ function ExecTestJSON {
     }
     if ($packageFailed) {
         Fail $ac "${what}: 套件層級回報 Action=fail（例如 TestMain 在 m.Run() 之後回傳非 0，或測試後發生 panic）-- 即使每個個別測試都 pass 也算失敗"
+        return
+    }
+    # 2026-07-31 第五輪 A-MAJOR-2：-minCount 只鎖數量、pattern 只鎖存在，都抓不到
+    # 「刪掉指定測試但同 pattern 還有別的測試」。-requireTests 逐名要求出現且 pass
+    # （exact match、大小寫敏感；skip 不算，因此優先於 -allowSkip）。
+    $missingRequired = @($requireTests | Where-Object { -not $seen.ContainsKey($_) -or $seen[$_] -ne 'pass' })
+    if ($missingRequired.Count -gt 0) {
+        Fail $ac "${what}: 下列身份鎖定的測試未出現或未 pass（改名/刪除/跳過皆轉紅）: $($missingRequired -join ' ; ')"
         return
     }
     if ($skipped.Count -gt 0) {
@@ -191,14 +208,63 @@ else {
 }
 
 # AC8: plugin init 旗標集合
+#
+# A-MINOR-1（外部稽核第六輪，2026-07-31）：舊版只驗「有沒有包含
+# {--yes,--target,--verbose}」+「沒有 --force」，這是子集檢查，不是全集
+# 檢查——多加一個從沒設想過的 --extra-foo 旗標一樣會通過，因為閘門從不檢查
+# 「僅有」這幾個。改成從 --help 的 Flags: 區塊逐行解析出實際的長旗標名稱
+# 集合，和預期集合做嚴格相等比較（多一個少一個都轉紅），不再只挑幾個名字
+# 個別 grep。
 $ih = & $bin plugin init --help 2>&1 | Out-String
-foreach ($f in @('--yes','--target','--verbose')) { if ($ih -notmatch [regex]::Escape($f)) { Fail 'AC8' "plugin init 缺旗標 $f" } }
-if ($ih -match '--force') { Fail 'AC8' 'plugin init 不該有 --force（上游沒有）' }
-if ($script:fails.Count -eq 0) { Pass 'AC8' }
+$ihFlagsSection = ($ih -split '(?m)^Flags:')[-1]
+$actualFlags = @([regex]::Matches($ihFlagsSection, '(?m)^\s*(?:-\w,\s*)?--([A-Za-z][\w-]*)') |
+  ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+$wantFlags = @('help', 'target', 'verbose', 'yes') | Sort-Object
+if (($actualFlags -join ',') -ne ($wantFlags -join ',')) {
+  Fail 'AC8' "plugin init --help 旗標集合 = [$($actualFlags -join ', ')]，want 恰好 [$($wantFlags -join ', ')]（多或少一個旗標都算失敗）"
+} else { Pass 'AC8' }
 
 # AC33: consumer init 不得獲得 --verbose（反向閘門）
 $ch = & $bin init --help 2>&1 | Out-String
 if ($ch -match '(?m)^\s+-v,\s*--verbose' -or $ch -match '--verbose') { Fail 'AC33' 'consumer `init --help` 出現 --verbose，plugin 旗標洩漏' } else { Pass 'AC33' }
+
+# ---- AC31（外部稽核第九輪，2026-07-31）：先前完全沒有閘門 ----
+# PRD:73／init.go:137 的 `else if mode.plugin` 分支：`plugin init --yes` 省略
+# PROJECT-NAME 時，取當前目錄的 basename 並過 kebab-case 驗證。合法目錄名應
+# 成功且 apm.yml 的 name 等於目錄名；非法目錄名應失敗且錯誤訊息是名稱驗證
+# （不是其他原因，例如目錄建立失敗）。
+$acc31 = Join-Path $env:TEMP ("apm-ac31-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $acc31 -Force | Out-Null
+try {
+  # (a) 合法 kebab-case 目錄名：省略參數應成功，apm.yml 的 name 應等於目錄名
+  $goodDir = Join-Path $acc31 'my-good-plugin'
+  New-Item -ItemType Directory -Path $goodDir -Force | Out-Null
+  Push-Location $goodDir
+  & $bin plugin init --yes --target claude 2>&1 | Out-Null
+  $exit31a = $LASTEXITCODE
+  Pop-Location
+  if ($exit31a -ne 0) {
+    Fail 'AC31' "合法目錄名 my-good-plugin 下省略 PROJECT-NAME 應成功，實際 exit $exit31a"
+  } else {
+    $y31 = Get-Content (Join-Path $goodDir 'apm.yml') -Raw -EA SilentlyContinue
+    if (-not $y31 -or $y31 -notmatch '(?m)^name:\s*my-good-plugin\s*$') {
+      Fail 'AC31' "apm.yml 的 name 應等於目錄名 my-good-plugin，實際內容：$y31"
+    } else { Pass 'AC31/valid-dirname-succeeds' }
+  }
+
+  # (b) 非法目錄名（Bad_Dir）：省略參數應失敗，且錯誤是名稱驗證本身
+  $badDir = Join-Path $acc31 'Bad_Dir'
+  New-Item -ItemType Directory -Path $badDir -Force | Out-Null
+  Push-Location $badDir
+  $out31b = & $bin plugin init --yes --target claude 2>&1 | Out-String
+  $exit31b = $LASTEXITCODE
+  Pop-Location
+  if ($exit31b -eq 0) {
+    Fail 'AC31' "非法目錄名 Bad_Dir 下省略 PROJECT-NAME 應失敗，實際成功"
+  } elseif ($out31b -notmatch 'invalid plugin name') {
+    Fail 'AC31' "非法目錄名 Bad_Dir 失敗了，但錯誤不是名稱驗證（可能是其他原因）：$($out31b.Trim())"
+  } else { Pass 'AC31/invalid-dirname-rejected' }
+} finally { Remove-Item $acc31 -Recurse -Force -EA SilentlyContinue }
 
 $probe = Join-Path $env:TEMP ("apm-pi-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $probe -Force | Out-Null
@@ -210,6 +276,21 @@ try {
   if ($LASTEXITCODE -eq 0) { Fail 'AC9' 'plugin init My_Plugin 應失敗' } else { Pass 'AC9/reject' }
   & $bin plugin init 1abc --yes 2>&1 | Out-Null
   if ($LASTEXITCODE -eq 0) { Fail 'AC36' 'plugin init 1abc（首字元非小寫字母）應失敗' } else { Pass 'AC36/first-char' }
+  # 2026-07-31 主 session mutation 自查：regex 首字元類放寬成 [a-zA-Z] 時，
+  # My_Plugin（底線）與 1abc（數字）兩探針都仍然拒絕 → 閘門假綠。補上
+  # 「大寫開頭 + 合法尾巴」與「連字號開頭」兩個恰好落在字元類邊界上的探針。
+  & $bin plugin init Abc --yes 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) { Fail 'AC36' 'plugin init Abc（大寫開頭、尾巴合法）應失敗' } else { Pass 'AC36/upper-first' }
+  # 2026-07-31 外部稽核第三輪 A-BLOCKING-1（主 session 自查確認）：這條探針
+  # 原本寫成 `plugin init -- -abc --yes`——`--` 之後的 `--yes` 也被當成位置
+  # 參數，cobra 因 `accepts at most 1 arg(s), received 2` 先失敗，於是不論
+  # 名稱驗證是否被放寬，探針都會「非 0 = 通過」，是假綠。旗標必須寫在 `--`
+  # 之前，讓 `-abc` 是唯一的位置參數，錯誤才會來自 pluginValidateName。
+  $hyphenOut = & $bin plugin init --yes -- -abc 2>&1 | Out-String
+  if ($LASTEXITCODE -eq 0) { Fail 'AC36' 'plugin init -abc（連字號開頭）應失敗' }
+  elseif ($hyphenOut -notmatch 'invalid plugin name') {
+    Fail 'AC36' "plugin init -abc 失敗了，但錯誤不是名稱驗證（可能又是 arity/旗標解析假綠）：$($hyphenOut.Trim())"
+  } else { Pass 'AC36/hyphen-first' }
   $n64 = 'a' * 64; $n65 = 'a' * 65
   & $bin plugin init $n65 --yes 2>&1 | Out-Null
   if ($LASTEXITCODE -eq 0) { Fail 'AC36' '長度 65 應被拒絕' } else { Pass 'AC36/65' }
@@ -222,7 +303,21 @@ try {
 
   # AC37: consumer 既有拒絕仍在
   & $bin init 'a/b' --yes 2>&1 | Out-Null
-  if ($LASTEXITCODE -eq 0) { Fail 'AC37' 'consumer 對 a/b 的既有拒絕消失了' } else { Pass 'AC37' }
+  if ($LASTEXITCODE -eq 0) { Fail 'AC37' 'consumer 對 a/b 的既有拒絕消失了' } else { Pass 'AC37/forward-slash' }
+  # A-BLOCKING-1（外部稽核第七輪，2026-07-31）：本閘門先前只探過 `a/b`
+  # （正斜線），從沒探過 `a\b`（反斜線）——consumerValidateName（init.go）
+  # 現況是 `strings.ContainsAny(pn, "/\\")`，兩種分隔符號都擋，但若未來
+  # 有人把它「簡化」成只驗 `strings.ContainsAny(pn, "/")`（少了反斜線），
+  # 這條閘門過去完全驗不到，因為根本沒有一個探針會用到反斜線。補上獨立探針。
+  & $bin init 'a\b' --yes 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) { Fail 'AC37' 'consumer 對 a\b（反斜線）的既有拒絕消失了' } else { Pass 'AC37/backslash' }
+  # A-BLOCKING-4（外部稽核第九輪，2026-07-31）：本檔先前只探過 a/b、a\b 兩個
+  # 分隔符號案例，從未探過 consumerValidateName 拒絕的另一半條件 `pn == ".."`
+  # 本身 -- 只靠 main_test.go:506 的既有單元測試涵蓋，本閘門測不到它是否仍被
+  # 拒絕。這裡補上端對端探針；下方另有 ExecTestJSON 對該單元測試本身做身份
+  # 鎖定。
+  & $bin init '..' --yes 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0) { Fail 'AC37' 'consumer 對 ".."（字面兩個點）的既有拒絕消失了' } else { Pass 'AC37/dotdot' }
 
   # AC10 / AC11 / AC12: 產物
   $d = Join-Path $probe 'ok-plugin'
@@ -243,11 +338,21 @@ try {
   else {
     $raw = Get-Content $pj -Raw
     $j = $raw | ConvertFrom-Json
+    # A-BLOCKING-3（外部稽核第九輪，2026-07-31）：先前只驗 license、author
+    # 是否「存在」、結尾換行與縮排，name/version/description 的實際值從未
+    # 比對過 -- 例如把三者的值互相接錯（name 寫成 description 的內容）一樣
+    # 會通過。這裡逐欄位比對成 CLI 引數（my-plugin/0.1.0）與衍生預設值
+    # （"APM project for my-plugin"）算出的期望值。author 例外：
+    # manifest.DetectAuthor() 讀本機 git config user.name，機器間不同，不能
+    # 寫死期望字串，維持既有的「存在且為 {name:...} 物件」檢查。
+    if ($j.name -ne 'my-plugin') { Fail 'AC11' "plugin.json name 應為 my-plugin，實際 $($j.name)" }
+    if ($j.version -ne '0.1.0') { Fail 'AC11' "plugin.json version 應為 0.1.0，實際 $($j.version)" }
+    if ($j.description -ne 'APM project for my-plugin') { Fail 'AC11' "plugin.json description 應為 'APM project for my-plugin'，實際 $($j.description)" }
     if ($j.license -ne 'MIT') { Fail 'AC11' "plugin.json license 應為 MIT，實際 $($j.license)" }
     if ($null -eq $j.author -or $null -eq $j.author.name) { Fail 'AC11' 'plugin.json author 應為 {name:...} 物件' }
     if (-not $raw.EndsWith("`n")) { Fail 'AC11' 'plugin.json 結尾缺換行' }
     if ($raw -notmatch '(?m)^  "name"') { Fail 'AC11' 'plugin.json 應為 2 空格縮排' }
-    if ($script:fails.Count -eq 0) { Pass 'AC11' }
+    if ($script:fails.Count -eq 0) { Pass 'AC11/e2e-fields' }
   }
 
   # AC12 反向閘門：consumer 不得產生 plugin.json / devDependencies
@@ -280,15 +385,55 @@ try {
     if ($ns -match 'install --dev') { Fail 'AC46' 'E4 未就緒卻印出跑不動的 `install --dev`（PRD 明文禁止）' } else { Write-Host "  skip [AC46] E4 未就緒；已確認未誤印" -ForegroundColor Yellow }
   }
 
+  # A-MINOR-1（外部稽核第六輪，2026-07-31）：上面 AC13/AC46 只驗「有沒有含
+  # 指定文字」，從不驗「Next steps 底下恰好是這幾行、順序如此」——多印一行
+  # (例如意外重複、或混入第三行提示) 不會被抓到，只要原本兩行還在。這裡逐行
+  # 解析「Next steps」標題之後（跳過空行）的內容，與預期的兩行做完整字串
+  # 相等比較（前提 E4 已就緒；E4 未就緒時只有 Pack as plugin 一行，已由上面
+  # 的 absence 檢查涵蓋，不重複驗證這個分支的行數）。
+  if ($devReady) {
+    $nsLines = @($ns -replace "`r", '' -split "`n")
+    $headerIdx = [Array]::IndexOf($nsLines, 'Next steps')
+    if ($headerIdx -lt 0) {
+      Fail 'AC46' "Next Steps 找不到 `Next steps` 標題行；完整輸出：$ns"
+    } else {
+      $rest = @($nsLines[($headerIdx + 1)..($nsLines.Length - 1)] | Where-Object { $_ -ne '' })
+      $wantLines = @(
+        ' i Install a dev dependency:  apm-go install --dev <owner>/<repo>',
+        ' i Pack as plugin:  apm-go pack'
+      )
+      if (($rest -join "`n") -ne ($wantLines -join "`n")) {
+        Fail 'AC46' "Next Steps 逐行內容不符：`n實際: $($rest -join ' | ')`n預期: $($wantLines -join ' | ')"
+      } else { Pass 'AC46/exact-lines' }
+    }
+  }
+
   # AC14/15/16/34/39: plugin-native 根目錄警告
   Pop-Location
   foreach ($src in @('agents','skills','commands','instructions','extensions','hooks')) {
     $w = Join-Path $probe "warn-$src"; New-Item -ItemType Directory -Path (Join-Path $w $src) -Force | Out-Null
     Push-Location $w
+    # A-BLOCKING-2（外部稽核第九輪，2026-07-31）：原本判斷「輸出同時不含
+    # 'plugin' 與 'pack' 才失敗」對 AC34 是假綠 -- plugin init 本身的成功
+    # 訊息就含 "APM plugin initialized successfully!"，Next Steps 也固定印
+    # "Pack as plugin: apm-go pack"，兩者都不必依賴這條警告就會出現，所以
+    # 把 detectPluginNativeRoot 的警告整段拿掉、只限定 consumer 模式
+    # （`!mode.plugin`）閘門仍然全線通過。改用警告訊息本身獨有的片語
+    # "plugin-native"（init.go:172 `Found plugin-native content (...)`），
+    # 與 AC15/AC16 既有的斷言用同一個唯一片語，不與正常成功輸出的任何字串
+    # 重疊。
+    # 2026-07-31 外部稽核第五輪 A-BLOCKING-1：這兩條原本只比對訊息片語，
+    # **從不檢查 exit code**——AC14 明文要求「警告不阻斷、exit 0」，若警告
+    # 分支印完訊息後 return 一個錯誤，訊息斷言照樣通過、閘門全綠，但真
+    # binary 已經 exit 1。訊息與 exit code 兩者都要驗。
     $o1 = & $bin init "w-$src" --yes --target claude 2>&1 | Out-String
-    if ($o1 -notmatch 'plugin' -and $o1 -notmatch 'pack') { Fail 'AC39' "根目錄有 $src/ 卻未印 plugin-native 警告（init）" }
+    $e1 = $LASTEXITCODE
+    if ($o1 -notmatch 'plugin-native') { Fail 'AC39' "根目錄有 $src/ 卻未印 plugin-native 警告（init）" }
+    if ($e1 -ne 0) { Fail 'AC14' "init 在 $src/ 警告情境下 exit $e1（AC14 要求警告不阻斷、exit 0）" }
     $o2 = & $bin plugin init "wp-$src" --yes --target claude 2>&1 | Out-String
-    if ($o2 -notmatch 'plugin' -and $o2 -notmatch 'pack') { Fail 'AC34' "根目錄有 $src/ 卻未印警告（plugin init）" }
+    $e2 = $LASTEXITCODE
+    if ($o2 -notmatch 'plugin-native') { Fail 'AC34' "根目錄有 $src/ 卻未印 plugin-native 警告（plugin init）" }
+    if ($e2 -ne 0) { Fail 'AC14' "plugin init 在 $src/ 警告情境下 exit $e2（AC14 要求警告不阻斷、exit 0）" }
     Pop-Location
   }
   $wj = Join-Path $probe 'warn-hooksjson'; New-Item -ItemType Directory -Path $wj -Force | Out-Null
@@ -296,6 +441,16 @@ try {
   Push-Location $wj
   $o3 = & $bin init w-hj --yes --target claude 2>&1 | Out-String
   if ($o3 -notmatch 'plugin' -and $o3 -notmatch 'pack') { Fail 'AC39' 'hooks.json 未觸發警告' }
+  # A-BLOCKING-1（外部稽核第十輪，2026-07-31）：這裡先前只驗過 `init`（consumer
+  # 模式）在「唯一來源是 hooks.json」情境下的警告，從沒驗過 `plugin init`
+  # 同一情境——兩者共用同一個 runInitCore/detectPluginNativeRoot 呼叫點，但
+  # 假設呼叫點被加上一個只排除 hooks.json-only 且 mode.plugin 的分支
+  # （例如 `if mode.plugin && len(sources) == 1 && sources[0] == "hooks.json"
+  # { sources = nil }`），這裡完全不會發現。補上 plugin init 的對照探針；
+  # 對應的 Go 單元回歸見 pluginwarn_test.go 的
+  # TestPluginInitCmd_HooksJSONOnly_StillWarns（已用同一個突變驗證過會轉紅）。
+  $o3p = & $bin plugin init wp-hj --yes --target claude 2>&1 | Out-String
+  if ($o3p -notmatch 'plugin-native') { Fail 'AC39' 'hooks.json 未觸發警告（plugin init）' }
   # AC15: 有 .apm/ 時警告消失
   New-Item -ItemType Directory -Path (Join-Path $wj '.apm') -Force | Out-Null
   $o4 = & $bin init w-hj2 --yes --target claude 2>&1 | Out-String
@@ -306,6 +461,93 @@ try {
   Pop-Location
   if ($script:fails.Count -eq 0) { Pass 'AC14/15/34/39' }
 } finally { Pop-Location -EA SilentlyContinue; Remove-Item $probe -Recurse -Force -EA SilentlyContinue }
+
+# ---- A-BLOCKING-1 身份鎖定（外部稽核第十輪，2026-07-31）----
+# 上面的 plugin init + hooks.json-only 探針只驗端對端輸出；
+# TestPluginInitCmd_HooksJSONOnly_StillWarns（pluginwarn_test.go）是唯一
+# 從 runInitCore 呼叫點層級（而非 detectPluginNativeRoot 本體）驗證這件事的
+# 單元測試，用 -requireTests 身份鎖定，防止它被改名/刪除/替換成不斷言的
+# 空測試而不被本閘門發現。
+ExecTestJSON 'A-BLOCKING-1/hooksjson-pluginmode' "go test -json -run 'TestPluginInitCmd_HooksJSONOnly_StillWarns'" './cmd/apm-go/' 'TestPluginInitCmd_HooksJSONOnly_StillWarns' -requireTests @('TestPluginInitCmd_HooksJSONOnly_StillWarns')
+
+# ---- AC11 身份鎖定（外部稽核第九輪 A-BLOCKING-3，2026-07-31）----
+# 上面 AC11/e2e-fields 只驗端對端 CLI 跑出來的一組固定引數；
+# internal/pluginjson.TestScaffold_MatchesUpstreamGolden 是唯一逐位元組比對
+# 真正上游 golden fixture（testdata/upstream-plugin-init.golden.json）的
+# 測試 -- 驗的是完整欄位順序、2 空格縮排、結尾換行同時成立，不只是值本身。
+# 用 -requireTests 身份鎖定，防止這個測試被改名/刪除/替換成同名但不比對
+# golden 的空測試而不被本閘門發現。
+ExecTestJSON 'AC11/golden' "go test -json -run 'TestScaffold_MatchesUpstreamGolden'" './internal/pluginjson/' 'TestScaffold_MatchesUpstreamGolden' -requireTests @('TestScaffold_MatchesUpstreamGolden')
+
+# ---- AC37 身份鎖定（外部稽核第九輪 A-BLOCKING-4，2026-07-31）----
+# 上面 AC37/dotdot 只驗端對端 exit code；main_test.go:506 的
+# TestInitCmd_ProjectNameWithDotDotRejected 是既有的單元測試，用
+# -requireTests 身份鎖定，防止它被改名/刪除/替換成不斷言的空測試。
+ExecTestJSON 'AC37/dotdot-unit' "go test -json -run 'TestInitCmd_ProjectNameWithDotDotRejected'" './cmd/apm-go/' 'TestInitCmd_ProjectNameWithDotDotRejected' -requireTests @('TestInitCmd_ProjectNameWithDotDotRejected')
+
+# ---- AC16（外部稽核第六輪 A-BLOCKING-1，2026-07-31）：專門的 symlink fixture
+# ---- 端對端驗證，先前只暗示透過既有測試涵蓋，這裡新增明確斷言 ----
+# 用真的 mklink（目錄用 /J junction，不需要特權；檔案用 /H hardlink，同樣
+# 不需要特權），不得因為建立失敗就靜默 skip -- 建立失敗時直接 Fail，因為這
+# 代表這個環境完全沒有驗到 AC16。
+$acc16 = Join-Path $env:TEMP ("apm-ac16-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $acc16 -Force | Out-Null
+try {
+  # (a) skills 是 junction 指到專案外真實目錄 -> 不觸發警告
+  $realSkills = Join-Path $acc16 'real-skills'; New-Item -ItemType Directory -Path $realSkills -Force | Out-Null
+  $projA = Join-Path $acc16 'proj-a'; New-Item -ItemType Directory -Path $projA -Force | Out-Null
+  $linkA = Join-Path $projA 'skills'
+  $mklinkA = & cmd /c mklink /J $linkA $realSkills 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'AC16' "無法建立 skills 的 junction 驗證 AC16（$mklinkA）"
+  } else {
+    Push-Location $projA
+    $oa = & $bin init ac16-a --yes --target claude 2>&1 | Out-String
+    $exitA = $LASTEXITCODE
+    Pop-Location
+    # A-MAJOR-1（外部稽核第十輪，2026-07-31）：這三個分支先前只驗輸出內容
+    # （match/notmatch 'plugin-native'），從未檢查 exit code -- 若 init 本身
+    # 因為其他原因失敗（例如殘留目錄衝突），輸出可能恰好不含 'plugin-native'
+    # 字串，會被誤判成「AC16 通過（正確地不觸發警告）」，但其實整個命令
+    # 已經以非 0 結束，AC16 從未被真正驗到。
+    if ($exitA -ne 0) { Fail 'AC16' "init ac16-a（skills junction 情境）exit $exitA，AC16 未被真正驗到" }
+    elseif ($oa -match 'plugin-native') { Fail 'AC16' "symlink 的 skills/（junction）不該觸發警告，實際輸出：$oa" } else { Pass 'AC16/skills-junction' }
+  }
+
+  # (b) .apm 是 junction 指到專案外真實目錄，且根目錄有 real skills/ -> 仍不觸發警告
+  $realApm = Join-Path $acc16 'real-apm'; New-Item -ItemType Directory -Path $realApm -Force | Out-Null
+  $projB = Join-Path $acc16 'proj-b'; New-Item -ItemType Directory -Path (Join-Path $projB 'skills') -Force | Out-Null
+  $linkB = Join-Path $projB '.apm'
+  $mklinkB = & cmd /c mklink /J $linkB $realApm 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'AC16' "無法建立 .apm 的 junction 驗證 AC16（$mklinkB）"
+  } else {
+    Push-Location $projB
+    $ob = & $bin init ac16-b --yes --target claude 2>&1 | Out-String
+    $exitB = $LASTEXITCODE
+    Pop-Location
+    if ($exitB -ne 0) { Fail 'AC16' "init ac16-b（.apm junction 情境）exit $exitB，AC16 未被真正驗到" }
+    elseif ($ob -match 'plugin-native') { Fail 'AC16' "symlink 的 .apm/（junction）應短路整個檢查，實際輸出：$ob" } else { Pass 'AC16/apm-junction' }
+  }
+
+  # (c) hooks.json 是 hardlink 指到專案外真實檔案 -> 仍觸發警告（A-BLOCKING-1：
+  # hooks.json 沒有 PRD 的 symlink 排除，跟 skills/ 不同）
+  $realHooks = Join-Path $acc16 'real-hooks.json'
+  '{}' | Set-Content $realHooks
+  $projC = Join-Path $acc16 'proj-c'; New-Item -ItemType Directory -Path $projC -Force | Out-Null
+  $linkC = Join-Path $projC 'hooks.json'
+  $mklinkC = & cmd /c mklink /H $linkC $realHooks 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'AC16' "無法建立 hooks.json 的 hardlink 驗證 A-BLOCKING-1（$mklinkC）"
+  } else {
+    Push-Location $projC
+    $oc = & $bin init ac16-c --yes --target claude 2>&1 | Out-String
+    $exitC = $LASTEXITCODE
+    Pop-Location
+    if ($exitC -ne 0) { Fail 'AC16' "init ac16-c（hooks.json hardlink 情境）exit $exitC（警告不該阻斷，AC14 要求 exit 0）" }
+    elseif ($oc -notmatch 'plugin-native') { Fail 'AC16' "symlink/hardlink 的 hooks.json 應觸發警告（A-BLOCKING-1），實際輸出：$oc" } else { Pass 'AC16/hooksjson-hardlink' }
+  }
+} finally { Remove-Item $acc16 -Recurse -Force -EA SilentlyContinue }
 
 # AC41: 三個互動分支「各有獨立斷言」—— 模式 9：逐一驗，不是總數 >= 3 就算
 # （總數判斷會被三個 MultiSelect 測試滿足，Form/Confirm 一個都沒有也照樣過）
@@ -327,6 +569,16 @@ if ($branchMissing.Count -gt 0) {
   }
   if ($script:fails.Count -eq $before41) { Pass 'AC41' }
 }
+
+# 2026-07-31 外部稽核第五輪 A-MAJOR-2：A-MAJOR-1（互動表單名稱驗證）的三個
+# 回歸測試只被上面那個廣泛的 `Form` pattern 涵蓋 —— 把三個測試全刪掉，既有的
+# TestPluginInitInteractive_Form_DefaultsMatchModeAndPrefill 仍然滿足 `Form`
+# pattern，AC41 照樣綠，這條修正會從閘門上完全消失。逐名身份鎖定。
+ExecTestJSON 'A-MAJOR-1/form-name-validation' "go test -json -run 'Form_(InvalidNameRejected|ConsumerName)'" './cmd/apm-go/' 'TestPluginInitInteractive_Form_InvalidNameRejected|TestInitInteractive_Form_ConsumerName' -requireTests @(
+  'TestPluginInitInteractive_Form_InvalidNameRejected',
+  'TestInitInteractive_Form_ConsumerNameStillAcceptsUnderscore',
+  'TestInitInteractive_Form_ConsumerNameRejectsPathSeparator'
+)
 
 # AC38: 互動模式下 plugin 與 consumer 的版本表單預設值「皆為」1.0.0
 # 模式 9：宣稱是「兩個模式皆」，必須兩邊各驗一次。原本 verify.ps1 完全沒有這條 ——
@@ -350,14 +602,23 @@ if ($acc.Count -gt 0) {
 # AC52: plugin init 走 clack 互動路徑，呼叫序列與 consumer init 相同（D12）
 # 這條不能只 grep 原始碼有沒有 ux.NewClack —— 那會被「有引用但沒走到」滿足。
 # 必須有一個記錄呼叫序列並比對兩模式的測試。
-$seqTests = @(& go test ./cmd/apm-go/ -list 'ClackSequence|InteractiveParity|ClackParity' 2>&1 | Where-Object { $_ -match '^Test' })
+#
+# A-MINOR-1（外部稽核第七輪，2026-07-31）：TestInitVsPluginInit_
+# ClackSequenceParity 現在活在一個 apm_test_hooks build-tag 隔離的檔案
+# （plugin_init_clacksequence_test.go）——因為它依賴的
+# ux.SetClackEventHookForTest 本身也移到同一個 tag 之後（同稽核輪的
+# A-MINOR-1 修復：release binary 不該內含這個測試專用掛勾點）。不加
+# -tags apm_test_hooks 時這條測試根本不存在於編譯單元裡（-list 零匹配，
+# 不是被跳過），所以這裡的 -list/-run 都要加上這個 tag，否則會誤判成
+# 「測試消失了」而非「測試被有意隔離」。
+$seqTests = @(& go test -tags apm_test_hooks ./cmd/apm-go/ -list 'ClackSequence|InteractiveParity|ClackParity' 2>&1 | Where-Object { $_ -match '^Test' })
 if ($seqTests.Count -eq 0) {
-  Fail 'AC52' '-list 零匹配：找不到「clack 呼叫序列 plugin init vs init 一致」的測試'
+  Fail 'AC52' '-list 零匹配（-tags apm_test_hooks）：找不到「clack 呼叫序列 plugin init vs init 一致」的測試'
 } else {
   # 2026-07-30：改用 ExecTestJSON（移植自 marketplace-add-fixes），不再只驗
   # exit code -- 原本的手動 -run + $LASTEXITCODE 檢查一樣會被「每個匹配到的
   # 測試全部 t.Skip」騙過（Go 仍回傳 exit 0），見該函式定義處註解。
-  ExecTestJSON 'AC52/test' "go test -json -run 'ClackSequence|InteractiveParity|ClackParity'" './cmd/apm-go/' 'ClackSequence|InteractiveParity|ClackParity'
+  ExecTestJSON 'AC52/test' "go test -tags apm_test_hooks -json -run 'ClackSequence|InteractiveParity|ClackParity'" './cmd/apm-go/' 'ClackSequence|InteractiveParity|ClackParity' -tags 'apm_test_hooks'
 }
 # 輔助（非充分）：pluginInitCmd 必須實際走到共用本體，不得自成一套非互動流程
 $pluginSrc = Get-ChildItem "$repo/cmd/apm-go" -Filter 'plugin*.go' -EA SilentlyContinue |
@@ -382,9 +643,40 @@ $d1 = & git diff $taskBase -- go.mod go.sum 2>&1; $d1Exit = $LASTEXITCODE
 if ($d1Exit -ne 0) {
   Fail 'AC23' "git diff $taskBase -- go.mod go.sum（exit $d1Exit）本身失敗，無法判定是否新增相依`n      $($d1 -join "``n      ")"
 } else {
-  $newReq = @($d1) | Where-Object { $_ -match '^\+\s+\S+\s+v' }
+  # 2026-07-31 外部稽核第五輪 A-MAJOR-1：舊 regex `^\+\s+\S+\s+v` 只抓
+  # require ( ... ) 區塊內「+ 後有縮排」的行——合法的單行
+  # `+require module vX` 與 go.sum 的 `+module vX h1:...` 都是 `+` 後直接
+  # 接文字，完全不匹配。B 部（marketplace-add-fixes）早已修正同一缺陷，
+  # A 部沒同步，本輪補上（三形態，與 B 部同一組判斷）。
+  $newReq = @($d1) | Where-Object {
+    $_ -match '^\+\s+\S+\s+v\d' -or          # require ( ... ) 區塊內
+    $_ -match '^\+require\s+\S+\s+v\d' -or   # 單行 require directive
+    $_ -match '^\+\S+/\S+\s+v\d.*\bh1:'      # go.sum 新增行
+  }
   if ($newReq) { Fail 'AC23' ("go.mod/go.sum 相對 task base（$taskBase）新增 require：" + ($newReq -join '; ')) } else { Pass 'AC23/no-new-deps' }
 }
+
+# ---- A-MINOR-1（外部稽核第七輪，2026-07-31）：ux.SetClackEventHookForTest
+# 改用 apm_test_hooks build tag 隔離，驗兩件事：(1) release binary（未加
+# -tags，同 AGENTS.md 記載的 build 指令）確實不含該符號；(2) 加上
+# -tags apm_test_hooks 後 AC52（TestInitVsPluginInit_ClackSequenceParity）
+# 仍然存在且通過 -- 不是被 tag 隔離之後就「消失且沒人注意到」。
+# 上面的 AC-L1/build、AC-L1/binary、AC-L1/go-test-all 已經是未加 -tags 的
+# 呼叫，proves 一般 `go build ./...`/`go test ./...` 不受影響；這裡只新增
+# tag 相關的兩項專屬檢查。
+$symbolCheck = & go tool nm $bin 2>&1
+if ($LASTEXITCODE -ne 0) {
+  Fail 'A-MINOR-1' "go tool nm `$bin 本身失敗（exit $LASTEXITCODE），無法驗證符號缺席"
+} else {
+  $hit = $symbolCheck | Select-String -Pattern 'SetClackEventHookForTest' -SimpleMatch
+  if ($hit) { Fail 'A-MINOR-1' "release binary（未加 -tags）仍含 SetClackEventHookForTest 符號：$hit" }
+  else { Pass 'A-MINOR-1/symbol-absent' }
+}
+# 反向確認：未加 -tags 時同一個測試名稱必須「不存在」（-list 零匹配），
+# 而不是存在但被跳過 -- 證明它是被排除編譯，不是靜默 skip。
+$listedSeqUntagged = @(& go test ./cmd/apm-go/ -list 'TestInitVsPluginInit_ClackSequenceParity' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listedSeqUntagged.Count -gt 0) { Fail 'A-MINOR-1' '未加 -tags apm_test_hooks 時 TestInitVsPluginInit_ClackSequenceParity 仍被 -list 列出，build tag 隔離未生效' }
+else { Pass 'A-MINOR-1/untagged-excludes-clacksequence' }
 
 # 覆蓋率：唯一檔名寫在 repo 內、驗 exit code、用完刪除。
 $cov = "$repo/apmcov-" + [guid]::NewGuid().ToString('N') + ".out"

@@ -3,7 +3,7 @@
   "name": "plugin-init",
   "title": "新增 apm-go plugin init",
   "description": "R3/R4：plugin 指令群、plugin init 六個 delta、plugin.json 產生、plugin-native 根目錄警告",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

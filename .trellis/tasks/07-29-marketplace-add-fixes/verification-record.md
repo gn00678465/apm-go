@@ -1421,3 +1421,894 @@ TIER 1 GREEN
   「每個測試是否 pass」與 `-minCount` 計數的字典，是量測正確性的關鍵
   路徑,已經改為大小寫敏感的 `Dictionary[string,string]`。
 - `task.py finish` 未執行；本輪同上，仍需外部（或使用者）覆核後才算收斂。
+
+---
+
+# Round 7（外部稽核第七輪，2026-07-31）
+
+> `trellis-implement` 修復下列本輪點名項目：B-BLOCKING-1、B-BLOCKING-2、
+> B-MAJOR-1、B-MINOR-1（本檔）；A-BLOCKING-1、A-MINOR-1 記在
+> `07-29-plugin-init/verification-record.md`。**implementer 本地跑過，
+> 尚未經外部覆核，`task.py finish` 未執行。**
+
+## B-BLOCKING-1 — 巢狀（nested/chained）junction 逃逸，SECRET-NESTED 重現
+
+根因：`resolveRealPathJunctionAware`（round 6 版本）逐一解析原始路徑的每個
+component，遇到 reparse point 就 substitute 成解析後的 target 字串，然後
+只再檢查「整個 substituted 字串」是不是 reparse point——但 Windows 對
+一個較長路徑字串（例如 `<root>/inner/pkg`）做 Lstat 時，中繼的
+`inner`（本身也是一個 junction）會被 OS 透明地在路徑解析當下直接
+follow 過去，Lstat 回傳的是最終 `pkg` 這個 component 的屬性（一個普通
+目錄，不是 reparse point）。所以「outer 是一個 junction，目標是
+`<root>/inner/pkg`，而 inner 本身又是指到 root 外的另一個 junction」
+這種巢狀情境，舊版只看得到「字面上看起來還在 root 內」，看不到 OS 真正
+會透過 inner 逃到 root 外。
+
+修復：`resolveRealPathJunctionAware` 改成 queue-based 的
+component-by-component 走法——每次把一個 reparse point 解析出 target 後，
+不是整串 substitute，而是把 target 自己的 path components 重新
+push 回同一個 pending queue，讓 target 內任何一個 intermediate
+component（例如 `inner`）在走到它的時候，享受跟原始路徑每個 component
+一模一樣的獨立 Lstat/reparse 檢查。cycle 偵測（`maxReparseResolutionHops`，
+40 hops）機制不變，一樣適用（每次 substitution 算一次 hop）。
+
+紅（暫時把 push-queue 邏輯換回 round 6 的「整串 substitute」版本）：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected -v
+    refcheck_test.go:751: ResolveLocalSourceAgainstRoot(root, ./outer) = nil error, want a rejection...
+    refcheck_test.go:791: ResolveLocalSourceAgainstRoot(root, ./a) = nil error, want a fail-closed rejection of the A->B->A cycle...
+--- FAIL: TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected (兩個子測試皆紅)
+FAIL
+```
+
+綠（還原 queue-based 修復後）：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected -v
+--- PASS: TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected (0.05s)
+    --- PASS: .../nested_junction_chain_escapes_through_an_intermediate_component (0.04s)
+    --- PASS: .../cycle_A->B->A_fails_closed (0.01s)
+PASS
+```
+
+cycle 子測試用真的目錄 symlink（不是 junction——junction 建立時必須驗證
+target 已存在，兩個 junction 互指會形成「建立第二個時，第一個指向的
+target 尚不存在」的雞生蛋問題，實測無法建立真正的 junction 循環；symlink
+沒有這個限制），對 `os.Symlink` 失敗時可見地 `t.Skip`。另用 5 秒 timeout
+的 goroutine 包裹，證明 `maxReparseResolutionHops` 真的會讓函式返回而非
+無限迴圈。
+
+端對端（`apm-go pack`）版本：`TestPack_NestedJunctionEscape_Rejected`
+（`cmd/apm-go/pack_test.go`），用與上面完全相同的巢狀 junction 結構
+（`inner`→root 外、`outer`→`<root>/inner/pkg`），fixture 描述含
+`SECRET-NESTED` 字串，斷言 `pack` 回傳 error 且 `marketplace.json`
+從未包含該字串：
+
+```
+$ go test ./cmd/apm-go/ -run TestPack_NestedJunctionEscape_Rejected -v
+--- PASS: TestPack_NestedJunctionEscape_Rejected (0.07s)
+PASS
+```
+
+## B-BLOCKING-2 — `apm.yml` 本身是 file symlink，逃逸未被攔截
+
+根因：`localApmYMLPath`（`internal/marketplace/build/metadata.go`）對
+`entry.Source` 呼叫 `authoring.ResolveLocalSourceAgainstRoot` 驗證
+**目錄**在 root 內之後，直接 `filepath.Join(packageRoot, "apm.yml")` 組出
+檔案路徑，從未對這個新增的 `apm.yml` **leaf component 本身**再做一次
+containment 檢查。若 `apm.yml` 本身是一個指到 root 外的 file symlink
+（`mklink pkg/apm.yml outside/apm.yml`），目錄本身完全合法、不觸發任何
+既有檢查，但 `os.Stat`/`readCapped`（皆 follow symlink）會讀到 root 外
+檔案的內容並塞進 `marketplace.json`。
+
+修復：`localApmYMLPath` 對 `filepath.Join(source, "apm.yml")` 再呼叫一次
+`authoring.ResolveLocalSourceAgainstRoot`（重用同一份 lexical + real
+symlink/junction-aware containment 邏輯，對 leaf file 與對目錄一視同仁，
+因為 `resolveRealPathJunctionAware` 不分辨 component 是檔案還是目錄）。
+
+紅（暫時拿掉 leaf 檢查，回到只驗目錄的版本）：
+
+```
+$ go test ./cmd/apm-go/ -run TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected -v
+    pack_test.go:651: pack succeeded, want rejection of a local package whose apm.yml leaf is a symlink escaping the project root
+--- FAIL: TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected
+FAIL
+```
+
+綠（還原修復後）：
+
+```
+$ go test ./cmd/apm-go/ -run TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected -v
+--- PASS: TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected (0.02s)
+PASS
+```
+
+file symlink 建立失敗（權限不足）時可見地 `t.Skip`，不靜默跳過。
+
+## B-MAJOR-1 — AC53 的 huh dot-import 逃逸口
+
+根因：`verify.ps1`（round 6 版本）用 regex `(?:(\w+)\s+)?"charm\.land/huh...`
+偵測 huh 的 import 別名，`\w+` 永遠配不到 Go dot import
+（`import . "charm.land/huh/v2"`）的別名 token（字面上是 `.`）；即使
+regex 修好了，dot import 之後 huh 的每個匯出名稱都變成裸呼叫（`NewForm(...)`，
+沒有任何 `huh.`/別名前綴），字串黑名單根本沒東西可比對。
+
+修復：新增 `TestMarketplaceInitCmd_NoInteractiveComponents`
+（`cmd/apm-go/ac53_interactive_gate_test.go`），改用真的 Go AST
+（`go/parser`+`go/ast`）解析 `marketplace_authoring.go`：
+1. 掃 import 宣告，對 huh 或 internal/ux 的 dot import 直接判定失敗
+   （不論有沒有實際呼叫——這種 import 本身就讓字串黑名單失效）。
+2. 對具名/別名 import，解析出實際綁定的識別字，檢查
+   `marketplaceInitCmd` 函式體（`ast.Inspect` 含巢狀函式字面值）內
+   透過該識別字的呼叫：huh 任何呼叫都算違規（huh 全部匯出都是互動元件）；
+   ux 只比對既有黑名單的特定 selector（`NewClack`/`InputText`/`Password`/
+   `MultiSelect`/`InputForm`/`Confirm`），避免誤傷 `ux.Success`/
+   `ux.BulletList` 等既有合法用法（第一版實作曾犯這個過度收緊的錯，
+   本地自查時發現並修正）。
+3. `ck`（`*ux.Clack` 慣用區域變數名）比對既有黑名單 selector
+   （`Form`/`MultiSelect`/`Confirm`/`Banner`/`Intro`/`Outro`）。
+
+`verify.ps1` 的 AC53 區塊改為呼叫這個 Go 測試（`-list` 先證明非零匹配，
+再 `ExecTestJSON` 驗證），取代原本的 regex。
+
+紅（暫時在 `marketplace_authoring.go` 加 `. "charm.land/huh/v2"` dot
+import + `var _ = NewForm`）：
+
+```
+$ go test ./cmd/apm-go/ -run TestMarketplaceInitCmd_NoInteractiveComponents -v
+    ac53_interactive_gate_test.go:119: marketplace_authoring.go dot-imports "charm.land/huh/v2" -- ...
+--- FAIL: TestMarketplaceInitCmd_NoInteractiveComponents
+FAIL
+```
+
+綠（還原後）：
+
+```
+$ go test ./cmd/apm-go/ -run TestMarketplaceInitCmd_NoInteractiveComponents -v
+--- PASS: TestMarketplaceInitCmd_NoInteractiveComponents (0.00s)
+PASS
+```
+
+## B-MINOR-1 — reparse tag 未區分 name-surrogate 與 Cloud/placeholder
+
+根因：`isJunctionOrUnknownReparsePoint`（round 6 版本）只看
+`FILE_ATTRIBUTE_REPARSE_POINT` 位元，任何 reparse point 都當成需要
+`os.Readlink` 解析；OneDrive/Cloud Files placeholder、NTFS 去重複、
+AppExecLink 等**非 name-surrogate**的 reparse point 同樣有這個屬性位元，
+但 `os.Readlink` 無法解析它們（它們根本沒有 symlink/junction 意義下的
+「target」），導致這類檔案原本會被上層 `resolveReparsePointTarget`
+判定為「無法讀取 target」而 fail-closed（拒絕）——一個把「OneDrive
+資料夾裡的普通檔案」誤判成路徑逃逸的假陽性。
+
+修復：`isJunctionOrUnknownReparsePoint`（`reparse_windows.go`）改讀
+reparse point 自己的 tag（`readReparseTag`，透過
+`FSCTL_GET_REPARSE_POINT` + `syscall.CreateFile`/`syscall.DeviceIoControl`，
+皆為標準函式庫 `syscall` 套件既有匯出、未新增任何相依），只有 Microsoft
+文件定義的 "name surrogate" 位元（`isNameSurrogateReparseTag`，
+`reparse_tags.go`，`tag & 0x20000000`）為真時才視為需要解析的 reparse
+point；讀不到 tag（DeviceIoControl 失敗等）時維持原本的 fail-closed。
+
+`isNameSurrogateReparseTag` 抽成不掛 build tag 的純函式，可跨平台測試，
+對照 Microsoft 文件的具體 tag 值：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestIsNameSurrogateReparseTag -v
+--- PASS: TestIsNameSurrogateReparseTag (0.00s)
+    --- PASS: .../IO_REPARSE_TAG_SYMLINK (true)
+    --- PASS: .../IO_REPARSE_TAG_MOUNT_POINT (true)
+    --- PASS: .../IO_REPARSE_TAG_CLOUD_(OneDrive/Cloud_Files_placeholder) (false)
+    --- PASS: .../IO_REPARSE_TAG_APPEXECLINK (false)
+    --- PASS: .../IO_REPARSE_TAG_DEDUP (false)
+PASS
+```
+
+**誠實揭露的殘留缺口**：`readReparseTag` 自己的 `DeviceIoControl` 管線
+未對一個真的 OneDrive/Cloud Files placeholder 或 AppExecLink 端對端跑過
+——建置這種 fixture 需要註冊一個 Cloud Files sync provider
+（`CfRegisterSyncRoot`），成本與新增的 syscall binding/系統註冊/清理
+遠超過這個 MINOR 級別假陽性本身（且任何 `DeviceIoControl` 失敗仍
+fail-closed，不會製造新的逃逸），未在本輪處理，理由已寫在
+`readReparseTag` 自己的 doc comment 裡。
+
+## 本輪 Tier 1 閘門輸出
+
+```
+$ go build ./...            → exit 0
+$ go vet ./...               → exit 0
+$ go vet -tags apm_test_hooks ./... → exit 0
+$ go test ./... -count=1     → 全綠（未加 tag）
+$ go test -tags apm_test_hooks ./... -count=1 → 全綠（加 tag）
+$ gofmt -l <本輪觸碰的檔案>  → 空（refcheck.go/testhooks.go 兩處既有
+  CRLF/縮排問題已用 gofmt -w 修正，僅限本輪觸碰的檔案，未動未觸碰檔案的
+  既有 gofmt 缺口，如 internal/ux/clack.go 等）
+$ git diff -- go.mod go.sum  → 空輸出（無新 require）
+```
+
+```
+$ pwsh -NoProfile -File .trellis/tasks/07-29-marketplace-add-fixes/verify.ps1
+== Tier 1: marketplace-add-fixes ==
+  ...（round 1-6 既有閘門全部 ok，含改用 AST 版的 AC53/no-clack）
+  ok   [AC53/no-clack]
+  ok   [AC53/no-block]
+  ok   [AC-L9]
+  ok   [AC-L1/coverage 86.9%]
+
+TIER 1 GREEN
+```
+
+## round 7 未處理事項
+
+- `internal/marketplace/build/builder.go:372` 的獨立 `resolveCloneURL`
+  第二份實作，其 `filepath.IsAbs` 分支同樣未套用 junction-aware
+  containment（round 4/5 已記錄的既有殘留範圍）——本輪未擴大處理，
+  未變動範圍判定的理由。
+- `readReparseTag` 對真實 Cloud Files placeholder 的端對端覆蓋缺口，見
+  B-MINOR-1 一節「誠實揭露的殘留缺口」。
+- `task.py finish` 未執行；本輪同上，仍需外部（或使用者）覆核後才算收斂。
+
+---
+
+# Round 8（外部稽核第八輪，2026-07-31）
+
+> `trellis-implement` 修復下列本輪點名項目：B-BLOCKING-1、B-BLOCKING-2、
+> B-MAJOR-1、B-MINOR-1、B-MINOR-2（本檔）。同上，implementer 本地跑過，
+> 尚未經外部覆核，`task.py finish` 未執行。
+
+## B-BLOCKING-1 — AC53 AST gate 可用套件層級 helper/var 別名繞過
+
+### 根因（讀過的程式碼位置）
+
+`cmd/apm-go/ac53_interactive_gate_test.go`（round 7 版本）的
+`TestMarketplaceInitCmd_NoInteractiveComponents` 只 `ast.Inspect` 了
+`marketplaceInitCmd` 這一個函式自己的 body。把互動呼叫搬進一個獨立的
+package-level helper function（或一個直接別名到互動 selector 的
+package-level var，如 `var f = ux.Confirm`），再由
+`marketplaceInitCmd` 只呼叫該 helper 一行，完全不需要任何別名花招就能讓
+掃描器看不到實際的互動呼叫——它文字上根本不在 `marketplaceInitCmd` 的
+body 裡。
+
+### 修復
+
+`ac53_interactive_gate_test.go` 改寫成有界（bounded）呼叫圖走訪：
+
+1. `ac53ParsePackageFiles` 解析本套件（`cmd/apm-go`）**每一個**非
+   `_test.go` 檔案（不只 `marketplace_authoring.go`），因為 helper 可能宣告
+   在任何一個檔案裡。
+2. `resolveAC53Callables` 收集：
+   - 每一個 top-level func 宣告（非 method，有 body）與每一個
+     `var NAME = func(...) {...}` 字面值，各自搭配「宣告它的那個檔案」
+     自己的 import 綁定（因為不同檔案的同名識別字可能綁定到不同 import，
+     或完全沒綁定）；
+   - 每一個 `var NAME = boundIdent.Selector` 直接別名（呼叫 `NAME(...)`
+     等同直接呼叫 `boundIdent.Selector(...)`）；
+   - `var a = b`（`b` 本身是另一個 package-level 識別字）的別名鏈，疊代
+     解到底。
+3. `ac53FindViolations` 從 `marketplaceInitCmd` 開始做 BFS：每次在函式體
+   內遇到一個透過**具名識別字**呼叫的 package-level func/var，若尚未
+   走訪過就排進佇列繼續掃描；同時沿用 round 7 既有規則（huh 任何呼叫都算
+   違規、ux 只比對既有黑名單 selector、`ck` 區域變數慣例）。
+4. Dot import 偵測維持不變（掃過**每一個**檔案，任何一個檔案對互動性套件
+   dot import 都直接判定失敗）。
+
+**誠實揭露的範圍界線**（不是「之後補」，是具體的界線）：這只解析透過
+**具名識別字**呼叫到的 package-level func/var，不做完整的 points-to
+分析——透過 struct 欄位、interface method dispatch、或另一個函式回傳值
+串接的動態間接呼叫不在此範圍內；要健全地涵蓋那些需要 `go/types`
+（比 `go/ast`+`go/parser` 大得多的相依面，且本任務全程的慣例是不為了防禦
+一個尚未具體示範過的繞法而擴大相依）。本輪關閉的是「具名 package-level
+helper／var 別名」這個**已被具體示範**的繞法。
+
+### 突變 1：同檔案 helper + var 別名（dispatch 給的原始範例）
+
+暫時在 `marketplace_authoring.go` 加入：
+
+```go
+var ac53Confirm = ux.Confirm
+
+func ac53MaybePrompt() error {
+	if !ux.CanPrompt() {
+		return nil
+	}
+	_, err := ac53Confirm("Continue?", true)
+	return err
+}
+```
+
+並在 `marketplaceInitCmd` 的 RunE 內加一行 `ac53MaybePrompt()` 呼叫。
+
+紅：
+
+```
+$ go test ./cmd/apm-go/ -run TestMarketplaceInitCmd_NoInteractiveComponents -v
+    ac53_interactive_gate_test.go:165: marketplaceInitCmd (transitively)
+    contains interactive component call(s), want none (AC53, D13):
+    ac53Confirm() [alias of github.com/apm-go/apm/internal/ux.Confirm]
+    (in ac53MaybePrompt)
+--- FAIL: TestMarketplaceInitCmd_NoInteractiveComponents
+FAIL
+```
+
+綠（還原後，`diff` 確認與原始檔案逐位元組相同）：
+
+```
+$ go test ./cmd/apm-go/ -run TestMarketplaceInitCmd_NoInteractiveComponents -v
+--- PASS: TestMarketplaceInitCmd_NoInteractiveComponents (0.01s)
+PASS
+```
+
+### 突變 2：跨檔案 helper + var 別名（證明「不只掃 marketplace_authoring.go」）
+
+新增一個獨立檔案 `cmd/apm-go/zzz_ac53_probe.go`：
+
+```go
+package main
+
+import "github.com/apm-go/apm/internal/ux"
+
+var ac53ProbeConfirm = ux.Confirm
+
+func ac53ProbeHelper() error {
+	_, err := ac53ProbeConfirm("probe", true)
+	return err
+}
+```
+
+並在 `marketplaceInitCmd` 的 RunE 內加一行 `ac53ProbeHelper()` 呼叫。
+
+紅：
+
+```
+$ go test ./cmd/apm-go/ -run TestMarketplaceInitCmd_NoInteractiveComponents -v
+    ac53_interactive_gate_test.go:165: marketplaceInitCmd (transitively)
+    contains interactive component call(s), want none (AC53, D13):
+    ac53ProbeConfirm() [alias of github.com/apm-go/apm/internal/ux.Confirm]
+    (in ac53ProbeHelper)
+--- FAIL: TestMarketplaceInitCmd_NoInteractiveComponents
+FAIL
+```
+
+綠（刪除探針檔案、還原 `marketplace_authoring.go`，`diff` 確認逐位元組
+相同後）：`--- PASS`。
+
+### 突變 3：dot import（round 7 既有回歸，確認本輪重寫未退化）
+
+暫時在 `marketplace_authoring.go` 加入 `. "charm.land/huh/v2"` dot import
+（並補一個 `var _ = NewForm` 避免因未使用而編譯失敗）：
+
+```
+$ go test ./cmd/apm-go/ -run TestMarketplaceInitCmd_NoInteractiveComponents -v
+    ac53_interactive_gate_test.go:156: main dot-imports "charm.land/huh/v2"
+    -- every exported name becomes callable with no package-qualifier
+    prefix at all, which no denylist (regex or AST) can ever positively
+    rule out; AC53 requires marketplace init to stay non-interactive (D13)
+--- FAIL: TestMarketplaceInitCmd_NoInteractiveComponents
+FAIL
+```
+
+綠（還原後，`diff` 確認逐位元組相同）：`--- PASS`。
+
+三次突變、三次還原，皆用 `diff` 逐位元組確認還原後與原始檔案完全相同，
+未殘留任何探針程式碼。
+
+---
+
+## B-BLOCKING-2 — round 7 的四支迴歸測試從未被 verify.ps1 引用
+
+### 根因
+
+`TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected`、
+`TestPack_NestedJunctionEscape_Rejected`、
+`TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected`、
+`TestIsNameSurrogateReparseTag`（round 7 新增）存在於原始碼裡，`go test
+./...`（全套件跑）會執行到並算進總體 PASS 統計，但
+`.trellis/tasks/07-29-marketplace-add-fixes/verify.ps1`（本 task 逐項
+身份鎖定的安全閘門）從未有任何一行引用過它們四個的名稱——`grep -n
+"<test name>" verify.ps1` 四個都零命中，實測確認：
+
+```
+$ grep -n "TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected\|TestPack_NestedJunctionEscape_Rejected\|TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected\|TestIsNameSurrogateReparseTag" .trellis/tasks/07-29-marketplace-add-fixes/verify.ps1
+（零輸出）
+```
+
+把任何一個刪掉、改壞、或換成 `t.Skip`，`verify.ps1` 本身仍然全綠。
+
+### 修復
+
+新增四行 `ExecTestJSON` 身份鎖定，先用 `go test -json` 確認每一個測試/
+子測試在**本次執行環境**確實回報 `Action=pass`（非 skip）：
+
+```
+$ go test ./internal/marketplace/authoring/ -json -run TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected 2>&1 | grep -E '"Action":"(pass|skip|fail)"'
+{"Action":"pass",...,"Test":"TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected/nested_junction_chain_escapes_through_an_intermediate_component"}
+{"Action":"pass",...,"Test":"TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected/cycle_A->B->A_fails_closed"}
+{"Action":"pass",...,"Test":"TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected"}
+$ go test ./cmd/apm-go/ -json -run TestPack_NestedJunctionEscape_Rejected 2>&1 | grep -E '"Action":"(pass|skip|fail)"'
+{"Action":"pass",...,"Test":"TestPack_NestedJunctionEscape_Rejected"}
+$ go test ./cmd/apm-go/ -json -run TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected 2>&1 | grep -E '"Action":"(pass|skip|fail)"'
+{"Action":"pass",...,"Test":"TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected"}
+$ go test ./internal/marketplace/authoring/ -json -run TestIsNameSurrogateReparseTag 2>&1 | grep -E '"Action":"(pass|skip|fail)"'
+{"Action":"pass",...,"Test":"TestIsNameSurrogateReparseTag/IO_REPARSE_TAG_SYMLINK"}
+{"Action":"pass",...,"Test":"TestIsNameSurrogateReparseTag/IO_REPARSE_TAG_MOUNT_POINT"}
+{"Action":"pass",...,"Test":"TestIsNameSurrogateReparseTag/IO_REPARSE_TAG_CLOUD_(OneDrive/Cloud_Files_placeholder)"}
+{"Action":"pass",...,"Test":"TestIsNameSurrogateReparseTag/IO_REPARSE_TAG_APPEXECLINK"}
+{"Action":"pass",...,"Test":"TestIsNameSurrogateReparseTag/IO_REPARSE_TAG_DEDUP"}
+{"Action":"pass",...,"Test":"TestIsNameSurrogateReparseTag"}
+```
+
+`verify.ps1` 新增（見該檔「B-BLOCKING-2」區塊）：
+
+- `B-BLOCKING-2/nested-junction-unit`：`-minCount 3`（2 子測試 + 1
+  頂層）+ `-requireTests` 鎖定頂層名稱 + `-allowSkip` 容許兩個子測試在
+  無 junction/symlink 特權的環境可見地 skip（本機兩者皆真的跑過並
+  PASS，非 skip，見上）。
+- `B-BLOCKING-2/nested-junction-e2e`：`-requireTests` 鎖定
+  `TestPack_NestedJunctionEscape_Rejected`（只用 junction，Windows 上無需
+  特權，本機實測 PASS）。
+- `B-BLOCKING-2/leaf-symlink-e2e`：`-minCount 1` + `-allowSkip`（檔案層級
+  的 file symlink 需要特權，本機實測 PASS，但其他機器可能無此特權）。
+- `B-BLOCKING-2/reparse-tag`：`-minCount 6`（5 子測試 + 1 頂層）+
+  `-requireTests` 鎖定頂層名稱（純邏輯測試，跨平台皆應 PASS）。
+
+### 關於「用 hardlink 取代 file symlink 讓 leaf 測試免特權」的評估與否決
+
+`TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected` 測的是「apm.yml
+本身是一個指到 root 外的 file symlink」是否被正確拒絕。file symlink 在
+Windows 需要 `SeCreateSymbolicLinkPrivilege`（或 Developer Mode）。曾
+評估用 Windows hardlink（`os.Link`，不需要特殊權限）取代 symlink 建立
+這個測試 fixture，**評估後否決**，理由（讀過
+`internal/marketplace/authoring/reparse_windows.go`/`refcheck.go` 的
+`isReparsePoint`/`resolveRealPathJunctionAware` 實作）：
+
+hardlink **不是** reparse point——`FILE_ATTRIBUTE_REPARSE_POINT` 屬性
+位元不會被設置，`resolveRealPathJunctionAware` 逐 component 走訪時，
+一個 hardlink 出來的檔案就是一個位於 root 內、完全普通的檔案項目（它與
+root 外某個檔案共享同一個 MFT record/inode，但這件事對「路徑解析」
+毫無影響——路徑字串本身從頭到尾都在 root 之內，沒有任何一步發生
+OS 層級的重新導向）。`isReparsePoint`/`isJunctionOrUnknownReparsePoint`
+兩者都只判斷「這是不是需要解析的 reparse point」，hardlink 永遠回答
+「不是」。若把這個測試的 fixture 從 file symlink 換成 hardlink，
+`pathWithinRoot` 從一開始就不會走到任何需要拒絕的分支——這個測試會
+**保證恆為綠燈，不論 containment 檢查本身對不對**，因為它根本沒有製造
+出「字串上在 root 內、但 OS 實際上會解析到 root 外」這個唯一需要被
+`resolveRealPathJunctionAware`/canonicalization 攔下的情境。採用它會是
+一個假閘門（詞表：「不可利用」——沒有讀過程式碼、沒有反例支持的判斷，
+本節即是那個反例：hardlink 不會觸發任何 containment 檢查分支，讀過
+`isReparsePoint`/`resolveRealPathJunctionAware` 的實作即可證實）。
+
+維持現狀：`-allowSkip` 讓這一條測試在無 file-symlink 特權的環境可見地
+skip，不偽造一個恆綠的替代測試。
+
+---
+
+## B-MAJOR-1 — Lstat 錯誤未區分「不存在」與「其他 I/O/權限錯誤」
+
+### 根因（讀過的程式碼位置）
+
+`internal/marketplace/authoring/refcheck.go`（round 7 版本）
+`longestExistingAncestor:453`（`if _, err := os.Lstat(cur); err == nil`）
+與 `resolveRealPathJunctionAware:546`（`fi, statErr := os.Lstat(candidate);
+if statErr != nil { return candidate, nil }`）都把**任何** `os.Lstat`
+失敗一律當成「這個 component 不存在」處理——包括 ACL/權限拒絕、或其他
+I/O 錯誤。一個 ACL 保護、行程沒有權限 Lstat 的 component（它自己可能
+就是需要被攔下的 reparse point）因此會被無聲地當作「不存在，沒什麼好
+解析的」放行，而不是回報「我沒辦法確認這裡到底是什麼」。
+
+### 修復
+
+兩處都改為 `errors.Is(err, fs.ErrNotExist)`：真的不存在才視為「往上層
+祖先繼續找」/「這條路徑走到這裡沒有更多東西要解析」；任何其他錯誤都
+`fail closed`（回傳 error，讓 `pathWithinRoot` 拒絕）。`longestExistingAncestor`
+簽名從 `(string)` 改為 `(string, error)`。同時把兩個函式內的
+`os.Lstat` 呼叫改成 package-level 變數 `osLstat`（初始值即
+`os.Lstat`），供測試注入假的 Lstat 行為，不需要依賴一個真的可以重現
+ACL 拒絕的環境才能驗證這個分支。
+
+### 突變/紅綠證據（fake-osLstat 單元測試，三層都個別驗證過）
+
+```
+$ go test ./internal/marketplace/authoring/ -run 'TestLongestExistingAncestor_NonNotExistLstatError_FailsClosed|TestResolveRealPathJunctionAware_NonNotExistLstatError_FailsClosed|TestPathWithinRoot_NonNotExistLstatError_FailsClosed' -v
+--- PASS: TestLongestExistingAncestor_NonNotExistLstatError_FailsClosed (0.00s)
+--- PASS: TestResolveRealPathJunctionAware_NonNotExistLstatError_FailsClosed (0.00s)
+--- PASS: TestPathWithinRoot_NonNotExistLstatError_FailsClosed (0.00s)
+PASS
+```
+
+突變 1（暫時拿掉 `longestExistingAncestor` 的 `errors.Is` 檢查，退回
+「任何錯誤都當不存在」）：
+
+```
+--- FAIL: TestLongestExistingAncestor_NonNotExistLstatError_FailsClosed
+    lstaterror_test.go:45: longestExistingAncestor(denied) returned a nil
+    error, want the injected non-ErrNotExist stat failure surfaced ...
+```
+
+（`TestPathWithinRoot_NonNotExistLstatError_FailsClosed` 這個突變下仍是
+綠——因為 `resolveRealPathJunctionAware` 自己那一層的 fail-closed 檢查
+獨立地攔住了同一個場景，是防禦縱深的證明，不是漏測；見下方突變 2 單獨
+證明 `resolveRealPathJunctionAware` 這一層自己也會被抓到。）
+
+突變 2（暫時拿掉 `resolveRealPathJunctionAware` 的 `errors.Is` 檢查）：
+
+```
+--- FAIL: TestResolveRealPathJunctionAware_NonNotExistLstatError_FailsClosed
+    lstaterror_test.go:74: resolveRealPathJunctionAware(denied) returned a
+    nil error, want the injected non-ErrNotExist stat failure to fail
+    closed ...
+--- FAIL: TestPathWithinRoot_NonNotExistLstatError_FailsClosed
+    lstaterror_test.go:101: pathWithinRoot(root, target) = true, want
+    false: a non-ErrNotExist stat error on an ancestor component must fail
+    closed ...
+```
+
+兩處分別還原後，三個測試與全套件 `go test ./internal/marketplace/authoring/...`
+皆恢復綠燈。
+
+### 真實 ACL 拒絕的端對端測試（可見地 skip）
+
+新增 `TestPathWithinRoot_RealACLDeniedComponent_FailsClosed`
+（Windows-only）：用 `icacls <dir> /deny <user>:(RA)` 對一個真實目錄下
+deny read-attributes ACE，驗證 `pathWithinRoot` 因此拒絕。本次執行環境：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestPathWithinRoot_RealACLDeniedComponent_FailsClosed -v
+--- SKIP: TestPathWithinRoot_RealACLDeniedComponent_FailsClosed (0.03s)
+    lstaterror_windows_test.go:54: SKIPPED: the icacls deny ACE had no
+    observable effect on this process's own os.Lstat (e.g. a privilege
+    level that bypasses ordinary DACL checks) -- the real-ACL-denial guard
+    is untested by this run
+PASS
+```
+
+本機以擁有者/較高權限身分執行，deny ACE 對本行程的 `os.Lstat` 沒有
+可觀察的效果（icacls 命令本身成功，但 Lstat 依然成功）——可見地
+`t.Skip`，不是靜默通過；`verify.ps1` 用 `-allowSkip` 容許，仍要求該測試
+至少被 `-list`/`-json` 觀察到（`-minCount 1`），不能悄悄零匹配。
+fake-osLstat 的三個單元測試（上方）已經在不依賴真實 ACL 環境的情況下
+完整覆蓋了這個分支的邏輯正確性。
+
+---
+
+## B-MINOR-1 — pathWithinRoot 最終比對是純字串比較，8.3/UNC/Volume-GUID
+別名可能造成誤判
+
+### 根因
+
+`pathWithinRoot`（round 7 版本）在 `resolveRealPathJunctionAware` 解析
+出 root 與 target 的「真實路徑」之後，直接用 `pathWithinRootLexical`
+（純字串 `filepath.Rel`/前綴比較）比對兩者。Windows 上同一個實體目錄
+可以有多種不同拼法（8.3 短檔名如 `C:\PROGRA~1`、
+`\\?\Volume{GUID}\...`、UNC loopback 路徑），純字串比較無法保證兩種
+拼法會比對一致。
+
+### 修復
+
+新增 `canonicalizeRealPathFn`（`canonicalize_windows.go`：透過
+`syscall.NewLazyDLL("kernel32.dll").NewProc("GetFinalPathNameByHandleW")`
+直接呼叫，**未新增任何相依**，只用標準函式庫 `syscall` 套件——與
+`reparse_windows.go` 既有的 `syscall.CreateFile`/`DeviceIoControl` 呼叫
+手法一致；`canonicalize_other.go`：非 Windows 平台為 identity no-op），
+在 `pathWithinRoot` 最終的 `pathWithinRootLexical` 比對之前，先把 root
+與 target 的「真實路徑」都各自送去 canonicalize 一次，任何 canonicalize
+失敗都 fail closed（拒絕）。
+
+### 紅/綠證據
+
+三個 fake-seam 單元測試（`canonicalize_test.go`）：
+
+```
+$ go test ./internal/marketplace/authoring/ -run 'TestPathWithinRoot_CanonicalizationFailure_FailsClosed|TestPathWithinRoot_UsesCanonicalizedPaths_NotRawStrings|TestPathWithinRoot_CanonicalizationNormalizesAliasedSpelling_StillContained' -v
+--- PASS: TestPathWithinRoot_CanonicalizationFailure_FailsClosed (0.00s)
+--- PASS: TestPathWithinRoot_UsesCanonicalizedPaths_NotRawStrings (0.00s)
+--- PASS: TestPathWithinRoot_CanonicalizationNormalizesAliasedSpelling_StillContained (0.00s)
+PASS
+```
+
+突變 1（拿掉 canonicalize 呼叫，直接比對 `realRoot`/`realExisting`）：
+
+```
+--- FAIL: TestPathWithinRoot_CanonicalizationFailure_FailsClosed
+    ...want false: a canonicalization failure must fail closed (reject) ...
+--- FAIL: TestPathWithinRoot_UsesCanonicalizedPaths_NotRawStrings
+    ...canonicalizeRealPathFn called 0 time(s), want exactly 2 ...
+```
+
+還原後兩者恢復綠燈（第三個測試在這個突變下維持綠，因為兩側都恰好在
+root 內，屬預期內的弱點——真正抓到「完全沒呼叫 canonicalize」的是第二個
+測試，見上）。
+
+真實 8.3 短檔名端對端測試（`canonicalize_windows_test.go`，透過標準函式庫
+`syscall.GetShortPathName` 取得真實短檔名別名，非用 `fsutil` 子行程）：
+
+```
+$ go test ./internal/marketplace/authoring/ -run TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained -v
+--- PASS: TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained (0.00s)
+PASS
+```
+
+本機該 volume 確實啟用 8.3 短檔名產生，測試真的用短檔名別名跑過並斷言
+`pathWithinRoot` 仍判定 contained（不是 skip）；`verify.ps1` 仍保留
+`-allowSkip` 給短檔名產生被停用的其他機器。
+
+`resolveCloneURL` 的 `filepath.IsAbs` 分支（round 4/5 已記錄的既有殘留
+範圍，`build/builder.go:372` 的獨立第二份實作亦同）本輪未變動，理由同
+round 5/7 記錄。
+
+---
+
+## B-MINOR-2 — `--category` 的 pflag Usage 字串裡一對反引號覆寫了 help metavar
+
+### 根因
+
+`cmd/apm-go/marketplace_package.go`（round 7 版本）
+`cmd.Flags().StringVar(&category, "category", "", "Package category
+(required for Codex output at `pack` time)")` 裡的一對反引號
+（`` `pack` ``）被 `pflag.UnquoteUsage` 當成 metavar 覆寫，讓 `--help`
+印出 `--category pack` 而非 `--category string`。
+
+### 紅/綠證據
+
+```
+$ ./bin/apm-go.exe marketplace package add --help | grep category   # 修復前
+      --category pack        Package category (required for Codex output at pack time)
+```
+
+修復：反引號改成單引號（與同檔 `--version`/`--tag-pattern` 既有慣例
+一致）。
+
+```
+$ ./bin/apm-go.exe marketplace package add --help | grep category   # 修復後
+      --category string      Package category (required for Codex output at 'pack' time)
+```
+
+新增 `TestMarketplacePackageAdd_CategoryFlagHelp_MetavarIsString`（直接用
+`pflag.UnquoteUsage` 讀 metavar，不比對渲染後的 help 文字，這樣測試只會
+因為反引號這個具體原因而紅，不會因為其他文字調整而誤紅）：
+
+```
+$ go test ./cmd/apm-go/ -run TestMarketplacePackageAdd_CategoryFlagHelp_MetavarIsString -v
+--- PASS: TestMarketplacePackageAdd_CategoryFlagHelp_MetavarIsString (0.00s)
+PASS
+```
+
+突變（暫時把單引號改回反引號）：
+
+```
+--- FAIL: TestMarketplacePackageAdd_CategoryFlagHelp_MetavarIsString
+    marketplace_package_test.go:1166: --category metavar = "pack", want
+    "string" (a stray backtick pair in the Usage string overrides pflag's
+    default type-derived metavar, AC47 help text)
+```
+
+還原後恢復綠燈。
+
+---
+
+## verify.ps1 新增/修正（round 8）
+
+- `B-MINOR-2`、`B-BLOCKING-2/nested-junction-unit`、
+  `B-BLOCKING-2/nested-junction-e2e`、`B-BLOCKING-2/leaf-symlink-e2e`、
+  `B-BLOCKING-2/reparse-tag`、`B-MAJOR-1/lstat-ancestor`、
+  `B-MAJOR-1/lstat-resolve`、`B-MAJOR-1/lstat-pathwithinroot`、
+  `B-MAJOR-1/lstat-real-acl`、`B-MINOR-1/canon-failclosed`、
+  `B-MINOR-1/canon-wiring`、`B-MINOR-1/canon-alias`、
+  `B-MINOR-1/canon-real8dot3` 皆為本輪新增的身份鎖定閘門。
+- **驅動發現的既有 bug（非本輪引入，附帶修正）**：`ExecTestJSON` 的
+  `$allowedSkipped` 清除迴圈（`$seen.Remove($t)`）從未被
+  `[void]`/`$null=` 吞掉回傳值——`Dictionary[string,string].Remove()`
+  回傳 `bool`，PowerShell 會把它直接印到主控台。這是本 task 全部 round
+  以來**第一次**有真正在這個環境觸發 `-allowSkip` 分支的閘門
+  （`B-MAJOR-1/lstat-real-acl`，見上），才第一次曝露這個純輸出雜訊
+  （不影響任何 PASS/FAIL 判定，`$script:fails` 從未被這個 bool 污染）；
+  已在 `verify.ps1` 加 `[void]` 修正並在該行附註記錄。
+
+---
+
+## Round 8 全套件與 Tier 1 閘門輸出
+
+```
+$ go build ./...                          → exit 0
+$ go vet ./...                            → exit 0
+$ go build -tags apm_test_hooks ./...     → exit 0
+$ go vet -tags apm_test_hooks ./...       → exit 0
+$ go test ./... -count=1                  → 全綠（未加 tag，24 個套件）
+$ go test -tags apm_test_hooks ./... -count=1 → 全綠（加 tag）
+$ gofmt -l <本輪觸碰的檔案>                → 空（refcheck.go/
+  marketplace_package_test.go 兩處既有 CRLF 問題已用 gofmt -w 修正，
+  僅限本輪觸碰的檔案，未動未觸碰檔案的既有 gofmt 缺口）
+$ git diff -- go.mod go.sum; git diff --cached -- go.mod go.sum → 皆空輸出
+```
+
+```
+$ pwsh -NoProfile -File .trellis/tasks/07-29-marketplace-add-fixes/verify.ps1
+== Tier 1: marketplace-add-fixes ==
+  ok   [AC-L1/build]
+  ok   [AC-L1/vet]
+  ok   [AC-L1/go-test-all]
+  ok   [AC-L1/binary]
+  ok   [AC47/flag]
+  ok   [AC49]
+  ok   [B-MINOR-2]
+  ok   [AC47/behavior]
+  ok   [AC50/behavior]
+  ok   [AC22]
+  ok   [AC18]
+  ok   [AC40]
+  ok   [AC21]
+  ok   [REGR-B1]
+  ok   [REGR-B2]
+  ok   [REGR-M1]
+  ok   [REGR-M2]
+  ok   [ROUND2-B1]
+  ok   [ROUND2-M1]
+  ok   [ROUND2-M2]
+  ok   [ROUND2-M3-CLI]
+  ok   [ROUND2-M3-39CHAR]
+  ok   [ROUND2-M3-SEVERITY]
+  ok   [ROUND3-B1-MANIFEST]
+  ok   [ROUND3-B1-RESOLVECLONEURL]
+  ok   [ROUND3-B2-UNIT]
+  ok   [ROUND3-B2-CLI]
+  ok   [ROUND3-MAJOR-HEADMIXEDCASE]
+  ok   [ROUND4-B3-UNIT]
+  ok   [ROUND4-B3-CLI]
+  ok   [ROUND4-MAJOR1]
+  ok   [ROUND4-MAJOR3]
+  ok   [ROUND4-MAJOR5]
+  ok   [B-BLOCKING-2/nested-junction-unit]
+  ok   [B-BLOCKING-2/nested-junction-e2e]
+  ok   [B-BLOCKING-2/leaf-symlink-e2e]
+  ok   [B-BLOCKING-2/reparse-tag]
+  ok   [B-MAJOR-1/lstat-ancestor]
+  ok   [B-MAJOR-1/lstat-resolve]
+  ok   [B-MAJOR-1/lstat-pathwithinroot]
+  note [B-MAJOR-1/lstat-real-acl] 環境限制導致以下測試可見地 skip（非本閘門失敗）: TestPathWithinRoot_RealACLDeniedComponent_FailsClosed
+  ok   [B-MAJOR-1/lstat-real-acl]
+  ok   [B-MINOR-1/canon-failclosed]
+  ok   [B-MINOR-1/canon-wiring]
+  ok   [B-MINOR-1/canon-alias]
+  ok   [B-MINOR-1/canon-real8dot3]
+  ok   [AC53/no-clack]
+  ok   [AC53/no-block]
+  ok   [AC-L9]
+  ok   [AC-L1/coverage 86.9%]
+
+TIER 1 GREEN
+```
+
+（`[void]` 修正前的第一次執行同樣 TIER 1 GREEN，唯一差異是
+`B-MAJOR-1/lstat-real-acl` 那個 `note` 行前多印了一行裸的 `True`——已在
+第二次執行確認消失，`git diff` 只改了 `verify.ps1` 這一行，未影響其他
+閘門的判定。）
+
+---
+
+## round 8 未處理事項
+
+- B-BLOCKING-1 的殘留範圍界線：透過 struct 欄位/interface method
+  dispatch/另一函式回傳值串接的動態間接呼叫不在此範圍——見該節「誠實
+  揭露的範圍界線」，成本估計（`go/types` 點對點分析）未在本輪承擔。
+- `internal/marketplace/build/builder.go:372` 的獨立 `resolveCloneURL`
+  第二份實作（round 4/5/7 已記錄的既有殘留範圍）本輪未擴大處理。
+- `readReparseTag` 對真實 Cloud Files placeholder 的端對端覆蓋缺口
+  （round 7 已記錄）本輪未處理。
+- `TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected` 與
+  `TestPathWithinRoot_RealACLDeniedComponent_FailsClosed` 在無對應
+  Windows 特權的環境仍會可見地 `t.Skip`——已用 `-allowSkip` +
+  `-minCount`/`-requireTests`（頂層名稱）雙重確保「至少被觀察到」，
+  但無法在無特權環境把這兩條規則本身跑成真的 PASS；fake-seam 單元測試
+  已在不依賴特權環境的情況下獨立覆蓋了兩者的邏輯正確性。
+  **2026-07-31 更正**：`TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected`
+  這一條已在 `verify.ps1`（外部稽核第九輪 follow-up）改為純
+  `-requireTests`，不再 `-allowSkip` 自己的精確名稱——見下方
+  B-BLOCKING-2（外部稽核第十輪）一節，`TestPathWithinRoot_
+  RealACLDeniedComponent_FailsClosed`（ACL）與
+  `TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained`（8.3）
+  兩條**仍然**保留 `-allowSkip` 自己的精確名稱，理由與證據見該節。
+- `task.py finish` 未執行；本輪同上，仍需外部（或使用者）覆核後才算
+  收斂。
+
+---
+
+## B-BLOCKING-2（外部稽核第十輪，2026-07-31）—— ACL/8.3 真實端對端測試的
+`-allowSkip` 自我豁免，是否構成 PRD:106「`t.Skip` 不算通過」的未記錄偏離
+
+### 稽核發現
+
+`verify.ps1`（本 task）第 608 行與第 647 行，`ExecTestJSON` 呼叫各自把
+被驗測試**自己的精確名稱**放進 `-allowSkip`：
+
+```
+ExecTestJSON 'B-MAJOR-1/lstat-real-acl' ... 'TestPathWithinRoot_RealACLDeniedComponent_FailsClosed' -minCount 1 -allowSkip @('TestPathWithinRoot_RealACLDeniedComponent_FailsClosed')
+ExecTestJSON 'B-MINOR-1/canon-real8dot3' ... 'TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained' -minCount 1 -allowSkip @('TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained')
+```
+
+這與 `TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected` 先前被拿掉
+`-allowSkip` 的理由（外部稽核第九輪 follow-up，見 `verify.ps1:588-596`
+註解：「等於明文允許這個唯二驗證...的安全回歸測試本身可見地 t.Skip 並
+仍視為通過...是本檔對自己文件化原則的直接違反」）是**同一個形狀**的
+豁免口，但 ACL／8.3 這兩條沒有一起被拿掉，PRD:106「`t.Skip` 不算通過」
+也沒有為這兩個具體例外留下書面記錄。
+
+### mutation 驗證（實測，非假設）
+
+把兩個測試本體暫時各自加一行 `t.Skip("mutation")`（改動僅存在於本次
+驗證過程，跑完立即用備份還原，`git diff` 對這兩個檔案最終皆為空）：
+
+```
+$ go test -run 'TestPathWithinRoot_RealACLDeniedComponent_FailsClosed' -v ./internal/marketplace/authoring/
+=== RUN   TestPathWithinRoot_RealACLDeniedComponent_FailsClosed
+    lstaterror_windows_test.go:30: mutation
+--- SKIP: TestPathWithinRoot_RealACLDeniedComponent_FailsClosed (0.00s)
+PASS
+
+$ go test -run 'TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained' -v ./internal/marketplace/authoring/
+=== RUN   TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained
+    canonicalize_windows_test.go:92: mutation
+--- SKIP: TestPathWithinRoot_Real8dot3ShortName_StillDetectedAsContained (0.00s)
+PASS
+```
+
+對照 `ExecTestJSON` 的判斷順序（`verify.ps1:70-159`）：兩個事件都是
+`Action=skip`；因為各自的 `-allowSkip` 清單裡就是它自己的精確名稱，
+兩者都會被歸進 `$allowedSkipped`（不是 `$skipped`），從 `$seen` 移除後
+「必須 pass」的檢查不會對空集合觸發，`exitCode` 仍是 0（`go test` 對
+全跳過、零 FAIL 的套件回傳 0）——**兩個 `ExecTestJSON` 呼叫在這個
+mutation 下都會回報 `ok`，不會轉紅**。與報告點名的疑慮一致：這兩條
+「規則」在把測試本體換成永久 `t.Skip` 之後不會被本檔任何一行擋下。
+
+驗證完成後已還原兩個檔案（`cp` 回 mutation 前的內容），`git status`
+確認兩個檔案相對目前工作樹無殘留變更。
+
+### 決定：保留 `-allowSkip`（與 leaf-symlink 不同），理由記錄如下
+
+與 leaf-symlink 不同，這裡**不**移除 `-allowSkip`，因為在本次實測環境
+中，這兩個真實端對端測試目前就是可見地 `t.Skip`（不是通過，也不是
+本應通過卻被本檔藏起來）：
+
+```
+$ go test -run 'TestPathWithinRoot_RealACLDeniedComponent_FailsClosed' -v ./internal/marketplace/authoring/
+    lstaterror_windows_test.go:54: SKIPPED: the icacls deny ACE had no observable effect on this process's own os.Lstat (e.g. a privilege level that bypasses ordinary DACL checks) -- the real-ACL-denial guard is untested by this run
+```
+
+若移除 `-allowSkip` 並改為 `-requireTests`（如 leaf-symlink 的修法），
+`verify.ps1` 會在**這個實測環境**立即轉紅——但紅的原因是這台機器的
+Windows 權杖繞過了一般 DACL 檢查（推測擁有
+`SeBackupPrivilege`/`SeRestorePrivilege` 或以擁有者身分執行），不是
+`pathWithinRoot`/`canonicalizeRealPath` 的 fail-closed 邏輯本身有回歸
+——該邏輯已由以下三個**不受環境影響、無 `-allowSkip`** 的 fake-seam
+單元測試獨立覆蓋（`verify.ps1:605-607`、`644-646`，皆用 `-requireTests`
+身份鎖定，無法被永久 skip 繞過）：
+
+- `TestLongestExistingAncestor_NonNotExistLstatError_FailsClosed`
+- `TestResolveRealPathJunctionAware_NonNotExistLstatError_FailsClosed`
+- `TestPathWithinRoot_NonNotExistLstatError_FailsClosed`
+- `TestPathWithinRoot_CanonicalizationFailure_FailsClosed`
+- `TestPathWithinRoot_UsesCanonicalizedPaths_NotRawStrings`
+- `TestPathWithinRoot_CanonicalizationNormalizesAliasedSpelling_StillContained`
+
+即：一個讓 ACL/8.3 邏輯真的退化（例如拿掉 `errors.Is` fail-closed 檢查、
+拿掉 canonicalize 呼叫）的突變，會被這六個身份鎖定測試之一擋下並轉紅
+（round 7/8 一節已個別展示每一個的紅/綠證據），**不依賴** ACL/8.3 這兩條
+可能永久 skip 的端對端測試。這兩條端對端測試存在的唯一目的是額外證明
+「真的接到 OS 呼叫」這一層還在（wiring），不是唯一防線。
+
+**威脅模型（若不修復會被誰利用）**：僅當（a）CI/開發環境的程序權杖繞過
+DACL 檢查（本次實測環境即是）**且**（b）有人同時移除/破壞這兩條 wiring
+測試本身**且**（c）上述六個 fail-closed 邏輯測試也一併被移除或破壞時，
+一個真正的 ACL/8.3 別名逃逸回歸才會在不被本檔任何閘門攔下的情況下漏網
+——單獨移除 (b) 不構成漏洞，因為 (c) 那六條仍會攔下邏輯層的退化。
+
+**成本估計（若要完全關閉這個殘留缺口）**：
+- ACL：需要一個不繞過 DACL 檢查的低權限 CI 執行身分（例如專用的
+  non-admin service account），或改用 `AdjustTokenPrivileges`/
+  `CreateRestrictedToken` 在測試內主動拿掉繞過用的特權後再跑 `icacls`
+  ——粗估 30-50 LOC + CI 執行身分變更，不在本輪承擔。
+- 8.3：需要一個明確停用/啟用 8.3 短檔名產生的可控 volume（`fsutil
+  8dot3name set 0/1` 需要系統管理權限且是全 volume 生效，會影響同一台
+  機器上的其他程序），或改用 `NtCreateFile`/`ObjectManager` 層級的
+  private namespace 直接建構別名——粗估同等量級，不在本輪承擔。
+
+維持現狀（保留 `-allowSkip`），本節作為 PRD:106 的書面記錄偏離，附上
+述證據三件套（file:line、威脅模型、成本估計），不再只是 `verify.ps1`
+內嵌註解裡的隱性假設。
