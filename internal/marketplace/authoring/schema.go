@@ -489,10 +489,20 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 			return nil, fmt.Errorf("marketplace.packages[%d] must be a mapping", i)
 		}
 		source := scalarString(item, "source")
-		if source != "" {
-			if err := manifest.ValidateMarketplaceSource(source); err != nil {
-				return nil, fmt.Errorf("marketplace.packages[%d]: %w", i, err)
-			}
+		// B-BLOCKING (2026-07-31): this used to only validate a non-empty
+		// source ("if source != \"\""), so an empty source skipped
+		// manifest.ValidateMarketplaceSource entirely and flowed straight
+		// through LoadAuthoringConfig/pack/Compose -- confirmed end-to-end
+		// with a compiled binary (a marketplace apm.yml with
+		// packages: [{name: ghost-pkg, source: "", ref: <40-hex>}] made
+		// `apm-go pack` succeed, only warning, and emit a malformed claude
+		// plugins[] entry missing "repo" -- see
+		// agent-schema.md's now-removed matching callout after the claude
+		// source table). ValidateMarketplaceSource already rejects "" with
+		// "marketplace source is empty" (mcp.go:301-303); running it
+		// unconditionally, like every other source, closes the gap.
+		if err := manifest.ValidateMarketplaceSource(source); err != nil {
+			return nil, fmt.Errorf("marketplace.packages[%d]: %w", i, err)
 		}
 		entries = append(entries, PackageEntry{
 			Name:              scalarString(item, "name"),

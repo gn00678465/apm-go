@@ -119,6 +119,42 @@ func TestAddPackage_VersionAndRefBothGiven_Errors(t *testing.T) {
 	}
 }
 
+// TestAddPackage_VersionGiven_RemoteSource_StillCallsListerForReachability is
+// AC20's second half (checklist.md AC20, R5.4): a --version range on a
+// *remote* source must skip ref *resolution* (proven by
+// TestMarketplacePackageAdd_VersionGiven_DoesNotWriteRef in
+// cmd/apm-go/marketplace_package_test.go) but must NOT skip the
+// verifyPackageSource reachability check -- that check still calls
+// lister.ListRefs exactly once. The CLI-level test above only proves "no
+// ref: written" against an actually-reachable fixture; it would still pass
+// even if the reachability call were deleted entirely. This test closes that
+// gap with an explicit stubLister.called assertion, directly against
+// AddPackage rather than through the CLI.
+func TestAddPackage_VersionGiven_RemoteSource_StillCallsListerForReachability(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	lister := &stubLister{}
+
+	// Act
+	_, _, err := AddPackage(dir, "owner/repo", AddOptions{Version: "^1.0.0"}, lister)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("AddPackage with --version against a reachable remote source returned error: %v", err)
+	}
+	if !lister.called {
+		t.Error("lister.ListRefs was never called: --version must still trigger verifyPackageSource's reachability check (AC20)")
+	}
+	cfg, _, lerr := LoadAuthoringConfig(dir)
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(cfg.Packages) != 1 || cfg.Packages[0].Ref != "" {
+		t.Errorf("Packages = %+v, want the new entry with no Ref (a --version range never resolves/writes a ref)", cfg.Packages)
+	}
+}
+
 func TestSetPackage_VersionAndRefBothGiven_Errors(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()

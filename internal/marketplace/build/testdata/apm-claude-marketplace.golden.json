@@ -30,6 +30,7 @@
     {
       "name": "impeccable",
       "description": "The design language that makes your AI harness better at design.",
+      "category": "Productivity",
       "version": "1.0.0",
       "tags": [
         "remote"

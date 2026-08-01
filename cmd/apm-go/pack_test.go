@@ -358,8 +358,13 @@ marketplace:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(claudeData), `"tool-a"`) || strings.Contains(string(claudeData), `"category"`) {
-		t.Errorf("claude output = %s, want tool-a present and no 'category' field", claudeData)
+	// category is now passed through to claude output too (mapper.go's
+	// ClaudePlugin.Category), matching upstream apm 0.26.0's own claude
+	// marketplace.json (eval-real-run-20260728.md:243-263) -- this used to
+	// assert the OPPOSITE (no "category" field), which was itself the mkt-052
+	// gap this fix closes; see mapper.go's ClaudePlugin.Category doc comment.
+	if !strings.Contains(string(claudeData), `"tool-a"`) || !strings.Contains(string(claudeData), `"category": "utility"`) {
+		t.Errorf("claude output = %s, want tool-a and category=utility both present", claudeData)
 	}
 	codexData, err := os.ReadFile(codexPath)
 	if err != nil {
@@ -652,6 +657,40 @@ marketplace:
 	}
 	if data, rerr := os.ReadFile(filepath.Join(dir, ".claude-plugin", "marketplace.json")); rerr == nil && strings.Contains(string(data), "SECRET-LEAF") {
 		t.Errorf("marketplace.json = %s, must never contain the escaping target's apm.yml contents", data)
+	}
+}
+
+// TestPack_EmptySourcePackage_Rejected is the CLI end-to-end regression for
+// schema.go's parsePackages fix: an empty `source: ""` package entry used to
+// skip manifest.ValidateMarketplaceSource entirely (it only ran when
+// "source != \"\""), letting `apm-go pack` succeed and silently emit a
+// malformed claude plugins[] entry (`{"source":{"source":"github","ref":...,
+// "sha":...}}`, missing "repo") -- reproduced end-to-end with a compiled
+// binary before the fix, per agent-schema.md's now-removed matching source-
+// table callout. ValidateMarketplaceSource's own dedicated message
+// ("marketplace source is empty") must now surface all the way out to pack's
+// exit code and stderr.
+func TestPack_EmptySourcePackage_Rejected(t *testing.T) {
+	chdirTemp(t)
+	writePackApmYML(t, `name: demo
+marketplace:
+  owner:
+    name: Acme
+  packages:
+    - name: ghost-pkg
+      source: ""
+      ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`)
+
+	// Act
+	out, err := runPackCmd(t)
+
+	// Assert
+	if err == nil {
+		t.Fatalf("pack succeeded, want rejection of an empty-source package entry (output: %s)", out)
+	}
+	if !strings.Contains(out, "marketplace source is empty") {
+		t.Errorf("pack output = %q, want it to contain manifest.ValidateMarketplaceSource's own %q message", out, "marketplace source is empty")
 	}
 }
 

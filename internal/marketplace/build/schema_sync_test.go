@@ -993,28 +993,21 @@ func TestSchemaGolden_CodexMarketplace_ValidatesAgainstApmSchema(t *testing.T) {
 // host, git-subdir for claude; local, url, git-subdir for codex), call the
 // REAL Compose, marshal, and schema.Validate the result.
 //
-// Known product defect candidate, NOT a precondition that's actually
-// enforced today (a Tier-5 audit correction of this comment's prior claim):
-// if a remote ResolvedPackage's SourceRepo is empty, Compose does not itself
+// If a remote ResolvedPackage's SourceRepo is empty, Compose does not itself
 // error -- it silently emits {"source":"github","repo":""} (claude) or
 // {"source":"url","url":""} (codex), which this schema then correctly
 // rejects (omitempty drops an EMPTY repo/url key entirely, landing on
 // TestSchemaReject_RemoteSourceVariants' "missing repo/url" cases). This
 // schema's stance is unchanged either way -- it describes the LEGAL output
-// shape, and rejecting this malformed one is correct regardless of where
-// the malformation originated. But the upstream guard this comment
-// previously claimed prevents an empty SourceRepo from ever reaching
-// Compose does NOT actually exist: internal/marketplace/authoring/
-// schema.go:492's parsePackages only calls manifest.ValidateMarketplaceSource
-// (:493) when `source != ""` -- an empty source: "" skips that validation
-// entirely and flows straight through LoadAuthoringConfig/pack/Compose,
-// confirmed end-to-end with a compiled binary (marketplace apm.yml with
-// packages: [{name: ghost-pkg, source: "", ref: <40-hex>}] -> `apm-go pack`
-// succeeds, only warns, and emits exactly the malformed doc described
-// above). Whether to reject empty source at the authoring load layer is a
-// product-behavior decision out of this spec/schema-only task's scope; see
-// .trellis/spec/conformance/agent-schema.md's matching callout after the
-// claude source table.
+// shape, and rejecting this malformed one is correct regardless of where the
+// malformation originated. The upstream guard that used to be missing --
+// internal/marketplace/authoring/schema.go's parsePackages only called
+// manifest.ValidateMarketplaceSource when `source != ""`, letting an empty
+// source: "" flow straight through LoadAuthoringConfig/pack/Compose -- is
+// now closed (parsePackages validates source unconditionally, the same as
+// every other value; see TestLoadAuthoringConfig_EmptySource_Rejected,
+// authoring/schema_test.go, and TestPack_EmptySourcePackage_Rejected,
+// cmd/apm-go/pack_test.go).
 func TestSchemaGolden_LiveOutput_ClaudeMarketplace(t *testing.T) {
 	cfg := &authoring.AuthoringConfig{
 		Name:                  "my-marketplace",
@@ -1127,10 +1120,11 @@ func TestSchemaGolden_LiveOutput_CodexMarketplace(t *testing.T) {
 // same Go types the schema is checked against (a coupled oracle). Verbatim
 // copy of research/eval-real-run-20260728.md:243-261 (also
 // research/agent-schema-support-matrix.md §2.1); note this upstream document
-// includes "category" on the plugin, which apm-go's own ClaudeMapper never
-// emits (mapper_test.go:561) -- see apm-claude-marketplace.schema.json's
-// $defs.plugin.properties.category (optional, schema-only) and this file's
-// TestSchemaDrift_GoTypesMatchSchemaProperties/ClaudePlugin whitelist.
+// includes "category" on the plugin, which apm-go's own ClaudeMapper now
+// also emits (mapper.go's ClaudePlugin.Category,
+// TestClaudeMapper_Output_CategoryPassedThrough_NoAPMOnlyFieldsInJSON) --
+// see apm-claude-marketplace.schema.json's $defs.plugin.properties.category
+// (a required Go field like any other now, not schema-only).
 func TestSchemaGolden_UpstreamClaudeMarketplace_ValidatesAgainstApmSchema(t *testing.T) {
 	schema := compileApmSchema(t, "testdata/apm-claude-marketplace.schema.json")
 	if err := validateJSONFile(t, schema, "testdata/upstream-claude-marketplace.golden.json"); err != nil {
@@ -1760,20 +1754,21 @@ func TestSchemaDrift_RemoteSourceBranchExactDiscriminatorEnum(t *testing.T) {
 // against an earlier version of this test (which only compared the UNION of
 // every case's schemaOnlyAllowed against a flat set) showed that a union
 // comparison is blind to the field moving to the WRONG case -- e.g. adding
-// an unrelated optional "category" to ClaudeOwner's schema and copying the
-// same whitelist entry onto the ClaudeOwner driftCase would leave the union
-// unchanged and still green. Keying by case name and asserting the whole map
-// equals this literal closes that hole: only ClaudePlugin may ever have
-// schemaOnlyAllowed, and only with value ["category"]. Widening this
-// (a genuinely new schema-only field, on any case) requires updating this
-// map, the relevant driftCase's schemaOnlyAllowed, the schema file's
-// property (with a rationale comment), and .trellis/spec/conformance/
-// agent-schema.md's matching field row together -- and getting that
-// widening ruled on, the same way "category" was (see agent-schema.md's
-// "已知的 schema-only 白名單" note).
-var wantSchemaOnlyAllowed = map[string][]string{
-	"ClaudePlugin": {"category"},
-}
+// an unrelated optional field to ClaudeOwner's schema and copying an
+// existing whitelist entry onto the ClaudeOwner driftCase would leave the
+// union unchanged and still green. Keying by case name and asserting the
+// whole map equals this literal closes that hole.
+//
+// Empty today: ClaudePlugin's prior sole entry ("category") was retired once
+// ClaudePlugin.Category (mapper.go) started actually emitting it -- it is no
+// longer schema-only, it round-trips through the Go type like every other
+// field (see mapper.go's ClaudePlugin.Category doc comment for why the
+// pre-existing entry here was a real gap, not a considered exception). A
+// genuinely new schema-only field (should one ever be needed again) requires
+// updating this map, the relevant driftCase's schemaOnlyAllowed, the schema
+// file's property (with a rationale comment), and .trellis/spec/conformance/
+// agent-schema.md's matching field row together.
+var wantSchemaOnlyAllowed = map[string][]string{}
 
 // wantGoOnlyAllowed is wantSchemaOnlyAllowed's mirror image: the EXACT,
 // case-by-case map of which driftCase is allowed to have GO-only fields
@@ -1820,10 +1815,10 @@ func TestSchemaDrift_GoTypesMatchSchemaProperties(t *testing.T) {
 		schemaFile string
 		path       []string
 		// schemaOnlyAllowed lists property names intentionally declared in
-		// the schema but NOT present in the Go type's json tags. Only
-		// ClaudePlugin (for "category") may ever set this -- see
-		// wantSchemaOnlyAllowed, asserted below via exact case-by-case
-		// mapping (not a flat union, per this file's Tier-2 audit fix).
+		// the schema but NOT present in the Go type's json tags. No case
+		// currently sets this -- see wantSchemaOnlyAllowed, asserted below
+		// via exact case-by-case mapping (not a flat union, per this file's
+		// Tier-2 audit fix).
 		schemaOnlyAllowed []string
 		// goOnlyAllowed is schemaOnlyAllowed's mirror: property names
 		// intentionally present in the Go type's json tags but NOT declared
@@ -1843,8 +1838,7 @@ func TestSchemaDrift_GoTypesMatchSchemaProperties(t *testing.T) {
 		{name: "ClaudeOwner", goType: reflect.TypeOf(ClaudeOwner{}), schemaFile: "testdata/apm-claude-marketplace.schema.json", path: []string{"$defs", "owner"}},
 		{
 			name: "ClaudePlugin", goType: reflect.TypeOf(ClaudePlugin{}), schemaFile: "testdata/apm-claude-marketplace.schema.json", path: []string{"$defs", "plugin"},
-			schemaOnlyAllowed: []string{"category"},
-			typeCheckSkip:     map[string]string{"source": "oneOf: plain string (local package path) or an object (RemoteSource, itself further oneOf-variant) -- see composeClaudePlugin's IsLocal branch (mapper.go:176-192) / composeRemoteSource (mapper.go:214-244)"},
+			typeCheckSkip: map[string]string{"source": "oneOf: plain string (local package path) or an object (RemoteSource, itself further oneOf-variant) -- see composeClaudePlugin's IsLocal branch (mapper.go:176-192) / composeRemoteSource (mapper.go:214-244)"},
 		},
 		{name: "RemoteSource(claude)", goType: reflect.TypeOf(RemoteSource{}), schemaFile: "testdata/apm-claude-marketplace.schema.json", path: []string{"$defs", "remoteSource"}},
 		{name: "CodexDocument", goType: reflect.TypeOf(CodexDocument{}), schemaFile: "testdata/apm-codex-marketplace.schema.json"},

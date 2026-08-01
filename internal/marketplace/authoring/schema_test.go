@@ -278,6 +278,35 @@ func TestLoadAuthoringConfig_SourceValidation_ReusesManifestValidator(t *testing
 	}
 }
 
+// TestLoadAuthoringConfig_EmptySource_Rejected closes a gap this file's
+// TestLoadAuthoringConfig_SourceValidation_ReusesManifestValidator table
+// never actually covered: parsePackages (schema.go) used to only call
+// manifest.ValidateMarketplaceSource when "source != \"\"", so a package
+// entry with an explicit empty source string skipped validation entirely --
+// confirmed end-to-end with a compiled binary (`apm-go pack` succeeded, only
+// warning, and emitted a malformed claude plugins[] entry missing "repo";
+// see agent-schema.md's matching source-table callout). Fixed by validating
+// source unconditionally, the same way every other value is -- manifest.
+// ValidateMarketplaceSource already rejects "" with its own dedicated
+// "marketplace source is empty" message (mcp.go:301-303).
+func TestLoadAuthoringConfig_EmptySource_Rejected(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: Acme\n  packages:\n    - name: ghost-pkg\n      source: \"\"\n      ref: "+strings.Repeat("a", 40)+"\n")
+
+	// Act
+	_, _, err := LoadAuthoringConfig(dir)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected an empty source to be rejected, got nil error")
+	}
+	if !strings.Contains(err.Error(), "marketplace source is empty") {
+		t.Errorf("error = %q, want it to contain manifest.ValidateMarketplaceSource's own %q message", err.Error(), "marketplace source is empty")
+	}
+}
+
 func TestLoadAuthoringConfig_SourceValidation_AcceptsValidShapes(t *testing.T) {
 	tests := []string{
 		"./packages/foo",

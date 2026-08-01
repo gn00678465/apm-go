@@ -86,7 +86,7 @@ plugin.json 生態，但沒有 marketplace 輸出；`opencode`/`antigravity` 只
 | `tags` | array[string] | 選填（`omitempty`） | 省略 | `output_mappers.py:53-223`（`pkg.tags` 非空才出；design.md:89；`pkg.Tags`） |
 | `homepage` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:53-223`（僅本地套件且 curator 條目有才出；design.md:90） |
 | `source` | string 或 object | 必填 | - | `output_mappers.py:150-201`（source 合成，design.md:93-98 逐規則對照；local 為純字串；remote 為下方 source 表的物件） |
-| `category` | string | 選填（schema-only，見下方說明） | 省略 | **上游會輸出、apm-go 刻意不輸出**：見下方「已知的 schema-only 白名單」 |
+| `category` | string | 選填（`omitempty`） | 省略 | `eval-real-run-20260728.md:263`（上游 claude 輸出會帶 `category`，雖然只有 codex 才強制要求）；curator 條目有才出，逐字透傳 `entry.Category`，不經 curator-wins 優先序（沒有「remote apm.yml 提供 category」的概念）；`mapper.go:52-75` |
 
 > **`additionalProperties` 例外（`author`）**：`apm-claude-marketplace.schema.json` 的
 > `$defs.plugin.properties.author` 宣告 `{"type":"object","additionalProperties":{"type":"string"}}`，
@@ -95,21 +95,14 @@ plugin.json 生態，但沒有 marketplace 輸出；`opencode`/`antigravity` 只
 > `ClaudePlugin.Author` 的 Go 型別是 `map[string]string`（`mapper.go:56`），沒有固定欄位名集合，
 > 只能用「值必須是 string」這種約束（`additionalProperties:{"type":"string"}`）取代「已知欄位 + 全關」。
 
-> ⚠️ **與上游的刻意差異：`category`**。上游 apm 0.26.0 的 claude 輸出**會**帶 `category`
-> （`eval-real-run-20260728.md:263`：「`category` 在 claude 輸出裡也會被帶出（雖然只有 codex 才強制要求）」，
-> 逐字產物見 `eval-real-run-20260728.md:243-261` 與本檔對應的
-> `internal/marketplace/build/testdata/upstream-claude-marketplace.golden.json`）。
-> 但 apm-go 的 `ClaudePlugin`（`mapper.go:52-62`）**不含** `category` 欄位——這是刻意對齊 Go 版本的行為，
-> 由 `internal/marketplace/build/mapper_test.go:561` 的 `TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON`
-> 鎖定（斷言輸出 JSON 絕不含 `category`/`tagPattern`/`include_prerelease`/`build`），mkt-052 修訂版的既有裁定。
->
-> **已知的 schema-only 白名單**：因為 AS4 要求「把上游實跑產物餵進 schema 要 validate 通過」，而上游產物確實
-> 帶 `category`，`apm-claude-marketplace.schema.json` 的 `$defs.plugin.properties` 因此把 `category` 宣告為
-> **optional**——這是本檔唯一一個「schema 有、Go 型別故意沒有」的欄位，不是漂移，是刻意的相容窗口。
-> `internal/marketplace/build/schema_sync_test.go` 的 `TestSchemaDrift_GoTypesMatchSchemaProperties` 用一個
-> 顯式白名單 `{"category"}` 承認這個例外，並額外斷言白名單裡的欄位**不得**出現在 `ClaudePlugin` 的 json tag
-> 裡——如果日後 Go 型別真的加了 `category`，這條反向斷言會轉紅，提醒維護者把白名單那一條移除
-> （因為屆時它就不再是「schema-only」了）。除了 `category`，schema 與 Go 型別的欄位集合仍要求完全相等。
+> **修訂記錄（2026-07-31）**：本欄位曾記載「上游會輸出、apm-go 刻意不輸出」的刻意差異，並在
+> `apm-claude-marketplace.schema.json` 留一個 schema-only 白名單例外（`ClaudePlugin` 的 Go json tag
+> 故意不含 `category`，`schema_sync_test.go` 的 `wantSchemaOnlyAllowed` 承認這個缺口）。覆核後認定這不是
+> 一個有權衡記錄的設計選擇，而是相對上游的真缺口（`mapper_test.go` 的舊測試
+> `TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON` 直接斷言輸出絕不含 `category`，卻沒有任何 file:line
+> 記錄「為什麼不輸出」的理由）——已修正：`ClaudePlugin.Category`（`mapper.go:52-75`）現在會從
+> `entry.Category` 逐字透傳，`wantSchemaOnlyAllowed` 的白名單例外已移除，schema 與 Go 型別的欄位集合現在
+> 完全相等（不再有例外）。
 
 ### source（`RemoteSource`, `mapper.go:72`；local 套件時 `source` 是純字串，不進這張表）
 
@@ -126,39 +119,16 @@ plugin.json 生態，但沒有 marketplace 輸出；`opencode`/`antigravity` 只
 | `ref` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:150-201`（規則 5，design.md:98；已知時附加） |
 | `sha` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:150-201`（規則 5，design.md:98；已知時附加） |
 
-> ⚠️ **空 `source` 目前不會被上游驗證層擋下——這是已知產品缺陷候選，不是「已知前置條件」**：
-> 主 session 已用實際編譯的 `bin/apm-go.exe` 端到端重現：對一份 marketplace `apm.yml` 塞入
-> `packages: [{name: ghost-pkg, source: "", ref: <40 碼 hex>}]`，`apm-go pack` **成功**（只印警告，
-> 不報錯），claude 輸出產生
-> `{"name":"ghost-pkg","source":{"source":"github","ref":"aaa…","sha":"aaa…"}}`——缺 `repo`，本
-> schema 正確拒絕這個形狀（`required` 規則擋下，等同 `TestSchemaReject_RemoteSourceVariants` 的
-> 「缺 repo」案例）。
->
-> 根因：`internal/marketplace/authoring/schema.go:492` 的 `parsePackages` 只在
-> `source != ""` 時才呼叫 `manifest.ValidateMarketplaceSource`（:493）——空字串 `source` **完全跳過**
-> 這條驗證，直接進入 `PackageEntry`，一路通過 `LoadAuthoringConfig` 與 `pack` 到 `Compose`，
-> 產出上述缺 `repo` 的畸形 entry。
->
-> **本 schema 的立場不變**：它描述的是「合法輸出」的形狀，用 `required` 擋下這個畸形 entry
-> 是刻意且正確的行為——schema 不需要、也不應該去容忍上游驗證層的漏洞。
-> **是否要在載入層（`authoring/schema.go`）拒絕空 `source`，屬產品行為裁定，不在本 task
-> （spec/schema-only）範圍內**，由使用者裁定並記入 task 的 verification-record。
->
-> **成本估計**（codex round-7 MAJOR-1 要求，claim-evidence-guide 的「時序」句型）：
-> 修法本身是 `internal/marketplace/authoring/schema.go:492` 拿掉 `source != ""` 這個條件、
-> 讓 `manifest.ValidateMarketplaceSource`（`internal/manifest/mcp.go:300-303`）對空字串無條件執行——
-> 該函式本身**已經**對空字串回傳 `"marketplace source is empty"`（`mcp.go:301-303`），
-> 所以修法確實只有 1 行（拿掉 `if` 判斷式，讓呼叫變成無條件）。回歸風險：對
-> `internal/marketplace/authoring/` 與 `internal/marketplace/resolver_test.go` 全文 grep
-> `Source:\s*""` 只找到一處（`resolver_test.go:45`），但那是 `MarketplacePlugin.Source`
-> （marketplace 內部 plugin 相對路徑解析，`resolver.go` 的完全不同程式碼路徑），
-> 不經過 `parsePackages`/`ValidateMarketplaceSource`——`authoring` 套件本身沒有任何既有測試
-> 依賴「空字串跳過驗證」這個行為（同一 grep 對 `internal/marketplace/authoring/` 零匹配）。
-> 估計總成本：1 行產品碼 + 1 個新測試（斷言空 `source` 現在回錯誤，約 10–15 行）+
-> 不需要調整既有測試。**成本很小，但仍是產品行為變更**（會讓現在「成功但印警告」的
-> `apm-go pack` 呼叫改為直接失敗），且與 `07-29-marketplace-add-fixes` 已交付範圍有時序
-> 重疊風險（同一驗證函式的呼叫慣例），因此仍由使用者裁定是否併入、以及併入哪個 task，
-> 不在本 task（spec/schema-only）自行變更產品碼。
+> **修訂記錄（2026-07-31）**：空 `source` 曾經不會被驗證層擋下（`internal/marketplace/authoring/
+> schema.go` 的 `parsePackages` 只在 `source != ""` 時才呼叫
+> `manifest.ValidateMarketplaceSource`，空字串完全跳過驗證，一路通過 `LoadAuthoringConfig` 與
+> `pack` 到 `Compose`，產出缺 `repo` 的畸形 claude plugins[] entry；本 schema 當時仍正確拒絕這個
+> 畸形形狀，`required` 規則擋下，等同 `TestSchemaReject_RemoteSourceVariants` 的「缺 repo」案例，
+> 但載入層本身沒有及早失敗）。已修正：`parsePackages` 現在對 `source` 無條件呼叫
+> `ValidateMarketplaceSource`（與其他任何值一致），該函式本身對空字串回傳
+> `"marketplace source is empty"`（`mcp.go:301-303`）。驗證：
+> `TestLoadAuthoringConfig_EmptySource_Rejected`（`internal/marketplace/authoring/schema_test.go`）、
+> `TestPack_EmptySourcePackage_Rejected`（`cmd/apm-go/pack_test.go`，CLI 端對端）。
 
 ---
 
@@ -315,7 +285,7 @@ apm-go **刻意照做對齊**（不「修正」它），因為 codex 端本來�
 
 | 產物家族 | schema 檔 | golden（正向） | 對應 Go 型別 | SHA-256（schema 檔原始 bytes） |
 |---|---|---|---|---|
-| Claude marketplace.json | `internal/marketplace/build/testdata/apm-claude-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-claude-marketplace.golden.json` | `ClaudeDocument`/`ClaudeOwner`/`ClaudePlugin`/`RemoteSource` | `511457e2a6ff8a932931f1c80bc8139977d64133219c206af153fbfa408807b0` |
+| Claude marketplace.json | `internal/marketplace/build/testdata/apm-claude-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-claude-marketplace.golden.json` | `ClaudeDocument`/`ClaudeOwner`/`ClaudePlugin`/`RemoteSource` | `7f4be09142edeb21dd35cb21f94a8d2583b7e0e852e27b2e937faeab1d07ece1` |
 | Codex marketplace.json | `internal/marketplace/build/testdata/apm-codex-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-codex-marketplace.golden.json` | `CodexDocument`/`CodexInterface`/`CodexPlugin`/`CodexPolicy`/`CodexLocalSource`/`RemoteSource` | `842586b03b7c9ad4284e0d7feb4d57211719253ab67d491275531ef7c5dacc62` |
 | plugin.json（claude） | `internal/pack/bundle/testdata/apm-plugin-claude.schema.json` | `internal/pack/bundle/testdata/apm-plugin-claude.golden.json` | `PluginManifest`/`Author` | `3d815c47be218a51e53c473e441ddc60ab8109bbc7ebae1a16bc2858fde28e35` |
 | plugin.json（copilot） | `internal/pack/bundle/testdata/apm-plugin-copilot.schema.json` | `internal/pack/bundle/testdata/apm-plugin-copilot.golden.json` | `PluginManifest`/`Author`（`mcpServers` 恆不出現） | `45970197c017188fd995154a36c9ca9d8620abcbee42d376c028c3cd3161f3ef` |

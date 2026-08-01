@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://apm-go.dev/schemas/apm-claude-marketplace.schema.json",
   "title": "apm-go Claude marketplace.json (.claude-plugin/marketplace.json)",
-  "description": "Self-authored schema for apm-go's own ClaudeMapper output (internal/marketplace/build/mapper.go). This is NOT the upstream Claude Code marketplace.json schema (that informational copy lives at testdata/claude-code-marketplace.schema.json) -- it describes exactly the field subset apm-go actually emits, plus one schema-only field: plugins[].category. Upstream apm 0.26.0 DOES emit category in its claude marketplace.json (see testdata/upstream-claude-marketplace.golden.json, verbatim from research/eval-real-run-20260728.md:243-261), but apm-go's own ClaudeMapper deliberately never emits it (mapper_test.go:561's TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON, mkt-052 修訂版's ruling) -- category is declared here as optional purely so this schema can still validate real upstream artifacts per AS4; it is intentionally absent from ClaudePlugin's Go json tags, and schema_sync_test.go's drift check special-cases exactly this one field via an explicit whitelist rather than requiring it to round-trip through the Go type. remoteSource is split into per-variant oneOf branches (github / url / git-subdir) whose required fields are read directly off composeRemoteSource (mapper.go:214-244): github always sets repo, url and git-subdir always set url, and git-subdir additionally always sets path.",
+  "description": "Self-authored schema for apm-go's own ClaudeMapper output (internal/marketplace/build/mapper.go). This is NOT the upstream Claude Code marketplace.json schema (that informational copy lives at testdata/claude-code-marketplace.schema.json) -- it describes exactly the field subset apm-go actually emits. Upstream apm 0.26.0 emits category in its claude marketplace.json (see testdata/upstream-claude-marketplace.golden.json, verbatim from research/eval-real-run-20260728.md:243-261), and apm-go's own ClaudeMapper now emits it too (ClaudePlugin.Category, mapper.go), populated from the curator's marketplace.packages[].category entry -- optional here (not required) since, unlike Codex output, Claude output does not mandate it. remoteSource is split into per-variant oneOf branches (github / url / git-subdir) whose required fields are read directly off composeRemoteSource (mapper.go:214-244): github always sets repo, url and git-subdir always set url, and git-subdir additionally always sets path.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -54,7 +54,7 @@
         },
         "category": {
           "type": "string",
-          "description": "Upstream apm 0.26.0 emits this; apm-go's ClaudeMapper deliberately never does (mapper_test.go:561, mkt-052 修訂版 ruling). Declared here only so this schema validates real upstream artifacts (AS4) -- schema-only, not part of ClaudePlugin's Go json tags; see schema_sync_test.go's explicit whitelist."
+          "description": "Curator-declared plugin category, passed through from marketplace.packages[].category (ClaudePlugin.Category, mapper.go). Optional for Claude output (unlike Codex, which requires it via CategoryRequiredError)."
         }
       },
       "required": ["name", "source"]

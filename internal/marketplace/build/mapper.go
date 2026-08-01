@@ -3,8 +3,10 @@
 // authoring block, internal/marketplace/authoring.AuthoringConfig) and
 // resolved (builder.go's ResolvePackages output) into the exact field
 // shape the upstream Claude Code marketplace.json schema subset expects,
-// with every APM-only field (build/tagPattern/include_prerelease/category)
-// stripped and no semver range ever leaking into an output "version".
+// with every APM-only field (build/tagPattern/include_prerelease) stripped
+// -- category is a curator-declared field upstream ALSO emits for claude
+// (see ClaudePlugin's own doc comment), so it is passed through, not
+// stripped -- and no semver range ever leaking into an output "version".
 //
 // Ported field-by-field from Python apm's output_mappers.py
 // (ClaudeMarketplaceMapper.compose, lines 53-223) -- see design.md's
@@ -50,15 +52,32 @@ type ClaudeOwner struct {
 // a *RemoteSource (a remote package's structured source dict) -- mirroring
 // the Python original's Union[str, dict] "source" value.
 type ClaudePlugin struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	Version     string            `json:"version,omitempty"`
-	Author      map[string]string `json:"author,omitempty"`
-	License     string            `json:"license,omitempty"`
-	Repository  string            `json:"repository,omitempty"`
-	Tags        []string          `json:"tags,omitempty"`
-	Homepage    string            `json:"homepage,omitempty"`
-	Source      any               `json:"source"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Category mirrors upstream apm 0.26.0's claude marketplace.json output
+	// (eval-real-run-20260728.md:243-263: "category 在 claude 輸出裡也會被帶
+	// 出（雖然只有 codex 才強制要求）", corroborated verbatim by
+	// testdata/upstream-claude-marketplace.golden.json, which places it
+	// exactly here -- immediately after "description", before "source" --
+	// the only real upstream example on file, so this is the strongest
+	// available evidence for its position). This field used to be
+	// deliberately omitted here (mkt-052 修訂版's prior ruling, tracked by
+	// this file's own now-updated file-header comment and
+	// mapper_test.go's TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON) --
+	// that was a real gap relative to upstream, not a considered design
+	// choice with a documented tradeoff; see agent-schema.md's now-removed
+	// "與上游的刻意差異：category" callout for the corrected record. Emitting
+	// it here also retires apm-claude-marketplace.schema.json's "category is
+	// schema-only" whitelist exception (schema_sync_test.go's
+	// wantSchemaOnlyAllowed).
+	Category   string            `json:"category,omitempty"`
+	Version    string            `json:"version,omitempty"`
+	Author     map[string]string `json:"author,omitempty"`
+	License    string            `json:"license,omitempty"`
+	Repository string            `json:"repository,omitempty"`
+	Tags       []string          `json:"tags,omitempty"`
+	Homepage   string            `json:"homepage,omitempty"`
+	Source     any               `json:"source"`
 }
 
 // RemoteSource is a remote package's structured plugin.source dict
@@ -127,7 +146,7 @@ func (ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedP
 // plugin-level field table.
 func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string) (ClaudePlugin, string, error) {
 	entry := pkg.Entry
-	plugin := ClaudePlugin{Name: entry.Name}
+	plugin := ClaudePlugin{Name: entry.Name, Category: entry.Category}
 
 	// description/version: for a remote package, pkg.RemoteDescription/
 	// RemoteVersion are already the final curator-wins-resolved values

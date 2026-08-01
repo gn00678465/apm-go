@@ -90,6 +90,23 @@ func canonicalizeRealPath(path string) (string, error) {
 	}
 	defer syscall.CloseHandle(h)
 
+	return canonicalPathFromHandle(path, h)
+}
+
+// canonicalPathFromHandle resolves an ALREADY-OPEN Windows handle h to its
+// canonical "final path" via GetFinalPathNameByHandleW, retrying with
+// VOLUME_NAME_GUID on the specific ERROR_PATH_NOT_FOUND failure mode a
+// missing drive letter produces (see canonicalizeRealPath's own doc comment
+// above for the full rationale). pathLabel is used only for error messages
+// -- it need not be h's own open path (openwithinroot_windows.go's
+// canonicalFilePath passes an already-open *os.File's Name() here, having
+// never itself called CreateFile). Shared by canonicalizeRealPath (which
+// opens its own, fresh handle to path) and openwithinroot_windows.go's
+// canonicalFilePath (which reuses an ALREADY-OPEN *os.File's own handle,
+// rather than opening a second one -- reusing the same handle, not a fresh
+// path-based CreateFile call, is the whole point of that call site: see
+// OpenLocalFileWithinRoot's doc comment, openwithinroot.go).
+func canonicalPathFromHandle(pathLabel string, h syscall.Handle) (string, error) {
 	result, callErr := getFinalPathNameByHandleFn(h, finalPathNameFlags)
 	if callErr != nil {
 		// B-MAJOR-1 (round 9): only retry with VOLUME_NAME_GUID for the
@@ -99,11 +116,11 @@ func canonicalizeRealPath(path string) (string, error) {
 		// matching this function's existing convention of never guessing
 		// past an error it cannot positively explain.
 		if !errors.Is(callErr, syscall.ERROR_PATH_NOT_FOUND) {
-			return "", fmt.Errorf("canonicalize %q: GetFinalPathNameByHandleW: %w", path, callErr)
+			return "", fmt.Errorf("canonicalize %q: GetFinalPathNameByHandleW: %w", pathLabel, callErr)
 		}
 		result, callErr = getFinalPathNameByHandleFn(h, volumeNameGUIDFlag)
 		if callErr != nil {
-			return "", fmt.Errorf("canonicalize %q: GetFinalPathNameByHandleW (VOLUME_NAME_GUID fallback): %w", path, callErr)
+			return "", fmt.Errorf("canonicalize %q: GetFinalPathNameByHandleW (VOLUME_NAME_GUID fallback): %w", pathLabel, callErr)
 		}
 	}
 

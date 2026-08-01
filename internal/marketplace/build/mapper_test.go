@@ -556,9 +556,18 @@ func TestClaudeMapper_Plugin_Homepage_OnlyEmittedForLocalPackage(t *testing.T) {
 	}
 }
 
-// ── no APM-only / Codex-only fields leak into the Claude JSON output ─────
+// ── category is passed through; other APM-only fields never leak ────────
 
-func TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON(t *testing.T) {
+// TestClaudeMapper_Output_CategoryPassedThrough_NoAPMOnlyFieldsInJSON
+// replaces the old TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON:
+// upstream apm 0.26.0's claude marketplace.json output DOES include
+// "category" (eval-real-run-20260728.md:243-263,
+// testdata/upstream-claude-marketplace.golden.json) -- treating it as
+// forbidden here was itself the mkt-052 gap this change closes (see
+// ClaudePlugin's own doc comment, mapper.go). tagPattern/include_prerelease/
+// build remain genuinely APM-only (upstream has no equivalent field at all)
+// and must still never leak.
+func TestClaudeMapper_Output_CategoryPassedThrough_NoAPMOnlyFieldsInJSON(t *testing.T) {
 	// Arrange
 	cfg := &authoring.AuthoringConfig{
 		Name:  "m",
@@ -586,8 +595,16 @@ func TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON(t *testing.T) {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
 
-	// Assert
-	for _, forbidden := range []string{"category", "tagPattern", "tag_pattern", "include_prerelease", "\"build\""} {
+	// Assert: category is now emitted, with the curator's declared value.
+	if doc.Plugins[0].Category != "Productivity" {
+		t.Errorf("Plugins[0].Category = %q, want %q", doc.Plugins[0].Category, "Productivity")
+	}
+	if !strings.Contains(string(raw), `"category":"Productivity"`) {
+		t.Errorf("output JSON missing \"category\":\"Productivity\": %s", raw)
+	}
+
+	// Assert: every genuinely APM/Codex-only field still never leaks.
+	for _, forbidden := range []string{"tagPattern", "tag_pattern", "include_prerelease", "\"build\""} {
 		if strings.Contains(string(raw), forbidden) {
 			t.Errorf("output JSON contains forbidden APM/Codex-only field %q: %s", forbidden, raw)
 		}
