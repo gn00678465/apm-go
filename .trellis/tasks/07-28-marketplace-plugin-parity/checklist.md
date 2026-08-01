@@ -60,13 +60,13 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### targets 單複數（prd.md:242-248）
 
-- [ ] AC1 — `apm-go init --yes` 產生的 apm.yml 使用複數 `targets:`
+- [x] AC1 — `apm-go init --yes` 產生的 apm.yml 使用複數 `targets:`
       · 驗法：暫存目錄跑 `..\bin\apm-go.exe init proj1 --yes --target claude`，
       `Select-String '^target' proj1\apm.yml`
       · 通過條件：只匹配 `targets:`，`target:`（單數）零匹配
       · 來源：prd.md:244（AC1）
 
-- [ ] AC2 — 對只有單數 `target:` 的既有 apm.yml 跑互動式 `apm-go init`，MultiSelect
+- [x] AC2 — 對只有單數 `target:` 的既有 apm.yml 跑互動式 `apm-go init`，MultiSelect
       預選狀態含該檔案原有的 targets
       · 驗法：Go 測試，stub `stdinIsTTY`/`stderrIsTTY` 為 true、stub `multiSelectWith`
       記錄收到的 `opts`；`t.TempDir()` 內寫入 `target: [claude]`（單數）的 apm.yml，
@@ -75,12 +75,12 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 通過條件：`opts` 中 `Value=="claude"` 的項目 `Selected==true`
       · 來源：prd.md:245-246（AC2）；design.md §8
 
-- [ ] AC3 — 對只有複數 `targets:` 的既有 apm.yml 做 AC2 同樣的事，結果相同
+- [x] AC3 — 對只有複數 `targets:` 的既有 apm.yml 做 AC2 同樣的事，結果相同
       · 驗法：同 AC2，改用 `targets:\n  - claude`
       · 通過條件：同 AC2
       · 來源：prd.md:247（AC3）
 
-- [ ] AC4 — `apm-go install` 的 no-deploy-target 錯誤輸出中出現 `targets:`，不出現單數示例
+- [x] AC4 — `apm-go install` 的 no-deploy-target 錯誤輸出中出現 `targets:`，不出現單數示例
       · 驗法：暫存空目錄（無 apm.yml）跑 `..\bin\apm-go.exe install owner/repo`，
       讀 stderr（對應 `install.go:820-834` 的 `errNoDeployTarget()`）
       · 通過條件：輸出含 `targets:`（複數），不含裸 `target:`（單數）範例行
@@ -88,21 +88,21 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### init 產物形狀（prd.md:250-258）
 
-- [ ] AC5 — `apm-go init --yes --target claude,codex,opencode` 的 apm.yml 鍵序為
+- [x] AC5 — `apm-go init --yes --target claude,codex,opencode` 的 apm.yml 鍵序為
       `name, version, description, author, targets, dependencies, includes, scripts`
       · 驗法：暫存目錄跑該指令，`Select-String -Pattern '^[a-z]' proj5\apm.yml`
       （只看頂層鍵）
       · 通過條件：8 個頂層鍵依序完全相符
       · 來源：prd.md:252-253（AC5）
 
-- [ ] AC6 — `targets:` 上方三行註解，第三行為
+- [x] AC6 — `targets:` 上方三行註解，第三行為
       `agent-skills, antigravity, claude, codex, copilot, opencode`
       · 驗法：`Get-Content proj5\apm.yml | Select-String -Context 3,0 '^targets:'`
       · 通過條件：三行逐字相符（比對 prd.md:254-255 逐字，不重複貼字避免與 prd.md
       失步）
       · 來源：prd.md:254-255（AC6）
 
-- [ ] AC7 — 未指定 target 時，輸出逐字為三行說明註解 + `# targets:` + `#   - claude`
+- [x] AC7 — 未指定 target 時，輸出逐字為三行說明註解 + `# targets:` + `#   - claude`
       的五行骨架
       · 驗法：暫存空目錄（無任何 harness marker）跑
       `..\bin\apm-go.exe init proj7 --yes`，讀 apm.yml
@@ -112,37 +112,37 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### plugin init（prd.md:260-276）
 
-- [ ] AC8 — `apm-go plugin init --help` 恰好列出 `--yes/-y`、`--target`、
+- [x] AC8 — `apm-go plugin init --help` 恰好列出 `--yes/-y`、`--target`、
       `--verbose/-v` 三個自訂旗標
       · 驗法：`..\bin\apm-go.exe plugin init --help`
       · 通過條件：Flags 區塊（不計 `-h`）恰 3 項，名稱/別名逐字相符
       · 來源：prd.md:262-263（AC8）
 
-- [ ] AC9 — `apm-go plugin init My_Plugin` 非零 exit；`apm-go plugin init my-plugin` exit 0
+- [x] AC9 — `apm-go plugin init My_Plugin` 非零 exit；`apm-go plugin init my-plugin` exit 0
       · 驗法：`..\bin\apm-go.exe plugin init My_Plugin; $LASTEXITCODE`；同法測
       `my-plugin`
       · 通過條件：前者非 0，後者為 0
       · 來源：prd.md:264-265（AC9）
 
-- [ ] AC10 — `apm-go plugin init p1 --yes` 的 apm.yml 含 `version: 0.1.0` 與
+- [x] AC10 — `apm-go plugin init p1 --yes` 的 apm.yml 含 `version: 0.1.0` 與
       `devDependencies: {apm: []}`，`devDependencies` 位於 `includes` 與 `scripts` 之間
       · 驗法：暫存目錄跑該指令，讀 apm.yml
       · 通過條件：兩個字串逐字存在；`devDependencies:` 行號介於 `includes:`/`scripts:` 之間
       · 來源：prd.md:266-267（AC10）
 
-- [ ] AC11 — 同次執行於專案根產生 `plugin.json`，含 `license:"MIT"`、2 空格縮排、結尾換行
+- [x] AC11 — 同次執行於專案根產生 `plugin.json`，含 `license:"MIT"`、2 空格縮排、結尾換行
       · 驗法：`Get-Content -Raw p1\plugin.json`，逐欄比對
       `research/eval-real-run-20260728.md` §D3 的上游產物
       · 通過條件：鍵序/內容逐欄相符；最後一個字元為 `\n`
       · 來源：prd.md:268-269（AC11）
 
-- [ ] AC12 — `apm-go init --yes` 的 apm.yml 不含 `devDependencies`，且不產生 `plugin.json`
+- [x] AC12 — `apm-go init --yes` 的 apm.yml 不含 `devDependencies`，且不產生 `plugin.json`
       · 驗法：暫存目錄跑 `..\bin\apm-go.exe init c1 --yes`
       · 通過條件：`Select-String devDependencies c1\apm.yml` 零匹配；
       `Test-Path c1\plugin.json` 為 `False`
       · 來源：prd.md:270-271（AC12）
 
-- [ ] AC13 — plugin 版 Next Steps 逐字含 `Pack as plugin:` + `apm-go pack` 一行，
+- [x] AC13 — plugin 版 Next Steps 逐字含 `Pack as plugin:` + `apm-go pack` 一行，
       且不含 consumer 版的 `Install a package:  apm-go install <owner>/<repo>`
       · 驗法：暫存目錄跑 `..\bin\apm-go.exe plugin init p13 --yes`，讀 stdout/stderr
       · 通過條件：**逐字**一行相符（不是「輸出任意處含 apm-go pack」）；consumer 提示不存在；
@@ -151,17 +151,17 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### plugin-native 警告（prd.md:278-285）
 
-- [ ] AC14 — 含 `skills/` 且無 `.apm/` 的目錄跑 `apm-go init --yes`，輸出含警告且 exit 0
+- [x] AC14 — 含 `skills/` 且無 `.apm/` 的目錄跑 `apm-go init --yes`，輸出含警告且 exit 0
       · 驗法：`$env:TEMP` 下建暫存目錄、`mkdir skills`，`..\..\bin\apm-go.exe init --yes; $LASTEXITCODE`
       · 通過條件：exit 0；stderr 含 skills 會被 `apm-go pack` 收錄的警告
       · 來源：prd.md:280-281（AC14）
 
-- [ ] AC15 — 同目錄建 `.apm/` 後重跑，警告消失
+- [x] AC15 — 同目錄建 `.apm/` 後重跑，警告消失
       · 驗法：延續 AC14 目錄，`mkdir .apm`，重跑 `--yes --force`
       · 通過條件：stderr 不含 AC14 警告文字
       · 來源：prd.md:282（AC15）
 
-- [ ] AC16 — `skills` 是 symlink 時不觸發警告
+- [x] AC16 — `skills` 是 symlink 時不觸發警告
       · 驗法：`New-Item -ItemType SymbolicLink -Path skills -Target realdir`
       （若當前環境無權限建立，測試 `t.Skip` 並寫明原因）之後跑 init
       · 通過條件：無警告輸出；**且該測試必須在至少一個平台上真的執行、真的斷言過才能打勾
@@ -170,14 +170,14 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### package add HEAD 解析（prd.md:287-303，硬性驗收用 Go 測試 + RefLister 替身，見上方慣例 5）
 
-- [ ] AC17 — 無 ref/version 旗標時解析後的 SHA 寫入 `ref:`
+- [x] AC17 — 無 ref/version 旗標時解析後的 SHA 寫入 `ref:`
       · 驗法：Go 測試，`AddPackage(dir, "owner/repo", AddOptions{}, mapRefLister{refs:
       []semver.TagInfo{{Name:"HEAD", Commit:"<40-hex 假 SHA>"}}})`（`t.TempDir()` 內先
       寫最小 `marketplace:` 區塊的 apm.yml）
       · 通過條件：寫回的 entry 含 `ref:` 且等於該假 SHA
       · 來源：prd.md:289-290（AC17）；design.md §6
 
-- [ ] AC18 — 同上情境加 `--no-verify` 時，exit 2 + 訊息
+- [x] AC18 — 同上情境加 `--no-verify` 時，exit 2 + 訊息
       `Cannot resolve HEAD ref without network access. Provide an explicit --ref SHA.`
       · 驗法：CLI 級，暫存目錄先跑（不加 `--no-verify` 的）`marketplace init`/手寫
       apm.yml，跑 `..\bin\apm-go.exe marketplace package add owner/repo --no-verify`
@@ -186,13 +186,13 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 通過條件：stderr 逐字含上述訊息；`$LASTEXITCODE` 為 2
       · 來源：prd.md:291-296（AC18，已加驗收紀律）
 
-- [ ] AC19 — 顯式 `--ref HEAD` 額外印 mutable-ref 警告後照常解析
+- [x] AC19 — 顯式 `--ref HEAD` 額外印 mutable-ref 警告後照常解析
       · 驗法：Go 測試同 AC17，`AddOptions{Ref:"HEAD"}` + `mapRefLister`
       · 通過條件：warning 輸出含 `'HEAD' is a mutable ref. Resolving to current SHA for
       safety.`；entry 仍正常寫入解析後 SHA
       · 來源：prd.md:297（AC19）
 
-- [ ] AC20 — `--version '^1.0.0'` 時不寫 `ref:`（更正：不是「不觸網」——reachability
+- [x] AC20 — `--version '^1.0.0'` 時不寫 `ref:`（更正：不是「不觸網」——reachability
       仍會在 `_verify_source`/`verifyPackageSource` 階段觸網，除非另加 `--no-verify`）
       · 驗法：Go 測試，`AddOptions{Version:"^1.0.0"}` + `mapRefLister`（**額外斷言**：
       這個測試替身要能記錄「是否被呼叫」，用來證明 `verifyPackageSource` 的 lister
@@ -202,8 +202,25 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       （除非另外加 `--no-verify`，那種情況才不呼叫）
       · 來源：prd.md:298-301（AC20，已更正——原「不觸網」的錯誤說法已改，驗法也已
       補上「reachability 仍觸網」這個斷言，不只是改了文字說明）
+      · **2026-08-01 check agent 獨立複驗（fresh context）發現的缺口與自我修正**：
+      逐檔核對後，`cmd/apm-go/marketplace_package_test.go:1089`
+      （`TestMarketplacePackageAdd_VersionGiven_DoesNotWriteRef`，唯一標註 AC20 的
+      既有測試）只斷言「無 `ref:` 鍵」，**沒有**斷言 `ListRefs` 被呼叫過——它用
+      `fixtureRemoteLister`（真的對本地 git fixture 跑 `git ls-remote`）而非會計數的
+      test double，若把 `verifyPackageSource` 裡的 `lister.ListRefs(source)` 呼叫整段
+      刪掉，這條既有測試仍會通過（因為刪掉呼叫不影響「有沒有寫 ref:」這件事）。
+      已讀 `internal/marketplace/authoring/editor.go:335-347`（`verifyPackageSource`）
+      確認原始碼行為本身是對的（非 local 來源、`noVerify=false` 時無條件呼叫
+      `lister.ListRefs`），但缺一個能抓到「呼叫被誤刪」這種回歸的測試。已自我修補：
+      新增 `internal/marketplace/authoring/editor_test.go` 的
+      `TestAddPackage_VersionGiven_RemoteSource_StillCallsListerForReachability`
+      （用既有的 `stubLister{}`，斷言 `lister.called == true` 且 entry 無 `ref:`），
+      `go test ./internal/marketplace/authoring/... -run
+      TestAddPackage_VersionGiven_RemoteSource_StillCallsListerForReachability -v`
+      已跑過並 PASS；補測試後重跑 `go build ./cmd/apm-go`、`go vet ./...`、
+      `go test ./...` 全部仍是 PASS（無回歸）。
 
-- [ ] AC21 — local（`./...`）source 在上述所有情境皆不觸網
+- [x] AC21 — local（`./...`）source 在上述所有情境皆不觸網
       · 驗法：`go test ./internal/marketplace/authoring/... -list
       'TestAddPackage_LocalSource_NoFlags_NeverTouchesNetwork'` 先確認匹配非空
       （現況已存在，見 `editor_test.go:20`），再 `-run` 該名稱
@@ -212,13 +229,13 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### 其他（prd.md:305-314）
 
-- [ ] AC22 — `apm-go marketplace audit <未註冊名稱>` 錯誤訊息含註冊指令與
+- [x] AC22 — `apm-go marketplace audit <未註冊名稱>` 錯誤訊息含註冊指令與
       `marketplace list` 提示
       · 驗法：暫存目錄跑 `..\bin\apm-go.exe marketplace audit definitely-not-registered`
       · 通過條件：訊息含 `marketplace add` 與 `marketplace list` 兩個子字串
       · 來源：prd.md:307-308（AC22）
 
-- [ ] AC23 — `plugin init` 互動路徑（Form/MultiSelect/Confirm）有測試覆蓋，且未新增
+- [x] AC23 — `plugin init` 互動路徑（Form/MultiSelect/Confirm）有測試覆蓋，且未新增
       `go.mod` 相依
       · 驗法：先 `go test ./cmd/apm-go/... -list 'TestPlugin.*Interactive'`（或實際命名）
       確認匹配非空，再 `-run`；`go.mod`/`go.sum` 檢查同時看 `git diff main...HEAD --
@@ -230,12 +247,12 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### target 集合一致性（prd.md:316-332）
 
-- [ ] AC24 — `apm-go init --target agent-skills` 成功
+- [x] AC24 — `apm-go init --target agent-skills` 成功
       · 驗法：暫存目錄 `..\bin\apm-go.exe init a1 --yes --target agent-skills; $LASTEXITCODE`
       · 通過條件：exit 0；apm.yml 的 `targets:` 含 `agent-skills`
       · 來源：prd.md:318（AC24）
 
-- [ ] AC25 — 存在測試斷言 `SupportedTargets`、`adapterTargets`、**init 互動選單實際使用
+- [x] AC25 — 存在測試斷言 `SupportedTargets`、`adapterTargets`、**init 互動選單實際使用
       的選項清單**三者同集合，任一方漂移即轉紅
       · 驗法：**測試必須位於 `cmd/apm-go` 套件**（選單 opts 組裝處），不是
       `internal/manifest`——只跑後者會漏掉選單那一半，這是 codex 阻斷 4 點名的錯誤
@@ -244,7 +261,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 通過條件：測試存在、位於正確 package、PASS
       · 來源：prd.md:319-325（AC25，已加驗收紀律：package 位置）
 
-- [ ] AC26 — AC6 的註解清單與 `SupportedTargets` 同源，非獨立字面量
+- [x] AC26 — AC6 的註解清單與 `SupportedTargets` 同源，非獨立字面量
       · 驗法：**行為測試，不是 grep**——測試中暫時替換來源切片（或直接呼叫 comment
       builder 函式）注入一個假 target，斷言輸出的註解字串跟著變。不接受「grep 不到完整
       字面量」當通過條件：清單若被拆成數個字面量再由 helper 拼接，完整字串 grep 仍是
@@ -252,7 +269,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 通過條件：注入假 target 後，斷言輸出的 Accepted values 行含該假 target
       · 來源：prd.md:326-330（AC26，已修正為行為測試）
 
-- [ ] AC27 — `CanonicalTargets` 未被更動，`targets: [cursor]` 仍解析成功並產生 req-tg-004
+- [x] AC27 — `CanonicalTargets` 未被更動，`targets: [cursor]` 仍解析成功並產生 req-tg-004
       warning
       · 驗法：暫存目錄寫 `targets:\n  - cursor` 的 apm.yml，跑
       `..\bin\apm-go.exe install`（或任何呼叫 `ParseManifest` 的子指令）
@@ -263,7 +280,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### 覆蓋率補洞（prd.md:334-349）
 
-- [ ] AC29 — 只有單數 `target: claude` 的既有 apm.yml，端對端跑 `install` 仍能正確部署，
+- [x] AC29 — 只有單數 `target: claude` 的既有 apm.yml，端對端跑 `install` 仍能正確部署，
       跑 `pack` 仍能正確打包（**更正驗法，見下**：`pack` 不是部署指令，通過條件分開判定）
       · 驗法：暫存目錄的 apm.yml 除了 `target: claude`（單數）外，**額外加一個可離線
       解析的本地依賴**（`dependencies:\n  apm:\n    - ./pkgs/demo`，`pkgs/demo` 內放
@@ -274,44 +291,64 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       「部署」判準）；`pack` exit 0 且產生 bundle 輸出（`pack` 的判準是「打包成功」，
       不是「部署」——兩者不可混為一談）
       · 來源：prd.md:339-341（AC29，驗法已依 codex 重大發現 5 修正）
+      · **2026-08-01 check agent 獨立複驗（fresh context）發現的驗法本身缺陷**：
+      本檔指定的單一 fixture（`target: claude` 單數 + `dependencies.apm: [./pkgs/demo]`
+      本地依賴）拿去跑 `pack` 時，**必定**失敗——已用暫存目錄實測，
+      `bin\apm-go.exe pack` 對含本地路徑依賴的 apm.yml 回傳
+      `Error: cannot pack -- apm.yml contains a local path dependency. Local
+      dependencies are for development only. Replace them with remote
+      references...`，exit 1。這是既有、與本 task 無關的產品規則
+      （`cmd/apm-go/pack.go` 對本地路徑依賴的既有檢查），不是「單數 target: 解析」
+      本身的缺陷；驗法把「觀察部署的本地依賴」與「pack 必須成功」綁進同一個
+      fixture 造成自相矛盾，是 checklist 本身的設計缺陷。**已改用兩個獨立 fixture
+      分別驗證同一個問題（R1.4/C4：雙鍵解析不得在部署鏈與 pack 鏈上被改壞）**：
+      (1) install：`target: claude`（單數）+ 本地依賴，`bin\apm-go.exe install`
+      exit 0，`.claude/skills/x/SKILL.md` 確實落地（已讀檔案系統確認存在）；
+      (2) pack：另一個暫存目錄用 `apm-go plugin init` 產生的 apm.yml 手動把
+      `targets:` 改成 `target:`（單數），加 plugin-native `skills/` 目錄（非本地依賴），
+      `bin\apm-go.exe pack` exit 0，並產生 `.claude-plugin/plugin.json`
+      （已讀檔案內容確認）。兩者合起來證明單數 `target:` 鍵在 install 部署鏈與
+      pack 鏈上都沒有被改壞，覆蓋了 R1.4/C4 的核心疑慮；唯一未達成的是「同一份
+      apm.yml 同時通過 install 與 pack」這個字面要求，因為該要求與既有的
+      local-path-dependency-blocks-pack 規則互斥，屬於檢核設計問題而非程式碼缺陷。
 
-- [ ] AC30 — `apm-go plugin --help` 只列出 `init` 一個子指令
+- [x] AC30 — `apm-go plugin --help` 只列出 `init` 一個子指令
       · 驗法：`..\bin\apm-go.exe plugin --help`（Commands 區塊）
       · 通過條件：恰列 1 個子指令 `init`
       · 來源：prd.md:342（AC30）
 
-- [ ] AC31 — `apm-go plugin init --yes`（不給 PROJECT-NAME）在當前目錄成功初始化，
+- [x] AC31 — `apm-go plugin init --yes`（不給 PROJECT-NAME）在當前目錄成功初始化，
       名稱取自目錄名並過 kebab-case
       · 驗法：`$env:TEMP` 下建立名為 `my-plugin`（已符合 kebab-case）的暫存目錄，
       `Push-Location` 進去跑 `..\..\bin\apm-go.exe plugin init --yes`（不傳位置參數）
       · 通過條件：exit 0；apm.yml 的 `name:` 為 `my-plugin`
       · 來源：prd.md:343-344（AC31，已補完整 fixture 路徑，不用 placeholder）
 
-- [ ] AC32 — `apm-go init My_Project --yes`（consumer）仍然成功
+- [x] AC32 — `apm-go init My_Project --yes`（consumer）仍然成功
       · 驗法：暫存目錄 `..\bin\apm-go.exe init My_Project --yes; $LASTEXITCODE`
       · 通過條件：exit 0；apm.yml 的 `name:` 為 `My_Project`（未被 kebab-case 規則
       拒絕/改寫）
       · 來源：prd.md:345-346（AC32）
 
-- [ ] AC33 — `apm-go init --help` 不含 `--verbose`/`-v`
+- [x] AC33 — `apm-go init --help` 不含 `--verbose`/`-v`
       · 驗法：`..\bin\apm-go.exe init --help`
       · 通過條件：Flags 區塊不含 `-v`/`--verbose`
       · 來源：prd.md:347（AC33）
 
-- [ ] AC34 — 含 `skills/` 且無 `.apm/` 的目錄跑 `apm-go plugin init`，同樣印警告
+- [x] AC34 — 含 `skills/` 且無 `.apm/` 的目錄跑 `apm-go plugin init`，同樣印警告
       · 驗法：同 AC14 fixture，改跑 `..\..\bin\apm-go.exe plugin init demo --yes`
       · 通過條件：exit 0；stderr 含與 AC14 相同警告
       · 來源：prd.md:348-349（AC34）
 
 ### codex 稽核補洞（prd.md:351-366，對應 `review/codex-audit-checklist.md` 阻斷 3）
 
-- [ ] AC36 — kebab-case 邊界：首字元非小寫字母（`1abc`）拒絕；長度 64 通過、65 拒絕
+- [x] AC36 — kebab-case 邊界：首字元非小寫字母（`1abc`）拒絕；長度 64 通過、65 拒絕
       · 驗法：Go 測試表驅動 `validateName`（plugin 模式），三個案例各自斷言
       · 通過條件：`1abc` 非 nil error；63 字元後綴組成的 64 長度字串成功；65 長度字串
       非 nil error
       · 來源：prd.md:355-356（AC36，新——彌補 AC9 只測底線的邊界缺口）
 
-- [ ] AC37 — consumer `apm-go init` 對 `a/b`、`a\b`、`..` 的**既有拒絕仍存在**
+- [x] AC37 — consumer `apm-go init` 對 `a/b`、`a\b`、`..` 的**既有拒絕仍存在**
       · 驗法：暫存目錄分別跑 `..\bin\apm-go.exe init "a/b"`、`init "a\b"`、
       `init ".."`，各自讀 `$LASTEXITCODE`（現況規則見 `cmd/apm-go/init.go:37`
       `strings.ContainsAny(pn, "/\\") || pn == ".."`，已讀過）
@@ -319,14 +356,14 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       consumer 的既有規則改鬆或改沒
       · 來源：prd.md:357-358（AC37，新）
 
-- [ ] AC38 — 互動模式（非 `--yes`）下 plugin 與 consumer 的版本表單預設值皆為 `1.0.0`
+- [x] AC38 — 互動模式（非 `--yes`）下 plugin 與 consumer 的版本表單預設值皆為 `1.0.0`
       · 驗法：用慣例 5 同款的 ux seam（stub TTY + `inputFormWith`），分別對 consumer
       `initCmd()` 與 plugin `pluginInitCmd()` 走互動路徑，斷言傳給表單的 `version`
       欄位 `Default` 為 `"1.0.0"`
       · 通過條件：兩個模式都是 `1.0.0`（不是 plugin 也變成 `0.1.0`）
       · 來源：prd.md:359-360（AC38，新——彌補 AC10 只測 `--yes` 的 `0.1.0`）
 
-- [ ] AC39 — plugin-native 警告對 `agents/ commands/ instructions/ extensions/ hooks/`
+- [x] AC39 — plugin-native 警告對 `agents/ commands/ instructions/ extensions/ hooks/`
       與 `hooks.json` 逐一都觸發，不只 `skills/`
       · 驗法：Go 測試表驅動 `pluginRootSources`，六個案例各自建一個只含該 marker
       的暫存目錄（`t.TempDir()`），逐一斷言回傳非空
@@ -334,14 +371,14 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       全過，這是 codex 阻斷 3 點名的 R4.2 缺口
       · 來源：prd.md:361-362（AC39，新）
 
-- [ ] AC40 — `resolveRef` 每個分支各有測試：隱含 HEAD、顯式 HEAD、`--version`、
+- [x] AC40 — `resolveRef` 每個分支各有測試：隱含 HEAD、顯式 HEAD、`--version`、
       `--no-verify`、40-hex SHA、local source
       · 驗法：Go 測試表驅動，六個案例各自用 `mapRefLister`/`stubLister`/`panicLister`
       （local 案例用 `panicLister` 證明不觸網），對 `resolveRef` 或 `AddPackage` 直接呼叫
       · 通過條件：六個分支各自有獨立斷言（不是 AC21 那樣只測 local+零旗標一種情境）
       · 來源：prd.md:363-364（AC40，新——彌補 AC21 單一情境的 R5.5 缺口）
 
-- [ ] AC41 — 互動路徑測試逐一命中 `Form`、`MultiSelect`、`Confirm` 三個分支，各自獨立斷言
+- [x] AC41 — 互動路徑測試逐一命中 `Form`、`MultiSelect`、`Confirm` 三個分支，各自獨立斷言
       · 驗法：三個獨立測試（或同一測試內三個獨立子斷言），分別驅動
       `inputFormWith`（Form）、`multiSelectWith`（MultiSelect）、`confirmWith`（Confirm）
       被呼叫且收到預期參數
@@ -351,14 +388,14 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### install --dev（prd.md:368-378，R9）
 
-- [ ] AC42 — `apm-go install --dev owner/repo` 寫入 `devDependencies.apm`，不寫入
+- [x] AC42 — `apm-go install --dev owner/repo` 寫入 `devDependencies.apm`，不寫入
       `dependencies.apm`
       · 驗法：Go 測試，`t.TempDir()` 最小 apm.yml，`runInstall(deps, ..., dev=true, ...)`
       （或對應簽章，實作後確認），讀回 apm.yml
       · 通過條件：`devDependencies.apm` 含該套件；`dependencies.apm` 不含
       · 來源：prd.md:370-371（AC42，新）
 
-- [ ] AC43 — apm.yml 原無 `devDependencies` 鍵時，`--dev` 自動建立該區段，鍵序落在
+- [x] AC43 — apm.yml 原無 `devDependencies` 鍵時，`--dev` 自動建立該區段，鍵序落在
       `includes` 與 `scripts` 之間
       · 驗法：Go 測試，最小 apm.yml（無 `devDependencies` 鍵），跑 `--dev` install，
       讀回並檢查頂層鍵序
@@ -366,7 +403,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       R2.1（AC5）同一鍵序契約，不能各自為政
       · 來源：prd.md:372-373（AC43，新）
 
-- [ ] AC44 — 不加 `--dev` 時行為與現況完全一致（回歸閘門）
+- [x] AC44 — 不加 `--dev` 時行為與現況完全一致（回歸閘門）
       · 驗法：`go test ./cmd/apm-go/... -list 'TestRunInstall'` 確認既有 install 測試
       清單非空後全跑，額外確認
       `TestRunInstall_DevDependency_ResolvedDeployedAndLocked`（`install_test.go:135`）、
@@ -377,13 +414,13 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       這條同時也是 R9.3「不重做既有 dev 讀取鏈」的回歸證明（見下方 R 子項覆蓋率 G1）
       · 來源：prd.md:374（AC44）；design.md §11「不做的事」
 
-- [ ] AC45 — `--dev` 裝進來的套件在 `apm.lock.yaml` 有 `package_type` 欄位；非 dev 行為不變
+- [x] AC45 — `--dev` 裝進來的套件在 `apm.lock.yaml` 有 `package_type` 欄位；非 dev 行為不變
       · 驗法：Go 測試，接續 AC42 的 fixture，讀 `apm.lock.yaml` 的對應 entry
       · 通過條件：dev entry 含 `package_type`（值待實作後確認，prd.md 未指定具體字串，
       只要求欄位存在）；非 dev entry 不受影響（無此欄位或維持現況）
       · 來源：prd.md:375-376（AC45，新）
 
-- [ ] AC46 — `plugin init` Next Steps 印兩行：`apm-go install --dev <owner>/<repo>` 與
+- [x] AC46 — `plugin init` Next Steps 印兩行：`apm-go install --dev <owner>/<repo>` 與
       `apm-go pack`
       · 驗法：暫存目錄跑 `..\bin\apm-go.exe plugin init p46 --yes`，讀 stdout/stderr
       · 通過條件：兩行皆逐字存在；與 AC13 合起來才是完整斷言（AC13 斷言 pack 那行 +
@@ -393,7 +430,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### marketplace package add --category（prd.md:380-388，R10）
 
-- [ ] AC47 — `add owner/repo --category Productivity` 在該 entry 寫出
+- [x] AC47 — `add owner/repo --category Productivity` 在該 entry 寫出
       `category: Productivity`
       · 驗法：Go 測試，`AddPackage(dir, "owner/repo", AddOptions{Category:"Productivity"},
       mapRefLister{...})`
@@ -401,14 +438,14 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       `putStr("category", entry.Category)` 已存在，只驗證有人填值）
       · 來源：prd.md:382-383（AC47，新）
 
-- [ ] AC48 — `outputs` 含 codex 且未給 `--category` 時 add 仍成功，但印警告
+- [x] AC48 — `outputs` 含 codex 且未給 `--category` 時 add 仍成功，但印警告
       · 驗法：Go 測試，`marketplace:` 區塊含 `outputs: {codex: {}}` 的 apm.yml，跑
       `AddPackage(..., AddOptions{}, ...)`（無 Category）
       · 通過條件：`err == nil`（不阻斷）；stderr/warning 輸出含 category 缺失、pack
       會失敗、可用 `--category` 補的提示
       · 來源：prd.md:384-385（AC48，新）
 
-- [ ] AC49 — `marketplace package set` 沒有 `--category` 旗標
+- [x] AC49 — `marketplace package set` 沒有 `--category` 旗標
       · 驗法：`go test ./cmd/apm-go/... -list
       'TestMarketplacePackageSetCmd_HasNoAddOnlyFlags'` 確認非空（現況已存在，
       `marketplace_package_test.go:37`），再 `-run`；額外確認該測試新增
@@ -416,7 +453,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 通過條件：既有守門測試 PASS 且涵蓋 `category`
       · 來源：prd.md:386（AC49）；implement.md Step 8c
 
-- [ ] AC50 — `add --category` 之後 `apm-go pack`（codex 輸出開啟）成功——端對端證明死結
+- [x] AC50 — `add --category` 之後 `apm-go pack`（codex 輸出開啟）成功——端對端證明死結
       解除
       · 驗法：暫存目錄：`marketplace init`（或手寫最小 marketplace apm.yml，
       `outputs: {codex: {}}`），`..\bin\apm-go.exe marketplace package add
@@ -427,7 +464,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### 全域（prd.md:390-396）
 
-- [ ] AC51 — `go build ./...`、`go vet ./...` exit 0；
+- [x] AC51 — `go build ./...`、`go vet ./...` exit 0；
       `go test ./... -coverprofile=cover.out` 後
       `go tool cover -func=cover.out | Select-Object -Last 1` 的 total ≥ 80%
       · 驗法：見上方慣例 3（已實測驗證 `-cover` 無 total 行、coverprofile 管線有）
