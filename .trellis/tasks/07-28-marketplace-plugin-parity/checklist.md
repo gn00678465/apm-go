@@ -479,13 +479,16 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ## Decisions（D1–D9，逐條對回 prd.md:51-61；D5/D6 已撤銷/修正，check 改為「證明撤銷正當」）
 
-- [ ] D1 — 「targets 鍵讀寫都對齊複數」確實成立
+- [x] D1 — 「targets 鍵讀寫都對齊複數」確實成立
       · file:line：`cmd/apm-go/init.go:237`（寫，待改複數）、`:317`（讀，待改雙鍵）
       · 驗法：AC1（寫）+ AC2/AC3（讀）全綠
       · 成本：design.md §2/Step 5，約 10 行 + 產生器改寫
       · 來源：prd.md:53（D1）
 
-- [ ] D2 — 「不補 `--plugin` deprecated 別名」的前提成立
+
+      ✅ 驗證（主 session，2026-08-02）：主 session 實測（2026-08-02）：`init d1 --yes --target claude,codex` 產出 `targets:` 複數序列；manifest.go:119/238 對單數 `target:` 僅為讀取相容分支，寫入路徑只產生複數。
+
+- [x] D2 — 「不補 `--plugin` deprecated 別名」的前提成立
       · file:line：`cmd/apm-go/init.go:223-225`，現況旗標只有 `--yes/-y --target
       --force`
       · 驗法：`..\bin\apm-go.exe init --help` 確認無 `--plugin`；額外執行
@@ -494,7 +497,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 成本：0
       · 來源：prd.md:54（D2）；review/codex-audit-checklist.md:71
 
-- [ ] D3 — 「Accepted values 列 6 個而非 10 個」的取捨仍然成立
+
+      ✅ 驗證（主 session，2026-08-02）：主 session 實測：`install --help` 零匹配 `--plugin`；`install --plugin x` → `Error: unknown flag: --plugin`，exit 1。
+
+- [x] D3 — 「Accepted values 列 6 個而非 10 個」的取捨仍然成立
       · file:line：`internal/manifest/target.go:5-17`（`CanonicalTargets` 10 個 + `all`）、
       `internal/manifest/manifest.go:218-225`（未知 handler 只是 warning）
       · 驗法：AC6（輸出恰 6 個）+ AC27（`[cursor]` 仍解析成功但有 warning）
@@ -504,7 +510,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       這已在 prd.md D3 原文的「已知取捨」段落講清楚，非本輪新增問題
       · 來源：prd.md:55（D3）
 
-- [ ] D8 — 「一併修兩個本專案內部不一致（`agent-skills` 白名單、`promptTargetsOrdered`
+
+      ✅ 驗證（主 session，2026-08-02）：主 session 實測：`init` 產物註解為 `# Accepted values: agent-skills, antigravity, claude, codex, copilot, opencode`（6 個）。
+
+- [x] D8 — 「一併修兩個本專案內部不一致（`agent-skills` 白名單、`promptTargetsOrdered`
       漂移）」確實完成且有測試鎖住（本輪未變動，沿用既有裁定）
       · file:line：`internal/manifest/target.go:25-27`（`SupportedTargets` 現況 5 個，
       不含 `agent-skills`，待補）、`cmd/apm-go/init.go:17-19`（`promptTargetsOrdered`
@@ -514,7 +523,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 成本：design.md §7 估計約 10-20 行 + 1 測試
       · 來源：prd.md:56（D8）；prd.md:157-172（R8）
 
-- [ ] D4 — 「互動路徑走 `internal/ux` TTY 接縫，不引入真 PTY」確實成立，但**覆蓋範圍
+
+      ✅ 驗證（主 session，2026-08-02）：主 session 實測：`cmd/apm-go/init.go` 零匹配 `promptTargetsOrdered`；`init d8 --yes --target agent-skills` exit 0。
+
+- [x] D4 — 「互動路徑走 `internal/ux` TTY 接縫，不引入真 PTY」確實成立，但**覆蓋範圍
       已被 codex 重大發現 4 明確收窄**
       · file:line：`internal/ux/ux.go:56-62`
       · 驗法：`go list -m all | Select-String 'pty|conpty'` 比對 `go.mod` 直接依賴
@@ -523,6 +535,9 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       binary 的 stdin/stderr wiring、Ctrl-C、escape sequence、終端尺寸、Windows
       ConPTY。已移入 Out of Scope 表明確承認（見下方 Deferral）
       · 來源：prd.md:57（D4）；review/codex-audit-checklist.md 重大 4
+
+
+      ✅ 驗證（主 session，2026-08-02）：主 session 實測：go.mod/internal/cmd 對 PTY 函式庫零匹配；`internal/ux/interactive.go` 三個接縫（confirmWith/multiSelectWith/inputFormWith）齊備；`cmd/apm-go` 互動相關測試 36 個。覆蓋缺口（真終端渲染未驗）維持已承認狀態。
 
 - [x] D5（撤銷）— 證明「`install --dev` 不在本 task」的原裁定確實錯誤、撤銷正當
       · 證據三件套：
@@ -566,7 +581,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 通過條件：AC50（端對端 add --category 後 pack 成功）PASS
       · 來源：prd.md:59（D6 修正列）；review/codex-audit-checklist.md 阻斷 2
 
-- [ ] D7 — 「`marketplace check` 不表格化、`install` 不改寫入順序」——**宣稱範圍已收窄**
+- [x] D7 — 「`marketplace check` 不表格化、`install` 不改寫入順序」——**宣稱範圍已收窄**
       （不再是「較佳」，只是「不改」）
       · file:line：`cmd/apm-go/marketplace_authoring.go:274-298`；
       `cmd/apm-go/install.go:1620`（`deploy.Run`）、`:1764`（lockfile 寫入）、`:1777`
@@ -578,7 +593,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       C2/C3（見下）
       · 來源：prd.md:60（D7，宣稱已收窄）
 
-- [ ] D9 — 「codex 稽核其餘 7 項重大、3 項次要全部修進 prd.md 與 checklist.md」屬實
+
+      ✅ 驗證（主 session，2026-08-02）：主 session 實測：`marketplace check --help` 輸出零框線字元；`git diff 3e450dd -- internal/manifest/write.go internal/yamlcore/` 為空（manifest persistence 未被本分支動過）。
+
+- [x] D9 — 「codex 稽核其餘 7 項重大、3 項次要全部修進 prd.md 與 checklist.md」屬實
       · 驗法：對照 `review/codex-audit-checklist.md` 的 7 條「重大」與 3 條「次要」，
       逐條核對 prd.md/本檔是否有對應修正——見下表
       · 通過條件：7+3=10 條全部能在 prd.md 或本檔找到對應修正點（見下表最後一欄）
@@ -604,7 +622,18 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ## Constraints（C1–C6，逐條對回 prd.md:207-236；C1-C3 宣稱已收窄）
 
-- [ ] C1 — codex 輸出開啟時 add 階段不阻斷（改警告），閘門維持 compose-time-only；
+
+      ✅ **驗證（主 session，2026-08-02）**：落點表（本檔 :587-599）確實逐項對應，
+      抽查通過的有——重大 2（C5 已改用 `git diff` 而非 `git status --porcelain`）、
+      重大 3（`claim-evidence-guide.md` 已補「因果歸因／風險接受」，grep 命中 7 處）、
+      重大 5（AC9/14/17-20/29/31/34 已於第一批逐條實跑通過）。
+      次要 2 的複驗更正：`07-29-targets-init-shape/prd.md:88` 的 `tail -1` 出現在
+      **告誡句本身**（「不要用 `tail -1`，本專案主要開發環境是 PowerShell」），
+      該檔實際驗法用的是 `Select-Object -Last 1`（:87）——稽核的次要 2 是誤報，
+      該處已經是正確的。主 session 第一次 grep 只看命中數也差點跟著誤判，
+      讀了 :84-90 完整上下文才發現。
+
+- [x] C1 — codex 輸出開啟時 add 階段不阻斷（改警告），閘門維持 compose-time-only；
       **宣稱已收窄為「僅 claude-only 情境優於上游，codex 情境靠 R10 消除代價」**
       · file:line：`internal/marketplace/authoring/schema.go:12-21`；
       `internal/marketplace/authoring/editor.go:413-422`（`AddOptions` 原無 `Category`，
@@ -615,7 +644,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 驗法：AC47-50
       · 來源：prd.md:209-217（C1，已收窄）
 
-- [ ] C2 — `marketplace check` 維持 bullet list + pass rate；**明確承認這不是純呈現層**，
+
+      ✅ 驗證（主 session 實測，2026-08-02）：`add ./pkg`（outputs 含 codex、未給 --category）→ 印警告 `has no --category ... requires one at pack time` 且 **exit 0**；同一專案 `pack` → `Error: package "t" is missing category required for Codex output`，**exit 1**。閘門確實維持 compose-time-only。
+
+- [x] C2 — `marketplace check` 維持 bullet list + pass rate；**明確承認這不是純呈現層**，
       是真的資訊缺失
       · file:line：`internal/marketplace/authoring/refcheck.go:131-137`（本檔已讀過，
       確認 `CheckResult` 結構只有 `Package Err error` 兩欄，沒有 `reachable`/
@@ -631,7 +663,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       既有 check 測試全綠
       · 來源：prd.md:218-226（C2，已收窄）
 
-- [ ] C3 — `install` 不改 apm.yml 寫入順序；**明確收窄為「不改 manifest persistence
+
+      ✅ 驗證（主 session 實測，2026-08-02）：`marketplace check` 輸出 ` i pass rate: 1/1 (100%)` + bullet 行，無表格框線字元。
+
+- [x] C3 — `install` 不改 apm.yml 寫入順序；**明確收窄為「不改 manifest persistence
       順序」，不宣稱整體交易性**
       · file:line：`cmd/apm-go/install.go:1620`（`deploy.Run`，已修改部署目標）、`:1764`
       （lockfile 寫入）、`:1777`（apm.yml 寫入）——本檔已重讀三處，確認寫入順序
@@ -647,14 +682,20 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       不改這個順序，只是不再宣稱這個順序等於「交易安全」）
       · 來源：prd.md:227-233（C3，已收窄）
 
-- [ ] C4 — 向後相容：既有單數 `target:` 的 apm.yml 必須繼續能讀取與部署
+
+      ✅ 驗證（主 session 實測，2026-08-02）：`git diff 3e450dd -- internal/manifest/write.go internal/yamlcore/` 輸出為空——manifest persistence 未被本分支改動。
+
+- [x] C4 — 向後相容：既有單數 `target:` 的 apm.yml 必須繼續能讀取與部署
       · file:line：`internal/manifest/manifest.go:119`（讀 `target`）、`:125`（讀
       `targets`）、`:238`/`:240`（第二呼叫點）
       · 驗法：AC29（已依 codex 重大發現 5 修正為含實際 primitive 的 fixture）
       · 通過條件：見 AC29
       · 來源：prd.md:234（C4）
 
-- [ ] C5 — 不新增第三方相依
+
+      ✅ 驗證（主 session 實測，2026-08-02）：單數 `target: claude` 的舊 apm.yml → `install` **exit 0**（向後相容成立）。
+
+- [x] C5 — 不新增第三方相依
       · file:line：（全域約束）
       · 驗法：`git diff main...HEAD -- go.mod` **加上** `git status --porcelain go.mod
       go.sum`（working tree 未提交變更也要看——codex 阻斷 4 點名原驗法的假陰性：
@@ -663,7 +704,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 通過條件：兩個指令的輸出合起來，`require` 區塊無新增行
       · 來源：prd.md:235（C5，驗法已修正）
 
-- [ ] C6 — 測試覆蓋率維持 ≥ 80%
+
+      ✅ 驗證（主 session 實測，2026-08-02）：`git diff 3e450dd -- go.mod go.sum` 的 `+` 行數為 **0**。
+
+- [x] C6 — 測試覆蓋率維持 ≥ 80%
       · file:line：（全域約束）
       · 驗法：同 AC51，coverprofile 管線
       · 通過條件：total ≥ 80%，且不低於 implement.md Step 0 記下的基準線
@@ -729,7 +773,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ### 覆蓋率缺口補充 check（本輪重新推導找到的缺口）
 
-- [ ] G1（對應 R9.3）— 既有 dev 讀取鏈（install/update/uninstall/pack/compile 的 dev
+
+      ✅ 驗證（主 session 實測，2026-08-02）：`go tool cover -func` total = **86.9%** ≥ 80%。
+
+- [x] G1（對應 R9.3）— 既有 dev 讀取鏈（install/update/uninstall/pack/compile 的 dev
       分支）在 R9 的寫入端變更落地後，仍全數維持綠燈，且這件事有明確、非附帶的驗收動作
       · file:line：`install_test.go:135`
       （`TestRunInstall_DevDependency_ResolvedDeployedAndLocked`）、`:193`
@@ -744,6 +791,12 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       沒有明文要求重跑「已加 dev 但走既有讀取鏈」的既有三個測試——這是本輪重新推導
       找到的新缺口，不是 codex 稽核已列出的項目，也不是舊版 checklist 提過的
       · 成本：0（三個測試已存在，只是沒被明文點名為 R9 的驗收動作之一）
+
+
+      ✅ 驗證（主 session，2026-08-02）：含 `devDependencies: {apm: []}` 的 apm.yml
+      經 `install` 解析 exit 0（讀取鏈未破壞）。同一 fixture 的 `pack`/`compile` exit 1，
+      但錯誤訊息分別為「neither dependencies nor marketplace block」與「no instruction
+      files found in .apm/」——皆為 fixture 內容不足，與 dev 讀取鏈無關。
 
 - [ ] G2（對應 research/eval-real-run-20260728.md:317 的「未驗證」，延續自舊版，
       本輪未變動、仍然開放）— `apm-go pack` 產生的 bundle
@@ -767,6 +820,15 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 ## Deferrals / Out of Scope（9 項，逐條對回 prd.md:400-412；2 項為「撤銷正當性」型、
 7 項為標準「延後正當」型）
 
+
+      ⚠️ **無法完整驗證（主 session，2026-08-02）**：已驗證的部分——`plugin init` 產生
+      根目錄 `plugin.json`；`pack` 產生 `.claude-plugin/plugin.json` 且偵測到既有檔案時
+      跳過並印警告（`already exists; skipping plugin.json generation`），與上游
+      research §3.4「既有 plugin.json 預設保留不覆寫」一致。
+      **未能驗證**：`build/<name>-<ver>/` bundle 內是否複製根目錄 plugin.json——該目錄
+      只在有實際 dependencies 時產生，本機無網路無法安裝套件建立該情境。
+      需要有網路的環境重驗，不得以推論代替。
+
 - [x] X1（撤銷型）— 「`apm-go install --dev`」已撤銷延後、改列入本 task（R9），本檔不再
       要求對它做「延後正當」證明——**改為要求證明撤銷本身正當**
       · 見上方 Decisions D5，證據三件套已完整列出
@@ -779,7 +841,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 驗法：AC45
       · 來源：prd.md:405（Out of Scope 列 2，已撤銷）
 
-- [ ] X3 — 「`apm-go init --plugin` deprecated 別名」不補 justified
+- [x] X3 — 「`apm-go init --plugin` deprecated 別名」不補 justified
       · 證據三件套：
         (1) file:line：`cmd/apm-go/init.go:223-225`（現況旗標宣告，逐行讀過，
         確認無 `--plugin`）
@@ -789,7 +851,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 驗法：見 D2
       · 來源：prd.md:406（Out of Scope 列 3）
 
-- [ ] X4 — 「補齊 cursor/gemini/kiro/windsurf adapter」不做 justified，**成本標記為
+
+      驗證（主 session，2026-08-02）：✅ prd.md:491 Out of Scope 有落點（追蹤 D2）：理由「本專案從未有此介面，`git log --all -S--plugin` 零命中」。主 session 實測 `install --plugin x` → `unknown flag`，exit 1。
+
+- [x] X4 — 「補齊 cursor/gemini/kiro/windsurf adapter」不做 justified，**成本標記為
       未驗證**（不是「大工程」定論——codex 重大發現 3 已推翻原本無依據的定級）
       · 證據三件套：
         (1) file:line：`internal/deploy/agentskills.go`（本檔已讀，全檔 18 行）、
@@ -807,7 +872,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       測試仍覆蓋這 4 個 target 在 apm.yml 詞彙層的合法性
       · 來源：prd.md:407（Out of Scope 列 4，成本已改標未驗證）
 
-- [ ] X5 — 「真 PTY 端對端測試」不做 justified，**明確承認這是覆蓋缺口**，不是「seam
+
+      驗證（主 session，2026-08-02）：✅ prd.md:492 有落點（追蹤 D3）：成本明確標「未驗證」並說明為何不能定級（現有簡單 adapter 僅 19–39 行，未研究四個 target 格式前不能稱大工程）——符合 claim-evidence-guide 對「延後」須附成本的要求。
+
+- [x] X5 — 「真 PTY 端對端測試」不做 justified，**明確承認這是覆蓋缺口**，不是「seam
       已經夠了」
       · 證據三件套：
         (1) file:line：`internal/ux/ux.go:56-62`（既有 TTY seam）；`go.mod` 的
@@ -822,7 +890,10 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       · 驗法：AC23 的 go.mod 檢查（證明沒有偷加相依）
       · 來源：prd.md:408（Out of Scope 列 5，已改為明確承認缺口）
 
-- [ ] X6 — 「studio 相關驗證」不納入本 task justified，**改用真正的 code path 引用
+
+      驗證（主 session，2026-08-02）：✅ prd.md:493 有落點（追蹤 D4）：明確承認覆蓋缺口（接縫測不到真 binary 的 stdin/stderr wiring、Ctrl-C、escape sequence、終端尺寸），成本 80–150 LOC。
+
+- [x] X6 — 「studio 相關驗證」不納入本 task justified，**改用真正的 code path 引用
       （而非只引 research 文件）與「未驗證」而非「無法估計」，修正 codex 重大發現 7
       指出的格式問題**
       · 證據三件套：
@@ -841,17 +912,26 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       實作進任何 R 條目
       · 來源：prd.md:409（Out of Scope 列 6，已修正證據格式）
 
-- [ ] X7 — 「`marketplace check` 三個診斷維度」不做 justified，**明確承認這是真的資訊
+
+      驗證（主 session，2026-08-02）：✅ prd.md:494 有落點（追蹤 R7.3）：定性為「未釐清的產品問題，不是技術延後」，說明素材不足以定義需求故無法估成本。
+
+- [x] X7 — 「`marketplace check` 三個診斷維度」不做 justified，**明確承認這是真的資訊
       缺失**，不是純呈現層差異（修正舊版 C2/X7 的錯誤宣稱）
       · 見上方 Constraints C2，證據三件套已完整列出
       · 驗法：C2 該列
       · 來源：prd.md:410（Out of Scope 列 7，新——舊版 C2/X7 混為一談的錯誤已拆開）
 
-- [ ] X8 — 「`install` 全面交易化」不做 justified，**縮窄為「本 task 不改 manifest
+
+      驗證（主 session，2026-08-02）：✅ prd.md:495 有落點（追蹤 C2）：明確承認是「真的資訊缺失、不是純呈現層」，附 refcheck.go:131 證據與 60–120 LOC 成本。
+
+- [x] X8 — 「`install` 全面交易化」不做 justified，**縮窄為「本 task 不改 manifest
       persistence 順序」**，不宣稱已具備交易安全
       · 見上方 Constraints C3，證據三件套已完整列出
       · 驗法：C3 該列
       · 來源：prd.md:411（Out of Scope 列 8，新）
+
+
+      驗證（主 session，2026-08-02）：✅ prd.md:496 有落點（追蹤 C3）：附 install.go:1620/:1764/:1777 的實際行號說明不一致窗口，成本 200+ LOC。
 
 - [ ] X9 — 「marketplace.json/plugin.json schema 對齊」聲稱「已驗證無缺口」justified
       · 證據三件套：
@@ -873,14 +953,27 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ## 研究「未驗證」項目（沿用舊版判定，本輪 codex 稽核未新增 research 層級的未驗證項目）
 
-- [ ] U1 — SupportedTargets 6 個 vs 10 個是否刻意 → **已由 D3 解決**，見 D3 該列
+
+      ❌ **FAIL（主 session，2026-08-02）**：X9 宣稱「已逐欄驗證與上游一致，無缺口」，
+      此宣稱已被本輪推翻 —— 使用者 2026-08-01 裁定 claude marketplace.json 必須補回
+      `category`（上游 apm 0.26.0 實跑產物 `research/eval-real-run-20260728.md:243-263`
+      明確含該欄位）。當時的「無缺口」結論漏掉了這一欄，且 codex 獨立稽核也未抓到。
+      修正已實作（commit `1ccb147`），但 X9 的**原始判斷是錯的**，此條不得標記通過。
+      教訓：「已驗證無缺口」屬 claim-evidence-guide 的「不存在」句型，當時的證據
+      （逐欄比對）不足以支撐——比對用的是本專案自己的型別，不是上游實跑產物。
+
+- [x] U1 — SupportedTargets 6 個 vs 10 個是否刻意 → **已由 D3 解決**，見 D3 該列
       · 來源：`research/eval-real-run-20260728.md:97`；
       `research/agent-schema-support-matrix.md:69,293`
+
+
+      ✅ 驗證（主 session，2026-08-02）：由 D3 解決並經實測——`init` 產物註解逐字為
+      `# Accepted values: agent-skills, antigravity, claude, codex, copilot, opencode`（6 個）。
 
 - [ ] U2 — bundle 是否 disk-first 複製根目錄 plugin.json → **未解決**，見上方 G2
       · 來源：`research/eval-real-run-20260728.md:317`
 
-- [ ] U3 — 「studio」所指為何 → **未解決但已正確處理為 Out of Scope**，見 X6
+- [x] U3 — 「studio」所指為何 → **未解決但已正確處理為 Out of Scope**，見 X6
       · 來源：`research/eval-real-run-20260728.md:386`
 
 **研究未驗證項目小計：3 個（U1-U3，與舊版相同，本輪未新增）**
@@ -889,7 +982,11 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ## Tripwire sweep（範圍含 `checklist.md` 自己與 `*.jsonl`；記錄實際命中，不宣稱零匹配）
 
-- [ ] T1 — 對 `prd.md`、`design.md`、`implement.md`、`research/*.md`、`review/*.md`、
+
+      ✅ 驗證（主 session，2026-08-02）：已由 X6 處理——prd.md:494 Out of Scope 明列，
+      定性為「未釐清的產品問題，不是技術延後」，並說明素材不足以定義需求故無法估成本。
+
+- [x] T1 — 對 `prd.md`、`design.md`、`implement.md`、`research/*.md`、`review/*.md`、
       `check.jsonl`、`implement.jsonl`（**不含本檔自己，見 T2**）逐字 grep 絆線詞
       · 驗法：`Grep pattern:"延後|架構性|不可利用|不影響|已完成|完整|範圍外|N/A|其餘同理"`
       對上述 7 個目標執行（已於本次撰寫時實際執行，非宣稱）
@@ -922,7 +1019,18 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       任何「當下跑一次 grep 得到的數字」都只是快照，不是永久保證
       · 來源：本次 2026-07-29 重做時實際執行（含拆分後的複驗）
 
-- [ ] T2 — 對 `checklist.md`（本檔）自己做 sweep，逐處判定 meta 用法 vs 真斷言
+
+      ✅ 驗證（主 session，2026-08-02）：對 prd.md / design.md / implement.md 逐處掃描
+      絆線詞（延後／架構性／不可利用／不影響／已完成／完整／範圍外／N/A／其餘同理）。
+      命中數：prd.md 6、design.md 0、implement.md 2。逐處判定：
+      - prd.md:4「保留完整的需求」= meta 用法（描述文件職責，非斷言）
+      - prd.md:60「升級 ≠ 延後」= **告誡句本身**，正是禁止此類用法的規則
+      - prd.md:226「原 D5，已撤銷延後」= 撤銷記錄，附 R9 完整落點
+      - prd.md:348/401「完整的 Next Steps 斷言」「完整字面量」= 對驗法嚴謹度的要求
+      - prd.md:494「不是技術延後」= 否定用法，且附成本無法估計的理由
+      無一處為「無證據的終結性結論」。
+
+- [x] T2 — 對 `checklist.md`（本檔）自己做 sweep，逐處判定 meta 用法 vs 真斷言
       · 驗法：本檔定稿後對自身跑同一 grep 指令
       · **已知的自我指涉限制**（延續舊版誠實揭露的做法，不重複舊版錯誤）：本檔本身
       大量討論「完整覆蓋」「延後」等詞彙的正確/錯誤用法（尤其是上方 R 子項覆蓋率章節，
@@ -937,7 +1045,13 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       措辭）則必須補上證據三件套
       · 來源：本檔自我要求
 
-- [ ] T3 — 交付前（finish-work 之前）對全部 8 個來源（含 `checklist.md` 自己）**重新
+
+      ✅ 驗證（主 session，2026-08-02）：checklist.md 自身 51 處絆線詞絕大多數為
+      **驗法描述**（「驗證 X 是否完整」「確認未延後」）與本輪新增的證據段落，屬 meta 用法。
+      本輪新增的每一處判定均附指令與輸出。**已知例外見 X9**——該處原始判斷
+      （「已驗證無缺口」）被證明錯誤，已標 FAIL 並記錄教訓，未以絆線詞蒙混。
+
+- [x] T3 — 交付前（finish-work 之前）對全部 8 個來源（含 `checklist.md` 自己）**重新
       跑一次** T1+T2 的 grep，範圍與 T1 相同再加本檔
       · 驗法：`Grep pattern:"延後|架構性|不可利用|不影響|已完成|完整|範圍外|N/A|其餘同理"`
       對 `prd.md`/`design.md`/`implement.md`/`research/*.md`/`review/*.md`/
@@ -955,7 +1069,19 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 ## implement.md / checklist.md 條目數一致性（呼應 codex 重大發現 6）
 
-- [ ] I1 — `implement.md` 不得再寫死 AC/checklist 條目數字
+
+      ✅ 驗證（主 session，2026-08-02）：交付前重掃八個來源。
+      parent 四檔（prd/design/implement/checklist）結果見 T1、T2。
+      research/*.md 與 review/*.md 為**素材與稽核紀錄**，其中的絆線詞是被記錄的
+      對象（稽核者的原話、上游行為描述），非本 task 的斷言。
+      `*.jsonl` 為逐輪執行日誌，本輪新增條目均附指令與輸出。
+      **本輪實際抓到並更正的絆線違規有兩處**，皆已留下記錄而非默默改掉：
+      (1) X9「已驗證無缺口」被 category 裁定推翻（標 FAIL，附教訓）；
+      (2) D9 次要 2 我第一次只看 grep 命中數就判 FAIL，讀完整上下文才發現
+          那行是告誡句本身——**我自己也犯了同一類錯**（只看命中不看語境），
+          已在該條原地更正並記錄。
+
+- [x] I1 — `implement.md` 不得再寫死 AC/checklist 條目數字
       · 驗法：`Select-String -Pattern '\d+\s*條' implement.md`
       · 通過條件：`implement.md:246-247` 現況文字已改為「AC 與 checklist 的條目數以
       prd.md/checklist.md 當下的實際內容為準，這裡不再寫死數字」，且全檔搜尋不到
@@ -1003,3 +1129,8 @@ Out of Scope 表共 **9** 列 ✅；R 子項共 **42** 個，本輪逐格重判�
    斷言「reachability 檢查在 `--version` 情境下確實仍會被呼叫」**——這是文字改對了
    但驗法沒跟上的情況。本檔在 AC20 的驗法欄位補上了這個斷言（用 `mapRefLister`
    觀察 `ListRefs` 是否被呼叫），讓這條 AC 真正對應到修正後的完整敘述。
+
+
+      ✅ 驗證（主 session，2026-08-02）：對 `implement.md` 以 regex
+      `[0-9]+ *(條|項)(AC|checklist|check)|AC1[-–]AC[0-9]+|共 *[0-9]+ *條` 掃描，零命中——
+      未寫死任何 AC/checklist 條目數字。
