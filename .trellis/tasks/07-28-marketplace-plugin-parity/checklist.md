@@ -829,6 +829,26 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       只在有實際 dependencies 時產生，本機無網路無法安裝套件建立該情境。
       需要有網路的環境重驗，不得以推論代替。
 
+
+      ✅ **原始碼層級已驗證（主 session，2026-08-02，一手上游 v0.26.0）**：
+      原問題「bundle 內是否也複製根目錄 plugin.json」當初標「未驗證」的理由是
+      「本專案根本還不會產生這個檔案 —— 沒有 plugin init」。該前提**已消失**：
+      本 task 的 `plugin init` 會在專案根產生 `plugin.json`。
+      以 `git show v0.26.0:` 取一手原始碼逐項比對：
+      - 上游 `core/plugin_manifest.py:290-312` find_or_synthesize_plugin_json 的
+        解析順序為 disk-first（先找磁碟、找到就用、解析失敗警告後退回合成）
+      - 上游 `utils/helpers.py` find_plugin_json 候選順序：
+        `plugin.json` → `.github/plugin/` → `.claude-plugin/` → `.cursor-plugin/`
+      - apm-go `internal/pack/bundle/producer.go:396` 同結構，`pluginJSONCandidates`
+        （:384）四項**同序**，解析失敗同樣 warn + fallback（:405）
+      ⇒ 磁碟上有根目錄 plugin.json 時，bundle 會採用它（disk-first 第一候選），
+        與上游一致。
+
+      ⚠️ **仍缺端到端實測**：`build/<name>-<ver>/` bundle 目錄只在有實際 dependencies
+      時產生，需安裝真實套件；本機無網路無法建立該情境。原始碼比對不等於端到端，
+      **不以此宣稱完整驗證**——有網路的環境須補跑一次 `plugin init` → 安裝相依 →
+      `pack`，確認 bundle 內的 plugin.json 內容即為根目錄那份。
+
 - [x] X1（撤銷型）— 「`apm-go install --dev`」已撤銷延後、改列入本 task（R9），本檔不再
       要求對它做「延後正當」證明——**改為要求證明撤銷本身正當**
       · 見上方 Decisions D5，證據三件套已完整列出
@@ -997,6 +1017,26 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
 - [ ] U2 — bundle 是否 disk-first 複製根目錄 plugin.json → **未解決**，見上方 G2
       · 來源：`research/eval-real-run-20260728.md:317`
+
+
+      ✅ **原始碼層級已驗證（主 session，2026-08-02，一手上游 v0.26.0）**：
+      原問題「bundle 內是否也複製根目錄 plugin.json」當初標「未驗證」的理由是
+      「本專案根本還不會產生這個檔案 —— 沒有 plugin init」。該前提**已消失**：
+      本 task 的 `plugin init` 會在專案根產生 `plugin.json`。
+      以 `git show v0.26.0:` 取一手原始碼逐項比對：
+      - 上游 `core/plugin_manifest.py:290-312` find_or_synthesize_plugin_json 的
+        解析順序為 disk-first（先找磁碟、找到就用、解析失敗警告後退回合成）
+      - 上游 `utils/helpers.py` find_plugin_json 候選順序：
+        `plugin.json` → `.github/plugin/` → `.claude-plugin/` → `.cursor-plugin/`
+      - apm-go `internal/pack/bundle/producer.go:396` 同結構，`pluginJSONCandidates`
+        （:384）四項**同序**，解析失敗同樣 warn + fallback（:405）
+      ⇒ 磁碟上有根目錄 plugin.json 時，bundle 會採用它（disk-first 第一候選），
+        與上游一致。
+
+      ⚠️ **仍缺端到端實測**：`build/<name>-<ver>/` bundle 目錄只在有實際 dependencies
+      時產生，需安裝真實套件；本機無網路無法建立該情境。原始碼比對不等於端到端，
+      **不以此宣稱完整驗證**——有網路的環境須補跑一次 `plugin init` → 安裝相依 →
+      `pack`，確認 bundle 內的 plugin.json 內容即為根目錄那份。
 
 - [x] U3 — 「studio」所指為何 → **未解決但已正確處理為 Out of Scope**，見 X6
       · 來源：`research/eval-real-run-20260728.md:386`
