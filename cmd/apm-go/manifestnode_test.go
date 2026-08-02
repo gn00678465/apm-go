@@ -217,13 +217,19 @@ func TestBuildManifestNode_SpecialCharacterScalars_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu is AC25:
-// manifest.SupportedTargets, manifest.HasAdapter's target set, and the init
-// MultiSelect prompt's actual option set (targetSelectOptions, what the user
-// is offered) must all be the same set of targets. If any of the three
-// gains or loses a target without the others following, this test goes red.
-// This test lives in cmd/apm-go (not internal/manifest) because the third
-// set -- the prompt menu -- only exists here.
+// TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu is AC25,
+// revised 2026-08-02 for parity with Python apm_cli's EXPLICIT_ONLY_TARGETS
+// (core/target_detection.py:430-431, v0.26.0): the prompt menu is no longer
+// required to equal the full SupportedTargets set -- explicit-only targets
+// (antigravity, agent-skills) have an adapter and remain --target-selectable
+// but are deliberately omitted from the interactive menu (commands/init.py:629,
+// `[t for t in _PROMPT_TARGETS_ORDERED if t not in EXPLICIT_ONLY_TARGETS]`).
+// The invariant this test now locks: (1) every SupportedTargets entry has an
+// adapter, (2) the prompt menu is exactly SupportedTargets minus
+// ExplicitOnlyTargets -- not independently drifted in either direction, and
+// (3) every ExplicitOnlyTargets entry is present in SupportedTargets (still
+// selectable) but absent from the prompt menu. This test lives in cmd/apm-go
+// (not internal/manifest) because the prompt menu set only exists here.
 func TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu(t *testing.T) {
 	for _, tgt := range manifest.SupportedTargets {
 		if !manifest.HasAdapter(tgt) {
@@ -232,9 +238,10 @@ func TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu(t *testing.T) {
 	}
 
 	opts := targetSelectOptions(nil, nil)
-	if len(opts) != len(manifest.SupportedTargets) {
-		t.Fatalf("prompt menu has %d options, want %d (one per SupportedTargets entry)",
-			len(opts), len(manifest.SupportedTargets))
+	wantMenuCount := len(manifest.SupportedTargets) - len(manifest.ExplicitOnlyTargets)
+	if len(opts) != wantMenuCount {
+		t.Fatalf("prompt menu has %d options, want %d (SupportedTargets minus ExplicitOnlyTargets)",
+			len(opts), wantMenuCount)
 	}
 	menuSet := make(map[string]bool, len(opts))
 	for _, o := range opts {
@@ -242,10 +249,19 @@ func TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu(t *testing.T) {
 		if !manifest.HasAdapter(o.Value) {
 			t.Errorf("prompt menu offers %q, but HasAdapter(%q) = false", o.Value, o.Value)
 		}
+		if manifest.ExplicitOnlyTargets[o.Value] {
+			t.Errorf("prompt menu offers explicit-only target %q; it must only be reachable via --target", o.Value)
+		}
 	}
 	for _, tgt := range manifest.SupportedTargets {
+		if manifest.ExplicitOnlyTargets[tgt] {
+			if menuSet[tgt] {
+				t.Errorf("explicit-only target %q must not appear in the prompt menu", tgt)
+			}
+			continue
+		}
 		if !menuSet[tgt] {
-			t.Errorf("SupportedTargets contains %q, but the prompt menu does not offer it", tgt)
+			t.Errorf("SupportedTargets contains non-explicit-only %q, but the prompt menu does not offer it", tgt)
 		}
 	}
 }

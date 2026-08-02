@@ -503,6 +503,30 @@ func TestInitCmd_NonInitTargetRejected(t *testing.T) {
 	}
 }
 
+// TestInitCmd_TargetFlag_AcceptsExplicitOnly is the --target half of the
+// 2026-08-02 explicit-only-targets parity fix: even though antigravity and
+// agent-skills are excluded from the interactive MultiSelect menu (see
+// TestTargetSelectOptions_ExcludesExplicitOnly), `--target` must still
+// accept them explicitly -- upstream's EXPLICIT_ONLY_TARGETS only gates the
+// prompt menu (commands/init.py:629), never the --target flag path
+// (manifest_targets_from_target_option has no such filter).
+func TestInitCmd_TargetFlag_AcceptsExplicitOnly(t *testing.T) {
+	for _, explicitOnly := range []string{"antigravity", "agent-skills"} {
+		t.Run(explicitOnly, func(t *testing.T) {
+			dir := t.TempDir()
+			origDir, _ := os.Getwd()
+			os.Chdir(dir)
+			defer os.Chdir(origDir)
+
+			cmd := initCmd()
+			cmd.SetArgs([]string{"--yes", "--target", explicitOnly})
+			if err := cmd.Execute(); err != nil {
+				t.Errorf("--target %s should be accepted by init, got error: %v", explicitOnly, err)
+			}
+		})
+	}
+}
+
 func TestInitCmd_ProjectNameWithDotDotRejected(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()

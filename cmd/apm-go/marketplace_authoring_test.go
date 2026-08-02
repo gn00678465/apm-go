@@ -76,6 +76,45 @@ func TestMarketplaceInit_ApmYMLMissing_ScaffoldsMinimalShellAndAppendsBlock(t *t
 	}
 }
 
+// TestMarketplaceInitCmd_NextStepsRenderedInBorderedBox is the marketplace-init
+// half of the 2026-08-02 upstream-parity fix: upstream renders its "Next
+// Steps" list inside a bordered Rich Panel (border_style="cyan",
+// commands/marketplace/init.py:117-123), but marketplaceInitCmd previously
+// used the plain ux.Section+BulletList renderer (no border at all, the same
+// shape as every other unadorned heading in this command's output). This
+// locks the fix: the "Next steps" block must be wrapped in ux.Box's rounded
+// border (top/bottom rule + side rails), not just a bare heading line.
+func TestMarketplaceInitCmd_NextStepsRenderedInBorderedBox(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+
+	// Act
+	out, err := runMarketplaceCmd(t, "init")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace init returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "Next steps") {
+		t.Fatalf("output = %q, want a \"Next steps\" section", out)
+	}
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+		if !strings.Contains(out, glyph) {
+			t.Errorf("output = %q, want it to contain rounded-border glyph %q (Next steps must be inside ux.Box, not a bare ux.Section heading)", out, glyph)
+		}
+	}
+	for _, step := range []string{
+		"1. Edit the 'marketplace:' block in apm.yml to add your packages",
+		"2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json",
+		"3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json",
+		"4. Commit apm.yml and the generated marketplace file(s)",
+	} {
+		if !strings.Contains(out, step) {
+			t.Errorf("output = %q, want it to still contain step %q (box restyle must not drop content)", out, step)
+		}
+	}
+}
+
 func TestMarketplaceInit_NameFlagOnlyAffectsScaffoldShellName(t *testing.T) {
 	// Arrange
 	chdirTemp(t)

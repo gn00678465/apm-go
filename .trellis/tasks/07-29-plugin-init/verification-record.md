@@ -288,3 +288,183 @@ TIER 1 GREEN（覆蓋率 86.9%）
 ## 本輪未處理事項
 
 - `task.py finish` 未執行；仍需外部（或使用者）覆核後才算收斂。
+
+---
+
+# Round 11（fresh-context 對照上游 v0.26.0，2026-08-02）—— 2 項修正
+
+> 依派工指示，用 fresh context 對照官方原始碼
+> `D:/Projects/apm-dev/apm/src/apm_cli/`（`git checkout v0.26.0`，比對後已還原
+> 該 repo 至原本的 detached HEAD `a9a883b3` + stash pop，未留副作用）找出的
+> 兩處先前 round 未涵蓋的落差。**`trellis-implement` 本地跑過，尚未經外部覆核，
+> `task.py finish` 未執行。**
+
+## 落差 1 — interactive MultiSelect 選單未排除 explicit-only targets
+
+### 根因（file:line + 反例）
+
+上游 `core/target_detection.py:430-431`：
+`EXPLICIT_ONLY_TARGETS = frozenset(capability.name for capability in
+TARGET_CAPABILITIES.values() if capability.explicit_only)`，逐一核對
+`core/target_catalog.py:150-177` 只有 `antigravity`（explicit_only=True，理由：
+`.agents/` 共用根目錄，無獨有訊號可偵測）與 `agent-skills`
+（explicit_only=True，理由：跨 client 部署位置而非單一工具）兩者為真。
+`commands/init.py:629`：
+`targets = [t for t in _PROMPT_TARGETS_ORDERED if t not in EXPLICIT_ONLY_TARGETS]`
+——互動選單建構時就先濾掉這兩個，即使 `prechecked`（既有 apm.yml 或偵測訊號）
+包含它們，`_prompt_target_selection` 回傳的 `chosen` 也不會含它們
+（`commands/init.py:621-687` 通讀確認：`chosen = [targets[i] for i in
+range(len(targets)) if selected[i]]`，`targets` 本身已排除，沒有事後合併邏輯）。
+`--target` 旗標路徑完全不受影響（`manifest_targets_from_target_option` 無此
+過濾）。
+
+apm-go 修正前：`cmd/apm-go/init.go:420-421`（修正前行號）
+`targetSelectOptions` 直接迭代 `manifest.SupportedTargets`（6 個，含
+antigravity/agent-skills），MultiSelect 會把這兩個 explicit-only target
+一併列為可勾選選項——與上游行為不符。`--target` 路徑（`init.go:258`）本來就
+已正確使用 `SupportedTargets`，不受影響。
+
+### 修復
+
+1. `internal/manifest/target.go` 新增 `ExplicitOnlyTargets`（`map[string]bool`，
+   `{"agent-skills": true, "antigravity": true}`）與 `PromptTargets`
+   （`deployTargets` 過濾掉 `ExplicitOnlyTargets` 後的切片，保留原順序）。
+2. `cmd/apm-go/init.go` 的 `targetSelectOptions` 改迭代 `manifest.PromptTargets`
+   （原本迭代 `manifest.SupportedTargets`）。`--target` 驗證路徑
+   （`init.go:258`）維持用 `SupportedTargets`，未改動。
+3. **既有 AC25 鎖定測試的語意隨之修正**（非靜默覆蓋）：
+   - `cmd/apm-go/manifestnode_test.go` 的
+     `TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu`（AC25）
+     原本斷言「prompt 選單 == SupportedTargets 全集」，這個前提本身在上游
+     行為前是錯的。改為斷言「prompt 選單 == SupportedTargets 扣掉
+     ExplicitOnlyTargets」，並新增雙向檢查（menu 不含 explicit-only、
+     非 explicit-only 的 SupportedTargets 成員都在 menu 裡）。
+   - `cmd/apm-go/plugin_init_interactive_test.go` 的
+     `TestPluginInitInteractive_MultiSelect_OffersFullSupportedTargetsMenu`
+     同樣從比對 `len(manifest.SupportedTargets)` 改為
+     `len(manifest.PromptTargets)`，並新增「選項集合不含任何 explicit-only
+     target」的逐項斷言。
+4. 新增兩個派工指定的測試：
+   - `cmd/apm-go/init_targetselect_test.go`：
+     `TestTargetSelectOptions_ExcludesExplicitOnly`——即使
+     `detected`/`existing` 顯式包含 explicit-only target，
+     `targetSelectOptions` 回傳的選項集合仍不含它；並斷言
+     `targetSelectOptions(nil, nil)` 的長度等於 `len(manifest.PromptTargets)`。
+   - `cmd/apm-go/main_test.go`：`TestInitCmd_TargetFlag_AcceptsExplicitOnly`——
+     `apm-go init --yes --target antigravity`／`--target agent-skills`
+     皆 exit 0（真的跑 `initCmd().Execute()`，不是 grep 原始碼）。
+
+### 突變驗證（實測，Edit 工具暫改 `init.go` 再還原，非宣稱）
+
+```
+$ [暫將 targetSelectOptions 內 manifest.PromptTargets 改回 manifest.SupportedTargets]
+$ go test ./cmd/apm-go/... -run 'TestTargetSelectOptions_ExcludesExplicitOnly|TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu|TestPluginInitInteractive_MultiSelect_OffersFullSupportedTargetsMenu' -v
+--- FAIL: TestTargetSelectOptions_ExcludesExplicitOnly (agent-skills, antigravity 子測試皆 FAIL)
+--- FAIL: TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu
+--- FAIL: TestPluginInitInteractive_MultiSelect_OffersFullSupportedTargetsMenu
+$ [還原 init.go]
+$ go build ./... && go test ./cmd/apm-go/... -run '同上 pattern' -v
+--- PASS ×3
+```
+
+## 落差 2 — `marketplace init` 的 Next Steps 沒有邊框
+
+### 根因（file:line + 反例）
+
+上游 `commands/marketplace/init.py:108-126`：`_rich_panel(...,
+title=" Next Steps", style="cyan")`（`utils/console.py:175-191`：
+`Panel(content, title=title, border_style=style)`，TTY 不可用或 Rich
+未安裝時才降級為 `--- {title} ---` 純文字）。apm-go 修正前
+`cmd/apm-go/marketplace_authoring.go:110-116`（修正前行號）用
+`ux.Section(w, "Next steps")` + `ux.BulletList(...)`——**永遠**是無邊框純文字，
+不是「TTY 才有邊框」的對齊選擇，而是完全沒有邊框渲染路徑。
+
+parent `prd.md:299-305`（C7）與本檔（`prd.md`）Constraints 段落已明文：
+本 task 比對的是**文字內容**、apm-go 自身 TTY 邊框渲染**沒有測試覆蓋**且
+明列為 Out of Scope（估 80–150 LOC）——這件事沒有變；本輪要修的是
+「完全沒有邊框」這個更基本的落差（哪怕是非 TTY 降級形狀，上游也至少有
+`--- Next Steps ---` 這種文字邊框標記，apm-go 原本連這個都沒有）。
+
+### 修復
+
+`cmd/apm-go/marketplace_authoring.go`：Next Steps 區塊改用既有的
+`internal/ux.Box`（`internal/ux/output.go:134-138`，lipgloss
+`RoundedBorder`，先前只有 `internal/ux/output_test.go` 用到，production code
+零呼叫端——init.go 的「About to create」摘要已改用 clack 風格的
+`ck.Note`，`ux.Box` 变成死碼但函式仍在）。**特意不用 `ck.Note`**：
+`ck.Note` 會 `fireClackEvent("Note")`（`internal/ux/clack.go:196-197`），
+是 AC52 clack 呼叫序列追蹤機制的一部分，屬於「互動流程」的視覺語彙
+（`◇` 開頭，暗示自己是某個互動步驟序列的一環）；`marketplace init` 依
+D13/AC53 明文鎖定為非互動指令，混用 `ck.Note` 會讓 AC53 的
+「零互動元件」語意變得曖昧（即使 `ck.Note` 本身不阻塞，仍是 clack 家族
+API）。`ux.Box` 是純 lipgloss 渲染、不掛 clack 事件、不依賴 `*Clack` 實例，
+已被 `ac53_interactive_gate_test.go:24-28` 的白名單邏輯歸類為
+「plain, non-blocking output helper」一類（該檔案的 denylist
+`interactiveUXSelectors` 沒有 `Box`）。
+
+內容（四行 Next Steps 文字）逐字不變，只換容器。
+
+### 新增測試
+
+`cmd/apm-go/marketplace_authoring_test.go`：
+`TestMarketplaceInitCmd_NextStepsRenderedInBorderedBox`——斷言輸出同時含
+`╭ ╮ ╰ ╯ │` 五個 RoundedBorder 字元（而非只驗「有 Next steps 字樣」）與四行
+step 文字皆逐字保留。
+
+### 突變驗證（實測）
+
+```
+$ [暫將 marketplace_authoring.go 的 ux.Box 呼叫改回 ux.Section+ux.BulletList]
+$ go test ./cmd/apm-go/... -run TestMarketplaceInitCmd_NextStepsRenderedInBorderedBox -v
+--- FAIL（5 個邊框字元斷言全部失敗，實際輸出貼在錯誤訊息裡，確認是舊的
+    純文字 "Next steps\n * 1. ..." 形狀）
+$ [還原]
+$ go build ./... && go test ./cmd/apm-go/... -run 同上 -v
+--- PASS
+```
+
+真 binary 端對端確認（`bin/apm-go.exe marketplace init`，臨時目錄執行，
+執行後已刪除）：
+
+```
+ + Created apm.yml with 'marketplace:' block
+
+╭─────────────────────────────────────────────────────────────────────────────────────────╮
+│ Next steps                                                                              │
+│ 1. Edit the 'marketplace:' block in apm.yml to add your packages                        │
+│ 2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json                        │
+│ 3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json │
+│ 4. Commit apm.yml and the generated marketplace file(s)                                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+**未驗證/已知限制**（誠實列出，不宣稱完成）：右緣在極長行上有輕微
+未對齊（ambiguous-width 計算，`ux.Box` 既有行為，非本輪新增缺陷，未深究
+根因）；`ux.Box` 的邊框字元組（`╭╮╰╯│─`）與上游 Rich Panel 的邊框字元組
+未逐字元比對是否相同 glyph 集合——本輪只驗證「有邊框」這個布林事實，不驗
+「邊框字元與上游位元組相同」，此為 C7/Out of Scope 既有邊界內。
+
+## 本輪跨任務回歸驗證
+
+五個 child task 的 verify.ps1 全數重跑，皆 TIER 1 GREEN（涵蓋率均
+87.0%，`agent-schema-spec` 為既有值不受本輪影響）：
+
+```
+$ pwsh -File .trellis/tasks/07-29-plugin-init/verify.ps1          → TIER 1 GREEN
+$ pwsh -File .trellis/tasks/07-29-targets-init-shape/verify.ps1   → TIER 1 GREEN（含 AC25 三個子測試）
+$ pwsh -File .trellis/tasks/07-29-marketplace-add-fixes/verify.ps1 → TIER 1 GREEN（含 AC53/no-clack、AC53/behavioral、AC53/no-block）
+$ pwsh -File .trellis/tasks/07-29-install-dev/verify.ps1          → TIER 1 GREEN
+$ pwsh -File .trellis/tasks/07-29-agent-schema-spec/verify.ps1    → TIER 1 GREEN
+```
+
+`go build ./...`、`go vet ./...`、`go test ./... -count=1`（全套件，未加
+`-tags`）皆 exit 0/全綠。`git diff -- go.mod go.sum` 與
+`git diff --cached -- go.mod go.sum` 皆空（未新增相依，AC-L2 沿用）。
+
+## 本輪未處理事項
+
+- 本輪修改觸及 `internal/manifest/target.go` 與 `cmd/apm-go/init.go`，兩者
+  同時是 `07-29-targets-init-shape` 的入邊來源（E1/E2/E3）；已用該 task 自己
+  的 verify.ps1 重驗，但**尚未同步更新該 task 自己的 verification-record.md**
+  ——留給該 task 的下一次 implement/check 輪次記錄，或由使用者裁定是否需要。
+- `task.py finish` 未執行；仍需外部（或使用者）覆核後才算收斂。

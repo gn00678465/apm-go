@@ -148,9 +148,13 @@ func TestPluginInitInteractive_Form_DefaultsMatchModeAndPrefill(t *testing.T) {
 
 // TestPluginInitInteractive_MultiSelect_OffersFullSupportedTargetsMenu
 // drives plugin init's MultiSelect branch and asserts the option set it
-// builds has exactly one entry per manifest.SupportedTargets -- proving
-// plugin mode reuses the same target menu as consumer init rather than a
-// bespoke/truncated one.
+// builds has exactly one entry per manifest.PromptTargets -- proving plugin
+// mode reuses the same target menu as consumer init rather than a
+// bespoke/truncated one. manifest.PromptTargets (not the full
+// manifest.SupportedTargets) is the correct comparison set as of 2026-08-02:
+// explicit-only targets (antigravity, agent-skills) are --target-selectable
+// but deliberately excluded from the interactive menu, parity with Python
+// apm_cli's EXPLICIT_ONLY_TARGETS filter (commands/init.py:629, v0.26.0).
 func TestPluginInitInteractive_MultiSelect_OffersFullSupportedTargetsMenu(t *testing.T) {
 	cap := driveInteractiveInit(t, pluginInitCmd(), []string{"my-plugin"}, true)
 	if cap.runErr != nil {
@@ -159,9 +163,14 @@ func TestPluginInitInteractive_MultiSelect_OffersFullSupportedTargetsMenu(t *tes
 	if cap.selectOpts == nil {
 		t.Fatal("multiSelectWith seam was never reached; MultiSelect branch not exercised")
 	}
-	if len(cap.selectOpts) != len(manifest.SupportedTargets) {
-		t.Errorf("MultiSelect offered %d options, want %d (one per manifest.SupportedTargets)",
-			len(cap.selectOpts), len(manifest.SupportedTargets))
+	if len(cap.selectOpts) != len(manifest.PromptTargets) {
+		t.Errorf("MultiSelect offered %d options, want %d (one per manifest.PromptTargets)",
+			len(cap.selectOpts), len(manifest.PromptTargets))
+	}
+	for _, o := range cap.selectOpts {
+		if manifest.ExplicitOnlyTargets[o.Value] {
+			t.Errorf("MultiSelect offered explicit-only target %q; plugin init must exclude it same as consumer init", o.Value)
+		}
 	}
 }
 

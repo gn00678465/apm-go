@@ -50,6 +50,35 @@ var SupportedTargets = deployTargets
 // adapterTargets backs HasAdapter. Derived from deployTargets (R8.3).
 var adapterTargets = targetSet(deployTargets)
 
+// ExplicitOnlyTargets are targets omitted from the init/plugin-init
+// interactive MultiSelect prompt, parity with Python apm_cli's
+// EXPLICIT_ONLY_TARGETS (core/target_detection.py:430-431, v0.26.0):
+// antigravity has no signal of its own to auto-detect on (it shares
+// GEMINI.md/AGENTS.md with other tools, see SignalWhitelist's comment in
+// detect.go) and agent-skills is a cross-client deploy location rather than
+// a single client tool. Both remain fully selectable via `--target`/apm.yml
+// `target:` -- SupportedTargets (the --target whitelist) is unaffected.
+var ExplicitOnlyTargets = map[string]bool{
+	"agent-skills": true,
+	"antigravity":  true,
+}
+
+// PromptTargets is the subset of deployTargets shown in the init/plugin-init
+// MultiSelect prompt: deployTargets with ExplicitOnlyTargets filtered out,
+// preserving deployTargets' display order (same derivation pattern as
+// SupportedTargets/adapterTargets above).
+var PromptTargets = filterOutExplicitOnly(deployTargets)
+
+func filterOutExplicitOnly(targets []string) []string {
+	var result []string
+	for _, t := range targets {
+		if !ExplicitOnlyTargets[t] {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
 func targetSet(targets []string) map[string]bool {
 	m := make(map[string]bool, len(targets))
 	for _, t := range targets {

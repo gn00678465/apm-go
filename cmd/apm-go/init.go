@@ -397,10 +397,13 @@ func interactiveTargetSelect(ck *ux.Clack, detected, existing []string) ([]strin
 }
 
 // targetSelectOptions builds the MultiSelect option list interactiveTargetSelect
-// prompts with: one entry per manifest.SupportedTargets (R8.3 -- the menu is
-// derived from that slice, not an independent literal), pre-selected when
-// the target is already configured (existing) or auto-detected, and labeled
-// with the detection signal when auto-detected. Split out from
+// prompts with: one entry per manifest.PromptTargets (manifest.SupportedTargets
+// minus manifest.ExplicitOnlyTargets -- parity with Python apm_cli's
+// _PROMPT_TARGETS_ORDERED filtered by EXPLICIT_ONLY_TARGETS, commands/init.py:629,
+// v0.26.0; explicit-only targets like antigravity/agent-skills stay selectable
+// via --target but are not offered in the prompt), pre-selected when the
+// target is already configured (existing) or auto-detected, and labeled with
+// the detection signal when auto-detected. Split out from
 // interactiveTargetSelect so tests (AC25) can inspect the option set
 // actually offered to the user without driving a live prompt.
 func targetSelectOptions(detected, existing []string) []ux.Option {
@@ -417,8 +420,8 @@ func targetSelectOptions(detected, existing []string) []ux.Option {
 		detectedSet[t] = true
 	}
 
-	opts := make([]ux.Option, len(manifest.SupportedTargets))
-	for i, t := range manifest.SupportedTargets {
+	opts := make([]ux.Option, len(manifest.PromptTargets))
+	for i, t := range manifest.PromptTargets {
 		label := t
 		if detectedSet[t] {
 			for _, sig := range manifest.SignalWhitelist {

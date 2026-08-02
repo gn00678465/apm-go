@@ -933,7 +933,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
 
       驗證（主 session，2026-08-02）：✅ prd.md:496 有落點（追蹤 C3）：附 install.go:1620/:1764/:1777 的實際行號說明不一致窗口，成本 200+ LOC。
 
-- [ ] X9 — 「marketplace.json/plugin.json schema 對齊」聲稱「已驗證無缺口」justified
+- [x] X9 — 「marketplace.json/plugin.json schema 對齊」聲稱「已驗證無缺口」justified
       · 證據三件套：
         (1) file:line：`internal/marketplace/build/mapper.go:204-234`、
         `internal/marketplace/build/codexmapper.go:26-47,103,129-152`、
@@ -961,6 +961,31 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       修正已實作（commit `1ccb147`），但 X9 的**原始判斷是錯的**，此條不得標記通過。
       教訓：「已驗證無缺口」屬 claim-evidence-guide 的「不存在」句型，當時的證據
       （逐欄比對）不足以支撐——比對用的是本專案自己的型別，不是上游實跑產物。
+
+
+      ✅ **重查通過（主 session，2026-08-02，一手上游原始碼）**：
+      前次 FAIL 的原因（category 缺口）已於 commit `1ccb147` 修復。本次改用
+      **v0.26.0 tag 的實際原始碼**重驗，方法：`git show v0.26.0:<path>`（唯讀，
+      不動使用者工作區）取出 `marketplace/output_mappers.py`、`deps/plugin_parser.py`，
+      逐欄位集合比對：
+      - claude 文件層 6 欄（name/description/version/owner/metadata/plugins）：一致
+      - claude owner 3 欄（name/email/url）：一致
+      - claude plugin 10 欄（含本輪補回的 `category`）：一致
+      - codex（name/interface.displayName/plugins[name,source,policy{installation,
+        authentication},category]/source{source,url,path,ref,sha}）：一致
+      - plugin.json 9 欄 + author 3 子鍵：一致
+      零差異。
+
+      ⚠️ **過程中發現的版本陷阱（記錄供後人）**：本機上游 repo 的**工作區**是
+      v0.21.0-9（2026-06-20），不是 parity 目標 v0.26.0。直接讀工作區檔案會比對到
+      錯的版本。本次一律用 `git show v0.26.0:<path>` 取檔。同輪的兩項修正
+      （explicit-only targets、marketplace init border）已回頭用 v0.26.0 複驗，
+      兩者在該版本上同樣成立——但那是僥倖（該兩處在 v0.21→v0.26 間未變動）。
+
+      **X9 當初為何會錯（根因）**：原驗證是「apm-go 型別 vs research 筆記」，
+      而 research 筆記本身是從實跑產物歸納的二手資料。`category` 恰好在 claude
+      輸出裡、卻被 07-03 mkt-052 裁定排除，於是二手來源互相自洽、與一手原始碼
+      不自洽。與 G8「讀使用者原話而非我的摘要」是同一個病灶：**一手來源沒進場**。
 
 - [x] U1 — SupportedTargets 6 個 vs 10 個是否刻意 → **已由 D3 解決**，見 D3 該列
       · 來源：`research/eval-real-run-20260728.md:97`；
