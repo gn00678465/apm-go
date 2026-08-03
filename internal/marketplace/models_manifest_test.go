@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -219,4 +220,71 @@ func TestMarketplaceManifest_PluginSourceWrongType_Dropped(t *testing.T) {
 		}
 		t.Fatalf("kept plugins %v, want only [good]", names)
 	}
+}
+
+// TestUnmarshalJSON_PluginSourceTagPattern locks the consumer half of upstream
+// v0.27.0's tag_pattern propagation (models.py:325-330 field, :459-467 parse).
+//
+// The error case is deliberately fail-loud for the WHOLE document, not a
+// per-entry skip: upstream's _parse_plugin_entry returns None (skip) for a
+// missing name or an unrecognised source, but *raises* TagPatternError for a
+// bad tag_pattern, and its caller at models.py:531 does not catch it. A
+// silently-dropped tag_pattern would change which tag a range resolves to.
+func TestUnmarshalJSON_PluginSourceTagPattern(t *testing.T) {
+	t.Run("present and valid is carried through", func(t *testing.T) {
+		var m MarketplaceManifest
+		err := json.Unmarshal([]byte(`{"name":"mk","plugins":[
+			{"name":"a","source":{"source":"github","repo":"acme/a","tag_pattern":"{name}-v{version}"}}
+		]}`), &m)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if m.Plugins[0].TagPattern != "{name}-v{version}" {
+			t.Errorf("TagPattern = %q, want %q", m.Plugins[0].TagPattern, "{name}-v{version}")
+		}
+	})
+
+	t.Run("absent stays empty rather than defaulted", func(t *testing.T) {
+		var m MarketplaceManifest
+		err := json.Unmarshal([]byte(`{"name":"mk","plugins":[
+			{"name":"a","source":{"source":"github","repo":"acme/a"}}
+		]}`), &m)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Upstream models the absent key as None and says so explicitly: it
+		// means "old marketplace.json", and the resolver -- not the parser --
+		// supplies the default.
+		if m.Plugins[0].TagPattern != "" {
+			t.Errorf("TagPattern = %q, want \"\" for an absent key", m.Plugins[0].TagPattern)
+		}
+	})
+
+	t.Run("string source is unaffected", func(t *testing.T) {
+		var m MarketplaceManifest
+		err := json.Unmarshal([]byte(`{"name":"mk","plugins":[{"name":"a","source":"./local"}]}`), &m)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if m.Plugins[0].TagPattern != "" {
+			t.Errorf("TagPattern = %q, want \"\"", m.Plugins[0].TagPattern)
+		}
+	})
+
+	t.Run("invalid fails the whole document and names the plugin", func(t *testing.T) {
+		var m MarketplaceManifest
+		err := json.Unmarshal([]byte(`{"name":"mk","plugins":[
+			{"name":"good","source":{"source":"github","repo":"acme/g"}},
+			{"name":"bad","source":{"source":"github","repo":"acme/b","tag_pattern":"{name}"}}
+		]}`), &m)
+		if err == nil {
+			t.Fatalf("expected an error, got plugins %+v", m.Plugins)
+		}
+		if !strings.Contains(err.Error(), "bad") {
+			t.Errorf("error = %q, must name the offending plugin", err.Error())
+		}
+		if !strings.Contains(err.Error(), "exactly one") {
+			t.Errorf("error = %q, must explain the pattern rule", err.Error())
+		}
+	})
 }

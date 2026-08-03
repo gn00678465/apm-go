@@ -8,10 +8,13 @@ package marketplace
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/apm-go/apm/internal/marketplace/tagpattern"
 )
 
 // SourceKind classifies how a MarketplaceSource's manifest content is
@@ -255,6 +258,13 @@ type MarketplacePlugin struct {
 	// parsing-only layer upstream too (mkt-005 revised) -- only tolerant
 	// parsing (no error, value otherwise unused) is required here.
 	Registry string `json:"registry,omitempty"`
+
+	// TagPattern is the producer's tag convention, read from the source
+	// object's "tag_pattern" key (not a top-level plugin key, hence json:"-").
+	// "" means the key was absent -- an older marketplace.json -- and the
+	// resolver supplies its own default, mirroring upstream's
+	// `tag_pattern: str | None = None` (models.py:325-330).
+	TagPattern string `json:"-"`
 }
 
 // MarketplaceManifest is the parsed content of a marketplace.json
@@ -314,7 +324,11 @@ func (m *MarketplaceManifest) UnmarshalJSON(data []byte) error {
 	m.Name = raw.Name
 	m.PluginRoot = parseManifestPluginRoot(raw.Metadata)
 	m.Owner = parseManifestOwner(raw.Owner)
-	m.Plugins = parseManifestPlugins(raw.Plugins)
+	plugins, err := parseManifestPlugins(raw.Plugins)
+	if err != nil {
+		return err
+	}
+	m.Plugins = plugins
 	return nil
 }
 
@@ -342,13 +356,19 @@ func parseManifestPluginRoot(raw json.RawMessage) string {
 // fallback (models.py:491-497). Each array element that is not a JSON
 // object -- or whose fields don't decode into rawPlugin at all -- is
 // skipped rather than failing the whole document (:501-502).
-func parseManifestPlugins(raw json.RawMessage) []MarketplacePlugin {
+// An invalid source.tag_pattern is the one per-entry problem that fails the
+// WHOLE document instead of skipping the entry. That asymmetry is upstream's:
+// _parse_plugin_entry returns None (skip) for a missing name or an
+// unrecognised source, but raises TagPatternError for a bad tag_pattern, and
+// its caller (models.py:531) does not catch it. Skipping would silently change
+// which tag a version range resolves to.
+func parseManifestPlugins(raw json.RawMessage) ([]MarketplacePlugin, error) {
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
 	}
 	var entries []json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil
+		return nil, nil
 	}
 	var plugins []MarketplacePlugin
 	for _, entry := range entries {
@@ -356,11 +376,15 @@ func parseManifestPlugins(raw json.RawMessage) []MarketplacePlugin {
 		if err := json.Unmarshal(entry, &rp); err != nil {
 			continue
 		}
-		if p, ok := rp.normalize(); ok {
+		p, ok, err := rp.normalize()
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			plugins = append(plugins, p)
 		}
 	}
-	return plugins
+	return plugins, nil
 }
 
 // rawPlugin is a plugin entry as found on disk, before Copilot-shape
@@ -413,10 +437,10 @@ func rawStringSliceField(raw json.RawMessage) []string {
 // entry is silently dropped (matching parse_marketplace_json's debug-log
 // skips: nameless entries, sourceless entries, npm-typed sources, and
 // sources whose shape is neither a string nor an object).
-func (rp rawPlugin) normalize() (MarketplacePlugin, bool) {
+func (rp rawPlugin) normalize() (MarketplacePlugin, bool, error) {
 	name := strings.TrimSpace(rp.Name)
 	if name == "" {
-		return MarketplacePlugin{}, false
+		return MarketplacePlugin{}, false, nil
 	}
 	source := rp.Source
 	if source == nil {
@@ -428,7 +452,7 @@ func (rp rawPlugin) normalize() (MarketplacePlugin, bool) {
 			}
 			source = synth
 		} else {
-			return MarketplacePlugin{}, false
+			return MarketplacePlugin{}, false, nil
 		}
 	}
 	switch srcVal := source.(type) {
@@ -442,22 +466,41 @@ func (rp rawPlugin) normalize() (MarketplacePlugin, bool) {
 			t, _ = srcVal["source"].(string)
 		}
 		if strings.EqualFold(strings.TrimSpace(t), "npm") {
-			return MarketplacePlugin{}, false
+			return MarketplacePlugin{}, false, nil
 		}
 	default:
 		// Neither a string nor an object (e.g. a number, array, or bool):
 		// Python drops these entries outright ("unrecognized source
 		// format", models.py:387-389).
-		return MarketplacePlugin{}, false
+		return MarketplacePlugin{}, false, nil
+	}
+	// Upstream validates a present source.tag_pattern here and lets the error
+	// propagate (models.py:459-467). An absent key stays "" -- upstream's None
+	// explicitly means "old marketplace.json", with the default supplied by the
+	// resolver, not by this parser.
+	tagPattern := ""
+	if srcMap, ok := source.(map[string]any); ok {
+		if rawTP, present := srcMap["tag_pattern"]; present {
+			s, isStr := rawTP.(string)
+			if !isStr {
+				return MarketplacePlugin{}, false, fmt.Errorf("plugin %q source.tag_pattern must be a string, got %T", name, rawTP)
+			}
+			validated, err := tagpattern.Validate(s, fmt.Sprintf("plugin %q source.tag_pattern", name))
+			if err != nil {
+				return MarketplacePlugin{}, false, err
+			}
+			tagPattern = validated
+		}
 	}
 	return MarketplacePlugin{
 		Name:        name,
 		Source:      source,
+		TagPattern:  tagPattern,
 		Description: rp.Description,
 		Version:     rawStringField(rp.Version),
 		Tags:        rawStringSliceField(rp.Tags),
 		Registry:    rp.Registry,
-	}, true
+	}, true, nil
 }
 
 // parseManifestOwner accepts the manifest "owner" field as either a plain

@@ -74,7 +74,8 @@
         "source": { "type": "string", "enum": ["github"] },
         "repo": { "type": "string" },
         "ref": { "type": "string" },
-        "sha": { "type": "string" }
+        "sha": { "type": "string" },
+        "tag_pattern": { "type": "string" }
       },
       "required": ["source", "repo"]
     },
@@ -86,7 +87,8 @@
         "source": { "type": "string", "enum": ["url"] },
         "url": { "type": "string" },
         "ref": { "type": "string" },
-        "sha": { "type": "string" }
+        "sha": { "type": "string" },
+        "tag_pattern": { "type": "string" }
       },
       "required": ["source", "url"]
     },
@@ -99,7 +101,8 @@
         "url": { "type": "string" },
         "path": { "type": "string" },
         "ref": { "type": "string" },
-        "sha": { "type": "string" }
+        "sha": { "type": "string" },
+        "tag_pattern": { "type": "string" }
       },
       "required": ["source", "url", "path"]
     }

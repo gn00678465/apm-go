@@ -13,16 +13,60 @@
 package tagpattern
 
 import (
+	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/apm-go/apm/internal/semver"
 )
 
-// defaultPattern is used whenever a package/build tagPattern is unset,
+// DefaultPattern is used whenever a package/build tagPattern is unset,
 // matching the "v{version}" default `apm marketplace init` scaffolds
 // (internal/marketplace/authoring/template.go's initBlockTemplate).
-const defaultPattern = "v{version}"
+const DefaultPattern = "v{version}"
+
+// placeholderRe finds every "{...}" token so Validate can reject the ones the
+// engine has no substitution for. It deliberately excludes nested braces,
+// matching upstream's `re.compile(r"\{[^{}]*\}")`.
+var placeholderRe = regexp.MustCompile(`\{[^{}]*\}`)
+
+// Validate returns a normalized, consumer-safe tag pattern, or an error naming
+// context (e.g. "build.tagPattern", "packages[2].tag_pattern") so the user
+// knows which key is wrong.
+//
+// It mirrors upstream v0.27.0 marketplace/tag_pattern.py's
+// validate_tag_pattern rule for rule. Note this is stricter than v0.26.0,
+// which accepted any pattern containing {version} OR {name}: a pattern with no
+// {version} produces a regex with no "version" capture group, so every tag is
+// silently dropped and the user sees "no matching version" instead of a
+// pattern error (see TestFilterTags_PatternWithoutVersionPlaceholder_
+// DropsEverything).
+func Validate(pattern, context string) (string, error) {
+	normalized := strings.TrimSpace(pattern)
+	if normalized == "" {
+		return "", fmt.Errorf("%q must be a non-empty string, got %q", context, pattern)
+	}
+
+	var unsupported []string
+	seen := make(map[string]bool)
+	for _, ph := range placeholderRe.FindAllString(normalized, -1) {
+		if ph == "{version}" || ph == "{name}" || seen[ph] {
+			continue
+		}
+		seen[ph] = true
+		unsupported = append(unsupported, ph)
+	}
+	if len(unsupported) > 0 {
+		sort.Strings(unsupported)
+		return "", fmt.Errorf("%q contains unsupported placeholder(s): %s", context, strings.Join(unsupported, ", "))
+	}
+
+	if n := strings.Count(normalized, "{version}"); n != 1 {
+		return "", fmt.Errorf("%q must contain exactly one {version} placeholder, got %q", context, normalized)
+	}
+	return normalized, nil
+}
 
 // Compile turns pattern (using the "{version}" and "{name}" placeholders)
 // into a regular expression that matches a full tag name and captures the
@@ -32,7 +76,7 @@ const defaultPattern = "v{version}"
 // "v{version}".
 func Compile(pattern, name string) *regexp.Regexp {
 	if pattern == "" {
-		pattern = defaultPattern
+		pattern = DefaultPattern
 	}
 
 	var sb strings.Builder

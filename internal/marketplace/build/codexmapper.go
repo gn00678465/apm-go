@@ -151,5 +151,11 @@ func composeCodexSource(pkg ResolvedPackage) any {
 	if pkg.SHA != "" {
 		src.SHA = pkg.SHA
 	}
+	// Upstream calls _set_effective_tag_pattern on both codex source branches
+	// (output_mappers.py:372 and :382); apm-go reaches both through this one
+	// shared tail, so a single assignment covers them.
+	if pkg.EffectiveTagPattern != "" {
+		src.TagPattern = pkg.EffectiveTagPattern
+	}
 	return src
 }

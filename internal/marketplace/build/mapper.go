@@ -95,6 +95,11 @@ type RemoteSource struct {
 	Path   string `json:"path,omitempty"`
 	Ref    string `json:"ref,omitempty"`
 	SHA    string `json:"sha,omitempty"`
+	// TagPattern is the producer's effective tag convention, propagated so a
+	// consumer can resolve semver ranges the same way without re-reading
+	// apm.yml (upstream v0.27.0 output_mappers.py's _set_effective_tag_pattern,
+	// inserted after the sha block -- hence this field's position).
+	TagPattern string `json:"tag_pattern,omitempty"`
 }
 
 // ClaudeMapper implements mkt-050/052 修訂版's Claude Code marketplace.json
@@ -258,6 +263,9 @@ func composeRemoteSource(pkg ResolvedPackage) *RemoteSource {
 	}
 	if pkg.SHA != "" {
 		src.SHA = pkg.SHA
+	}
+	if pkg.EffectiveTagPattern != "" {
+		src.TagPattern = pkg.EffectiveTagPattern
 	}
 	return src
 }

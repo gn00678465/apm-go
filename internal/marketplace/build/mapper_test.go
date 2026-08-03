@@ -831,3 +831,77 @@ func TestSubtractPluginRoot_StripsPrefix(t *testing.T) {
 		t.Errorf("got %q, want ./nested/tool-a", got)
 	}
 }
+
+// TestCompose_RemoteSourceCarriesTagPattern locks upstream v0.27.0's
+// output_mappers.py:262/372/382 `_set_effective_tag_pattern`: every REMOTE
+// source object gains a `tag_pattern` key. Because upstream's
+// yml_schema.py:609 defaults build.tagPattern to "v{version}",
+// `entry.tag_pattern or yml.build.tag_pattern` is never empty -- so this is an
+// output SHAPE change, not an optional field. Local sources are untouched
+// (upstream only calls the helper on the remote branches).
+func TestCompose_RemoteSourceCarriesTagPattern(t *testing.T) {
+	// The fallback chain (entry > build > "v{version}") is the builder's job,
+	// exactly as upstream splits it: builder.py computes
+	// effective_tag_pattern, output_mappers.py only copies it. The chain is
+	// covered by TestResolveRemote_EffectiveTagPatternFallbackChain in
+	// builder_test.go; here the field is set directly so this test fails only
+	// when the mapper stops copying it.
+	cfg := &authoring.AuthoringConfig{
+		Name:  "demo",
+		Owner: authoring.Owner{Name: "Acme"},
+	}
+	resolved := []ResolvedPackage{
+		{
+			Entry:               authoring.PackageEntry{Name: "remote-tool", Source: "acme/tool"},
+			SourceRepo:          "acme/tool",
+			Ref:                 "v1.2.3",
+			SHA:                 "0123456789012345678901234567890123456789",
+			EffectiveTagPattern: "{name}-v{version}",
+		},
+		{
+			Entry:   authoring.PackageEntry{Name: "local-tool", Source: "./pkgs/tool-a"},
+			IsLocal: true,
+			Subdir:  "./pkgs/tool-a",
+			// A local package never reaches composeRemoteSource; setting the
+			// field proves the local branch really is unreachable rather than
+			// merely unset.
+			EffectiveTagPattern: "{name}-v{version}",
+		},
+	}
+
+	doc, _, err := ClaudeMapper{}.Compose(cfg, resolved)
+	if err != nil {
+		t.Fatalf("Compose() error = %v", err)
+	}
+
+	src, ok := doc.Plugins[0].Source.(*RemoteSource)
+	if !ok {
+		t.Fatalf("remote plugin Source = %#v, want *RemoteSource", doc.Plugins[0].Source)
+	}
+	if src.TagPattern != "{name}-v{version}" {
+		t.Errorf("remote source tag_pattern = %q, want %q", src.TagPattern, "{name}-v{version}")
+	}
+	if _, isString := doc.Plugins[1].Source.(string); !isString {
+		t.Errorf("local plugin Source = %#v, want plain string with no tag_pattern", doc.Plugins[1].Source)
+	}
+}
+
+// TestRemoteSource_TagPatternIsSerializedAfterSHA locks the key position:
+// upstream inserts _set_effective_tag_pattern after the `if pkg.sha:` block,
+// so tag_pattern trails sha in the emitted object.
+func TestRemoteSource_TagPatternIsSerializedAfterSHA(t *testing.T) {
+	b, err := json.Marshal(&RemoteSource{
+		Source: "github", Repo: "acme/tool", Ref: "v1.0.0", SHA: "abc", TagPattern: "v{version}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	shaAt, tpAt := strings.Index(got, `"sha"`), strings.Index(got, `"tag_pattern"`)
+	if tpAt < 0 {
+		t.Fatalf("tag_pattern missing from %s", got)
+	}
+	if shaAt > tpAt {
+		t.Errorf("tag_pattern must follow sha, got %s", got)
+	}
+}

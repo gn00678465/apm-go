@@ -355,3 +355,51 @@ func TestCodexMapper_Plugin_RemotePackage_RefOrSHAOmittedWhenEmpty(t *testing.T)
 		t.Errorf("Ref/SHA = %q/%q, want both empty", src.Ref, src.SHA)
 	}
 }
+
+// TestComposeCodexSource_CarriesTagPattern mirrors the claude-side test: both
+// codex remote branches (upstream output_mappers.py:372 and :382) gain
+// tag_pattern, and the local branch -- a *CodexLocalSource, a different type
+// entirely -- must not.
+func TestComposeCodexSource_CarriesTagPattern(t *testing.T) {
+	remoteWithSubdir := ResolvedPackage{
+		Entry:               authoring.PackageEntry{Name: "a", Source: "acme/tool"},
+		SourceRepo:          "acme/tool",
+		Subdir:              "pkgs/a",
+		Ref:                 "v1.0.0",
+		EffectiveTagPattern: "{name}-v{version}",
+	}
+	remotePlain := ResolvedPackage{
+		Entry:               authoring.PackageEntry{Name: "b", Source: "acme/tool"},
+		SourceRepo:          "acme/tool",
+		Ref:                 "v1.0.0",
+		EffectiveTagPattern: "v{version}",
+	}
+	local := ResolvedPackage{
+		Entry:               authoring.PackageEntry{Name: "c", Source: "./pkgs/c"},
+		IsLocal:             true,
+		EffectiveTagPattern: "v{version}",
+	}
+
+	for _, tt := range []struct {
+		name string
+		pkg  ResolvedPackage
+		want string
+	}{
+		{"git-subdir branch", remoteWithSubdir, "{name}-v{version}"},
+		{"url branch", remotePlain, "v{version}"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			src, ok := composeCodexSource(tt.pkg).(*RemoteSource)
+			if !ok {
+				t.Fatalf("source = %#v, want *RemoteSource", composeCodexSource(tt.pkg))
+			}
+			if src.TagPattern != tt.want {
+				t.Errorf("tag_pattern = %q, want %q", src.TagPattern, tt.want)
+			}
+		})
+	}
+
+	if _, isLocal := composeCodexSource(local).(*CodexLocalSource); !isLocal {
+		t.Errorf("local source = %#v, want *CodexLocalSource (no tag_pattern field at all)", composeCodexSource(local))
+	}
+}

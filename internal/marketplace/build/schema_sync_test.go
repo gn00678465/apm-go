@@ -537,7 +537,14 @@ type specRow struct {
 // (D3.2's "欄位集合" sync was field-NAME only; this additionally lets
 // TestSchemaSync_SpecMatchesSchemaTypesAndRequiredness compare each row's
 // declared type/required-ness against the schema).
-var tableRowRe = regexp.MustCompile("(?m)^\\|\\s*`([A-Za-z][A-Za-z0-9]*)`\\s*\\|\\s*([^|]*?)\\s*\\|\\s*([^|]*?)\\s*\\|")
+// The name class must allow "_": every field this file covered before
+// v0.27.0 happened to be one word or camelCase (mcpServers), so the original
+// [A-Za-z0-9]* silently could not express a snake_case field name. The first
+// one -- tag_pattern -- made the spec row invisible to this parser, which
+// surfaced as "only in schema: [tag_pattern]" rather than a parse error. That
+// is fail-closed (an undocumentable field blocks the sync test instead of
+// passing it), but it did make the real cause hard to see.
+var tableRowRe = regexp.MustCompile("(?m)^\\|\\s*`([A-Za-z][A-Za-z0-9_]*)`\\s*\\|\\s*([^|]*?)\\s*\\|\\s*([^|]*?)\\s*\\|")
 
 // discoveredTable is one field-table occurrence found anywhere in the spec
 // document: its owning heading text, that heading's own byte offset (start
@@ -1675,11 +1682,11 @@ var remoteSourceBranchExactProperties = []struct {
 	defPath    []string
 	want       []string
 }{
-	{"testdata/apm-claude-marketplace.schema.json", []string{"$defs", "remoteSourceGithub"}, []string{"source", "repo", "ref", "sha"}},
-	{"testdata/apm-claude-marketplace.schema.json", []string{"$defs", "remoteSourceUrl"}, []string{"source", "url", "ref", "sha"}},
-	{"testdata/apm-claude-marketplace.schema.json", []string{"$defs", "remoteSourceGitSubdir"}, []string{"source", "url", "path", "ref", "sha"}},
-	{"testdata/apm-codex-marketplace.schema.json", []string{"$defs", "remoteSourceUrl"}, []string{"source", "url", "ref", "sha"}},
-	{"testdata/apm-codex-marketplace.schema.json", []string{"$defs", "remoteSourceGitSubdir"}, []string{"source", "url", "path", "ref", "sha"}},
+	{"testdata/apm-claude-marketplace.schema.json", []string{"$defs", "remoteSourceGithub"}, []string{"source", "repo", "ref", "sha", "tag_pattern"}},
+	{"testdata/apm-claude-marketplace.schema.json", []string{"$defs", "remoteSourceUrl"}, []string{"source", "url", "ref", "sha", "tag_pattern"}},
+	{"testdata/apm-claude-marketplace.schema.json", []string{"$defs", "remoteSourceGitSubdir"}, []string{"source", "url", "path", "ref", "sha", "tag_pattern"}},
+	{"testdata/apm-codex-marketplace.schema.json", []string{"$defs", "remoteSourceUrl"}, []string{"source", "url", "ref", "sha", "tag_pattern"}},
+	{"testdata/apm-codex-marketplace.schema.json", []string{"$defs", "remoteSourceGitSubdir"}, []string{"source", "url", "path", "ref", "sha", "tag_pattern"}},
 }
 
 func TestSchemaDrift_RemoteSourceBranchExactProperties(t *testing.T) {

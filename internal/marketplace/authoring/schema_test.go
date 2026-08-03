@@ -878,3 +878,107 @@ marketplace:
 		t.Fatalf("LoadAuthoringConfig must not enforce codex's category-required gate at load time (F3): %v", err)
 	}
 }
+
+// ── v0.27.0: tag pattern validation at load time ──
+
+// TestLoadAuthoringConfig_TagPatternValidatedAtLoad locks upstream v0.27.0's
+// yml_schema.py, which routes both `build.tagPattern` (:613) and
+// `packages[N].tag_pattern` (:863) through tag_pattern.validate_tag_pattern.
+// Before this, apm-go read both keys with a bare scalarString and never
+// checked them, so a pattern missing {version} silently matched no tags.
+func TestLoadAuthoringConfig_TagPatternValidatedAtLoad(t *testing.T) {
+	tests := []struct {
+		name    string
+		block   string
+		wantErr string
+		wantCtx string
+	}{
+		{
+			name: "build pattern without version placeholder",
+			block: `  build:
+    tagPattern: "{name}"
+  packages: []
+`,
+			wantErr: "exactly one",
+			wantCtx: "build.tagPattern",
+		},
+		{
+			name: "build pattern blank",
+			block: `  build:
+    tagPattern: "   "
+  packages: []
+`,
+			wantErr: "non-empty",
+			wantCtx: "build.tagPattern",
+		},
+		{
+			name: "package pattern with unsupported placeholder",
+			block: `  packages:
+    - name: a
+      source: acme/a
+      tag_pattern: "{foo}-v{version}"
+`,
+			wantErr: "unsupported placeholder",
+			wantCtx: "packages[0].tag_pattern",
+		},
+		{
+			name: "package pattern with two version placeholders",
+			block: `  packages:
+    - name: a
+      source: acme/a
+    - name: b
+      source: acme/b
+      tag_pattern: "v{version}-{version}"
+`,
+			wantErr: "exactly one",
+			wantCtx: "packages[1].tag_pattern",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+tt.block)
+			_, _, err := LoadAuthoringConfig(dir)
+			if err == nil {
+				t.Fatalf("expected error for %s", tt.name)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantCtx) {
+				t.Errorf("error = %q, must name the offending key %q", err.Error(), tt.wantCtx)
+			}
+		})
+	}
+}
+
+// TestLoadAuthoringConfig_ValidTagPatternsStillLoad is the control group: the
+// tightened validation must not reject the forms upstream still accepts.
+func TestLoadAuthoringConfig_ValidTagPatternsStillLoad(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", `name: demo
+version: 1.0.0
+marketplace:
+  build:
+    tagPattern: "{name}-v{version}"
+  packages:
+    - name: a
+      source: acme/a
+      tag_pattern: "v{version}"
+    - name: b
+      source: acme/b
+`)
+	cfg, _, err := LoadAuthoringConfig(dir)
+	if err != nil {
+		t.Fatalf("valid patterns must load, got %v", err)
+	}
+	if cfg.Build.TagPattern != "{name}-v{version}" {
+		t.Errorf("Build.TagPattern = %q", cfg.Build.TagPattern)
+	}
+	if cfg.Packages[0].TagPattern != "v{version}" {
+		t.Errorf("Packages[0].TagPattern = %q", cfg.Packages[0].TagPattern)
+	}
+	if cfg.Packages[1].TagPattern != "" {
+		t.Errorf("Packages[1].TagPattern = %q, want \"\" (absent key stays absent)", cfg.Packages[1].TagPattern)
+	}
+}

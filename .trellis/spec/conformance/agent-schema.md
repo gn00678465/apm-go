@@ -118,6 +118,7 @@ plugin.json 生態，但沒有 marketplace 輸出；`opencode`/`antigravity` 只
 | `path` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:150-201`（規則 2，design.md:95；只在 `"git-subdir"` 形狀出現） |
 | `ref` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:150-201`（規則 5，design.md:98；已知時附加） |
 | `sha` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:150-201`（規則 5，design.md:98；已知時附加） |
+| `tag_pattern` | string | 選填（`omitempty`） | 省略 | **v0.27.0 新增**：`output_mappers.py:262`（claude）、`:372`/`:382`（codex）的 `_set_effective_tag_pattern`，插入點在 `if pkg.sha:` 之後。值來自 `builder.py:635`/`:814` 的 `entry.tag_pattern or yml.build.tag_pattern`；因 `yml_schema.py:609` 把 `build.tagPattern` 預設為 `v{version}`，remote source 實際上**恆會輸出**此欄位 |
 
 > **修訂記錄（2026-07-31）**：空 `source` 曾經不會被驗證層擋下（`internal/marketplace/authoring/
 > schema.go` 的 `parsePackages` 只在 `source != ""` 時才呼叫
@@ -185,6 +186,7 @@ plugin.json 生態，但沒有 marketplace 輸出；`opencode`/`antigravity` 只
 | `path` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:226-309`（design.md:104 的 git-subdir 分支；只在 `"git-subdir"` 出現） |
 | `ref` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:226-309`（design.md:104「ref/sha 同樣追加」；已知時附加） |
 | `sha` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:226-309`（design.md:104；已知時附加） |
+| `tag_pattern` | string | 選填（`omitempty`） | 省略 | **v0.27.0 新增**：`output_mappers.py:372`/`:382` 的 `_set_effective_tag_pattern`，兩個 codex source 分支都呼叫；apm-go 兩分支共用 `composeCodexSource` 的同一段尾巴 |
 
 > ⚠️ **`repo` 是 Go-only 欄位，schema 刻意不宣告**：`RemoteSource` Go 型別的 `Repo` 欄位是與 Claude
 > 共用的（Claude 的 github 變體會用到），但 `composeCodexSource`（`codexmapper.go:129-155`）在
@@ -285,8 +287,8 @@ apm-go **刻意照做對齊**（不「修正」它），因為 codex 端本來�
 
 | 產物家族 | schema 檔 | golden（正向） | 對應 Go 型別 | SHA-256（schema 檔原始 bytes） |
 |---|---|---|---|---|
-| Claude marketplace.json | `internal/marketplace/build/testdata/apm-claude-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-claude-marketplace.golden.json` | `ClaudeDocument`/`ClaudeOwner`/`ClaudePlugin`/`RemoteSource` | `7f4be09142edeb21dd35cb21f94a8d2583b7e0e852e27b2e937faeab1d07ece1` |
-| Codex marketplace.json | `internal/marketplace/build/testdata/apm-codex-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-codex-marketplace.golden.json` | `CodexDocument`/`CodexInterface`/`CodexPlugin`/`CodexPolicy`/`CodexLocalSource`/`RemoteSource` | `842586b03b7c9ad4284e0d7feb4d57211719253ab67d491275531ef7c5dacc62` |
+| Claude marketplace.json | `internal/marketplace/build/testdata/apm-claude-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-claude-marketplace.golden.json` | `ClaudeDocument`/`ClaudeOwner`/`ClaudePlugin`/`RemoteSource` | `b1d7dadba78bff781585354374236a36e6c8fb4bfed81928ea284cca78ed9444` |
+| Codex marketplace.json | `internal/marketplace/build/testdata/apm-codex-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-codex-marketplace.golden.json` | `CodexDocument`/`CodexInterface`/`CodexPlugin`/`CodexPolicy`/`CodexLocalSource`/`RemoteSource` | `4a2730f21302e44c50826b47955fdf5ecaa2e60c6c088b3cd24aa87d4b3f8abc` |
 | plugin.json（claude） | `internal/pack/bundle/testdata/apm-plugin-claude.schema.json` | `internal/pack/bundle/testdata/apm-plugin-claude.golden.json` | `PluginManifest`/`Author` | `3d815c47be218a51e53c473e441ddc60ab8109bbc7ebae1a16bc2858fde28e35` |
 | plugin.json（copilot） | `internal/pack/bundle/testdata/apm-plugin-copilot.schema.json` | `internal/pack/bundle/testdata/apm-plugin-copilot.golden.json` | `PluginManifest`/`Author`（`mcpServers` 恆不出現） | `45970197c017188fd995154a36c9ca9d8620abcbee42d376c028c3cd3161f3ef` |
 

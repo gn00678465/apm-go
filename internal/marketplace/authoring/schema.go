@@ -30,6 +30,7 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/marketplace/tagpattern"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
@@ -308,6 +309,10 @@ func parseAuthoringNode(node *yaml.Node, inherited topLevelFields, isLegacy bool
 	if err != nil {
 		return nil, err
 	}
+	build, err := parseBuild(node)
+	if err != nil {
+		return nil, err
+	}
 
 	name, nameOverridden := overridableString(node, "name")
 	if !nameOverridden {
@@ -335,7 +340,7 @@ func parseAuthoringNode(node *yaml.Node, inherited topLevelFields, isLegacy bool
 		DescriptionOverridden: descriptionOverridden,
 		VersionOverridden:     versionOverridden,
 		Owner:                 parseOwner(node),
-		Build:                 parseBuild(node),
+		Build:                 build,
 		Outputs:               outputs,
 		Metadata:              metadata,
 		Packages:              packages,
@@ -421,11 +426,21 @@ func parseAuthor(item *yaml.Node) map[string]string {
 	return out
 }
 
-func parseBuild(node *yaml.Node) Build {
+// parseBuild reads the marketplace.build block. When `tagPattern` is present
+// it is validated (upstream v0.27.0 yml_schema.py:613 routes it through
+// tag_pattern.validate_tag_pattern). When the key is absent, "" is kept and
+// tagpattern.Compile's own "v{version}" fallback applies -- the same effective
+// default as upstream's `raw.get("tagPattern", "v{version}")`.
+func parseBuild(node *yaml.Node) (Build, error) {
 	v := mappingValue(node, "build")
-	return Build{
-		TagPattern: scalarString(v, "tagPattern"),
+	if mappingValue(v, "tagPattern") == nil {
+		return Build{}, nil
 	}
+	pattern, err := tagpattern.Validate(scalarString(v, "tagPattern"), "build.tagPattern")
+	if err != nil {
+		return Build{}, err
+	}
+	return Build{TagPattern: pattern}, nil
 }
 
 // parseOutputs accepts the map form (`outputs: {claude: {}, codex: {}}`,
@@ -504,6 +519,20 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 		if err := manifest.ValidateMarketplaceSource(source); err != nil {
 			return nil, fmt.Errorf("marketplace.packages[%d]: %w", i, err)
 		}
+		// Upstream v0.27.0 yml_schema.py:863 validates a present
+		// packages[N].tag_pattern; an absent key stays "" and inherits
+		// build.tagPattern (or tagpattern.Compile's default) downstream.
+		tagPattern := ""
+		if mappingValue(item, "tag_pattern") != nil {
+			validated, err := tagpattern.Validate(
+				scalarString(item, "tag_pattern"),
+				fmt.Sprintf("packages[%d].tag_pattern", i),
+			)
+			if err != nil {
+				return nil, err
+			}
+			tagPattern = validated
+		}
 		entries = append(entries, PackageEntry{
 			Name:              scalarString(item, "name"),
 			Description:       scalarString(item, "description"),
@@ -511,7 +540,7 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 			Version:           scalarString(item, "version"),
 			Ref:               scalarString(item, "ref"),
 			Subdir:            scalarString(item, "subdir"),
-			TagPattern:        scalarString(item, "tag_pattern"),
+			TagPattern:        tagPattern,
 			Tags:              mergeTagsKeywords(item),
 			IncludePrerelease: boolValue(item, "include_prerelease"),
 			Category:          scalarString(item, "category"),
