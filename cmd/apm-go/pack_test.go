@@ -1261,3 +1261,76 @@ func TestRunPack_EmptyLicenseField_StillWarns(t *testing.T) {
 		t.Errorf("output = %q, want the license-undeclared warning for an empty license: value", out)
 	}
 }
+
+// TestPackCmd_EmptyDependencyListsStillTriggerBundle locks the exact apm.yml
+// that `plugin init` scaffolds. Upstream's detect_outputs
+// (build_orchestrator.py:363) is `if data and data.get("dependencies")` -- a
+// TRUTHINESS check on the raw YAML value, and `{apm: [], mcp: []}` is a
+// non-empty dict, so Python produces a bundle. apm-go used to compute
+// hasDeps as len(ParsedDeps) > 0, which is "are there any dependency
+// entries", and wrongly reported "nothing to pack".
+//
+// Verified end-to-end against both binaries on identical inputs (apm.yml +
+// plugin.json only): upstream printed "Packed 1 file(s) -> build\d-0.1.0";
+// apm-go exited 1. `plugin init`'s own Next Steps prints `apm-go pack`, so
+// this is on the documented happy path, not an edge case.
+func TestPackCmd_EmptyDependencyListsStillTriggerBundle(t *testing.T) {
+	// Arrange: byte-for-byte the dependencies block `plugin init` writes.
+	chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm: []\n  mcp: []\nincludes: auto\nscripts: {}\n")
+
+	// Act
+	_, err := runPackCmd(t)
+
+	// Assert
+	if err != nil && err.Error() == wantNothingToPack {
+		t.Fatalf("pack reported %q, but an empty-but-present dependencies mapping is truthy upstream and must trigger the bundle producer", err.Error())
+	}
+}
+
+// TestPackCmd_DependenciesTruthinessMatrix pins each shape of the
+// `dependencies:` key to Python's truthiness rules, so the fix cannot drift
+// into "any present key counts".
+func TestPackCmd_DependenciesTruthinessMatrix(t *testing.T) {
+	tests := []struct {
+		name string
+		deps string
+		// wantErr is the exact error pack must fail with, or "" when the
+		// bundle producer must run instead.
+		wantErr string
+	}{
+		{"absent key", "", wantNothingToPack},
+		{"empty mapping", "dependencies: {}\n", wantNothingToPack},
+		{"mapping of empty lists", "dependencies:\n  apm: []\n  mcp: []\n", ""},
+		{"mapping with entries", "dependencies:\n  apm:\n    - owner/repo\n", ""},
+
+		// apm-go's manifest schema rejects these two shapes before pack's
+		// producer detection is reached, with a more specific message. Both
+		// are falsy upstream too, so the outcome (exit 1) agrees; only the
+		// wording is stricter here. Locked so the fix above cannot silently
+		// turn either into a successful pack.
+		{"explicit null", "dependencies:\n", "apm.yml: dependencies must be a mapping"},
+		{"empty sequence", "dependencies: []\n", "apm.yml: dependencies must be a mapping"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirTemp(t)
+			writePackApmYML(t, "name: demo\nversion: 1.0.0\n"+tt.deps)
+
+			_, err := runPackCmd(t)
+
+			if tt.wantErr == "" {
+				if err != nil && err.Error() == wantNothingToPack {
+					t.Errorf("pack reported nothing-to-pack, want the bundle producer to run")
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("pack succeeded, want error %q", tt.wantErr)
+			}
+			if err.Error() != tt.wantErr {
+				t.Errorf("err = %q, want %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}

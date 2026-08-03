@@ -127,7 +127,13 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 	var hasDeps bool
 	var targets []string
 	if mErr == nil && m != nil {
-		hasDeps = len(m.ParsedDeps) > 0
+		// Python tests the RAW value's truthiness -- `data.get("dependencies")`
+		// (build_orchestrator.py:363) -- not whether any dependency entry
+		// exists. `plugin init` scaffolds `dependencies: {apm: [], mcp: []}`,
+		// a non-empty dict, so upstream runs the bundle producer while
+		// `len(m.ParsedDeps) > 0` (the previous test here) reported "nothing to
+		// pack" and exited 1 on `plugin init`'s own documented next step.
+		hasDeps = yamlValueIsTruthy(nodeMappingValue(apmYMLRoot, "dependencies"))
 		targets = m.Target
 	}
 
@@ -177,6 +183,45 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 // regardless and reports it uniformly with every other no-op case. A real
 // parse/validation error is returned alongside a nil m/root; see runPack's
 // doc comment for why the caller doesn't always propagate it immediately.
+// nodeMappingValue returns the value node for key in a mapping node, or nil
+// when node is not a mapping or key is absent.
+func nodeMappingValue(node *yamllib.Node, key string) *yamllib.Node {
+	if node == nil || node.Kind != yamllib.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// yamlValueIsTruthy mirrors Python truthiness applied to a yaml.safe_load
+// value, which is what upstream's detect_outputs uses to decide whether the
+// bundle producer runs. The load-bearing case is a mapping whose values are
+// all empty: `{apm: [], mcp: []}` is a non-empty dict and therefore TRUE,
+// even though it declares no actual dependency.
+func yamlValueIsTruthy(node *yamllib.Node) bool {
+	if node == nil {
+		return false
+	}
+	switch node.Kind {
+	case yamllib.MappingNode, yamllib.SequenceNode:
+		return len(node.Content) > 0
+	case yamllib.ScalarNode:
+		if node.Tag == "!!null" {
+			return false
+		}
+		switch node.Value {
+		case "", "0", "false", "False", "FALSE":
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 func loadPackManifest() (m *manifest.Manifest, root *yamllib.Node, err error) {
 	data, err := os.ReadFile("apm.yml")
 	if err != nil {
