@@ -798,7 +798,7 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       但錯誤訊息分別為「neither dependencies nor marketplace block」與「no instruction
       files found in .apm/」——皆為 fixture 內容不足，與 dev 讀取鏈無關。
 
-- [ ] G2（對應 research/eval-real-run-20260728.md:317 的「未驗證」，延續自舊版，
+- [x] G2（對應 research/eval-real-run-20260728.md:317 的「未驗證」，延續自舊版，
       本輪未變動、仍然開放）— `apm-go pack` 產生的 bundle
       （`build/<name>-<version>/plugin.json`）在 `plugin init` 開始產生根目錄
       `plugin.json` 之後，確實是 disk-first 複製磁碟上那份
@@ -808,6 +808,88 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       比對 `build/demo-e2e-0.1.0/plugin.json` 與根目錄 `demo-e2e/plugin.json`
       · 通過條件：兩份逐欄相同（含 `license`）
       · 狀態：本輪 codex 稽核與 prd.md 修訂皆未觸及這一項，予以延續，非本輪新發現
+
+      ✅ **端到端通過（主 session，2026-08-03）**。先更正一個錯誤前提：舊註記寫
+      「本機無網路無法安裝套件」——**那是錯的，從未實測**。`git ls-remote
+      https://github.com/microsoft/apm.git HEAD` 回 `703dd9e7`、exit=0，網路可用。
+
+      實際步驟（`C:\Users\gn006\AppData\Local\Temp\g2\d`，短路徑；scratchpad 路徑
+      120+ 字元會讓 `github/awesome-copilot` 的 clone 撞上 Windows MAX_PATH，
+      報 `Filename too long: exit status 128`）：
+      1. `apm-go plugin init d --yes` → 根目錄 `plugin.json`（含 `license: MIT`）
+      2. `apm-go install microsoft/apm-sample-package --target claude`
+         → 裝入 2 個相依（含 depth-2 transitive）
+      3. `apm-go pack` → `+ Packed 1884 file(s) -> build\d-0.1.0`
+
+      **逐欄比對**（`json.load` 後 dict 相等，非字串比對）：
+      ```
+      root  : {"author":{"name":"Madao"},"description":"APM project for d",
+               "license":"MIT","name":"d","version":"0.1.0"}
+      bundle: 同上
+      EQUAL；license 兩邊皆 "MIT"
+      ```
+
+      **disk-first 決定性證明**（僅「相同」不足以排除「合成剛好一樣」）：
+      在根目錄 `plugin.json` 注入 `homepage: https://disk-first-marker.example`
+      與 `description: EDITED-ON-DISK`（兩者 apm.yml 皆無，合成路徑不可能產生），
+      重跑 `pack` 後 bundle 內的 `plugin.json` **原樣帶有這兩個欄位**
+      ⇒ bundle 確為 disk-first 複製磁碟那份，非合成。
+
+      ⚠️ **驗證過程中發現一個新的阻斷級缺口，見下方 G3**——`plugin init` 的產物
+      直接 `pack` 在 apm-go 會失敗，本項是繞過該缺口（改裝正式 `dependencies`）
+      後才驗成的。
+
+- [x] G3（**本輪新發現，阻斷級；已修**）— `plugin init` → `pack` 在 apm-go 是斷的：
+      同一份輸入上游能產 bundle，apm-go 直接報錯退出
+      · 乾淨 A/B（兩邊目錄內容完全相同，只有 `apm.yml` + `plugin.json`，
+        即 `plugin init` 的原始產物）：
+      ```
+      apm-go   → exit 1, "apm.yml has neither 'dependencies:' nor 'marketplace:'
+                 block, and 'target:' does not include 'claude' or 'copilot'.
+                 Nothing to pack."，無 build/
+      上游 apm → "[*] Packed 1 file(s) -> build\d-0.1.0"，build/ 產生
+      ```
+      · 根因（一手）：上游 `core/build_orchestrator.py:363`
+        `if data and data.get("dependencies"): out.add(OutputKind.BUNDLE)`。
+        `plugin init` 產出的 `dependencies:` 是 `{apm: [], mcp: []}`
+        ——在 Python 是**非空 dict，truthy**，所以上游判定要產 bundle；
+        apm-go 判定為「空」而擋下。
+      · 追加事實：apm-go 即使補上 `targets: [claude]`（gate 的另一條件）也只產
+        `.claude-plugin/plugin.json`，**仍無 `build/` bundle**；上游同輸入有 bundle。
+      · 威脅模型：這不是邊角案例——`plugin init` 的 Next Steps 第二行就印
+        `apm-go pack`，使用者照著做必然撞到。
+      · 成本估計：實測 **約 40 行**（含測試）。
+
+      ✅ **已修並驗證（主 session，2026-08-04）**
+
+      · 缺陷位置：`cmd/apm-go/pack.go:130` 舊寫法 `hasDeps = len(m.ParsedDeps) > 0`。
+        `internal/pack/detect.go:26-29` 的 doc comment 本來就寫明要對齊
+        `data.get("dependencies")`，所以 `DetectOutputs` 本身沒錯——**錯在呼叫端
+        把「有沒有相依項目」當成「dependencies 鍵是否 truthy」**。
+      · 修法：新增 `nodeMappingValue` + `yamlValueIsTruthy`（`pack.go`），對
+        `apm.yml` 的**原始 YAML 節點**做 Python 式 truthy 判斷：
+        mapping/sequence 看 `len(Content) > 0`；scalar 排除 `!!null` 與
+        `"" / 0 / false`。`{apm: [], mcp: []}` 是非空 mapping ⇒ truthy。
+      · 新測試：
+        - `TestPackCmd_EmptyDependencyListsStillTriggerBundle`
+          （逐字使用 `plugin init` 產出的 dependencies 區塊）
+        - `TestPackCmd_DependenciesTruthinessMatrix`（6 種形狀逐一釘住）
+      · 突變測試：把 `hasDeps` 改回 `len(m.ParsedDeps) > 0` ⇒ 兩個測試皆 FAIL；
+        還原後 GREEN。
+      · **端到端 A/B 複驗**（兩邊輸入完全相同，即 `plugin init` 的原始產物）：
+        ```
+        apm-go   → + Packed 1 file(s) -> ...\build\d-0.1.0
+        上游 apm → [*] Packed 1 file(s) -> build\d-0.1.0
+        bundle/plugin.json：EQUAL(go vs py)=True、EQUAL(go vs 根目錄)=True
+        ```
+      · 過程更正：matrix 測試中 `dependencies:`（null）與 `dependencies: []`
+        兩格我原本預期回 `ErrNothingToPack`，實測是 apm-go schema 更早擋下的
+        `apm.yml: dependencies must be a mapping`。**錯的是我的測試預期，不是實作**
+        ——已改為釘住真實訊息（兩者上游同為 falsy，退出碼一致，僅措辭更嚴格）。
+      · 已知未處理（不在本次修正範圍，記錄備查）：`loadPackManifest` 在 schema
+        解析失敗時回傳 `nil` 根節點，因此 `hasDeps` 恆為 false；上游是從
+        `yaml.safe_load` 的原始 dict 取值，不受 schema 驗證影響。此差異在本次
+        修正前即存在，**未評估影響面**。
 
 **R 子項總數**：R1(4)+R2(4)+R3(9)+R4(3)+R5(5)+R6(1)+R7(3)+R8(4)+R9(5)+R10(4) = **42 個
 子項**。42 個子項中，**6 個在舊版判斷錯誤、本輪已用新增的 AC36-41 修正**
@@ -1007,6 +1089,26 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       輸出裡、卻被 07-03 mkt-052 裁定排除，於是二手來源互相自洽、與一手原始碼
       不自洽。與 G8「讀使用者原話而非我的摘要」是同一個病灶：**一手來源沒進場**。
 
+      ⏫ **基準線位移，此結論的有效範圍已縮小（主 session，2026-08-03）**：
+      上述「零差異」**僅對 v0.26.0 成立**。使用者更新上游 repo 後量測到
+      `git -C D:/Projects/apm-dev/apm diff --stat v0.26.0..v0.27.0 -- src/`
+      = 102 檔 / +8514 / -1963，其中 **`marketplace/output_mappers.py` 有變動**
+      （`:262`/`:372`/`:382` 新增 `_set_effective_tag_pattern`，對所有 remote
+      source 寫入 `source.tag_pattern`）。
+      ⇒ 本條對 v0.27.0 **已失效**，缺口為真。**尚未立案**——建立任務需使用者
+      指名許可，未取得前不得自行開立（見 AGENTS.md「四類需指名許可的動作」）。
+      本輪比對過的另外四支檔案（`core/target_catalog.py`、`commands/init.py`、
+      `deps/plugin_parser.py`、`core/plugin_manifest.py`、`utils/helpers.py`）
+      不在 102 檔清單中，即 v0.26→v0.27 未變動，相關結論仍成立。
+      完整落差與一手行號見
+      `.trellis/tasks/07-28-marketplace-plugin-parity/upstream-v0.27.0-delta.md`。
+
+      **上一條「版本陷阱」記錄本身也不完整（自我更正）**：我當時只修正了
+      「讀到錯的工作區版本」，卻沒有問「v0.26.0 是不是還是現行基準」——
+      等於用一個未檢查的假設換掉另一個。正確處理是三步：停 → 用
+      `git describe` + `git diff --stat` 量測落差 → **明確說明並取得裁定**，
+      因為基準線位移是範圍變更，不該由執行者默默決定。第三步當時完全沒做。
+
 - [x] U1 — SupportedTargets 6 個 vs 10 個是否刻意 → **已由 D3 解決**，見 D3 該列
       · 來源：`research/eval-real-run-20260728.md:97`；
       `research/agent-schema-support-matrix.md:69,293`
@@ -1015,7 +1117,8 @@ coordinator 拆成 parent（本任務，傘任務）+ 4 個 child task（`07-29-
       ✅ 驗證（主 session，2026-08-02）：由 D3 解決並經實測——`init` 產物註解逐字為
       `# Accepted values: agent-skills, antigravity, claude, codex, copilot, opencode`（6 個）。
 
-- [ ] U2 — bundle 是否 disk-first 複製根目錄 plugin.json → **未解決**，見上方 G2
+- [x] U2 — bundle 是否 disk-first 複製根目錄 plugin.json → **已解決**，見上方 G2
+      的端到端驗證（2026-08-03，含 marker 欄位的 disk-first 決定性證明）
       · 來源：`research/eval-real-run-20260728.md:317`
 
 
