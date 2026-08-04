@@ -1,4 +1,4 @@
-#requires -Version 7
+﻿#requires -Version 7
 # Tier 1 確定性閘門 — marketplace-add-fixes（無入邊、無出邊）
 
 $ErrorActionPreference = 'Stop'
@@ -711,6 +711,24 @@ if ($listedBehavioral.Count -eq 0) {
   Fail 'AC53/behavioral' 'TestMarketplaceInitCmd_NoInteractivePrompt_Behavioral 不存在（-list 零匹配）'
 } else {
   ExecTestJSON 'AC53/behavioral' "go test -tags apm_test_hooks -json -run 'TestMarketplaceInitCmd_NoInteractivePrompt_Behavioral'" './cmd/apm-go/' 'TestMarketplaceInitCmd_NoInteractivePrompt_Behavioral' -tags 'apm_test_hooks' -requireTests @('TestMarketplaceInitCmd_NoInteractivePrompt_Behavioral')
+
+# AC53/stdin（2026-08-04，外部稽核 codex 發現、主 session 實跑重現）：
+# 上面兩層都是「名字導向」—— AST 閘門走 huh/ux 綁定的識別字，seam 閘門只數
+# 走 ux prompt seam 的呼叫。直接讀 os.Stdin（fmt.Fscan / bufio.NewReader(os.Stdin)
+# / os.Stdin.Read）兩者皆非，全部維持綠色。
+# 已實測：把 `if !force { var p string; fmt.Fscan(os.Stdin, &p) }` 插進
+# marketplaceInitCmd，三層閘門全綠，但實際二進位在 live stdin 下阻塞
+# （`sleep 60 | timeout 8 apm-go marketplace init` → rc=124；stdin=/dev/null → rc=0）。
+# go test 抓不到的原因就是測試行程的 stdin 會立即 EOF。
+# 新閘門改為行為導向：把 os.Stdin 換成永不供給資料、write end 保持開啟的 pipe，
+# 任何讀取都會阻塞，10 秒逾時即判失敗 —— 對「所有讀 stdin 的行為」有效，
+# 不需要事先知道要黑名單哪個函式。
+$listed = @(& go test -tags apm_test_hooks ./cmd/apm-go/ -list 'TestMarketplaceInitCmd_DoesNotReadStdin' 2>&1 | Where-Object { $_ -match '^Test' })
+if ($listed.Count -eq 0) {
+  Fail 'AC53/stdin' 'TestMarketplaceInitCmd_DoesNotReadStdin 不存在（-list 零匹配）'
+} else {
+  ExecTestJSON 'AC53/stdin' "go test -tags apm_test_hooks -json -run 'TestMarketplaceInitCmd_DoesNotReadStdin'" './cmd/apm-go/' 'TestMarketplaceInitCmd_DoesNotReadStdin' -tags 'apm_test_hooks' -requireTests @('TestMarketplaceInitCmd_DoesNotReadStdin')
+}
 }
 
 # B-BLOCKING-1（外部稽核第十輪，2026-07-31）：上面那條行為測試從不傳

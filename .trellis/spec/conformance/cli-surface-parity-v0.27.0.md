@@ -4,7 +4,19 @@
 **上游基準**：`microsoft/apm` v0.27.0（`git -C D:/Projects/apm-dev/apm describe --tags` → `v0.27.0-2-g703dd9e7`；HEAD 的 2 個 commit 未觸及 `src/`）
 **apm-go**：`feat/marketplace-plugin-parity` 分支，含未提交改動
 
-> **本文只記錄，不代表已排程實作。** 使用者裁定：「這部分需要記錄下來，但是不是現在實作」。
+> **⛔ 範圍護欄（2026-08-04 使用者第三次重申）**
+>
+> 本文涵蓋的**整體 CLI parity 已由使用者明示排入其他任務**。
+> `07-28-marketplace-plugin-parity` 及其五個 child **專注於 plugin / marketplace**，
+> 本文所列的缺席指令與旗標**一律不屬於該 parent 的驗收範圍**。
+>
+> 具體禁止事項（寫給未來的自己，因為口頭記住已被證明失敗三次）：
+> - 不得把本文的數字（33 指令 / 75 旗標）放進 plugin/marketplace 任務的
+>   完成度、缺口清單或交付報告
+> - 不得在回答「plugin/marketplace 是否完整」時引用本文作為未完成的理由
+> - 該五個 child 的驗收邊界是它們各自 `prd.md` 的 AC，不是本文
+>
+> 本文的唯一用途：作為**另一個任務**的輸入資料。
 
 ## 測法（可重跑）
 

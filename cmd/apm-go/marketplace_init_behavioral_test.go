@@ -212,3 +212,64 @@ func TestMarketplaceInitCmd_ForceFlag_NoInteractivePrompt_Behavioral(t *testing.
 		t.Fatalf("marketplace init --force reached an interactive prompt seam (confirm=%d multiSelect=%d form=%d); AC53/D13 requires it to stay non-interactive", confirmCalls, multiSelectCalls, formCalls)
 	}
 }
+
+// TestMarketplaceInitCmd_DoesNotReadStdin closes the escape hatch that the
+// other two AC53 gates share: both are name-based. The AST gate
+// (TestMarketplaceInitCmd_NoInteractiveComponents) walks the call graph for
+// identifiers bound to charm.land/huh or internal/ux; the seam-counting gate
+// above only counts calls that go THROUGH ux's prompt seams. A direct read of
+// os.Stdin -- `fmt.Fscan(os.Stdin, &x)`, bufio.NewReader(os.Stdin).ReadString,
+// os.Stdin.Read -- is neither, so both stay green.
+//
+// Reproduced before writing this test: inserting
+//
+//	if !force {
+//	    var probe string
+//	    fmt.Fscan(os.Stdin, &probe)
+//	}
+//
+// into marketplaceInitCmd left all three existing gates GREEN, while the built
+// binary blocked indefinitely on a live stdin (rc=124 under `sleep 60 | timeout
+// 8 apm-go marketplace init`; rc=0 with stdin=/dev/null). Tests miss it
+// precisely because `go test` hands the process a stdin that EOFs immediately.
+//
+// This gate is behavioural rather than name-based on purpose: it fails for ANY
+// blocking stdin read, including ones nobody has thought to blacklist.
+func TestMarketplaceInitCmd_DoesNotReadStdin(t *testing.T) {
+	chdirTemp(t)
+
+	restoreTTY := ux.SetTTYSeamsForTest(true, true, true)
+	t.Cleanup(restoreTTY)
+
+	// A pipe whose write end is deliberately held open and never written to:
+	// any read blocks instead of returning EOF, exactly like an idle terminal.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = origStdin
+		_ = w.Close()
+		_ = r.Close()
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		cmd := marketplaceInitCmd()
+		cmd.SetArgs(nil)
+		done <- cmd.Execute()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("marketplace init returned an error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("marketplace init blocked on stdin: it must never read stdin (AC53/D13). " +
+			"A name-based gate cannot see this -- os.Stdin reads bypass both the huh/ux AST " +
+			"walk and the ux prompt-seam counters.")
+	}
+}
