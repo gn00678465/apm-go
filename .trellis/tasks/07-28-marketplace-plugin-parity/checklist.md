@@ -1302,3 +1302,63 @@ Out of Scope 表共 **9** 列 ✅；R 子項共 **42** 個，本輪逐格重判�
       ✅ 驗證（主 session，2026-08-02）：對 `implement.md` 以 regex
       `[0-9]+ *(條|項)(AC|checklist|check)|AC1[-–]AC[0-9]+|共 *[0-9]+ *條` 掃描，零命中——
       未寫死任何 AC/checklist 條目數字。
+
+---
+
+## Tier 2 外部稽核結果（codex，2026-08-04）
+
+以 `codex exec -s read-only -C D:/Projects/apm-dev/apm-go` 對五個 child 的全部
+AC 做對抗性稽核（prompt 明寫：立場是推翻而非確認，`verification-record.md` 與
+`verify.ps1` 是被稽核對象不是證據）。
+
+**先記一個方法論修正**：一開始派的是三個 fresh-context Claude subagent，
+被使用者指出「同模型不算驗證」而全部停掉（零產出）。`.trellis/workflow.md:304`
+早就寫著這條，我引用過卻在派工時違反。改用 codex 後才是真的外部。
+
+### 環境限制（影響判讀）
+
+codex 在 read-only sandbox 下所有 Go 指令在編譯前即失敗：
+
+```text
+go: creating work dir: mkdir C:\...\Temp\go-build...: Access is denied.
+```
+
+`workspace-write` 模式則因 `codex-windows-sandbox-setup.exe` 不存在而完全
+啟動不了。故多數 UNVERIFIABLE 是**環境所致，不是找到缺口**。
+
+| 稽核範圍 | MET | NOT-MET | UNVERIFIABLE |
+|---|---:|---:|---:|
+| plugin-init（24 AC） | 1 | 0 | 23 |
+| marketplace-add-fixes（14 AC） | 1 | 0 | 13 |
+| targets-init-shape + install-dev + agent-schema-spec（31 AC） | 3 | 6 | 22 |
+
+### 6 條 NOT-MET 的逐條判定（主 session 獨立查證，非採信）
+
+| 項目 | 判定 | 依據 |
+|---|---|---|
+| **AS4** | ✅ **真缺口，已修** | `upstream-*.golden.json` 有 remote source 卻無 `tag_pattern`，是 v0.26.0 舊產物。已用真實上游 v0.27.0 重產，並新增 `TestSchemaGolden_UpstreamGoldensAreNotStale`（突變驗證會紅） |
+| **AS1** | ✅ **真缺口，已修** | spec 引用 `plugin_parser.py:963-990` 等 4 組行號，v0.27.0 實際在 `1000-1064`／`1039-1051`／`1058-1060`；`build_plugin_manifest` 根本不在該檔（在 `core/plugin_manifest.py:342-391`）。另修正 `tag_pattern` 必填性的自相矛盾敘述 |
+| **AC2 / AC3** | ❌ **非缺陷：AC 文字過期** | 上游 `commands/init.py:629` 的 `_prompt_target_selection` 同樣 `targets = [t for t in _PROMPT_TARGETS_ORDERED if t not in EXPLICIT_ONLY_TARGETS]`，且 `chosen = [targets[i] ... if selected[i]]; return chosen`。**上游也會丟掉既有的 explicit-only target**，apm-go 行為與上游一致。AC2/AC3 的「預選不遺失」寫在使用者 explicit-only 裁定之前，措辭過寬 |
+| **AC25** | ❌ **非缺陷：codex 誤讀** | AC 要求的是「三集合**同源**」，不是同集合。`target.go:48/51/70` 的 `SupportedTargets`／`adapterTargets`／`PromptTargets` 全部從單一字面量 `deployTargets` 推導，同源成立 |
+| **AC44** | ❌ **非缺陷：後續裁定覆蓋** | codex 拿 `e2ca739^` 當基準，但該版行為（`install X` 對既有 dev entry 附加成重複條目）**本身就是**前一輪外部 Tier-2 稽核找到的缺陷。使用者 2026-07-30 裁定改為 npm 式搬家，已由 `TestRunInstall_Dev_ExistingDevDependency_BareInstall_MovesToNonDev` 鎖定 |
+
+⇒ **6 條 NOT-MET 中 2 條為真（已修），4 條為 AC 文字過期或誤讀。**
+
+### 稽核另外挖到但不在 AC 範圍內的
+
+1. **AC53 閘門有具體假陰性反例**（codex 純讀原始碼推出，未實跑）：加入
+   `if !force { fmt.Fscan(os.Stdin, &x) }` → AST 黑名單不抓 `fmt.Fscan`；
+   行為測試沒把 stdin 換成永不回傳的 pipe；`--force` 測試不走 `!force` 分支。
+   真 TTY 下會卡住等輸入，三層閘門卻可能維持綠色。**未修，未實跑重現。**
+2. **hash 封印受 `core.autocrlf` 影響**（本輪實際踩到）：`sha256HexFile` 對原始
+   位元組雜湊，同一 commit 的 LF 工作檔與 CRLF checkout 會算出不同值。已修為
+   正規化後雜湊。
+3. `target.go:55` 的上游行號引用仍指向 v0.26.0，已更新為
+   `core/target_detection.py:433-435, v0.27.0`。
+
+### 尚未取得的證據
+
+codex 無法編譯，因此**沒有任何一條 AC 是由外部稽核實際跑測試驗證的**。
+Tier 1 閘門（五個 `verify.ps1`，exit=0 全綠）是本專案自己的斷言，
+不構成外部驗證。要取得真正的外部測試證據，需解決 codex sandbox 無法
+建立 Go build cache 的問題。

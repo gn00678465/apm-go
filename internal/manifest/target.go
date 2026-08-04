@@ -52,7 +52,7 @@ var adapterTargets = targetSet(deployTargets)
 
 // ExplicitOnlyTargets are targets omitted from the init/plugin-init
 // interactive MultiSelect prompt, parity with Python apm_cli's
-// EXPLICIT_ONLY_TARGETS (core/target_detection.py:430-431, v0.26.0):
+// EXPLICIT_ONLY_TARGETS (core/target_detection.py:433-435, v0.27.0):
 // antigravity has no signal of its own to auto-detect on (it shares
 // GEMINI.md/AGENTS.md with other tools, see SignalWhitelist's comment in
 // detect.go) and agent-skills is a cross-client deploy location rather than
