@@ -118,7 +118,25 @@ plugin.json 生態，但沒有 marketplace 輸出；`opencode`/`antigravity` 只
 | `path` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:150-201`（規則 2，design.md:95；只在 `"git-subdir"` 形狀出現） |
 | `ref` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:150-201`（規則 5，design.md:98；已知時附加） |
 | `sha` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:150-201`（規則 5，design.md:98；已知時附加） |
-| `tag_pattern` | string | 選填（`omitempty`） | 省略 | **v0.27.0 新增**：`output_mappers.py:262`（claude）、`:372`/`:382`（codex）的 `_set_effective_tag_pattern`，插入點在 `if pkg.sha:` 之後。值來自 `builder.py:635`/`:814` 的 `entry.tag_pattern or yml.build.tag_pattern`；因 `yml_schema.py:609` 把 `build.tagPattern` 預設為 `v{version}`，remote source 實際上**恆會輸出**此欄位 |
+| `tag_pattern` | string | 選填（`omitempty`；schema 面刻意保持選填，產出面 remote 恆有——見下方說明） | 省略 | **v0.27.0 新增**：`output_mappers.py:262`（claude）、`:372`/`:382`（codex）的 `_set_effective_tag_pattern`，插入點在 `if pkg.sha:` 之後。值來自 `builder.py:635`/`:814` 的 `entry.tag_pattern or yml.build.tag_pattern` |
+
+> **`tag_pattern` 的「選填」與「恆會輸出」不矛盾，但必須分開講**（2026-08-04 修訂，
+> 原本兩者寫在同一格造成自相矛盾）：
+>
+> - **產出面（v0.27.0 起恆有）**：`yml_schema.py:609` 把 `build.tagPattern` 預設為
+>   `v{version}`，所以 `entry.tag_pattern or yml.build.tag_pattern` 永不為空，
+>   **每個 remote source 都會帶此欄位**。apm-go 對缺席鍵保留空字串，因此把同一個
+>   預設補在輸出端（`builder.go` 的 `EffectiveTagPattern` fallback 鏈），效果相同。
+>   local source 不輸出（上游只在 remote 分支呼叫該 helper）。
+> - **schema 面（刻意保持選填）**：schema 同時要能驗證**v0.27.0 之前產生的**
+>   marketplace.json——上游 `models.py:325-330` 明載 `None` 代表「舊版
+>   marketplace.json」，由 resolver 端 fallback。把它列入 `required` 會拒絕合法舊檔；
+>   `TestSchemaGolden_RemoteSourceVariantsMinimal` 正是為擋這種過度收緊而存在
+>   （實測：加入 required 後該測試轉紅，錯誤訊息為 "over-tightened required list?"）。
+> - **因此「upstream golden 是否過期」不能靠 schema 驗證偵測**（缺一個選填欄位仍會
+>   通過）。改由 `TestSchemaGolden_UpstreamGoldensAreNotStale` 針對
+>   `upstreamGoldenProvenance` 宣告的版本，直接斷言每個 remote source 都帶
+>   `tag_pattern`。
 
 > **修訂記錄（2026-07-31）**：空 `source` 曾經不會被驗證層擋下（`internal/marketplace/authoring/
 > schema.go` 的 `parsePackages` 只在 `source != ""` 時才呼叫
@@ -186,7 +204,7 @@ plugin.json 生態，但沒有 marketplace 輸出；`opencode`/`antigravity` 只
 | `path` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:226-309`（design.md:104 的 git-subdir 分支；只在 `"git-subdir"` 出現） |
 | `ref` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:226-309`（design.md:104「ref/sha 同樣追加」；已知時附加） |
 | `sha` | string | 選填（`omitempty`） | 省略 | `output_mappers.py:226-309`（design.md:104；已知時附加） |
-| `tag_pattern` | string | 選填（`omitempty`） | 省略 | **v0.27.0 新增**：`output_mappers.py:372`/`:382` 的 `_set_effective_tag_pattern`，兩個 codex source 分支都呼叫；apm-go 兩分支共用 `composeCodexSource` 的同一段尾巴 |
+| `tag_pattern` | string | 選填（`omitempty`；schema 面刻意保持選填，產出面 remote 恆有——同 Claude 段的說明） | 省略 | **v0.27.0 新增**：`output_mappers.py:372`/`:382` 的 `_set_effective_tag_pattern`，兩個 codex source 分支都呼叫；apm-go 兩分支共用 `composeCodexSource` 的同一段尾巴 |
 
 > ⚠️ **`repo` 是 Go-only 欄位，schema 刻意不宣告**：`RemoteSource` Go 型別的 `Repo` 欄位是與 Claude
 > 共用的（Claude 的 github 變體會用到），但 `composeCodexSource`（`codexmapper.go:129-155`）在
@@ -214,8 +232,8 @@ apm-go **刻意照做對齊**（不「修正」它），因為 codex 端本來�
 ## plugin.json（claude: `.claude-plugin/plugin.json`；copilot: `.github/plugin/plugin.json`）
 
 由 `apm.yml` 合成（`internal/pack/bundle/pluginjson.go` 的 `PluginManifest`/`Synthesize`/`ToJSONValue`）。
-上游對照：`deps/plugin_parser.py:930-992`（`synthesize_plugin_json_from_apm_yml`）、
-`core/plugin_manifest.py:366-382`（`build_plugin_manifest`）。實跑產物見
+上游對照：`deps/plugin_parser.py:1000-1064`（`synthesize_plugin_json_from_apm_yml`）、
+`core/plugin_manifest.py:342-391`（`build_plugin_manifest`）。實跑產物見
 `research/agent-schema-support-matrix.md` §3、`research/eval-real-run-20260728.md` §D3。
 
 **claude 與 copilot 共用同一個 Go 型別**（`PluginManifest`）；`mcpServers` 是唯一的生態差異
@@ -241,23 +259,23 @@ apm-go **刻意照做對齊**（不「修正」它），因為 codex 端本來�
 
 | 欄位 | 型別 | 必填/選填 | 預設值 | 上游出處 |
 |---|---|---|---|---|
-| `name` | string | 必填 | - | `deps/plugin_parser.py:963-990`（`synthesize_plugin_json_from_apm_yml`/`build_plugin_manifest` 的欄位順序；apm.yml 的 `name:`；缺/空回錯，mf-002 同款檢查） |
-| `version` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:963-990`（apm.yml 的 `version:`） |
-| `description` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:963-990`（apm.yml 的 `description:`） |
-| `author` | object | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:963-990`（見下方 author 表；scalar author 會被合成為 `{"name": …}`） |
-| `license` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:963-990`（apm.yml 的 `license:`；`apm.yml` 通常沒有此欄位，`plugin init` 硬寫的 license 不會回填進 apm.yml，見 research §3.4） |
-| `homepage` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:963-990`（apm.yml 的 `homepage:`） |
-| `repository` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:963-990`（apm.yml 的 `repository:`） |
-| `keywords` | array[string] | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:988-990`（`synthesizeKeywords` 逐字對照；apm.yml 的 `keywords:`；單一 scalar 會被包成一元素陣列） |
+| `name` | string | 必填 | - | `deps/plugin_parser.py:1000-1064`（`synthesize_plugin_json_from_apm_yml`/`build_plugin_manifest` 的欄位順序；apm.yml 的 `name:`；缺/空回錯，mf-002 同款檢查） |
+| `version` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1000-1064`（apm.yml 的 `version:`） |
+| `description` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1000-1064`（apm.yml 的 `description:`） |
+| `author` | object | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1000-1064`（見下方 author 表；scalar author 會被合成為 `{"name": …}`） |
+| `license` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1000-1064`（apm.yml 的 `license:`；`apm.yml` 通常沒有此欄位，`plugin init` 硬寫的 license 不會回填進 apm.yml，見 research §3.4） |
+| `homepage` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1000-1064`（apm.yml 的 `homepage:`） |
+| `repository` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1000-1064`（apm.yml 的 `repository:`） |
+| `keywords` | array[string] | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1058-1060`（`synthesizeKeywords` 逐字對照；apm.yml 的 `keywords:`；單一 scalar 會被包成一元素陣列） |
 | `mcpServers` | object | 選填（`omitempty`） | 省略；**copilot 生態一律不輸出** | `core/plugin_manifest.py:372-378`（`build_plugin_manifest` 的 `manifest.pop`/條件賦值；本專案 `pluginmanifest/producer.go:47-52`），且已剝除帶憑證鍵（`env`/`environment`/`headers`/`authorization`，`plugin_manifest.py:77-78`） |
 
 ### author（`Author`, `pluginjson.go:17`）
 
 | 欄位 | 型別 | 必填/選填 | 預設值 | 上游出處 |
 |---|---|---|---|---|
-| `name` | string | 必填 | - | `deps/plugin_parser.py:969-981`（`synthesizeAuthor` 逐字對照；scalar author 值，或 mapping 的 `name:`——缺 name 則整個 author 欄位被丟棄） |
-| `email` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:969-981`（mapping 的 `email:`） |
-| `url` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:969-981`（mapping 的 `url:`） |
+| `name` | string | 必填 | - | `deps/plugin_parser.py:1039-1051`（`synthesizeAuthor` 逐字對照；scalar author 值，或 mapping 的 `name:`——缺 name 則整個 author 欄位被丟棄） |
+| `email` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1039-1051`（mapping 的 `email:`） |
+| `url` | string | 選填（`omitempty`） | 省略 | `deps/plugin_parser.py:1039-1051`（mapping 的 `url:`） |
 
 ### claude / copilot 差異
 

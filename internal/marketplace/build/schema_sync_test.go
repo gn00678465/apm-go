@@ -2455,14 +2455,24 @@ var foreignSchemaFileHashPaths = []string{
 	"internal/pack/bundle/testdata/apm-plugin-copilot.schema.json",
 }
 
-// sha256HexFile returns the lower-case-hex SHA-256 of path's raw bytes.
+// sha256HexFile returns the lower-case-hex SHA-256 of path's content with CRLF
+// normalized to LF.
+//
+// Hashing raw bytes made the seal platform-dependent: this repo has
+// core.autocrlf=true, so a Windows checkout materializes CRLF while git stores
+// LF, and any tool that rewrites a schema file (sed, a Python read/write) can
+// silently flip the file to LF. The recorded hash then matches whichever form
+// happened to be on disk when it was computed, and fails on a fresh clone --
+// observed for real: a hash recorded from an LF working copy did not match the
+// same commit's CRLF checkout. Normalizing removes the line-ending degree of
+// freedom without weakening detection of any actual content change.
 func sha256HexFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256([]byte(strings.ReplaceAll(string(data), "\r\n", "\n")))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -2526,6 +2536,93 @@ func TestSchemaSync_SchemaFileHashesMatchSpec(t *testing.T) {
 			actualHash := sha256HexFile(t, filepath.Join(repoRoot, filepath.FromSlash(want)))
 			if specHash != actualHash {
 				t.Errorf("schema 檔已變更但 spec 對照表 SHA-256 未更新——先確認 spec 的欄位表/型別/enum 描述是否需同步，再更新 hash (%s: spec=%s, actual=%s)", want, specHash, actualHash)
+			}
+		})
+	}
+}
+
+// upstreamGoldenProvenance records which upstream release each
+// testdata/upstream-*.golden.json was captured from, and the exact fixture
+// that produced it, so the files can be regenerated rather than guessed at.
+//
+//	cd <tmp> && cat > apm.yml <<'YAML'
+//	name: demo
+//	version: 1.0.0
+//	license: MIT
+//	marketplace:
+//	  name: my-marketplace
+//	  owner: {name: acme-org, url: https://github.com/acme-org}
+//	  outputs: {claude: {}, codex: {}}
+//	  packages:
+//	    - name: impeccable
+//	      description: "The design language that makes your AI harness better at design."
+//	      source: pbakaus/impeccable
+//	      ref: fc2e694afca1ac0cc384b4fe56bab3335fea7912
+//	      category: Productivity
+//	YAML
+//	uv --project <upstream> run apm pack   # needs network
+var upstreamGoldenProvenance = []struct {
+	file    string
+	release string
+}{
+	{"testdata/upstream-claude-marketplace.golden.json", "v0.27.0"},
+	{"testdata/upstream-codex-marketplace.golden.json", "v0.27.0"},
+}
+
+// TestSchemaGolden_UpstreamGoldensAreNotStale closes the hole that let the
+// v0.26.0-era upstream goldens survive the v0.27.0 tag_pattern change: the
+// two TestSchemaGolden_Upstream* tests above only validate each golden
+// AGAINST THE SCHEMA, and tag_pattern is deliberately optional there (a
+// pre-v0.27.0 marketplace.json must still be accepted -- see
+// TestSchemaGolden_RemoteSourceVariantsMinimal, and upstream models.py's
+// "None means old marketplace.json"). An optional field can therefore go
+// missing from an "upstream" fixture without any test noticing.
+//
+// This test asserts the stronger, provenance-specific property instead: a
+// fixture claiming to be a v0.27.0 capture must carry every field v0.27.0
+// unconditionally emits. tag_pattern is one of those -- yml_schema.py:609
+// defaults build.tagPattern to "v{version}", so builder.py's
+// `entry.tag_pattern or yml.build.tag_pattern` is never empty and
+// output_mappers.py's _set_effective_tag_pattern always fires on a REMOTE
+// source. (Local sources are plain strings / CodexLocalSource and are
+// skipped here, matching upstream, which only calls the helper on the
+// remote branches.)
+func TestSchemaGolden_UpstreamGoldensAreNotStale(t *testing.T) {
+	for _, g := range upstreamGoldenProvenance {
+		t.Run(g.file, func(t *testing.T) {
+			data, err := os.ReadFile(g.file)
+			if err != nil {
+				t.Fatalf("read %s: %v", g.file, err)
+			}
+			var doc struct {
+				Plugins []struct {
+					Name   string          `json:"name"`
+					Source json.RawMessage `json:"source"`
+				} `json:"plugins"`
+			}
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatalf("parse %s: %v", g.file, err)
+			}
+			if len(doc.Plugins) == 0 {
+				t.Fatalf("%s has no plugins; it cannot evidence anything", g.file)
+			}
+			remotes := 0
+			for _, p := range doc.Plugins {
+				var obj map[string]any
+				if err := json.Unmarshal(p.Source, &obj); err != nil {
+					continue // plain-string (local) source
+				}
+				if kind, _ := obj["source"].(string); kind == "local" {
+					continue
+				}
+				remotes++
+				if _, ok := obj["tag_pattern"]; !ok {
+					t.Errorf("plugin %q in %s is a remote source with no tag_pattern; %s always emits it, so this fixture predates %s and must be regenerated (see upstreamGoldenProvenance for the fixture)",
+						p.Name, g.file, g.release, g.release)
+				}
+			}
+			if remotes == 0 {
+				t.Errorf("%s has no remote source; it cannot evidence remote-branch behaviour", g.file)
 			}
 		})
 	}

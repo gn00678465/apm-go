@@ -1,6 +1,9 @@
 {
   "name": "my-marketplace",
-  "owner": { "name": "acme-org", "url": "https://github.com/acme-org" },
+  "owner": {
+    "name": "acme-org",
+    "url": "https://github.com/acme-org"
+  },
   "plugins": [
     {
       "name": "impeccable",
@@ -10,7 +13,8 @@
         "source": "github",
         "repo": "pbakaus/impeccable",
         "ref": "fc2e694afca1ac0cc384b4fe56bab3335fea7912",
-        "sha": "fc2e694afca1ac0cc384b4fe56bab3335fea7912"
+        "sha": "fc2e694afca1ac0cc384b4fe56bab3335fea7912",
+        "tag_pattern": "v{version}"
       }
     }
   ]

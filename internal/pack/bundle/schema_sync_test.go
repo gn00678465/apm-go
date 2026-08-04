@@ -1289,13 +1289,17 @@ var foreignSchemaFileHashPaths = []string{
 	"internal/marketplace/build/testdata/apm-codex-marketplace.schema.json",
 }
 
+// sha256HexFile normalizes CRLF to LF before hashing -- see the twin in
+// internal/marketplace/build/schema_sync_test.go for why (core.autocrlf makes a
+// raw-byte hash platform-dependent, so a seal recorded from an LF working copy
+// fails on a CRLF checkout of the same commit).
 func sha256HexFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256([]byte(strings.ReplaceAll(string(data), "\r\n", "\n")))
 	return hex.EncodeToString(sum[:])
 }
 
