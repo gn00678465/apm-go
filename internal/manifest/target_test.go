@@ -206,3 +206,27 @@ func TestCanonicalTargets_UnchangedAndCursorStillParses(t *testing.T) {
 		t.Error("expected req-tg-004 warning for cursor (no adapter)")
 	}
 }
+
+// TestPromptTargets_ExactMembership locks the interactive menu against a
+// LITERAL list. Every existing prompt-menu test compares against
+// manifest.PromptTargets itself, so changing PromptTargets moves the test with
+// it -- the same self-referential hole deployTargets' own comment warns about.
+// Both init and plugin init read this one slice, so this test also enforces
+// that the two menus stay identical.
+func TestPromptTargets_ExactMembership(t *testing.T) {
+	want := []string{"copilot", "claude", "opencode", "codex", "antigravity"}
+
+	if len(PromptTargets) != len(want) {
+		t.Fatalf("PromptTargets = %v (%d), want %v (%d)", PromptTargets, len(PromptTargets), want, len(want))
+	}
+	for i := range want {
+		if PromptTargets[i] != want[i] {
+			t.Errorf("PromptTargets[%d] = %q, want %q (full: %v)", i, PromptTargets[i], want[i], PromptTargets)
+		}
+	}
+	for _, w := range want {
+		if ExplicitOnlyTargets[w] {
+			t.Errorf("%q is in the prompt menu but also marked explicit-only", w)
+		}
+	}
+}

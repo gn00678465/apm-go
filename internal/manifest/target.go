@@ -50,17 +50,11 @@ var SupportedTargets = deployTargets
 // adapterTargets backs HasAdapter. Derived from deployTargets (R8.3).
 var adapterTargets = targetSet(deployTargets)
 
-// ExplicitOnlyTargets are targets omitted from the init/plugin-init
-// interactive MultiSelect prompt, parity with Python apm_cli's
-// EXPLICIT_ONLY_TARGETS (core/target_detection.py:433-435, v0.27.0):
-// antigravity has no signal of its own to auto-detect on (it shares
-// GEMINI.md/AGENTS.md with other tools, see SignalWhitelist's comment in
-// detect.go) and agent-skills is a cross-client deploy location rather than
-// a single client tool. Both remain fully selectable via `--target`/apm.yml
-// `target:` -- SupportedTargets (the --target whitelist) is unaffected.
+// ExplicitOnlyTargets are omitted from the init/plugin-init MultiSelect
+// prompt; they stay selectable via --target/apm.yml. Membership is locked by
+// TestPromptTargets_ExactMembership against a literal list.
 var ExplicitOnlyTargets = map[string]bool{
 	"agent-skills": true,
-	"antigravity":  true,
 }
 
 // PromptTargets is the subset of deployTargets shown in the init/plugin-init
