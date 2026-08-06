@@ -127,13 +127,12 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 	var hasDeps bool
 	var targets []string
 	if mErr == nil && m != nil {
-		// Python tests the RAW value's truthiness -- `data.get("dependencies")`
-		// (build_orchestrator.py:363) -- not whether any dependency entry
-		// exists. `plugin init` scaffolds `dependencies: {apm: [], mcp: []}`,
-		// a non-empty dict, so upstream runs the bundle producer while
-		// `len(m.ParsedDeps) > 0` (the previous test here) reported "nothing to
-		// pack" and exited 1 on `plugin init`'s own documented next step.
-		hasDeps = yamlValueIsTruthy(nodeMappingValue(apmYMLRoot, "dependencies"))
+		// v0.28.0 (build_orchestrator.py:361, PR #2458) changed upstream's
+		// test from raw-value truthiness to `is not None`: ANY present,
+		// non-null dependencies: value -- including an empty `{}` -- runs
+		// the bundle producer. Only a missing key or an explicit null
+		// (`dependencies:` with nothing after it) skips it.
+		hasDeps = yamlValueIsNotNull(nodeMappingValue(apmYMLRoot, "dependencies"))
 		targets = m.Target
 	}
 
@@ -197,27 +196,21 @@ func nodeMappingValue(node *yamllib.Node, key string) *yamllib.Node {
 	return nil
 }
 
-// yamlValueIsTruthy mirrors Python truthiness applied to a yaml.safe_load
-// value, which is what upstream's detect_outputs uses to decide whether the
-// bundle producer runs. The load-bearing case is a mapping whose values are
-// all empty: `{apm: [], mcp: []}` is a non-empty dict and therefore TRUE,
-// even though it declares no actual dependency.
-func yamlValueIsTruthy(node *yamllib.Node) bool {
+// yamlValueIsNotNull mirrors v0.28.0's `data.get("dependencies") is not
+// None` (build_orchestrator.py:361): a present key with ANY non-null value
+// counts -- an empty mapping/sequence and even falsy scalars ("", 0, false)
+// all run the bundle producer; only a missing key (nil node) or an explicit
+// YAML null does not. This replaced the v0.27 Python-truthiness rule, whose
+// load-bearing difference was `dependencies: {}` (falsy dict -> no bundle).
+func yamlValueIsNotNull(node *yamllib.Node) bool {
 	if node == nil {
 		return false
 	}
 	switch node.Kind {
 	case yamllib.MappingNode, yamllib.SequenceNode:
-		return len(node.Content) > 0
-	case yamllib.ScalarNode:
-		if node.Tag == "!!null" {
-			return false
-		}
-		switch node.Value {
-		case "", "0", "false", "False", "FALSE":
-			return false
-		}
 		return true
+	case yamllib.ScalarNode:
+		return node.Tag != "!!null"
 	}
 	return false
 }

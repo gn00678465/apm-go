@@ -515,6 +515,10 @@ func TestValidateMarketplaceSource(t *testing.T) {
 		{"./packages/foo", ""},
 		{"https://example.com/owner/repo", ""},
 		{"https://example.com/owner/repo.git", ""},
+		// v0.28.0 (PR #2439): the https form allows nested repository
+		// paths (e.g. GitLab subgroups); the shorthands below do not.
+		{"https://gitlab.com/group/subgroup/repo", ""},
+		{"https://gitlab.com/group/subgroup/repo.git", ""},
 		{"owner/repo", ""},
 		{"github.com/owner/repo", ""},
 		// BLOCKING 1 (external audit round 5, 2026-07-30): mirroring
@@ -536,6 +540,14 @@ func TestValidateMarketplaceSource(t *testing.T) {
 		{"", "empty"},
 		{"../escape", ".."},
 		{"./packages/../../../etc/passwd", ".."},
+		// v0.28.0's nesting is https-only: the host-prefixed and bare
+		// shorthands stay exactly host/owner/repo and owner/repo
+		// (upstream's _HOST_PREFIXED_SOURCE_RE / _OWNER_REPO_PAT are
+		// unchanged by PR #2439).
+		{"gitlab.com/group/subgroup/repo", "must be one of"},
+		{"group/subgroup/repo", "must be one of"},
+		// The '..'-segment guard applies inside a nested https path too.
+		{"https://gitlab.com/group/../repo", ".."},
 		// BLOCKING 1 (external audit round 3, 2026-07-30): a "\\"-style
 		// traversal segment must be rejected too, not just "/"-style --
 		// the original check only ever split on "/", so this slipped

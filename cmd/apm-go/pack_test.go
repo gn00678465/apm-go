@@ -1289,8 +1289,11 @@ func TestPackCmd_EmptyDependencyListsStillTriggerBundle(t *testing.T) {
 }
 
 // TestPackCmd_DependenciesTruthinessMatrix pins each shape of the
-// `dependencies:` key to Python's truthiness rules, so the fix cannot drift
-// into "any present key counts".
+// `dependencies:` key to v0.28.0's `is not None` rule
+// (build_orchestrator.py:361, PR #2458): any present, non-null value --
+// including an empty `{}` -- runs the bundle producer; only a missing key
+// or an explicit null does not. (v0.27 used Python truthiness instead,
+// under which `dependencies: {}` was falsy and did NOT pack.)
 func TestPackCmd_DependenciesTruthinessMatrix(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1300,15 +1303,16 @@ func TestPackCmd_DependenciesTruthinessMatrix(t *testing.T) {
 		wantErr string
 	}{
 		{"absent key", "", wantNothingToPack},
-		{"empty mapping", "dependencies: {}\n", wantNothingToPack},
+		{"empty mapping", "dependencies: {}\n", ""},
 		{"mapping of empty lists", "dependencies:\n  apm: []\n  mcp: []\n", ""},
 		{"mapping with entries", "dependencies:\n  apm:\n    - owner/repo\n", ""},
 
 		// apm-go's manifest schema rejects these two shapes before pack's
-		// producer detection is reached, with a more specific message. Both
-		// are falsy upstream too, so the outcome (exit 1) agrees; only the
-		// wording is stricter here. Locked so the fix above cannot silently
-		// turn either into a successful pack.
+		// producer detection is reached, with a more specific message.
+		// Explicit null is None upstream too (no bundle), so the outcome
+		// (exit 1) agrees. An empty sequence is non-null upstream, so
+		// v0.28's producer would start and then fail parsing the list as a
+		// dependencies mapping -- both exit 1, apm-go just says why earlier.
 		{"explicit null", "dependencies:\n", "apm.yml: dependencies must be a mapping"},
 		{"empty sequence", "dependencies: []\n", "apm.yml: dependencies must be a mapping"},
 	}

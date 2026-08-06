@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -200,7 +201,40 @@ func resolveCloneURL(source string) (string, error) {
 	if isLocalPackageSource(source) {
 		return validateLocalSourceWithinRoot(source)
 	}
+	// v0.28.0 (PR #2439): a host-prefixed shorthand routes to ITS host, not
+	// github.com -- upstream splits the host out (split_host_from_source)
+	// and hands it to RefResolver(host=...) for both `package add`'s
+	// verify/resolve and `check`'s per-entry resolution.
+	if host, repoPath := SplitHostFromSource(source); host != "" {
+		return "https://" + host + "/" + repoPath + ".git", nil
+	}
 	return "https://github.com/" + source + ".git", nil
+}
+
+// hostPrefixedSourceRe matches the `host.tld/owner/repo` shorthand (exactly
+// three segments, first FQDN-ish), mirroring upstream's
+// _HOST_PREFIXED_SOURCE_RE (yml_schema.py:112-113).
+var hostPrefixedSourceRe = regexp.MustCompile(
+	`^((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]*)/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)$`)
+
+// httpsURLSourceRe matches `https://host.tld/path/to/repo[.git]` with a
+// nested (2+ segment) repository path, mirroring upstream's
+// _HTTPS_URL_SOURCE_RE as widened by v0.28.0's PR #2439.
+var httpsURLSourceRe = regexp.MustCompile(
+	`^https://((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]*)/([A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+?)(?:\.git)?$`)
+
+// SplitHostFromSource splits a host-qualified marketplace source into
+// (host, repository path), mirroring upstream's split_host_from_source
+// (yml_schema.py:125-140): the https form's trailing ".git" is stripped;
+// the bare owner/repo shorthand and "./..." local paths return ("", source).
+func SplitHostFromSource(source string) (host, repoPath string) {
+	if m := httpsURLSourceRe.FindStringSubmatch(source); m != nil {
+		return m[1], strings.TrimSuffix(m[2], ".git")
+	}
+	if m := hostPrefixedSourceRe.FindStringSubmatch(source); m != nil {
+		return m[1], m[2]
+	}
+	return "", source
 }
 
 // validateLocalSourceWithinRoot implements mkt-046's local-source path-

@@ -176,6 +176,10 @@ func TestCanonicalTargets_UnchangedAndCursorStillParses(t *testing.T) {
 		"kiro":         true,
 		"all":          true,
 		"antigravity":  true,
+		// v0.28.0 (PR #2420): canonical, no deploy adapter yet (same
+		// vocabulary-only footing as cursor/gemini/windsurf/kiro).
+		// grok-cloud is deliberately absent: experimental-gated upstream.
+		"grok-build": true,
 	}
 	if len(CanonicalTargets) != len(wantCanonical) {
 		t.Fatalf("CanonicalTargets has %d entries, want %d (R8.4: must not be modified by this task)",

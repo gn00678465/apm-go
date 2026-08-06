@@ -1339,3 +1339,40 @@ func TestGitRefLister_ListRefs_SanitizesCredentialsInErrorMessage(t *testing.T) 
 		t.Errorf("ListRefs error lost the host entirely: %v", err)
 	}
 }
+
+// TestSplitHostFromSource mirrors upstream split_host_from_source
+// (yml_schema.py:125-140, nested-https widened by v0.28.0 PR #2439).
+func TestSplitHostFromSource(t *testing.T) {
+	tests := []struct {
+		source   string
+		wantHost string
+		wantRepo string
+	}{
+		{"owner/repo", "", "owner/repo"},
+		{"./pkgs/tool", "", "./pkgs/tool"},
+		{"gitlab.com/owner/repo", "gitlab.com", "owner/repo"},
+		{"https://gitlab.com/owner/repo", "gitlab.com", "owner/repo"},
+		{"https://gitlab.com/owner/repo.git", "gitlab.com", "owner/repo"},
+		{"https://gitlab.com/group/subgroup/repo", "gitlab.com", "group/subgroup/repo"},
+		{"https://gitlab.com/group/subgroup/repo.git", "gitlab.com", "group/subgroup/repo"},
+	}
+	for _, tt := range tests {
+		host, repo := SplitHostFromSource(tt.source)
+		if host != tt.wantHost || repo != tt.wantRepo {
+			t.Errorf("SplitHostFromSource(%q) = (%q, %q), want (%q, %q)", tt.source, host, repo, tt.wantHost, tt.wantRepo)
+		}
+	}
+}
+
+// TestResolveCloneURL_HostPrefixedShorthand_RoutesToItsHost covers v0.28.0
+// PR #2439: a host-qualified shorthand must clone from ITS host, not be
+// concatenated onto github.com.
+func TestResolveCloneURL_HostPrefixedShorthand_RoutesToItsHost(t *testing.T) {
+	got, err := resolveCloneURL("gitlab.com/owner/repo")
+	if err != nil {
+		t.Fatalf("resolveCloneURL returned error: %v", err)
+	}
+	if got != "https://gitlab.com/owner/repo.git" {
+		t.Errorf("resolveCloneURL(gitlab.com/owner/repo) = %q, want https://gitlab.com/owner/repo.git", got)
+	}
+}

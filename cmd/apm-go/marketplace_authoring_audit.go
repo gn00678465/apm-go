@@ -55,7 +55,14 @@ func marketplaceAuditCmd() *cobra.Command {
 			}
 			ux.Info(w, "Checking %d plugin%s...", len(m.Plugins), plural)
 
-			reports := authoring.RunAudit(m, name, src.Host, authoring.DefaultApmYMLFetcher)
+			// v0.28.0 (PR #2460): a LOCAL marketplace's string-source
+			// plugins are audited against their on-disk apm.yml instead of
+			// being skipped; localRoot flags that mode.
+			localRoot := ""
+			if src.Kind() == marketplace.KindLocal {
+				localRoot = src.URL
+			}
+			reports := authoring.RunAudit(m, name, src.Host, localRoot, authoring.DefaultApmYMLFetcher)
 
 			// Upstream audit.py:49-56: the section header is suppressed on
 			// an all-clean default run, where it would hang above an empty
@@ -74,8 +81,16 @@ func marketplaceAuditCmd() *cobra.Command {
 			ok, bypassTotal, skipped, unverifiable := printAuditReports(cmd, reports, verbose)
 
 			fmt.Fprintln(w)
-			ux.Info(w, "Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
+			// v0.28.0 (PR #2460): the Summary line only reads as a success
+			// when something was audited AND nothing was skipped or
+			// unverifiable; every other mix is neutral info.
+			summary := fmt.Sprintf("Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
 				ok, bypassTotal, skipped, unverifiable)
+			if ok > 0 && bypassTotal == 0 && skipped == 0 && unverifiable == 0 {
+				ux.Success(w, "%s", summary)
+			} else {
+				ux.Info(w, "%s", summary)
+			}
 			if bypassTotal > 0 {
 				// Upstream audit.py:106-113's closing explainer.
 				fmt.Fprintln(w)
@@ -84,6 +99,21 @@ func marketplaceAuditCmd() *cobra.Command {
 					"https://microsoft.github.io/apm/reference/cli/marketplace/#apm-marketplace-audit-name")
 			}
 
+			// v0.28.0 --strict tightening (audit.py:117-138): an audit that
+			// verified nothing, or skipped any plugin, cannot claim
+			// supply-chain integrity and fails before the bypass/error check.
+			if strict && ok == 0 && bypassTotal == 0 {
+				if skipped > 0 && !verbose {
+					ux.Info(w, "Run 'apm-go marketplace audit %s --strict --verbose' to see skipped plugin reasons.", name)
+				}
+				return fmt.Errorf("--strict: no plugins were audited; cannot verify supply-chain integrity")
+			}
+			if strict && skipped > 0 {
+				if !verbose {
+					ux.Info(w, "Run 'apm-go marketplace audit %s --strict --verbose' to see skipped plugin reasons.", name)
+				}
+				return fmt.Errorf("--strict: %d plugin source(s) skipped; cannot verify a complete marketplace audit", skipped)
+			}
 			if strict && (bypassTotal > 0 || unverifiable > 0) {
 				return fmt.Errorf("audit %q failed: %d bypass warning(s), %d unverifiable error(s)", name, bypassTotal, unverifiable)
 			}

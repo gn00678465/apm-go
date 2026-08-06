@@ -127,8 +127,11 @@ func marketplacePackageAddCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:          "add SOURCE",
-		Short:        "Add a package to the marketplace authoring config",
+		Use:   "add SOURCE",
+		Short: "Add a package to the marketplace authoring config",
+		Long: "Add a package to the marketplace authoring config. SOURCE accepts " +
+			"owner/repo, host.tld/owner/repo, https://host.tld/owner/repo " +
+			"(nested paths allowed), or a ./local path.",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

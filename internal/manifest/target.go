@@ -14,6 +14,11 @@ var CanonicalTargets = map[string]bool{
 	"kiro":         true, // parity: Python CANONICAL_TARGETS (apm_yml.py:25-37)
 	"all":          true,
 	"antigravity":  true, // pre-standard, tracking microsoft/apm#1650
+	// v0.28.0 (PR #2420): grok-build joined manifest_target_names()
+	// (core/target_catalog.py). grok-cloud did NOT -- it carries
+	// experimental_flag="grok_cloud" upstream, which manifest_target_names
+	// filters out, so it stays invalid in apm.yml here too.
+	"grok-build": true,
 }
 
 var TargetAliases = map[string]string{

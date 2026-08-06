@@ -45,6 +45,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -143,40 +144,57 @@ var DefaultApmYMLFetcher ApmYMLFetcher = githubRawFetcher{}
 // RunAudit implements mkt-043 修訂版 for every plugin in m, isolating each
 // plugin's failure into its own report (mirrors Python's run_audit: one bad
 // plugin never aborts the rest of the marketplace's audit).
-func RunAudit(m *marketplace.MarketplaceManifest, marketplaceName, marketplaceHost string, fetcher ApmYMLFetcher) []PluginAuditReport {
+//
+// localRoot, when non-empty, marks the audited marketplace as a LOCAL one
+// (v0.28.0 PR #2460): a plugin whose source is a plain string is then
+// resolved to a local apm.yml under the marketplace's own directory (with
+// containment) and genuinely audited, instead of being skipped as
+// FetchUnsupportedSource. Dict-shaped sources keep the github fetch path in
+// both modes, exactly like upstream's fetch_plugin_apm_yml.
+func RunAudit(m *marketplace.MarketplaceManifest, marketplaceName, marketplaceHost, localRoot string, fetcher ApmYMLFetcher) []PluginAuditReport {
 	reports := make([]PluginAuditReport, 0, len(m.Plugins))
 	for _, p := range m.Plugins {
-		reports = append(reports, auditPlugin(p, marketplaceName, marketplaceHost, fetcher))
+		reports = append(reports, auditPlugin(p, marketplaceName, marketplaceHost, localRoot, m.PluginRoot, fetcher))
 	}
 	return reports
 }
 
 // auditPlugin fetches and audits a single plugin's apm.yml.
-func auditPlugin(p marketplace.MarketplacePlugin, marketplaceName, marketplaceHost string, fetcher ApmYMLFetcher) PluginAuditReport {
-	host, owner, repo, ref, path, ok := resolvePluginGithubCoords(p.Source, marketplaceHost)
-	if !ok {
-		return PluginAuditReport{
-			PluginName:  p.Name,
-			FetchStatus: FetchUnsupportedSource,
-			Detail:      "plugin source is not an addressable github manifest",
+func auditPlugin(p marketplace.MarketplacePlugin, marketplaceName, marketplaceHost, localRoot, pluginRoot string, fetcher ApmYMLFetcher) PluginAuditReport {
+	var root *yaml.Node
+	if src, isStr := p.Source.(string); localRoot != "" && isStr {
+		var report *PluginAuditReport
+		root, report = fetchLocalPluginApmYML(p.Name, src, localRoot, pluginRoot)
+		if report != nil {
+			return *report
 		}
-	}
-
-	data, err := fetcher.FetchRaw(host, owner, repo, path, ref)
-	if err != nil {
-		if errors.Is(err, ErrApmYMLNotFound) {
+	} else {
+		host, owner, repo, ref, path, ok := resolvePluginGithubCoords(p.Source, marketplaceHost)
+		if !ok {
 			return PluginAuditReport{
 				PluginName:  p.Name,
-				FetchStatus: FetchNoManifest,
-				Detail:      fmt.Sprintf("no apm.yml at %q @ %s", path, ref),
+				FetchStatus: FetchUnsupportedSource,
+				Detail:      "plugin source is not an addressable github manifest",
 			}
 		}
-		return PluginAuditReport{PluginName: p.Name, FetchStatus: FetchNetworkError, Detail: err.Error()}
-	}
 
-	root, err := parseApmYMLRoot(data)
-	if err != nil {
-		return PluginAuditReport{PluginName: p.Name, FetchStatus: FetchParseError, Detail: err.Error()}
+		data, err := fetcher.FetchRaw(host, owner, repo, path, ref)
+		if err != nil {
+			if errors.Is(err, ErrApmYMLNotFound) {
+				return PluginAuditReport{
+					PluginName:  p.Name,
+					FetchStatus: FetchNoManifest,
+					Detail:      fmt.Sprintf("no apm.yml at %q @ %s", path, ref),
+				}
+			}
+			return PluginAuditReport{PluginName: p.Name, FetchStatus: FetchNetworkError, Detail: err.Error()}
+		}
+
+		var perr error
+		root, perr = parseApmYMLRoot(data)
+		if perr != nil {
+			return PluginAuditReport{PluginName: p.Name, FetchStatus: FetchParseError, Detail: perr.Error()}
+		}
 	}
 
 	var issues []DepIssue
@@ -188,6 +206,79 @@ func auditPlugin(p marketplace.MarketplacePlugin, marketplaceName, marketplaceHo
 		issues = append(issues, DepIssue{Dep: dep, Classification: cls, Suggestion: suggestReplacement(dep, marketplaceName)})
 	}
 	return PluginAuditReport{PluginName: p.Name, FetchStatus: FetchOK, Issues: issues}
+}
+
+// fetchLocalPluginApmYML resolves and reads a local marketplace plugin's
+// apm.yml, mirroring v0.28.0's local branch of fetch_plugin_apm_yml
+// (marketplace/audit.py:230-255) + resolve_local_plugin_path
+// (marketplace/resolver.py): the plugin's relative source (composed with the
+// manifest's plugin_root for bare single-segment names) resolves under the
+// marketplace's own directory, containment-checked via pathWithinRoot. A
+// nil report means success and root holds the parsed document; a non-nil
+// report is the terminal per-plugin outcome.
+func fetchLocalPluginApmYML(pluginName, source, localRoot, pluginRoot string) (root *yaml.Node, report *PluginAuditReport) {
+	fail := func(status FetchStatus, detail string) (*yaml.Node, *PluginAuditReport) {
+		return nil, &PluginAuditReport{PluginName: pluginName, FetchStatus: status, Detail: detail}
+	}
+
+	rootDir := localRoot
+	if fi, err := os.Stat(localRoot); err == nil && !fi.IsDir() {
+		rootDir = filepath.Dir(localRoot)
+	}
+
+	rel, err := normaliseRelativePluginSource(source, pluginRoot)
+	if err != nil {
+		return fail(FetchUnsupportedSource, fmt.Sprintf("local plugin source cannot be resolved: %v", err))
+	}
+	candidate := filepath.Join(rootDir, filepath.FromSlash(rel), "apm.yml")
+	if !pathWithinRoot(rootDir, candidate) {
+		return fail(FetchUnsupportedSource,
+			fmt.Sprintf("local plugin source cannot be resolved: %q escapes the marketplace directory", source))
+	}
+
+	fi, err := os.Stat(candidate)
+	if err != nil || fi.IsDir() {
+		return fail(FetchNoManifest, fmt.Sprintf("no apm.yml at %q", candidate))
+	}
+	data, err := os.ReadFile(candidate)
+	if err != nil {
+		return fail(FetchNetworkError, fmt.Sprintf("failed to read local apm.yml: %v", err))
+	}
+	parsed, err := parseApmYMLRoot(data)
+	if err != nil {
+		return fail(FetchParseError, err.Error())
+	}
+	return parsed, nil
+}
+
+// normaliseRelativePluginSource mirrors upstream's
+// _normalise_relative_plugin_source (marketplace/resolver.py): strip
+// surrounding slashes and a leading "./", compose a bare single-segment
+// name onto plugin_root, and reject "."/".." path segments.
+func normaliseRelativePluginSource(source, pluginRoot string) (string, error) {
+	rel := strings.Trim(source, "/")
+	rel = strings.TrimPrefix(rel, "./")
+	rel = strings.Trim(rel, "/")
+
+	if pluginRoot != "" && rel != "" && rel != "." && !strings.Contains(rel, "/") {
+		prRoot := strings.Trim(pluginRoot, "/")
+		prRoot = strings.TrimPrefix(prRoot, "./")
+		prRoot = strings.Trim(prRoot, "/")
+		if prRoot != "" {
+			rel = prRoot + "/" + rel
+		}
+	}
+
+	if rel != "" && rel != "." {
+		// Both separators, mirroring mcp.go's dual-separator traversal
+		// guard: a Windows-style "..\" segment must not slip through.
+		for _, seg := range strings.FieldsFunc(rel, func(r rune) bool { return r == '/' || r == '\\' }) {
+			if seg == "." || seg == ".." {
+				return "", fmt.Errorf("relative source path %q contains a %q path segment", source, seg)
+			}
+		}
+	}
+	return rel, nil
 }
 
 // parseApmYMLRoot parses a fetched apm.yml's raw bytes and returns its

@@ -263,6 +263,12 @@ const (
 	marketplaceHostPattern      = `(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]*`
 	marketplaceSegmentPattern   = `[A-Za-z0-9._-]+`
 	marketplaceOwnerRepoPattern = marketplaceSegmentPattern + `/` + marketplaceSegmentPattern
+	// marketplaceHTTPSRepoPattern is the full-URL form's repository path:
+	// two or more segments, mirroring v0.28.0's _HTTPS_REPOSITORY_PAT
+	// (yml_schema.py:98, PR #2439) -- nested paths like
+	// "group/subgroup/repo" are allowed on the https:// form only; the
+	// host-prefixed and bare shorthands stay exactly owner/repo.
+	marketplaceHTTPSRepoPattern = marketplaceSegmentPattern + `(?:/` + marketplaceSegmentPattern + `)+`
 )
 
 // marketplaceSourceRe mirrors upstream's SOURCE_RE (yml_schema.py:100-107):
@@ -290,7 +296,7 @@ const (
 // prefix), or "C:foo" (contains ":" -- not a SEGMENT_PAT character, and no
 // "/" at all) can match any of the four alternatives below.
 var marketplaceSourceRe = regexp.MustCompile(
-	`^(?:https://` + marketplaceHostPattern + `/` + marketplaceOwnerRepoPattern + `(?:\.git)?` +
+	`^(?:https://` + marketplaceHostPattern + `/` + marketplaceHTTPSRepoPattern + `(?:\.git)?` +
 		`|` + marketplaceHostPattern + `/` + marketplaceOwnerRepoPattern +
 		`|` + marketplaceOwnerRepoPattern +
 		`|\./.*` +
@@ -303,7 +309,7 @@ func ValidateMarketplaceSource(source string) error {
 	}
 
 	if !marketplaceSourceRe.MatchString(source) {
-		return fmt.Errorf("marketplace source %q must be one of 'owner/repo', 'host.tld/owner/repo', 'https://host.tld/owner/repo[.git]', or './path'", source)
+		return fmt.Errorf("marketplace source %q must be one of 'owner/repo', 'host.tld/owner/repo', 'https://host.tld/owner/repo[.git]' (nested paths allowed), or './path'", source)
 	}
 
 	// The grammar match above already makes a userinfo ("user@"), a port
