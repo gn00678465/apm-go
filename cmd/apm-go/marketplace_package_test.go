@@ -468,10 +468,10 @@ func TestMarketplacePackageRemove_InteractiveExplicitNo_AbortsCleanly(t *testing
 
 	// Assert
 	if err != nil {
-		t.Fatalf(`package remove with an explicit interactive "n" returned error: %v, want a clean exit 0 Aborted`, err)
+		t.Fatalf(`package remove with an explicit interactive "n" returned error: %v, want a clean exit 0 Cancelled`, err)
 	}
-	if !strings.Contains(out, "Aborted") {
-		t.Errorf("output = %q, want an Aborted message", out)
+	if !strings.Contains(out, "Cancelled") {
+		t.Errorf("output = %q, want a Cancelled message", out)
 	}
 	data, rerr := os.ReadFile("apm.yml")
 	if rerr != nil {
@@ -1355,5 +1355,46 @@ func TestMarketplacePackageAdd_LocalSourceEscapingRoot_Rejected(t *testing.T) {
 	}
 	if string(data) != apmYML {
 		t.Errorf("apm.yml was modified despite the rejected add;\ngot:\n%s\nwant unchanged:\n%s", string(data), apmYML)
+	}
+}
+
+// TestMarketplacePackageAdd_ExplicitHead_PrintsResolvedSHALine covers
+// upstream plugin/__init__.py:147-150: when a mutable ref is resolved to a
+// concrete SHA, the resolved 12-character SHA is reported -- the user must
+// be able to see what actually got written into apm.yml.
+func TestMarketplacePackageAdd_ExplicitHead_PrintsResolvedSHALine(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	withFixtureRemoteLister(t, repoDir)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", "owner/repo", "--ref", "HEAD")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("package add --ref HEAD returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "Resolved HEAD to ") {
+		t.Errorf("output = %q, want a 'Resolved HEAD to <sha12>' line", out)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	// The reported SHA prefix and the stored ref must agree.
+	idx := strings.Index(out, "Resolved HEAD to ")
+	sha12 := strings.TrimSpace(out[idx+len("Resolved HEAD to "):])
+	if nl := strings.IndexAny(sha12, "\r\n"); nl >= 0 {
+		sha12 = sha12[:nl]
+	}
+	if len(sha12) != 12 || !strings.Contains(string(data), "ref: "+sha12) {
+		t.Errorf("apm.yml = %q, want its stored ref to start with the reported SHA %q", string(data), sha12)
 	}
 }

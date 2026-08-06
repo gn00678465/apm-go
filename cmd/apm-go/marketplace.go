@@ -227,6 +227,17 @@ func marketplaceAddCmd() *cobra.Command {
 				return fmt.Errorf("invalid marketplace name %q: names may only contain letters, digits, '.', '_', and '-' (required for apm-go install's plugin@marketplace syntax)", name)
 			}
 
+			w := cmd.OutOrStdout()
+
+			// Mirrors upstream __init__.py:630-635: surface progress before
+			// the slow probe + fetch (5-30s for generic-git) so the user
+			// sees activity instead of staring at a blank terminal.
+			provisionalLabel := name
+			if provisionalLabel == "" {
+				provisionalLabel = fallbackMarketplaceAlias(src)
+			}
+			ux.Info(w, "Registering marketplace %q...", provisionalLabel)
+
 			wasFullHTTPSSource := strings.HasPrefix(strings.ToLower(rawSource), "https://")
 			if needsUnpinnedGitRefWarning(wasFullHTTPSSource, src.Kind(), effectiveRef) {
 				ux.Warn(cmd.ErrOrStderr(), "Pin this git marketplace with a #ref (e.g. SOURCE#v1.2.3) to avoid silently tracking a moving branch")
@@ -247,14 +258,27 @@ func marketplaceAddCmd() *cobra.Command {
 				return fmt.Errorf("register marketplace: %w", err)
 			}
 
-			w := cmd.OutOrStdout()
-			ux.Success(w, "Added marketplace %q (kind: %s)", effectiveName, src.Kind())
+			// Upstream __init__.py:721-724's success line carries the plugin
+			// count on the default path, not only under --verbose.
+			ux.Success(w, "Marketplace %q registered (%d plugins)", effectiveName, len(m.Plugins))
 			if verbose {
-				ux.BulletList(w, []ux.Item{
+				items := []ux.Item{
 					{Text: fmt.Sprintf("source: %s", src.URL)},
+					{Text: fmt.Sprintf("source type: %s", src.Kind())},
 					{Text: fmt.Sprintf("ref: %s", src.Ref)},
+					{Text: fmt.Sprintf("alias source: %s", aliasSourceLabel(name, effectiveName, m.Name))},
 					{Text: fmt.Sprintf("plugins: %d", len(m.Plugins))},
-				})
+				}
+				if m.Description != "" {
+					items = append(items, ux.Item{Text: fmt.Sprintf("description: %s", m.Description)})
+				}
+				ux.BulletList(w, items)
+			}
+			// Upstream __init__.py:728-732: when the registered alias came
+			// from the manifest (not --name, not the repo-derived fallback),
+			// tell the user what name to install against.
+			if name == "" && effectiveName != provisionalLabel {
+				ux.Info(w, "Install plugins with: apm-go install <plugin>@%s", effectiveName)
 			}
 			return nil
 		},
@@ -326,6 +350,21 @@ func resolveMarketplaceAlias(explicitName, manifestName string, src *marketplace
 	return fallback, ""
 }
 
+// aliasSourceLabel names where `marketplace add`'s registered alias came
+// from, for --verbose output (upstream __init__.py:678-695's alias_source).
+func aliasSourceLabel(explicitName, effectiveName, manifestName string) string {
+	switch {
+	case explicitName != "":
+		return "--name flag"
+	case effectiveName == manifestName:
+		return fmt.Sprintf("manifest.name (%q)", manifestName)
+	case manifestName != "":
+		return fmt.Sprintf("derived name (manifest.name %q invalid)", manifestName)
+	default:
+		return "derived name (manifest.name missing)"
+	}
+}
+
 // fallbackMarketplaceAlias derives a repo-name-shaped alias from src when
 // neither --name nor a usable manifest name is available: Owner/Repo for
 // every remote Kind that has them (SCP, full URL, shorthand), the local
@@ -384,6 +423,8 @@ func marketplaceListCmd() *cobra.Command {
 				}
 			}
 			ux.Table(w, headers, rows)
+			// Upstream __init__.py:883-886's post-table usage hint.
+			ux.Info(w, "Use 'apm-go marketplace browse <name>' to see plugins")
 			return nil
 		},
 	}
@@ -474,6 +515,7 @@ func marketplaceUpdateCmd() *cobra.Command {
 				if src == nil {
 					return marketplaceNotRegisteredErr(name)
 				}
+				ux.Info(w, "Refreshing marketplace %q...", name)
 				m, err := marketplace.Fetch(context.Background(), src)
 				if err != nil {
 					return fmt.Errorf("refresh marketplace %q: %w", name, err)
@@ -489,6 +531,13 @@ func marketplaceUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Upstream __init__.py:980-982: an empty registry is reported,
+			// never a silent exit-0 with zero output.
+			if len(sources) == 0 {
+				ux.Info(w, "No marketplaces registered.")
+				return nil
+			}
+			ux.Info(w, "Refreshing %d marketplace(s)...", len(sources))
 			for i := range sources {
 				s := sources[i]
 				m, ferr := marketplace.Fetch(context.Background(), &s)
@@ -501,6 +550,8 @@ func marketplaceUpdateCmd() *cobra.Command {
 					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", s.URL)}})
 				}
 			}
+			// Upstream __init__.py:993's closing line.
+			ux.Success(w, "Marketplace cache refreshed")
 			return nil
 		},
 	}
@@ -540,15 +591,17 @@ func marketplaceRemoveCmd() *cobra.Command {
 				// never conflated with "user declined" -- it requires
 				// -y/--yes instead, the same as an outright non-interactive
 				// session.
+				// Upstream __init__.py:1023-1026's prompt names the source
+				// alongside the alias, and a decline prints "Cancelled".
 				proceed, err := confirmOrRequireYes(
-					fmt.Sprintf("Remove marketplace %q?", name),
+					fmt.Sprintf("Remove marketplace %q (%s)?", name, src.URL),
 					"marketplace remove requires -y/--yes in a non-interactive environment",
 				)
 				if err != nil {
 					return err
 				}
 				if !proceed {
-					ux.Info(cmd.ErrOrStderr(), "Aborted.")
+					ux.Info(cmd.ErrOrStderr(), "Cancelled")
 					return nil
 				}
 			}
@@ -591,12 +644,16 @@ func marketplaceValidateCmd() *cobra.Command {
 			if src == nil {
 				return marketplaceNotRegisteredErr(name)
 			}
+			w := cmd.OutOrStdout()
+			// Mirrors upstream validate.py:29-36's pre-fetch progress and
+			// post-fetch plugin count.
+			ux.Info(w, "Validating marketplace %q...", name)
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
+			ux.Info(w, "Found %d plugins", len(m.Plugins))
 
-			w := cmd.OutOrStdout()
 			if verbose {
 				// Mirrors Python's validate.py:38-42 per-plugin verbose
 				// detail (source type: dict vs string), printed after the
@@ -612,19 +669,31 @@ func marketplaceValidateCmd() *cobra.Command {
 				ux.BulletList(w, items)
 			}
 
-			findings := marketplace.Validate(m)
-			if len(findings) > 0 {
-				items := make([]ux.Item, len(findings))
-				for i, f := range findings {
-					icon := ux.SymbolWarn
-					if f.Level == marketplace.LevelError {
-						icon = ux.SymbolError
-					}
-					items[i] = ux.Item{Text: fmt.Sprintf("%s %s", icon, f.Message)}
+			// Per-check rendering, mirroring upstream validate.py:54-80:
+			// every check prints a line -- a passing check included -- and
+			// the Summary counts passed checks and individual warning/error
+			// messages, not an approximation.
+			checks := marketplace.ValidateChecks(m)
+			passed, warnings, errs := 0, 0, 0
+			fmt.Fprintln(w)
+			ux.Info(w, "Validation Results:")
+			for _, check := range checks {
+				if check.Passed() {
+					ux.Success(w, "%s: all plugins valid", check.CheckName)
+					passed++
+					continue
 				}
-				ux.BulletList(w, items)
+				for _, f := range check.Findings {
+					if f.Level == marketplace.LevelError {
+						ux.Error(w, "%s: %s", check.CheckName, f.Message)
+						errs++
+					} else {
+						ux.Warn(w, "%s: %s", check.CheckName, f.Message)
+						warnings++
+					}
+				}
 			}
-			passed, warnings, errs := summarizeFindings(m, findings)
+			fmt.Fprintln(w)
 			ux.Info(w, "Summary: %d passed, %d warnings, %d errors", passed, warnings, errs)
 			if errs > 0 {
 				return fmt.Errorf("marketplace %q failed validation with %d error(s)", name, errs)
@@ -637,29 +706,6 @@ func marketplaceValidateCmd() *cobra.Command {
 	// error).
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print each plugin's source type before the validation results")
 	return cmd
-}
-
-// summarizeFindings turns Validate's flat []Finding slice into the
-// passed/warnings/errors counts validate's Summary line reports. "passed" is
-// counted against a fixed unit count (the manifest name check, plus one unit
-// per plugin) minus the number of errors, floored at zero -- Validate does
-// not expose which specific check(s) each finding came from, so this is an
-// approximation of "how much of the manifest came back clean", not a
-// literal per-check tally.
-func summarizeFindings(m *marketplace.MarketplaceManifest, findings []marketplace.Finding) (passed, warnings, errs int) {
-	for _, f := range findings {
-		if f.Level == marketplace.LevelError {
-			errs++
-		} else {
-			warnings++
-		}
-	}
-	total := 1 + len(m.Plugins)
-	passed = total - errs
-	if passed < 0 {
-		passed = 0
-	}
-	return passed, warnings, errs
 }
 
 // marketplaceBuildCmd implements mkt-019: `marketplace build` was removed

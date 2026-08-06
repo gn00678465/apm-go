@@ -499,9 +499,9 @@ func classifyRefResolution(source, ref, version string, noVerify, implicitHeadOn
 // AFTER this resolveRef call, or reordered before it without adding a
 // regression test for it, is not covered by this reasoning and would need
 // its own test.
-func resolveRef(source, ref, version string, lister RefLister, noVerify, implicitHeadOnEmpty, skipLocalSource bool, onExplicitHeadWillResolve func()) (string, error) {
+func resolveRef(source, ref, version string, lister RefLister, noVerify, implicitHeadOnEmpty, skipLocalSource bool, onExplicitHeadWillResolve func(), onRefResolved func(ref, sha string)) (string, error) {
 	kind := classifyRefResolution(source, ref, version, noVerify, implicitHeadOnEmpty, skipLocalSource)
-	return resolveRefForKind(kind, source, ref, lister, onExplicitHeadWillResolve)
+	return resolveRefForKind(kind, source, ref, lister, onExplicitHeadWillResolve, onRefResolved)
 }
 
 // resolveRefForKind performs kind's corresponding lister I/O (if any) and
@@ -513,7 +513,15 @@ func resolveRef(source, ref, version string, lister RefLister, noVerify, implici
 // it through classifyRefResolution -- there is no such tuple today, by
 // construction, since every kind classifyRefResolution can return has its
 // own explicit case.
-func resolveRefForKind(kind refResolutionKind, source, ref string, lister RefLister, onExplicitHeadWillResolve func()) (string, error) {
+func resolveRefForKind(kind refResolutionKind, source, ref string, lister RefLister, onExplicitHeadWillResolve func(), onRefResolved func(ref, sha string)) (string, error) {
+	// reportResolved fires the CLI's "Resolved <ref> to <sha12>" progress
+	// hook only when a real resolution happened (the stored value differs
+	// from what the user gave).
+	reportResolved := func(given, sha string) {
+		if onRefResolved != nil && given != sha {
+			onRefResolved(given, sha)
+		}
+	}
 	switch kind {
 	case refKindNone:
 		return "", nil
@@ -531,6 +539,7 @@ func resolveRefForKind(kind refResolutionKind, source, ref string, lister RefLis
 		}
 		for _, r := range refs {
 			if strings.EqualFold(r.Name, "HEAD") {
+				reportResolved("HEAD", r.Commit)
 				return r.Commit, nil
 			}
 		}
@@ -542,6 +551,7 @@ func resolveRefForKind(kind refResolutionKind, source, ref string, lister RefLis
 		}
 		for _, r := range refs {
 			if r.Name == ref {
+				reportResolved(ref, r.Commit)
 				return r.Commit, nil
 			}
 		}
@@ -672,6 +682,13 @@ type AddOptions struct {
 	// mutable-ref warning (see resolveRef's own doc comment for the
 	// BLOCKING 2 fix this hook exists for).
 	OnExplicitHeadWillResolve func()
+	// OnRefResolved, when non-nil, is invoked by resolveRef after a
+	// mutable/named ref was genuinely resolved to a different commit SHA,
+	// with the ref as given ("HEAD" for the implicit-HEAD case) and the
+	// resolved SHA. The CLI wires this to print upstream's "Resolved <ref>
+	// to <sha12>" progress line (plugin/__init__.py:147-150, 179-182) so the
+	// user learns what actually got written into apm.yml.
+	OnRefResolved func(ref, sha string)
 }
 
 // AddPackage implements `apm marketplace package add SOURCE` (mkt-045):
@@ -717,7 +734,7 @@ func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name str
 		return "", false, fmt.Errorf("package %q already exists", name)
 	}
 
-	resolvedRef, err := resolveRef(source, opts.Ref, opts.Version, lister, opts.NoVerify, true, true, opts.OnExplicitHeadWillResolve)
+	resolvedRef, err := resolveRef(source, opts.Ref, opts.Version, lister, opts.NoVerify, true, true, opts.OnExplicitHeadWillResolve, opts.OnRefResolved)
 	if err != nil {
 		return "", false, err
 	}
@@ -774,6 +791,10 @@ type SetOptions struct {
 	// test only ever used a tag/branch ref, never HEAD, so nothing caught
 	// this gap.
 	OnExplicitHeadWillResolve func()
+	// OnRefResolved mirrors AddOptions.OnRefResolved (see that field's doc
+	// comment): invoked with (ref-as-given, resolved SHA) after resolveRef
+	// genuinely resolved the ref to a different commit.
+	OnRefResolved func(ref, sha string)
 }
 
 // SetPackage implements `apm marketplace package set NAME` (mkt-045):
@@ -824,7 +845,7 @@ func SetPackage(dir, name string, opts SetOptions, lister RefLister) (fallbackUs
 		// (BLOCKING 2, external audit 2026-07-30) -- fixed by threading a
 		// dedicated skipLocalSource argument through resolveRef instead of
 		// letting it infer add-vs-set from implicitHeadOnEmpty alone.
-		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, "", lister, false, false, false, opts.OnExplicitHeadWillResolve)
+		resolvedRef, rerr := resolveRef(merged.Source, *opts.Ref, "", lister, false, false, false, opts.OnExplicitHeadWillResolve, opts.OnRefResolved)
 		if rerr != nil {
 			return false, rerr
 		}

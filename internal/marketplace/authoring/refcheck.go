@@ -710,9 +710,17 @@ func parseRefsOutput(output string) []semver.TagInfo {
 // CheckResult is one package's `apm marketplace check` outcome (mkt-041).
 // Err is nil when the pin was verified, or when the package had nothing
 // that needed verifying (local source, or no Ref/Version pinned at all).
+// Reachable/VersionFound/RefOK mirror Python check.py's _CheckResult
+// columns (Entry Health Check table): Reachable is false only when the
+// remote itself could not be listed (network/offline failure), VersionFound
+// reports whether any tag matched the entry's tag pattern at all, and RefOK
+// is the overall pass/fail (always false when Err is non-nil).
 type CheckResult struct {
-	Package PackageEntry
-	Err     error
+	Package      PackageEntry
+	Err          error
+	Reachable    bool
+	VersionFound bool
+	RefOK        bool
 }
 
 // isLocalPackageSource reports whether source names a local (in-repo)
@@ -735,32 +743,37 @@ func isLocalPackageSource(source string) bool {
 func CheckPackages(cfg *AuthoringConfig, lister RefLister, offline bool) []CheckResult {
 	results := make([]CheckResult, 0, len(cfg.Packages))
 	for _, pkg := range cfg.Packages {
-		results = append(results, CheckResult{Package: pkg, Err: checkPackage(cfg, pkg, lister, offline)})
+		results = append(results, checkPackage(cfg, pkg, lister, offline))
 	}
 	return results
 }
 
-func checkPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offline bool) error {
+func checkPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offline bool) CheckResult {
+	pass := CheckResult{Package: pkg, Reachable: true, VersionFound: true, RefOK: true}
+	fail := func(reachable, versionFound bool, err error) CheckResult {
+		return CheckResult{Package: pkg, Err: err, Reachable: reachable, VersionFound: versionFound}
+	}
+
 	if isLocalPackageSource(pkg.Source) {
-		return nil
+		return pass
 	}
 	if pkg.Ref == "" && pkg.Version == "" {
-		return nil
+		return pass
 	}
 	if offline {
-		return fmt.Errorf("package %q: --offline has no cached refs to verify %q against", pkg.Name, pkg.Source)
+		return fail(false, false, fmt.Errorf("package %q: --offline has no cached refs to verify %q against", pkg.Name, pkg.Source))
 	}
 
 	refs, err := lister.ListRefs(pkg.Source)
 	if err != nil {
-		return fmt.Errorf("package %q: %w", pkg.Name, err)
+		return fail(false, false, fmt.Errorf("package %q: %w", pkg.Name, err))
 	}
 
 	if pkg.Ref != "" {
 		if !hasRefNamed(refs, pkg.Ref) {
-			return fmt.Errorf("package %q: pinned ref %q not found on %q", pkg.Name, pkg.Ref, pkg.Source)
+			return fail(true, false, fmt.Errorf("package %q: pinned ref %q not found on %q", pkg.Name, pkg.Ref, pkg.Source))
 		}
-		return nil
+		return pass
 	}
 
 	pattern := pkg.TagPattern
@@ -770,12 +783,12 @@ func checkPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offl
 	versionTags := tagpattern.FilterTags(refs, pattern, pkg.Name)
 	_, ok, err := semver.MaxSatisfying(versionTags, pkg.Version)
 	if err != nil {
-		return fmt.Errorf("package %q: %w", pkg.Name, err)
+		return fail(true, len(versionTags) > 0, fmt.Errorf("package %q: %w", pkg.Name, err))
 	}
 	if !ok {
-		return fmt.Errorf("package %q: no tag on %q matches version range %q", pkg.Name, pkg.Source, pkg.Version)
+		return fail(true, len(versionTags) > 0, fmt.Errorf("package %q: no tag on %q matches version range %q", pkg.Name, pkg.Source, pkg.Version))
 	}
-	return nil
+	return pass
 }
 
 // DuplicatePackageNames implements mkt-041's non-fatal duplicate-package-

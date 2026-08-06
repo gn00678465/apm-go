@@ -270,9 +270,10 @@ type MarketplacePlugin struct {
 // MarketplaceManifest is the parsed content of a marketplace.json
 // document.
 type MarketplaceManifest struct {
-	Name    string              `json:"name"`
-	Owner   string              `json:"owner,omitempty"`
-	Plugins []MarketplacePlugin `json:"plugins,omitempty"`
+	Name        string              `json:"name"`
+	Owner       string              `json:"owner,omitempty"`
+	Description string              `json:"description,omitempty"`
+	Plugins     []MarketplacePlugin `json:"plugins,omitempty"`
 
 	// PluginRoot is metadata.pluginRoot from the manifest: the base path
 	// bare-name relative plugin sources resolve under (consumed by the
@@ -313,15 +314,17 @@ type MarketplaceManifest struct {
 //     than rejected.
 func (m *MarketplaceManifest) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Name     string          `json:"name"`
-		Owner    json.RawMessage `json:"owner"`
-		Plugins  json.RawMessage `json:"plugins"`
-		Metadata json.RawMessage `json:"metadata"`
+		Name        string          `json:"name"`
+		Owner       json.RawMessage `json:"owner"`
+		Description string          `json:"description"`
+		Plugins     json.RawMessage `json:"plugins"`
+		Metadata    json.RawMessage `json:"metadata"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	m.Name = raw.Name
+	m.Description = raw.Description
 	m.PluginRoot = parseManifestPluginRoot(raw.Metadata)
 	m.Owner = parseManifestOwner(raw.Owner)
 	plugins, err := parseManifestPlugins(raw.Plugins)

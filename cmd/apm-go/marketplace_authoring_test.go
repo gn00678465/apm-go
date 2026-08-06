@@ -691,8 +691,10 @@ func TestMarketplaceCheck_RemotePackagePinnedRefMissing_ExitsNonZero(t *testing.
 	if err == nil {
 		t.Fatal("marketplace check with a missing pinned ref returned no error, want exit 1 (mkt-041)")
 	}
-	if !strings.Contains(out, "x: tool") {
-		t.Errorf("output = %q, want an x failure line naming the package", out)
+	// The Entry Health Check table row must name the package with a failed
+	// STATUS cell and carry the pin failure in DETAIL.
+	if !strings.Contains(out, "tool") || !strings.Contains(out, `pinned ref "v9.9.9" not found`) {
+		t.Errorf("output = %q, want a table row naming the package and its missing-pin detail", out)
 	}
 }
 
@@ -762,9 +764,10 @@ func TestMarketplaceCheck_LegacyConfig_PrintsDeprecationWarning(t *testing.T) {
 	}
 }
 
-// TestMarketplaceCheck_VerbosePrintsEveryPackage covers --verbose printing
-// a line for passing packages too, not just failures.
-func TestMarketplaceCheck_VerbosePrintsEveryPackage(t *testing.T) {
+// TestMarketplaceCheck_TableListsPassingPackagesByDefault covers the Entry
+// Health Check table (upstream __init__.py:1246-1287): every entry gets a
+// row -- passing entries included -- without needing --verbose.
+func TestMarketplaceCheck_TableListsPassingPackagesByDefault(t *testing.T) {
 	// Arrange
 	chdirTemp(t)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
@@ -776,14 +779,41 @@ func TestMarketplaceCheck_VerbosePrintsEveryPackage(t *testing.T) {
 	}
 
 	// Act
-	out, err := runMarketplaceCmd(t, "check", "-v")
+	out, err := runMarketplaceCmd(t, "check")
 
 	// Assert
 	if err != nil {
-		t.Fatalf("marketplace check -v returned error: %v", err)
+		t.Fatalf("marketplace check returned error: %v", err)
 	}
-	if !strings.Contains(out, "+: local-a: ok") {
-		t.Errorf("output = %q, want a per-package + line with -v", out)
+	for _, want := range []string{"REACHABLE", "VERSION FOUND", "REF OK", "local-a", "OK"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q (Entry Health Check table)", out, want)
+		}
+	}
+}
+
+// TestMarketplaceCheck_OfflinePrintsModeNotice covers upstream
+// check.py:69-73's offline-mode notice line.
+func TestMarketplaceCheck_OfflinePrintsModeNotice(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n" +
+		"  packages:\n" +
+		"    - name: local-a\n      source: ./pkgs/a\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "check", "--offline")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace check --offline returned error: %v", err)
+	}
+	if !strings.Contains(out, "Offline mode") {
+		t.Errorf("output = %q, want the offline-mode notice", out)
 	}
 }
 
@@ -1008,5 +1038,39 @@ func TestMarketplaceOutdated_LegacyConfig_PrintsDeprecationWarning(t *testing.T)
 	}
 	if !strings.Contains(out, "apm-go marketplace migrate") {
 		t.Errorf("output = %q, want a deprecation warning pointing at 'apm-go marketplace migrate'", out)
+	}
+}
+
+// TestMarketplaceOutdated_CurrentColumnReadsMarketplaceJSON covers upstream
+// _load_current_versions (__init__.py:1133-1148): a ./marketplace.json in
+// the working directory feeds the Current column; without it every cell is
+// "--". Also locks the RANGE column added for table parity.
+func TestMarketplaceOutdated_CurrentColumnReadsMarketplaceJSON(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0", "v1.1.0")
+	withFixtureRemoteLister(t, repoDir)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n" +
+		"  packages:\n" +
+		"    - name: tool\n      source: owner/repo\n      version: \"^1.0.0\"\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mktJSON := `{"name": "demo", "plugins": [{"name": "tool", "source": {"ref": "v1.0.0"}}]}`
+	if err := os.WriteFile("marketplace.json", []byte(mktJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act (v1.1.0 exists, so the package is upgradable and exits non-zero;
+	// the columns are what this test is about)
+	out, _ := runMarketplaceCmd(t, "outdated")
+
+	// Assert
+	for _, want := range []string{"RANGE", "^1.0.0", "v1.0.0", "v1.1.0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q (Current from marketplace.json + Range column)", out, want)
+		}
 	}
 }

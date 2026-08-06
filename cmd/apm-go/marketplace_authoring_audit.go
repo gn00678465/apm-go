@@ -41,17 +41,48 @@ func marketplaceAuditCmd() *cobra.Command {
 			if src == nil {
 				return marketplaceNotRegisteredErr(name)
 			}
+			w := cmd.OutOrStdout()
+			// Mirrors upstream audit.py:36-40's progress lines around the
+			// fetch.
+			ux.Info(w, "Auditing marketplace %q...", name)
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
+			plural := "s"
+			if len(m.Plugins) == 1 {
+				plural = ""
+			}
+			ux.Info(w, "Checking %d plugin%s...", len(m.Plugins), plural)
 
 			reports := authoring.RunAudit(m, name, src.Host, authoring.DefaultApmYMLFetcher)
+
+			// Upstream audit.py:49-56: the section header is suppressed on
+			// an all-clean default run, where it would hang above an empty
+			// body.
+			hasFindings := false
+			for _, r := range reports {
+				if r.FetchStatus != authoring.FetchOK || len(r.Issues) > 0 {
+					hasFindings = true
+					break
+				}
+			}
+			fmt.Fprintln(w)
+			if hasFindings || verbose {
+				ux.Info(w, "Audit Results:")
+			}
 			ok, bypassTotal, skipped, unverifiable := printAuditReports(cmd, reports, verbose)
 
-			fmt.Fprintln(cmd.OutOrStdout())
-			ux.Info(cmd.OutOrStdout(), "Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
+			fmt.Fprintln(w)
+			ux.Info(w, "Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
 				ok, bypassTotal, skipped, unverifiable)
+			if bypassTotal > 0 {
+				// Upstream audit.py:106-113's closing explainer.
+				fmt.Fprintln(w)
+				ux.Info(w, "Marketplace refs (name@marketplace) pin transitive deps through the catalogue "+
+					"so consumers get the same versions you tested. See: "+
+					"https://microsoft.github.io/apm/reference/cli/marketplace/#apm-marketplace-audit-name")
+			}
 
 			if strict && (bypassTotal > 0 || unverifiable > 0) {
 				return fmt.Errorf("audit %q failed: %d bypass warning(s), %d unverifiable error(s)", name, bypassTotal, unverifiable)
@@ -99,8 +130,13 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 // two-level nested tree (plugin -> dependency -> hint), replacing the
 // former flat "- dep" / "  hint: ..." indentation.
 func printBypassTree(w io.Writer, r authoring.PluginAuditReport) {
+	// Upstream audit.py:68-71's singular/plural phrasing.
+	verbPhrase := fmt.Sprintf("%d dependencies bypass", len(r.Issues))
+	if len(r.Issues) == 1 {
+		verbPhrase = "1 dependency bypasses"
+	}
 	root := ux.TreeNode{
-		Text: fmt.Sprintf("%s: %d dependencies bypass the marketplace", r.PluginName, len(r.Issues)),
+		Text: fmt.Sprintf("%s: %s the marketplace", r.PluginName, verbPhrase),
 	}
 	for _, issue := range r.Issues {
 		root.Children = append(root.Children, ux.TreeNode{

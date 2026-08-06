@@ -58,6 +58,16 @@ func anySetFieldFlagChanged(cmd *cobra.Command) bool {
 	return false
 }
 
+// shortSHA truncates a commit SHA to upstream's 12-character display form
+// (plugin/__init__.py:148's sha[:12]) for the "Resolved <ref> to <sha>"
+// progress line.
+func shortSHA(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
 // parseTagsFlag splits a comma-separated --tags value into a trimmed,
 // non-empty slice, or nil when raw is empty -- mirrors Python's
 // _parse_tags. Used by `add`, where an omitted --tags must leave
@@ -173,6 +183,12 @@ func marketplacePackageAddCmd() *cobra.Command {
 				OnExplicitHeadWillResolve: func() {
 					ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
 				},
+				// Upstream plugin/__init__.py:147-150/179-182: report what
+				// SHA the mutable/named ref actually resolved to, so the
+				// user learns what got written into apm.yml.
+				OnRefResolved: func(ref, sha string) {
+					ux.Info(cmd.OutOrStdout(), "Resolved %s to %s", ref, shortSHA(sha))
+				},
 			}
 			resolved, fallbackUsed, err := authoring.AddPackage(".", args[0], opts, authoring.DefaultRefLister)
 			if err != nil {
@@ -275,6 +291,12 @@ func marketplacePackageSetCmd() *cobra.Command {
 			opts.OnExplicitHeadWillResolve = func() {
 				ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
 			}
+			// Mirrors `add`'s OnRefResolved wiring above (upstream's set.py
+			// resolves through the same _resolve_ref and prints the same
+			// "Resolved <ref> to <sha12>" progress line).
+			opts.OnRefResolved = func(ref, sha string) {
+				ux.Info(cmd.OutOrStdout(), "Resolved %s to %s", ref, shortSHA(sha))
+			}
 
 			fallbackUsed, err := authoring.SetPackage(".", args[0], opts, authoring.DefaultRefLister)
 			if err != nil {
@@ -333,7 +355,7 @@ func marketplacePackageRemoveCmd() *cobra.Command {
 					return err
 				}
 				if !proceed {
-					ux.Info(cmd.ErrOrStderr(), "Aborted.")
+					ux.Info(cmd.ErrOrStderr(), "Cancelled")
 					return nil
 				}
 			}

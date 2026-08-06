@@ -156,3 +156,60 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateChecks covers the per-check grouping `marketplace validate`
+// renders from (one line per named check, passing checks included),
+// mirroring Python validate_marketplace's [Schema, Names] ValidationResult
+// list.
+func TestValidateChecks(t *testing.T) {
+	t.Run("clean manifest: two named checks, both passed", func(t *testing.T) {
+		m := &MarketplaceManifest{
+			Name: "acme-tools",
+			Plugins: []MarketplacePlugin{
+				{Name: "alpha", Source: "./alpha"},
+				{Name: "beta", Source: "./beta"},
+			},
+		}
+		got := ValidateChecks(m)
+		if len(got) != 2 || got[0].CheckName != "Schema" || got[1].CheckName != "Names" {
+			t.Fatalf("ValidateChecks() checks = %#v, want [Schema, Names]", got)
+		}
+		if !got[0].Passed() || !got[1].Passed() {
+			t.Errorf("ValidateChecks() = %#v, want both checks passed", got)
+		}
+	})
+
+	t.Run("schema and duplicate findings land in their own checks", func(t *testing.T) {
+		m := &MarketplaceManifest{
+			Name: "acme-tools",
+			Plugins: []MarketplacePlugin{
+				{Name: "alpha"},
+				{Name: "Alpha", Source: "./a"},
+			},
+		}
+		got := ValidateChecks(m)
+		if len(got) != 2 {
+			t.Fatalf("ValidateChecks() returned %d checks, want 2", len(got))
+		}
+		schema, names := got[0], got[1]
+		if schema.Passed() || len(schema.Findings) != 1 {
+			t.Errorf("Schema check = %#v, want exactly the missing-source finding", schema)
+		}
+		if names.Passed() || len(names.Findings) != 1 {
+			t.Errorf("Names check = %#v, want exactly the duplicate-name finding", names)
+		}
+	})
+
+	t.Run("flat Validate stays the ordered flatten of ValidateChecks", func(t *testing.T) {
+		m := &MarketplaceManifest{
+			Plugins: []MarketplacePlugin{{Name: "alpha"}, {Name: "Alpha", Source: "./a"}},
+		}
+		var want []Finding
+		for _, check := range ValidateChecks(m) {
+			want = append(want, check.Findings...)
+		}
+		if got := Validate(m); !reflect.DeepEqual(got, want) {
+			t.Errorf("Validate() = %#v, want ValidateChecks flattened %#v", got, want)
+		}
+	})
+}

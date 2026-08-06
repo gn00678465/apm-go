@@ -51,7 +51,7 @@ func TestResolveRef_ImplicitHead_RemoteSource_ResolvesViaLister(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: "HEAD", Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", "", "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", "", "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -69,7 +69,7 @@ func TestResolveRef_ImplicitHead_RemoteSource_ResolvesViaLister(t *testing.T) {
 // implicit-HEAD pin.
 func TestResolveRef_ImplicitHeadDisabled_EmptyRefShortCircuits_NoListerCall(t *testing.T) {
 	// Act
-	got, err := resolveRef("owner/repo", "", "", panicLister{}, false, false, false, nil)
+	got, err := resolveRef("owner/repo", "", "", panicLister{}, false, false, false, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -87,7 +87,7 @@ func TestResolveRef_ExplicitHead_RemoteSource_ResolvesViaLister(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: "HEAD", Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", "HEAD", "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", "HEAD", "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -105,7 +105,7 @@ func TestResolveRef_ExplicitHead_CaseInsensitive(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: "HEAD", Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", "head", "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", "head", "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -125,7 +125,7 @@ func TestResolveRef_ExplicitHead_MixedCase_TitleCase(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: "HEAD", Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", "Head", "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", "Head", "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -148,7 +148,7 @@ func TestResolveRef_RefsHeadsHEAD_NotTreatedAsHeadKeyword(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: weirdRef, Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", weirdRef, "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", weirdRef, "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -165,7 +165,7 @@ func TestResolveRef_VersionGiven_SkipsResolution_NoListerCall(t *testing.T) {
 	// Act: panicLister proves a --version range never triggers ref
 	// resolution, even though ref itself is empty (which would otherwise
 	// be treated as an implicit HEAD).
-	got, err := resolveRef("owner/repo", "", "^1.0.0", panicLister{}, false, true, true, nil)
+	got, err := resolveRef("owner/repo", "", "^1.0.0", panicLister{}, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -180,7 +180,7 @@ func TestResolveRef_VersionGiven_SkipsResolution_NoListerCall(t *testing.T) {
 
 func TestResolveRef_NoVerify_ImplicitHead_ReturnsOfflineError(t *testing.T) {
 	// Act: panicLister proves the failure itself never touches the network.
-	_, err := resolveRef("owner/repo", "", "", panicLister{}, true, true, true, nil)
+	_, err := resolveRef("owner/repo", "", "", panicLister{}, true, true, true, nil, nil)
 
 	// Assert
 	if err == nil {
@@ -193,7 +193,7 @@ func TestResolveRef_NoVerify_ImplicitHead_ReturnsOfflineError(t *testing.T) {
 
 func TestResolveRef_NoVerify_ExplicitHead_ReturnsOfflineError(t *testing.T) {
 	// Act
-	_, err := resolveRef("owner/repo", "HEAD", "", panicLister{}, true, true, true, nil)
+	_, err := resolveRef("owner/repo", "HEAD", "", panicLister{}, true, true, true, nil, nil)
 
 	// Assert
 	if err == nil {
@@ -216,7 +216,7 @@ func TestResolveRef_ExplicitHead_InvokesOnExplicitHeadWillResolve(t *testing.T) 
 	calls := 0
 
 	// Act
-	got, err := resolveRef("owner/repo", "HEAD", "", lister, false, true, true, func() { calls++ })
+	got, err := resolveRef("owner/repo", "HEAD", "", lister, false, true, true, func() { calls++ }, nil)
 
 	// Assert
 	if err != nil {
@@ -237,7 +237,7 @@ func TestResolveRef_ImplicitHead_DoesNotInvokeOnExplicitHeadWillResolve(t *testi
 	calls := 0
 
 	// Act
-	if _, err := resolveRef("owner/repo", "", "", lister, false, true, true, func() { calls++ }); err != nil {
+	if _, err := resolveRef("owner/repo", "", "", lister, false, true, true, func() { calls++ }, nil); err != nil {
 		t.Fatalf("resolveRef returned error: %v", err)
 	}
 
@@ -254,7 +254,7 @@ func TestResolveRef_NoVerify_ExplicitHead_DoesNotInvokeOnExplicitHeadWillResolve
 	calls := 0
 
 	// Act
-	_, err := resolveRef("owner/repo", "HEAD", "", panicLister{}, true, true, true, func() { calls++ })
+	_, err := resolveRef("owner/repo", "HEAD", "", panicLister{}, true, true, true, func() { calls++ }, nil)
 
 	// Assert
 	if err == nil {
@@ -272,7 +272,7 @@ func TestResolveRef_LocalSource_ExplicitHead_DoesNotInvokeOnExplicitHeadWillReso
 	calls := 0
 
 	// Act
-	got, err := resolveRef("./pkgs/tool", "HEAD", "", panicLister{}, false, true, true, func() { calls++ })
+	got, err := resolveRef("./pkgs/tool", "HEAD", "", panicLister{}, false, true, true, func() { calls++ }, nil)
 
 	// Assert
 	if err != nil {
@@ -291,7 +291,7 @@ func TestResolveRef_LocalSource_ExplicitHead_DoesNotInvokeOnExplicitHeadWillReso
 func TestResolveRef_ConcreteSHA_ReturnedAsIs_NoListerCall(t *testing.T) {
 	// Act: panicLister proves an already-concrete SHA never triggers a
 	// lister call, even with --no-verify unset.
-	got, err := resolveRef("owner/repo", resolveRefTestSHA, "", panicLister{}, false, true, true, nil)
+	got, err := resolveRef("owner/repo", resolveRefTestSHA, "", panicLister{}, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -319,7 +319,7 @@ func TestResolveRef_ShaPattern_40CharNonHex_ResolvesViaLister(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: nonHexRef, Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", nonHexRef, "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", nonHexRef, "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -342,7 +342,7 @@ func TestResolveRef_ShaPattern_41Char_ResolvesViaLister(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: ref41, Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", ref41, "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", ref41, "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -370,7 +370,7 @@ func TestResolveRef_ShaPattern_39CharValidHex_ResolvesViaLister(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: ref39, Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", ref39, "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", ref39, "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -392,7 +392,7 @@ func TestResolveRef_ShaPattern_UppercaseSHA_ResolvesViaLister(t *testing.T) {
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: upperSHA, Commit: resolveRefTestSHA}}}
 
 	// Act
-	got, err := resolveRef("owner/repo", upperSHA, "", lister, false, true, true, nil)
+	got, err := resolveRef("owner/repo", upperSHA, "", lister, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -419,7 +419,7 @@ func TestResolveRef_ShaPattern_UppercaseSHA_ResolvesViaLister(t *testing.T) {
 // audit (MAJOR 2, 2026-07-30) flagged in the previous revision.
 func TestResolveRef_LocalSource_ImplicitHead_ZeroFlag_NeverTouchesNetwork(t *testing.T) {
 	// Act
-	got, err := resolveRef("./pkgs/tool", "", "", panicLister{}, false, true, true, nil)
+	got, err := resolveRef("./pkgs/tool", "", "", panicLister{}, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -432,7 +432,7 @@ func TestResolveRef_LocalSource_ImplicitHead_ZeroFlag_NeverTouchesNetwork(t *tes
 
 func TestResolveRef_LocalSource_ExplicitHead_NeverTouchesNetwork(t *testing.T) {
 	// Act
-	got, err := resolveRef("./pkgs/tool", "HEAD", "", panicLister{}, false, true, true, nil)
+	got, err := resolveRef("./pkgs/tool", "HEAD", "", panicLister{}, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -458,7 +458,7 @@ func TestResolveRef_LocalSource_ExplicitHead_NeverTouchesNetwork(t *testing.T) {
 // panic or return the SHA verbatim instead of "".
 func TestResolveRef_LocalSource_Version_NeverTouchesNetwork(t *testing.T) {
 	// Act
-	got, err := resolveRef("./pkgs/tool", "", "^1.0.0", panicLister{}, false, true, true, nil)
+	got, err := resolveRef("./pkgs/tool", "", "^1.0.0", panicLister{}, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -473,7 +473,7 @@ func TestResolveRef_LocalSource_NoVerify_NeverTouchesNetwork(t *testing.T) {
 	// Act: a local source must succeed (not error) even with --no-verify
 	// and an implicit HEAD -- unlike the remote case, there is nothing to
 	// resolve at all, so the offline-HEAD error must never fire here.
-	got, err := resolveRef("./pkgs/tool", "", "", panicLister{}, true, true, true, nil)
+	got, err := resolveRef("./pkgs/tool", "", "", panicLister{}, true, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -490,7 +490,7 @@ func TestResolveRef_LocalSource_NoVerify_NeverTouchesNetwork(t *testing.T) {
 // make this test fail by returning the SHA verbatim instead of "".
 func TestResolveRef_LocalSource_ConcreteSHA_NeverTouchesNetwork(t *testing.T) {
 	// Act
-	got, err := resolveRef("./pkgs/tool", resolveRefTestSHA, "", panicLister{}, false, true, true, nil)
+	got, err := resolveRef("./pkgs/tool", resolveRefTestSHA, "", panicLister{}, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -518,7 +518,7 @@ func TestResolveRef_LocalSource_ConcreteSHA_NeverTouchesNetwork(t *testing.T) {
 // panicLister proves this test would catch it.
 func TestResolveRef_LocalSource_OrdinaryMutableRef_NeverTouchesNetwork(t *testing.T) {
 	// Act
-	got, err := resolveRef("./pkgs/tool", "main", "", panicLister{}, false, true, true, nil)
+	got, err := resolveRef("./pkgs/tool", "main", "", panicLister{}, false, true, true, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -545,7 +545,7 @@ func TestResolveRef_LocalSource_SetMode_DoesNotShortCircuit_ResolvesViaLister(t 
 
 	// Act: skipLocalSource=false, implicitHeadOnEmpty=false -- SetPackage's
 	// own call shape.
-	got, err := resolveRef("./pkgs/tool", "main", "", lister, false, false, false, nil)
+	got, err := resolveRef("./pkgs/tool", "main", "", lister, false, false, false, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -559,7 +559,7 @@ func TestResolveRef_LocalSource_SetMode_DoesNotShortCircuit_ResolvesViaLister(t 
 func TestResolveRef_LocalSource_SetMode_ConcreteSHA_StoredVerbatim_NoListerCall(t *testing.T) {
 	// Act: panicLister proves an already-concrete SHA never triggers a
 	// lister call for set-mode either, local source or not.
-	got, err := resolveRef("./pkgs/tool", resolveRefTestSHA, "", panicLister{}, false, false, false, nil)
+	got, err := resolveRef("./pkgs/tool", resolveRefTestSHA, "", panicLister{}, false, false, false, nil, nil)
 
 	// Assert
 	if err != nil {
@@ -631,7 +631,7 @@ func TestWillResolveMutableRefForAdd_MatchesResolveRefAcrossCrossProduct(t *test
 						}}}
 
 						predicted := WillResolveMutableRefForAdd(s.source, ref, version, noVerify)
-						got, _ := resolveRef(s.source, ref, version, spy, noVerify, true, true, nil)
+						got, _ := resolveRef(s.source, ref, version, spy, noVerify, true, true, nil, nil)
 						actuallyResolvedViaHead := spy.called && got == headSHA
 
 						if predicted != actuallyResolvedViaHead {
@@ -729,7 +729,7 @@ func TestResolveRef_CrossProduct_MatchesDirectSpecOracle(t *testing.T) {
 							t.Fatalf("test fixture bug: unhandled ref %q", ref)
 						}
 
-						got, err := resolveRef(s.source, ref, version, spy, noVerify, true, true, nil)
+						got, err := resolveRef(s.source, ref, version, spy, noVerify, true, true, nil, nil)
 
 						if spy.called != wantListerCalled {
 							t.Errorf("lister called = %v, want %v (source=%q, ref=%q, version=%q, noVerify=%v)", spy.called, wantListerCalled, s.source, ref, version, noVerify)
@@ -774,7 +774,7 @@ func strconvBool(b bool) string {
 func TestResolveRefForKind_UnrecognizedKind_FailsClosed_NeverTouchesLister(t *testing.T) {
 	const unrecognizedKind = refResolutionKind(999)
 
-	got, err := resolveRefForKind(unrecognizedKind, "owner/repo", "some-ref", panicLister{}, nil)
+	got, err := resolveRefForKind(unrecognizedKind, "owner/repo", "some-ref", panicLister{}, nil, nil)
 
 	if err == nil {
 		t.Fatal("resolveRefForKind with an unrecognized kind returned no error, want a fail-closed error")

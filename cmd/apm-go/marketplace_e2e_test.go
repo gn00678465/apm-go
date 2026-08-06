@@ -254,45 +254,6 @@ func TestFallbackMarketplaceAlias(t *testing.T) {
 	})
 }
 
-// TestSummarizeFindings covers validate's Summary-line arithmetic.
-func TestSummarizeFindings(t *testing.T) {
-	tests := []struct {
-		name         string
-		manifest     *marketplace.MarketplaceManifest
-		findings     []marketplace.Finding
-		wantPassed   int
-		wantWarnings int
-		wantErrs     int
-	}{
-		{
-			name:       "no findings: everything passed",
-			manifest:   &marketplace.MarketplaceManifest{Name: "acme", Plugins: []marketplace.MarketplacePlugin{{Name: "p"}}},
-			findings:   nil,
-			wantPassed: 2, wantWarnings: 0, wantErrs: 0,
-		},
-		{
-			name:       "one error reduces passed by one",
-			manifest:   &marketplace.MarketplaceManifest{Name: "acme", Plugins: []marketplace.MarketplacePlugin{{Name: "p"}, {Name: "q"}}},
-			findings:   []marketplace.Finding{{Level: marketplace.LevelError, Message: "x"}},
-			wantPassed: 2, wantWarnings: 0, wantErrs: 1,
-		},
-		{
-			name:       "errors cannot drive passed below zero",
-			manifest:   &marketplace.MarketplaceManifest{Name: "acme"},
-			findings:   []marketplace.Finding{{Level: marketplace.LevelError, Message: "a"}, {Level: marketplace.LevelError, Message: "b"}, {Level: marketplace.LevelError, Message: "c"}},
-			wantPassed: 0, wantWarnings: 0, wantErrs: 3,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			passed, warnings, errs := summarizeFindings(tt.manifest, tt.findings)
-			if passed != tt.wantPassed || warnings != tt.wantWarnings || errs != tt.wantErrs {
-				t.Errorf("summarizeFindings() = (%d, %d, %d), want (%d, %d, %d)", passed, warnings, errs, tt.wantPassed, tt.wantWarnings, tt.wantErrs)
-			}
-		})
-	}
-}
-
 // ── `add` (mkt-010, mkt-011, mkt-018) ───────────────────────────────────
 
 func TestMarketplaceAdd_LocalPath_FallsBackToManifestNameAlias(t *testing.T) {
@@ -867,10 +828,10 @@ func TestMarketplaceRemove_InteractiveExplicitNo_AbortsCleanly(t *testing.T) {
 
 	// Assert
 	if err != nil {
-		t.Fatalf(`marketplace remove with an explicit interactive "n" returned error: %v, want a clean exit 0 Aborted`, err)
+		t.Fatalf(`marketplace remove with an explicit interactive "n" returned error: %v, want a clean exit 0 Cancelled`, err)
 	}
-	if !strings.Contains(out, "Aborted") {
-		t.Errorf("output = %q, want an Aborted message", out)
+	if !strings.Contains(out, "Cancelled") {
+		t.Errorf("output = %q, want a Cancelled message", out)
 	}
 	if src, _ := marketplace.FindByName("acme"); src == nil {
 		t.Error("marketplace was removed despite an explicit decline")
@@ -1377,6 +1338,20 @@ func TestMarketplaceValidate_HappyPathPrintsSummaryAndSucceeds(t *testing.T) {
 	if !strings.Contains(out, "Summary: 2 passed, 0 warnings, 0 errors") {
 		t.Errorf("output = %q, want the passing summary line", out)
 	}
+	// Upstream validate.py:54-63: passing checks each print their own line
+	// under a "Validation Results:" header, and the fetch is bracketed by
+	// progress lines -- a clean manifest must not collapse to a bare Summary.
+	for _, want := range []string{
+		`Validating marketplace "acme"...`,
+		"Found 1 plugins",
+		"Validation Results:",
+		"Schema: all plugins valid",
+		"Names: all plugins valid",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q", out, want)
+		}
+	}
 }
 
 func TestMarketplaceValidate_ErrorsFailTheCommand(t *testing.T) {
@@ -1464,5 +1439,90 @@ func TestMarketplaceValidate_NoCheckRefsFlag(t *testing.T) {
 	cmd := marketplaceValidateCmd()
 	if cmd.Flags().Lookup("check-refs") != nil {
 		t.Error("marketplace validate has a --check-refs flag, want it absent (mkt-017)")
+	}
+}
+
+// TestMarketplaceUpdate_EmptyRegistryReportsInsteadOfSilence covers upstream
+// __init__.py:980-982: `marketplace update` with nothing registered must say
+// so, never exit 0 with zero output.
+func TestMarketplaceUpdate_EmptyRegistryReportsInsteadOfSilence(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+
+	// Act
+	out, err := runMarketplaceCmd(t, "update")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace update with an empty registry returned error: %v", err)
+	}
+	if !strings.Contains(out, "No marketplaces registered") {
+		t.Errorf("output = %q, want the empty-registry notice instead of silence", out)
+	}
+}
+
+// TestMarketplaceUpdate_AllPrintsStartAndClosingLines covers upstream
+// __init__.py:983/:993: the refresh-all path is bracketed by a start line
+// carrying the count and a closing "cache refreshed" line.
+func TestMarketplaceUpdate_AllPrintsStartAndClosingLines(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "update")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace update returned error: %v", err)
+	}
+	for _, want := range []string{"Refreshing 1 marketplace(s)...", "Marketplace cache refreshed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
+// TestMarketplaceList_PrintsBrowseHintAfterTable covers upstream
+// __init__.py:883-886's post-table usage hint.
+func TestMarketplaceList_PrintsBrowseHintAfterTable(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: "/abs/path", Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "list")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace list returned error: %v", err)
+	}
+	if !strings.Contains(out, "marketplace browse <name>") {
+		t.Errorf("output = %q, want the browse usage hint after the table", out)
+	}
+}
+
+// TestMarketplaceAdd_SuccessLineCarriesPluginCount covers upstream
+// __init__.py:721-724: the default (non-verbose) success line reports how
+// many plugins the registered marketplace serves.
+func TestMarketplaceAdd_SuccessLineCarriesPluginCount(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [{"name": "p", "source": "./p"}, {"name": "q", "source": "./q"}]}`)
+
+	// Act
+	out, err := runMarketplaceCmd(t, "add", dir)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace add returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, `Marketplace "acme" registered (2 plugins)`) {
+		t.Errorf("output = %q, want the registered line with the plugin count", out)
 	}
 }

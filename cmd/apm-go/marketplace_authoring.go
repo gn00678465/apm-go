@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -284,27 +285,31 @@ func marketplaceCheckCmd() *cobra.Command {
 				ux.Warn(cmd.ErrOrStderr(), "%s", w)
 			}
 
-			results := authoring.CheckPackages(cfg, authoring.DefaultRefLister, offline)
 			w := cmd.OutOrStdout()
+			if offline {
+				// Upstream check.py:69-73's offline-mode notice.
+				ux.Info(w, "Offline mode -- only schema and cached-ref checks")
+			}
+
+			results := authoring.CheckPackages(cfg, authoring.DefaultRefLister, offline)
 			failed := 0
-			var items []ux.Item
-			for _, r := range results {
+			// Upstream's Entry Health Check table (__init__.py:1246-1287):
+			// one row per entry -- passing entries included -- with the
+			// Reachable/Version Found/Ref OK classification columns.
+			tableRows := make([][]string, len(results))
+			for i, r := range results {
+				detail := "OK"
 				if r.Err != nil {
 					failed++
-					items = append(items, ux.Item{Text: fmt.Sprintf("%s: %s: %v", ux.SymbolError, r.Package.Name, r.Err)})
-					continue
+					detail = r.Err.Error()
 				}
-				if verbose {
-					items = append(items, ux.Item{Text: fmt.Sprintf("%s: %s: ok", ux.SymbolSuccess, r.Package.Name)})
+				tableRows[i] = []string{
+					checkBoolSymbol(r.RefOK), r.Package.Name,
+					checkBoolSymbol(r.Reachable), checkBoolSymbol(r.VersionFound), checkBoolSymbol(r.RefOK),
+					detail,
 				}
 			}
-			if len(items) > 0 {
-				ux.BulletList(w, items)
-			}
-			if len(results) > 0 {
-				verified := len(results) - failed
-				ux.Info(w, "pass rate: %d/%d (%.0f%%)", verified, len(results), float64(verified)/float64(len(results))*100)
-			}
+			ux.Table(w, []string{"STATUS", "PACKAGE", "REACHABLE", "VERSION FOUND", "REF OK", "DETAIL"}, tableRows)
 			if failed > 0 {
 				return fmt.Errorf("check failed: %d/%d package(s) have an unverifiable pin", failed, len(results))
 			}
@@ -318,6 +323,14 @@ func marketplaceCheckCmd() *cobra.Command {
 	return cmd
 }
 
+// checkBoolSymbol renders one Entry Health Check boolean cell.
+func checkBoolSymbol(ok bool) string {
+	if ok {
+		return ux.SymbolSuccess
+	}
+	return ux.SymbolError
+}
+
 // marketplaceOutdatedCmd implements mkt-042 修訂版: report every package's
 // upgrade status against real git tags (authoring.OutdatedPackages/
 // authoring.DefaultRefLister), printing one line per package with its
@@ -327,11 +340,10 @@ func marketplaceCheckCmd() *cobra.Command {
 // icon it would have been before being overridden (see OutdatedRow's own
 // doc comment).
 //
-// current-version tracking (telling "[+] already up to date" apart from a
-// merely-not-yet-published state) is not wired up yet: `apm pack`
-// (mkt-050+), the command that would produce a marketplace.json to read
-// that from, is a separate, not-yet-landed sub-task. OutdatedPackages is
-// called with a nil map, which still reports every other icon correctly.
+// The Current column comes from ./marketplace.json in the working directory
+// (loadCurrentMarketplaceVersions), mirroring upstream's
+// _load_current_versions (__init__.py:1133-1148): a missing or unparsable
+// file degrades to "--" for every row, never an error.
 func marketplaceOutdatedCmd() *cobra.Command {
 	var offline, includePrerelease, verbose bool
 
@@ -349,20 +361,24 @@ func marketplaceOutdatedCmd() *cobra.Command {
 				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
-			rows := authoring.OutdatedPackages(cfg, authoring.DefaultRefLister, offline, includePrerelease, nil)
+			rows := authoring.OutdatedPackages(cfg, authoring.DefaultRefLister, offline, includePrerelease, loadCurrentMarketplaceVersions())
 
 			w := cmd.OutOrStdout()
 			upgradable := 0
 			tableRows := make([][]string, len(rows))
 			for i, r := range rows {
+				rangeSpec := r.Package.Version
+				if rangeSpec == "" || r.Package.Ref != "" {
+					rangeSpec = "--"
+				}
 				tableRows[i] = []string{
-					outdatedStatusSymbol(r.Status), r.Package.Name, r.Current, r.LatestInRange, r.LatestOverall, r.Note,
+					outdatedStatusSymbol(r.Status), r.Package.Name, r.Current, rangeSpec, r.LatestInRange, r.LatestOverall, r.Note,
 				}
 				if r.Upgradable {
 					upgradable++
 				}
 			}
-			ux.Table(w, []string{"STATUS", "NAME", "CURRENT", "LATEST-IN-RANGE", "LATEST", "NOTE"}, tableRows)
+			ux.Table(w, []string{"STATUS", "NAME", "CURRENT", "RANGE", "LATEST-IN-RANGE", "LATEST", "NOTE"}, tableRows)
 
 			if upgradable > 0 {
 				ux.Info(w, "%d package(s) can be updated", upgradable)
@@ -384,6 +400,40 @@ func marketplaceOutdatedCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "include prerelease versions when determining the latest tag")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print extra diagnostics")
 	return cmd
+}
+
+// loadCurrentMarketplaceVersions reads ./marketplace.json (the working
+// directory's published manifest) and returns each plugin's pinned
+// source.ref by name, for outdated's Current column -- mirroring upstream's
+// _load_current_versions (__init__.py:1133-1148). Best-effort: a missing,
+// unreadable, or unparsable file returns an empty map (every Current cell
+// degrades to "--"), never an error.
+func loadCurrentMarketplaceVersions() map[string]string {
+	data, err := os.ReadFile("marketplace.json")
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Plugins []struct {
+			Name   string          `json:"name"`
+			Source json.RawMessage `json:"source"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil
+	}
+	current := make(map[string]string, len(doc.Plugins))
+	for _, p := range doc.Plugins {
+		var src struct {
+			Ref string `json:"ref"`
+		}
+		// A string-form source has no ref; mirror upstream's dict-only read.
+		if err := json.Unmarshal(p.Source, &src); err != nil || src.Ref == "" {
+			continue
+		}
+		current[p.Name] = src.Ref
+	}
+	return current
 }
 
 // outdatedStatusSymbol maps authoring.OutdatedRow.Status's bracket token to
