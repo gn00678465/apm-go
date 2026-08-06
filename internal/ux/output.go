@@ -2,12 +2,14 @@ package ux
 
 import (
 	"io"
+	"os"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/list"
 	"charm.land/lipgloss/v2/table"
 	"charm.land/lipgloss/v2/tree"
+	"golang.org/x/term"
 )
 
 // Item is a single entry in a BulletList, with an indent Level (0 = top).
@@ -35,10 +37,34 @@ var (
 	boxStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(ColorBrand)).Padding(0, 1)
 )
 
+// terminalWidthFor returns w's terminal column width when w is a real
+// terminal, or 0 (no constraint) for a pipe, redirected file, or in-memory
+// buffer -- so tests, logs, and shell pipelines keep the natural
+// content-sized rendering. A package-level var so tests can force a width
+// without a real TTY.
+var terminalWidthFor = func(w io.Writer) int {
+	f, ok := w.(*os.File)
+	if !ok || !isTerminalFile(f) {
+		return 0
+	}
+	cols, _, err := term.GetSize(int(f.Fd()))
+	if err != nil || cols <= 0 {
+		return 0
+	}
+	return cols
+}
+
 // Table renders headers and rows as a boxed table to w. Headers may be
 // nil/empty to render a headerless table. lipgloss/table computes column
 // widths (and CJK full-width runes) correctly, so the box stays aligned --
 // unlike pterm's width engine.
+//
+// When w is a real terminal and the table's natural width would overflow it,
+// the table is capped to the terminal width: lipgloss/table shrinks columns
+// and word-wraps data cells (its default Wrap(true)) instead of letting the
+// terminal hard-break the box borders mid-row. The cap is applied only on
+// overflow -- a narrow table is never stretched to fill the terminal, since
+// Table.Width() would otherwise expand columns too.
 func Table(w io.Writer, headers []string, rows [][]string) {
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
@@ -57,7 +83,11 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 	}
 	t = t.Rows(rows...)
 
-	lipgloss.Fprintln(w, t.String())
+	rendered := t.String()
+	if maxWidth := terminalWidthFor(w); maxWidth > 0 && lipgloss.Width(rendered) > maxWidth {
+		rendered = t.Width(maxWidth).String()
+	}
+	lipgloss.Fprintln(w, rendered)
 }
 
 // BulletList renders a leveled bullet list to w. Indentation is expressed as

@@ -2,6 +2,7 @@ package ux
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -236,5 +237,73 @@ func TestDiff_Golden(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("Diff output missing %q: %q", want, out)
 		}
+	}
+}
+
+// withTerminalWidth forces terminalWidthFor to report a fixed width for the
+// duration of the test, standing in for a real TTY of that size.
+func withTerminalWidth(t *testing.T, width int) {
+	t.Helper()
+	orig := terminalWidthFor
+	terminalWidthFor = func(io.Writer) int { return width }
+	t.Cleanup(func() { terminalWidthFor = orig })
+}
+
+// TestTable_OverflowingTerminalIsCappedAndWrapped covers the narrow-window
+// case the fixed-content-width rendering used to break: a table wider than
+// the terminal must shrink to the terminal width, word-wrapping cell content
+// inside its column instead of letting the terminal hard-break the box.
+func TestTable_OverflowingTerminalIsCappedAndWrapped(t *testing.T) {
+	// Arrange
+	withTerminalWidth(t, 40)
+	var buf bytes.Buffer
+	longCell := "a-very-long-detail message that is far wider than forty columns in total"
+
+	// Act
+	Table(&buf, []string{"NAME", "DETAIL"}, [][]string{{"tool", longCell}})
+
+	// Assert
+	out := buf.String()
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if got := lipgloss.Width(line); got > 40 {
+			t.Errorf("line %q is %d columns wide, want <= 40 (terminal width)", line, got)
+		}
+	}
+	// The wrapped content must survive: spot-check a word from the long
+	// cell's head and tail.
+	if !strings.Contains(out, "a-very-long-detail") || !strings.Contains(out, "total") {
+		t.Errorf("output = %q, want the long cell's content preserved across wrapped lines", out)
+	}
+	lines := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+	if lines <= 4 {
+		t.Errorf("output has %d lines, want > 4 (borders + multiple wrapped content lines)", lines)
+	}
+}
+
+// TestTable_NarrowTableIsNotStretchedToTerminalWidth proves the cap only
+// applies on overflow: Table.Width() would otherwise EXPAND a small table's
+// columns to fill the terminal.
+func TestTable_NarrowTableIsNotStretchedToTerminalWidth(t *testing.T) {
+	// Arrange: render once with no width constraint as the baseline.
+	var baseline bytes.Buffer
+	Table(&baseline, []string{"A"}, [][]string{{"x"}})
+
+	withTerminalWidth(t, 200)
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, []string{"A"}, [][]string{{"x"}})
+
+	// Assert
+	if buf.String() != baseline.String() {
+		t.Errorf("narrow table under a wide terminal = %q, want the unconstrained rendering %q", buf.String(), baseline.String())
+	}
+}
+
+// TestTerminalWidthFor_NonTerminalWriterReportsZero locks the default: a
+// bytes.Buffer (tests, pipes, logs) is never width-constrained.
+func TestTerminalWidthFor_NonTerminalWriterReportsZero(t *testing.T) {
+	if got := terminalWidthFor(&bytes.Buffer{}); got != 0 {
+		t.Errorf("terminalWidthFor(bytes.Buffer) = %d, want 0", got)
 	}
 }
