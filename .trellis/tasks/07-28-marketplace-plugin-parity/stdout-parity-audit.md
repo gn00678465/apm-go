@@ -134,6 +134,17 @@ microsoft/apm`）。九項逐一對應：
 **基準位移警示**：e2e 的 outdated 實跑顯示上游現有 **v0.28.0** tag（本盤查與
 修正的基準仍是使用者裁定的 v0.27.0）。基準是否再抬升屬使用者裁定，此處僅記錄。
 
+## v0.28.0 對齊後重跑（2026-08-06）
+
+七項 v0.28 對齊落地後，本文的端到端腳本全量重跑一次。與 v0.27 期的輸出
+逐位元比對，**唯一差異**是 audit 的預期行為變更：本地 plugin 的 skip 理由從
+「not an addressable github manifest」（v0.27：不可定址）變成
+「no apm.yml at '<path>'」（v0.28：真的解析到本地路徑後找不到 manifest）。
+其餘 13 個子指令輸出全部一致（`diff` 僅該 2 行）。重跑時順修一處格式：
+skip detail 原用 `%q` 會把 Windows 路徑反斜線加倍，改為上游原樣的單引號
+`'%s'`（audit.py f-string 同形）。`stdout-parity-e2e.log` 已更新為重跑版
+（v0.27 版在 git 歷史 `da55f59`）。
+
 ## 未驗證 / 範圍外
 
 - 上游 rich 表格 vs apm-go ux.Table 的邊框/樣式差異不在本盤查範圍（親任務 prd.md

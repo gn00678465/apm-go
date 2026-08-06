@@ -238,7 +238,10 @@ func fetchLocalPluginApmYML(pluginName, source, localRoot, pluginRoot string) (r
 
 	fi, err := os.Stat(candidate)
 	if err != nil || fi.IsDir() {
-		return fail(FetchNoManifest, fmt.Sprintf("no apm.yml at %q", candidate))
+		// Single quotes, not %q: upstream prints the path verbatim
+		// (audit.py: f"no apm.yml at '{local_plugin_path}'"), and %q would
+		// double every Windows backslash.
+		return fail(FetchNoManifest, fmt.Sprintf("no apm.yml at '%s'", candidate))
 	}
 	data, err := os.ReadFile(candidate)
 	if err != nil {

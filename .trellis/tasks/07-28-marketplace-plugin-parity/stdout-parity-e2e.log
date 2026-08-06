@@ -82,8 +82,8 @@ $ apm-go marketplace audit acme -v
  i Checking 2 plugins...
 
  i Audit Results:
- i p: skipped (plugin source is not an addressable github manifest)
- i q: skipped (plugin source is not an addressable github manifest)
+ i p: skipped (no apm.yml at 'C:\Users\gn006\AppData\Local\Temp\claude\D--Projects-apm-dev-apm-go\0e2eeee7-af4b-4797-aad3-dc3eb146535e\scratchpad\e2e-ws\mkt\p\apm.yml')
+ i q: skipped (no apm.yml at 'C:\Users\gn006\AppData\Local\Temp\claude\D--Projects-apm-dev-apm-go\0e2eeee7-af4b-4797-aad3-dc3eb146535e\scratchpad\e2e-ws\mkt\q\apm.yml')
 
  i Summary: 0 clean, 0 bypass warning(s), 2 skipped, 0 unverifiable error(s)
 [exit 0]
