@@ -65,6 +65,12 @@ var terminalWidthFor = func(w io.Writer) int {
 // terminal hard-break the box borders mid-row. The cap is applied only on
 // overflow -- a narrow table is never stretched to fill the terminal, since
 // Table.Width() would otherwise expand columns too.
+//
+// Whenever any data cell spans multiple lines -- a "\n" in the input, or
+// wrapping introduced by the width cap -- row separator lines are drawn so
+// adjacent rows stay distinguishable (2026-08-07 user ruling; a deliberate
+// ergonomic addition over upstream rich's show_lines=False default).
+// Single-line tables keep the separator-free rendering.
 func Table(w io.Writer, headers []string, rows [][]string) {
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
@@ -83,11 +89,30 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 	}
 	t = t.Rows(rows...)
 
+	multiline := anyCellMultiline(rows)
+	capped := false
 	rendered := t.String()
 	if maxWidth := terminalWidthFor(w); maxWidth > 0 && lipgloss.Width(rendered) > maxWidth {
-		rendered = t.Width(maxWidth).String()
+		t = t.Width(maxWidth)
+		capped = true
+	}
+	if multiline || capped {
+		rendered = t.BorderRow(true).String()
 	}
 	lipgloss.Fprintln(w, rendered)
+}
+
+// anyCellMultiline reports whether any data cell already contains a line
+// break of its own.
+func anyCellMultiline(rows [][]string) bool {
+	for _, row := range rows {
+		for _, cell := range row {
+			if strings.Contains(cell, "\n") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // BulletList renders a leveled bullet list to w. Indentation is expressed as

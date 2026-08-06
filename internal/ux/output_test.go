@@ -307,3 +307,61 @@ func TestTerminalWidthFor_NonTerminalWriterReportsZero(t *testing.T) {
 		t.Errorf("terminalWidthFor(bytes.Buffer) = %d, want 0", got)
 	}
 }
+
+// TestTable_MultilineCellsDrawRowSeparators covers the 2026-08-07 ruling:
+// once any cell spans multiple lines, adjacent rows need separator lines to
+// stay distinguishable.
+func TestTable_MultilineCellsDrawRowSeparators(t *testing.T) {
+	// Arrange: headerless two-row table, first cell multi-line.
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, nil, [][]string{{"first line\nsecond line"}, {"row two"}})
+
+	// Assert: a row-separator junction appears between the two rows.
+	if !strings.Contains(buf.String(), "├") {
+		t.Errorf("output = %q, want a row separator between multi-line rows", buf.String())
+	}
+}
+
+// TestTable_SingleLineRowsKeepSeparatorFreeRendering locks the default: a
+// plain single-line table gains no separators (and no headerless "├" at
+// all).
+func TestTable_SingleLineRowsKeepSeparatorFreeRendering(t *testing.T) {
+	// Arrange
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, nil, [][]string{{"a"}, {"b"}})
+
+	// Assert
+	if strings.Contains(buf.String(), "├") {
+		t.Errorf("output = %q, want no row separators for single-line rows", buf.String())
+	}
+}
+
+// TestTable_CappedWrappingDrawsRowSeparators: wrapping introduced by the
+// terminal-width cap also triggers separators, so wrapped rows in a narrow
+// window stay readable.
+func TestTable_CappedWrappingDrawsRowSeparators(t *testing.T) {
+	// Arrange
+	withTerminalWidth(t, 30)
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, nil, [][]string{
+		{"one", "a rather long cell that will certainly wrap at thirty columns"},
+		{"two", "another long cell that will also wrap at thirty columns"},
+	})
+
+	// Assert
+	out := buf.String()
+	if !strings.Contains(out, "├") {
+		t.Errorf("output = %q, want row separators once the width cap wraps cells", out)
+	}
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if got := lipgloss.Width(line); got > 30 {
+			t.Errorf("line %q is %d columns wide, want <= 30", line, got)
+		}
+	}
+}
