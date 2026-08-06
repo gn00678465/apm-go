@@ -107,8 +107,24 @@ kiro/grok 的 deploy 面實作。
 | pack 輸出路徑（項4） | — | 視 apm-go pack 現況對照（中） |
 | target 詞彙（項6） | — | grok*/kiro agents 屬 deploy 面，跨任務 |
 
-## 未驗證聲明
+## 未驗證聲明（量測時點）
 
-- 以上為 compare API 的 patch 層級閱讀；**未實跑 v0.28.0**（本地無 tag、未 fetch）。
+- 以上為 compare API 的 patch 層級閱讀；量測時本地無 tag、未 fetch。
+  （2026-08-06 稍後使用者已 fetch v0.28.0 tag，本地 `git rev-parse
+  v0.28.0^{commit}` = `dcbaf654`，與 API 量測一致。）
 - 166 檔中 tests/docs 未逐檔讀；src/apm_cli 範圍外 32 檔僅按 commit 標題歸類。
-- apm-go pack 的輸出路徑/override 現況未在本文比對（項 4 標「視現況對照」）。
+
+## 七項處理結果（2026-08-06，使用者裁定「抬到 v0.28.0，先補範圍內 7 項」）
+
+端到端抽驗輸出見同目錄 `upstream-v0.28.0-e2e.log`；單元/CLI 測試
+`go test ./... -count=1` 全綠。
+
+| 項 | 結果 | 證據 |
+|---|---|---|
+| 1 dependencies 非 null 即真 | **已修** — `pack.go` `yamlValueIsTruthy`→`yamlValueIsNotNull`；matrix 測試更新（改期望前實跑，唯一轉紅的正是 `empty_mapping` 格） | e2e：`dependencies: {}` → `Would pack 1 file(s)` |
+| 2 巢狀 HTTPS source | **已修** — `mcp.go` `marketplaceHTTPSRepoPattern`（僅 https 分支放寬；shorthand 維持兩段，測試同時釘住反例） | e2e：`add https://gitlab.com/group/subgroup/repo --no-verify` 寫入成功 |
+| 3 audit 本地稽核 + strict + Summary | **已修** — `authoring/audit.go` `fetchLocalPluginApmYML`（plugin_root 組合 + 雙分隔符 traversal 拒絕 + pathWithinRoot containment）；cmd 層 strict 兩道新閘 + Summary 條件化；3 個新 CLI 測試 | e2e：本地 bypass 被抓出（`1 dependency bypasses`）、`--strict` 因 1 skipped exit 1 |
+| 4 pack 有效輸出路徑 | **無病灶** — 上游修的是自家四個呼叫點不一致；apm-go 只有一個解析點（`pack.go:445` ResolveOutputPath）與一個寫出點（`pack.go:467` 唯一 build.WriteOutput 生產呼叫，grep 全 repo 佐證），優先序 CLI > 設定(map 形優先) > 預設已同 v0.28 語意 | `output.go:54-66` |
+| 5 version_check plugin.json fallback | **無對應面** — apm-go pack 無 `--check-versions`（`pack.go:80-86` 全旗標清單）、`VersionAlignment` 全 repo 零命中；上游變更僅作用於該 gate 內部。若未來補 gate（估 ~250 行 version_check + pack 接線），需直接以 v0.28 形態實作 | pack 旗標缺口清單（cli-surface-parity 文件） |
+| 6 grok target / fan-out | **部分修** — `grok-build` 進 CanonicalTargets（v0.28 `manifest_target_names()` 含之；`grok-cloud` 上游 experimental-gated 故不進）。cross-target fan-out 所在的 `_filter_files_by_target` 在 apm-go **無對應面**（bundle producer 僅存 target metadata 字串，`producer.go:498-502`；filter/prefix 邏輯 grep 零命中）——屬 pack bundle 深度缺口，非 v0.28 新增。kiro/grok 的 deploy adapter 屬 install/deploy 面（另一任務） | `target.go` + e2e：host-prefixed `gitlab.com/gitlab-org/gitlab-runner --ref HEAD` 解析出真 SHA |
+| 7 package add host 拆分 | **已修** — `refcheck.go` `SplitHostFromSource` + `resolveCloneURL` host 路由（host-prefixed shorthand 原本一律誤導向 github.com——v0.27 期即存在的錯誤，一併修正）；add help 文字更新 | e2e：對 gitlab.com 真 ls-remote，`Resolved HEAD to afc6aa4f6cfc` |
