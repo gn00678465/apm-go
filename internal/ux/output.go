@@ -92,8 +92,14 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 	multiline := anyCellMultiline(rows)
 	capped := false
 	rendered := t.String()
-	if maxWidth := terminalWidthFor(w); maxWidth > 0 && lipgloss.Width(rendered) > maxWidth {
-		t = t.Width(maxWidth)
+	// Cap to ONE LESS than the terminal width, and trigger already at
+	// exact-width: a line that occupies every terminal column puts the
+	// right border glyph in the last cell, where Windows terminals'
+	// auto-wrap/last-column handling clips or wraps it -- the reported
+	// "right border missing" symptom. rich reserves the same 1-column
+	// margin on legacy Windows consoles.
+	if maxWidth := terminalWidthFor(w); maxWidth > 1 && lipgloss.Width(rendered) >= maxWidth {
+		t = t.Width(maxWidth - 1)
 		capped = true
 	}
 	if multiline || capped {

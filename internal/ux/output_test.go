@@ -365,3 +365,29 @@ func TestTable_CappedWrappingDrawsRowSeparators(t *testing.T) {
 		}
 	}
 }
+
+// TestTable_ExactTerminalWidthIsShrunkByOneColumn covers the "right border
+// missing" report: a table whose natural width EQUALS the terminal width
+// puts its right border in the last column, which Windows terminals clip or
+// wrap -- so exact-width tables must shrink by one column too.
+func TestTable_ExactTerminalWidthIsShrunkByOneColumn(t *testing.T) {
+	// Arrange: measure the natural width first (buffer -> no constraint).
+	headers := []string{"NAME", "DETAIL"}
+	rows := [][]string{{"tool", "a modestly long detail cell"}}
+	var natural bytes.Buffer
+	Table(&natural, headers, rows)
+	naturalWidth := lipgloss.Width(strings.Split(natural.String(), "\n")[0])
+
+	withTerminalWidth(t, naturalWidth)
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, headers, rows)
+
+	// Assert
+	for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		if got := lipgloss.Width(line); got >= naturalWidth {
+			t.Errorf("line %q is %d columns wide, want <= %d (one column narrower than the terminal)", line, got, naturalWidth-1)
+		}
+	}
+}
