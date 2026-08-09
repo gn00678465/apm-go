@@ -57,6 +57,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # pre-release tag（含 '-'，如 v0.3.0-beta.1）標記 prerelease，
+          # 否則會成為 releases/latest，install 腳本預設就裝到 beta
+          prerelease_flag=""
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease_flag="--prerelease" ;;
+          esac
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes
+            --generate-notes $prerelease_flag
