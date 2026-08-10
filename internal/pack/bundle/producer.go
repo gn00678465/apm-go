@@ -17,6 +17,7 @@ import (
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/security"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // DepSource is one dependency's already-resolved install location, fed to
@@ -147,7 +148,7 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	}
 
 	for _, c := range fileMap.Collisions {
-		fmt.Fprintf(w, "[warn] %s\n", c)
+		ux.Warn(w, "%s", c)
 	}
 
 	outputFiles := fileMap.Keys()
@@ -229,9 +230,9 @@ func PrintSecretWarning(w io.Writer, dropped []string) {
 	if len(dropped) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "[warn] Secrets withheld from plugin.json so they are never committed as "+
+	ux.Warn(w, "Secrets withheld from plugin.json so they are never committed as "+
 		"plaintext -- stripped from .mcp.json before writing: %s. Use $ENV_VAR references in "+
-		".mcp.json to keep secrets out of the manifest.\n", strings.Join(dropped, ", "))
+		".mcp.json to keep secrets out of the manifest.", strings.Join(dropped, ", "))
 }
 
 // collectHooksFromAPM returns merged hooks from apmDir/hooks/*.json,
@@ -331,8 +332,8 @@ func scanBundleSources(w io.Writer, fileMap *FileMap, force bool) {
 		total += len(verdict.AllFindings())
 	}
 	if total > 0 {
-		fmt.Fprintf(w, "[warn] Bundle contains %d hidden character(s) across source files "+
-			"-- run 'apm-go audit' to inspect before publishing\n", total)
+		ux.Warn(w, "Bundle contains %d hidden character(s) across source files "+
+			"-- run 'apm-go audit' to inspect before publishing", total)
 	}
 }
 
@@ -402,13 +403,13 @@ func findOrSynthesizePluginJSON(w io.Writer, projectRoot string, apmYMLNode *yam
 		}
 		v, perr := DecodeJSONValue(data)
 		if perr != nil {
-			fmt.Fprintf(w, "[warn] Found plugin.json at %s but could not parse it: %v. Falling back to synthesis from apm.yml.\n", p, perr)
+			ux.Warn(w, "Found plugin.json at %s but could not parse it: %v. Falling back to synthesis from apm.yml.", p, perr)
 			break
 		}
 		return v, nil
 	}
 	if !suppressMissingInfo {
-		fmt.Fprintln(w, "[i] No plugin.json found; synthesising from apm.yml.")
+		ux.Info(w, "No plugin.json found; synthesising from apm.yml.")
 	}
 	m, err := Synthesize(apmYMLNode)
 	if err != nil {
@@ -441,8 +442,8 @@ func stripSchemaInvalidKeys(w io.Writer, v JSONValue) JSONValue {
 		kept.O = append(kept.O, f)
 	}
 	if len(stripped) > 0 {
-		fmt.Fprintf(w, "[warn] Stripped schema-invalid keys from authored plugin.json: %s "+
-			"-- convention directories are auto-discovered by Claude Code\n", strings.Join(stripped, ", "))
+		ux.Warn(w, "Stripped schema-invalid keys from authored plugin.json: %s "+
+			"-- convention directories are auto-discovered by Claude Code", strings.Join(stripped, ", "))
 	}
 	return kept
 }

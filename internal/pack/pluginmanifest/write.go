@@ -9,6 +9,7 @@ import (
 
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/pack/bundle"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // PluginEcosystemPaths mirrors core/plugin_manifest.py's
@@ -31,7 +32,7 @@ var PluginEcosystemPaths = map[string]string{
 //     wrote=true
 //   - a .github/-rooted path (copilot) gets an extra info line, since
 //     GitHub Actions grants elevated trust to generated content there
-//   - on success -> "[+] Generated plugin manifest: <path>", wrote=true
+//   - on success -> "Generated plugin manifest: <path>", wrote=true
 //
 // Containment is enforced via internal/marketplace/build.EnsureWithinRoot
 // (mirrors ensure_path_within), reused rather than reimplemented per
@@ -40,7 +41,7 @@ var PluginEcosystemPaths = map[string]string{
 func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest, force, dryRun bool) (wrote bool, err error) {
 	relPath, ok := PluginEcosystemPaths[ecosystem]
 	if !ok {
-		fmt.Fprintf(w, "[warn] unknown plugin ecosystem %q; skipping plugin.json generation.\n", ecosystem)
+		ux.Warn(w, "unknown plugin ecosystem %q; skipping plugin.json generation.", ecosystem)
 		return false, nil
 	}
 
@@ -50,20 +51,20 @@ func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest,
 	}
 
 	if dryRun {
-		fmt.Fprintf(w, "[i] Would write plugin manifest to %s\n", absPath)
+		ux.Info(w, "Would write plugin manifest to %s", absPath)
 		return false, nil
 	}
 
 	if _, statErr := os.Stat(absPath); statErr == nil {
 		if !force {
-			fmt.Fprintf(w, "[warn] %s already exists; skipping plugin.json generation. Re-run with --force to overwrite it.\n", absPath)
+			ux.Warn(w, "%s already exists; skipping plugin.json generation. Re-run with --force to overwrite it.", absPath)
 			return false, nil
 		}
-		fmt.Fprintf(w, "[warn] Overwriting %s with generated manifest from apm.yml (--force).\n", absPath)
+		ux.Warn(w, "Overwriting %s with generated manifest from apm.yml (--force).", absPath)
 	}
 
 	if strings.HasPrefix(filepath.ToSlash(relPath), ".github/") {
-		fmt.Fprintf(w, "[i] Writing generated plugin manifest under .github/: %s\n", absPath)
+		ux.Info(w, "Writing generated plugin manifest under .github/: %s", absPath)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
@@ -80,6 +81,6 @@ func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest,
 		return false, fmt.Errorf("write plugin manifest %s: %w", absPath, err)
 	}
 
-	fmt.Fprintf(w, "[+] Generated plugin manifest: %s\n", absPath)
+	ux.Success(w, "Generated plugin manifest: %s", absPath)
 	return true, nil
 }
