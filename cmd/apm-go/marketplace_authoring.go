@@ -107,7 +107,6 @@ func marketplaceInitCmd() *cobra.Command {
 				warnIfGitignoreIgnoresMarketplaceJSON(cmd.ErrOrStderr())
 			}
 
-			fmt.Fprintln(w)
 			// Bordered box, not the plain ux.Section+BulletList this used to
 			// be: upstream renders this exact step list inside a Rich Panel
 			// (border_style="cyan", title=" Next Steps",
