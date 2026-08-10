@@ -5,7 +5,8 @@ set -e
 #
 # Downloads the apm-go binary for this platform from GitHub Releases,
 # verifies its SHA256 checksum, installs it to ~/.local/bin, and
-# ensures that directory is on PATH (appends to ~/.profile if not).
+# ensures that directory is on PATH (idempotently appends to the login
+# shell's profile file: ~/.zprofile for zsh, ~/.profile otherwise).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | sh
@@ -109,12 +110,27 @@ chmod +x "$INSTALL_DIR/$BINARY_NAME"
 # Stage 6 - Ensure ~/.local/bin is on PATH
 # ---------------------------------------------------------------------------
 
+# Pick the profile file the user's login shell actually reads (issue #17):
+# zsh (macOS default, and zsh-on-Linux/WSL) never reads ~/.profile -- it
+# reads ~/.zprofile for login shells. bash/sh keep ~/.profile.
+case "${SHELL:-}" in
+    */zsh) PROFILE_FILE="$HOME/.zprofile" ;;
+    *)     PROFILE_FILE="$HOME/.profile" ;;
+esac
+PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
+
 case ":$PATH:" in
     *":$INSTALL_DIR:"*)
         ;;
     *)
-        printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.profile"
-        printf "%bAdded %s to PATH via ~/.profile. Restart your shell to pick it up.%b\n" "$BLUE" "$INSTALL_DIR" "$NC"
+        # Idempotent: the current shell may simply not have picked the line
+        # up yet -- do not append a duplicate on re-install.
+        if [ -f "$PROFILE_FILE" ] && grep -Fqx "$PATH_LINE" "$PROFILE_FILE"; then
+            printf "%b%s already configures %s; restart your shell to pick it up.%b\n" "$BLUE" "$PROFILE_FILE" "$INSTALL_DIR" "$NC"
+        else
+            printf '\n%s\n' "$PATH_LINE" >> "$PROFILE_FILE"
+            printf "%bAdded %s to PATH via %s. Restart your shell to pick it up.%b\n" "$BLUE" "$INSTALL_DIR" "$PROFILE_FILE" "$NC"
+        fi
         ;;
 esac
 
