@@ -42,8 +42,16 @@ exit 3
 		Timeout:   defaultTimeout,
 	}
 
-	if err := Run(cfg); err != nil {
-		t.Fatalf("Run: %v", err)
+	// runCases (not Run) so this test exercises LoadCases/runCaseSide/the
+	// JSONL/run.json writers without also driving the Oracle/Target pin
+	// preflight (ticket 03, preflight_test.go), which needs a real git
+	// checkout to resolve APM_ORACLE_CMD's --project argument against.
+	preflight := Preflight{
+		OracleVersion: getVersion(cfg.OracleCmd, cfg.Timeout),
+		TargetVersion: getVersion(cfg.TargetBin, cfg.Timeout),
+	}
+	if err := runCases(cfg, preflight); err != nil {
+		t.Fatalf("runCases: %v", err)
 	}
 
 	// run.json header.
@@ -112,8 +120,8 @@ printf '\377\n'
 		Timeout:   defaultTimeout,
 	}
 
-	if err := Run(cfg); err != nil {
-		t.Fatalf("Run: %v", err)
+	if err := runCases(cfg, Preflight{}); err != nil {
+		t.Fatalf("runCases: %v", err)
 	}
 
 	wantBytes := []byte{0xff, '\n'}

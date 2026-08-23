@@ -11,6 +11,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -54,6 +55,10 @@ func main() {
 
 	if err := Run(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "parity: %v\n", err)
+		var pf *preflightError
+		if errors.As(err, &pf) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }
@@ -74,7 +79,31 @@ func resolveCmd(envVar, def string) []string {
 // Run executes every case in cfg.CasesDir against both sides and writes the
 // evidence tree under cfg.OutDir. Nothing is compared: a case's non-zero
 // exit code is captured, not treated as a runner failure.
+//
+// Before touching cfg.CasesDir or cfg.OutDir at all, it runs the Oracle/
+// Target pin preflight (ticket 03): a pin mismatch or unusable Target
+// binary returns a *preflightError and NO case runs, no output directory is
+// created, and no run.json is written.
 func Run(cfg Config) error {
+	pin, err := pinnedOracleCommitFunc()
+	if err != nil {
+		return &preflightError{err}
+	}
+	preflight, err := runPreflight(cfg, pin)
+	if err != nil {
+		return err
+	}
+
+	return runCases(cfg, preflight)
+}
+
+// runCases loads cfg.CasesDir, runs every case against both sides, and
+// writes run.json (embedding the already-computed preflight evidence) plus
+// per-case evidence under cfg.OutDir. Split out from Run so ticket 01's
+// capture-pipeline tests (main_test.go) can drive the JSONL/run.json
+// writers directly without also going through the Oracle/Target pin
+// preflight, which needs a real (or throwaway) git checkout to resolve.
+func runCases(cfg Config, preflight Preflight) error {
 	cases, err := LoadCases(cfg.CasesDir)
 	if err != nil {
 		return err
@@ -86,9 +115,7 @@ func Run(cfg Config) error {
 		}
 	}
 
-	oracleVersion := getVersion(cfg.OracleCmd, cfg.Timeout)
-	targetVersion := getVersion(cfg.TargetBin, cfg.Timeout)
-	if err := writeRunHeader(cfg, oracleVersion, targetVersion); err != nil {
+	if err := writeRunHeader(cfg, preflight); err != nil {
 		return err
 	}
 
@@ -127,21 +154,26 @@ func runCaseAllSides(cfg Config, c Case) error {
 }
 
 // runHeader is <out>/run.json: what ran, against which binaries, when.
+// Preflight is ticket 03's Oracle/Target pin evidence; OracleVersion/
+// TargetVersion are kept as their own top-level fields (not just nested
+// under Preflight) for ticket 01's existing consumers.
 type runHeader struct {
-	Timestamp     string `json:"timestamp"`
-	OracleCmd     string `json:"apm_oracle_cmd"`
-	TargetBin     string `json:"apm_target_bin"`
-	OracleVersion string `json:"oracle_version"`
-	TargetVersion string `json:"target_version"`
+	Timestamp     string    `json:"timestamp"`
+	OracleCmd     string    `json:"apm_oracle_cmd"`
+	TargetBin     string    `json:"apm_target_bin"`
+	OracleVersion string    `json:"oracle_version"`
+	TargetVersion string    `json:"target_version"`
+	Preflight     Preflight `json:"preflight"`
 }
 
-func writeRunHeader(cfg Config, oracleVersion, targetVersion string) error {
+func writeRunHeader(cfg Config, preflight Preflight) error {
 	header := runHeader{
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 		OracleCmd:     strings.Join(cfg.OracleCmd, " "),
 		TargetBin:     strings.Join(cfg.TargetBin, " "),
-		OracleVersion: oracleVersion,
-		TargetVersion: targetVersion,
+		OracleVersion: preflight.OracleVersion,
+		TargetVersion: preflight.TargetVersion,
+		Preflight:     preflight,
 	}
 	data, err := json.MarshalIndent(header, "", "  ")
 	if err != nil {
