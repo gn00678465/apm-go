@@ -35,6 +35,7 @@ func main() {
 	root.AddCommand(packCmd())
 	root.AddCommand(compileCmd())
 	root.AddCommand(doctorCmd())
+	root.AddCommand(searchCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(exitCodeOf(err))

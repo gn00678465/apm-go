@@ -151,10 +151,13 @@ func marketplaceNotRegisteredErr(name string) error {
 // (mkt-040, mkt-041, mkt-042 修訂版, mkt-045/046, mkt-043 修訂版, mkt-044 --
 // Phase M3's full producer-side command set). Deliberately absent, per
 // Phase M5 of marketplace-checklist.md:
-// search (mkt-060, a top-level command, not a marketplace subcommand),
 // doctor (mkt-061), publish (mkt-062), a browse --json flag (mkt-063), a validate
 // --check-refs flag (mkt-017: an upstream placeholder that never did
-// anything), and an "update" alias named "refresh" (mkt-064).
+// anything), and an "update" alias named "refresh" (mkt-064). search
+// (mkt-060) is likewise never nested here -- it is registered top-level only,
+// in search.go (main.go's root.AddCommand(searchCmd())), matching the
+// Oracle's own top-level `apm search` alias (cli.py:224) without also
+// exposing a redundant `apm-go marketplace search`.
 func marketplaceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "marketplace",
