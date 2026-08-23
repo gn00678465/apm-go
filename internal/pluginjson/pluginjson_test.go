@@ -8,7 +8,7 @@ import (
 
 // TestScaffold_MatchesUpstreamGolden pins R3.3.d against the real upstream
 // production artifact (internal/pack/bundle/testdata/upstream-plugin-init.golden.json,
-// captured 2026-07-31 -- see .trellis/spec/conformance/agent-schema.md's
+// captured 2026-07-31 -- see spec/conformance/agent-schema.md's
 // "plugin.json" section): same field order, same 2-space indent, same
 // trailing newline.
 func TestScaffold_MatchesUpstreamGolden(t *testing.T) {

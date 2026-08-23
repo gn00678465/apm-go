@@ -20,7 +20,7 @@
 //     see apm-claude-marketplace.schema.json/apm-codex-marketplace.schema.json's
 //     doc comments), so its properties/required extraction is oneOf-aware
 //     (union of branch properties, intersection of branch required).
-//   - SchemaSync: the spec doc's (.trellis/spec/conformance/agent-schema.md)
+//   - SchemaSync: the spec doc's (spec/conformance/agent-schema.md)
 //     per-family markdown field tables are parsed and compared, as a flat
 //     field-name set, against the union of that family's schema properties.
 //
@@ -931,7 +931,7 @@ func assertSpecTableMatchesSchema(t *testing.T, rows []specRow, c specSchemaCase
 }
 
 func TestSchemaSync_SpecMatchesSchemaTypesAndRequiredness(t *testing.T) {
-	specPath := filepath.Join(findRepoRoot(t), ".trellis", "spec", "conformance", "agent-schema.md")
+	specPath := filepath.Join(findRepoRoot(t), "spec", "conformance", "agent-schema.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specPath, err)
@@ -1441,7 +1441,7 @@ type apException struct {
 // <name>", ...). Confirmed exhaustive by reading both schema files in full
 // before writing this map: codex has ZERO exceptions (every object node is
 // already additionalProperties:false); claude has exactly two, both
-// documented in .trellis/spec/conformance/agent-schema.md next to their
+// documented in spec/conformance/agent-schema.md next to their
 // field rows:
 //
 //   - root.properties.metadata: a free-form passthrough object
@@ -1773,7 +1773,7 @@ func TestSchemaDrift_RemoteSourceBranchExactDiscriminatorEnum(t *testing.T) {
 // pre-existing entry here was a real gap, not a considered exception). A
 // genuinely new schema-only field (should one ever be needed again) requires
 // updating this map, the relevant driftCase's schemaOnlyAllowed, the schema
-// file's property (with a rationale comment), and .trellis/spec/conformance/
+// file's property (with a rationale comment), and spec/conformance/
 // agent-schema.md's matching field row together.
 var wantSchemaOnlyAllowed = map[string][]string{}
 
@@ -2186,7 +2186,7 @@ func specSubTableFieldNames(rows []specRow) map[string]bool {
 // duplicate/bogus table sharing the same heading prefix can't silently
 // substitute its own (unchecked) content for the real one.
 func TestSchemaSync_SpecMatchesSchemaFieldSet(t *testing.T) {
-	specPath := filepath.Join(findRepoRoot(t), ".trellis", "spec", "conformance", "agent-schema.md")
+	specPath := filepath.Join(findRepoRoot(t), "spec", "conformance", "agent-schema.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specPath, err)
@@ -2300,7 +2300,7 @@ func subtestLabel(heading string, index int) string {
 //     on to pick which table to read, so this loop doubles as that
 //     assumption's own explicit test.
 func TestSchemaSync_AllFieldTablesAreMapped(t *testing.T) {
-	specPath := filepath.Join(findRepoRoot(t), ".trellis", "spec", "conformance", "agent-schema.md")
+	specPath := filepath.Join(findRepoRoot(t), "spec", "conformance", "agent-schema.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specPath, err)
@@ -2486,7 +2486,7 @@ func sha256HexFile(t *testing.T, path string) string {
 // file's actual current bytes, or an unrecognized schema-file hash row
 // (neither this package's own nor the sibling's acknowledged one).
 func TestSchemaSync_SchemaFileHashesMatchSpec(t *testing.T) {
-	specPath := filepath.Join(findRepoRoot(t), ".trellis", "spec", "conformance", "agent-schema.md")
+	specPath := filepath.Join(findRepoRoot(t), "spec", "conformance", "agent-schema.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specPath, err)

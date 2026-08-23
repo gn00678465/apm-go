@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/backend/terminal-ux-contract.md", "reason": "本 task 要動 internal/ux 的三個 prompt func（改為 var 建立測試 seam）。該契約規範 ux 門面、TTY 偵測必須用 x/term.IsTerminal、huh Form 必須 WithOutput(os.Stderr)、exit code 不得改變"}
-{"file": ".trellis/spec/guides/claim-evidence-guide.md", "reason": "任何比較句/等價句/充分性句/量級句都要證據三件套。禁止用『會自動繼承』『成本小』這類無憑據擔保收尾"}
-{"file": ".trellis/spec/guides/loop-graph-engineering.md", "reason": "模式 9（驗證粒度必須追上宣稱粒度）：需求出現全稱量詞就要逐項展開；模式 5：同一 AC 修 3 次仍紅要升級不是延後"}
-{"file": ".trellis/tasks/07-28-marketplace-plugin-parity/research/eval-real-run-20260728.md", "reason": "§B 是上游 PTY 捕獲的 apm.yml golden（鍵序、三行註解逐字、2 空格序列縮排），AC5/AC6/AC7 的比對基準"}
-{"file": ".trellis/tasks/07-28-marketplace-plugin-parity/design.md", "reason": "§2 有序 YAML 產生器方案（yaml.Node + HeadComment 經 SafeDump，已 probe 實測）、§7 三集合單一來源、§8 ux seam"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "專案禁止事項與品質標準"}

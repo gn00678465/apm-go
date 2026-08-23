@@ -42,7 +42,9 @@ apm_modules/
 
 # Conformance authority (local-only, not pushed to remote).
 # Anchored to repo root on purpose: the unanchored form also swallowed
-# .trellis/spec/conformance/, whose specs are runtime inputs of committed
+# spec/conformance/, whose specs are runtime inputs of committed
 # sync tests (schema_sync_test.go) and must ship with the repo.
 /conformance/
 .gitmodules
+
+bin/

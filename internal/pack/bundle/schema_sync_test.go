@@ -436,7 +436,7 @@ func assertSpecTableMatchesSchema(t *testing.T, rows []specRow, c specSchemaCase
 }
 
 func TestSchemaSync_SpecMatchesSchemaTypesAndRequiredness(t *testing.T) {
-	specPath := filepath.Join(findRepoRoot(t), ".trellis", "spec", "conformance", "agent-schema.md")
+	specPath := filepath.Join(findRepoRoot(t), "spec", "conformance", "agent-schema.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specPath, err)
@@ -1091,7 +1091,7 @@ func specSubTableFieldNames(rows []specRow) map[string]bool {
 // table's rows are read from its bindSpecSchemaCase-bound occurrence
 // (Tier-8 audit fix), not a first-match substring search.
 func TestSchemaSync_SpecMatchesSchemaFieldSet(t *testing.T) {
-	specPath := filepath.Join(findRepoRoot(t), ".trellis", "spec", "conformance", "agent-schema.md")
+	specPath := filepath.Join(findRepoRoot(t), "spec", "conformance", "agent-schema.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specPath, err)
@@ -1174,7 +1174,7 @@ func subtestLabel(heading string, index int) string {
 // discovered table -- see build package's identical-in-spirit copy for the
 // full "duplicate heading prefix" rationale.
 func TestSchemaSync_AllFieldTablesAreMapped(t *testing.T) {
-	specPath := filepath.Join(findRepoRoot(t), ".trellis", "spec", "conformance", "agent-schema.md")
+	specPath := filepath.Join(findRepoRoot(t), "spec", "conformance", "agent-schema.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specPath, err)
@@ -1314,7 +1314,7 @@ func sha256HexFile(t *testing.T, path string) string {
 // actual current bytes, or an unrecognized schema-file hash row (neither
 // this package's own nor the sibling's acknowledged one).
 func TestSchemaSync_SchemaFileHashesMatchSpec(t *testing.T) {
-	specPath := filepath.Join(findRepoRoot(t), ".trellis", "spec", "conformance", "agent-schema.md")
+	specPath := filepath.Join(findRepoRoot(t), "spec", "conformance", "agent-schema.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", specPath, err)

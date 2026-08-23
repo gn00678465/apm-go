@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/terminal-ux-contract.md", "reason": "§6 Tests Required 列出 internal/ux 的必要測試（含非互動不阻塞、Clack golden、覆蓋率 >=80%）"}
-{"file": ".trellis/spec/guides/claim-evidence-guide.md", "reason": "審查回報本身也受句型規則約束：不得用形容詞收尾，完成宣告要附可執行證據"}
-{"file": ".trellis/spec/guides/loop-graph-engineering.md", "reason": "雙層停止條件：Tier 1 verify.ps1 必須先跑且綠，才輪到語意審查。純 LLM 判斷的 false positive 率有論文量化（71.62% vs 22.97%）"}
