@@ -25,6 +25,11 @@ type initMode struct {
 	// apm.yml (manifestSpec.Plugin, R3.3.c), writing plugin.json (R3.3.d),
 	// and validateName's kebab-case rule (R3.3.a).
 	plugin bool
+	// pluginFormat is upstream's plugin_mode (commands/init.py:139): "" for
+	// consumer init, pluginModeClaude for the legacy Claude layout,
+	// pluginModeAgent for Agent Plugins v1 (which additionally scaffolds
+	// mcp.json, commands/init.py:199-202).
+	pluginFormat string
 	// defaultYesVer is the version written when --yes/non-interactive picks
 	// a default (R3.3.b). The interactive form's default is always "1.0.0"
 	// for both modes, independent of this field.
@@ -51,14 +56,36 @@ var consumerMode = initMode{
 
 var pluginMode = initMode{
 	plugin:        true,
+	pluginFormat:  pluginModeClaude,
 	defaultYesVer: "0.1.0",
 	validateName:  pluginValidateName,
 	introTitle:    "Setting up your APM plugin project",
 	successTitle:  "APM plugin initialized successfully!",
-	nextSteps: []string{
-		"Install a dev dependency:  apm-go install --dev <owner>/<repo>",
-		"Pack as plugin:  apm-go pack",
-	},
+	nextSteps:     pluginNextSteps,
+}
+
+// agentPluginMode is pluginMode with plugin_mode="agent" (commands/
+// plugin/init.py:62): same name rule, version default, apm.yml shape and
+// next steps, but additionally scaffolds mcp.json.
+var agentPluginMode = initMode{
+	plugin:        true,
+	pluginFormat:  pluginModeAgent,
+	defaultYesVer: "0.1.0",
+	validateName:  pluginValidateName,
+	introTitle:    "Setting up your APM plugin project",
+	successTitle:  "APM plugin initialized successfully!",
+	nextSteps:     pluginNextSteps,
+}
+
+// pluginNextSteps is shared by both plugin modes (commands/init.py:322-327).
+// Intentional deviation (Finding 3, F10): upstream's second and third lines
+// name `apm pack --format agent-plugin|claude-plugin`; apm-go's pack has no
+// --format selector yet (spec Out of Scope), so the steps name the pack
+// command that actually exists rather than a flag that would fail. Restore
+// upstream's two lines when pack grows --format.
+var pluginNextSteps = []string{
+	"Add dev dependencies:    apm-go install --dev <owner>/<repo>",
+	"Pack as plugin:          apm-go pack",
 }
 
 // pluginNameRe is R3.3.a's kebab-case validation, matching upstream's
@@ -148,9 +175,12 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		return fmt.Errorf("cannot determine directory: %w", err)
 	}
 
-	// Phase 2: Existing apm.yml check
+	// Phase 2: Existing generated-files check (commands/init.py:195-215).
+	// apm.yml drives the overwrite prompt; plugin modes additionally report
+	// plugin.json (and mcp.json in agent mode) in the notice.
 	_, existsErr := os.Stat("apm.yml")
 	apmYmlExists := existsErr == nil
+	existingGenerated := existingGeneratedFiles(mode)
 
 	// Every prompt of an interactive run is recorded on one clack-style
 	// connecting line (issue #14). ck stays nil for --yes and
@@ -178,17 +208,28 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		}
 	}
 
-	if apmYmlExists {
+	// Finding 4 (F09): gate on ANY generated file, not just apm.yml
+	// (commands/init.py:205-215). Upstream's notice is "apm.yml already
+	// exists" when that is the only one, else "Generated files already
+	// exist: <list>".
+	if len(existingGenerated) > 0 {
+		rendered := strings.Join(existingGenerated, ", ")
+		notice := "Generated files already exist: " + rendered
+		if len(existingGenerated) == 1 && existingGenerated[0] == "apm.yml" {
+			notice = "apm.yml already exists"
+		}
 		switch {
 		case yes || force:
 			if ck != nil {
-				ck.Step("apm.yml already exists", "Overwriting (--force)")
+				ck.Step(notice, "Overwriting (--force)")
 				ck.Bar()
 			} else {
-				ux.Info(os.Stderr, "--yes specified, overwriting apm.yml...")
+				// commands/init.py:205-209: warning first, then progress.
+				ux.Warn(os.Stderr, "%s", notice)
+				ux.Info(os.Stderr, "--yes specified, overwriting: %s", rendered)
 			}
 		case ck != nil:
-			ok, err := ck.Confirm("apm.yml already exists. Continue and overwrite?", false)
+			ok, err := ck.Confirm(notice+". Continue and overwrite?", false)
 			if err != nil {
 				return fmt.Errorf("confirm overwrite: %w", err)
 			}
@@ -198,7 +239,7 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 			}
 			ck.Bar()
 		default:
-			return fmt.Errorf("apm.yml already exists; use --yes to overwrite")
+			return fmt.Errorf("%s; use --yes to overwrite", notice)
 		}
 	}
 
@@ -331,17 +372,13 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 	if _, _, err := manifest.ParseManifest(reloaded); err != nil {
 		return fmt.Errorf("generated manifest fails validation: %w", err)
 	}
-	if err := os.WriteFile("apm.yml", out, 0644); err != nil {
-		return fmt.Errorf("write apm.yml: %w", err)
-	}
 
-	// R3.3.d: plugin mode additionally scaffolds a root plugin.json
-	// template (distinct from `apm pack`'s apm.yml-synthesized one, see
-	// internal/pluginjson's doc comment).
-	if mode.plugin {
-		if err := pluginjson.Scaffold(cwd, name, version, description, author); err != nil {
-			return err
+	if !mode.plugin {
+		if err := os.WriteFile("apm.yml", out, 0644); err != nil {
+			return fmt.Errorf("write apm.yml: %w", err)
 		}
+	} else if err := writePluginScaffold(cwd, mode, out, name, version, description, author); err != nil {
+		return err
 	}
 
 	// Phase 7: Success output
@@ -359,6 +396,56 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		ux.Info(os.Stderr, "%s", line)
 	}
 	return nil
+}
+
+// writePluginScaffold writes apm.yml plus R3.3.d's plugin.json template
+// (distinct from `apm pack`'s apm.yml-synthesized one, see
+// internal/pluginjson's doc comment) and, in agent mode, mcp.json -- as ONE
+// staged commit (Finding 5, F03/F09; upstream commands/init.py:407-444), so a
+// failure on any file restores every prior file and leaves no partial
+// scaffold.
+func writePluginScaffold(cwd string, mode initMode, apmYML []byte, name, version, description, author string) error {
+	stage, err := pluginjson.NewStagedScaffold(cwd)
+	if err != nil {
+		return err
+	}
+	defer stage.Cleanup()
+
+	if err := os.WriteFile(stage.Add("apm.yml"), apmYML, 0644); err != nil {
+		return fmt.Errorf("write apm.yml: %w", err)
+	}
+	agent := mode.pluginFormat == pluginModeAgent
+	for _, f := range pluginjson.ScaffoldFiles(agent) {
+		stage.Add(f)
+	}
+	scaffold := pluginjson.Scaffold
+	if agent {
+		scaffold = pluginjson.ScaffoldAgent
+	}
+	if err := scaffold(stage.Dir(), name, version, description, author); err != nil {
+		return err
+	}
+	return stage.Commit()
+}
+
+// existingGeneratedFiles returns, in upstream order (commands/init.py:
+// 196-203), the generated files of mode that already exist in the cwd:
+// apm.yml, then plugin.json (plugin modes), then mcp.json (agent mode).
+func existingGeneratedFiles(mode initMode) []string {
+	candidates := []string{"apm.yml"}
+	if mode.plugin {
+		candidates = append(candidates, "plugin.json")
+		if mode.pluginFormat == pluginModeAgent {
+			candidates = append(candidates, "mcp.json")
+		}
+	}
+	var existing []string
+	for _, f := range candidates {
+		if _, err := os.Stat(f); err == nil {
+			existing = append(existing, f)
+		}
+	}
+	return existing
 }
 
 // interactiveTargetSelect prompts for the target list via a huh MultiSelect
