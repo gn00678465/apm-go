@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -84,6 +85,66 @@ exit 3
 		recordPath := filepath.Join(outDir, side, "echo-case", "record.json")
 		if _, err := os.Stat(recordPath); err != nil {
 			t.Errorf("%s: %v", recordPath, err)
+		}
+	}
+}
+
+// TestRun_EndToEndCapturesNonUTF8BytesExactly is the ticket's required
+// reproducer: a stub emitting the invalid-UTF-8 byte 0xff must come through
+// byte-exact in stdout.bin, with record.json's sha256 matching, rather than
+// being mangled to U+FFFD by JSON string encoding.
+func TestRun_EndToEndCapturesNonUTF8BytesExactly(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `
+if [ "$1" = "--version" ]; then echo "stub 1.0"; exit 0; fi
+printf '\377\n'
+`)
+
+	casesDir := t.TempDir()
+	writeCase(t, casesDir, "raw-bytes", `{"id": "raw-bytes", "argv": []}`)
+
+	outDir := t.TempDir()
+	cfg := Config{
+		CasesDir:  casesDir,
+		OutDir:    outDir,
+		OracleCmd: []string{stub},
+		TargetBin: []string{stub},
+		Timeout:   defaultTimeout,
+	}
+
+	if err := Run(cfg); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	wantBytes := []byte{0xff, '\n'}
+
+	for _, side := range []string{"oracle", "target"} {
+		caseOutDir := filepath.Join(outDir, side, "raw-bytes")
+
+		binData, err := os.ReadFile(filepath.Join(caseOutDir, "stdout.bin"))
+		if err != nil {
+			t.Fatalf("%s: reading stdout.bin: %v", side, err)
+		}
+		if !bytes.Equal(binData, wantBytes) {
+			t.Errorf("%s: stdout.bin = % x, want % x", side, binData, wantBytes)
+		}
+
+		recData, err := os.ReadFile(filepath.Join(caseOutDir, "record.json"))
+		if err != nil {
+			t.Fatalf("%s: reading record.json: %v", side, err)
+		}
+		var rec Record
+		if err := json.Unmarshal(recData, &rec); err != nil {
+			t.Fatalf("%s: unmarshalling record.json: %v", side, err)
+		}
+		if rec.Stdout != nil {
+			t.Errorf("%s: record.json inlined non-UTF-8 stdout as %q, want field omitted", side, *rec.Stdout)
+		}
+		if rec.StdoutBytes != len(wantBytes) {
+			t.Errorf("%s: StdoutBytes = %d, want %d", side, rec.StdoutBytes, len(wantBytes))
+		}
+		if want := sha256Hex(wantBytes); rec.StdoutSHA256 != want {
+			t.Errorf("%s: StdoutSHA256 = %q, want %q", side, rec.StdoutSHA256, want)
 		}
 	}
 }

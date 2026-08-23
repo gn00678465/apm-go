@@ -36,19 +36,13 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 		return Record{}, fmt.Errorf("case %s (%s): walking post-run tree: %w", c.ID, side, err)
 	}
 
-	rec := Record{
-		ID:       c.ID,
-		Argv:     argv,
-		EnvDelta: env,
-		ExitCode: res.ExitCode,
-		TimedOut: res.TimedOut,
-		Stdout:   string(res.Stdout),
-		Stderr:   string(res.Stderr),
-		Tree:     tree,
-	}
+	rec := NewRecord(c.ID, argv, env, res.ExitCode, res.TimedOut, res.Stdout, res.Stderr, tree)
 
 	caseOutDir := filepath.Join(outDir, side, c.ID)
 	if err := writeRecordJSON(caseOutDir, rec); err != nil {
+		return Record{}, fmt.Errorf("case %s (%s): %w", c.ID, side, err)
+	}
+	if err := writeRawBodies(caseOutDir, res.Stdout, res.Stderr); err != nil {
 		return Record{}, fmt.Errorf("case %s (%s): %w", c.ID, side, err)
 	}
 	if err := copyEvidenceFiles(caseOutDir, roots, tree); err != nil {

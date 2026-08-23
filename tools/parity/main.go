@@ -115,8 +115,8 @@ func runCaseAllSides(cfg Config, c Case) error {
 		}
 
 		jsonlPath := filepath.Join(cfg.OutDir, s.name+".jsonl")
-		recordPath := filepath.Join(s.name, c.ID, "record.json")
-		if err := appendJSONLRecord(jsonlPath, rec, recordPath); err != nil {
+		caseDir := filepath.Join(s.name, c.ID)
+		if err := appendJSONLRecord(jsonlPath, rec, caseDir); err != nil {
 			return fmt.Errorf("case %s (%s): %w", c.ID, s.name, err)
 		}
 	}

@@ -112,7 +112,11 @@ exit 0
 		t.Fatalf("runCaseSide: %v", err)
 	}
 	if rec.ExitCode != 0 {
-		t.Fatalf("stub exited %d, stderr=%q", rec.ExitCode, rec.Stderr)
+		var stderr string
+		if rec.Stderr != nil {
+			stderr = *rec.Stderr
+		}
+		t.Fatalf("stub exited %d, stderr=%q", rec.ExitCode, stderr)
 	}
 
 	byPath := map[string]TreeEntry{}
