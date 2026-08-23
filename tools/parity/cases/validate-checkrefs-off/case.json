@@ -1,0 +1,7 @@
+{
+  "id": "validate-checkrefs-off",
+  "argv": ["marketplace", "validate", "skills"],
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "skills"]],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F08"]
+}

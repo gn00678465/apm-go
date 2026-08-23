@@ -149,15 +149,18 @@ func marketplaceNotRegisteredErr(name string) error {
 // (from internal/marketplace/authoring) the producer-side `init`, `check`,
 // `outdated`, `package add/remove/set`, `audit`, and `migrate` subcommands
 // (mkt-040, mkt-041, mkt-042 修訂版, mkt-045/046, mkt-043 修訂版, mkt-044 --
-// Phase M3's full producer-side command set). Deliberately absent, per
-// Phase M5 of marketplace-checklist.md:
-// doctor (mkt-061), publish (mkt-062), a browse --json flag (mkt-063), a validate
-// --check-refs flag (mkt-017: an upstream placeholder that never did
-// anything), and an "update" alias named "refresh" (mkt-064). search
-// (mkt-060) is likewise never nested here -- it is registered top-level only,
-// in search.go (main.go's root.AddCommand(searchCmd())), matching the
-// Oracle's own top-level `apm search` alias (cli.py:224) without also
-// exposing a redundant `apm-go marketplace search`.
+// Phase M3's full producer-side command set). Deliberately absent as a
+// MARKETPLACE subcommand, per Phase M5 of marketplace-checklist.md: doctor
+// (mkt-061, which apm-go does have -- top-level only, main.go's
+// root.AddCommand(doctorCmd()), matching the Oracle's own top-level `apm
+// doctor`, never nested under marketplace), publish (mkt-062), and a browse
+// --json flag (mkt-063). validate's --check-refs is ported as a hidden
+// no-op below (ticket 06), not absent. "update" has no "refresh" alias
+// (mkt-064). search (mkt-060) is likewise
+// never nested here -- it is registered top-level only, in search.go
+// (main.go's root.AddCommand(searchCmd())), matching the Oracle's own
+// top-level `apm search` alias (cli.py:224) without also exposing a
+// redundant `apm-go marketplace search`.
 func marketplaceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "marketplace",
@@ -633,6 +636,7 @@ func marketplaceRemoveCmd() *cobra.Command {
 // (exit 1) when any error was found.
 func marketplaceValidateCmd() *cobra.Command {
 	var verbose bool
+	var checkRefs bool
 	cmd := &cobra.Command{
 		Use:          "validate NAME",
 		Short:        "Validate a registered marketplace's manifest",
@@ -677,6 +681,15 @@ func marketplaceValidateCmd() *cobra.Command {
 			// the Summary counts passed checks and individual warning/error
 			// messages, not an approximation.
 			checks := marketplace.ValidateChecks(m)
+
+			// check-refs placeholder: mirrors upstream validate.py:49-54
+			// exactly -- results are already computed above, this warning
+			// prints before they're rendered, and it performs no ref lookup
+			// or network call of its own.
+			if checkRefs {
+				ux.Warn(w, "Ref checking not yet implemented -- skipping ref reachability checks")
+			}
+
 			passed, warnings, errs := 0, 0, 0
 			fmt.Fprintln(w)
 			ux.Info(w, "Validation Results:")
@@ -708,6 +721,14 @@ func marketplaceValidateCmd() *cobra.Command {
 	// subcommand; validate was missing it entirely (an unknown-flag hard
 	// error).
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print each plugin's source type before the validation results")
+	// Ticket 06: upstream validate.py:16-18 accepts --check-refs as a
+	// hidden, not-yet-implemented placeholder (network ref reachability
+	// checking); ported as a hidden no-op for CLI surface parity, not a
+	// real feature.
+	cmd.Flags().BoolVar(&checkRefs, "check-refs", false, "verify version refs are reachable (network) -- not yet implemented")
+	if err := cmd.Flags().MarkHidden("check-refs"); err != nil {
+		panic(err)
+	}
 	return cmd
 }
 

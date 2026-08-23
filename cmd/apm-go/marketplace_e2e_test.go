@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -1432,13 +1434,154 @@ func TestMarketplaceBrowse_NoJSONFlag(t *testing.T) {
 	}
 }
 
-// TestMarketplaceValidate_NoCheckRefsFlag covers mkt-017: the upstream
-// --check-refs flag was a placeholder that never did anything and is not
-// ported.
-func TestMarketplaceValidate_NoCheckRefsFlag(t *testing.T) {
+// ── `validate --check-refs` hidden no-op (ticket 06) ─────────────────────
+
+// TestMarketplaceValidate_CheckRefsFlagIsHidden proves --check-refs parses
+// (accepted) but is marked hidden, so it never appears in --help output
+// (upstream validate.py:16-18's own `hidden=True`).
+func TestMarketplaceValidate_CheckRefsFlagIsHidden(t *testing.T) {
 	cmd := marketplaceValidateCmd()
-	if cmd.Flags().Lookup("check-refs") != nil {
-		t.Error("marketplace validate has a --check-refs flag, want it absent (mkt-017)")
+	f := cmd.Flags().Lookup("check-refs")
+	if f == nil {
+		t.Fatal("marketplace validate has no --check-refs flag, want it accepted (ticket 06)")
+	}
+	if !f.Hidden {
+		t.Error("--check-refs flag is not marked Hidden")
+	}
+
+	var helpBuf bytes.Buffer
+	cmd.SetOut(&helpBuf)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("validate --help: %v", err)
+	}
+	if strings.Contains(helpBuf.String(), "check-refs") {
+		t.Errorf("--help output = %q, want it to omit the hidden --check-refs flag", helpBuf.String())
+	}
+}
+
+// TestMarketplaceValidate_CheckRefsPrintsPlaceholderWarning proves
+// --check-refs is accepted without error, emits the exact upstream
+// validate.py:51-54 warning, and otherwise produces byte-identical output
+// to the same invocation without the flag once that one line is removed --
+// no ref lookup or network call changes any other output line, since it
+// performs neither.
+func TestMarketplaceValidate_CheckRefsPrintsPlaceholderWarning(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	withFlag, errWith := runMarketplaceCmd(t, "validate", "acme", "--check-refs")
+	withoutFlag, errWithout := runMarketplaceCmd(t, "validate", "acme")
+
+	// Assert
+	if errWith != nil {
+		t.Fatalf("marketplace validate --check-refs returned error: %v (output: %s)", errWith, withFlag)
+	}
+	if errWithout != nil {
+		t.Fatalf("marketplace validate (no flag) returned error: %v (output: %s)", errWithout, withoutFlag)
+	}
+
+	const warning = "Ref checking not yet implemented -- skipping ref reachability checks"
+	if !strings.Contains(withFlag, warning) {
+		t.Errorf("--check-refs output = %q, want it to contain the exact upstream warning %q", withFlag, warning)
+	}
+	if strings.Contains(withoutFlag, warning) {
+		t.Errorf("output without --check-refs unexpectedly contains the placeholder warning: %q", withoutFlag)
+	}
+	assertLineSeverity(t, withFlag, warning, ux.SymbolWarn)
+
+	// Every other line must be identical: strip the warning line (and its
+	// severity-symbol prefix, ux.SymbolWarn's own " ! " -- see
+	// assertLineSeverity) and diff what remains against the same
+	// invocation without the flag.
+	warningLine := " " + ux.SymbolWarn + " " + warning + "\n"
+	strippedWith := strings.Replace(withFlag, warningLine, "", 1)
+	if strippedWith != withoutFlag {
+		t.Errorf("output with --check-refs (warning line removed) = %q, want identical to without the flag %q", strippedWith, withoutFlag)
+	}
+}
+
+// buildRecordingFakeGit compiles a stand-in "git" executable that, on every
+// invocation, appends its arguments as one line to the file named by the
+// GIT_RECORD_FILE env var and exits 0. It returns the directory to prepend
+// to PATH. This is deliberately its own tiny fake local to this test file
+// (not internal/gitops/testdata/fakegit, which this ticket does not touch)
+// since proving a negative -- git is NEVER invoked -- needs an invocation
+// log, not just controllable output.
+func buildRecordingFakeGit(t *testing.T) (dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	const program = `package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	if rec := os.Getenv("GIT_RECORD_FILE"); rec != "" {
+		f, err := os.OpenFile(rec, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err == nil {
+			fmt.Fprintln(f, strings.Join(os.Args[1:], " "))
+			f.Close()
+		}
+	}
+	os.Exit(0)
+}
+`
+	src := filepath.Join(dir, "fakegit_main.go")
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatalf("writing fake git source: %v", err)
+	}
+
+	name := "git"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	out := filepath.Join(dir, name)
+	cmd := exec.Command("go", "build", "-o", out, src)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go build fake git: %v\n%s", err, output)
+	}
+	return dir
+}
+
+// TestMarketplaceValidate_CheckRefsPerformsNoGitOrNetworkCall proves
+// --check-refs does exactly what it claims: no ref lookup, no network call.
+// A recording fake "git" is prepended to PATH and must never be invoked;
+// the marketplace itself is registered via the local-file fetch path (a
+// plain directory URL, no git/HTTP transport at all), so a genuine network
+// call would have nothing to route through either.
+func TestMarketplaceValidate_CheckRefsPerformsNoGitOrNetworkCall(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeGitDir := buildRecordingFakeGit(t)
+	recordFile := filepath.Join(t.TempDir(), "git-invocations.log")
+	t.Setenv("PATH", fakeGitDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_RECORD_FILE", recordFile)
+
+	// Act
+	out, err := runMarketplaceCmd(t, "validate", "acme", "--check-refs")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace validate --check-refs returned error: %v (output: %s)", err, out)
+	}
+	if data, statErr := os.ReadFile(recordFile); statErr == nil {
+		t.Errorf("git was invoked during --check-refs (it performs no ref lookup): %s", data)
+	} else if !os.IsNotExist(statErr) {
+		t.Fatalf("reading git invocation record: %v", statErr)
 	}
 }
 
