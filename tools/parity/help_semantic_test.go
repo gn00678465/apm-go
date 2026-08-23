@@ -90,6 +90,34 @@ func TestParseHelpFlags_DefaultAnnotationExtractedFromEitherStyle(t *testing.T) 
 	}
 }
 
+// TestParseHelpFlags_DefaultAnnotationStrippedFromDescription proves ticket
+// 02 attempt 3's fix for eval-ticket-02-r2.md Issue 2: once DefaultIfShown
+// is extracted, the same annotation must also be removed from Description
+// (and any whitespace it leaves behind collapsed) -- otherwise Click's
+// "[default: 20]" and Cobra's "(default 20)" describe the identical default
+// but leave help_semantic reporting a false-positive description drift.
+func TestParseHelpFlags_DefaultAnnotationStrippedFromDescription(t *testing.T) {
+	click := parseHelpFlags("  --limit int  Max results to show  [default: 20]\n")
+	if len(click) != 1 {
+		t.Fatalf("click flags = %+v, want 1", click)
+	}
+	if click[0].DefaultIfShown != "20" || click[0].Description != "Max results to show" {
+		t.Errorf("click = %+v, want DefaultIfShown \"20\" and Description \"Max results to show\"", click[0])
+	}
+
+	cobra := parseHelpFlags("  --limit int  Max results to show (default 20)\n")
+	if len(cobra) != 1 {
+		t.Fatalf("cobra flags = %+v, want 1", cobra)
+	}
+	if cobra[0].DefaultIfShown != "20" || cobra[0].Description != "Max results to show" {
+		t.Errorf("cobra = %+v, want DefaultIfShown \"20\" and Description \"Max results to show\"", cobra[0])
+	}
+
+	if !helpFlagsEqual(click, cobra) {
+		t.Errorf("click = %+v, cobra = %+v, want equal once the default annotation is stripped from both", click, cobra)
+	}
+}
+
 func TestParseHelpDescriptionParagraph_ClickAndCobraAgree(t *testing.T) {
 	want := "Run environment diagnostics (git, network, auth, marketplace config). Reports a pass/fail table and exits non-zero if a critical check fails."
 

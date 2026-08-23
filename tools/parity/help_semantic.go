@@ -89,7 +89,7 @@ func parseHelpFlags(text string) []helpFlagInfo {
 		if !ok || long == helpFlagOwnHelp {
 			continue
 		}
-		info := helpFlagInfo{LongFlag: long, ShortAlias: short, Description: desc}
+		info := helpFlagInfo{LongFlag: long, ShortAlias: short}
 		if dm := defaultAnnotationRe.FindStringSubmatch(desc); dm != nil {
 			if dm[1] != "" {
 				info.DefaultIfShown = strings.TrimSpace(dm[1])
@@ -97,6 +97,12 @@ func parseHelpFlags(text string) []helpFlagInfo {
 				info.DefaultIfShown = strings.TrimSpace(dm[2])
 			}
 		}
+		// Strip the annotation itself out of the prose, then collapse the
+		// whitespace it leaves behind -- otherwise Click's "[default: 20]"
+		// and Cobra/pflag's "(default 20)" describe the exact same default
+		// but leave the two sides' Description unequal purely on framework
+		// syntax (ticket 02 attempt 3: eval-ticket-02-r2.md Issue 2).
+		info.Description = strings.Join(strings.Fields(defaultAnnotationRe.ReplaceAllString(desc, "")), " ")
 		seen[long] = info
 	}
 

@@ -3,6 +3,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,5 +91,50 @@ touch should-not-run.marker
 	}
 	if !strings.Contains(err.Error(), "setup_argv[0]") || !strings.Contains(err.Error(), "exited 7") {
 		t.Errorf("error = %q, want it to name setup_argv[0] and its exit code 7", err.Error())
+	}
+}
+
+// TestRunCaseSide_CapturesFilesWrittenUnderHome proves postRunTree's HOME
+// coverage (ticket 02 attempt 3, amending ticket 01 AC5): a stub that writes
+// under $HOME/.apm/ -- exactly what the real Oracle does with its
+// marketplace registry, ignoring APM_CONFIG_DIR entirely -- must show up in
+// the record's tree under the "home/" label, and its evidence bytes must be
+// copied out before the sandbox is torn down.
+func TestRunCaseSide_CapturesFilesWrittenUnderHome(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `
+mkdir -p "$HOME/.apm"
+echo '{"marketplaces":[]}' > "$HOME/.apm/x.json"
+exit 0
+`)
+
+	c := Case{ID: "writes-home", Argv: []string{"seed"}}
+
+	outDir := t.TempDir()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+
+	found := false
+	for _, e := range rec.Tree {
+		if e.Path == "home/.apm/x.json" {
+			found = true
+			if e.Kind != "file" {
+				t.Errorf("home/.apm/x.json kind = %q, want file", e.Kind)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("tree = %+v, want an entry for home/.apm/x.json", rec.Tree)
+	}
+
+	fsPath := filepath.Join(outDir, "target", "writes-home", "fs", "home", ".apm", "x.json")
+	data, err := os.ReadFile(fsPath)
+	if err != nil {
+		t.Fatalf("evidence file %s was not copied out: %v", fsPath, err)
+	}
+	if string(data) != `{"marketplaces":[]}`+"\n" {
+		t.Errorf("evidence file contents = %q", data)
 	}
 }

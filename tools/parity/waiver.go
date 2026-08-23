@@ -56,27 +56,39 @@ func loadWaivers(path string) ([]Waiver, error) {
 
 // negativeControlTaxonomy is the taxonomy tag reserved for a runner case
 // that exists purely to prove the diff pipeline detects a real difference
-// (a negative control), never to hide an unexplained product gap. A waiver
-// may only use it for a case whose own manifest declares
-// expected_taxonomy: ["negative-control"] -- an ordinary product case
-// (e.g. "doctor-help") does not, so validateWaivers rejects it there
-// (ticket 02 attempt 2, W3).
+// (a negative control), never to hide an unexplained product gap.
 const negativeControlTaxonomy = "negative-control"
+
+// runnerOwnedNegativeControlIDs is the fixed, runner-owned allow-list of
+// case ids a waiver may tag negative-control against. Eligibility is
+// intentionally NOT read from a case's own manifest (case.json's
+// expected_taxonomy): a case.json lives under tools/parity/cases and is
+// otherwise just product-authored input to the runner, so letting a case
+// self-declare "I am a negative control" would let a product case
+// self-authorize the one taxonomy that is supposed to be unforgeable
+// (ticket 02 attempt 3: eval-ticket-02-r2.md's "product-negative"
+// reproducer -- a product case that adds
+// expected_taxonomy: ["negative-control"] to its own manifest must still be
+// rejected at validation). "version" is the only case that currently earns
+// this: its whole purpose is proving --version diffs and the pipeline
+// catches it.
+var runnerOwnedNegativeControlIDs = map[string]bool{
+	"version": true,
+}
 
 // validateWaivers fails closed on any waiver that isn't a precise,
 // accountable exemption: an id that doesn't match a loaded case, fields
 // that are empty or a wildcard, an empty reason, an oracle_commit that
 // doesn't match oracleCommit, or the reserved negative-control taxonomy
-// applied to a case that doesn't itself declare it. casesByID is every case
-// LoadCases loaded for this run, keyed by ID -- both what makes an id
-// "known" and where a case's own expected_taxonomy comes from.
+// applied to an id outside runnerOwnedNegativeControlIDs. casesByID is
+// every case LoadCases loaded for this run, keyed by ID -- what makes a
+// waiver's id "known".
 func validateWaivers(waivers []Waiver, casesByID map[string]Case, oracleCommit string) error {
 	for _, w := range waivers {
 		if w.ID == "" {
 			return &waiverValidationError{fmt.Errorf("waivers.json: entry with empty id")}
 		}
-		c, ok := casesByID[w.ID]
-		if !ok {
+		if _, ok := casesByID[w.ID]; !ok {
 			return &waiverValidationError{fmt.Errorf("waivers.json: case %q: unknown case id", w.ID)}
 		}
 		if len(w.Fields) == 0 {
@@ -95,22 +107,13 @@ func validateWaivers(waivers []Waiver, casesByID map[string]Case, oracleCommit s
 				"waivers.json: case %q: oracle_commit %q does not match this run's pinned baseline %q",
 				w.ID, w.OracleCommit, oracleCommit)}
 		}
-		if w.Taxonomy == negativeControlTaxonomy && !stringSliceContains(c.ExpectedTaxonomy, negativeControlTaxonomy) {
+		if w.Taxonomy == negativeControlTaxonomy && !runnerOwnedNegativeControlIDs[w.ID] {
 			return &waiverValidationError{fmt.Errorf(
-				"waivers.json: case %q: taxonomy %q is reserved for a case whose own manifest declares expected_taxonomy [%q]; got %v",
-				w.ID, negativeControlTaxonomy, negativeControlTaxonomy, c.ExpectedTaxonomy)}
+				"waivers.json: case %q: taxonomy %q is reserved for the runner-owned negative-control case ids %v; a case.json cannot self-declare eligibility",
+				w.ID, negativeControlTaxonomy, runnerOwnedNegativeControlIDs)}
 		}
 	}
 	return nil
-}
-
-func stringSliceContains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // loadAndValidateWaivers reads waivers.json and validates it against

@@ -99,11 +99,11 @@ func TestValidateWaivers_ValidPasses(t *testing.T) {
 }
 
 // TestValidateWaivers_NegativeControlOnProductCaseFailsExit2 proves ticket
-// 02 attempt 2's W3 fix: a case whose own manifest does NOT declare
-// expected_taxonomy ["negative-control"] can never be waived with that
-// reserved taxonomy, however well-formed the rest of the waiver is
-// (eval-ticket-02.md's W3 finding: a "product" case waiver using
-// negative-control was previously accepted and exited 0).
+// 02 attempt 2's W3 fix: a case that isn't on runnerOwnedNegativeControlIDs
+// can never be waived with the reserved negative-control taxonomy, however
+// well-formed the rest of the waiver is (eval-ticket-02.md's W3 finding: a
+// "product" case waiver using negative-control was previously accepted and
+// exited 0).
 func TestValidateWaivers_NegativeControlOnProductCaseFailsExit2(t *testing.T) {
 	productCase := Case{ID: "doctor-help"} // no expected_taxonomy at all
 	err := validateWaivers([]Waiver{{
@@ -113,18 +113,38 @@ func TestValidateWaivers_NegativeControlOnProductCaseFailsExit2(t *testing.T) {
 	assertWaiverValidationError(t, err)
 }
 
-// TestValidateWaivers_NegativeControlAllowedWhenCaseDeclaresIt proves the
-// reservation is scoped to the case's own manifest, not the id "version"
-// specifically: any case that legitimately declares itself a negative
-// control may use the taxonomy.
-func TestValidateWaivers_NegativeControlAllowedWhenCaseDeclaresIt(t *testing.T) {
+// TestValidateWaivers_NegativeControlAllowedForRunnerOwnedID proves
+// eligibility is runner-owned (runnerOwnedNegativeControlIDs), not read
+// from the case's own manifest: "version" has no expected_taxonomy
+// declared here at all, yet is still allowed, because runner-owned
+// eligibility doesn't depend on the manifest field in the first place
+// (ticket 02 attempt 3).
+func TestValidateWaivers_NegativeControlAllowedForRunnerOwnedID(t *testing.T) {
+	plainVersionCase := Case{ID: "version"} // deliberately no expected_taxonomy
 	err := validateWaivers([]Waiver{{
 		ID: "version", Fields: []string{"stdout"}, Taxonomy: "negative-control",
 		Reason: "proves the diff pipeline detects a real difference", OracleCommit: "pin",
-	}}, casesByID(versionCase), "pin")
+	}}, casesByID(plainVersionCase), "pin")
 	if err != nil {
-		t.Errorf("validateWaivers: %v, want nil (version declares expected_taxonomy negative-control)", err)
+		t.Errorf("validateWaivers: %v, want nil (\"version\" is runner-owned regardless of its manifest)", err)
 	}
+}
+
+// TestValidateWaivers_ProductCaseCannotSelfDeclareNegativeControl is the
+// evaluator's "product-negative" reproducer (eval-ticket-02-r2.md, ticket
+// 02 attempt 3, item 3): a product case whose OWN manifest declares
+// expected_taxonomy: ["negative-control"] must still be rejected when
+// waived with that taxonomy, because eligibility comes from the runner's
+// own id allow-list, not from anything a case.json can assert about
+// itself. Accepting this would let any product case self-authorize hiding
+// a real gap under the one taxonomy that's supposed to be unforgeable.
+func TestValidateWaivers_ProductCaseCannotSelfDeclareNegativeControl(t *testing.T) {
+	selfDeclared := Case{ID: "product-negative", ExpectedTaxonomy: []string{"negative-control"}}
+	err := validateWaivers([]Waiver{{
+		ID: "product-negative", Fields: []string{"stdout"}, Taxonomy: "negative-control",
+		Reason: "self-declared negative control", OracleCommit: "pin",
+	}}, casesByID(selfDeclared), "pin")
+	assertWaiverValidationError(t, err)
 }
 
 func assertWaiverValidationError(t *testing.T, err error) {
