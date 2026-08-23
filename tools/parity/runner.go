@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 )
@@ -20,6 +21,9 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 	defer sb.cleanup()
 
 	env := buildEnv(c.Env, sb.Home, sb.ConfigDir, sb.LauncherCache)
+	if c.PathPrepend != "" {
+		env["PATH"] = filepath.Join(c.Dir, c.PathPrepend) + string(os.PathListSeparator) + env["PATH"]
+	}
 
 	// Setup runs happen before the pre-run tree snapshot: they seed state
 	// (e.g. registering a marketplace) that Argv's own run depends on, and

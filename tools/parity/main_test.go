@@ -456,12 +456,13 @@ func TestRealCases_FixtureDirLoads(t *testing.T) {
 // (ticket 07: pack --format agent-plugin/apm refuse the unimplemented
 // exporters -- .review/ticket-review.md §D authorizes exactly these two
 // field-precise waivers) pack-refuse-agent-plugin/pack-refuse-apm, and
-// (ticket 10: error/warning channel and prefix parity's own runner cases,
-// each waiving the pre-existing, out-of-scope message-wording/tree gap
-// left once the channel/prefix fix itself is clean -- see
-// .scratch/parity-runner/issues/10-error-output-contract.md)
-// browse-unknown-marketplace/list-empty entries -- no other case ever earns
-// a bulk/wildcard waiver here.
+// (ticket 10: error/warning channel and prefix parity's own runner cases --
+// see .scratch/parity-runner/issues/10-error-output-contract.md)
+// browse-unknown-marketplace/list-empty (attempt 2: now `tree`-only, since
+// the message-wording gap they used to also cover is deliberately left
+// UNWAIVED and tracked by ticket 14 instead) and doctor-healthy (attempt 2:
+// box-drawing/padding `stdout` + the Oracle-only `gh` device-id `tree`
+// path) entries -- no other case ever earns a bulk/wildcard waiver here.
 func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	pin, err := pinnedOracleCommit()
 	if err != nil {
@@ -489,7 +490,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	for _, w := range waivers {
 		gotIDs = append(gotIDs, w.ID)
 	}
-	wantIDs := []string{"version", "doctor-help", "pack-refuse-agent-plugin", "browse-unknown-marketplace", "list-empty", "pack-refuse-apm"}
+	wantIDs := []string{"version", "doctor-healthy", "doctor-help", "pack-refuse-agent-plugin", "browse-unknown-marketplace", "list-empty", "pack-refuse-apm"}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)
 	}

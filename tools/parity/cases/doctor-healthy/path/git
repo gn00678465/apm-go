@@ -1,0 +1,22 @@
+#!/bin/sh
+# Deterministic fake `git` for the "doctor-healthy" case (ticket 08's
+# path_prepend fault-injection mechanism, added ahead of ticket 08 per
+# ticket 10 attempt 2): both the Oracle and apm-go shell out to the real
+# `git --version` / `git ls-remote` for doctor's git/network checks
+# (doctor.py:139-176, doctor.go:139-181), so a real git on the runner host's
+# PATH would make output depend on that host's git version and actual
+# network reachability. This fixture answers both probes identically on
+# both sides, without a real network call.
+case "$1" in
+  --version)
+    echo "git version 2.45.0"
+    exit 0
+    ;;
+  ls-remote)
+    printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\tHEAD\n'
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac

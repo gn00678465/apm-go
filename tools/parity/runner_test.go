@@ -138,3 +138,31 @@ exit 0
 		t.Errorf("evidence file contents = %q", data)
 	}
 }
+
+// TestRunCaseSide_PathPrependShadowsRealBinary proves case.path_prepend
+// (ticket 08's fault-injection mechanism, added here per ticket 10 attempt
+// 2 for doctor-healthy) puts its case-relative directory at the FRONT of
+// PATH: a fixture `git` shell script there is what the case's own binary
+// finds, not whatever real `git` (if any) is on the runner host's PATH.
+func TestRunCaseSide_PathPrependShadowsRealBinary(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `git --version`)
+
+	caseDir := t.TempDir()
+	pathDir := filepath.Join(caseDir, "path")
+	if err := os.MkdirAll(pathDir, 0o755); err != nil {
+		t.Fatalf("mkdir path fixture dir: %v", err)
+	}
+	writeStubScript(t, pathDir, "git", `echo "git version 9.9.9 (fixture)"`)
+
+	c := Case{ID: "path-prepend", Argv: []string{}, PathPrepend: "path", Dir: caseDir}
+
+	outDir := t.TempDir()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+	if rec.Stdout == nil || !strings.Contains(*rec.Stdout, "git version 9.9.9 (fixture)") {
+		t.Errorf("stdout = %v, want the fixture git's output (path_prepend must shadow the real git)", rec.Stdout)
+	}
+}

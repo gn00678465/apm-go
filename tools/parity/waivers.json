@@ -11,6 +11,24 @@
     "eval_plan_ref": ".review/spec-surface-gaps-and-parity-runner.md stories 29-32"
   },
   {
+    "id": "doctor-healthy",
+    "fields": [
+      "stdout",
+      "tree"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Added by ticket 10 attempt 2 (path_prepend + a fixture git shim so both sides see identical git/network probe output). Ticket 10 decision (A) fixed doctor's table to be unconditional (no IsRich() plain fallback) AND on the right channel (renderDoctorTable's `w` moved from os.Stderr to os.Stdout in the same commit -- the pinned Oracle's own Console defaults to stdout for ANY output, not just Warn/Error): `stderr` and `exit_code` no longer differ at all. What remains on `stdout` is the same pre-existing, already-documented rendering-library difference recorded on search's/browse's own table (marketplace_browse_table.go, search.go: rich's HEAVY_HEAD box style vs ux.Table's ROUNDED style, plus rich's centered title line vs apm-go's left-aligned one, plus rich's per-cell word-wrap vs ux.Table's column-widening) -- box-drawing and padding only, nothing textual. `tree` covers home/.local/state/gh/device-id (and its parent dirs): the Oracle's auth check delegates to AuthResolver, which shells out to `gh auth token` to probe for a token even when none is configured, and `gh` persists a device-id file under $HOME/.local/state/gh the first time it runs regardless of login state; apm-go's auth check never invokes `gh`. Not added to baseline.json because this is the first runner case to exercise the Oracle's auth-check code path -- if a future case shows the same path, promote it to baseline.json instead of duplicating this waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/10-error-output-contract.md",
+    "tree_paths": [
+      "home/.local",
+      "home/.local/state",
+      "home/.local/state/gh",
+      "home/.local/state/gh/device-id"
+    ]
+  },
+  {
     "id": "doctor-help",
     "fields": [
       "stdout"
@@ -53,15 +71,13 @@
   {
     "id": "browse-unknown-marketplace",
     "fields": [
-      "stdout",
-      "error_body",
       "tree"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Ticket 10 (error/warning channel and prefix parity) fixed the channel/prefix gap this case exists to pin: apm-go's error now lands on stdout with the Oracle's \"[x] \" prefix (previously stderr with \"Error: \"), so the `stderr`/`exit_code` fields no longer differ at all. What remains is a message-WORDING gap (`marketplaceNotRegisteredErr`'s apm-go-specific phrasing vs. the Oracle's \"Failed to browse marketplace: Marketplace '...' is not registered.\"), which is out of scope for ticket 10 and not yet assigned to a tracked ticket -- `stdout` and `error_body` (ticket 10's own body-only comparator) both still differ on wording alone, proving this is a genuine remaining gap, not something the channel/prefix fix silently papered over. Also covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json, home/.apm/marketplaces.json, and home/.cache/apm/last_version_check on ANY invocation (ticket 12 scope, tracked separately); apm-go has neither a global config file nor a version-check cache.",
+    "reason": "Ticket 10 attempt 2: this entry no longer covers `stdout`/`error_body` -- per direct instruction those wording diffs (`marketplaceNotRegisteredErr`'s apm-go-specific phrasing vs. the Oracle's \"Failed to browse marketplace: Marketplace '...' is not registered.\") are deliberately left UNWAIVED and tracked as the first entry of ticket 14 (marketplace command wording parity), so this case shows as a genuine open gap in the runner's gate rather than being hidden. Ticket 10 itself already fixed the channel/prefix gap this case originally existed to pin (apm-go's error now lands on stdout with the Oracle's \"[x] \" prefix, so `exit_code` no longer differs). This entry still covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json and home/.cache/apm/last_version_check on ANY invocation (ticket 12 scope, now baseline-excluded) plus home/.apm/marketplaces.json, a real product-specific path outside the baseline.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/10-error-output-contract.md",
+    "eval_plan_ref": ".scratch/parity-runner/issues/12-global-config-parity.md",
     "tree_paths": [
       "home/.apm",
       "home/.apm/config.json",
@@ -74,14 +90,13 @@
   {
     "id": "list-empty",
     "fields": [
-      "stdout",
       "tree"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`marketplace list` with none registered was already on the right channel/severity before ticket 10 (both sides print an informational, not an error/warning, line) -- this case is a regression guard proving ticket 10's Warn/Error-only channel switch left Info untouched, not a case the ticket fixes. What differs is pre-existing and out of ticket 10's scope: apm-go's Info prefix is the bare centered \" i \" (colors.go's SymbolInfo, unchanged -- only Warn/Error moved to the Oracle's bracketed \"[!] \"/\"[x] \" per ticket 10 decision A) vs. the Oracle's \"[i] \", plus apm-go's own shorter hint wording vs. the Oracle's two-line \"Use 'apm marketplace add SOURCE' to register one (OWNER/REPO, HTTPS URL, SSH URL, or local path).\". Also covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json, home/.apm/marketplaces.json, and home/.cache/apm/last_version_check on ANY invocation (ticket 12 scope, tracked separately); apm-go has neither a global config file nor a version-check cache.",
+    "reason": "Ticket 10 attempt 2: this entry no longer covers `stdout` -- per direct instruction the wording diff (apm-go's Info prefix is the bare centered \" i \" vs. the Oracle's \"[i] \", plus apm-go's own shorter hint wording vs. the Oracle's two-line \"Use 'apm marketplace add SOURCE' to register one (OWNER/REPO, HTTPS URL, SSH URL, or local path).\") is deliberately left UNWAIVED and tracked as the second entry of ticket 14 (marketplace command wording parity), so this case shows as a genuine open gap in the runner's gate rather than being hidden. `marketplace list` with none registered was already on the right channel/severity before ticket 10 (both sides print an informational, not an error/warning, line) -- this case remains a regression guard proving ticket 10's Warn/Error-only channel switch left Info untouched. This entry still covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json and home/.cache/apm/last_version_check on ANY invocation (ticket 12 scope, now baseline-excluded) plus home/.apm/marketplaces.json, a real product-specific path outside the baseline.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/10-error-output-contract.md",
+    "eval_plan_ref": ".scratch/parity-runner/issues/12-global-config-parity.md",
     "tree_paths": [
       "home/.apm",
       "home/.apm/config.json",

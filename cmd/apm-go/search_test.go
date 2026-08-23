@@ -25,9 +25,14 @@ const searchFixtureManifest = `{
 
 // runSearchCmd executes searchCmd() standalone (it is a top-level command,
 // never nested under marketplaceCmd()) and returns its combined stdout+
-// stderr and the RunE error.
+// stderr and the RunE error. NO_COLOR=1 CI=1 with no TTY (a bytes.Buffer is
+// never a terminal): the exact "rich renderers stay on, ANSI strips"
+// scenario ticket 10 decision (A) requires -- search's table must render
+// unconditionally, never the old IsRich()-gated plain fallback.
 func runSearchCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("CI", "1")
 	c := searchCmd()
 	var buf bytes.Buffer
 	c.SetOut(&buf)
@@ -140,11 +145,15 @@ func TestSearchCmd_MatchesByName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
 	}
-	if !strings.Contains(out, "Found 1 plugin(s):") {
-		t.Errorf("output = %q, want it to report 1 match", out)
+	assertBoxDrawing(t, "search", out)
+	assertNoANSI(t, "search", out)
+	if !strings.Contains(out, "Search Results: 'security' in skills") {
+		t.Errorf("output = %q, want the table title", out)
 	}
-	if !strings.Contains(out, "security-scanner@skills -- Scans your dependency graph for known CVEs") {
-		t.Errorf("output = %q, want the name-matched plugin line", out)
+	for _, want := range []string{"security-scanner", "Scans your dependency graph for known CVEs", "security-scanner@skills"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, missing %q", out, want)
+		}
 	}
 	if strings.Contains(out, "toolkit-helper") || strings.Contains(out, "widget-pack") {
 		t.Errorf("output = %q, want only the name match, no other plugin", out)
@@ -159,8 +168,12 @@ func TestSearchCmd_MatchesByDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
 	}
-	if !strings.Contains(out, "toolkit-helper@skills -- Runs static license compliance checks across your repository") {
-		t.Errorf("output = %q, want the description-matched plugin line", out)
+	assertBoxDrawing(t, "search", out)
+	assertNoANSI(t, "search", out)
+	for _, want := range []string{"toolkit-helper", "Runs static license compliance checks across your repository", "toolkit-helper@skills"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, missing %q", out, want)
+		}
 	}
 	if strings.Contains(out, "security-scanner") || strings.Contains(out, "widget-pack") {
 		t.Errorf("output = %q, want only the description match", out)
@@ -175,14 +188,21 @@ func TestSearchCmd_MatchesByTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
 	}
-	if !strings.Contains(out, "widget-pack@skills -- Bundles widgets for rapid prototyping") {
-		t.Errorf("output = %q, want the tag-matched plugin line", out)
+	assertBoxDrawing(t, "search", out)
+	assertNoANSI(t, "search", out)
+	for _, want := range []string{"widget-pack", "Bundles widgets for rapid prototyping", "widget-pack@skills"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, missing %q", out, want)
+		}
 	}
 	if strings.Contains(out, "security-scanner") || strings.Contains(out, "toolkit-helper") {
 		t.Errorf("output = %q, want only the tag match", out)
 	}
 }
 
+// TestSearchCmd_EmptyDescriptionHasNoDashSuffix proves an empty description
+// renders as the table's "--" placeholder cell (truncateSearchDescription's
+// empty case), not a blank cell.
 func TestSearchCmd_EmptyDescriptionHasNoDashSuffix(t *testing.T) {
 	isolatedMarketplaceRegistry(t)
 	registerSearchFixture(t)
@@ -191,11 +211,13 @@ func TestSearchCmd_EmptyDescriptionHasNoDashSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
 	}
-	if !strings.Contains(out, "quiet-plugin@skills\n") {
-		t.Errorf("output = %q, want a bare \"quiet-plugin@skills\" line with no \" -- \" suffix for an empty description", out)
+	assertBoxDrawing(t, "search", out)
+	assertNoANSI(t, "search", out)
+	if !strings.Contains(out, "quiet-plugin") || !strings.Contains(out, "quiet-plugin@skills") {
+		t.Errorf("output = %q, want the quiet-plugin row", out)
 	}
-	if strings.Contains(out, "quiet-plugin@skills --") {
-		t.Errorf("output = %q, want no \" -- \" suffix for an empty description", out)
+	if !strings.Contains(out, "--") {
+		t.Errorf("output = %q, want the empty-description placeholder \"--\"", out)
 	}
 }
 
@@ -211,16 +233,13 @@ func TestSearchCmd_LimitAppliedAfterMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
 	}
-	if !strings.Contains(full, "Found 2 plugin(s):") {
+	if !strings.Contains(full, "security-scanner") || !strings.Contains(full, "toolkit-helper") {
 		t.Fatalf("output = %q, want 2 matches before --limit", full)
 	}
 
 	limited, err := runSearchCmd(t, "--limit", "1", "your@skills")
 	if err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
-	}
-	if !strings.Contains(limited, "Found 1 plugin(s):") {
-		t.Errorf("output = %q, want exactly 1 match with --limit 1", limited)
 	}
 	if !strings.Contains(limited, "security-scanner@skills") {
 		t.Errorf("output = %q, want the manifest-order-first match (security-scanner) to survive --limit 1", limited)
@@ -230,21 +249,26 @@ func TestSearchCmd_LimitAppliedAfterMatching(t *testing.T) {
 	}
 }
 
-func TestSearchCmd_DescriptionOver60CharsIsUnaffectedByLimitButFetched(t *testing.T) {
+// TestSearchCmd_DescriptionOver60CharsIsTruncatedInTable proves the
+// >60-char-description plugin is found and its description is truncated by
+// the rich table's rule (__init__.py:1417-1424) -- ticket 10 decision (A)
+// means this table path is unconditional now, so there is no non-rich
+// fallback that would show the untruncated description.
+func TestSearchCmd_DescriptionOver60CharsIsTruncatedInTable(t *testing.T) {
 	isolatedMarketplaceRegistry(t)
 	registerSearchFixture(t)
 
-	// The non-rich fallback path never truncates (that is a rich-table-only
-	// rendering rule -- __init__.py:1417-1424 is inside the `if console:`
-	// branch); this only proves the >60-char-description plugin is found and
-	// its full description reaches the renderer.
 	out, err := runSearchCmd(t, "docgen@skills")
 	if err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
 	}
-	wantDesc := "Generates comprehensive API documentation from source code annotations automatically and keeps it in sync"
-	if !strings.Contains(out, wantDesc) {
-		t.Errorf("output = %q, want the full untruncated description in the non-rich fallback", out)
+	fullDesc := "Generates comprehensive API documentation from source code annotations automatically and keeps it in sync"
+	wantTruncated := "Generates comprehensive API documentation from source cod..."
+	if !strings.Contains(out, wantTruncated) {
+		t.Errorf("output = %q, want the truncated description %q", out, wantTruncated)
+	}
+	if strings.Contains(out, fullDesc) {
+		t.Errorf("output = %q, want the description truncated, not the full string", out)
 	}
 }
 

@@ -147,6 +147,60 @@ func TestDiffCase_ErrorBody_SkippedWhenBothSidesExitZero(t *testing.T) {
 	}
 }
 
+// TestStripErrorBodyPrefix is a table-driven test of every prefix
+// errorBodyPrefixes strips (ticket 10 attempt-2 item 2): the Oracle's "[x] "
+// error and "[!] " warning markers, apm-go's pre-ticket-10 "Error: " (cobra's
+// default ErrPrefix()), and the bare "!" glyph ux.Warn used before this
+// ticket's oracleLine switch. A line carrying none of these passes through
+// unchanged.
+func TestStripErrorBodyPrefix(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"oracle_error_prefix", "[x] Marketplace 'nope' is not registered.", "Marketplace 'nope' is not registered."},
+		{"oracle_warning_prefix", "[!] No plugins found matching 'x'.", "No plugins found matching 'x'."},
+		{"apm_go_error_prefix", "Error: something went wrong", "something went wrong"},
+		{"bare_bang_glyph", "! something went wrong", "something went wrong"},
+		{"no_matching_prefix_passthrough", "plain line with no severity marker", "plain line with no severity marker"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripErrorBodyPrefix(tt.line); got != tt.want {
+				t.Errorf("stripErrorBodyPrefix(%q) = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestErrorBody_TableDriven covers errorBody's line-selection rules (ticket
+// 10 attempt-2 item 2): leading/trailing whitespace around the matched line,
+// blank lines preceding the real body, and a body present on only one of the
+// two streams (stdout ∪ stderr, stdout checked first).
+func TestErrorBody_TableDriven(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdout string
+		stderr string
+		want   string
+	}{
+		{"leading_trailing_whitespace_stripped", "   [x] padded message   \n", "", "padded message"},
+		{"blank_first_lines_then_body", "\n\n[x] real message\n", "", "real message"},
+		{"body_only_on_stderr", "", "[!] warning on stderr\n", "warning on stderr"},
+		{"body_only_on_stdout", "[x] error on stdout\n", "", "error on stdout"},
+		{"blank_stdout_falls_through_to_stderr", "\n", "[x] fallback from stderr\n", "fallback from stderr"},
+		{"both_empty", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := errorBody(tt.stdout, tt.stderr); got != tt.want {
+				t.Errorf("errorBody(%q, %q) = %q, want %q", tt.stdout, tt.stderr, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDiffCase_StdoutDiffersUsesNormalizedValue(t *testing.T) {
 	outDir := t.TempDir()
 	c := Case{ID: "c1"}

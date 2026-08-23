@@ -35,6 +35,15 @@ type Case struct {
 	// a spurious "added" tree diff against Argv's own run.
 	SetupArgv [][]string `json:"setup_argv"`
 
+	// PathPrepend is a case-relative directory (e.g. "path") whose absolute
+	// path is prepended to PATH, ahead of everything else, for both sides
+	// (ticket 08's fault-injection mechanism: a fixture `git` shell script
+	// placed there shadows the real one so a case can script git's
+	// behaviour -- ok/missing/nonzero/hang/etc -- deterministically).
+	// Applied on top of buildEnv's own PATH (env.go's allow-listed
+	// inherited value); empty means PATH is left as the runner's own value.
+	PathPrepend string `json:"path_prepend"`
+
 	// Dir is the absolute path to the case directory (not part of case.json).
 	Dir string `json:"-"`
 }

@@ -117,21 +117,14 @@ func searchCmd() *cobra.Command {
 				return nil
 			}
 
-			// Oracle __init__.py:1397-1403 (colorama/non-rich fallback).
-			if !ux.IsRich() {
-				ux.Success(w, "Found %d plugin(s):", len(results))
-				for _, p := range results {
-					desc := ""
-					if p.Description != "" {
-						desc = " -- " + p.Description
-					}
-					ux.Plain(w, "  %s@%s%s", p.Name, marketplaceName, desc)
-				}
-				ux.Info(w, "Install: apm-go install <plugin-name>@%s", marketplaceName)
-				return nil
-			}
-
-			// Oracle __init__.py:1405-1424 (rich table).
+			// Oracle __init__.py:1405-1424 (rich table). Ticket 10 decision
+			// (A): the Oracle's _get_console() never returns a
+			// plain-fallback console in a normal install, so the table path
+			// is unconditional -- ux.Table already always renders
+			// box-drawing (lipgloss downsamples color only, never the
+			// border characters), so NO_COLOR/CI/no-TTY still gets a table,
+			// just without ANSI. __init__.py:1397-1403's colorama fallback
+			// has no apm-go equivalent.
 			rows := make([][]string, 0, len(results))
 			for _, p := range results {
 				rows = append(rows, []string{p.Name, truncateSearchDescription(p.Description), p.Name + "@" + marketplaceName})

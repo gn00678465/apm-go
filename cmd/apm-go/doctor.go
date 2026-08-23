@@ -242,17 +242,19 @@ func checkDuplicateNames(cfg *authoring.AuthoringConfig) doctorCheck {
 	return c
 }
 
-// renderDoctorTable mirrors _render_doctor_table (__init__.py:1311-1348):
-// a titled table in a rich terminal, `  [i]/[+]/[x] name: detail` lines
-// otherwise.
+// renderDoctorTable mirrors _render_doctor_table (__init__.py:1311-1348): a
+// titled table. Ticket 10 decision (A): the Oracle's _get_console() never
+// returns a plain-fallback console in a normal install, so the table path is
+// unconditional here -- ux.Table already always renders box-drawing
+// (lipgloss downsamples color only, never the border characters), so
+// NO_COLOR/CI/no-TTY still gets a table, just without ANSI. The runner
+// case doctor-healthy (ticket 10 attempt 2) proved this table was still on
+// os.Stderr while the pinned Oracle's own Console defaults to stdout for
+// ANY output (decision (A)'s own _get_console() analysis, not just
+// Warn/Error) -- w is stdout for the same reason ux.Error/ux.Warn's
+// errWriter redirects theirs (printer.go).
 func renderDoctorTable(checks []doctorCheck) {
-	w := os.Stderr
-	if !ux.IsRich() {
-		for _, c := range checks {
-			ux.Plain(w, "  %s %s: %s", c.icon(), c.name, c.detail)
-		}
-		return
-	}
+	w := os.Stdout
 	rows := make([][]string, 0, len(checks))
 	for _, c := range checks {
 		rows = append(rows, []string{c.name, c.icon(), c.detail})
