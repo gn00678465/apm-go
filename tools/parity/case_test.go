@@ -18,7 +18,8 @@ func TestLoadCases_ParsesManifestAndSortsByDirName(t *testing.T) {
 		"env": {"FOO": "bar"},
 		"rewrite_binary_name": true,
 		"expected_taxonomy": ["F08"],
-		"waiver": "known-diff"
+		"waiver": "known-diff",
+		"setup_argv": [["marketplace", "add", "./fixture", "--name", "skills"]]
 	}`)
 	writeCase(t, casesDir, "a-case", `{"id": "a-case", "argv": ["--version"]}`)
 
@@ -57,6 +58,14 @@ func TestLoadCases_ParsesManifestAndSortsByDirName(t *testing.T) {
 	}
 	if b.Waiver != "known-diff" {
 		t.Errorf("waiver = %q, want %q", b.Waiver, "known-diff")
+	}
+	if len(b.SetupArgv) != 1 || len(b.SetupArgv[0]) != 5 || b.SetupArgv[0][0] != "marketplace" || b.SetupArgv[0][4] != "skills" {
+		t.Errorf("setup_argv = %v, want [[marketplace add ./fixture --name skills]]", b.SetupArgv)
+	}
+
+	a := cases[0]
+	if a.SetupArgv != nil {
+		t.Errorf("a-case setup_argv = %v, want nil (field omitted)", a.SetupArgv)
 	}
 }
 

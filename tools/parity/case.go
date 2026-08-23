@@ -24,6 +24,17 @@ type Case struct {
 	ExpectedTaxonomy  []string          `json:"expected_taxonomy"`
 	Waiver            string            `json:"waiver"`
 
+	// SetupArgv is zero or more argv lists run, in order, against the same
+	// binary/sandbox/env BEFORE Argv, to seed state Argv's own case depends
+	// on (e.g. `["marketplace", "add", "./fixture", "--name", "skills"]` to
+	// register a marketplace before a `search` case queries it). Each
+	// setup step must exit 0 -- a nonzero exit fails the case as a runner
+	// error (the fixture never got seeded, so the real case's evidence
+	// would be meaningless). Setup runs are not captured as evidence and
+	// are excluded from the pre-run tree snapshot, so they never appear as
+	// a spurious "added" tree diff against Argv's own run.
+	SetupArgv [][]string `json:"setup_argv"`
+
 	// Dir is the absolute path to the case directory (not part of case.json).
 	Dir string `json:"-"`
 }

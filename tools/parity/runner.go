@@ -19,12 +19,27 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 	}
 	defer sb.cleanup()
 
+	env := buildEnv(c.Env, sb.Home, sb.ConfigDir)
+
+	// Setup runs happen before the pre-run tree snapshot: they seed state
+	// (e.g. registering a marketplace) that Argv's own run depends on, and
+	// must not be attributed to Argv as a tree diff of its own.
+	for i, setupArgv := range c.SetupArgv {
+		argv := make([]string, 0, len(binPath)+len(setupArgv))
+		argv = append(argv, binPath...)
+		argv = append(argv, setupArgv...)
+		res := runProcess(argv, env, "", sb.Cwd, timeout)
+		if res.ExitCode != 0 {
+			return Record{}, fmt.Errorf("case %s (%s): setup_argv[%d] %v exited %d: stdout=%q stderr=%q",
+				c.ID, side, i, setupArgv, res.ExitCode, res.Stdout, res.Stderr)
+		}
+	}
+
 	preTree, err := walkTree(sb.Cwd, "cwd")
 	if err != nil {
 		return Record{}, fmt.Errorf("case %s (%s): snapshotting fixture: %w", c.ID, side, err)
 	}
 
-	env := buildEnv(c.Env, sb.Home, sb.ConfigDir)
 	argv := make([]string, 0, len(binPath)+len(c.Argv))
 	argv = append(argv, binPath...)
 	argv = append(argv, c.Argv...)

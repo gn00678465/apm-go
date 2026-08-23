@@ -1,0 +1,6 @@
+{
+  "id": "search-empty-query",
+  "argv": ["search", "@skills"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

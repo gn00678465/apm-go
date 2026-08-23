@@ -382,7 +382,14 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		t.Fatal("waivers.json: expected at least the version negative-control entry")
 	}
 
-	knownIDs := map[string]bool{"version": true, "doctor-help": true}
+	cases, err := LoadCases("cases")
+	if err != nil {
+		t.Fatalf("LoadCases(\"cases\"): %v", err)
+	}
+	knownIDs := make(map[string]bool, len(cases))
+	for _, c := range cases {
+		knownIDs[c.ID] = true
+	}
 	if err := validateWaivers(waivers, knownIDs, pin); err != nil {
 		t.Errorf("validateWaivers: %v", err)
 	}

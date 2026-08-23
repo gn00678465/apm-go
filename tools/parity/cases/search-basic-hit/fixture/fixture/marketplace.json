@@ -1,0 +1,10 @@
+{
+  "name": "skills",
+  "plugins": [
+    {"name": "security-scanner", "source": "./security-scanner", "description": "Scans your dependency graph for known CVEs", "tags": ["security", "cli"]},
+    {"name": "toolkit-helper", "source": "./toolkit-helper", "description": "Runs static license compliance checks across your repository", "tags": ["utility"]},
+    {"name": "widget-pack", "source": "./widget-pack", "description": "Bundles widgets for rapid prototyping", "tags": ["experimental", "beta-channel"]},
+    {"name": "docgen", "source": "./docgen", "description": "Generates comprehensive API documentation from source code annotations automatically and keeps it in sync", "tags": ["docs"]},
+    {"name": "quiet-plugin", "source": "./quiet-plugin", "description": "", "tags": []}
+  ]
+}
