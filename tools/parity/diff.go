@@ -296,6 +296,12 @@ func heuristicTaxonomy(fields []string, argv []string) []string {
 		case "tree":
 			add("F09")
 			add("F03")
+		case "help_semantic":
+			// help_semantic can only ever be set for a --help case
+			// (isHelpCase gates diffCase's call into diffHelpSemantic),
+			// so this is unconditional, unlike the stdout/stderr case
+			// above.
+			add("F01")
 		}
 	}
 	return tax

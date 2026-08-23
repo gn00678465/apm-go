@@ -190,6 +190,9 @@ Flags:
 		if detail.HelpSemantic == nil || detail.HelpSemantic.Flags == nil {
 			t.Errorf("detail.HelpSemantic = %+v, want a populated Flags diff", detail.HelpSemantic)
 		}
+		if !containsStr(cd.Taxonomy.Heuristic, "F01") {
+			t.Errorf("Heuristic = %v, want to contain F01 for a help_semantic diff (code-review finding: heuristicTaxonomy had no case for it)", cd.Taxonomy.Heuristic)
+		}
 	})
 }
 
