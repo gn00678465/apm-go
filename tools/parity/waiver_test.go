@@ -202,3 +202,35 @@ func TestLoadAndValidateWaivers_ExplicitPathOverridesDefault(t *testing.T) {
 		t.Errorf("waivers = %v, want 1", waivers)
 	}
 }
+
+func TestValidateWaivers_TreeWaiverRequiresExactTreePaths(t *testing.T) {
+	known := map[string]Case{"c1": {ID: "c1"}}
+	base := Waiver{ID: "c1", Taxonomy: "F09", OracleCommit: "deadbeef", Reason: "r", Owner: "o", EvalPlanRef: "x"}
+
+	noPaths := base
+	noPaths.Fields = []string{"tree"}
+	if err := validateWaivers([]Waiver{noPaths}, known, "deadbeef"); err == nil {
+		t.Error("tree waiver without tree_paths must be rejected")
+	}
+
+	glob := base
+	glob.Fields = []string{"tree"}
+	glob.TreePaths = []string{"home/*"}
+	if err := validateWaivers([]Waiver{glob}, known, "deadbeef"); err == nil {
+		t.Error("tree_paths glob must be rejected")
+	}
+
+	stray := base
+	stray.Fields = []string{"stdout"}
+	stray.TreePaths = []string{"home/.apm/config.json"}
+	if err := validateWaivers([]Waiver{stray}, known, "deadbeef"); err == nil {
+		t.Error("tree_paths without tree in fields must be rejected")
+	}
+
+	ok := base
+	ok.Fields = []string{"tree"}
+	ok.TreePaths = []string{"home/.apm/config.json"}
+	if err := validateWaivers([]Waiver{ok}, known, "deadbeef"); err != nil {
+		t.Errorf("exact tree_paths must validate: %v", err)
+	}
+}

@@ -380,7 +380,7 @@ func TestApplyWaiver_FullCoverageWaives(t *testing.T) {
 	cd := CaseDiff{ID: "c1", Fields: []string{"stdout", "exit_code"}}
 	waivers := []Waiver{{ID: "c1", Fields: []string{"stdout", "exit_code"}, Reason: "known gap"}}
 
-	got := applyWaiver(cd, waivers)
+	got := applyWaiver(cd, nil, waivers)
 	if !got.Waived {
 		t.Error("Waived = false, want true (waiver covers every differing field)")
 	}
@@ -393,7 +393,7 @@ func TestApplyWaiver_PartialCoverageDoesNotWaive(t *testing.T) {
 	cd := CaseDiff{ID: "c1", Fields: []string{"stdout", "exit_code"}}
 	waivers := []Waiver{{ID: "c1", Fields: []string{"stdout"}, Reason: "known gap"}}
 
-	got := applyWaiver(cd, waivers)
+	got := applyWaiver(cd, nil, waivers)
 	if got.Waived {
 		t.Error("Waived = true, want false: waiver only lists stdout, diff also has exit_code")
 	}
@@ -403,7 +403,7 @@ func TestApplyWaiver_WrongIDDoesNotMatch(t *testing.T) {
 	cd := CaseDiff{ID: "c1", Fields: []string{"stdout"}}
 	waivers := []Waiver{{ID: "other", Fields: []string{"stdout"}, Reason: "x"}}
 
-	got := applyWaiver(cd, waivers)
+	got := applyWaiver(cd, nil, waivers)
 	if got.Waived {
 		t.Error("Waived = true, want false: no waiver for this id")
 	}
@@ -411,7 +411,7 @@ func TestApplyWaiver_WrongIDDoesNotMatch(t *testing.T) {
 
 func TestApplyWaiver_EmptyDiffNeverWaived(t *testing.T) {
 	cd := CaseDiff{ID: "c1"}
-	got := applyWaiver(cd, []Waiver{{ID: "c1", Fields: []string{"stdout"}, Reason: "x"}})
+	got := applyWaiver(cd, nil, []Waiver{{ID: "c1", Fields: []string{"stdout"}, Reason: "x"}})
 	if got.Waived {
 		t.Error("Waived = true, want false: nothing differed, nothing to waive")
 	}
@@ -435,4 +435,40 @@ func containsStr(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// Ticket 02 attempt 5 (eval-ticket-02-r3.md): a `tree` waiver must name the
+// exact paths it covers. A tree diff is waived only when EVERY differing
+// path is listed in the waiver's tree_paths; a waiver whose scope lives only
+// in its reason text waives nothing.
+func TestApplyWaiver_TreeRequiresPathPreciseCoverage(t *testing.T) {
+	cd := CaseDiff{ID: "c1", Fields: []string{"tree"}}
+	paths := []string{"home/.apm/config.json"}
+
+	// Field-only waiver, no tree_paths -> NOT waived.
+	got := applyWaiver(cd, paths, []Waiver{{ID: "c1", Fields: []string{"tree"}, Reason: "x"}})
+	if got.Waived {
+		t.Fatal("tree waiver without tree_paths must not waive")
+	}
+
+	// Exact path listed -> waived.
+	got = applyWaiver(cd, paths, []Waiver{{ID: "c1", Fields: []string{"tree"}, TreePaths: []string{"home/.apm/config.json"}, Reason: "x"}})
+	if !got.Waived {
+		t.Fatal("tree waiver naming the exact path must waive")
+	}
+
+	// A second, unlisted path appears -> NOT waived (this is the
+	// last_version_check case the evaluator caught).
+	got = applyWaiver(cd, []string{"home/.apm/config.json", "home/.cache/apm/last_version_check"},
+		[]Waiver{{ID: "c1", Fields: []string{"tree"}, TreePaths: []string{"home/.apm/config.json"}, Reason: "x"}})
+	if got.Waived {
+		t.Fatal("an unlisted tree path must break the waiver")
+	}
+
+	// stdout-only diff with a waiver that has tree_paths but no stdout coverage -> NOT waived.
+	got = applyWaiver(CaseDiff{ID: "c1", Fields: []string{"stdout"}}, nil,
+		[]Waiver{{ID: "c1", Fields: []string{"tree"}, TreePaths: []string{"a"}, Reason: "x"}})
+	if got.Waived {
+		t.Fatal("tree_paths must not widen field coverage")
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Waiver is one entry in waivers.json: an explicit, narrow exemption for a
@@ -15,8 +16,14 @@ import (
 // through Case.Waiver, which ticket 01 carries through case.json unmodified
 // but this ticket does not otherwise use.
 type Waiver struct {
-	ID           string   `json:"id"`
-	Fields       []string `json:"fields"`
+	ID     string   `json:"id"`
+	Fields []string `json:"fields"`
+	// TreePaths is REQUIRED whenever Fields contains "tree": the exact
+	// evidence paths (e.g. "home/.apm/config.json") this waiver covers. A
+	// tree diff is waived only when every differing path is listed -- scope
+	// must be machine-checked, never carried in Reason prose alone
+	// (eval-ticket-02-r3.md, ticket-review §E3).
+	TreePaths    []string `json:"tree_paths,omitempty"`
 	Taxonomy     string   `json:"taxonomy"`
 	OracleCommit string   `json:"oracle_commit"`
 	Reason       string   `json:"reason"`
@@ -98,6 +105,18 @@ func validateWaivers(waivers []Waiver, casesByID map[string]Case, oracleCommit s
 			if f == "" || f == "*" {
 				return &waiverValidationError{fmt.Errorf("waivers.json: case %q: field %q is not an explicit field name", w.ID, f)}
 			}
+		}
+		if hasField(w.Fields, "tree") {
+			if len(w.TreePaths) == 0 {
+				return &waiverValidationError{fmt.Errorf("waivers.json: case %q: a tree waiver must list tree_paths (the exact evidence paths it covers)", w.ID)}
+			}
+			for _, p := range w.TreePaths {
+				if p == "" || p == "*" || strings.ContainsAny(p, "*?[") {
+					return &waiverValidationError{fmt.Errorf("waivers.json: case %q: tree_paths entry %q is not an exact path", w.ID, p)}
+				}
+			}
+		} else if len(w.TreePaths) > 0 {
+			return &waiverValidationError{fmt.Errorf("waivers.json: case %q: tree_paths given but \"tree\" is not in fields", w.ID)}
 		}
 		if w.Reason == "" {
 			return &waiverValidationError{fmt.Errorf("waivers.json: case %q: reason is empty", w.ID)}

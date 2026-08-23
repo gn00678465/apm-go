@@ -321,7 +321,11 @@ func containsHelpFlag(argv []string) bool {
 // covers every one of those fields (acceptance: "EVERY differing field is
 // listed in that waiver's fields. Partial coverage = unwaived."). A diff
 // with no fields is left as-is: there is nothing to waive.
-func applyWaiver(cd CaseDiff, waivers []Waiver) CaseDiff {
+// applyWaiver marks cd waived when a waiver for its id covers every
+// differing field -- and, when "tree" is among them, names every differing
+// tree path in TreePaths. treePaths is the union of added/removed/changed
+// paths from the tree diff detail (nil when tree did not differ).
+func applyWaiver(cd CaseDiff, treePaths []string, waivers []Waiver) CaseDiff {
 	if len(cd.Fields) == 0 {
 		return cd
 	}
@@ -329,13 +333,47 @@ func applyWaiver(cd CaseDiff, waivers []Waiver) CaseDiff {
 		if w.ID != cd.ID {
 			continue
 		}
-		if coversAllFields(w.Fields, cd.Fields) {
-			cd.Waived = true
-			cd.WaiverReason = w.Reason
-			return cd
+		if !coversAllFields(w.Fields, cd.Fields) {
+			continue
 		}
+		if hasField(cd.Fields, "tree") && !coversAllFields(w.TreePaths, treePaths) {
+			continue
+		}
+		cd.Waived = true
+		cd.WaiverReason = w.Reason
+		return cd
 	}
 	return cd
+}
+
+func hasField(fields []string, f string) bool {
+	for _, x := range fields {
+		if x == f {
+			return true
+		}
+	}
+	return false
+}
+
+// treeDiffPaths flattens a tree diff detail into the sorted set of paths
+// that differ, for path-precise waiver matching.
+func treeDiffPaths(d treeDiffDetail) []string {
+	seen := map[string]bool{}
+	for _, e := range d.Added {
+		seen[e.Path] = true
+	}
+	for _, e := range d.Removed {
+		seen[e.Path] = true
+	}
+	for _, c := range d.Changed {
+		seen[c.Path] = true
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func coversAllFields(waiverFields, diffFields []string) bool {

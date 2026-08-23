@@ -204,7 +204,11 @@ func runCases(cfg Config, preflight Preflight) error {
 		if err != nil {
 			return err
 		}
-		cd = applyWaiver(cd, waivers)
+		var treePaths []string
+		if detail.Tree != nil {
+			treePaths = treeDiffPaths(*detail.Tree)
+		}
+		cd = applyWaiver(cd, treePaths, waivers)
 		diffs = append(diffs, cd)
 
 		if len(cd.Fields) > 0 {

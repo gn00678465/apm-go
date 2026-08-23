@@ -162,12 +162,12 @@ func selfTestS5(dir string, timeout time.Duration) error {
 		return fmt.Errorf("s5 base case produced fields %v, want [stdout]", cd.Fields)
 	}
 
-	matching := applyWaiver(cd, []Waiver{{ID: "s5", Fields: []string{"stdout"}, Reason: "self-test S5"}})
+	matching := applyWaiver(cd, nil, []Waiver{{ID: "s5", Fields: []string{"stdout"}, Reason: "self-test S5"}})
 	if !matching.Waived {
 		return fmt.Errorf("a waiver covering [stdout] did not waive a [stdout] diff")
 	}
 
-	partial := applyWaiver(cd, []Waiver{{ID: "s5", Fields: []string{"exit_code"}, Reason: "self-test S5"}})
+	partial := applyWaiver(cd, nil, []Waiver{{ID: "s5", Fields: []string{"exit_code"}, Reason: "self-test S5"}})
 	if partial.Waived {
 		return fmt.Errorf("a waiver covering only [exit_code] incorrectly waived a [stdout] diff")
 	}
