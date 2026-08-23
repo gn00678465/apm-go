@@ -303,6 +303,9 @@ func ResolveLocalSourceAgainstRoot(root, source string) (string, error) {
 }
 
 func resolveLocalSourceAgainstRoot(root, source string) (string, error) {
+	// Normalize backslashes so "..\..\" traversal is caught on all platforms.
+	source = strings.ReplaceAll(source, `\`, "/")
+
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve project root %q: %w", root, err)
