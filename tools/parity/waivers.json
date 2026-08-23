@@ -69,44 +69,6 @@
     ]
   },
   {
-    "id": "browse-unknown-marketplace",
-    "fields": [
-      "tree"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Ticket 10 attempt 2: this entry no longer covers `stdout`/`error_body` -- per direct instruction those wording diffs (`marketplaceNotRegisteredErr`'s apm-go-specific phrasing vs. the Oracle's \"Failed to browse marketplace: Marketplace '...' is not registered.\") are deliberately left UNWAIVED and tracked as the first entry of ticket 14 (marketplace command wording parity), so this case shows as a genuine open gap in the runner's gate rather than being hidden. Ticket 10 itself already fixed the channel/prefix gap this case originally existed to pin (apm-go's error now lands on stdout with the Oracle's \"[x] \" prefix, so `exit_code` no longer differs). This entry still covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json and home/.cache/apm/last_version_check on ANY invocation (ticket 12 scope, now baseline-excluded) plus home/.apm/marketplaces.json, a real product-specific path outside the baseline.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/12-global-config-parity.md",
-    "tree_paths": [
-      "home/.apm",
-      "home/.apm/config.json",
-      "home/.apm/marketplaces.json",
-      "home/.cache",
-      "home/.cache/apm",
-      "home/.cache/apm/last_version_check"
-    ]
-  },
-  {
-    "id": "list-empty",
-    "fields": [
-      "tree"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Ticket 10 attempt 2: this entry no longer covers `stdout` -- per direct instruction the wording diff (apm-go's Info prefix is the bare centered \" i \" vs. the Oracle's \"[i] \", plus apm-go's own shorter hint wording vs. the Oracle's two-line \"Use 'apm marketplace add SOURCE' to register one (OWNER/REPO, HTTPS URL, SSH URL, or local path).\") is deliberately left UNWAIVED and tracked as the second entry of ticket 14 (marketplace command wording parity), so this case shows as a genuine open gap in the runner's gate rather than being hidden. `marketplace list` with none registered was already on the right channel/severity before ticket 10 (both sides print an informational, not an error/warning, line) -- this case remains a regression guard proving ticket 10's Warn/Error-only channel switch left Info untouched. This entry still covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json and home/.cache/apm/last_version_check on ANY invocation (ticket 12 scope, now baseline-excluded) plus home/.apm/marketplaces.json, a real product-specific path outside the baseline.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/12-global-config-parity.md",
-    "tree_paths": [
-      "home/.apm",
-      "home/.apm/config.json",
-      "home/.apm/marketplaces.json",
-      "home/.cache",
-      "home/.cache/apm",
-      "home/.cache/apm/last_version_check"
-    ]
-  },
-  {
     "id": "pack-refuse-apm",
     "fields": [
       "exit_code",
@@ -128,6 +90,22 @@
       "home/.cache",
       "home/.cache/apm",
       "home/.cache/apm/last_version_check"
+    ]
+  },
+  {
+    "id": "registry-explicit-config-dir",
+    "fields": [
+      "tree"
+    ],
+    "taxonomy": "F04",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "apm-go honours APM_CONFIG_DIR as an explicit override; the Oracle has no such variable -- intentional environment-semantics extension, spec §Out of Scope to add. This case sets APM_CONFIG_DIR to a path under its own sandbox cwd (ticket 15's runner no longer forces the var on either side, so the Oracle's real behaviour -- ignoring it -- and apm-go's real behaviour -- honouring it -- are both captured as evidence rather than masked by the runner's own env choice). Target writes cwd/altcfg/marketplaces.json (RegistryPath honours APM_CONFIG_DIR directly, internal/marketplace/registry.go:108-121); Oracle ignores the var and writes home/.apm/marketplaces.json (home/.apm itself is baseline-excluded, but marketplaces.json is real product state outside the baseline). This entry covers the tree field for exactly the paths in tree_paths.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/15-runner-config-root.md",
+    "tree_paths": [
+      "home/.apm/marketplaces.json",
+      "cwd/altcfg",
+      "cwd/altcfg/marketplaces.json"
     ]
   }
 ]

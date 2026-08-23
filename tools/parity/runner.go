@@ -20,7 +20,7 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 	}
 	defer sb.cleanup()
 
-	env := buildEnv(c.Env, sb.Home, sb.ConfigDir, sb.LauncherCache)
+	env := buildEnv(expandCaseEnv(c.Env, sb.Cwd), sb.Home, sb.LauncherCache)
 	if c.PathPrepend != "" {
 		env["PATH"] = filepath.Join(c.Dir, c.PathPrepend) + string(os.PathListSeparator) + env["PATH"]
 	}
@@ -71,26 +71,22 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 	return rec, nil
 }
 
-// postRunTree walks cwd, APM_CONFIG_DIR, and HOME after the run, merges them
-// with the deleted entries diffDeleted finds against the pre-run fixture
-// snapshot, and returns the merged, sorted tree plus the label->root map
-// evidence copying needs. HOME is captured because the Oracle ignores
-// APM_CONFIG_DIR entirely and writes its own persistent state (e.g. the
-// marketplace registry) under $HOME/.apm/ -- without this, that state never
-// enters the tree/fs evidence at all, and a Target-only APM_CONFIG_DIR file
-// shows up as a spurious "added" tree diff instead of the real Oracle/Target
-// storage-location divergence it actually is (ticket 02 attempt 3, amending
-// ticket 01 AC5: eval-ticket-02-r2.md Issue 1). HOME-rooted paths are
-// recorded under the "home/" label and normalised to <HOME> the same way
-// "cwd/" and "config/" already normalise to <TMP>/<CFG>.
+// postRunTree walks cwd and HOME after the run, merges them with the
+// deleted entries diffDeleted finds against the pre-run fixture snapshot,
+// and returns the merged, sorted tree plus the label->root map evidence
+// copying needs. HOME is captured because the Oracle always writes its
+// persistent state (e.g. the marketplace registry) under $HOME/.apm/ --
+// without this, that state never enters the tree/fs evidence at all (ticket
+// 02 attempt 3, amending ticket 01 AC5: eval-ticket-02-r2.md Issue 1).
+// HOME-rooted paths are recorded under the "home/" label and normalised to
+// <HOME> the same way "cwd/" already normalises to <TMP>. There is no
+// separate "config" root: since ticket 15 the runner no longer forces
+// APM_CONFIG_DIR on either side, so the one case that sets it explicitly
+// points it at a path under Cwd, which the cwd walk already covers.
 func postRunTree(sb *sandbox, preTree []TreeEntry) ([]TreeEntry, map[string]string, error) {
-	roots := map[string]string{"cwd": sb.Cwd, "config": sb.ConfigDir, "home": sb.Home}
+	roots := map[string]string{"cwd": sb.Cwd, "home": sb.Home}
 
 	postCwd, err := walkTree(sb.Cwd, "cwd")
-	if err != nil {
-		return nil, nil, err
-	}
-	postConfig, err := walkTree(sb.ConfigDir, "config")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -99,11 +95,8 @@ func postRunTree(sb *sandbox, preTree []TreeEntry) ([]TreeEntry, map[string]stri
 		return nil, nil, err
 	}
 
-	afterPaths := make(map[string]bool, len(postCwd)+len(postConfig)+len(postHome))
+	afterPaths := make(map[string]bool, len(postCwd)+len(postHome))
 	for _, e := range postCwd {
-		afterPaths[e.Path] = true
-	}
-	for _, e := range postConfig {
 		afterPaths[e.Path] = true
 	}
 	for _, e := range postHome {
@@ -111,9 +104,8 @@ func postRunTree(sb *sandbox, preTree []TreeEntry) ([]TreeEntry, map[string]stri
 	}
 	deleted := diffDeleted(preTree, afterPaths)
 
-	tree := make([]TreeEntry, 0, len(postCwd)+len(postConfig)+len(postHome)+len(deleted))
+	tree := make([]TreeEntry, 0, len(postCwd)+len(postHome)+len(deleted))
 	tree = append(tree, postCwd...)
-	tree = append(tree, postConfig...)
 	tree = append(tree, postHome...)
 	tree = append(tree, deleted...)
 	sortTreeEntries(tree)

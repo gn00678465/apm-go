@@ -21,7 +21,7 @@ echo "should never be reached"
 `)
 
 	cwd := t.TempDir()
-	env := buildEnv(nil, t.TempDir(), t.TempDir(), t.TempDir())
+	env := buildEnv(nil, t.TempDir(), t.TempDir())
 
 	start := time.Now()
 	res := runProcess([]string{stub}, env, "", cwd, 200*time.Millisecond)
@@ -54,7 +54,7 @@ sleep 30
 `)
 
 	cwd := t.TempDir()
-	env := buildEnv(nil, t.TempDir(), t.TempDir(), t.TempDir())
+	env := buildEnv(nil, t.TempDir(), t.TempDir())
 
 	res := runProcess([]string{stub}, env, "", cwd, 200*time.Millisecond)
 	if !res.TimedOut {
@@ -94,7 +94,7 @@ exit 7
 `)
 
 	cwd := t.TempDir()
-	env := buildEnv(nil, t.TempDir(), t.TempDir(), t.TempDir())
+	env := buildEnv(nil, t.TempDir(), t.TempDir())
 
 	res := runProcess([]string{stub}, env, "", cwd, defaultTimeout)
 	if res.TimedOut {
@@ -120,7 +120,7 @@ if [ -t 1 ]; then echo "stdout-is-a-tty"; fi
 `)
 
 	cwd := t.TempDir()
-	env := buildEnv(nil, t.TempDir(), t.TempDir(), t.TempDir())
+	env := buildEnv(nil, t.TempDir(), t.TempDir())
 
 	res := runProcess([]string{stub}, env, "input-from-case", cwd, defaultTimeout)
 	out := string(res.Stdout)
@@ -134,7 +134,7 @@ if [ -t 1 ]; then echo "stdout-is-a-tty"; fi
 
 func TestRunProcess_StartFailureReturnsSyntheticResult(t *testing.T) {
 	cwd := t.TempDir()
-	env := buildEnv(nil, t.TempDir(), t.TempDir(), t.TempDir())
+	env := buildEnv(nil, t.TempDir(), t.TempDir())
 
 	res := runProcess([]string{filepath.Join(t.TempDir(), "does-not-exist")}, env, "", cwd, defaultTimeout)
 	if res.ExitCode != -1 {

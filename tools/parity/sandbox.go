@@ -10,15 +10,18 @@ import (
 )
 
 // sandbox is one run's isolated filesystem: a fresh cwd (fixture
-// materialised into it), a fresh HOME, and a fresh APM_CONFIG_DIR, all under
-// one temp root so cleanup() removes everything in a single call. The runner
-// never points any of these at the invoking user's real $HOME or
-// $APM_CONFIG_DIR.
+// materialised into it) and a fresh HOME, both under one temp root so
+// cleanup() removes everything in a single call. The runner never points
+// either of these at the invoking user's real $HOME. There is no dedicated
+// APM_CONFIG_DIR directory: the Oracle has no such variable, so the runner
+// no longer forces one on apm-go either (ticket 15) -- a case that wants to
+// exercise apm-go's explicit-override support points APM_CONFIG_DIR at a
+// path under Cwd via case.env's "<TMP>" placeholder, and that path is
+// created by the product under test, not pre-made here.
 type sandbox struct {
-	root      string
-	Cwd       string
-	Home      string
-	ConfigDir string
+	root string
+	Cwd  string
+	Home string
 	// LauncherCache is handed to the Oracle's launcher (uv) as UV_CACHE_DIR.
 	// It is deliberately NOT an evidence root: nothing under it is walked or
 	// copied, because it holds launcher state, not product state.
@@ -37,10 +40,9 @@ func newSandbox(fixtureDir string) (*sandbox, error) {
 		root:          root,
 		Cwd:           filepath.Join(root, "cwd"),
 		Home:          filepath.Join(root, "home"),
-		ConfigDir:     filepath.Join(root, "config"),
 		LauncherCache: filepath.Join(root, "launcher-cache"),
 	}
-	for _, dir := range []string{sb.Cwd, sb.Home, sb.ConfigDir, sb.LauncherCache} {
+	for _, dir := range []string{sb.Cwd, sb.Home, sb.LauncherCache} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			os.RemoveAll(root)
 			return nil, fmt.Errorf("creating sandbox dir %s: %w", dir, err)

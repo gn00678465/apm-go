@@ -24,16 +24,13 @@ func TestNewSandbox_MaterialisesFixtureIntoCwd(t *testing.T) {
 	assertFileContent(t, filepath.Join(sb.Cwd, "sub", "nested.txt"), "nested content")
 	assertFileContent(t, filepath.Join(sb.Cwd, "empty.txt"), "")
 
-	// Home and config dir must exist and start empty: no fixture materialises
-	// into them.
-	for _, dir := range []string{sb.Home, sb.ConfigDir} {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("reading %s: %v", dir, err)
-		}
-		if len(entries) != 0 {
-			t.Errorf("%s expected empty, has %d entries", dir, len(entries))
-		}
+	// Home must exist and start empty: no fixture materialises into it.
+	entries, err := os.ReadDir(sb.Home)
+	if err != nil {
+		t.Fatalf("reading %s: %v", sb.Home, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("%s expected empty, has %d entries", sb.Home, len(entries))
 	}
 }
 
@@ -66,10 +63,12 @@ func TestSandbox_CleanupRemovesEverything(t *testing.T) {
 	}
 }
 
-// TestSandbox_NeverUsesRealHomeOrConfigDir is the direct proof the ticket
-// requires: a case that writes to $HOME/.apm/marker (following the client's
-// own resolution, not APM_CONFIG_DIR) must land inside the sandbox, and the
-// invoking user's real ~/.apm must stay untouched.
+// TestSandbox_NeverUsesRealHomeOrConfigDir is the direct proof ticket 01
+// AC1 requires, re-verified after ticket 15 stopped forcing APM_CONFIG_DIR:
+// a case that writes to $HOME/.apm/marker (following the client's own
+// resolution) must land inside the sandbox, and the invoking user's real
+// ~/.apm must stay untouched. HOME alone carries the isolation guarantee
+// now; there is no separate sandbox APM_CONFIG_DIR to prove isolated.
 func TestSandbox_NeverUsesRealHomeOrConfigDir(t *testing.T) {
 	realHome, err := os.UserHomeDir()
 	if err != nil {
@@ -84,7 +83,6 @@ func TestSandbox_NeverUsesRealHomeOrConfigDir(t *testing.T) {
 	stub := writeStubScript(t, scriptDir, "stub.sh", `
 mkdir -p "$HOME/.apm"
 touch "$HOME/.apm/parity-test-marker"
-touch "$APM_CONFIG_DIR/marker2"
 exit 0
 `)
 
@@ -96,7 +94,7 @@ exit 0
 	}
 	defer sb.cleanup()
 
-	env := buildEnv(nil, sb.Home, sb.ConfigDir, sb.LauncherCache)
+	env := buildEnv(nil, sb.Home, sb.LauncherCache)
 	res := runProcess([]string{stub}, env, "", sb.Cwd, defaultTimeout)
 	if res.ExitCode != 0 {
 		t.Fatalf("stub exited %d, stderr=%q", res.ExitCode, res.Stderr)

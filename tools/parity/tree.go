@@ -13,7 +13,7 @@ import (
 	"sort"
 )
 
-// TreeEntry is one path under a run's cwd or APM_CONFIG_DIR, before or after
+// TreeEntry is one path under a run's cwd or HOME, before or after
 // normalisation. Kind "deleted" marks a fixture path that existed before the
 // run and is gone afterward; it carries no Size/SHA256.
 type TreeEntry struct {
@@ -24,8 +24,8 @@ type TreeEntry struct {
 }
 
 // walkTree walks root and returns a path-sorted listing of everything under
-// it, each path prefixed "label/" so entries from cwd and APM_CONFIG_DIR
-// stay unambiguous once merged into one tree. root itself is not listed.
+// it, each path prefixed "label/" so entries from cwd and HOME stay
+// unambiguous once merged into one tree. root itself is not listed.
 func walkTree(root, label string) ([]TreeEntry, error) {
 	if _, err := os.Stat(root); os.IsNotExist(err) {
 		return nil, nil

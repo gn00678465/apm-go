@@ -313,7 +313,7 @@ func getVersion(binPath []string, timeout time.Duration) string {
 	defer sb.cleanup()
 
 	argv := append(append([]string{}, binPath...), "--version")
-	env := buildEnv(nil, sb.Home, sb.ConfigDir, sb.LauncherCache)
+	env := buildEnv(nil, sb.Home, sb.LauncherCache)
 	res := runProcess(argv, env, "", sb.Cwd, timeout)
 	return strings.TrimSpace(string(res.Stdout))
 }

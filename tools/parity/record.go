@@ -183,7 +183,7 @@ func appendJSONLRecord(path string, r Record, caseDir string) error {
 
 // copyEvidenceFiles copies the raw bytes of every "file" tree entry into
 // <caseOutDir>/fs/<path>, preserving the label/relative-path layout used in
-// TreeEntry.Path. roots maps each label ("cwd", "config") to the sandbox
+// TreeEntry.Path. roots maps each label ("cwd", "home") to the sandbox
 // directory it was walked from. Empty files are copied too — an empty source
 // still produces an empty destination file via the O_CREATE open.
 func copyEvidenceFiles(caseOutDir string, roots map[string]string, tree []TreeEntry) error {

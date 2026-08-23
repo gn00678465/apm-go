@@ -139,6 +139,35 @@ exit 0
 	}
 }
 
+// TestRunCaseSide_ExpandsTMPInCaseEnv proves a case.env value containing
+// "<TMP>" is expanded to the run's own sandbox cwd before the subprocess
+// sees it (ticket 15: the registry-explicit-config-dir case needs this to
+// point APM_CONFIG_DIR at a path inside its own cwd).
+func TestRunCaseSide_ExpandsTMPInCaseEnv(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `echo "$APM_CONFIG_DIR"`)
+
+	c := Case{ID: "tmp-expansion", Argv: []string{}, Env: map[string]string{"APM_CONFIG_DIR": "<TMP>/altcfg"}}
+
+	outDir := t.TempDir()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+
+	wantCwd := sandboxCwdFromHome(rec.EnvDelta["HOME"])
+	if wantCwd == "" {
+		t.Fatalf("could not derive cwd from EnvDelta[HOME] = %q", rec.EnvDelta["HOME"])
+	}
+	want := wantCwd + "/altcfg"
+	if rec.EnvDelta["APM_CONFIG_DIR"] != want {
+		t.Errorf("EnvDelta[APM_CONFIG_DIR] = %q, want %q", rec.EnvDelta["APM_CONFIG_DIR"], want)
+	}
+	if rec.Stdout == nil || strings.TrimSpace(*rec.Stdout) != want {
+		t.Errorf("stdout = %v, want the subprocess to see the expanded path %q", rec.Stdout, want)
+	}
+}
+
 // TestRunCaseSide_PathPrependShadowsRealBinary proves case.path_prepend
 // (ticket 08's fault-injection mechanism, added here per ticket 10 attempt
 // 2 for doctor-healthy) puts its case-relative directory at the FRONT of
