@@ -179,7 +179,7 @@ func parseHelpDescriptionParagraph(text string) string {
 }
 
 // diffHelpSemantic reads each side's stdout.bin, normalizes it the same way
-// diffNormalizedField does, and compares the extracted flag set and first
+// normalizedField does, and compares the extracted flag set and first
 // description paragraph. Parsing from the normalized text (not raw) means a
 // help_semantic comparison is immune to sandbox-path noise the same way
 // stdout itself is.

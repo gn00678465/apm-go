@@ -20,6 +20,11 @@ func main() {
 		Use:     "apm-go",
 		Short:   "Agent Package Manager (Go)",
 		Version: version.Version,
+		// SilenceErrors: this app owns error printing (ux.Error, stdout with
+		// "[x] ", ticket 10 decision A) instead of cobra's own
+		// c.PrintErrln(c.ErrPrefix(), err.Error()) default, which writes
+		// "Error: ..." to stderr -- see the root.Execute() error branch below.
+		SilenceErrors: true,
 	}
 
 	root.AddCommand(validateCmd())
@@ -38,6 +43,7 @@ func main() {
 	root.AddCommand(searchCmd())
 
 	if err := root.Execute(); err != nil {
+		ux.Error(os.Stderr, "%s", err)
 		os.Exit(exitCodeOf(err))
 	}
 }

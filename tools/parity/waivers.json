@@ -36,12 +36,12 @@
     "fields": [
       "exit_code",
       "stdout",
-      "stderr",
+      "error_body",
       "tree"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "apm-go's pack command does not yet implement the Agent Plugins v1 exporter (bundle/formats.py BundleFormat.AGENT_PLUGIN / packer.py's agent-plugin route). `--format agent-plugin` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0) and writes a real Agent Plugin bundle (plugin.json, mcp.json, skills/, embedded apm.lock.yaml) under cwd/build/. Intentional deviation per .review/ticket-review.md §D: Claude path parity is closed; the Agent Plugin exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff.",
+    "reason": "apm-go's pack command does not yet implement the Agent Plugins v1 exporter (bundle/formats.py BundleFormat.AGENT_PLUGIN / packer.py's agent-plugin route). `--format agent-plugin` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0) and writes a real Agent Plugin bundle (plugin.json, mcp.json, skills/, embedded apm.lock.yaml) under cwd/build/. Intentional deviation per .review/ticket-review.md §D: Claude path parity is closed; the Agent Plugin exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff. `fields` updated by ticket 10: apm-go's refusal now prints on stdout (matching the Oracle's channel), so `stderr` no longer differs and drops out; `error_body` (ticket 10's new body-only comparator) takes its place here purely because the two sides run entirely different code paths at different exit codes (Oracle succeeds and prints a completion line, apm-go refuses and prints an error) -- not a new gap, the same documented exporter-not-implemented difference the rest of this waiver already covers.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": "§8.3 row 1 / §2.2",
     "tree_paths": [
@@ -61,16 +61,57 @@
     ]
   },
   {
-    "id": "pack-refuse-apm",
+    "id": "browse-unknown-marketplace",
     "fields": [
-      "exit_code",
       "stdout",
-      "stderr",
+      "error_body",
       "tree"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "apm-go's pack command does not yet implement the legacy APM bundle layout exporter (bundle/formats.py BundleFormat.APM / packer.py's apm route). `--format apm` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0, \"No deployed files found -- empty bundle created\" since this fixture has no per-target deployed artifacts) and writes a real (if minimal) APM-format bundle under cwd/build/. Intentional deviation per .review/ticket-review.md §D: Claude path parity is closed; the APM exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff.",
+    "reason": "Ticket 10 (error/warning channel and prefix parity) fixed the channel/prefix gap this case exists to pin: apm-go's error now lands on stdout with the Oracle's \"[x] \" prefix (previously stderr with \"Error: \"), so the `stderr`/`exit_code` fields no longer differ at all. What remains is a message-WORDING gap (`marketplaceNotRegisteredErr`'s apm-go-specific phrasing vs. the Oracle's \"Failed to browse marketplace: Marketplace '...' is not registered.\"), which is out of scope for ticket 10 and not yet assigned to a tracked ticket -- `stdout` and `error_body` (ticket 10's own body-only comparator) both still differ on wording alone, proving this is a genuine remaining gap, not something the channel/prefix fix silently papered over. Also covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json, home/.apm/marketplaces.json, and home/.cache/apm/last_version_check on ANY invocation (ticket 12 scope, tracked separately); apm-go has neither a global config file nor a version-check cache.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/10-error-output-contract.md",
+    "tree_paths": [
+      "home/.apm",
+      "home/.apm/config.json",
+      "home/.apm/marketplaces.json",
+      "home/.cache",
+      "home/.cache/apm",
+      "home/.cache/apm/last_version_check"
+    ]
+  },
+  {
+    "id": "list-empty",
+    "fields": [
+      "stdout",
+      "tree"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`marketplace list` with none registered was already on the right channel/severity before ticket 10 (both sides print an informational, not an error/warning, line) -- this case is a regression guard proving ticket 10's Warn/Error-only channel switch left Info untouched, not a case the ticket fixes. What differs is pre-existing and out of ticket 10's scope: apm-go's Info prefix is the bare centered \" i \" (colors.go's SymbolInfo, unchanged -- only Warn/Error moved to the Oracle's bracketed \"[!] \"/\"[x] \" per ticket 10 decision A) vs. the Oracle's \"[i] \", plus apm-go's own shorter hint wording vs. the Oracle's two-line \"Use 'apm marketplace add SOURCE' to register one (OWNER/REPO, HTTPS URL, SSH URL, or local path).\". Also covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json, home/.apm/marketplaces.json, and home/.cache/apm/last_version_check on ANY invocation (ticket 12 scope, tracked separately); apm-go has neither a global config file nor a version-check cache.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/10-error-output-contract.md",
+    "tree_paths": [
+      "home/.apm",
+      "home/.apm/config.json",
+      "home/.apm/marketplaces.json",
+      "home/.cache",
+      "home/.cache/apm",
+      "home/.cache/apm/last_version_check"
+    ]
+  },
+  {
+    "id": "pack-refuse-apm",
+    "fields": [
+      "exit_code",
+      "stdout",
+      "error_body",
+      "tree"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "apm-go's pack command does not yet implement the legacy APM bundle layout exporter (bundle/formats.py BundleFormat.APM / packer.py's apm route). `--format apm` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0, \"No deployed files found -- empty bundle created\" since this fixture has no per-target deployed artifacts) and writes a real (if minimal) APM-format bundle under cwd/build/. Intentional deviation per .review/ticket-review.md §D: Claude path parity is closed; the APM exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff. `fields` updated by ticket 10: apm-go's refusal now prints on stdout (matching the Oracle's channel), so `stderr` no longer differs and drops out; `error_body` (ticket 10's new body-only comparator) takes its place here purely because the two sides run entirely different code paths at different exit codes (Oracle succeeds and prints a completion line, apm-go refuses and prints an error) -- not a new gap, the same documented exporter-not-implemented difference the rest of this waiver already covers.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": "§8.3 row 1 / §2.2",
     "tree_paths": [

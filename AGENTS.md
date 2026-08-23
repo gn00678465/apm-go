@@ -79,7 +79,7 @@ internal/
 
 **Security scanning.** `internal/security/` runs before deploy. `ScanPolicy` controls whether findings block, warn, or are ignored. The gate is fail-closed: unknown policy = block.
 
-**UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI. User-facing text uses the `ux` printers, not `fmt.Print`; `ux.Plain` is for lines whose status glyph is part of the message.
+**UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI. User-facing text uses the `ux` printers, not `fmt.Print`; `ux.Plain` is for lines whose status glyph is part of the message; `ux.Error`/`ux.Warn` always land on stdout with the oracle's `"[x] "`/`"[!] "` prefixes, regardless of which stream the call site passes.
 
 **Safe YAML subset.** `yamlcore.SafeLoad` rejects YAML features outside the OpenAPM safe subset (no anchors, no merge keys, no custom tags). All YAML ingestion goes through it.
 

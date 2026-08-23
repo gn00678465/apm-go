@@ -1496,10 +1496,9 @@ func TestMarketplaceValidate_CheckRefsPrintsPlaceholderWarning(t *testing.T) {
 	assertLineSeverity(t, withFlag, warning, ux.SymbolWarn)
 
 	// Every other line must be identical: strip the warning line (and its
-	// severity-symbol prefix, ux.SymbolWarn's own " ! " -- see
-	// assertLineSeverity) and diff what remains against the same
-	// invocation without the flag.
-	warningLine := " " + ux.SymbolWarn + " " + warning + "\n"
+	// Oracle-mirrored bracket prefix, "[!] " -- see assertLineSeverity) and
+	// diff what remains against the same invocation without the flag.
+	warningLine := "[" + ux.SymbolWarn + "] " + warning + "\n"
 	strippedWith := strings.Replace(withFlag, warningLine, "", 1)
 	if strippedWith != withoutFlag {
 		t.Errorf("output with --check-refs (warning line removed) = %q, want identical to without the flag %q", strippedWith, withoutFlag)

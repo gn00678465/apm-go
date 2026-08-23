@@ -43,6 +43,7 @@ type diffDetail struct {
 	ExitCode     *intDiff          `json:"exit_code,omitempty"`
 	Stdout       *stringDiff       `json:"stdout,omitempty"`
 	Stderr       *stringDiff       `json:"stderr,omitempty"`
+	ErrorBody    *stringDiff       `json:"error_body,omitempty"`
 	Tree         *treeDiffDetail   `json:"tree,omitempty"`
 	HelpSemantic *helpSemanticDiff `json:"help_semantic,omitempty"`
 }
@@ -81,8 +82,9 @@ type treeEntryChange struct {
 	New  TreeEntry `json:"new"`
 }
 
-// diffCase compares exit_code, normalized stdout, normalized stderr, and
-// tree. outDir/c.ID is used both to read each side's byte-exact stdout.bin/
+// diffCase compares exit_code, normalized stdout, normalized stderr,
+// error_body (ticket 10), and tree. outDir/c.ID is used both to read each
+// side's byte-exact stdout.bin/
 // stderr.bin (record.go's writeRawBodies always writes these, regardless of
 // size or UTF-8 validity) for the text fields, and to locate each side's
 // copied fs/ evidence for the tree's raw-byte comparison.
@@ -101,21 +103,48 @@ func diffCase(outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, dif
 		detail.ExitCode = &intDiff{Old: oracleRec.ExitCode, New: targetRec.ExitCode}
 	}
 
+	var oStdoutNorm, tStdoutNorm, oStderrNorm, tStderrNorm string
 	for _, f := range []struct {
-		name string
-		out  **stringDiff
+		name     string
+		out      **stringDiff
+		oNormOut *string
+		tNormOut *string
 	}{
-		{"stdout", &detail.Stdout},
-		{"stderr", &detail.Stderr},
+		{"stdout", &detail.Stdout, &oStdoutNorm, &tStdoutNorm},
+		{"stderr", &detail.Stderr, &oStderrNorm, &tStderrNorm},
 	} {
-		sd, differ, err := diffNormalizedField(oracleCaseDir, targetCaseDir, f.name, oCwd, oCfg, oHome, tCwd, tCfg, tHome, c.RewriteBinaryName)
+		oNorm, tNorm, sd, differ, err := normalizedField(oracleCaseDir, targetCaseDir, f.name, oCwd, oCfg, oHome, tCwd, tCfg, tHome, c.RewriteBinaryName)
 		if err != nil {
 			return CaseDiff{}, diffDetail{}, fmt.Errorf("case %s: comparing %s: %w", c.ID, f.name, err)
 		}
+		*f.oNormOut = oNorm
+		*f.tNormOut = tNorm
 		if differ {
 			fields = append(fields, f.name)
 			sdCopy := sd
 			*f.out = &sdCopy
+		}
+	}
+
+	// error_body (ticket 10): only meaningful when at least one side
+	// actually errored -- a case where both sides exit 0 has no "error" to
+	// compare, and computing it anyway would just compare two empty/
+	// incidental first-lines. This is deliberately independent of the
+	// stdout/stderr diff fields above: a channel/prefix-only difference (the
+	// Oracle's error on stdout with "[x] " vs. apm-go's on stderr with
+	// "Error: ") leaves error_body equal while stdout/stderr themselves
+	// still differ, so a waiver naming only stdout/stderr can never mask an
+	// actual wording or exit-code drift -- that would still show up here,
+	// unwaived.
+	if oracleRec.ExitCode != 0 || targetRec.ExitCode != 0 {
+		oBody := errorBody(oStdoutNorm, oStderrNorm)
+		tBody := errorBody(tStdoutNorm, tStderrNorm)
+		if oBody != tBody {
+			fields = append(fields, "error_body")
+			detail.ErrorBody = &stringDiff{
+				Raw:        stringOldNew{Old: oBody, New: tBody},
+				Normalized: stringOldNew{Old: oBody, New: tBody},
+			}
 		}
 	}
 
@@ -145,41 +174,79 @@ func diffCase(outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, dif
 	return cd, detail, nil
 }
 
-// diffNormalizedField reads <side-case-dir>/<field>.bin -- the byte-exact
-// raw capture, unconditionally written regardless of size or UTF-8
-// validity -- directly from disk for both sides and normalizes each with
-// that side's own sandbox paths. Reading straight from the .bin evidence
-// (rather than Record's inline Stdout/Stderr, which is capped at 64KiB and
-// omitted entirely for non-UTF-8 output) means every case gets normalized
-// the same way regardless of output size or encoding: falling back to
-// comparing un-normalized raw sha256 for large/non-UTF-8 bodies would make
-// such a case appear to differ purely because each side's sandbox got its
-// own unique temp path, never because of an actual behavioural difference.
+// normalizedField reads <side-case-dir>/<field>.bin -- the byte-exact raw
+// capture, unconditionally written regardless of size or UTF-8 validity --
+// directly from disk for both sides and normalizes each with that side's
+// own sandbox paths. Reading straight from the .bin evidence (rather than
+// Record's inline Stdout/Stderr, which is capped at 64KiB and omitted
+// entirely for non-UTF-8 output) means every case gets normalized the same
+// way regardless of output size or encoding: falling back to comparing
+// un-normalized raw sha256 for large/non-UTF-8 bodies would make such a
+// case appear to differ purely because each side's sandbox got its own
+// unique temp path, never because of an actual behavioural difference.
 // Go's string/regexp operations here work over the byte sequence as-is, so
 // this is safe even when the bytes aren't valid UTF-8. Whether the field
 // differs is decided on the NORMALIZED value only; the returned stringDiff
 // additionally carries the untouched raw old/new (ticket 02 attempt 2, D2)
-// so a reviewer never has to guess what the un-normalized bytes looked like.
-func diffNormalizedField(oracleCaseDir, targetCaseDir, field, oCwd, oCfg, oHome, tCwd, tCfg, tHome string, rewriteBinaryName bool) (sd stringDiff, differ bool, err error) {
+// so a reviewer never has to guess what the un-normalized bytes looked
+// like. oNorm/tNorm are always returned (even when the field doesn't
+// differ) so callers can derive further comparisons -- e.g. error_body
+// (ticket 10) -- from the same normalized text without re-reading/
+// re-normalizing it.
+func normalizedField(oracleCaseDir, targetCaseDir, field, oCwd, oCfg, oHome, tCwd, tCfg, tHome string, rewriteBinaryName bool) (oNorm, tNorm string, sd stringDiff, differ bool, err error) {
 	oRaw, err := os.ReadFile(filepath.Join(oracleCaseDir, field+".bin"))
 	if err != nil {
-		return stringDiff{}, false, fmt.Errorf("reading oracle %s: %w", field+".bin", err)
+		return "", "", stringDiff{}, false, fmt.Errorf("reading oracle %s: %w", field+".bin", err)
 	}
 	tRaw, err := os.ReadFile(filepath.Join(targetCaseDir, field+".bin"))
 	if err != nil {
-		return stringDiff{}, false, fmt.Errorf("reading target %s: %w", field+".bin", err)
+		return "", "", stringDiff{}, false, fmt.Errorf("reading target %s: %w", field+".bin", err)
 	}
 
-	oNorm := normalizeString(string(oRaw), oCwd, oCfg, oHome, rewriteBinaryName)
-	tNorm := normalizeString(string(tRaw), tCwd, tCfg, tHome, rewriteBinaryName)
+	oNorm = normalizeString(string(oRaw), oCwd, oCfg, oHome, rewriteBinaryName)
+	tNorm = normalizeString(string(tRaw), tCwd, tCfg, tHome, rewriteBinaryName)
 
 	if oNorm == tNorm {
-		return stringDiff{}, false, nil
+		return oNorm, tNorm, stringDiff{}, false, nil
 	}
-	return stringDiff{
+	return oNorm, tNorm, stringDiff{
 		Raw:        stringOldNew{Old: string(oRaw), New: string(tRaw)},
 		Normalized: stringOldNew{Old: oNorm, New: tNorm},
 	}, true, nil
+}
+
+// errorBodyPrefixes are the leading severity markers stripped from a case's
+// error_body before comparison (ticket 10): the Oracle's bracketed
+// STATUS_SYMBOLS ("[x] " error, "[!] " warning, utils/console.py:37-61) and
+// apm-go's pre-ticket-10 stderr contract ("Error: ", cobra's default
+// ErrPrefix(), and the bare "!" ux.Warn used before this ticket's oracleLine
+// switch). Longest-prefix-first so "[x] " isn't partially matched by a
+// shorter entry.
+var errorBodyPrefixes = []string{"[x] ", "[!] ", "Error: ", "!"}
+
+// errorBody extracts the first non-empty line of stdout-then-stderr
+// (already normalized by the caller) and strips one leading severity
+// prefix plus surrounding whitespace, so a channel/prefix-only difference
+// between the Oracle and apm-go leaves error_body equal even when the raw
+// stdout/stderr fields still differ.
+func errorBody(normalizedStdout, normalizedStderr string) string {
+	for _, line := range strings.Split(normalizedStdout+"\n"+normalizedStderr, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		return stripErrorBodyPrefix(line)
+	}
+	return ""
+}
+
+func stripErrorBodyPrefix(line string) string {
+	for _, p := range errorBodyPrefixes {
+		if rest, ok := strings.CutPrefix(line, p); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return line
 }
 
 // diffTrees compares two sides' Tree entries by path. Paths are already

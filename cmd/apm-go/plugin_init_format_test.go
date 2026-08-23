@@ -210,7 +210,11 @@ func TestPluginInit_PluginJSONOnly_StillWarnsAndRequiresYes(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	out := captureStderr(t, func() {
+	// Combined capture: the warning (ux.Warn) now lands on stdout (ticket 10
+	// decision A) while the progress line (ux.Info) stays on stderr -- this
+	// test only cares about their relative order, not which stream either is
+	// on.
+	out := captureInstallCombined(t, func() {
 		if err := runPluginInit(t, "my-plugin", "--yes", "--format", "claude-plugin"); err != nil {
 			t.Errorf("plugin init --yes: %v", err)
 		}

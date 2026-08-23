@@ -187,7 +187,8 @@ func TestDetectPluginNativeRoot_SymlinkedHooksJSON_Detected(t *testing.T) {
 // own body. This test drives pluginInitCmd() end-to-end against a directory
 // whose ONLY plugin-native source is hooks.json (no pluginNativeDirs
 // present, matching the mutation's `len(sources) == 1 && sources[0] ==
-// "hooks.json"` guard exactly) and asserts the warning still reaches stderr.
+// "hooks.json"` guard exactly) and asserts the warning still reaches stdout
+// (ticket 10 decision A: ux.Warn's channel).
 func TestPluginInitCmd_HooksJSONOnly_StillWarns(t *testing.T) {
 	dir := t.TempDir()
 	origDir, err := os.Getwd()
@@ -203,7 +204,7 @@ func TestPluginInitCmd_HooksJSONOnly_StillWarns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := captureStderr(t, func() {
+	out := captureUninstallStdout(t, func() {
 		cmd := pluginInitCmd()
 		cmd.SetArgs([]string{"my-plugin", "--yes", "--target", "claude"})
 		if err := cmd.Execute(); err != nil {

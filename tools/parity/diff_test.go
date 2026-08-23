@@ -71,6 +71,73 @@ func TestDiffCase_ExitCodeDiffers(t *testing.T) {
 	}
 }
 
+// TestDiffCase_ErrorBody_ChannelAndPrefixOnlyDifferenceLeavesErrorBodyEqual
+// is ticket 10's core error_body acceptance case: the Oracle's error on
+// stdout with a "[x] " prefix vs. apm-go's pre-ticket-10 contract of the
+// same wording on stderr with an "Error: " prefix. stdout and stderr both
+// genuinely differ (different channel), but error_body -- which strips the
+// prefix and compares the first non-empty line across (stdout ∪ stderr) --
+// must come out equal, so a waiver naming only stdout/stderr is legitimate.
+func TestDiffCase_ErrorBody_ChannelAndPrefixOnlyDifferenceLeavesErrorBodyEqual(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "[x] marketplace \"nope\" is not registered\n", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "Error: marketplace \"nope\" is not registered\n")
+
+	cd, detail := mustDiffCase(t, outDir, c, Record{ExitCode: 1}, Record{ExitCode: 1})
+	if !fieldsEqual(cd.Fields, []string{"stdout", "stderr"}) {
+		t.Fatalf("Fields = %v, want [stdout stderr] (error_body must NOT be among them)", cd.Fields)
+	}
+	if detail.ErrorBody != nil {
+		t.Errorf("detail.ErrorBody = %+v, want nil (channel/prefix-only difference)", detail.ErrorBody)
+	}
+}
+
+// TestDiffCase_ErrorBody_GenuineWordingDifferenceIsDetected proves
+// error_body is not a rubber stamp: once the prefix is stripped, a REAL
+// wording difference still shows up as its own field, unwaivable by a
+// stdout/stderr-only waiver entry.
+func TestDiffCase_ErrorBody_GenuineWordingDifferenceIsDetected(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "[x] Marketplace 'nope' is not registered.\n", "")
+	writeBinFiles(t, outDir, "target", "c1", "[x] marketplace \"nope\" is not registered\n", "")
+
+	cd, detail := mustDiffCase(t, outDir, c, Record{ExitCode: 1}, Record{ExitCode: 1})
+	if !containsStr(cd.Fields, "error_body") {
+		t.Fatalf("Fields = %v, want error_body among them", cd.Fields)
+	}
+	if detail.ErrorBody == nil {
+		t.Fatal("detail.ErrorBody = nil, want a diff")
+	}
+	if detail.ErrorBody.Normalized.Old != "Marketplace 'nope' is not registered." {
+		t.Errorf("ErrorBody.Old = %q", detail.ErrorBody.Normalized.Old)
+	}
+	if detail.ErrorBody.Normalized.New != "marketplace \"nope\" is not registered" {
+		t.Errorf("ErrorBody.New = %q", detail.ErrorBody.Normalized.New)
+	}
+}
+
+// TestDiffCase_ErrorBody_SkippedWhenBothSidesExitZero proves error_body is
+// only computed "for cases with non-zero exit on either side" (ticket 10
+// acceptance): two successful runs whose first stdout line happens to
+// differ must not spuriously grow an error_body field -- there is no error
+// to compare.
+func TestDiffCase_ErrorBody_SkippedWhenBothSidesExitZero(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "Installed 1 dependency\n", "")
+	writeBinFiles(t, outDir, "target", "c1", "Installed 2 dependencies\n", "")
+
+	cd, detail := mustDiffCase(t, outDir, c, Record{ExitCode: 0}, Record{ExitCode: 0})
+	if containsStr(cd.Fields, "error_body") {
+		t.Errorf("Fields = %v, want no error_body (both sides exit 0)", cd.Fields)
+	}
+	if detail.ErrorBody != nil {
+		t.Errorf("detail.ErrorBody = %+v, want nil", detail.ErrorBody)
+	}
+}
+
 func TestDiffCase_StdoutDiffersUsesNormalizedValue(t *testing.T) {
 	outDir := t.TempDir()
 	c := Case{ID: "c1"}

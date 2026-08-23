@@ -222,13 +222,13 @@ func TestRunUninstall_HashMismatchKeepsFileWithWarning(t *testing.T) {
 
 	// opts.Verbose is deliberately left false: the warning must not be
 	// gated behind --verbose (only removedFiles's "[-] ..." transcript is).
-	stderr := captureUninstallStderr(t, func() {
+	stdout := captureUninstallStdout(t, func() {
 		if err := runUninstall([]string{"acme/foo"}, uninstallOptions{}); err != nil {
 			t.Fatalf("runUninstall: %v", err)
 		}
 	})
-	if !strings.Contains(stderr, "modified since deploy (hash mismatch)") {
-		t.Errorf(`expected a stderr warning containing "modified since deploy (hash mismatch)" even without --verbose, got:\n%s`, stderr)
+	if !strings.Contains(stdout, "modified since deploy (hash mismatch)") {
+		t.Errorf(`expected a stdout warning containing "modified since deploy (hash mismatch)" even without --verbose, got:\n%s`, stdout)
 	}
 
 	got, err := os.ReadFile(editedPath)
@@ -1206,13 +1206,13 @@ func TestRunUninstall_LocalPathDependencyRemovesModulesLockAndDeployedFiles(t *t
 	}
 	writeUninstallLockfileFixture(t, lock)
 
-	stderr := captureUninstallStderr(t, func() {
+	stdout := captureUninstallStdout(t, func() {
 		if err := runUninstall([]string{"./dep-pkg"}, uninstallOptions{}); err != nil {
 			t.Fatalf("runUninstall: %v", err)
 		}
 	})
-	if !strings.Contains(stderr, "modified since deploy (hash mismatch)") {
-		t.Errorf(`expected a stderr warning containing "modified since deploy (hash mismatch)" for the hand-edited local-dep file, got:\n%s`, stderr)
+	if !strings.Contains(stdout, "modified since deploy (hash mismatch)") {
+		t.Errorf(`expected a stdout warning containing "modified since deploy (hash mismatch)" for the hand-edited local-dep file, got:\n%s`, stdout)
 	}
 
 	if _, err := os.Stat(filepath.Join(dir, ".agents", "agents", "depagent")); !os.IsNotExist(err) {
