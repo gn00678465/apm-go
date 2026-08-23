@@ -69,6 +69,16 @@ func TestLoadCases_MissingIDIsError(t *testing.T) {
 	}
 }
 
+func TestLoadCases_DuplicateIDIsError(t *testing.T) {
+	casesDir := t.TempDir()
+	writeCase(t, casesDir, "foo", `{"id": "dup", "argv": []}`)
+	writeCase(t, casesDir, "foo-v2", `{"id": "dup", "argv": []}`)
+
+	if _, err := LoadCases(casesDir); err == nil {
+		t.Fatal("expected error for duplicate case id, got nil")
+	}
+}
+
 func TestCase_FixtureDir(t *testing.T) {
 	casesDir := t.TempDir()
 	writeCase(t, casesDir, "with-fixture", `{"id": "with-fixture", "argv": []}`)

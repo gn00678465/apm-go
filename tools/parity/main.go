@@ -60,9 +60,11 @@ func main() {
 
 // resolveCmd splits an env var (or its default) on whitespace into command
 // parts. Neither default value nor documented overrides need quoting, so a
-// plain Fields split is sufficient here.
+// plain Fields split is sufficient here. A whitespace-only override falls
+// back to def too, rather than resolving to an empty argv that would later
+// panic on argv[0].
 func resolveCmd(envVar, def string) []string {
-	v := os.Getenv(envVar)
+	v := strings.TrimSpace(os.Getenv(envVar))
 	if v == "" {
 		v = def
 	}

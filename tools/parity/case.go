@@ -55,6 +55,7 @@ func LoadCases(casesDir string) ([]Case, error) {
 	sort.Strings(names)
 
 	var cases []Case
+	seenIDs := make(map[string]string, len(names))
 	for _, name := range names {
 		dir := filepath.Join(casesDir, name)
 		manifestPath := filepath.Join(dir, "case.json")
@@ -73,6 +74,13 @@ func LoadCases(casesDir string) ([]Case, error) {
 		if c.ID == "" {
 			return nil, fmt.Errorf("%s: case.json missing required \"id\"", manifestPath)
 		}
+		// Evidence is keyed purely by ID (<out>/<side>/<id>/...), so a
+		// duplicate would silently overwrite an earlier case's evidence
+		// instead of erroring.
+		if prevDir, ok := seenIDs[c.ID]; ok {
+			return nil, fmt.Errorf("%s: duplicate case id %q also used by %s", manifestPath, c.ID, prevDir)
+		}
+		seenIDs[c.ID] = dir
 		c.Dir = dir
 		cases = append(cases, c)
 	}

@@ -40,18 +40,13 @@ type Record struct {
 	StderrSHA256 string            `json:"stderr_sha256"`
 	StderrBytes  int               `json:"stderr_bytes"`
 	Tree         []TreeEntry       `json:"tree"`
-
-	// stdoutRaw/stderrRaw are the exact captured bytes, unexported so they
-	// never round-trip through JSON (Stdout/Stderr above are the JSON view,
-	// which lossily omits itself for large or non-UTF-8 bodies). writeRawBodies
-	// is what actually persists them.
-	stdoutRaw []byte
-	stderrRaw []byte
 }
 
 // NewRecord builds a Record from the exact bytes a subprocess wrote, deriving
 // the sha256/byte-count evidence and the (possibly absent) inline string view
-// for each of stdout/stderr.
+// for each of stdout/stderr. The raw bytes themselves are not retained on the
+// Record — callers pass them separately to writeRawBodies, which is what
+// actually persists them to <id>/stdout.bin and stderr.bin.
 func NewRecord(id string, argv []string, envDelta map[string]string, exitCode int, timedOut bool, stdoutRaw, stderrRaw []byte, tree []TreeEntry) Record {
 	return Record{
 		ID:           id,
@@ -66,8 +61,6 @@ func NewRecord(id string, argv []string, envDelta map[string]string, exitCode in
 		StderrSHA256: sha256Hex(stderrRaw),
 		StderrBytes:  len(stderrRaw),
 		Tree:         tree,
-		stdoutRaw:    stdoutRaw,
-		stderrRaw:    stderrRaw,
 	}
 }
 

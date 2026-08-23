@@ -180,6 +180,14 @@ func TestResolveCmd_DefaultsAndEnvOverride(t *testing.T) {
 		t.Errorf("resolveCmd default = %v", got)
 	}
 
+	// A whitespace-only override must fall back to the default rather than
+	// resolving to an empty argv, which would later panic on argv[0].
+	t.Setenv("APM_PARITY_TEST_CMD", "   ")
+	got = resolveCmd("APM_PARITY_TEST_CMD", "./bin/apm-go")
+	if len(got) != 1 || got[0] != "./bin/apm-go" {
+		t.Errorf("resolveCmd with whitespace-only override = %v, want default", got)
+	}
+
 	t.Setenv("APM_PARITY_TEST_CMD", "uv run --project /x apm")
 	got = resolveCmd("APM_PARITY_TEST_CMD", "./bin/apm-go")
 	want := []string{"uv", "run", "--project", "/x", "apm"}
