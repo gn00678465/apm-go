@@ -1,3 +1,5 @@
+//go:build unix
+
 package main
 
 import (
@@ -58,11 +60,20 @@ func runProcess(argv []string, env map[string]string, stdin string, cwd string, 
 		// fully written because Wait() only returns once the internal
 		// copy goroutines have finished draining the pipes.
 	case <-time.After(timeout):
-		timedOut = true
-		// Negative pid signals the whole process group, not just the
-		// direct child, so a subprocess it spawned cannot survive the kill.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-done // block until Wait() actually returns so the buffers are final
+		// select can still land here even if the process exited at the
+		// exact instant the timer fired (Go picks a ready case at random
+		// when more than one is ready). Re-check done without blocking
+		// before killing, so a race doesn't SIGKILL a pid the OS may have
+		// already reused for an unrelated process.
+		select {
+		case <-done:
+		default:
+			timedOut = true
+			// Negative pid signals the whole process group, not just the
+			// direct child, so a subprocess it spawned cannot survive the kill.
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			<-done // block until Wait() actually returns so the buffers are final
+		}
 	}
 
 	exitCode := -1

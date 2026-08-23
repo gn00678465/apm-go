@@ -1,3 +1,5 @@
+//go:build unix
+
 // Command parity runs every case under -cases against both the Oracle
 // (apm) and the Target (apm-go), isolated from the invoking user's real
 // environment, and writes one raw evidence record per side per case under
