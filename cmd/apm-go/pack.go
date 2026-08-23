@@ -42,6 +42,8 @@ func packCmd() *cobra.Command {
 		marketplaceFilter string
 		pathOverrideArgs  []string
 		verbose           bool
+		format            string
+		claudePlugin      bool
 	)
 
 	cmd := &cobra.Command{
@@ -65,6 +67,22 @@ nothing.`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// resolve_bundle_format runs before ANY producer, lockfile
+			// read/write, marketplace build, or output-directory creation
+			// (commands/pack.py:318-326; ticket 07 §D of .review/
+			// ticket-review.md) -- so this is the very first thing RunE
+			// does, ahead of even runPack's read-only apm.yml/lockfile
+			// probing.
+			bf, err := resolveBundleFormat(format, cmd.Flags().Changed("format"), claudePlugin, packFormatChoices)
+			if err != nil {
+				return withExitCode(2, err)
+			}
+			switch bf {
+			case pluginModeAgent:
+				return withExitCode(2, fmt.Errorf("bundle format 'agent-plugin' is not yet supported by apm-go; use --format claude-plugin"))
+			case bundleModeApm:
+				return withExitCode(2, fmt.Errorf("bundle format 'apm' is not yet supported by apm-go; use --format claude-plugin"))
+			}
 			return runPack(cmd, packOptions{
 				offline:           offline,
 				includePrerelease: includePrerelease,
@@ -73,9 +91,15 @@ nothing.`,
 				marketplaceFilter: marketplaceFilter,
 				pathOverrideArgs:  pathOverrideArgs,
 				verbose:           verbose,
+				bundleFormat:      bundleFormatLockValue(bf),
 			})
 		},
 	}
+	// Click turns a flag given without its value into a usage error (exit
+	// 2, "Option '--format' requires an argument."); cobra reports it as a
+	// plain parse error. Map it here so the CLI contract matches (shared
+	// with `plugin init`, cmd/apm-go/plugin.go).
+	setBundleFormatFlagErrorFunc(cmd)
 
 	cmd.Flags().BoolVar(&offline, "offline", false, "use cached refs only (no network); fails packages with a pinned ref/version instead of silently degrading")
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "include prerelease versions when resolving semver ranges")
@@ -84,6 +108,13 @@ nothing.`,
 	cmd.Flags().StringVarP(&marketplaceFilter, "marketplace", "m", "", "comma-separated marketplace outputs to build (e.g. 'claude,codex'); 'all' (default) builds every configured output, 'none' skips marketplace entirely")
 	cmd.Flags().StringArrayVar(&pathOverrideArgs, "marketplace-path", nil, "override the output path for a format: FORMAT=PATH (repeatable)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print extra diagnostics")
+	cmd.Flags().Var(bundleFormatChoiceValue{&format, packFormatChoices}, "format",
+		"Bundle format selector. 'agent-plugin' emits portable Agent Plugins v1; "+
+			"'plugin' is the compatibility alias for the legacy Claude plugin bundle; "+
+			"'claude' / 'claude-plugin' also emit that bundle; and 'apm' emits the "+
+			"legacy APM bundle layout. The current no-flag default is 'claude-plugin'. "+
+			"apm-go currently implements only the Claude plugin bundle; agent-plugin and apm are accepted but refused.")
+	cmd.Flags().BoolVar(&claudePlugin, "claude-plugin", false, "Select the legacy Claude plugin bundle output (current no-flag default).")
 	return cmd
 }
 
@@ -96,6 +127,11 @@ type packOptions struct {
 	marketplaceFilter string
 	pathOverrideArgs  []string
 	verbose           bool
+	// bundleFormat is the resolved --format/--claude-plugin selector's
+	// canonical BundleFormat.lock_value (bundleFormatLockValue, ticket
+	// 07) -- always "claude-plugin" today, since RunE refuses
+	// agent-plugin/apm before runPack is ever called.
+	bundleFormat string
 }
 
 // runPack reads apm.yml once, routes to whichever of the three producers
@@ -273,6 +309,7 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		SuppressMissingPluginJSONInfo: hasMarketplaceBlock,
 		Lockfile:                      lf,
 		LockfileNode:                  lockNode,
+		Format:                        opts.bundleFormat,
 	})
 	if err != nil {
 		return err

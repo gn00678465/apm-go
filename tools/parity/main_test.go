@@ -452,9 +452,11 @@ func TestRealCases_FixtureDirLoads(t *testing.T) {
 // oracle_commit matches the embedded oracle.pin, the reserved
 // negative-control taxonomy is only ever used on a case that itself
 // declares expected_taxonomy ["negative-control"], and (ticket 02 attempt
-// 2: "No bulk waivers") it contains EXACTLY the version and doctor-help
-// entries -- every search-* waiver ticket 05 attempt 1 added belongs to
-// ticket 05, not here.
+// 2: "No bulk waivers") it contains EXACTLY the version, doctor-help, and
+// (ticket 07: pack --format agent-plugin/apm refuse the unimplemented
+// exporters -- .review/ticket-review.md §D authorizes exactly these two
+// field-precise waivers) pack-refuse-agent-plugin/pack-refuse-apm entries --
+// no other case ever earns a bulk/wildcard waiver here.
 func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	pin, err := pinnedOracleCommit()
 	if err != nil {
@@ -482,7 +484,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	for _, w := range waivers {
 		gotIDs = append(gotIDs, w.ID)
 	}
-	wantIDs := []string{"version", "doctor-help"}
+	wantIDs := []string{"version", "doctor-help", "pack-refuse-agent-plugin", "pack-refuse-apm"}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)
 	}

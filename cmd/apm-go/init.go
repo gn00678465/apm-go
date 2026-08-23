@@ -77,15 +77,12 @@ var agentPluginMode = initMode{
 	nextSteps:     pluginNextSteps,
 }
 
-// pluginNextSteps is shared by both plugin modes (commands/init.py:322-327).
-// Intentional deviation (Finding 3, F10): upstream's second and third lines
-// name `apm pack --format agent-plugin|claude-plugin`; apm-go's pack has no
-// --format selector yet (spec Out of Scope), so the steps name the pack
-// command that actually exists rather than a flag that would fail. Restore
-// upstream's two lines when pack grows --format.
+// pluginNextSteps is shared by both plugin modes (commands/init.py:322-327),
+// apm-go spelled in place of apm.
 var pluginNextSteps = []string{
 	"Add dev dependencies:    apm-go install --dev <owner>/<repo>",
-	"Pack as plugin:          apm-go pack",
+	"Pack as Agent Plugins v1:             apm-go pack --format agent-plugin",
+	"Pack as Claude plugin:                apm-go pack --format claude-plugin",
 }
 
 // pluginNameRe is R3.3.a's kebab-case validation, matching upstream's

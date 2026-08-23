@@ -30,5 +30,58 @@
       "home/.apm",
       "home/.apm/config.json"
     ]
+  },
+  {
+    "id": "pack-refuse-agent-plugin",
+    "fields": [
+      "exit_code",
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "apm-go's pack command does not yet implement the Agent Plugins v1 exporter (bundle/formats.py BundleFormat.AGENT_PLUGIN / packer.py's agent-plugin route). `--format agent-plugin` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0) and writes a real Agent Plugin bundle (plugin.json, mcp.json, skills/, embedded apm.lock.yaml) under cwd/build/. Intentional deviation per .review/ticket-review.md §D: Claude path parity is closed; the Agent Plugin exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "§8.3 row 1 / §2.2",
+    "tree_paths": [
+      "cwd/build",
+      "cwd/build/pack-parity-fixture-1.0.0",
+      "cwd/build/pack-parity-fixture-1.0.0/apm.lock.yaml",
+      "cwd/build/pack-parity-fixture-1.0.0/mcp.json",
+      "cwd/build/pack-parity-fixture-1.0.0/plugin.json",
+      "cwd/build/pack-parity-fixture-1.0.0/skills",
+      "cwd/build/pack-parity-fixture-1.0.0/skills/hello",
+      "cwd/build/pack-parity-fixture-1.0.0/skills/hello/SKILL.md",
+      "home/.apm",
+      "home/.apm/config.json",
+      "home/.cache",
+      "home/.cache/apm",
+      "home/.cache/apm/last_version_check"
+    ]
+  },
+  {
+    "id": "pack-refuse-apm",
+    "fields": [
+      "exit_code",
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "apm-go's pack command does not yet implement the legacy APM bundle layout exporter (bundle/formats.py BundleFormat.APM / packer.py's apm route). `--format apm` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0, \"No deployed files found -- empty bundle created\" since this fixture has no per-target deployed artifacts) and writes a real (if minimal) APM-format bundle under cwd/build/. Intentional deviation per .review/ticket-review.md §D: Claude path parity is closed; the APM exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "§8.3 row 1 / §2.2",
+    "tree_paths": [
+      "cwd/build",
+      "cwd/build/pack-parity-fixture-1.0.0",
+      "cwd/build/pack-parity-fixture-1.0.0/apm.lock.yaml",
+      "home/.apm",
+      "home/.apm/config.json",
+      "home/.cache",
+      "home/.cache/apm",
+      "home/.cache/apm/last_version_check"
+    ]
   }
 ]

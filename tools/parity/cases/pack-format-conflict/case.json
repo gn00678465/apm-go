@@ -1,0 +1,5 @@
+{
+  "id": "pack-format-conflict",
+  "argv": ["pack", "--format", "agent-plugin", "--claude-plugin"],
+  "rewrite_binary_name": true
+}

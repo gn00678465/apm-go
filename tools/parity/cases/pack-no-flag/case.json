@@ -1,0 +1,5 @@
+{
+  "id": "pack-no-flag",
+  "argv": ["pack"],
+  "rewrite_binary_name": true
+}

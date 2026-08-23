@@ -71,6 +71,13 @@ type ProduceOptions struct {
 	// lockfile is not None").
 	Lockfile     *lockfile.Lockfile
 	LockfileNode *yaml.Node
+
+	// Format is the resolved selector's canonical BundleFormat.lock_value
+	// (bundle/formats.py:15-17, e.g. "claude-plugin"), embedded verbatim as
+	// the bundle lockfile's pack.format. Empty defaults to "claude-plugin"
+	// (embedPackLockfile) -- every caller of Produce today only ever
+	// builds the Claude-compatible bundle.
+	Format string
 }
 
 // ProduceResult mirrors Python's PackResult.
@@ -211,7 +218,7 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	}
 
 	if opts.Lockfile != nil {
-		if err := embedPackLockfile(absBundleDir, opts.Lockfile, opts.LockfileNode, opts.Target); err != nil {
+		if err := embedPackLockfile(absBundleDir, opts.Lockfile, opts.LockfileNode, opts.Target, opts.Format); err != nil {
 			return nil, err
 		}
 	}
@@ -470,7 +477,7 @@ func sanitizeBundleName(name string) string {
 // apm.lock.yaml itself) and writes apm.lock.yaml with an embedded pack:
 // section, mirroring export_plugin_bundle step 14b (plugin_exporter.py:
 // 632-660).
-func embedPackLockfile(bundleDir string, lf *lockfile.Lockfile, original *yaml.Node, target string) error {
+func embedPackLockfile(bundleDir string, lf *lockfile.Lockfile, original *yaml.Node, target, format string) error {
 	bundleFiles := map[string]string{}
 	walkErr := filepath.WalkDir(bundleDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {
@@ -500,7 +507,11 @@ func embedPackLockfile(bundleDir string, lf *lockfile.Lockfile, original *yaml.N
 	if effectiveTarget == "" {
 		effectiveTarget = "all"
 	}
-	meta := NewPackMetadata("plugin", effectiveTarget, bundleFiles)
+	effectiveFormat := format
+	if effectiveFormat == "" {
+		effectiveFormat = "claude-plugin"
+	}
+	meta := NewPackMetadata(effectiveFormat, effectiveTarget, bundleFiles)
 	enriched, err := EnrichLockfileForPack(lf, meta, original)
 	if err != nil {
 		return err

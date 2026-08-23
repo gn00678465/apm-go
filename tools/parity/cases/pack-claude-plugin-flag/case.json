@@ -1,0 +1,5 @@
+{
+  "id": "pack-claude-plugin-flag",
+  "argv": ["pack", "--claude-plugin"],
+  "rewrite_binary_name": true
+}

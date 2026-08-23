@@ -135,6 +135,23 @@ func quoteJoin(items []string) string {
 	return strings.Join(q, ", ")
 }
 
+// bundleFormatLockValue mirrors BundleFormat.lock_value (bundle/formats.py:
+// 15-17): the canonical string a resolved mode writes into an embedded
+// bundle's pack.format field. Total over all three modes even though only
+// pluginModeClaude is reachable through `apm-go pack` today (ticket 07) --
+// agent-plugin and apm are refused before any lockfile write -- so the
+// mapping stays an obvious 1:1 match with upstream's enum.
+func bundleFormatLockValue(mode string) string {
+	switch mode {
+	case pluginModeAgent:
+		return "agent-plugin"
+	case bundleModeApm:
+		return "apm"
+	default:
+		return "claude-plugin"
+	}
+}
+
 // bundleFormatChoiceValue is a pflag.Value whose Type() renders Click's
 // Choice metavar so `--help` shows e.g. "--format [plugin|agent-plugin|
 // claude|claude-plugin]" instead of cobra's default "--format string"
