@@ -1,9 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/spf13/cobra"
 )
 
@@ -58,15 +55,10 @@ func pluginInitCmd() *cobra.Command {
 	// Click turns a flag given without its value into a usage error
 	// (exit 2, "Option '--format' requires an argument."); cobra reports it
 	// as a plain parse error. Map it here so the CLI contract matches.
-	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
-		if name, ok := strings.CutPrefix(err.Error(), "flag needs an argument: "); ok {
-			return withExitCode(2, fmt.Errorf("Option '%s' requires an argument.", name))
-		}
-		return withExitCode(2, err)
-	})
+	setBundleFormatFlagErrorFunc(cmd)
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive prompts and use auto-detected defaults")
 	cmd.Flags().StringVar(&targetFlag, "target", "", "Comma-separated target list (skip prompt, write directly)")
-	cmd.Flags().Var(formatChoiceValue{&format}, "format",
+	cmd.Flags().Var(bundleFormatChoiceValue{&format, pluginFormatChoices}, "format",
 		"Plugin format. 'agent-plugin' selects portable Agent Plugins v1; 'plugin', 'claude', and 'claude-plugin' select the current Claude-compatible default.")
 	cmd.Flags().BoolVar(&claudePlugin, "claude-plugin", false, "Scaffold the legacy Claude-compatible layout (current no-flag default)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output")
