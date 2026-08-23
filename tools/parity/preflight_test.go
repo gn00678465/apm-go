@@ -244,6 +244,62 @@ func TestRun_PreflightSuccessDrivesRunCases(t *testing.T) {
 	}
 }
 
+// TestRun_RelativeTargetBinIsResolvedToAbsoluteBeforeCaseExecution is a
+// regression test for a latent bug: every case runs with cmd.Dir set to its
+// own sandbox cwd (sandbox.go), and a relative argv[0] containing a path
+// separator resolves against cmd.Dir, not this process's cwd -- so a
+// relative -target-bin (like the real default, "./bin/apm-go") would fail
+// to exec in every single case with "no such file or directory", forever,
+// regardless of actual Oracle/Target parity. Run() must resolve it to the
+// absolute path runPreflight already validated before any case executes.
+func TestRun_RelativeTargetBinIsResolvedToAbsoluteBeforeCaseExecution(t *testing.T) {
+	oracleDir, head := initGitRepo(t)
+	restore := SetPinnedOracleCommitForTest(head)
+	defer restore()
+
+	scriptDir := t.TempDir()
+	oracleBin := writeStubScript(t, scriptDir, "oracle.sh", `
+if [ "$1" = "--version" ]; then echo "oracle 1.0"; exit 0; fi
+echo "ran"; exit 0
+`)
+	writeStubScript(t, scriptDir, "target.sh", `
+if [ "$1" = "--version" ]; then echo "target 1.0"; exit 0; fi
+echo "ran"; exit 0
+`)
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(scriptDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(origWD); err != nil {
+			t.Fatalf("restoring cwd: %v", err)
+		}
+	}()
+
+	cfg := Config{
+		OracleCmd: []string{oracleBin, "--project", oracleDir},
+		TargetBin: []string{"./target.sh"}, // relative, on purpose
+		Timeout:   defaultTimeout,
+	}
+	casesDir := t.TempDir()
+	writeCase(t, casesDir, "c1", `{"id": "c1", "argv": []}`)
+	cfg.CasesDir = casesDir
+	cfg.OutDir = t.TempDir()
+
+	if err := Run(cfg); err != nil {
+		t.Fatalf("Run: %v, want the relative -target-bin to resolve and the case to actually run", err)
+	}
+
+	targetRec := readSoleJSONLRecord(t, filepath.Join(cfg.OutDir, "target.jsonl"))
+	if targetRec.ExitCode != 0 || targetRec.Stdout == nil || !strings.Contains(*targetRec.Stdout, "ran") {
+		t.Errorf("target record = %+v, want the stub to have actually executed", targetRec)
+	}
+}
+
 func TestPinnedOracleCommit_ValidatesEmbeddedPin(t *testing.T) {
 	pin, err := pinnedOracleCommit()
 	if err != nil {

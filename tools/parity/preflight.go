@@ -34,6 +34,7 @@ type preflightError struct{ err error }
 
 func (e *preflightError) Error() string { return e.err.Error() }
 func (e *preflightError) Unwrap() error { return e.err }
+func (e *preflightError) ExitCode() int { return 2 }
 
 // Preflight is the evidence proving a run compared the right two binaries:
 // the Oracle checkout is at the pinned commit and the Target binary is an

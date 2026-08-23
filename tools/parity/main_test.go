@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,16 +43,19 @@ exit 3
 		Timeout:   defaultTimeout,
 	}
 
-	// runCases (not Run) so this test exercises LoadCases/runCaseSide/the
-	// JSONL/run.json writers without also driving the Oracle/Target pin
-	// preflight (ticket 03, preflight_test.go), which needs a real git
-	// checkout to resolve APM_ORACLE_CMD's --project argument against.
+	// captureRun (not runCases/Run) so this test exercises LoadCases/
+	// runCaseSide/the JSONL/run.json writers without also driving ticket
+	// 02's diff/waiver-gate stage -- this test's oracle/target stubs
+	// deliberately differ, which runCases would now (correctly) fail on --
+	// or the Oracle/Target pin preflight (ticket 03, preflight_test.go),
+	// which needs a real git checkout to resolve APM_ORACLE_CMD's
+	// --project argument against.
 	preflight := Preflight{
 		OracleVersion: getVersion(cfg.OracleCmd, cfg.Timeout),
 		TargetVersion: getVersion(cfg.TargetBin, cfg.Timeout),
 	}
-	if err := runCases(cfg, preflight); err != nil {
-		t.Fatalf("runCases: %v", err)
+	if _, err := captureRun(cfg, preflight); err != nil {
+		t.Fatalf("captureRun: %v", err)
 	}
 
 	// run.json header.
@@ -205,6 +209,187 @@ func TestResolveCmd_DefaultsAndEnvOverride(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("resolveCmd[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestRunCases_UnwaivedDiffFailsGate proves ticket 02's core wiring: two
+// stubs that genuinely disagree, with no waiver in play, must fail
+// runCases with a plain error (main() falls through to exit 1 -- no
+// *preflightError/*waiverValidationError/*selfTestError involved).
+func TestRunCases_UnwaivedDiffFailsGate(t *testing.T) {
+	scriptDir := t.TempDir()
+	oracle := writeStubScript(t, scriptDir, "oracle.sh", `echo "oracle output"; exit 0`)
+	target := writeStubScript(t, scriptDir, "target.sh", `echo "target output"; exit 0`)
+
+	casesDir := t.TempDir()
+	writeCase(t, casesDir, "c1", `{"id": "c1", "argv": []}`)
+
+	cfg := Config{
+		CasesDir:    casesDir,
+		OutDir:      t.TempDir(),
+		OracleCmd:   []string{oracle},
+		TargetBin:   []string{target},
+		Timeout:     defaultTimeout,
+		WaiversPath: filepath.Join(t.TempDir(), "no-such-waivers.json"),
+	}
+
+	err := runCases(cfg, Preflight{OracleCommit: "pin"})
+	if err == nil {
+		t.Fatal("runCases: expected an unwaived-diff error, got nil")
+	}
+	var ec interface{ ExitCode() int }
+	if errors.As(err, &ec) {
+		t.Errorf("runCases error %v unexpectedly carries ExitCode() = %d, want a plain error (exit 1)", err, ec.ExitCode())
+	}
+
+	diffData, readErr := os.ReadFile(filepath.Join(cfg.OutDir, "diff.jsonl"))
+	if readErr != nil {
+		t.Fatalf("reading diff.jsonl: %v", readErr)
+	}
+	if !strings.Contains(string(diffData), `"stdout"`) {
+		t.Errorf("diff.jsonl = %s, want it to mention the stdout diff", diffData)
+	}
+}
+
+// TestRunCases_WaivedDiffPasses proves a fully-covering waiver both
+// silences the gate (runCases returns nil) AND still shows up as
+// waived:true in diff.jsonl (acceptance: "waivers are visible, not
+// hidden").
+func TestRunCases_WaivedDiffPasses(t *testing.T) {
+	scriptDir := t.TempDir()
+	oracle := writeStubScript(t, scriptDir, "oracle.sh", `echo "oracle output"; exit 0`)
+	target := writeStubScript(t, scriptDir, "target.sh", `echo "target output"; exit 0`)
+
+	casesDir := t.TempDir()
+	writeCase(t, casesDir, "c1", `{"id": "c1", "argv": []}`)
+
+	waiversPath := filepath.Join(t.TempDir(), "waivers.json")
+	if err := os.WriteFile(waiversPath, []byte(`[{"id":"c1","fields":["stdout"],"reason":"known diff","oracle_commit":"pin"}]`), 0o644); err != nil {
+		t.Fatalf("writing waivers.json: %v", err)
+	}
+
+	cfg := Config{
+		CasesDir:    casesDir,
+		OutDir:      t.TempDir(),
+		OracleCmd:   []string{oracle},
+		TargetBin:   []string{target},
+		Timeout:     defaultTimeout,
+		WaiversPath: waiversPath,
+	}
+
+	if err := runCases(cfg, Preflight{OracleCommit: "pin"}); err != nil {
+		t.Fatalf("runCases: %v, want nil (fully-covering waiver)", err)
+	}
+
+	diffData, err := os.ReadFile(filepath.Join(cfg.OutDir, "diff.jsonl"))
+	if err != nil {
+		t.Fatalf("reading diff.jsonl: %v", err)
+	}
+	var cd CaseDiff
+	if err := json.Unmarshal(bytes.TrimSpace(diffData), &cd); err != nil {
+		t.Fatalf("unmarshalling diff.jsonl: %v\n%s", err, diffData)
+	}
+	if !cd.Waived {
+		t.Errorf("diff.jsonl entry Waived = false, want true")
+	}
+	if !fieldsEqual(cd.Fields, []string{"stdout"}) {
+		t.Errorf("diff.jsonl entry Fields = %v, want [stdout] (waived, not hidden)", cd.Fields)
+	}
+}
+
+// TestRunCases_UnknownWaiverIDFailsExit2 proves a waivers.json referencing
+// a case id that was never loaded fails closed before any real diff logic
+// runs, via *waiverValidationError (main() exit 2).
+func TestRunCases_UnknownWaiverIDFailsExit2(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `exit 0`)
+
+	casesDir := t.TempDir()
+	writeCase(t, casesDir, "c1", `{"id": "c1", "argv": []}`)
+
+	waiversPath := filepath.Join(t.TempDir(), "waivers.json")
+	if err := os.WriteFile(waiversPath, []byte(`[{"id":"ghost","fields":["stdout"],"reason":"r","oracle_commit":"pin"}]`), 0o644); err != nil {
+		t.Fatalf("writing waivers.json: %v", err)
+	}
+
+	cfg := Config{
+		CasesDir:    casesDir,
+		OutDir:      t.TempDir(),
+		OracleCmd:   []string{stub},
+		TargetBin:   []string{stub},
+		Timeout:     defaultTimeout,
+		WaiversPath: waiversPath,
+	}
+
+	err := runCases(cfg, Preflight{OracleCommit: "pin"})
+	var we *waiverValidationError
+	if !errors.As(err, &we) {
+		t.Fatalf("runCases error %v is not a *waiverValidationError, so main() would not exit 2", err)
+	}
+}
+
+// TestRealCases_FixtureDirLoads is a regression check on the two product
+// case fixtures ticket 02 restores (acceptance: "The two product cases
+// from 01 (--version, doctor --help) remain").
+func TestRealCases_FixtureDirLoads(t *testing.T) {
+	cases, err := LoadCases("cases")
+	if err != nil {
+		t.Fatalf("LoadCases(\"cases\"): %v", err)
+	}
+
+	byID := make(map[string]Case, len(cases))
+	for _, c := range cases {
+		byID[c.ID] = c
+	}
+
+	version, ok := byID["version"]
+	if !ok {
+		t.Fatal(`cases/: missing the "version" case`)
+	}
+	if !fieldsEqual(version.Argv, []string{"--version"}) {
+		t.Errorf("version.Argv = %v, want [--version]", version.Argv)
+	}
+	if !fieldsEqual(version.ExpectedTaxonomy, []string{"negative-control"}) {
+		t.Errorf("version.ExpectedTaxonomy = %v, want [negative-control]", version.ExpectedTaxonomy)
+	}
+
+	doctorHelp, ok := byID["doctor-help"]
+	if !ok {
+		t.Fatal(`cases/: missing the "doctor-help" case`)
+	}
+	if !fieldsEqual(doctorHelp.Argv, []string{"doctor", "--help"}) {
+		t.Errorf("doctor-help.Argv = %v, want [doctor --help]", doctorHelp.Argv)
+	}
+}
+
+// TestRealWaiversJSON_ValidatesAgainstPin is a regression check that the
+// checked-in waivers.json is internally consistent: its "version" entry's
+// oracle_commit matches the embedded oracle.pin, and it never uses the
+// reserved negative-control taxonomy for any id other than the runner's
+// own version negative-control case.
+func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
+	pin, err := pinnedOracleCommit()
+	if err != nil {
+		t.Fatalf("pinnedOracleCommit: %v", err)
+	}
+
+	waivers, err := loadWaivers("waivers.json")
+	if err != nil {
+		t.Fatalf("loadWaivers: %v", err)
+	}
+	if len(waivers) == 0 {
+		t.Fatal("waivers.json: expected at least the version negative-control entry")
+	}
+
+	knownIDs := map[string]bool{"version": true, "doctor-help": true}
+	if err := validateWaivers(waivers, knownIDs, pin); err != nil {
+		t.Errorf("validateWaivers: %v", err)
+	}
+
+	for _, w := range waivers {
+		if w.Taxonomy == "negative-control" && w.ID != "version" {
+			t.Errorf("waiver %q uses reserved taxonomy negative-control; that tag is reserved for the version runner case", w.ID)
 		}
 	}
 }

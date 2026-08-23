@@ -1,0 +1,11 @@
+[
+  {
+    "id": "version",
+    "fields": ["stdout"],
+    "taxonomy": "negative-control",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "--version deliberately prints each binary's own name/version string; this case exists to prove the diff pipeline actually detects a real difference (a negative control), not to hide an unexplained product gap. Reserved for this runner case only -- never accept taxonomy negative-control on a product waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".review/spec-surface-gaps-and-parity-runner.md stories 29-32"
+  }
+]
