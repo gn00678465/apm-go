@@ -2,34 +2,24 @@
   {
     "id": "version",
     "fields": [
-      "stdout",
-      "tree"
+      "stdout"
     ],
     "taxonomy": "negative-control",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "--version deliberately prints each binary's own name/version string; this case exists to prove the diff pipeline actually detects a real difference (a negative control), not to hide an unexplained product gap. Reserved for this runner case only -- never accept taxonomy negative-control on a product waiver. Also covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json ({\"default_client\": \"vscode\"}, config.py:15) on ANY invocation, including --version; apm-go has no global config file. That is a real F09 product difference present in every case and is tracked as ticket 12 (global config parity), not hidden here.",
+    "reason": "--version deliberately prints each binary's own name/version string; this case exists to prove the diff pipeline actually detects a real difference (a negative control), not to hide an unexplained product gap. Reserved for this runner case only -- never accept taxonomy negative-control on a product waiver.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".review/spec-surface-gaps-and-parity-runner.md stories 29-32",
-    "tree_paths": [
-      "home/.apm",
-      "home/.apm/config.json"
-    ]
+    "eval_plan_ref": ".review/spec-surface-gaps-and-parity-runner.md stories 29-32"
   },
   {
     "id": "doctor-help",
     "fields": [
-      "stdout",
-      "tree"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Intentional rendering-library difference: upstream Click/Rich help and target Cobra/ux help use different Usage/Options/Flags ordering and wording. The doctor help semantic surface, flags, description, exit code, and non-TTY contract were compared separately; only stdout presentation is waived. Also covers the `tree` field for exactly the paths in tree_paths: the Oracle auto-creates home/.apm/config.json ({\"default_client\": \"vscode\"}, config.py:15) on ANY invocation, including --version; apm-go has no global config file. That is a real F09 product difference present in every case and is tracked as ticket 12 (global config parity), not hidden here.",
+    "reason": "Intentional rendering-library difference: upstream Click/Rich help and target Cobra/ux help use different Usage/Options/Flags ordering and wording. The doctor help semantic surface, flags, description, exit code, and non-TTY contract were compared separately; only stdout presentation is waived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".review/eval-plan.md §8.3 Rich/Clack vs ux/Cobra",
-    "tree_paths": [
-      "home/.apm",
-      "home/.apm/config.json"
-    ]
+    "eval_plan_ref": ".review/eval-plan.md §8.3 Rich/Clack vs ux/Cobra"
   },
   {
     "id": "pack-refuse-agent-plugin",

@@ -1,0 +1,27 @@
+[
+  {
+    "path": "home/.apm",
+    "reason": "The Oracle auto-creates ~/.apm (mode 0700) on ANY invocation via ensure_config_exists(), including --version. apm-go has no global config directory: config.json's only key ever written by ensure_config_exists is default_client (\"vscode\"), and get_default_client()/set_default_client() are the only readers -- apm-go has not ported the MCP client-selection commands that call them, so mirroring the file would create a file apm-go never reads. Decision B (ticket 12): baseline exclusion, not mirrored.",
+    "oracle_ref": "config.py:14 (CONFIG_DIR), config.py:24-42 (ensure_config_exists)"
+  },
+  {
+    "path": "home/.apm/config.json",
+    "reason": "The Oracle writes {\"default_client\": \"vscode\"} to ~/.apm/config.json (mode 0600) on ANY invocation via ensure_config_exists(), including --version -- called from config.get_config() (itself called by marketplace/registry.py on every registry lookup) and from marketplace/registry.py directly. apm-go has no global config file: the only apm-go command that reads a JSON key named default_client, or any other config.py key (auto_integrate, temp_dir, install_target, self_update_channel, allow_protocol_fallback, prefer_ssh, registries.*, external_scanners.*, mcp_registry_url), has not been ported. Mirroring the file would create a file apm-go never uses. Decision B (ticket 12): baseline exclusion, not mirrored.",
+    "oracle_ref": "config.py:15 (CONFIG_FILE), config.py:24-42 (ensure_config_exists)"
+  },
+  {
+    "path": "home/.cache",
+    "reason": "The Oracle auto-creates ~/.cache/apm/ the first time the post-command update check runs (get_update_cache_path()'s mkdir), on commands where _check_and_notify_updates() is wired into the CLI result callback (cli.py:178) -- not on every invocation (e.g. --version and --help short-circuit before the callback runs). apm-go has no self-update/version-check feature at all: check_for_updates, should_check_for_updates, and save_version_check_timestamp have no apm-go equivalent. Decision B (ticket 12): baseline exclusion, not mirrored.",
+    "oracle_ref": "utils/version_checker.py:261-271 (get_update_cache_path), commands/_helpers.py:453-486 (_check_and_notify_updates), cli.py:178 (call site)"
+  },
+  {
+    "path": "home/.cache/apm",
+    "reason": "See home/.cache: the same auto-created directory, one level down. apm-go has no update-check feature to mirror. Decision B (ticket 12): baseline exclusion, not mirrored.",
+    "oracle_ref": "utils/version_checker.py:261-271 (get_update_cache_path)"
+  },
+  {
+    "path": "home/.cache/apm/last_version_check",
+    "reason": "The Oracle touches ~/.cache/apm/last_version_check (save_version_check_timestamp()) whenever check_for_updates() runs and should_check_for_updates() finds no cache file or one older than 86400s -- gated by _check_and_notify_updates() in the CLI's post-command callback (cli.py:178), so it appears on commands that reach that callback (e.g. doctor) but not on --version/--help, which exit before it runs. apm-go has no self-update/version-check feature: no code path calls GitHub to compare versions or persists a check timestamp. Decision B (ticket 12): baseline exclusion, not mirrored.",
+    "oracle_ref": "utils/version_checker.py:301-308 (save_version_check_timestamp), utils/version_checker.py:311-338 (check_for_updates), commands/_helpers.py:453-486 (_check_and_notify_updates)"
+  }
+]

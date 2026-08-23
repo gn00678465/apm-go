@@ -74,6 +74,24 @@ type treeDiffDetail struct {
 	Added   []TreeEntry       `json:"added,omitempty"`
 	Removed []TreeEntry       `json:"removed,omitempty"`
 	Changed []treeEntryChange `json:"changed,omitempty"`
+	// BaselineExcluded lists entries that would otherwise have landed in
+	// Added/Removed/Changed but matched a tools/parity/baseline.json path
+	// (ticket 12): still captured evidence, but not counted toward the
+	// tree field differing. Kind on each entry is the side it was found on
+	// -- "removed" (Oracle-only), "added" (Target-only), or "changed"
+	// (present on both, differing) -- so a reviewer can tell which without
+	// re-deriving it from the raw fs/ evidence.
+	BaselineExcluded []baselineExcludedEntry `json:"baseline_excluded,omitempty"`
+}
+
+// baselineExcludedEntry is one tree entry a baseline.json path matched.
+// DiffKind records why it would otherwise have been Added/Removed/Changed;
+// Entry carries the Oracle-side (or, for an Added-only entry, Target-side)
+// TreeEntry so the excluded path's kind/size/sha256 are still visible.
+type baselineExcludedEntry struct {
+	Path     string    `json:"path"`
+	DiffKind string    `json:"diff_kind"`
+	Entry    TreeEntry `json:"entry"`
 }
 
 type treeEntryChange struct {
@@ -88,7 +106,7 @@ type treeEntryChange struct {
 // stderr.bin (record.go's writeRawBodies always writes these, regardless of
 // size or UTF-8 validity) for the text fields, and to locate each side's
 // copied fs/ evidence for the tree's raw-byte comparison.
-func diffCase(outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, diffDetail, error) {
+func diffCase(outDir string, c Case, oracleRec, targetRec Record, baseline map[string]bool) (CaseDiff, diffDetail, error) {
 	oracleCaseDir := filepath.Join(outDir, "oracle", c.ID)
 	targetCaseDir := filepath.Join(outDir, "target", c.ID)
 
@@ -150,8 +168,15 @@ func diffCase(outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, dif
 
 	oracleFSRoot := filepath.Join(oracleCaseDir, "fs")
 	targetFSRoot := filepath.Join(targetCaseDir, "fs")
-	if td, differ := diffTrees(oracleFSRoot, targetFSRoot, oracleRec.Tree, targetRec.Tree, oCwd, oCfg, oHome, tCwd, tCfg, tHome, c.RewriteBinaryName); differ {
+	if td, differ := diffTrees(oracleFSRoot, targetFSRoot, oracleRec.Tree, targetRec.Tree, oCwd, oCfg, oHome, tCwd, tCfg, tHome, c.RewriteBinaryName, baseline); differ {
 		fields = append(fields, "tree")
+		detail.Tree = &td
+	} else if len(td.BaselineExcluded) > 0 {
+		// No real (unexcluded) tree diff, but a baseline-excluded path was
+		// still found and is worth surfacing when this case's diff detail
+		// is written for some other reason. Not on its own enough to add
+		// "tree" to fields or to force writeDiffDetail for an otherwise
+		// clean case.
 		detail.Tree = &td
 	}
 
@@ -262,45 +287,58 @@ func stripErrorBodyPrefix(line string) string {
 // behavioural difference (ticket 02 attempt 2, bytes normalisation). Non-
 // file entries (dir/symlink) have no byte content to normalize, so they
 // still compare via kind/size/sha256 directly.
-func diffTrees(oracleFSRoot, targetFSRoot string, oTree, tTree []TreeEntry, oCwd, oCfg, oHome, tCwd, tCfg, tHome string, rewriteBinaryName bool) (treeDiffDetail, bool) {
+func diffTrees(oracleFSRoot, targetFSRoot string, oTree, tTree []TreeEntry, oCwd, oCfg, oHome, tCwd, tCfg, tHome string, rewriteBinaryName bool, baseline map[string]bool) (treeDiffDetail, bool) {
 	oMap := indexTreeByPath(oTree)
 	tMap := indexTreeByPath(tTree)
 
 	var added, removed []TreeEntry
 	var changed []treeEntryChange
+	var baselineExcluded []baselineExcludedEntry
 
 	for path, oe := range oMap {
 		te, ok := tMap[path]
 		if !ok {
+			if baseline[path] {
+				baselineExcluded = append(baselineExcluded, baselineExcludedEntry{Path: path, DiffKind: "removed", Entry: oe})
+				continue
+			}
 			removed = append(removed, oe)
 			continue
 		}
-		switch {
-		case oe.Kind != te.Kind:
-			changed = append(changed, treeEntryChange{Path: path, Old: oe, New: te})
-		case oe.Kind != "file":
-			if oe.Size != te.Size || oe.SHA256 != te.SHA256 {
-				changed = append(changed, treeEntryChange{Path: path, Old: oe, New: te})
-			}
-		case !normalizedFileBytesEqual(oracleFSRoot, targetFSRoot, path, oCwd, oCfg, oHome, tCwd, tCfg, tHome, rewriteBinaryName):
-			changed = append(changed, treeEntryChange{Path: path, Old: oe, New: te})
+		differs := oe.Kind != te.Kind ||
+			(oe.Kind != "file" && (oe.Size != te.Size || oe.SHA256 != te.SHA256)) ||
+			(oe.Kind == "file" && !normalizedFileBytesEqual(oracleFSRoot, targetFSRoot, path, oCwd, oCfg, oHome, tCwd, tCfg, tHome, rewriteBinaryName))
+		if !differs {
+			continue
 		}
+		if baseline[path] {
+			baselineExcluded = append(baselineExcluded, baselineExcludedEntry{Path: path, DiffKind: "changed", Entry: oe})
+			continue
+		}
+		changed = append(changed, treeEntryChange{Path: path, Old: oe, New: te})
 	}
 	for path, te := range tMap {
-		if _, ok := oMap[path]; !ok {
-			added = append(added, te)
+		if _, ok := oMap[path]; ok {
+			continue
 		}
+		if baseline[path] {
+			baselineExcluded = append(baselineExcluded, baselineExcludedEntry{Path: path, DiffKind: "added", Entry: te})
+			continue
+		}
+		added = append(added, te)
 	}
 
+	sort.Slice(baselineExcluded, func(i, j int) bool { return baselineExcluded[i].Path < baselineExcluded[j].Path })
+
 	if len(added) == 0 && len(removed) == 0 && len(changed) == 0 {
-		return treeDiffDetail{}, false
+		return treeDiffDetail{BaselineExcluded: baselineExcluded}, false
 	}
 
 	sortTreeEntries(added)
 	sortTreeEntries(removed)
 	sort.Slice(changed, func(i, j int) bool { return changed[i].Path < changed[j].Path })
 
-	return treeDiffDetail{Added: added, Removed: removed, Changed: changed}, true
+	return treeDiffDetail{Added: added, Removed: removed, Changed: changed, BaselineExcluded: baselineExcluded}, true
 }
 
 func indexTreeByPath(tree []TreeEntry) map[string]TreeEntry {

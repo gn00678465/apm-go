@@ -28,18 +28,20 @@ const (
 // Config is main()'s parsed input, factored out so Run is testable without
 // touching flag.CommandLine or the real environment.
 type Config struct {
-	CasesDir    string
-	OutDir      string
-	OracleCmd   []string
-	TargetBin   []string
-	Timeout     time.Duration
-	WaiversPath string // "" means the default sibling of CasesDir; see loadAndValidateWaivers.
+	CasesDir     string
+	OutDir       string
+	OracleCmd    []string
+	TargetBin    []string
+	Timeout      time.Duration
+	WaiversPath  string // "" means the default sibling of CasesDir; see loadAndValidateWaivers.
+	BaselinePath string // "" means the default sibling of CasesDir; see loadAndValidateBaseline.
 }
 
 func main() {
 	cases := flag.String("cases", "", "directory of case subdirectories, each with a case.json")
 	out := flag.String("out", "", "directory to write evidence into")
 	waivers := flag.String("waivers", "", "path to waivers.json (default: a \"waivers.json\" sibling of -cases)")
+	baseline := flag.String("baseline", "", "path to baseline.json (default: a \"baseline.json\" sibling of -cases)")
 	selftestOnly := flag.Bool("selftest-only", false, "run only the fault-injection self-test and exit (3 on failure)")
 	flag.Parse()
 
@@ -58,12 +60,13 @@ func main() {
 	}
 
 	cfg := Config{
-		CasesDir:    *cases,
-		OutDir:      *out,
-		OracleCmd:   resolveCmd("APM_ORACLE_CMD", defaultOracleCmd),
-		TargetBin:   resolveCmd("APM_TARGET_BIN", defaultTargetBin),
-		Timeout:     defaultTimeout,
-		WaiversPath: *waivers,
+		CasesDir:     *cases,
+		OutDir:       *out,
+		OracleCmd:    resolveCmd("APM_ORACLE_CMD", defaultOracleCmd),
+		TargetBin:    resolveCmd("APM_TARGET_BIN", defaultTargetBin),
+		Timeout:      defaultTimeout,
+		WaiversPath:  *waivers,
+		BaselinePath: *baseline,
 	}
 
 	if err := Run(cfg); err != nil {
@@ -193,6 +196,12 @@ func runCases(cfg Config, preflight Preflight) error {
 		return err
 	}
 
+	baselineEntries, err := loadAndValidateBaseline(cfg.CasesDir, cfg.BaselinePath)
+	if err != nil {
+		return err
+	}
+	baseline := baselinePathSet(baselineEntries)
+
 	pairs, err := captureRun(cfg, preflight)
 	if err != nil {
 		return err
@@ -200,7 +209,7 @@ func runCases(cfg Config, preflight Preflight) error {
 
 	diffs := make([]CaseDiff, 0, len(pairs))
 	for _, p := range pairs {
-		cd, detail, err := diffCase(cfg.OutDir, p.Case, p.Oracle, p.Target)
+		cd, detail, err := diffCase(cfg.OutDir, p.Case, p.Oracle, p.Target, baseline)
 		if err != nil {
 			return err
 		}

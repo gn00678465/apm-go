@@ -28,7 +28,16 @@ func writeBinFiles(t *testing.T, outDir, side, id, stdout, stderr string) {
 
 func mustDiffCase(t *testing.T, outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, diffDetail) {
 	t.Helper()
-	cd, detail, err := diffCase(outDir, c, oracleRec, targetRec)
+	cd, detail, err := diffCase(outDir, c, oracleRec, targetRec, nil)
+	if err != nil {
+		t.Fatalf("diffCase: %v", err)
+	}
+	return cd, detail
+}
+
+func mustDiffCaseWithBaseline(t *testing.T, outDir string, c Case, oracleRec, targetRec Record, baseline map[string]bool) (CaseDiff, diffDetail) {
+	t.Helper()
+	cd, detail, err := diffCase(outDir, c, oracleRec, targetRec, baseline)
 	if err != nil {
 		t.Fatalf("diffCase: %v", err)
 	}
@@ -294,6 +303,58 @@ func TestDiffCase_TreeRemovedFile(t *testing.T) {
 	}
 }
 
+// TestDiffCase_TreeBaselineExcludedPathIsNotATreeDiff proves an
+// Oracle-only path listed in baseline.json (ticket 12) is excluded from
+// the tree field entirely -- unlike a waiver, this applies without any
+// per-case tree_paths entry.
+func TestDiffCase_TreeBaselineExcludedPathIsNotATreeDiff(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	oracle := Record{Tree: []TreeEntry{{Path: "home/.apm/config.json", Kind: "file", Size: 1, SHA256: "x"}}}
+	target := Record{Tree: nil}
+	baseline := map[string]bool{"home/.apm/config.json": true}
+
+	cd, detail := mustDiffCaseWithBaseline(t, outDir, c, oracle, target, baseline)
+	if len(cd.Fields) != 0 {
+		t.Fatalf("Fields = %v, want none (baseline-excluded path must not count as a tree diff)", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.BaselineExcluded) != 1 || detail.Tree.BaselineExcluded[0].Path != "home/.apm/config.json" {
+		t.Errorf("detail.Tree = %+v, want one baseline_excluded entry", detail.Tree)
+	}
+	if detail.Tree.BaselineExcluded[0].DiffKind != "removed" {
+		t.Errorf("BaselineExcluded[0].DiffKind = %q, want %q", detail.Tree.BaselineExcluded[0].DiffKind, "removed")
+	}
+}
+
+// TestDiffCase_TreeBaselineExcludedPathAlongsideRealTreeDiff proves a
+// baseline-excluded path is dropped from Removed/Added/Changed even when
+// the case ALSO has a genuine, unwaived-by-baseline tree diff elsewhere:
+// the real diff still surfaces as "tree", and the excluded path is
+// reported separately rather than either hiding the real diff or being
+// swept into it.
+func TestDiffCase_TreeBaselineExcludedPathAlongsideRealTreeDiff(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	oracle := Record{Tree: []TreeEntry{{Path: "home/.apm/config.json", Kind: "file", Size: 1, SHA256: "x"}}}
+	target := Record{Tree: []TreeEntry{{Path: "cwd/build", Kind: "dir"}}}
+	baseline := map[string]bool{"home/.apm/config.json": true}
+
+	cd, detail := mustDiffCaseWithBaseline(t, outDir, c, oracle, target, baseline)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Fatalf("Fields = %v, want [tree] (real diff must still surface)", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.Added) != 1 || detail.Tree.Added[0].Path != "cwd/build" {
+		t.Errorf("detail.Tree.Added = %+v, want [cwd/build]", detail.Tree.Added)
+	}
+	if len(detail.Tree.BaselineExcluded) != 1 || detail.Tree.BaselineExcluded[0].Path != "home/.apm/config.json" {
+		t.Errorf("detail.Tree.BaselineExcluded = %+v, want [home/.apm/config.json]", detail.Tree.BaselineExcluded)
+	}
+}
+
 // TestDiffCase_SameShaButDifferentRawBytesIsATreeDiff proves the tree
 // comparison doesn't just trust TreeEntry.SHA256 equality (acceptance:
 // "raw bytes of every file present on both sides") -- it reads the actual
@@ -342,7 +403,7 @@ func TestDiffCase_MissingStdoutBinIsAnError(t *testing.T) {
 	c := Case{ID: "c1"}
 	// Neither side's stdout.bin/stderr.bin was written.
 
-	_, _, err := diffCase(outDir, c, Record{}, Record{})
+	_, _, err := diffCase(outDir, c, Record{}, Record{}, nil)
 	if err == nil {
 		t.Fatal("diffCase: expected an error when evidence files are missing, got nil")
 	}

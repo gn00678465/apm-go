@@ -83,7 +83,7 @@ func selfTestDiff(dir, id, oracleBody, targetBody string, timeout time.Duration)
 		return CaseDiff{}, err
 	}
 
-	cd, _, err := diffCase(caseDir, c, oracleRec, targetRec)
+	cd, _, err := diffCase(caseDir, c, oracleRec, targetRec, nil)
 	if err != nil {
 		return CaseDiff{}, err
 	}
