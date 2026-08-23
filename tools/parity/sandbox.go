@@ -19,6 +19,10 @@ type sandbox struct {
 	Cwd       string
 	Home      string
 	ConfigDir string
+	// LauncherCache is handed to the Oracle's launcher (uv) as UV_CACHE_DIR.
+	// It is deliberately NOT an evidence root: nothing under it is walked or
+	// copied, because it holds launcher state, not product state.
+	LauncherCache string
 }
 
 // newSandbox creates a fresh sandbox and, if fixtureDir is non-empty, copies
@@ -30,12 +34,13 @@ func newSandbox(fixtureDir string) (*sandbox, error) {
 	}
 
 	sb := &sandbox{
-		root:      root,
-		Cwd:       filepath.Join(root, "cwd"),
-		Home:      filepath.Join(root, "home"),
-		ConfigDir: filepath.Join(root, "config"),
+		root:          root,
+		Cwd:           filepath.Join(root, "cwd"),
+		Home:          filepath.Join(root, "home"),
+		ConfigDir:     filepath.Join(root, "config"),
+		LauncherCache: filepath.Join(root, "launcher-cache"),
 	}
-	for _, dir := range []string{sb.Cwd, sb.Home, sb.ConfigDir} {
+	for _, dir := range []string{sb.Cwd, sb.Home, sb.ConfigDir, sb.LauncherCache} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			os.RemoveAll(root)
 			return nil, fmt.Errorf("creating sandbox dir %s: %w", dir, err)

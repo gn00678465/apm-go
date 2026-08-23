@@ -15,7 +15,7 @@ func TestBuildEnv_AllowListAndFixedVars(t *testing.T) {
 	// is an allow-list and not "inherit everything".
 	t.Setenv("APM_PARITY_TEST_SECRET", "leak-me-not")
 
-	env := buildEnv(map[string]string{"CASE_VAR": "case-value"}, "/tmp/sandbox-home", "/tmp/sandbox-config")
+	env := buildEnv(map[string]string{"CASE_VAR": "case-value"}, "/tmp/sandbox-home", "/tmp/sandbox-config", "/tmp/sandbox-launchercache")
 
 	want := map[string]string{
 		"PATH":           "/fake/bin",
@@ -27,6 +27,12 @@ func TestBuildEnv_AllowListAndFixedVars(t *testing.T) {
 		"CASE_VAR":       "case-value",
 		"HOME":           "/tmp/sandbox-home",
 		"APM_CONFIG_DIR": "/tmp/sandbox-config",
+		// The Oracle is launched through `uv run`, and uv writes its own
+		// cache under $HOME/.cache/uv by default. That is the launcher's
+		// artefact, not the product's, and it must never land inside an
+		// evidence root -- so it is pinned to a sandbox dir OUTSIDE
+		// home/cwd/config (ticket 02 attempt 4, orchestrator fix).
+		"UV_CACHE_DIR": "/tmp/sandbox-launchercache",
 	}
 	for k, v := range want {
 		if env[k] != v {
@@ -49,10 +55,14 @@ func TestBuildEnv_CaseCannotOverrideIsolationVars(t *testing.T) {
 	env := buildEnv(map[string]string{
 		"HOME":           "/evil/home",
 		"APM_CONFIG_DIR": "/evil/config",
-	}, "/sandbox/home", "/sandbox/config")
+		"UV_CACHE_DIR":   "/evil/cache",
+	}, "/sandbox/home", "/sandbox/config", "/sandbox/launcher-cache")
 
 	if env["HOME"] != "/sandbox/home" {
 		t.Errorf("HOME = %q, want sandbox value to win", env["HOME"])
+	}
+	if env["UV_CACHE_DIR"] != "/sandbox/launcher-cache" {
+		t.Errorf("UV_CACHE_DIR = %q, want sandbox value to win", env["UV_CACHE_DIR"])
 	}
 	if env["APM_CONFIG_DIR"] != "/sandbox/config" {
 		t.Errorf("APM_CONFIG_DIR = %q, want sandbox value to win", env["APM_CONFIG_DIR"])
@@ -72,7 +82,7 @@ func TestBuildEnv_MissingAllowListedVarsAreOmitted(t *testing.T) {
 		}
 	})
 
-	env := buildEnv(nil, "/sandbox/home", "/sandbox/config")
+	env := buildEnv(nil, "/sandbox/home", "/sandbox/config", "/sandbox/launcher-cache")
 
 	if _, ok := env["LC_ALL"]; ok {
 		t.Errorf("LC_ALL present in env despite being unset: %q", env["LC_ALL"])

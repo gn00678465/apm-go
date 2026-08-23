@@ -19,7 +19,7 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 	}
 	defer sb.cleanup()
 
-	env := buildEnv(c.Env, sb.Home, sb.ConfigDir)
+	env := buildEnv(c.Env, sb.Home, sb.ConfigDir, sb.LauncherCache)
 
 	// Setup runs happen before the pre-run tree snapshot: they seed state
 	// (e.g. registering a marketplace) that Argv's own run depends on, and

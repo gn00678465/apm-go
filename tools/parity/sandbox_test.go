@@ -96,7 +96,7 @@ exit 0
 	}
 	defer sb.cleanup()
 
-	env := buildEnv(nil, sb.Home, sb.ConfigDir)
+	env := buildEnv(nil, sb.Home, sb.ConfigDir, sb.LauncherCache)
 	res := runProcess([]string{stub}, env, "", sb.Cwd, defaultTimeout)
 	if res.ExitCode != 0 {
 		t.Fatalf("stub exited %d, stderr=%q", res.ExitCode, res.Stderr)
