@@ -329,6 +329,90 @@ func TestRunCases_UnknownWaiverIDFailsExit2(t *testing.T) {
 	}
 }
 
+// TestRunCases_InvalidWaiverInvokesNeitherOracleNorTarget proves ticket 02
+// attempt 2's W2 fix: waivers.json is validated BEFORE any real case
+// executes, not merely before the gate decision at the end. The stub
+// scripts each touch a marker file the moment they're invoked; if
+// validation genuinely ran first, those markers must never appear.
+func TestRunCases_InvalidWaiverInvokesNeitherOracleNorTarget(t *testing.T) {
+	scriptDir := t.TempDir()
+	oracleMarker := filepath.Join(scriptDir, "oracle-invoked")
+	targetMarker := filepath.Join(scriptDir, "target-invoked")
+	oracle := writeStubScript(t, scriptDir, "oracle.sh", `touch `+oracleMarker+`; exit 0`)
+	target := writeStubScript(t, scriptDir, "target.sh", `touch `+targetMarker+`; exit 0`)
+
+	casesDir := t.TempDir()
+	writeCase(t, casesDir, "c1", `{"id": "c1", "argv": []}`)
+
+	waiversPath := filepath.Join(t.TempDir(), "waivers.json")
+	if err := os.WriteFile(waiversPath, []byte(`[{"id":"ghost","fields":["stdout"],"reason":"r","oracle_commit":"pin"}]`), 0o644); err != nil {
+		t.Fatalf("writing waivers.json: %v", err)
+	}
+
+	cfg := Config{
+		CasesDir:    casesDir,
+		OutDir:      filepath.Join(t.TempDir(), "out"),
+		OracleCmd:   []string{oracle},
+		TargetBin:   []string{target},
+		Timeout:     defaultTimeout,
+		WaiversPath: waiversPath,
+	}
+
+	err := runCases(cfg, Preflight{OracleCommit: "pin"})
+	var we *waiverValidationError
+	if !errors.As(err, &we) {
+		t.Fatalf("runCases error %v is not a *waiverValidationError, so main() would not exit 2", err)
+	}
+
+	if _, statErr := os.Stat(oracleMarker); !os.IsNotExist(statErr) {
+		t.Error("oracle stub was invoked despite an invalid waivers.json -- validation must run before any real case")
+	}
+	if _, statErr := os.Stat(targetMarker); !os.IsNotExist(statErr) {
+		t.Error("target stub was invoked despite an invalid waivers.json -- validation must run before any real case")
+	}
+	if _, statErr := os.Stat(cfg.OutDir); !os.IsNotExist(statErr) {
+		t.Errorf("%s exists after a waiver validation failure, want no output directory created", cfg.OutDir)
+	}
+}
+
+// TestRunCases_NegativeControlWaiverOnProductCaseFailsExit2 proves ticket 02
+// attempt 2's W3 fix through the full runCases flow: a case whose manifest
+// doesn't declare expected_taxonomy ["negative-control"] can't be waived
+// with that reserved taxonomy, even though the waiver otherwise fully
+// covers the diff and would exit 0 if accepted (eval-ticket-02.md's W3
+// reproducer, which previously got exit 0).
+func TestRunCases_NegativeControlWaiverOnProductCaseFailsExit2(t *testing.T) {
+	scriptDir := t.TempDir()
+	oracle := writeStubScript(t, scriptDir, "oracle.sh", `echo "oracle output"; exit 0`)
+	target := writeStubScript(t, scriptDir, "target.sh", `echo "target output"; exit 1`)
+
+	casesDir := t.TempDir()
+	// No expected_taxonomy: an ordinary product case, not a declared
+	// negative control.
+	writeCase(t, casesDir, "product", `{"id": "product", "argv": []}`)
+
+	waiversPath := filepath.Join(t.TempDir(), "waivers.json")
+	waiver := `[{"id":"product","fields":["stdout","exit_code"],"taxonomy":"negative-control","reason":"product negative-control probe","oracle_commit":"pin"}]`
+	if err := os.WriteFile(waiversPath, []byte(waiver), 0o644); err != nil {
+		t.Fatalf("writing waivers.json: %v", err)
+	}
+
+	cfg := Config{
+		CasesDir:    casesDir,
+		OutDir:      filepath.Join(t.TempDir(), "out"),
+		OracleCmd:   []string{oracle},
+		TargetBin:   []string{target},
+		Timeout:     defaultTimeout,
+		WaiversPath: waiversPath,
+	}
+
+	err := runCases(cfg, Preflight{OracleCommit: "pin"})
+	var we *waiverValidationError
+	if !errors.As(err, &we) {
+		t.Fatalf("runCases error %v is not a *waiverValidationError, so main() would not exit 2 (negative-control must be rejected for a product case)", err)
+	}
+}
+
 // TestRealCases_FixtureDirLoads is a regression check on the two product
 // case fixtures ticket 02 restores (acceptance: "The two product cases
 // from 01 (--version, doctor --help) remain").
@@ -364,10 +448,13 @@ func TestRealCases_FixtureDirLoads(t *testing.T) {
 }
 
 // TestRealWaiversJSON_ValidatesAgainstPin is a regression check that the
-// checked-in waivers.json is internally consistent: its "version" entry's
-// oracle_commit matches the embedded oracle.pin, and it never uses the
-// reserved negative-control taxonomy for any id other than the runner's
-// own version negative-control case.
+// checked-in waivers.json is internally consistent: every entry's
+// oracle_commit matches the embedded oracle.pin, the reserved
+// negative-control taxonomy is only ever used on a case that itself
+// declares expected_taxonomy ["negative-control"], and (ticket 02 attempt
+// 2: "No bulk waivers") it contains EXACTLY the version and doctor-help
+// entries -- every search-* waiver ticket 05 attempt 1 added belongs to
+// ticket 05, not here.
 func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	pin, err := pinnedOracleCommit()
 	if err != nil {
@@ -378,25 +465,25 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadWaivers: %v", err)
 	}
-	if len(waivers) == 0 {
-		t.Fatal("waivers.json: expected at least the version negative-control entry")
-	}
 
 	cases, err := LoadCases("cases")
 	if err != nil {
 		t.Fatalf("LoadCases(\"cases\"): %v", err)
 	}
-	knownIDs := make(map[string]bool, len(cases))
+	byID := make(map[string]Case, len(cases))
 	for _, c := range cases {
-		knownIDs[c.ID] = true
+		byID[c.ID] = c
 	}
-	if err := validateWaivers(waivers, knownIDs, pin); err != nil {
+	if err := validateWaivers(waivers, byID, pin); err != nil {
 		t.Errorf("validateWaivers: %v", err)
 	}
 
+	gotIDs := make([]string, 0, len(waivers))
 	for _, w := range waivers {
-		if w.Taxonomy == "negative-control" && w.ID != "version" {
-			t.Errorf("waiver %q uses reserved taxonomy negative-control; that tag is reserved for the version runner case", w.ID)
-		}
+		gotIDs = append(gotIDs, w.ID)
+	}
+	wantIDs := []string{"version", "doctor-help"}
+	if !fieldsEqual(gotIDs, wantIDs) {
+		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)
 	}
 }

@@ -103,11 +103,54 @@ func TestDiffCase_StdoutGenuinelyDiffers(t *testing.T) {
 	if !fieldsEqual(cd.Fields, []string{"stdout"}) {
 		t.Fatalf("Fields = %v, want [stdout]", cd.Fields)
 	}
-	if detail.Stdout == nil || detail.Stdout.Old != "usage: apm [OPTIONS]" || detail.Stdout.New != "usage: apm-go [OPTIONS]" {
-		t.Errorf("detail.Stdout = %+v", detail.Stdout)
+	if detail.Stdout == nil || detail.Stdout.Raw.Old != "usage: apm [OPTIONS]" || detail.Stdout.Raw.New != "usage: apm-go [OPTIONS]" {
+		t.Errorf("detail.Stdout.Raw = %+v", detail.Stdout)
+	}
+	if detail.Stdout == nil || detail.Stdout.Normalized.Old != "usage: apm [OPTIONS]" || detail.Stdout.Normalized.New != "usage: apm-go [OPTIONS]" {
+		t.Errorf("detail.Stdout.Normalized = %+v, want unchanged (no sandbox paths present)", detail.Stdout)
 	}
 	if !containsStr(cd.Taxonomy.Heuristic, "F01") {
 		t.Errorf("Heuristic = %v, want to contain F01 for a --help case", cd.Taxonomy.Heuristic)
+	}
+}
+
+// TestDiffCase_DiffDetailKeepsRawAndNormalizedOldNew proves ticket 02
+// attempt 2's D2 fix: diff/<id>.json's stdout detail keeps the untouched
+// raw old/new (as actually printed, sandbox paths and all) ALONGSIDE the
+// normalized old/new used to decide the field differs -- not the
+// normalized value in place of the raw one (eval-ticket-02.md's D2
+// finding: the previous attempt stored only the normalized value, so a raw
+// hex commit like "c8d6cdec" had already been rewritten to "<SHA>" in the
+// evidence a reviewer would read).
+func TestDiffCase_DiffDetailKeepsRawAndNormalizedOldNew(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	oracleHome := "/tmp/apm-parity-oracle/home"
+	targetHome := "/tmp/apm-parity-target/home"
+	writeBinFiles(t, outDir, "oracle", "c1", "path: /tmp/apm-parity-oracle/cwd/f exit 0", "")
+	writeBinFiles(t, outDir, "target", "c1", "path: /tmp/apm-parity-target/cwd/f exit 1", "")
+
+	oracle := Record{EnvDelta: map[string]string{"HOME": oracleHome}}
+	target := Record{EnvDelta: map[string]string{"HOME": targetHome}}
+
+	cd, detail := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"stdout"}) {
+		t.Fatalf("Fields = %v, want [stdout]", cd.Fields)
+	}
+	if detail.Stdout == nil {
+		t.Fatal("detail.Stdout = nil")
+	}
+	if detail.Stdout.Raw.Old != "path: /tmp/apm-parity-oracle/cwd/f exit 0" {
+		t.Errorf("Raw.Old = %q, want the untouched raw bytes", detail.Stdout.Raw.Old)
+	}
+	if detail.Stdout.Raw.New != "path: /tmp/apm-parity-target/cwd/f exit 1" {
+		t.Errorf("Raw.New = %q, want the untouched raw bytes", detail.Stdout.Raw.New)
+	}
+	if detail.Stdout.Normalized.Old != "path: <TMP>/f exit 0" {
+		t.Errorf("Normalized.Old = %q, want the sandbox path normalized away", detail.Stdout.Normalized.Old)
+	}
+	if detail.Stdout.Normalized.New != "path: <TMP>/f exit 1" {
+		t.Errorf("Normalized.New = %q, want the sandbox path normalized away", detail.Stdout.Normalized.New)
 	}
 }
 
@@ -240,12 +283,96 @@ func TestDiffCase_MissingStdoutBinIsAnError(t *testing.T) {
 
 func writeFSFile(t *testing.T, outDir, side, id, relPath, content string) {
 	t.Helper()
+	writeFSFileBytes(t, outDir, side, id, relPath, []byte(content))
+}
+
+func writeFSFileBytes(t *testing.T, outDir, side, id, relPath string, content []byte) {
+	t.Helper()
 	full := filepath.Join(outDir, side, id, "fs", filepath.FromSlash(relPath))
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(full, content, 0o644); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+}
+
+// TestDiffCase_TreeFileNormalizesSandboxPathBeforeByteCompare proves ticket
+// 02 attempt 2's bytes-normalisation fix: a text file that merely stores
+// its own sandbox's absolute cwd (e.g. a registry manifest recording the
+// fixture dir it was seeded from) must NOT show as a tree diff purely
+// because each side's sandbox got a different-length temp path -- even
+// though that gives the two sides genuinely different raw bytes, size, and
+// sha256 at capture time.
+func TestDiffCase_TreeFileNormalizesSandboxPathBeforeByteCompare(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+
+	oracleHome := "/tmp/apm-parity-oracle/home"
+	targetHome := "/tmp/apm-parity-target/home"
+	oracle := Record{
+		Tree:     []TreeEntry{{Path: "config/registry.json", Kind: "file", Size: 55, SHA256: "oracle-sha-differs-because-cwd-length-differs"}},
+		EnvDelta: map[string]string{"HOME": oracleHome},
+	}
+	target := Record{
+		Tree:     []TreeEntry{{Path: "config/registry.json", Kind: "file", Size: 55, SHA256: "target-sha-differs-because-cwd-length-differs"}},
+		EnvDelta: map[string]string{"HOME": targetHome},
+	}
+
+	writeFSFile(t, outDir, "oracle", "c1", "config/registry.json", `{"fixture":"/tmp/apm-parity-oracle/cwd/fixture"}`)
+	writeFSFile(t, outDir, "target", "c1", "config/registry.json", `{"fixture":"/tmp/apm-parity-target/cwd/fixture"}`)
+
+	cd, _ := mustDiffCase(t, outDir, c, oracle, target)
+	if len(cd.Fields) != 0 {
+		t.Errorf("Fields = %v, want none: registry file differs only by each side's own sandbox cwd", cd.Fields)
+	}
+}
+
+// TestDiffCase_TreeFileGenuineTextDriftStillDetected proves the
+// normalisation fix doesn't paper over a real difference: two text files
+// whose content differs for a reason OTHER than the sandbox path must still
+// surface as a tree diff.
+func TestDiffCase_TreeFileGenuineTextDriftStillDetected(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	entry := TreeEntry{Path: "config/registry.json", Kind: "file", Size: 10, SHA256: "sha"}
+	oracle := Record{Tree: []TreeEntry{entry}}
+	target := Record{Tree: []TreeEntry{entry}}
+
+	writeFSFile(t, outDir, "oracle", "c1", "config/registry.json", `{"n":1}`)
+	writeFSFile(t, outDir, "target", "c1", "config/registry.json", `{"n":2}`)
+
+	cd, detail := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Fatalf("Fields = %v, want [tree]: genuine content drift, not sandbox-path noise", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.Changed) != 1 {
+		t.Errorf("detail.Tree = %+v, want one changed entry", detail.Tree)
+	}
+}
+
+// TestDiffCase_TreeFileNonUTF8ComparedRaw proves binary tree files are
+// compared as raw bytes, never run through normalizeString/UTF-8 decoding
+// (acceptance: "binary files compare raw").
+func TestDiffCase_TreeFileNonUTF8ComparedRaw(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	entry := TreeEntry{Path: "cwd/f.bin", Kind: "file", Size: 2, SHA256: "sha"}
+	oracle := Record{Tree: []TreeEntry{entry}}
+	target := Record{Tree: []TreeEntry{entry}}
+
+	writeFSFileBytes(t, outDir, "oracle", "c1", "cwd/f.bin", []byte{0xff, 0x00})
+	writeFSFileBytes(t, outDir, "target", "c1", "cwd/f.bin", []byte{0xff, 0x01})
+
+	cd, _ := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Errorf("Fields = %v, want [tree]: genuinely different non-UTF-8 bytes", cd.Fields)
 	}
 }
 

@@ -11,135 +11,14 @@
     "eval_plan_ref": ".review/spec-surface-gaps-and-parity-runner.md stories 29-32"
   },
   {
-    "id": "search-missing-at",
-    "fields": [
-      "stdout",
-      "stderr"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Two compounding, deliberate differences, both framework-level: (1) the Oracle's error path prints via its rich/colorama console -- stdout, prefixed '[x] ', before sys.exit(1) -- while apm-go's RunE-returned error lands on stderr via cobra's own 'Error: ' prefix, the same stream/prefix shape every erroring command in this codebase already has (see marketplaceNotRegisteredErr's callers in marketplace.go). (2) The message text itself intentionally reads 'apm-go search security@skills' -- ticket 05's sanctioned wording deviation (search.go's package doc comment) -- not a literal 'apm-go marketplace search security@skills' transliteration of the Oracle's alias-invariant hardcoded string, since apm-go's search has no marketplace-group alias to point users at.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-empty-query",
-    "fields": [
-      "stdout",
-      "stderr"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same compounding stream/prefix and hint-wording differences as search-missing-at (see that entry): Oracle prints '[x] Both QUERY and MARKETPLACE are required...apm marketplace search security@skills' to stdout before sys.exit(1); apm-go returns the ticket-specified 'apm-go search security@skills' wording as a RunE error, landing on stderr with cobra's 'Error: ' prefix.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-empty-marketplace",
-    "fields": [
-      "stdout",
-      "stderr"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same compounding stream/prefix and hint-wording differences as search-missing-at (see that entry), exercising the 'empty MARKETPLACE side' branch of the same both-required check instead of the empty-QUERY side.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-unknown-marketplace",
-    "fields": [
-      "stdout",
-      "stderr",
-      "tree"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same compounding stream/prefix difference as search-missing-at (Oracle: stdout, '[x] ' prefix, before sys.exit(1); apm-go: stderr, cobra's 'Error: ' prefix). The message text itself matches verbatim otherwise -- 'apm-go marketplace list' is copied from the Oracle's 'apm marketplace list' unchanged (the marketplace group itself is not renamed), so this waiver covers only the stream/prefix shape, not a wording deviation. Additionally, the setup_argv 'marketplace add ./fixture --name skills' step writes config/marketplaces.json only on the Target side's APM_CONFIG_DIR: the Oracle's registry.py never reads that env var (it always resolves to $HOME/.apm, per internal/marketplace/registry.go's own RegistryPath doc comment noting apm-go additionally honors APM_CONFIG_DIR for test isolation, an accepted apm-go-only convenience) -- so the Oracle's registry file lands under the sandbox HOME tree, which the runner's tree walk never covers (only cwd/ and config/ are walked), while the Target's lands under config/ and is captured as an 'added' tree entry.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-last-at-split",
-    "fields": [
-      "stdout",
-      "tree"
-    ],
-    "taxonomy": "rendering",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Both sides reach the same zero-results warning (proving the query correctly split on the LAST '@', not the first -- see cmd/apm-go/search_test.go's TestSearchCmd_SplitsOnLastAt for a byte-level assertion on the actual marketplace name resolved), but Oracle's rich Console word-wraps and colors '[!] No plugins found...' while apm-go's ux.Warn does not -- the same accepted visual-styling gap as search-zero-results (see that entry). Additionally, the setup_argv 'marketplace add ./fixture --name skills' step writes config/marketplaces.json only on the Target side's APM_CONFIG_DIR: the Oracle's registry.py never reads that env var (it always resolves to $HOME/.apm, per internal/marketplace/registry.go's own RegistryPath doc comment noting apm-go additionally honors APM_CONFIG_DIR for test isolation, an accepted apm-go-only convenience) -- so the Oracle's registry file lands under the sandbox HOME tree, which the runner's tree walk never covers (only cwd/ and config/ are walked), while the Target's lands under config/ and is captured as an 'added' tree entry.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-basic-hit",
-    "fields": [
-      "stdout",
-      "tree"
-    ],
-    "taxonomy": "rendering",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Both sides find the same single name-matched plugin, but render it through different table engines: Oracle's rich.Table (HEAVY_HEAD box, ANSI styling) vs apm-go's ux.Table (lipgloss rounded border) -- the identical byte-level visual difference marketplace_browse_table.go's renderBrowseTable already documents and accepts for `marketplace browse`. Match content/order is verified directly against apm-go's own output in cmd/apm-go/search_test.go's TestSearchCmd_MatchesByName, not via Oracle byte comparison. Additionally, the setup_argv 'marketplace add ./fixture --name skills' step writes config/marketplaces.json only on the Target side's APM_CONFIG_DIR: the Oracle's registry.py never reads that env var (it always resolves to $HOME/.apm, per internal/marketplace/registry.go's own RegistryPath doc comment noting apm-go additionally honors APM_CONFIG_DIR for test isolation, an accepted apm-go-only convenience) -- so the Oracle's registry file lands under the sandbox HOME tree, which the runner's tree walk never covers (only cwd/ and config/ are walked), while the Target's lands under config/ and is captured as an 'added' tree entry.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-tag-hit",
-    "fields": [
-      "stdout",
-      "tree"
-    ],
-    "taxonomy": "rendering",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same accepted rich.Table-vs-ux.Table visual-styling difference as search-basic-hit (see that entry), here for a tag-only match. Verified directly in cmd/apm-go/search_test.go's TestSearchCmd_MatchesByTag. Additionally, the setup_argv 'marketplace add ./fixture --name skills' step writes config/marketplaces.json only on the Target side's APM_CONFIG_DIR: the Oracle's registry.py never reads that env var (it always resolves to $HOME/.apm, per internal/marketplace/registry.go's own RegistryPath doc comment noting apm-go additionally honors APM_CONFIG_DIR for test isolation, an accepted apm-go-only convenience) -- so the Oracle's registry file lands under the sandbox HOME tree, which the runner's tree walk never covers (only cwd/ and config/ are walked), while the Target's lands under config/ and is captured as an 'added' tree entry.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-description-truncation",
-    "fields": [
-      "stdout",
-      "tree"
-    ],
-    "taxonomy": "rendering",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same accepted rich.Table-vs-ux.Table visual-styling difference as search-basic-hit (see that entry). The 57-char + '...' truncation rule itself (Oracle __init__.py:1417-1419) is ported exactly and verified byte-for-byte in cmd/apm-go/search_test.go's TestTruncateSearchDescription, independent of the table's surrounding box styling. Additionally, the setup_argv 'marketplace add ./fixture --name skills' step writes config/marketplaces.json only on the Target side's APM_CONFIG_DIR: the Oracle's registry.py never reads that env var (it always resolves to $HOME/.apm, per internal/marketplace/registry.go's own RegistryPath doc comment noting apm-go additionally honors APM_CONFIG_DIR for test isolation, an accepted apm-go-only convenience) -- so the Oracle's registry file lands under the sandbox HOME tree, which the runner's tree walk never covers (only cwd/ and config/ are walked), while the Target's lands under config/ and is captured as an 'added' tree entry.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-limit-1",
-    "fields": [
-      "stdout",
-      "tree"
-    ],
-    "taxonomy": "rendering",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same accepted rich.Table-vs-ux.Table visual-styling difference as search-basic-hit (see that entry). That --limit truncates the already-matched result set to the first manifest-order match is verified directly in cmd/apm-go/search_test.go's TestSearchCmd_LimitAppliedAfterMatching. Additionally, the setup_argv 'marketplace add ./fixture --name skills' step writes config/marketplaces.json only on the Target side's APM_CONFIG_DIR: the Oracle's registry.py never reads that env var (it always resolves to $HOME/.apm, per internal/marketplace/registry.go's own RegistryPath doc comment noting apm-go additionally honors APM_CONFIG_DIR for test isolation, an accepted apm-go-only convenience) -- so the Oracle's registry file lands under the sandbox HOME tree, which the runner's tree walk never covers (only cwd/ and config/ are walked), while the Target's lands under config/ and is captured as an 'added' tree entry.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-zero-results",
-    "fields": [
-      "stdout",
-      "tree"
-    ],
-    "taxonomy": "rendering",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Both sides warn and exit 0 with no matches, but Oracle's rich Console word-wraps and colors '[!] No plugins found matching...apm marketplace browse skills...' while apm-go's ux.Warn prints one unwrapped, differently-styled line reading '...apm-go marketplace browse skills...' (the 'apm'->'apm-go' substitution the ticket explicitly allows in this hint). Message content is verified directly in cmd/apm-go/search_test.go's TestSearchCmd_ZeroResultsWarningAndExit0. Additionally, the setup_argv 'marketplace add ./fixture --name skills' step writes config/marketplaces.json only on the Target side's APM_CONFIG_DIR: the Oracle's registry.py never reads that env var (it always resolves to $HOME/.apm, per internal/marketplace/registry.go's own RegistryPath doc comment noting apm-go additionally honors APM_CONFIG_DIR for test isolation, an accepted apm-go-only convenience) -- so the Oracle's registry file lands under the sandbox HOME tree, which the runner's tree walk never covers (only cwd/ and config/ are walked), while the Target's lands under config/ and is captured as an 'added' tree entry.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
-  },
-  {
-    "id": "search-help",
+    "id": "doctor-help",
     "fields": [
       "stdout"
     ],
-    "taxonomy": "rendering",
+    "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Click's --help template ('Usage: apm search [OPTIONS] QUERY@MARKETPLACE' / 'Options:') and cobra's ('Usage:\\n  apm-go search ...' / 'Flags:') are structurally different renderers -- the same framework-level gap the doctor-help case already carries unaddressed pending ticket 08's backfill. Content-level parity (short description text, --limit's default-20 display, -v/--verbose) is verified directly in cmd/apm-go/search_test.go's TestSearchCmd_HelpText, not via byte comparison against the Oracle.",
+    "reason": "Intentional rendering-library difference: upstream Click/Rich help and target Cobra/ux help use different Usage/Options/Flags ordering and wording. The doctor help semantic surface, flags, description, exit code, and non-TTY contract were compared separately; only stdout presentation is waived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/05-search-command.md"
+    "eval_plan_ref": ".review/eval-plan.md §8.3 Rich/Clack vs ux/Cobra"
   }
 ]

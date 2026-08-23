@@ -170,22 +170,30 @@ func captureRun(cfg Config, preflight Preflight) ([]CasePair, error) {
 }
 
 // runCases layers ticket 02's normalise/diff/waiver-gate stage on top of
-// captureRun: once every case's raw evidence is captured, it validates
-// waivers.json against the case IDs actually loaded, diffs each case's
-// Oracle/Target records, writes diff.jsonl/diff/<id>.json/summary.txt, and
-// fails the run (exit 1, via a plain error) if any case has an unwaived
-// diff.
+// captureRun. It validates waivers.json against the case IDs LoadCases
+// finds and this run's preflight.OracleCommit BEFORE calling captureRun at
+// all (ticket 02 attempt 2, W2: "LoadCases -> validate -> ONLY THEN execute
+// any case") -- an invalid waivers.json fails the run with
+// *waiverValidationError having triggered zero Oracle/Target invocations.
+// Once evidence is captured, it diffs each case's Oracle/Target records,
+// writes diff.jsonl/diff/<id>.json/summary.txt, and fails the run (exit 1,
+// via a plain error) if any case has an unwaived diff.
 func runCases(cfg Config, preflight Preflight) error {
-	pairs, err := captureRun(cfg, preflight)
+	cases, err := LoadCases(cfg.CasesDir)
+	if err != nil {
+		return err
+	}
+	casesByID := make(map[string]Case, len(cases))
+	for _, c := range cases {
+		casesByID[c.ID] = c
+	}
+
+	waivers, err := loadAndValidateWaivers(cfg.CasesDir, cfg.WaiversPath, preflight.OracleCommit, casesByID)
 	if err != nil {
 		return err
 	}
 
-	knownIDs := make(map[string]bool, len(pairs))
-	for _, p := range pairs {
-		knownIDs[p.Case.ID] = true
-	}
-	waivers, err := loadAndValidateWaivers(cfg.OutDir, cfg.CasesDir, cfg.WaiversPath, knownIDs)
+	pairs, err := captureRun(cfg, preflight)
 	if err != nil {
 		return err
 	}

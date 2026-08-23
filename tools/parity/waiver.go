@@ -25,9 +25,10 @@ type Waiver struct {
 }
 
 // waiverValidationError marks a waivers.json validation failure -- unknown
-// case id, empty reason, empty/wildcard fields, or an oracle_commit that
-// doesn't match this run's pinned baseline. Like *preflightError, this
-// fails the run closed with exit 2, before any real case executes.
+// case id, empty reason, empty/wildcard fields, an oracle_commit that
+// doesn't match this run's pinned baseline, or a reserved-taxonomy misuse.
+// Like *preflightError, this fails the run closed with exit 2, before any
+// real case executes.
 type waiverValidationError struct{ err error }
 
 func (e *waiverValidationError) Error() string { return e.err.Error() }
@@ -53,17 +54,29 @@ func loadWaivers(path string) ([]Waiver, error) {
 	return waivers, nil
 }
 
+// negativeControlTaxonomy is the taxonomy tag reserved for a runner case
+// that exists purely to prove the diff pipeline detects a real difference
+// (a negative control), never to hide an unexplained product gap. A waiver
+// may only use it for a case whose own manifest declares
+// expected_taxonomy: ["negative-control"] -- an ordinary product case
+// (e.g. "doctor-help") does not, so validateWaivers rejects it there
+// (ticket 02 attempt 2, W3).
+const negativeControlTaxonomy = "negative-control"
+
 // validateWaivers fails closed on any waiver that isn't a precise,
 // accountable exemption: an id that doesn't match a loaded case, fields
-// that are empty or a wildcard, an empty reason, or an oracle_commit that
-// doesn't match oracleCommit (the value this run actually recorded in
-// run.json's preflight.oracle_commit -- see loadAndValidateWaivers).
-func validateWaivers(waivers []Waiver, knownIDs map[string]bool, oracleCommit string) error {
+// that are empty or a wildcard, an empty reason, an oracle_commit that
+// doesn't match oracleCommit, or the reserved negative-control taxonomy
+// applied to a case that doesn't itself declare it. casesByID is every case
+// LoadCases loaded for this run, keyed by ID -- both what makes an id
+// "known" and where a case's own expected_taxonomy comes from.
+func validateWaivers(waivers []Waiver, casesByID map[string]Case, oracleCommit string) error {
 	for _, w := range waivers {
 		if w.ID == "" {
 			return &waiverValidationError{fmt.Errorf("waivers.json: entry with empty id")}
 		}
-		if !knownIDs[w.ID] {
+		c, ok := casesByID[w.ID]
+		if !ok {
 			return &waiverValidationError{fmt.Errorf("waivers.json: case %q: unknown case id", w.ID)}
 		}
 		if len(w.Fields) == 0 {
@@ -82,22 +95,33 @@ func validateWaivers(waivers []Waiver, knownIDs map[string]bool, oracleCommit st
 				"waivers.json: case %q: oracle_commit %q does not match this run's pinned baseline %q",
 				w.ID, w.OracleCommit, oracleCommit)}
 		}
+		if w.Taxonomy == negativeControlTaxonomy && !stringSliceContains(c.ExpectedTaxonomy, negativeControlTaxonomy) {
+			return &waiverValidationError{fmt.Errorf(
+				"waivers.json: case %q: taxonomy %q is reserved for a case whose own manifest declares expected_taxonomy [%q]; got %v",
+				w.ID, negativeControlTaxonomy, negativeControlTaxonomy, c.ExpectedTaxonomy)}
+		}
 	}
 	return nil
 }
 
-// loadAndValidateWaivers reads outDir/run.json back from disk -- not the
-// in-memory Preflight the caller already computed -- so validation always
-// checks against the oracle_commit this run actually wrote as evidence,
-// not merely what was in memory a moment earlier. Waivers live at
-// waiversPath if given, otherwise default to a "waivers.json" sibling of
-// casesDir (tools/parity/cases -> tools/parity/waivers.json).
-func loadAndValidateWaivers(outDir, casesDir, waiversPath string, knownIDs map[string]bool) ([]Waiver, error) {
-	header, err := readRunHeader(outDir)
-	if err != nil {
-		return nil, fmt.Errorf("reading run.json for waiver validation: %w", err)
+func stringSliceContains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
 	}
+	return false
+}
 
+// loadAndValidateWaivers reads waivers.json and validates it against
+// casesByID and oracleCommit BEFORE any real case executes (ticket 02
+// attempt 2, W2): oracleCommit is the in-memory preflight.OracleCommit the
+// caller already computed, not a value read back from run.json -- run.json
+// is not written until after this validation passes (runCases calls this
+// before captureRun), so there is nothing on disk yet to read it from.
+// Waivers live at waiversPath if given, otherwise default to a
+// "waivers.json" sibling of casesDir (tools/parity/cases -> tools/parity/waivers.json).
+func loadAndValidateWaivers(casesDir, waiversPath, oracleCommit string, casesByID map[string]Case) ([]Waiver, error) {
 	path := waiversPath
 	if path == "" {
 		path = filepath.Join(filepath.Dir(casesDir), "waivers.json")
@@ -107,20 +131,8 @@ func loadAndValidateWaivers(outDir, casesDir, waiversPath string, knownIDs map[s
 	if err != nil {
 		return nil, err
 	}
-	if err := validateWaivers(waivers, knownIDs, header.Preflight.OracleCommit); err != nil {
+	if err := validateWaivers(waivers, casesByID, oracleCommit); err != nil {
 		return nil, err
 	}
 	return waivers, nil
-}
-
-func readRunHeader(outDir string) (runHeader, error) {
-	data, err := os.ReadFile(filepath.Join(outDir, "run.json"))
-	if err != nil {
-		return runHeader{}, err
-	}
-	var h runHeader
-	if err := json.Unmarshal(data, &h); err != nil {
-		return runHeader{}, fmt.Errorf("unmarshalling run.json: %w", err)
-	}
-	return h, nil
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/apm-go/apm/internal/ux"
 )
@@ -35,14 +36,15 @@ type Taxonomy struct {
 	Heuristic []string `json:"heuristic"`
 }
 
-// diffDetail is <out>/diff/<id>.json: the raw old/new value for every field
-// that differed, kept alongside diff.jsonl's field-name list so a reviewer
-// never has to re-run the case to see what actually changed.
+// diffDetail is <out>/diff/<id>.json: the old/new value for every field that
+// differed, kept alongside diff.jsonl's field-name list so a reviewer never
+// has to re-run the case to see what actually changed.
 type diffDetail struct {
-	ExitCode *intDiff        `json:"exit_code,omitempty"`
-	Stdout   *stringDiff     `json:"stdout,omitempty"`
-	Stderr   *stringDiff     `json:"stderr,omitempty"`
-	Tree     *treeDiffDetail `json:"tree,omitempty"`
+	ExitCode     *intDiff          `json:"exit_code,omitempty"`
+	Stdout       *stringDiff       `json:"stdout,omitempty"`
+	Stderr       *stringDiff       `json:"stderr,omitempty"`
+	Tree         *treeDiffDetail   `json:"tree,omitempty"`
+	HelpSemantic *helpSemanticDiff `json:"help_semantic,omitempty"`
 }
 
 type intDiff struct {
@@ -50,7 +52,16 @@ type intDiff struct {
 	New int `json:"new"`
 }
 
+// stringDiff keeps BOTH the untouched raw old/new (read straight from the
+// .bin evidence) and the sandbox-path-normalized old/new (ticket 02 attempt
+// 2, D2) -- a reviewer sees exactly what each side actually printed, not
+// only the post-substitution view that made the two sides comparable.
 type stringDiff struct {
+	Raw        stringOldNew `json:"raw"`
+	Normalized stringOldNew `json:"normalized"`
+}
+
+type stringOldNew struct {
 	Old string `json:"old"`
 	New string `json:"new"`
 }
@@ -79,6 +90,9 @@ func diffCase(outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, dif
 	oracleCaseDir := filepath.Join(outDir, "oracle", c.ID)
 	targetCaseDir := filepath.Join(outDir, "target", c.ID)
 
+	oCwd, oCfg, oHome := sandboxPathsFromEnvDelta(oracleRec.EnvDelta)
+	tCwd, tCfg, tHome := sandboxPathsFromEnvDelta(targetRec.EnvDelta)
+
 	var fields []string
 	var detail diffDetail
 
@@ -94,21 +108,33 @@ func diffCase(outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, dif
 		{"stdout", &detail.Stdout},
 		{"stderr", &detail.Stderr},
 	} {
-		oldS, newS, differ, err := diffNormalizedField(oracleCaseDir, targetCaseDir, f.name, oracleRec, targetRec, c.RewriteBinaryName)
+		sd, differ, err := diffNormalizedField(oracleCaseDir, targetCaseDir, f.name, oCwd, oCfg, oHome, tCwd, tCfg, tHome, c.RewriteBinaryName)
 		if err != nil {
 			return CaseDiff{}, diffDetail{}, fmt.Errorf("case %s: comparing %s: %w", c.ID, f.name, err)
 		}
 		if differ {
 			fields = append(fields, f.name)
-			*f.out = &stringDiff{Old: oldS, New: newS}
+			sdCopy := sd
+			*f.out = &sdCopy
 		}
 	}
 
 	oracleFSRoot := filepath.Join(oracleCaseDir, "fs")
 	targetFSRoot := filepath.Join(targetCaseDir, "fs")
-	if td, differ := diffTrees(oracleFSRoot, targetFSRoot, oracleRec.Tree, targetRec.Tree); differ {
+	if td, differ := diffTrees(oracleFSRoot, targetFSRoot, oracleRec.Tree, targetRec.Tree, oCwd, oCfg, oHome, tCwd, tCfg, tHome, c.RewriteBinaryName); differ {
 		fields = append(fields, "tree")
 		detail.Tree = &td
+	}
+
+	if isHelpCase(c.Argv) {
+		hs, differ, err := diffHelpSemantic(oracleCaseDir, targetCaseDir, oCwd, oCfg, oHome, tCwd, tCfg, tHome, c.RewriteBinaryName)
+		if err != nil {
+			return CaseDiff{}, diffDetail{}, fmt.Errorf("case %s: comparing help_semantic: %w", c.ID, err)
+		}
+		if differ {
+			fields = append(fields, "help_semantic")
+			detail.HelpSemantic = &hs
+		}
 	}
 
 	cd := CaseDiff{
@@ -130,37 +156,46 @@ func diffCase(outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, dif
 // such a case appear to differ purely because each side's sandbox got its
 // own unique temp path, never because of an actual behavioural difference.
 // Go's string/regexp operations here work over the byte sequence as-is, so
-// this is safe even when the bytes aren't valid UTF-8.
-func diffNormalizedField(oracleCaseDir, targetCaseDir, field string, oracleRec, targetRec Record, rewriteBinaryName bool) (oldVal, newVal string, differ bool, err error) {
+// this is safe even when the bytes aren't valid UTF-8. Whether the field
+// differs is decided on the NORMALIZED value only; the returned stringDiff
+// additionally carries the untouched raw old/new (ticket 02 attempt 2, D2)
+// so a reviewer never has to guess what the un-normalized bytes looked like.
+func diffNormalizedField(oracleCaseDir, targetCaseDir, field, oCwd, oCfg, oHome, tCwd, tCfg, tHome string, rewriteBinaryName bool) (sd stringDiff, differ bool, err error) {
 	oRaw, err := os.ReadFile(filepath.Join(oracleCaseDir, field+".bin"))
 	if err != nil {
-		return "", "", false, fmt.Errorf("reading oracle %s: %w", field+".bin", err)
+		return stringDiff{}, false, fmt.Errorf("reading oracle %s: %w", field+".bin", err)
 	}
 	tRaw, err := os.ReadFile(filepath.Join(targetCaseDir, field+".bin"))
 	if err != nil {
-		return "", "", false, fmt.Errorf("reading target %s: %w", field+".bin", err)
+		return stringDiff{}, false, fmt.Errorf("reading target %s: %w", field+".bin", err)
 	}
-
-	oCwd, oCfg, oHome := sandboxPathsFromEnvDelta(oracleRec.EnvDelta)
-	tCwd, tCfg, tHome := sandboxPathsFromEnvDelta(targetRec.EnvDelta)
 
 	oNorm := normalizeString(string(oRaw), oCwd, oCfg, oHome, rewriteBinaryName)
 	tNorm := normalizeString(string(tRaw), tCwd, tCfg, tHome, rewriteBinaryName)
 
 	if oNorm == tNorm {
-		return "", "", false, nil
+		return stringDiff{}, false, nil
 	}
-	return oNorm, tNorm, true, nil
+	return stringDiff{
+		Raw:        stringOldNew{Old: string(oRaw), New: string(tRaw)},
+		Normalized: stringOldNew{Old: oNorm, New: tNorm},
+	}, true, nil
 }
 
 // diffTrees compares two sides' Tree entries by path. Paths are already
 // sandbox-relative labels ("cwd/...", "config/..." -- tree.go's walkTree),
-// so no path normalization is needed here. A path present on both sides
-// with equal kind/size/sha256 is additionally verified by reading its raw
-// bytes back from each side's copied fs/ evidence directory (acceptance:
-// "raw bytes of every file present on both sides") rather than trusting
-// sha256 equality alone.
-func diffTrees(oracleFSRoot, targetFSRoot string, oTree, tTree []TreeEntry) (treeDiffDetail, bool) {
+// so no path normalization is needed to match them up. A path present on
+// both sides as a "file" is ALWAYS compared via normalizedFileBytesEqual,
+// never short-circuited on TreeEntry.Size/SHA256 equality: those are
+// computed from each side's raw, un-normalized bytes at capture time, so a
+// file that merely embeds its own sandbox's absolute path (e.g. a registry
+// manifest recording the fixture dir it was seeded from) would otherwise
+// have a different size/sha256 on every run purely because each side's
+// temp dir name has a different length -- never because of an actual
+// behavioural difference (ticket 02 attempt 2, bytes normalisation). Non-
+// file entries (dir/symlink) have no byte content to normalize, so they
+// still compare via kind/size/sha256 directly.
+func diffTrees(oracleFSRoot, targetFSRoot string, oTree, tTree []TreeEntry, oCwd, oCfg, oHome, tCwd, tCfg, tHome string, rewriteBinaryName bool) (treeDiffDetail, bool) {
 	oMap := indexTreeByPath(oTree)
 	tMap := indexTreeByPath(tTree)
 
@@ -173,11 +208,14 @@ func diffTrees(oracleFSRoot, targetFSRoot string, oTree, tTree []TreeEntry) (tre
 			removed = append(removed, oe)
 			continue
 		}
-		if oe.Kind != te.Kind || oe.Size != te.Size || oe.SHA256 != te.SHA256 {
+		switch {
+		case oe.Kind != te.Kind:
 			changed = append(changed, treeEntryChange{Path: path, Old: oe, New: te})
-			continue
-		}
-		if oe.Kind == "file" && !fileBytesEqual(oracleFSRoot, targetFSRoot, path) {
+		case oe.Kind != "file":
+			if oe.Size != te.Size || oe.SHA256 != te.SHA256 {
+				changed = append(changed, treeEntryChange{Path: path, Old: oe, New: te})
+			}
+		case !normalizedFileBytesEqual(oracleFSRoot, targetFSRoot, path, oCwd, oCfg, oHome, tCwd, tCfg, tHome, rewriteBinaryName):
 			changed = append(changed, treeEntryChange{Path: path, Old: oe, New: te})
 		}
 	}
@@ -206,19 +244,29 @@ func indexTreeByPath(tree []TreeEntry) map[string]TreeEntry {
 	return m
 }
 
-// fileBytesEqual reads path (a tree entry's sandbox-relative label, e.g.
-// "cwd/apm.yml") back from each side's copied fs/ evidence directory
-// (record.go's copyEvidenceFiles) and compares the raw bytes directly. Any
-// read failure is treated as a difference rather than silently skipped --
-// evidence that can't be verified is not evidence of a match.
-func fileBytesEqual(oracleFSRoot, targetFSRoot, path string) bool {
+// normalizedFileBytesEqual reads path (a tree entry's sandbox-relative
+// label, e.g. "cwd/apm.yml") back from each side's copied fs/ evidence
+// directory (record.go's copyEvidenceFiles). When both sides' bytes are
+// valid UTF-8, it compares them the same way stdout/stderr are compared:
+// after normalizeString substitutes away each side's own sandbox paths --
+// otherwise a file that merely stores its own sandbox's absolute path would
+// show as changed on every run. A file that isn't valid UTF-8 on either
+// side is compared as raw bytes instead (acceptance: "binary files compare
+// raw"). Any read failure is treated as a difference rather than silently
+// skipped -- evidence that can't be verified is not evidence of a match.
+func normalizedFileBytesEqual(oracleFSRoot, targetFSRoot, path, oCwd, oCfg, oHome, tCwd, tCfg, tHome string, rewriteBinaryName bool) bool {
 	rel := filepath.FromSlash(path)
 	oData, oErr := os.ReadFile(filepath.Join(oracleFSRoot, rel))
 	tData, tErr := os.ReadFile(filepath.Join(targetFSRoot, rel))
 	if oErr != nil || tErr != nil {
 		return false
 	}
-	return bytes.Equal(oData, tData)
+	if !utf8.Valid(oData) || !utf8.Valid(tData) {
+		return bytes.Equal(oData, tData)
+	}
+	oNorm := normalizeString(string(oData), oCwd, oCfg, oHome, rewriteBinaryName)
+	tNorm := normalizeString(string(tData), tCwd, tCfg, tHome, rewriteBinaryName)
+	return oNorm == tNorm
 }
 
 // heuristicTaxonomy is an advisory-only guess at which finding classes a
