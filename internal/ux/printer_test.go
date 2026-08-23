@@ -85,3 +85,18 @@ func TestPrintLine_SymbolFixedWidthThreeCentered(t *testing.T) {
 		})
 	}
 }
+
+// Plain is the symbol-free line printer for callers whose status glyph is
+// part of the message itself (doctor's upstream "[+] name: detail" rows,
+// Finding 9). It still goes through the per-writer colour policy.
+func TestPlain_NoSymbol_NoANSI_Newline(t *testing.T) {
+	var buf bytes.Buffer
+	Plain(&buf, "  [%s] %s: %s", "+", "git", "ok")
+	got := buf.String()
+	if got != "  [+] git: ok\n" {
+		t.Errorf("got %q", got)
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Errorf("ANSI leaked into non-TTY writer: %q", got)
+	}
+}

@@ -37,6 +37,14 @@ func Error(w io.Writer, format string, a ...any) {
 	printLine(w, errorStyle, SymbolError, format, a...)
 }
 
+// Plain prints a line with no severity symbol, for callers whose status
+// glyph is part of the message itself (e.g. doctor's upstream
+// "  [+] name: detail" rows). Routed through lipgloss.Fprintln like every
+// other printer so the per-writer colour/TTY policy still applies.
+func Plain(w io.Writer, format string, a ...any) {
+	lipgloss.Fprintln(w, fmt.Sprintf(format, a...))
+}
+
 // printLine renders "<symbol><message>" with the symbol centered in a
 // fixed-width-3 column (R8: all message symbols share one visual width, so
 // multi-line output stays aligned; the centered padding already supplies the

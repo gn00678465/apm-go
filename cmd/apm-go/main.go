@@ -34,6 +34,7 @@ func main() {
 	root.AddCommand(marketplaceCmd())
 	root.AddCommand(packCmd())
 	root.AddCommand(compileCmd())
+	root.AddCommand(doctorCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(exitCodeOf(err))

@@ -57,6 +57,20 @@ var (
 	)
 )
 
+// IsNoConfigError reports whether err is LoadAuthoringConfig's "neither
+// apm.yml marketplace: block nor marketplace.yml exists" outcome (upstream
+// detect_config_source -> ConfigSource.NONE, marketplace/migration.py:109).
+func IsNoConfigError(err error) bool {
+	return errors.Is(err, errNoMarketplaceConfig)
+}
+
+// IsConfigsMutuallyExclusiveError reports whether err is LoadAuthoringConfig's
+// "both files exist" outcome (upstream detect_config_source raising
+// MarketplaceYmlError, marketplace/migration.py:98-103).
+func IsConfigsMutuallyExclusiveError(err error) bool {
+	return errors.Is(err, errMarketplaceConfigsMutuallyExclusive)
+}
+
 // ConfigSource identifies which file an AuthoringConfig was loaded from.
 type ConfigSource int
 
@@ -163,9 +177,13 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 
 	apmRoot, apmBlock, err := loadApmMarketplaceBlock(apmPath)
 	if err != nil {
-		return nil, 0, err
+		return nil, ConfigSourceApmYML, err
 	}
 
+	// On a parse/validation error the returned ConfigSource still names the
+	// file that was being read (upstream detect_config_source resolves the
+	// source before loading, so a caller such as `apm doctor` can attribute
+	// the failure to the right file).
 	switch {
 	case apmBlock != nil && legacyExists:
 		return nil, 0, errMarketplaceConfigsMutuallyExclusive
@@ -177,17 +195,17 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 		}
 		cfg, err := parseAuthoringNode(apmBlock, inherited, false)
 		if err != nil {
-			return nil, 0, err
+			return nil, ConfigSourceApmYML, err
 		}
 		return cfg, ConfigSourceApmYML, nil
 	case legacyExists:
 		root, err := loadYAMLRoot(legacyPath)
 		if err != nil {
-			return nil, 0, err
+			return nil, ConfigSourceLegacy, err
 		}
 		cfg, err := parseAuthoringNode(root, topLevelFields{}, true)
 		if err != nil {
-			return nil, 0, err
+			return nil, ConfigSourceLegacy, err
 		}
 		return cfg, ConfigSourceLegacy, nil
 	default:
