@@ -187,13 +187,17 @@ func TestInitCmd_ProjectNameArg(t *testing.T) {
 // not exist, so every user who followed the old prompt hit "unknown
 // command" on their very first next step. The valid `apm-go install`
 // next-step must still be there.
+//
+// The next-step lines print via ux.Info, which (ticket 10 attempt 3) now
+// redirects os.Stderr to os.Stdout the same way Warn/Error already did --
+// so this asserts against captureStdout, not stderr.
 func TestInitCmd_DoesNotSuggestRun(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(dir)
 	defer os.Chdir(origDir)
 
-	stderr := captureUninstallStderr(t, func() {
+	stdout := captureStdout(t, func() {
 		cmd := initCmd()
 		cmd.SetArgs([]string{"--yes"})
 		if err := cmd.Execute(); err != nil {
@@ -201,15 +205,15 @@ func TestInitCmd_DoesNotSuggestRun(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(stderr, "apm-go install") {
-		t.Errorf("init output = %q, want the valid 'apm-go install' next-step to remain", stderr)
+	if !strings.Contains(stdout, "apm-go install") {
+		t.Errorf("init output = %q, want the valid 'apm-go install' next-step to remain", stdout)
 	}
 	const removedPromise = "apm-go run <script>"
-	if strings.Contains(stderr, removedPromise) {
-		t.Errorf("init output = %q, must not contain the removed promise %q (that command does not exist)", stderr, removedPromise)
+	if strings.Contains(stdout, removedPromise) {
+		t.Errorf("init output = %q, must not contain the removed promise %q (that command does not exist)", stdout, removedPromise)
 	}
-	if strings.Contains(stderr, "Run a script") {
-		t.Errorf("init output = %q, must not contain the removed 'Run a script' next-step label", stderr)
+	if strings.Contains(stdout, "Run a script") {
+		t.Errorf("init output = %q, must not contain the removed 'Run a script' next-step label", stdout)
 	}
 }
 

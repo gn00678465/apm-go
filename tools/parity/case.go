@@ -45,6 +45,13 @@ type Case struct {
 	PathPrepend string `json:"path_prepend"`
 
 	// Dir is the absolute path to the case directory (not part of case.json).
+	// LoadCases guarantees this via filepath.Abs -- a relative -cases flag
+	// (the normal CLI shape) must not leave Dir relative, because
+	// runCaseSide joins it into PATH (PathPrepend) while the subprocess's
+	// cwd is its own sandbox, not this process's cwd: a relative Dir would
+	// resolve against the wrong directory and PathPrepend's fixture binary
+	// would never shadow the real one (ticket 10 attempt 3, eval-ticket-10-r2.md
+	// §4).
 	Dir string `json:"-"`
 }
 
@@ -78,6 +85,11 @@ func LoadCases(casesDir string) ([]Case, error) {
 	seenIDs := make(map[string]string, len(names))
 	for _, name := range names {
 		dir := filepath.Join(casesDir, name)
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			return nil, fmt.Errorf("resolving absolute path for %s: %w", dir, err)
+		}
+		dir = absDir
 		manifestPath := filepath.Join(dir, "case.json")
 		data, err := os.ReadFile(manifestPath)
 		if os.IsNotExist(err) {

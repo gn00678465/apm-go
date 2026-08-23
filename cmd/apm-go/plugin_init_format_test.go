@@ -175,7 +175,10 @@ func TestPluginInit_AgentFormat_ExistingMCPJSON_ListedInOverwriteNotice(t *testi
 			t.Fatal(err)
 		}
 	}
-	out := captureStderr(t, func() {
+	// The overwrite notice's file list comes from ux.Info(os.Stderr, "--yes
+	// specified, overwriting: %s", ...) (init.go), which (ticket 10 attempt
+	// 3) now redirects to stdout the same way Warn/Error already did.
+	out := captureStdout(t, func() {
 		if err := runPluginInit(t, "my-plugin", "--yes", "--format", "agent-plugin"); err != nil {
 			t.Errorf("plugin init: %v", err)
 		}

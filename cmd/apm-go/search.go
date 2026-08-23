@@ -84,6 +84,14 @@ func searchCmd() *cobra.Command {
 				)
 			}
 
+			w := cmd.OutOrStdout()
+
+			// Oracle __init__.py:1392 (logger.start(f"Searching '{marketplace_name}'
+			// for '{query}'...", symbol="search")): printed once the registry lookup
+			// has succeeded, before the fetch -- a fetch failure still shows it, since
+			// it narrates the fetch itself starting, not its outcome.
+			ux.Running(w, "Searching '%s' for '%s'...", marketplaceName, query)
+
 			// Oracle __init__.py:1382-1383 (search_marketplace -> fetch_marketplace).
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
@@ -105,8 +113,6 @@ func searchCmd() *cobra.Command {
 			if limit < len(results) {
 				results = results[:limit]
 			}
-
-			w := cmd.OutOrStdout()
 
 			// Oracle __init__.py:1385-1389.
 			if len(results) == 0 {

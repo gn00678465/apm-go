@@ -18,18 +18,24 @@ var (
 	errorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(ColorError))
 )
 
-// oracleErrorPrefix and oracleWarnPrefix mirror the Oracle's bracketed
-// STATUS_SYMBOLS glyphs (utils/console.py:37-61: "[x]" error, "[!]"
-// warning) verbatim, deliberately diverging from colors.go's bare
-// width-3-centered SymbolError/SymbolWarn ("x"/"!") that every other
-// severity still uses -- ticket 10's decision (A) (see
-// .scratch/parity-runner/issues/10-error-output-contract.md) aligns
-// apm-go's error/warning channel and prefix to the Oracle's observable
-// contract; Success/Info were never found to differ, so they keep the
-// existing centered-symbol convention untouched.
+// oracleErrorPrefix, oracleWarnPrefix, oracleInfoPrefix, and
+// oracleRunningPrefix mirror the Oracle's bracketed STATUS_SYMBOLS glyphs
+// (utils/console.py:37-61: "[x]" error, "[!]" warning, "[i]" info, "[>]"
+// running/search) verbatim, deliberately diverging from colors.go's bare
+// width-3-centered SymbolError/SymbolWarn/SymbolInfo ("x"/"!"/"i") that
+// Success alone still uses -- ticket 10's decision (A) (see
+// .scratch/parity-runner/issues/10-error-output-contract.md) aligns apm-go's
+// error/warning/info/running channel and prefix to the Oracle's observable
+// contract; Success was never found to differ, so it keeps the existing
+// centered-symbol convention untouched. oracleRunningPrefix backs the new
+// Running printer (attempt 3): CommandLogger.start(symbol="search")
+// (core/command_logger.py:81-83) and the "running"/"search" STATUS_SYMBOLS
+// entries both resolve to "[>]".
 const (
-	oracleErrorPrefix = "[x] "
-	oracleWarnPrefix  = "[!] "
+	oracleErrorPrefix   = "[x] "
+	oracleWarnPrefix    = "[!] "
+	oracleInfoPrefix    = "[i] "
+	oracleRunningPrefix = "[>] "
 )
 
 // Success prints a "+ ..." line to w.
@@ -37,9 +43,22 @@ func Success(w io.Writer, format string, a ...any) {
 	printLine(w, successStyle, SymbolSuccess, format, a...)
 }
 
-// Info prints an "i ..." line to w.
+// Info prints a "[i] ..." line to w, redirected to stdout if w is the
+// process's stderr stream (see errWriter) -- the Oracle's info channel
+// (CommandLogger.info/.progress, both _rich_info under the hood, always land
+// on the same Console as Warn/Error; attempt 3 closes the gap where Info
+// previously stayed on the centered-symbol convention regardless of channel).
 func Info(w io.Writer, format string, a ...any) {
-	printLine(w, infoStyle, SymbolInfo, format, a...)
+	oracleLine(w, infoStyle, oracleInfoPrefix, format, a...)
+}
+
+// Running prints a "[>] ..." line to w, redirected to stdout if w is the
+// process's stderr stream (see errWriter) -- CommandLogger.start's default
+// symbol ("running", and "search" specifically for `apm search`'s progress
+// line; core/command_logger.py:81-83), which STATUS_SYMBOLS maps to the same
+// "[>]" glyph and _rich_info routes to the same channel as Info.
+func Running(w io.Writer, format string, a ...any) {
+	oracleLine(w, infoStyle, oracleRunningPrefix, format, a...)
 }
 
 // Warn prints a "[!] ..." line to w, redirected to stdout if w is the

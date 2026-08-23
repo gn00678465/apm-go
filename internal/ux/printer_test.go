@@ -20,7 +20,8 @@ func TestPrinters_Golden_NonTTYWriterHasNoANSI(t *testing.T) {
 		symbol string
 	}{
 		{name: "Success", fn: func(buf *bytes.Buffer) { Success(buf, "done: %s", "ok") }, symbol: SymbolSuccess},
-		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "info: %s", "ok") }, symbol: SymbolInfo},
+		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "info: %s", "ok") }, symbol: "i"},
+		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "running: %s", "ok") }, symbol: ">"},
 		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "warn: %s", "ok") }, symbol: SymbolWarn},
 		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "error: %s", "ok") }, symbol: SymbolError},
 	}
@@ -49,13 +50,13 @@ func TestPrinters_Golden_NonTTYWriterHasNoANSI(t *testing.T) {
 }
 
 // TestPrintLine_SymbolFixedWidthThreeCentered is the R8/P4-5/P4-6 regression:
-// Success/Info's message symbol renders centered in a fixed 3-rune column
+// Success's message symbol renders centered in a fixed 3-rune column
 // (padding survives ANSI stripping since it's plain whitespace, not color),
 // and the message text starts immediately after that column with no
 // additional space -- so multi-line output stays aligned and there's no
-// double gap. Warn/Error deliberately left this shared convention under
-// ticket 10's decision (A): they render the Oracle's literal "[!] "/"[x] "
-// bracket prefix instead (see TestOracleLine_BracketPrefixNoExtraSpace).
+// double gap. Info/Warn/Error deliberately left this shared convention under
+// ticket 10's decision (A): they render the Oracle's literal "[i] "/"[!]
+// "/"[x] " bracket prefix instead (see TestOracleLine_BracketPrefixNoExtraSpace).
 func TestPrintLine_SymbolFixedWidthThreeCentered(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -63,7 +64,6 @@ func TestPrintLine_SymbolFixedWidthThreeCentered(t *testing.T) {
 		symbol string
 	}{
 		{name: "Success", fn: func(buf *bytes.Buffer) { Success(buf, "msg") }, symbol: SymbolSuccess},
-		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "msg") }, symbol: SymbolInfo},
 	}
 
 	for _, tt := range tests {
@@ -89,8 +89,9 @@ func TestPrintLine_SymbolFixedWidthThreeCentered(t *testing.T) {
 	}
 }
 
-// TestOracleLine_BracketPrefixNoExtraSpace pins Warn/Error's Oracle-mirrored
-// format (ticket 10 decision A): a literal "[!] "/"[x] " prefix immediately
+// TestOracleLine_BracketPrefixNoExtraSpace pins Info/Running/Warn/Error's
+// Oracle-mirrored format (ticket 10 decisions A and attempt-3's Info/Running
+// extension): a literal "[i] "/"[>] "/"[!] "/"[x] " prefix immediately
 // followed by the message, no centering/padding.
 func TestOracleLine_BracketPrefixNoExtraSpace(t *testing.T) {
 	tests := []struct {
@@ -98,6 +99,8 @@ func TestOracleLine_BracketPrefixNoExtraSpace(t *testing.T) {
 		fn     func(buf *bytes.Buffer)
 		prefix string
 	}{
+		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "msg") }, prefix: oracleInfoPrefix},
+		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "msg") }, prefix: oracleRunningPrefix},
 		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "msg") }, prefix: oracleWarnPrefix},
 		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "msg") }, prefix: oracleErrorPrefix},
 	}

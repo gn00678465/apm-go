@@ -115,6 +115,45 @@ func TestCase_FixtureDir(t *testing.T) {
 	}
 }
 
+// TestLoadCases_RelativeCasesDir_YieldsAbsoluteDir is (a) of ticket 10
+// attempt 3's regression pair: a relative -cases flag (the normal CLI shape,
+// e.g. "tools/parity/cases" from the repo root) must not leave Case.Dir
+// relative, since runCaseSide joins it into PATH for PathPrepend while the
+// subprocess's cwd is its own sandbox, not this process's cwd
+// (eval-ticket-10-r2.md §4).
+func TestLoadCases_RelativeCasesDir_YieldsAbsoluteDir(t *testing.T) {
+	parent := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(parent); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(origWD); err != nil {
+			t.Fatalf("restoring cwd: %v", err)
+		}
+	}()
+
+	writeCase(t, "cases", "only-case", `{"id": "only-case", "argv": []}`)
+
+	cases, err := LoadCases("cases")
+	if err != nil {
+		t.Fatalf("LoadCases: %v", err)
+	}
+	if len(cases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(cases))
+	}
+	if !filepath.IsAbs(cases[0].Dir) {
+		t.Errorf("Dir = %q, want an absolute path for a relative -cases flag", cases[0].Dir)
+	}
+	wantDir := filepath.Join(parent, "cases", "only-case")
+	if cases[0].Dir != wantDir {
+		t.Errorf("Dir = %q, want %q", cases[0].Dir, wantDir)
+	}
+}
+
 func writeCase(t *testing.T, casesDir, id, manifest string) {
 	t.Helper()
 	dir := filepath.Join(casesDir, id)

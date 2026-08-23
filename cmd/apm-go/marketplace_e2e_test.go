@@ -967,14 +967,14 @@ func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
 		t.Fatalf("marketplace browse returned error: %v", err)
 	}
 	for _, want := range []string{
-		"i Fetching plugins from 'acme'...",
+		"[i] Fetching plugins from 'acme'...",
 		"Plugins in 'acme'",
 		"│ Plugin",
 		"│ cool-plugin",
 		"cool-plugin@acme",
 		"bare-plugin@acme",
 		"--",
-		"i Install a plugin: apm-go install <plugin-name>@acme",
+		"[i] Install a plugin: apm-go install <plugin-name>@acme",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)

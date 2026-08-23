@@ -107,5 +107,16 @@
       "cwd/altcfg",
       "cwd/altcfg/marketplaces.json"
     ]
+  },
+  {
+    "id": "search-basic-hit",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Ticket 10 attempt 3 fixed the two real gaps that used to mask this case's true remaining diff: the [>]-prefixed progress line (ux.Running, \"Searching '<marketplace>' for '<query>'...\", matching CommandLogger.start's symbol=\"search\") and the [i] Info channel/prefix now both match the Oracle byte-for-byte (rewrite_binary_name covers the apm/apm-go hint token). What remains on `stdout` is exactly the same pre-existing, already-documented rendering-library difference recorded on doctor-healthy's and browse's own tables (rich's HEAVY_HEAD box style vs ux.Table's ROUNDED style, rich's centered title line vs apm-go's left-aligned one, rich's per-cell word-wrap vs ux.Table's column-widening) -- box-drawing and padding only, nothing textual. `tree` is deliberately NOT waived here: home/.apm/marketplaces.json differs because the Oracle serializes a registered source's URL as a file:// URI while apm-go stores a bare filesystem path -- ticket 05's own open registry-serialization gap, unrelated to this ticket's output-contract scope.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/10-error-output-contract.md"
   }
 ]

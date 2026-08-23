@@ -168,6 +168,69 @@ func TestRunCaseSide_ExpandsTMPInCaseEnv(t *testing.T) {
 	}
 }
 
+// TestRunCaseSide_LoadCasesRelativeDir_PathPrependStillResolves is (b) of
+// ticket 10 attempt 3's regression pair (eval-ticket-10-r2.md §4): a case
+// loaded via a RELATIVE -cases flag (LoadCases, not a hand-built Case struct
+// like TestRunCaseSide_PathPrependShadowsRealBinary above) must still have
+// PathPrepend's fixture binary shadow the real one, even when the runner's
+// own cwd changes before the case actually runs -- exactly what happens
+// between LoadCases (relative to the invoking shell's cwd) and runCaseSide
+// (which chdirs the subprocess into its own sandbox). Before the fix,
+// Case.Dir stayed relative, runner.go's PATH join resolved it against
+// whatever the process's cwd happened to be at run time, and the fixture
+// "path/git" was never found -- the real host git answered instead.
+func TestRunCaseSide_LoadCasesRelativeDir_PathPrependStillResolves(t *testing.T) {
+	parent := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(origWD); err != nil {
+			t.Fatalf("restoring cwd: %v", err)
+		}
+	}()
+	if err := os.Chdir(parent); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+
+	writeCase(t, "cases", "path-prepend-relative", `{"id": "path-prepend-relative", "argv": [], "path_prepend": "path"}`)
+	pathDir := filepath.Join(parent, "cases", "path-prepend-relative", "path")
+	if err := os.MkdirAll(pathDir, 0o755); err != nil {
+		t.Fatalf("mkdir path fixture dir: %v", err)
+	}
+	writeStubScript(t, pathDir, "git", `echo "git version 9.9.9 (fixture)"`)
+
+	cases, err := LoadCases("cases")
+	if err != nil {
+		t.Fatalf("LoadCases: %v", err)
+	}
+	if len(cases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(cases))
+	}
+	c := cases[0]
+
+	// Move the process's cwd elsewhere BEFORE running the case -- if
+	// Case.Dir were still relative, PathPrepend would now resolve against
+	// this unrelated directory instead of the case's own.
+	elsewhere := t.TempDir()
+	if err := os.Chdir(elsewhere); err != nil {
+		t.Fatalf("Chdir elsewhere: %v", err)
+	}
+
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `git --version`)
+
+	outDir := t.TempDir()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+	if rec.Stdout == nil || !strings.Contains(*rec.Stdout, "git version 9.9.9 (fixture)") {
+		t.Errorf("stdout = %v, want the fixture git's output (a relative -cases flag must not break path_prepend)", rec.Stdout)
+	}
+}
+
 // TestRunCaseSide_PathPrependShadowsRealBinary proves case.path_prepend
 // (ticket 08's fault-injection mechanism, added here per ticket 10 attempt
 // 2 for doctor-healthy) puts its case-relative directory at the FRONT of

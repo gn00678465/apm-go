@@ -7,8 +7,16 @@
 # PATH would make output depend on that host's git version and actual
 # network reachability. This fixture answers both probes identically on
 # both sides, without a real network call.
+#
+# The bare `version` (no leading dashes) arm exists because GitPython's own
+# import-time probe runs `git version` (not `--version`) and parses
+# `stdout.split(" ")[2]` (git/cmd.py `version_info`) -- invisible until
+# ticket 10 attempt 3's Case.Dir fix made this fixture actually reachable
+# for the first time; before that, the bare "*)" arm's silent `exit 0`
+# handed GitPython an empty stdout, `split(" ")[2]` raised IndexError, and
+# the Oracle's whole CLI import crashed before doctor's own code ever ran.
 case "$1" in
-  --version)
+  --version|version)
     echo "git version 2.45.0"
     exit 0
     ;;

@@ -461,8 +461,13 @@ func TestRealCases_FixtureDirLoads(t *testing.T) {
 // longer forces APM_CONFIG_DIR, so browse-unknown-marketplace/list-empty's
 // registry-location `tree` waivers no longer apply and are dropped)
 // registry-explicit-config-dir, the one case that exercises apm-go's
-// APM_CONFIG_DIR override as a path-precise `tree` waiver -- no other case
-// ever earns a bulk/wildcard waiver here.
+// APM_CONFIG_DIR override as a path-precise `tree` waiver, plus (ticket 10
+// attempt 3: the [>]/[i] prefix and Case.Dir fixes made this case's `stdout`
+// diff legitimate -- box-drawing/padding only, same shape as
+// doctor-healthy's) search-basic-hit's `stdout`-only entry (its `tree` diff,
+// ticket 05's open file:// vs bare-path registry-serialization gap, stays
+// unwaived on purpose) -- no other case ever earns a bulk/wildcard waiver
+// here.
 func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	pin, err := pinnedOracleCommit()
 	if err != nil {
@@ -490,7 +495,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	for _, w := range waivers {
 		gotIDs = append(gotIDs, w.ID)
 	}
-	wantIDs := []string{"version", "doctor-healthy", "doctor-help", "pack-refuse-agent-plugin", "pack-refuse-apm", "registry-explicit-config-dir"}
+	wantIDs := []string{"version", "doctor-healthy", "doctor-help", "pack-refuse-agent-plugin", "pack-refuse-apm", "registry-explicit-config-dir", "search-basic-hit"}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)
 	}
