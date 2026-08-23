@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — runner diff/gate attempt 2 (needs a body-level error comparator; see below).
 
-**Status:** attempt 3 committed (6de0793) — eval-ticket-10-r3: FAIL on evidence provenance ONLY (the corpus behind the evidence was run before the commit, so run.json pins target_commit 43732b7/dirty); all six attempt-3 ACs pass behaviorally. To close: re-run the full corpus on a clean tree at 6de0793+ and confirm run.json provenance plus the five checks listed at the end of eval-ticket-10-r3.md. `browse-unknown-marketplace`/`list-empty` wording → ticket 14; `search-basic-hit` tree diff (marketplaces.json) → ticket 05.
+**Status:** CLOSED — attempt 3 (6de0793). eval-ticket-10-r3 Round 4: PASS (clean-provenance corpus /tmp/p10-evidence at bbf60df satisfied all five closing checks; no remaining findings). `browse-unknown-marketplace`/`list-empty` wording → ticket 14; `search-basic-hit` tree diff (marketplaces.json) → ticket 05.
 
 **Origin:** first real parity run (`/tmp/p5`) + `marketplace browse nonexistent` probe + evaluator ruling `.review/eval-ticket-05.md` §B/§C. Oracle: `core/command_logger.py:81-130` (`_rich_*` helpers → one stdout Console), `commands/_helpers.py:72-93` (`_get_console()`).
 

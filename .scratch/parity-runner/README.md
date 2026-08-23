@@ -23,6 +23,6 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: 01 02 03 04 12 15 ✅ · 06 07 ✅(command-local) · 10 attempt 3 committed (6de0793) — eval-ticket-10-r3 FAIL on evidence provenance ONLY (corpus ran pre-commit); all six ACs pass behaviorally, close needs a clean-tree corpus re-run · 05 command+evidence landed, convergence reduced by 10a3 ([>] progress + [i] prefix), remaining gaps open · 11 13 14 ready after 10 · 08 09 queued.
+Status: 01 02 03 04 10 12 15 ✅ · 06 07 ✅(command-local) · 10 closed at attempt 3 (6de0793; eval-ticket-10-r3 Round 4 PASS, evidence /tmp/p10-evidence @ bbf60df) · 05 command+evidence landed, convergence reduced by 10a3 ([>] progress + [i] prefix), remaining gaps open (marketplaces.json tree, error-case wording) · 08 11 13 14 ready · 09 queued (needs 08).
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`; orchestrator intervenes after 3 failed attempts on the same ticket.
