@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — runner diff/gate (attempt 4: HOME capture + UV_CACHE_DIR isolation make this visible).
 
-**Status:** ready-for-agent
+**Status:** done — 60e037d; verified .review/eval-ticket-12.md PASS. Remaining 9 registry tree diffs are runner-caused (APM_CONFIG_DIR injection) → ticket 15.
 
 **Origin:** orchestrator intervention on ticket 02 attempt 4 (`/tmp/p4`). Currently masked only on `version` and `doctor-help` by explicit, path-named waiver text; all other cases show it unwaived.
 
