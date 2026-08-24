@@ -38,9 +38,11 @@ func TestMarketplaceManifest_OwnerShapes(t *testing.T) {
 
 // TestMarketplaceManifest_PluginNormalization verifies the per-entry rules
 // mirrored from Python's _parse_plugin_entry: Copilot "repository" shape
-// synthesis, nameless/sourceless drops, and the mkt-026 dual-layer npm
-// behavior (type/source npm dropped at parse; "kind: npm" survives parsing
-// and is rejected later at resolution).
+// synthesis, nameless/sourceless drops, and npm rejection under any of the
+// three discriminator keys ("type"/"source"/"kind" -- all dropped at parse
+// time, see TestParseManifestPlugins_NPMRejectedForAllThreeDiscriminatorKeys
+// in resolver_test.go for the ticket 11 attempt 2 correction of an earlier,
+// incorrect "kind survives parsing" claim here).
 func TestMarketplaceManifest_PluginNormalization(t *testing.T) {
 	doc := `{
 		"name": "m",
@@ -70,12 +72,12 @@ func TestMarketplaceManifest_PluginNormalization(t *testing.T) {
 		byName[p.Name] = p
 	}
 
-	if len(m.Plugins) != 3 {
+	if len(m.Plugins) != 2 {
 		names := make([]string, 0, len(m.Plugins))
 		for _, p := range m.Plugins {
 			names = append(names, p.Name)
 		}
-		t.Fatalf("kept %d plugins %v, want 3 (claude-style, copilot-style, npm-kind-variant)", len(m.Plugins), names)
+		t.Fatalf("kept %d plugins %v, want 2 (claude-style, copilot-style)", len(m.Plugins), names)
 	}
 
 	if _, ok := byName["claude-style"]; !ok {
@@ -94,11 +96,13 @@ func TestMarketplaceManifest_PluginNormalization(t *testing.T) {
 		t.Errorf("copilot-style synthesized source = %v", src)
 	}
 
-	// mkt-026 dual layer: kind-variant survives parsing.
-	if _, ok := byName["npm-kind-variant"]; !ok {
-		t.Error("npm-kind-variant must survive parse (rejected later at resolution, not here)")
-	}
-	for _, dropped := range []string{"npm-typed", "npm-source-key", "sourceless", "bad-repository"} {
+	// Ticket 11 attempt 2 correction: _parse_plugin_entry's own source_type
+	// derivation (models.py:447-454) reads "type", "source", AND "kind" --
+	// all three -- so "kind: npm" is rejected at PARSE time in the real
+	// Oracle too, exactly like "type: npm"/"source: npm". There is no
+	// parse-vs-resolve split for npm detection; mkt-026's "two-vs-three-key"
+	// premise did not hold up against a full reading of models.py.
+	for _, dropped := range []string{"npm-typed", "npm-source-key", "npm-kind-variant", "sourceless", "bad-repository"} {
 		if _, ok := byName[dropped]; ok {
 			t.Errorf("%s must be dropped at parse", dropped)
 		}
@@ -268,6 +272,169 @@ func TestMarketplaceManifest_StructuralErrors(t *testing.T) {
 			name: "non-object plugin elements are named by index, valid siblings kept",
 			doc:  `{"name":"m","plugins":[{"name":"a","source":"./a"},"not-an-object",42,{"name":"b","source":"./b"}]}`,
 			want: []string{"plugins[1]: expected an object", "plugins[2]: expected an object"},
+		},
+		// Ticket 11 eval attempt 2 blocking reproducer 1: a JSON null array
+		// element unmarshals into a nil map with NO decode error, which is
+		// indistinguishable from "not an object" unless checked explicitly
+		// (the actual attempt-1 bug: it read as a valid, zero-key object).
+		{
+			name: "eval reproducer 1: a null plugin element is not an object",
+			doc:  `{"name":"m","plugins":[null]}`,
+			want: []string{"plugins[0]: expected an object"},
+		},
+		// Ticket 11 eval attempt 2 blocking reproducer 2: an empty object IS
+		// a valid JSON object (unlike null), so it reaches per-field
+		// validation and fails on the first field Python itself checks:
+		// name.
+		{
+			name: "eval reproducer 2: an empty object plugin element fails on name",
+			doc:  `{"name":"m","plugins":[{}]}`,
+			want: []string{"plugins[0].name: expected a non-empty string"},
+		},
+		{
+			name: "name present but blank after trim",
+			doc:  `{"name":"m","plugins":[{"name":"   ","source":"./a"}]}`,
+			want: []string{"plugins[0].name: expected a non-empty string"},
+		},
+		{
+			name: "name present but not a string",
+			doc:  `{"name":"m","plugins":[{"name":42,"source":"./a"}]}`,
+			want: []string{"plugins[0].name: expected a non-empty string"},
+		},
+		{
+			name: "neither source nor repository present",
+			doc:  `{"name":"m","plugins":[{"name":"a"}]}`,
+			want: []string{"plugins[0].source: expected a source or repository field"},
+		},
+		{
+			name: "source explicitly null (must not silently fall back to a repository check)",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":null,"repository":"owner/repo"}]}`,
+			want: []string{"plugins[0].source: expected a string or object"},
+		},
+		{
+			name: "source is a number",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":42}]}`,
+			want: []string{"plugins[0].source: expected a string or object"},
+		},
+		{
+			name: "source is an array",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":[1,2,3]}]}`,
+			want: []string{"plugins[0].source: expected a string or object"},
+		},
+		{
+			name: "source is a bool",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":true}]}`,
+			want: []string{"plugins[0].source: expected a string or object"},
+		},
+		{
+			name: "repository present but not a string",
+			doc:  `{"name":"m","plugins":[{"name":"a","repository":42}]}`,
+			want: []string{"plugins[0].repository: expected an owner/repository string"},
+		},
+		{
+			name: "repository present but no slash",
+			doc:  `{"name":"m","plugins":[{"name":"a","repository":"no-slash"}]}`,
+			want: []string{"plugins[0].repository: expected an owner/repository string"},
+		},
+		{
+			name: "repository valid, synthesizes a github source (no structural error)",
+			doc:  `{"name":"m","plugins":[{"name":"a","repository":"owner/repo"}]}`,
+			want: nil,
+		},
+		{
+			name: "dict source: npm via type key",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"npm","package":"x"}}]}`,
+			want: []string{"plugins[0].source: unsupported source type 'npm'"},
+		},
+		{
+			name: "dict source: npm via source key",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"source":"npm","package":"x"}}]}`,
+			want: []string{"plugins[0].source: unsupported source type 'npm'"},
+		},
+		{
+			name: "dict source: npm via kind key (ticket 11 attempt 2: all three keys reject npm at parse time)",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"kind":"npm","package":"x"}}]}`,
+			want: []string{"plugins[0].source: unsupported source type 'npm'"},
+		},
+		{
+			name: "dict source: npm is case-insensitive",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"NPM"}}]}`,
+			want: []string{"plugins[0].source: unsupported source type 'npm'"},
+		},
+		{
+			name: "dict source: no type and no repo",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{}}]}`,
+			want: []string{"plugins[0].source: expected a supported source type or an owner/repository field"},
+		},
+		{
+			name: "dict source: no recognized type, but a valid repo (implicit github, no structural error)",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"repo":"owner/repo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "dict source: unsupported type with an otherwise-valid repo",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"svn","repo":"owner/repo"}}]}`,
+			want: []string{"plugins[0].source: unsupported source type 'svn'"},
+		},
+		{
+			name: "dict source: github missing repo",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"github"}}]}`,
+			want: []string{"plugins[0].source: github requires an owner/repository field"},
+		},
+		{
+			name: "dict source: github repo is a local path",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"github","repo":"./local/path"}}]}`,
+			want: []string{"plugins[0].source: github requires a valid non-local owner/repository field"},
+		},
+		{
+			name: "dict source: github valid (no structural error)",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"github","repo":"owner/repo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "dict source: url missing url field",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"url"}}]}`,
+			want: []string{"plugins[0].source: url requires a non-empty url field"},
+		},
+		{
+			name: "dict source: url is a local path",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"url","url":"./local/path"}}]}`,
+			want: []string{"plugins[0].source: url requires a valid non-local url field"},
+		},
+		{
+			name: "dict source: url valid (no structural error)",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"url","url":"https://example.com/owner/repo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "dict source: git-subdir missing both repo and url",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"git-subdir"}}]}`,
+			want: []string{"plugins[0].source: git-subdir requires an owner/repository or url field"},
+		},
+		{
+			name: "dict source: git-subdir repo is a local path",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"git-subdir","repo":"./local"}}]}`,
+			want: []string{"plugins[0].source: git-subdir requires a valid non-local owner/repository or url field"},
+		},
+		{
+			name: "dict source: git-subdir valid via repo (no structural error)",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"git-subdir","repo":"owner/repo","subdir":"pkg/a"}}]}`,
+			want: nil,
+		},
+		{
+			name: "dict source: gitlab missing both repo and url",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"gitlab"}}]}`,
+			want: []string{"plugins[0].source: gitlab requires an owner/repository or url field"},
+		},
+		{
+			name: "dict source: gitlab valid via url (no structural error)",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":{"type":"gitlab","url":"https://gitlab.example.com/owner/repo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "multiple malformed entries accumulate, in index order (not first-error-stops)",
+			doc:  `{"name":"m","plugins":[{},{"name":"a","source":{"type":"npm"}},{"name":"b","source":"./ok"}]}`,
+			want: []string{"plugins[0].name: expected a non-empty string", "plugins[1].source: unsupported source type 'npm'"},
 		},
 	}
 	for _, tt := range tests {

@@ -216,12 +216,13 @@ func TestResolvePluginSource_Errors(t *testing.T) {
 	}
 }
 
-// TestResolvePluginSource_NPMRejected covers mkt-026's npm rejection at the
-// resolve layer, for both the "type" key and the "kind" key variant --
-// coercePluginType reads all three (type/source/kind) discriminator keys,
-// unlike the manifest parse layer (models.go), which only reads
-// type/source (see TestResolvePluginSource_NPMDualLayer for the two-layer
-// regression case).
+// TestResolvePluginSource_NPMRejected covers resolvePluginSource's own npm
+// rejection directly (bypassing JSON parsing, unlike
+// TestParseManifestPlugins_NPMRejectedForAllThreeDiscriminatorKeys), for
+// all three discriminator keys (type/source/kind) -- a safety net for a
+// plugin constructed directly, since a JSON-sourced npm plugin (any of the
+// three keys) is already dropped at manifest-parse time and never reaches
+// here in practice.
 func TestResolvePluginSource_NPMRejected(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -251,17 +252,25 @@ func TestResolvePluginSource_NPMRejected(t *testing.T) {
 	}
 }
 
-// TestResolvePluginSource_NPMDualLayer covers mkt-026's dual-layer npm
-// behavior end to end: a "type: npm" plugin is dropped by the manifest
-// parse layer (models.go) and never reaches resolution at all, while a
-// "kind: npm" plugin survives manifest parsing (models.go's npm check only
-// reads "type"/"source") and is rejected only here, at resolvePluginSource
-// (which uses the three-key coercePluginType).
-func TestResolvePluginSource_NPMDualLayer(t *testing.T) {
+// TestParseManifestPlugins_NPMRejectedForAllThreeDiscriminatorKeys is
+// ticket 11 attempt 2's correction of a prior misreading of this parser:
+// _parse_plugin_entry's own source_type derivation (models.py:447-454)
+// reads "type", "source", AND "kind" -- all three keys -- so an npm source
+// under ANY of them is dropped at manifest-PARSE time in the real Oracle,
+// with a matching structural_errors entry; there is no dual-layer
+// parse-vs-resolve split for this. (An earlier version of this test,
+// TestResolvePluginSource_NPMDualLayer, asserted the opposite for the
+// "kind" variant based on that misreading; resolvePluginSource's own,
+// independent npm rejection -- exercised directly, bypassing JSON parsing,
+// by TestResolvePluginSource_NPMRejected -- remains a real, tested safety
+// net for a plugin constructed some other way, just not one a JSON-sourced
+// npm plugin can ever actually reach.)
+func TestParseManifestPlugins_NPMRejectedForAllThreeDiscriminatorKeys(t *testing.T) {
 	doc := `{
 		"name": "m",
 		"plugins": [
 			{"name": "npm-typed", "source": {"type": "npm", "package": "left-pad"}},
+			{"name": "npm-source-key", "source": {"source": "npm", "package": "left-pad"}},
 			{"name": "npm-kind-variant", "source": {"kind": "npm", "package": "left-pad"}},
 			{"name": "ok", "source": "./ok"}
 		]
@@ -276,23 +285,24 @@ func TestResolvePluginSource_NPMDualLayer(t *testing.T) {
 		byName[p.Name] = p
 	}
 
-	// Layer 1 (manifest parse): "type: npm" never survives -- a lookup by
-	// name for it would report PluginNotFound in the full ResolvePlugin flow
-	// (a later step); here we assert its absence from the parsed manifest.
-	if _, ok := byName["npm-typed"]; ok {
-		t.Error(`"npm-typed" plugin must be dropped at manifest parse time (mkt-026 layer 1), not survive to resolution`)
+	for _, dropped := range []string{"npm-typed", "npm-source-key", "npm-kind-variant"} {
+		if _, ok := byName[dropped]; ok {
+			t.Errorf("%q plugin must be dropped at manifest parse time, not survive to resolution", dropped)
+		}
+	}
+	if _, ok := byName["ok"]; !ok {
+		t.Error(`"ok" plugin (a valid string source) must survive parsing`)
 	}
 
-	// Layer 2 (resolve): "kind: npm" survives manifest parsing and is only
-	// rejected here.
-	kindVariant, ok := byName["npm-kind-variant"]
-	if !ok {
-		t.Fatal(`"npm-kind-variant" plugin must survive manifest parsing (mkt-026 layer 1 only checks type/source, not kind)`)
+	wantStructural := "plugins[2].source: unsupported source type 'npm'"
+	found := false
+	for _, e := range m.StructuralErrors {
+		if e == wantStructural {
+			found = true
+		}
 	}
-	if _, err := resolvePluginSource(&kindVariant, "mktOwner", "mktRepo"); err == nil {
-		t.Error(`resolvePluginSource() on "kind: npm" plugin returned no error; want npm rejection at the resolve layer (mkt-026 layer 2)`)
-	} else if !strings.Contains(err.Error(), "npm") {
-		t.Errorf("resolvePluginSource() error = %q; want it to mention npm", err.Error())
+	if !found {
+		t.Errorf("StructuralErrors = %v, want it to contain %q (the kind-variant entry, index 2)", m.StructuralErrors, wantStructural)
 	}
 }
 

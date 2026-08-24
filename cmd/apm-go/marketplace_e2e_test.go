@@ -1420,6 +1420,63 @@ func TestMarketplaceValidate_StructureCheckFailsOnBrokenManifest(t *testing.T) {
 	}
 }
 
+// TestMarketplaceValidate_StructurePerElementDiagnostics is ticket 11 eval
+// attempt 2's two blocking reproducers, at the cobra command level: an
+// invalid array element used to pass silently (Structure/Schema/Names all
+// "passed", exit 0) because parseManifestPlugins only ported the two
+// top-level "plugins" diagnostics, not _parse_plugin_entry's own per-field
+// ones. Both must now report the Oracle's exact Structure message and
+// exit 1, with every other check's row suppressed (has_structure_errors).
+func TestMarketplaceValidate_StructurePerElementDiagnostics(t *testing.T) {
+	tests := []struct {
+		name        string
+		manifest    string
+		wantMessage string
+	}{
+		{
+			name:        "eval reproducer 1: a null plugin element",
+			manifest:    `{"name": "acme", "plugins": [null]}`,
+			wantMessage: "  Structure: plugins[0]: expected an object",
+		},
+		{
+			name:        "eval reproducer 2: an empty object plugin element",
+			manifest:    `{"name": "acme", "plugins": [{}]}`,
+			wantMessage: "  Structure: plugins[0].name: expected a non-empty string",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			isolatedMarketplaceRegistry(t)
+			dir := writeLocalManifestDir(t, tt.manifest)
+			if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+				t.Fatal(err)
+			}
+
+			// Act
+			out, err := runMarketplaceCmd(t, "validate", "acme")
+
+			// Assert
+			if err == nil {
+				t.Fatalf("marketplace validate returned no error for %s", tt.manifest)
+			}
+			if exitCodeOf(err) != 1 {
+				t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(err))
+			}
+			for _, want := range []string{tt.wantMessage, "Summary: 0 passed, 0 warnings, 1 errors"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("output = %q, want it to contain %q", out, want)
+				}
+			}
+			for _, notWant := range []string{"Found ", "Schema:", "Names:"} {
+				if strings.Contains(out, notWant) {
+					t.Errorf("output = %q, must not contain %q once Structure failed", out, notWant)
+				}
+			}
+		})
+	}
+}
+
 func TestMarketplaceValidate_NotRegisteredErrors(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
