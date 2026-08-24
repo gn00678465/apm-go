@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — runner diff/gate (attempt 3: HOME capture so the registry tree diff disappears).
 
-**Status:** done (2026-08-24, attempt 2) — `.review/eval-ticket-11.md` FAILed attempt 1: the Structure check ported only the two top-level "plugins" diagnostics and silently passed structurally-invalid *elements* (`plugins:[null]`, `plugins:[{}]`, and "similar source-shape cases"). Attempt 2 ports the Oracle's complete per-element diagnostic set. Attempt 1's product-parity fixes (Structure/Schema/Names ordering, rendering, help parity, `withSilentExitCode`, the systemic F01 waivers) were accepted and are unchanged.
+**Status:** done (2026-08-24, attempt 3) — `.review/eval-ticket-11.md` FAILed attempt 1: the Structure check ported only the two top-level "plugins" diagnostics and silently passed structurally-invalid *elements* (`plugins:[null]`, `plugins:[{}]`, and "similar source-shape cases"). Attempt 2 ported the Oracle's complete per-element diagnostic set, but its own `isValidRemoteCoordinate` approximation, `repo`/`repository` fallback, and `tag_pattern` handling each still diverged from the Oracle in ways attempt 2's own stated scope boundary didn't own up to — attempt 3 closes those three (see "Attempt 3" section below). Attempts 1-2's other product-parity fixes (Structure/Schema/Names ordering, rendering, help parity, `withSilentExitCode`, the systemic F01 waivers, the `mkt-026` correction) were accepted and are unchanged.
 
 **Origin:** runner cases from ticket 06 (`.review/eval-ticket-06.md` AC5): Oracle prints Structure/Schema/Names → "3 passed"; Target prints Schema/Names → "2 passed". `validate-help` shows a `help_semantic` diff. These are pre-existing M-06 gaps the runner exposed, not caused by ticket 06.
 
@@ -85,6 +85,98 @@ one remaining, explicitly documented partial-parity boundary (AGENTS.md's
 implausible coordinate" corner, not whether malformed entries are detected
 at all.
 
+## Attempt 3: coordinate grammar, repo fallback truthiness, tag_pattern deferral
+
+`.review/eval-ticket-11.md`'s attempt-2 ruling confirmed both attempt-2
+reproducers fixed, but raised three NEW blocking reproducers — none were
+regressions in the ported diagnostics themselves, all were corners attempt
+2's own "still deliberately bounded" note (above) had wrongly assumed were
+out of scope or hadn't considered at all:
+
+1. **`isValidRemoteCoordinate`'s bounded approximation under-rejects.**
+   Attempt 2's checks (non-empty, not local-path-shaped, no control chars)
+   accepted syntactically invalid coordinates the Oracle's real
+   `DependencyReference.parse` (models.py:40-47) rejects outright:
+   `"owner/"`, `"owner//repo"`, `"owner/repo?x"`, and a bare word (`"foo"`)
+   for a `url` source. Rather than hand-porting `DependencyReference.parse`'s
+   grammar a second time, `isValidRemoteCoordinate` now calls
+   `manifest.ParseDepString` — apm-go's own existing full Go port of that
+   same grammar, already used by `install`/dependency resolution
+   (`internal/manifest/depref.go`) — and returns `err == nil && !ref.IsLocal`.
+   This closes the divergence for free (the parser's `parseShorthand`,
+   `ownerCharRe`, `repoCharRe` already reject every example above) and
+   deletes the second, weaker approximation instead of maintaining two.
+   `looksLikeLocalPath` is no longer called from this path (still used
+   elsewhere for `SourceKind` classification).
+2. **`repo`/`repository` fallback used the wrong "presence" semantics.**
+   The Oracle's actual expression is `raw.get("repo", "") or
+   raw.get("repository", "")` — Python `or`, which falls through on any
+   *falsy* value (`""`, `0`, `None`, missing), not merely an absent key.
+   Attempt 2's `firstNonEmptyString` treated any non-string `"repo"` as
+   absent and fell back to `"repository"` — wrong: a truthy non-string
+   `"repo"` (e.g. `42`) is used as-is by the Oracle and never falls back
+   (then correctly fails as "no `/` in it" → `"github requires an
+   owner/repository field"`), while a *falsy* `"repo"` (`""` or `0`) does
+   still fall back. Added `pythonTruthy`/`pythonGetOr` implementing this
+   exact `or`-fallback semantic; `dictSourceDiagnostic` now reads
+   `pythonGetOr(src, "repo", "repository")` for its repo lookup instead of
+   `firstNonEmptyString` (still used, unchanged, for the `type`/`source`/
+   `kind` derivation, which IS simple presence-checking in the Oracle).
+3. **`tag_pattern` errors failed the wrong thing.** Attempt 2 made an
+   invalid `tag_pattern` a hard Go `error` out of `parsePluginEntry`,
+   propagating up to fail the entire `marketplace add`/fetch — but the real
+   Oracle (models.py:521-533) catches `TagPatternError` *inside*
+   `_parse_plugin_entry` and converts it to an ordinary per-entry
+   `(None, diagnostic)` skip, exactly like every other structural
+   diagnostic: the malformed entry is dropped from `manifest.plugins` and
+   reported via `structural_errors`, while `marketplace add` still
+   *succeeds* and every sibling plugin is unaffected. `parsePluginEntry`
+   (and transitively `parseManifestPlugins`/`UnmarshalJSON`) no longer
+   returns an `error` for this case at all. Added `pythonRepr` (Python
+   single-quoted repr formatting, for the Oracle's exact f-string message
+   bytes), `tagPatternPlaceholderRe`, and `tagPatternStructuralError` to
+   produce the Oracle's exact message
+   (`"source.tag_pattern: 'Plugin '<name>' source.tag_pattern' must
+   contain exactly one {version} placeholder, got '<pattern>'"`, plus the
+   non-string and unsupported-placeholder variants) as a Structure
+   diagnostic instead of a Go error. The stale doc comment above
+   `parsePluginEntry` (models.go:686-701 in the eval's numbering) claiming
+   tag_pattern failure "fails the whole document" is corrected; the
+   existing test that had encoded that wrong belief
+   (`TestUnmarshalJSON_PluginSourceTagPattern`'s last subtest) is rewritten
+   to assert the real per-entry-drop behavior.
+
+**Blast radius verified directly against the pinned Oracle** (per the
+eval's explicit request, since `parseManifestPlugins` is shared with
+browse/search/install): a marketplace with one valid plugin and one
+`tag_pattern`-broken plugin now registers successfully via `marketplace
+add` on both sides (Oracle emits a CommandLogger warning naming the
+malformed-entry count); `marketplace browse` lists only the valid plugin on
+both sides; `install <bad-plugin>@<mkt>` fails with a "not found in
+marketplace"-style error on both (different exact wording, not a
+newly-introduced divergence, not flagged by the eval); `marketplace
+validate` reports the exact Structure diagnostic (modulo the
+already-waived `[*]`/`[i]` icon difference) with exit 1 on both. Encoded as
+`TestMarketplaceValidate_TagPatternDeferral` (`cmd/apm-go/
+marketplace_e2e_test.go`), exercising `add` → `browse` → `validate`
+end-to-end through the real cobra command tree.
+
+All three fixes, plus the evaluator's named divergence-class probes
+(`owner//repo`, `owner/repo?x`, `url:"foo"`), plus a coordinate-grammar
+"still accepts every previously-valid shape" regression case (HTTPS URL,
+SCP-style SSH, host-qualified `github.com/owner/repo`) and truthy/falsy
+repo-fallback pairs (`repo:42` vs `repo:""`/`repo:0`, each with a
+`repository` fallback present), were verified byte-for-byte against the
+live pinned Oracle before being encoded as the ~12 new
+`TestMarketplaceManifest_StructuralErrors` sub-cases plus the rewritten
+`TestUnmarshalJSON_PluginSourceTagPattern` subtest.
+
+No import cycle: `internal/manifest` does not import `internal/marketplace`
+(verified); `internal/marketplace` already imports `internal/manifest`
+elsewhere (`resolver.go`, `resolve_plugin.go`, `crossrepo.go`), so adding
+the same import to `models.go` is the existing dependency direction, not a
+new one.
+
 ## Acceptance criteria
 
 - [x] Target's `ValidateChecks` (or its caller) emits a Structure check with the Oracle's pass/fail message, in the Oracle's order (Structure, Schema, Names), and the summary counts it. Fixture with a structurally broken manifest (`plugins` not a list, `validate-structure-fail`) fails Structure with the Oracle's message ("plugins: expected a list") and exit 1. **Attempt 2:** every per-element diagnostic `_parse_plugin_entry`/`_dict_source_error` can raise is now ported (see "Attempt 2" section above) and verified against both the real Oracle directly and `apm-go marketplace validate` end to end for the evaluator's exact two reproducers (`plugins:[null]`, `plugins:[{}]`) plus 28 further hand-derived cases.
@@ -115,3 +207,8 @@ Full-corpus run against the pinned Oracle (real subprocess, no mocks), clean tre
 - `internal/marketplace/resolver.go`: `coercePluginType`'s doc comment corrected (no parse-vs-resolve npm split).
 - `internal/marketplace/resolver_test.go`: `TestResolvePluginSource_NPMDualLayer` replaced with `TestParseManifestPlugins_NPMRejectedForAllThreeDiscriminatorKeys` (asserts all three keys are dropped at parse time, with the matching `StructuralErrors` message); `TestResolvePluginSource_NPMRejected`'s doc comment corrected.
 - `cmd/apm-go/marketplace_e2e_test.go`: +`TestMarketplaceValidate_StructurePerElementDiagnostics` (the evaluator's exact two reproducers, at the cobra command level, end to end through `apm-go marketplace validate`).
+
+### Attempt 3 additions
+- `internal/marketplace/models.go`: `isValidRemoteCoordinate` rewritten to call `manifest.ParseDepString` (new `internal/manifest` import) instead of the attempt-2 bounded approximation; new `pythonTruthy`/`pythonGetOr` helpers, `dictSourceDiagnostic`'s repo lookup switched to `pythonGetOr(src, "repo", "repository")`; new `pythonRepr`, `tagPatternPlaceholderRe`, `tagPatternStructuralError`; `parsePluginEntry`/`parseManifestPlugins`/`UnmarshalJSON`'s call site no longer return an `error` for tag_pattern (or anything else — nothing produces one any more); stale "fails the whole document" doc comment on `parsePluginEntry` corrected; `internal/marketplace/tagpattern` import removed (no longer called from this path).
+- `internal/marketplace/models_manifest_test.go`: `TestMarketplaceManifest_StructuralErrors` extended with the eval's three reproducers, its named divergence-class probes, a coordinate-grammar regression case, and truthy/falsy repo-fallback pairs; `TestUnmarshalJSON_PluginSourceTagPattern`'s last subtest rewritten from asserting whole-document failure to asserting per-entry drop + `StructuralErrors`; unused `"strings"` import removed.
+- `cmd/apm-go/marketplace_e2e_test.go`: +`TestMarketplaceValidate_TagPatternDeferral` (blast-radius regression: `add` succeeds, `browse` excludes only the malformed entry, `validate` reports the Structure diagnostic — verified against the real Oracle first, then encoded).

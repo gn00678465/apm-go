@@ -2,7 +2,6 @@ package marketplace
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -436,6 +435,86 @@ func TestMarketplaceManifest_StructuralErrors(t *testing.T) {
 			doc:  `{"name":"m","plugins":[{},{"name":"a","source":{"type":"npm"}},{"name":"b","source":"./ok"}]}`,
 			want: []string{"plugins[0].name: expected a non-empty string", "plugins[1].source: unsupported source type 'npm'"},
 		},
+
+		// Ticket 11 eval attempt 3: isValidRemoteCoordinate's coordinate-
+		// grammar reproducers -- each syntactically invalid, but each was
+		// previously accepted by the bounded (non-empty/non-local/no-control-
+		// chars) approximation. All 4 verified against the real pinned
+		// Oracle's parse_marketplace_json directly.
+		{
+			name: "eval attempt 3 reproducer: github repo with a trailing slash (empty repo segment)",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/"}}]}`,
+			want: []string{"plugins[0].source: github requires a valid non-local owner/repository field"},
+		},
+		{
+			name: "eval attempt 3 divergence-class probe: github repo with a doubled slash",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner//repo"}}]}`,
+			want: []string{"plugins[0].source: github requires a valid non-local owner/repository field"},
+		},
+		{
+			name: "eval attempt 3 divergence-class probe: github repo with a query string",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo?x"}}]}`,
+			want: []string{"plugins[0].source: github requires a valid non-local owner/repository field"},
+		},
+		{
+			name: "eval attempt 3 divergence-class probe: url is a bare word (not a valid dependency reference at all)",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"url","url":"foo"}}]}`,
+			want: []string{"plugins[0].source: url requires a valid non-local url field"},
+		},
+		{
+			name: "coordinate grammar still accepts every previously-valid shape (HTTPS URL, SCP SSH, host-qualified)",
+			doc: `{"name":"m","plugins":[
+				{"name":"a","source":{"type":"github","repo":"https://github.com/owner/repo"}},
+				{"name":"b","source":{"type":"github","repo":"git@github.com:owner/repo.git"}},
+				{"name":"c","source":{"type":"github","repo":"github.com/owner/repo"}}
+			]}`,
+			want: nil,
+		},
+
+		// Ticket 11 eval attempt 3: repo/repository fallback truthiness
+		// reproducer -- Python's `raw.get("repo","") or raw.get("repository","")`
+		// depends on the "repo" value's OWN truthiness, not "is it a string".
+		{
+			name: "eval attempt 3 reproducer: truthy non-string repo is used as-is, never falls back to repository",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":42,"repository":"owner/repo"}}]}`,
+			want: []string{"plugins[0].source: github requires an owner/repository field"},
+		},
+		{
+			name: "falsy empty-string repo DOES fall back to repository (valid)",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"","repository":"owner/repo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "falsy zero repo DOES fall back to repository (valid)",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":0,"repository":"owner/repo"}}]}`,
+			want: nil,
+		},
+
+		// Ticket 11 eval attempt 3: tag_pattern deferral reproducer -- a
+		// malformed tag_pattern is a per-element Structure diagnostic, not a
+		// whole-document parse failure (see also
+		// TestUnmarshalJSON_PluginSourceTagPattern for the marketplace-add/
+		// browse/install blast-radius coverage).
+		{
+			name: "eval attempt 3 reproducer: tag_pattern wrong placeholder count",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":"{name}"}}]}`,
+			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'p' source.tag_pattern' must contain exactly one {version} placeholder, got '{name}'"},
+		},
+		{
+			name: "tag_pattern non-string",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":42}}]}`,
+			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'p' source.tag_pattern' must be a non-empty string, got 42"},
+		},
+		{
+			name: "tag_pattern unsupported placeholder",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":"{foo}"}}]}`,
+			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'p' source.tag_pattern' contains unsupported placeholder(s): {foo}"},
+		},
+		{
+			name: "tag_pattern valid (no structural error)",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":"{name}-v{version}"}}]}`,
+			want: nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -456,13 +535,19 @@ func TestMarketplaceManifest_StructuralErrors(t *testing.T) {
 }
 
 // TestUnmarshalJSON_PluginSourceTagPattern locks the consumer half of upstream
-// v0.27.0's tag_pattern propagation (models.py:325-330 field, :459-467 parse).
+// v0.27.0's tag_pattern propagation (models.py:325-330 field, :521-533 parse).
 //
-// The error case is deliberately fail-loud for the WHOLE document, not a
-// per-entry skip: upstream's _parse_plugin_entry returns None (skip) for a
-// missing name or an unrecognised source, but *raises* TagPatternError for a
-// bad tag_pattern, and its caller at models.py:531 does not catch it. A
-// silently-dropped tag_pattern would change which tag a range resolves to.
+// Ticket 11 attempt 3 correction: an earlier version of this test (and its
+// own doc comment) asserted an invalid tag_pattern fails the WHOLE
+// document, believing _parse_plugin_entry's caller at models.py:531 lets
+// TagPatternError propagate uncaught. Verified directly against the pinned
+// Oracle's parse_marketplace_json: models.py:521-533 wraps the
+// validate_tag_pattern call in `try: ... except TagPatternError as exc:
+// return None, f"source.tag_pattern: {exc}"` -- the exact same
+// skip-with-diagnostic shape as every other _parse_plugin_entry branch. A
+// malformed tag_pattern is dropped from manifest.plugins and reported in
+// structural_errors (visible via `apm marketplace validate`'s Structure
+// check); it does NOT fail `marketplace add`/fetch for the whole manifest.
 func TestUnmarshalJSON_PluginSourceTagPattern(t *testing.T) {
 	t.Run("present and valid is carried through", func(t *testing.T) {
 		var m MarketplaceManifest
@@ -504,20 +589,25 @@ func TestUnmarshalJSON_PluginSourceTagPattern(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid fails the whole document and names the plugin", func(t *testing.T) {
+	t.Run("invalid is dropped per-entry and reported in StructuralErrors, siblings kept", func(t *testing.T) {
 		var m MarketplaceManifest
 		err := json.Unmarshal([]byte(`{"name":"mk","plugins":[
 			{"name":"good","source":{"source":"github","repo":"acme/g"}},
 			{"name":"bad","source":{"source":"github","repo":"acme/b","tag_pattern":"{name}"}}
 		]}`), &m)
-		if err == nil {
-			t.Fatalf("expected an error, got plugins %+v", m.Plugins)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(err.Error(), "bad") {
-			t.Errorf("error = %q, must name the offending plugin", err.Error())
+		if len(m.Plugins) != 1 || m.Plugins[0].Name != "good" {
+			names := make([]string, 0, len(m.Plugins))
+			for _, p := range m.Plugins {
+				names = append(names, p.Name)
+			}
+			t.Fatalf("kept plugins %v, want only [good] (the malformed entry is dropped, not the whole document)", names)
 		}
-		if !strings.Contains(err.Error(), "exactly one") {
-			t.Errorf("error = %q, must explain the pattern rule", err.Error())
+		want := "plugins[1].source.tag_pattern: 'Plugin 'bad' source.tag_pattern' must contain exactly one {version} placeholder, got '{name}'"
+		if len(m.StructuralErrors) != 1 || m.StructuralErrors[0] != want {
+			t.Errorf("StructuralErrors = %v, want [%q]", m.StructuralErrors, want)
 		}
 	})
 }

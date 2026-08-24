@@ -1477,6 +1477,58 @@ func TestMarketplaceValidate_StructurePerElementDiagnostics(t *testing.T) {
 	}
 }
 
+// TestMarketplaceValidate_TagPatternDeferral is ticket 11 eval attempt 3's
+// third blocking reproducer, PLUS the requested blast-radius check: a
+// malformed source.tag_pattern is a per-element Structure diagnostic
+// (models.py:521-533), not a whole-document parse failure. Before this
+// fix, `marketplace add` itself failed while parsing (parsePluginEntry
+// returned a hard error), so the marketplace was never registered at all
+// -- browse/search/install for EVERY plugin in that marketplace, including
+// perfectly valid ones, failed too. Verified against the real pinned
+// Oracle directly: `marketplace add` registers successfully (with a
+// CommandLogger warning naming the malformed-entry count), `browse` lists
+// only the valid plugin, and `validate` reports the Structure diagnostic.
+func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "broken", "plugins": [`+
+		`{"name": "good-plugin", "source": {"type": "github", "repo": "acme/good"}},`+
+		`{"name": "bad-plugin", "source": {"type": "github", "repo": "acme/bad", "tag_pattern": "{name}"}}`+
+		`]}`)
+
+	// Act: registering the marketplace must succeed despite the malformed
+	// entry (the blast-radius regression this fix closes).
+	addErr := marketplace.AddSource(marketplace.MarketplaceSource{Name: "broken", URL: dir, Path: "marketplace.json"})
+
+	// Assert
+	if addErr != nil {
+		t.Fatalf("AddSource returned an error for a manifest with one malformed plugin entry: %v", addErr)
+	}
+
+	browseOut, browseErr := runMarketplaceCmd(t, "browse", "broken")
+	if browseErr != nil {
+		t.Fatalf("marketplace browse returned error: %v", browseErr)
+	}
+	if !strings.Contains(browseOut, "good-plugin") {
+		t.Errorf("browse output = %q, want it to list the valid plugin", browseOut)
+	}
+	if strings.Contains(browseOut, "bad-plugin") {
+		t.Errorf("browse output = %q, must NOT list the tag_pattern-malformed plugin", browseOut)
+	}
+
+	validateOut, validateErr := runMarketplaceCmd(t, "validate", "broken")
+	if validateErr == nil {
+		t.Fatal("marketplace validate returned no error for a manifest with a malformed tag_pattern")
+	}
+	if exitCodeOf(validateErr) != 1 {
+		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(validateErr))
+	}
+	wantMessage := "  Structure: plugins[1].source.tag_pattern: 'Plugin 'bad-plugin' source.tag_pattern' must contain exactly one {version} placeholder, got '{name}'"
+	if !strings.Contains(validateOut, wantMessage) {
+		t.Errorf("validate output = %q, want it to contain %q", validateOut, wantMessage)
+	}
+}
+
 func TestMarketplaceValidate_NotRegisteredErrors(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
