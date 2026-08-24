@@ -3,6 +3,7 @@ package marketplace
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -17,6 +18,26 @@ import (
 type pythonReprConformanceRow struct {
 	JSON string `json:"json"`
 	Repr string `json:"repr"`
+}
+
+// pythonReprWhitespaceRow is one code point of the fixture's exhaustive
+// isspace() sweep: `is_space` is CPython's own `chr(cp).isspace()` answer,
+// asserted 1:1 against pyIsSpace (ticket 11 attempt 6: Go's
+// unicode.IsSpace misses Python's U+001C-U+001F, so the boundary is locked
+// per-code-point rather than trusted to any one library's table).
+type pythonReprWhitespaceRow struct {
+	Codepoint int  `json:"codepoint"`
+	IsSpace   bool `json:"is_space"`
+}
+
+// pythonReprConformanceDoc mirrors spec/conformance/python-repr.json's
+// top-level shape; OracleCommit pins the generating Oracle checkout to the
+// SAME commit the parity suite is gated on (tools/parity/oracle.pin), the
+// identical provenance rule depref_conformance_test.go enforces.
+type pythonReprConformanceDoc struct {
+	OracleCommit    string                     `json:"oracle_commit"`
+	Rows            []pythonReprConformanceRow `json:"rows"`
+	WhitespaceSweep []pythonReprWhitespaceRow  `json:"whitespace_sweep"`
 }
 
 // TestPythonReprValue_OracleConformance is ticket 11 attempt 5's PART 2:
@@ -34,15 +55,27 @@ func TestPythonReprValue_OracleConformance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading spec/conformance/python-repr.json: %v", err)
 	}
-	var rows []pythonReprConformanceRow
-	if err := json.Unmarshal(data, &rows); err != nil {
+	var doc pythonReprConformanceDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatalf("parsing spec/conformance/python-repr.json: %v", err)
 	}
-	if len(rows) == 0 {
+	if len(doc.Rows) == 0 {
 		t.Fatal("spec/conformance/python-repr.json is empty")
 	}
 
-	for _, row := range rows {
+	pinData, err := os.ReadFile("../../tools/parity/oracle.pin")
+	if err != nil {
+		t.Fatalf("reading tools/parity/oracle.pin: %v", err)
+	}
+	wantPin := strings.TrimSpace(string(pinData))
+	if doc.OracleCommit != wantPin {
+		t.Fatalf("python-repr.json's oracle_commit = %q, want %q (tools/parity/oracle.pin) -- "+
+			"the fixture was generated against a different Oracle commit than the parity suite is pinned to; "+
+			"regenerate it with tools/depref_conformance_gen.py --oracle-commit %s",
+			doc.OracleCommit, wantPin, wantPin)
+	}
+
+	for _, row := range doc.Rows {
 		t.Run(row.JSON, func(t *testing.T) {
 			v, err := decodeOrderedJSON(json.RawMessage(row.JSON))
 			if err != nil {
@@ -52,5 +85,19 @@ func TestPythonReprValue_OracleConformance(t *testing.T) {
 				t.Errorf("pythonReprValue(%s) = %q, want %q (Oracle repr())", row.JSON, got, row.Repr)
 			}
 		})
+	}
+
+	// The isspace() sweep: every code point CPython classifies (or refuses
+	// to classify) as whitespace must agree with pyIsSpace, so
+	// pyStrTrimSpace's strip boundary can never silently drift from
+	// Python's str.strip() again.
+	if len(doc.WhitespaceSweep) == 0 {
+		t.Fatal("python-repr.json has no whitespace_sweep -- regenerate the fixture")
+	}
+	for _, ws := range doc.WhitespaceSweep {
+		if got := pyIsSpace(rune(ws.Codepoint)); got != ws.IsSpace {
+			t.Errorf("pyIsSpace(U+%04X) = %v, want %v (CPython chr(cp).isspace())",
+				ws.Codepoint, got, ws.IsSpace)
+		}
 	}
 }

@@ -539,3 +539,15 @@ across all 49 cases. `go build`/`vet`/`gofmt` clean; `go test ./...` green
 - `internal/manifest/depref_conformance_test.go` (new), `internal/marketplace/python_repr_conformance_test.go` (new): the conformance test suite, see "Part 2" above.
 - `tools/depref_conformance_gen.py` (new), `spec/conformance/depref-accept.json` (new), `spec/conformance/python-repr.json` (new): the conformance fixtures, see "Part 2" above.
 - `cmd/apm-go/marketplace_e2e_test.go`: `TestMarketplaceValidate_TagPatternDeferral`'s doc comment corrected (install-command claim).
+
+## Attempt 6 (orchestrator-completed, 2026-08-24)
+
+Per the user's protocol correction, the orchestrator took over after attempt 5's FAIL (the intervention rule means hands-on implementation after 3 failures, not more spec-writing). The implementor's in-flight attempt-6 work was interrupted, reviewed, KEPT (it was correct and well-researched -- including the discovery that `SSH://` stays case-sensitive in the Oracle while `HTTPS://`/`HTTP://` fold), and completed by the orchestrator:
+
+- Implementor (kept): case-insensitive https/http scheme dispatch (`hasFoldPrefix`, reference.py:1626); `pyStr` dict KEYS end-to-end with `pyStrHashKey` for duplicate detection (lone surrogates in keys no longer collapse to U+FFFD); `pyIsSpace` porting Python's `str.isspace()` (Go's `unicode.IsSpace` + U+001C-U+001F); generator gained the Oracle pin embedding, mixed-case-scheme/surrogate-key/whitespace-sweep case classes, and `apmgo_accepted`/`apmgo_is_local` known-gap locking; `depref_conformance_test.go` asserts the pin and both directions of every known gap; both fixtures regenerated (88 depref rows, 46 repr rows + 276-code-point isspace sweep).
+- Orchestrator (completed): `python_repr_conformance_test.go` updated to the new doc shape -- pin assertion (same tools/parity/oracle.pin rule as the depref test) and the per-code-point `pyIsSpace` sweep assertion.
+
+Orchestrator verification (all first-hand, not relayed):
+- Fixture honesty: regenerated both fixtures against the pinned Oracle with the checked-in generator -- byte-identical to the committed files.
+- All three attempt-5 reproducers byte-identical across sides (modulo the pre-waived rich word-wrap): `HTTPS://x.io/owner/repo` -> Structure passed/exit 0 both sides; tag_pattern {"\ud800":1} -> got {'\ud800': 1} exit 1 both sides; tag_pattern "\u001c" -> must be a non-empty string, got '\x1c' exit 1 both sides.
+- `go test ./...` green (Windows-only exception), `-race` clean on internal/manifest, internal/marketplace, cmd/apm-go; gofmt/vet clean.

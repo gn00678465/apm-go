@@ -1,170 +1,1295 @@
-[
-  {
-    "json": "null",
-    "repr": "None"
-  },
-  {
-    "json": "true",
-    "repr": "True"
-  },
-  {
-    "json": "false",
-    "repr": "False"
-  },
-  {
-    "json": "\"\"",
-    "repr": "''"
-  },
-  {
-    "json": "\"hello\"",
-    "repr": "'hello'"
-  },
-  {
-    "json": "42",
-    "repr": "42"
-  },
-  {
-    "json": "-7",
-    "repr": "-7"
-  },
-  {
-    "json": "0",
-    "repr": "0"
-  },
-  {
-    "json": "-0",
-    "repr": "0"
-  },
-  {
-    "json": "1.0",
-    "repr": "1.0"
-  },
-  {
-    "json": "-0.0",
-    "repr": "-0.0"
-  },
-  {
-    "json": "1.5",
-    "repr": "1.5"
-  },
-  {
-    "json": "-0.5",
-    "repr": "-0.5"
-  },
-  {
-    "json": "3.14159",
-    "repr": "3.14159"
-  },
-  {
-    "json": "1e20",
-    "repr": "1e+20"
-  },
-  {
-    "json": "1e-5",
-    "repr": "1e-05"
-  },
-  {
-    "json": "1e400",
-    "repr": "inf"
-  },
-  {
-    "json": "-1e400",
-    "repr": "-inf"
-  },
-  {
-    "json": "123456789012345678901234567890",
-    "repr": "123456789012345678901234567890"
-  },
-  {
-    "json": "\"it's\"",
-    "repr": "\"it's\""
-  },
-  {
-    "json": "\"say \\\"hi\\\"\"",
-    "repr": "'say \"hi\"'"
-  },
-  {
-    "json": "\"both ' and \\\"\"",
-    "repr": "'both \\' and \"'"
-  },
-  {
-    "json": "\"tab\\there\"",
-    "repr": "'tab\\there'"
-  },
-  {
-    "json": "\"line\\nbreak\"",
-    "repr": "'line\\nbreak'"
-  },
-  {
-    "json": "\"cr\\rreturn\"",
-    "repr": "'cr\\rreturn'"
-  },
-  {
-    "json": "\"back\\\\slash\"",
-    "repr": "'back\\\\slash'"
-  },
-  {
-    "json": "\"\\u0007\"",
-    "repr": "'\\x07'"
-  },
-  {
-    "json": "\"\\u001b[31m\"",
-    "repr": "'\\x1b[31m'"
-  },
-  {
-    "json": "\"h\\u00e9llo\"",
-    "repr": "'h\u00e9llo'"
-  },
-  {
-    "json": "\"\\ud800\"",
-    "repr": "'\\ud800'"
-  },
-  {
-    "json": "\"\\udc00\"",
-    "repr": "'\\udc00'"
-  },
-  {
-    "json": "\"\\ud83d\\ude00\"",
-    "repr": "'\ud83d\ude00'"
-  },
-  {
-    "json": "\"\\u200b\"",
-    "repr": "'\\u200b'"
-  },
-  {
-    "json": "[1, 2, 3]",
-    "repr": "[1, 2, 3]"
-  },
-  {
-    "json": "[1, \"a\", null, true, false]",
-    "repr": "[1, 'a', None, True, False]"
-  },
-  {
-    "json": "[]",
-    "repr": "[]"
-  },
-  {
-    "json": "{}",
-    "repr": "{}"
-  },
-  {
-    "json": "{\"x\": 1}",
-    "repr": "{'x': 1}"
-  },
-  {
-    "json": "{\"b\": 1, \"a\": 2}",
-    "repr": "{'b': 1, 'a': 2}"
-  },
-  {
-    "json": "{\"a\": 1, \"b\": 2, \"a\": 3}",
-    "repr": "{'a': 3, 'b': 2}"
-  },
-  {
-    "json": "{\"a\": [1, 2], \"b\": {\"c\": 3}}",
-    "repr": "{'a': [1, 2], 'b': {'c': 3}}"
-  },
-  {
-    "json": "[{\"x\": 1}, {\"y\": 2}]",
-    "repr": "[{'x': 1}, {'y': 2}]"
-  }
-]
+{
+  "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+  "rows": [
+    {
+      "json": "null",
+      "repr": "None"
+    },
+    {
+      "json": "true",
+      "repr": "True"
+    },
+    {
+      "json": "false",
+      "repr": "False"
+    },
+    {
+      "json": "\"\"",
+      "repr": "''"
+    },
+    {
+      "json": "\"hello\"",
+      "repr": "'hello'"
+    },
+    {
+      "json": "42",
+      "repr": "42"
+    },
+    {
+      "json": "-7",
+      "repr": "-7"
+    },
+    {
+      "json": "0",
+      "repr": "0"
+    },
+    {
+      "json": "-0",
+      "repr": "0"
+    },
+    {
+      "json": "1.0",
+      "repr": "1.0"
+    },
+    {
+      "json": "-0.0",
+      "repr": "-0.0"
+    },
+    {
+      "json": "1.5",
+      "repr": "1.5"
+    },
+    {
+      "json": "-0.5",
+      "repr": "-0.5"
+    },
+    {
+      "json": "3.14159",
+      "repr": "3.14159"
+    },
+    {
+      "json": "1e20",
+      "repr": "1e+20"
+    },
+    {
+      "json": "1e-5",
+      "repr": "1e-05"
+    },
+    {
+      "json": "1e400",
+      "repr": "inf"
+    },
+    {
+      "json": "-1e400",
+      "repr": "-inf"
+    },
+    {
+      "json": "123456789012345678901234567890",
+      "repr": "123456789012345678901234567890"
+    },
+    {
+      "json": "\"it's\"",
+      "repr": "\"it's\""
+    },
+    {
+      "json": "\"say \\\"hi\\\"\"",
+      "repr": "'say \"hi\"'"
+    },
+    {
+      "json": "\"both ' and \\\"\"",
+      "repr": "'both \\' and \"'"
+    },
+    {
+      "json": "\"tab\\there\"",
+      "repr": "'tab\\there'"
+    },
+    {
+      "json": "\"line\\nbreak\"",
+      "repr": "'line\\nbreak'"
+    },
+    {
+      "json": "\"cr\\rreturn\"",
+      "repr": "'cr\\rreturn'"
+    },
+    {
+      "json": "\"back\\\\slash\"",
+      "repr": "'back\\\\slash'"
+    },
+    {
+      "json": "\"\\u0007\"",
+      "repr": "'\\x07'"
+    },
+    {
+      "json": "\"\\u001b[31m\"",
+      "repr": "'\\x1b[31m'"
+    },
+    {
+      "json": "\"h\\u00e9llo\"",
+      "repr": "'h\u00e9llo'"
+    },
+    {
+      "json": "\"\\ud800\"",
+      "repr": "'\\ud800'"
+    },
+    {
+      "json": "\"\\udc00\"",
+      "repr": "'\\udc00'"
+    },
+    {
+      "json": "\"\\ud83d\\ude00\"",
+      "repr": "'\ud83d\ude00'"
+    },
+    {
+      "json": "\"\\u200b\"",
+      "repr": "'\\u200b'"
+    },
+    {
+      "json": "[1, 2, 3]",
+      "repr": "[1, 2, 3]"
+    },
+    {
+      "json": "[1, \"a\", null, true, false]",
+      "repr": "[1, 'a', None, True, False]"
+    },
+    {
+      "json": "[]",
+      "repr": "[]"
+    },
+    {
+      "json": "{}",
+      "repr": "{}"
+    },
+    {
+      "json": "{\"x\": 1}",
+      "repr": "{'x': 1}"
+    },
+    {
+      "json": "{\"b\": 1, \"a\": 2}",
+      "repr": "{'b': 1, 'a': 2}"
+    },
+    {
+      "json": "{\"a\": 1, \"b\": 2, \"a\": 3}",
+      "repr": "{'a': 3, 'b': 2}"
+    },
+    {
+      "json": "{\"a\": [1, 2], \"b\": {\"c\": 3}}",
+      "repr": "{'a': [1, 2], 'b': {'c': 3}}"
+    },
+    {
+      "json": "[{\"x\": 1}, {\"y\": 2}]",
+      "repr": "[{'x': 1}, {'y': 2}]"
+    },
+    {
+      "json": "{\"\\ud800\": 1}",
+      "repr": "{'\\ud800': 1}"
+    },
+    {
+      "json": "{\"a\": {\"\\ud800\": 1}}",
+      "repr": "{'a': {'\\ud800': 1}}"
+    },
+    {
+      "json": "{\"\\ud800\": \"\\udc00\"}",
+      "repr": "{'\\ud800': '\\udc00'}"
+    },
+    {
+      "json": "[{\"\\ud800\": 1}, \"\\udc00\"]",
+      "repr": "[{'\\ud800': 1}, '\\udc00']"
+    }
+  ],
+  "whitespace_sweep": [
+    {
+      "codepoint": 0,
+      "is_space": false
+    },
+    {
+      "codepoint": 1,
+      "is_space": false
+    },
+    {
+      "codepoint": 2,
+      "is_space": false
+    },
+    {
+      "codepoint": 3,
+      "is_space": false
+    },
+    {
+      "codepoint": 4,
+      "is_space": false
+    },
+    {
+      "codepoint": 5,
+      "is_space": false
+    },
+    {
+      "codepoint": 6,
+      "is_space": false
+    },
+    {
+      "codepoint": 7,
+      "is_space": false
+    },
+    {
+      "codepoint": 8,
+      "is_space": false
+    },
+    {
+      "codepoint": 9,
+      "is_space": true
+    },
+    {
+      "codepoint": 10,
+      "is_space": true
+    },
+    {
+      "codepoint": 11,
+      "is_space": true
+    },
+    {
+      "codepoint": 12,
+      "is_space": true
+    },
+    {
+      "codepoint": 13,
+      "is_space": true
+    },
+    {
+      "codepoint": 14,
+      "is_space": false
+    },
+    {
+      "codepoint": 15,
+      "is_space": false
+    },
+    {
+      "codepoint": 16,
+      "is_space": false
+    },
+    {
+      "codepoint": 17,
+      "is_space": false
+    },
+    {
+      "codepoint": 18,
+      "is_space": false
+    },
+    {
+      "codepoint": 19,
+      "is_space": false
+    },
+    {
+      "codepoint": 20,
+      "is_space": false
+    },
+    {
+      "codepoint": 21,
+      "is_space": false
+    },
+    {
+      "codepoint": 22,
+      "is_space": false
+    },
+    {
+      "codepoint": 23,
+      "is_space": false
+    },
+    {
+      "codepoint": 24,
+      "is_space": false
+    },
+    {
+      "codepoint": 25,
+      "is_space": false
+    },
+    {
+      "codepoint": 26,
+      "is_space": false
+    },
+    {
+      "codepoint": 27,
+      "is_space": false
+    },
+    {
+      "codepoint": 28,
+      "is_space": true
+    },
+    {
+      "codepoint": 29,
+      "is_space": true
+    },
+    {
+      "codepoint": 30,
+      "is_space": true
+    },
+    {
+      "codepoint": 31,
+      "is_space": true
+    },
+    {
+      "codepoint": 32,
+      "is_space": true
+    },
+    {
+      "codepoint": 33,
+      "is_space": false
+    },
+    {
+      "codepoint": 34,
+      "is_space": false
+    },
+    {
+      "codepoint": 35,
+      "is_space": false
+    },
+    {
+      "codepoint": 36,
+      "is_space": false
+    },
+    {
+      "codepoint": 37,
+      "is_space": false
+    },
+    {
+      "codepoint": 38,
+      "is_space": false
+    },
+    {
+      "codepoint": 39,
+      "is_space": false
+    },
+    {
+      "codepoint": 40,
+      "is_space": false
+    },
+    {
+      "codepoint": 41,
+      "is_space": false
+    },
+    {
+      "codepoint": 42,
+      "is_space": false
+    },
+    {
+      "codepoint": 43,
+      "is_space": false
+    },
+    {
+      "codepoint": 44,
+      "is_space": false
+    },
+    {
+      "codepoint": 45,
+      "is_space": false
+    },
+    {
+      "codepoint": 46,
+      "is_space": false
+    },
+    {
+      "codepoint": 47,
+      "is_space": false
+    },
+    {
+      "codepoint": 48,
+      "is_space": false
+    },
+    {
+      "codepoint": 49,
+      "is_space": false
+    },
+    {
+      "codepoint": 50,
+      "is_space": false
+    },
+    {
+      "codepoint": 51,
+      "is_space": false
+    },
+    {
+      "codepoint": 52,
+      "is_space": false
+    },
+    {
+      "codepoint": 53,
+      "is_space": false
+    },
+    {
+      "codepoint": 54,
+      "is_space": false
+    },
+    {
+      "codepoint": 55,
+      "is_space": false
+    },
+    {
+      "codepoint": 56,
+      "is_space": false
+    },
+    {
+      "codepoint": 57,
+      "is_space": false
+    },
+    {
+      "codepoint": 58,
+      "is_space": false
+    },
+    {
+      "codepoint": 59,
+      "is_space": false
+    },
+    {
+      "codepoint": 60,
+      "is_space": false
+    },
+    {
+      "codepoint": 61,
+      "is_space": false
+    },
+    {
+      "codepoint": 62,
+      "is_space": false
+    },
+    {
+      "codepoint": 63,
+      "is_space": false
+    },
+    {
+      "codepoint": 64,
+      "is_space": false
+    },
+    {
+      "codepoint": 65,
+      "is_space": false
+    },
+    {
+      "codepoint": 66,
+      "is_space": false
+    },
+    {
+      "codepoint": 67,
+      "is_space": false
+    },
+    {
+      "codepoint": 68,
+      "is_space": false
+    },
+    {
+      "codepoint": 69,
+      "is_space": false
+    },
+    {
+      "codepoint": 70,
+      "is_space": false
+    },
+    {
+      "codepoint": 71,
+      "is_space": false
+    },
+    {
+      "codepoint": 72,
+      "is_space": false
+    },
+    {
+      "codepoint": 73,
+      "is_space": false
+    },
+    {
+      "codepoint": 74,
+      "is_space": false
+    },
+    {
+      "codepoint": 75,
+      "is_space": false
+    },
+    {
+      "codepoint": 76,
+      "is_space": false
+    },
+    {
+      "codepoint": 77,
+      "is_space": false
+    },
+    {
+      "codepoint": 78,
+      "is_space": false
+    },
+    {
+      "codepoint": 79,
+      "is_space": false
+    },
+    {
+      "codepoint": 80,
+      "is_space": false
+    },
+    {
+      "codepoint": 81,
+      "is_space": false
+    },
+    {
+      "codepoint": 82,
+      "is_space": false
+    },
+    {
+      "codepoint": 83,
+      "is_space": false
+    },
+    {
+      "codepoint": 84,
+      "is_space": false
+    },
+    {
+      "codepoint": 85,
+      "is_space": false
+    },
+    {
+      "codepoint": 86,
+      "is_space": false
+    },
+    {
+      "codepoint": 87,
+      "is_space": false
+    },
+    {
+      "codepoint": 88,
+      "is_space": false
+    },
+    {
+      "codepoint": 89,
+      "is_space": false
+    },
+    {
+      "codepoint": 90,
+      "is_space": false
+    },
+    {
+      "codepoint": 91,
+      "is_space": false
+    },
+    {
+      "codepoint": 92,
+      "is_space": false
+    },
+    {
+      "codepoint": 93,
+      "is_space": false
+    },
+    {
+      "codepoint": 94,
+      "is_space": false
+    },
+    {
+      "codepoint": 95,
+      "is_space": false
+    },
+    {
+      "codepoint": 96,
+      "is_space": false
+    },
+    {
+      "codepoint": 97,
+      "is_space": false
+    },
+    {
+      "codepoint": 98,
+      "is_space": false
+    },
+    {
+      "codepoint": 99,
+      "is_space": false
+    },
+    {
+      "codepoint": 100,
+      "is_space": false
+    },
+    {
+      "codepoint": 101,
+      "is_space": false
+    },
+    {
+      "codepoint": 102,
+      "is_space": false
+    },
+    {
+      "codepoint": 103,
+      "is_space": false
+    },
+    {
+      "codepoint": 104,
+      "is_space": false
+    },
+    {
+      "codepoint": 105,
+      "is_space": false
+    },
+    {
+      "codepoint": 106,
+      "is_space": false
+    },
+    {
+      "codepoint": 107,
+      "is_space": false
+    },
+    {
+      "codepoint": 108,
+      "is_space": false
+    },
+    {
+      "codepoint": 109,
+      "is_space": false
+    },
+    {
+      "codepoint": 110,
+      "is_space": false
+    },
+    {
+      "codepoint": 111,
+      "is_space": false
+    },
+    {
+      "codepoint": 112,
+      "is_space": false
+    },
+    {
+      "codepoint": 113,
+      "is_space": false
+    },
+    {
+      "codepoint": 114,
+      "is_space": false
+    },
+    {
+      "codepoint": 115,
+      "is_space": false
+    },
+    {
+      "codepoint": 116,
+      "is_space": false
+    },
+    {
+      "codepoint": 117,
+      "is_space": false
+    },
+    {
+      "codepoint": 118,
+      "is_space": false
+    },
+    {
+      "codepoint": 119,
+      "is_space": false
+    },
+    {
+      "codepoint": 120,
+      "is_space": false
+    },
+    {
+      "codepoint": 121,
+      "is_space": false
+    },
+    {
+      "codepoint": 122,
+      "is_space": false
+    },
+    {
+      "codepoint": 123,
+      "is_space": false
+    },
+    {
+      "codepoint": 124,
+      "is_space": false
+    },
+    {
+      "codepoint": 125,
+      "is_space": false
+    },
+    {
+      "codepoint": 126,
+      "is_space": false
+    },
+    {
+      "codepoint": 127,
+      "is_space": false
+    },
+    {
+      "codepoint": 128,
+      "is_space": false
+    },
+    {
+      "codepoint": 129,
+      "is_space": false
+    },
+    {
+      "codepoint": 130,
+      "is_space": false
+    },
+    {
+      "codepoint": 131,
+      "is_space": false
+    },
+    {
+      "codepoint": 132,
+      "is_space": false
+    },
+    {
+      "codepoint": 133,
+      "is_space": true
+    },
+    {
+      "codepoint": 134,
+      "is_space": false
+    },
+    {
+      "codepoint": 135,
+      "is_space": false
+    },
+    {
+      "codepoint": 136,
+      "is_space": false
+    },
+    {
+      "codepoint": 137,
+      "is_space": false
+    },
+    {
+      "codepoint": 138,
+      "is_space": false
+    },
+    {
+      "codepoint": 139,
+      "is_space": false
+    },
+    {
+      "codepoint": 140,
+      "is_space": false
+    },
+    {
+      "codepoint": 141,
+      "is_space": false
+    },
+    {
+      "codepoint": 142,
+      "is_space": false
+    },
+    {
+      "codepoint": 143,
+      "is_space": false
+    },
+    {
+      "codepoint": 144,
+      "is_space": false
+    },
+    {
+      "codepoint": 145,
+      "is_space": false
+    },
+    {
+      "codepoint": 146,
+      "is_space": false
+    },
+    {
+      "codepoint": 147,
+      "is_space": false
+    },
+    {
+      "codepoint": 148,
+      "is_space": false
+    },
+    {
+      "codepoint": 149,
+      "is_space": false
+    },
+    {
+      "codepoint": 150,
+      "is_space": false
+    },
+    {
+      "codepoint": 151,
+      "is_space": false
+    },
+    {
+      "codepoint": 152,
+      "is_space": false
+    },
+    {
+      "codepoint": 153,
+      "is_space": false
+    },
+    {
+      "codepoint": 154,
+      "is_space": false
+    },
+    {
+      "codepoint": 155,
+      "is_space": false
+    },
+    {
+      "codepoint": 156,
+      "is_space": false
+    },
+    {
+      "codepoint": 157,
+      "is_space": false
+    },
+    {
+      "codepoint": 158,
+      "is_space": false
+    },
+    {
+      "codepoint": 159,
+      "is_space": false
+    },
+    {
+      "codepoint": 160,
+      "is_space": true
+    },
+    {
+      "codepoint": 161,
+      "is_space": false
+    },
+    {
+      "codepoint": 162,
+      "is_space": false
+    },
+    {
+      "codepoint": 163,
+      "is_space": false
+    },
+    {
+      "codepoint": 164,
+      "is_space": false
+    },
+    {
+      "codepoint": 165,
+      "is_space": false
+    },
+    {
+      "codepoint": 166,
+      "is_space": false
+    },
+    {
+      "codepoint": 167,
+      "is_space": false
+    },
+    {
+      "codepoint": 168,
+      "is_space": false
+    },
+    {
+      "codepoint": 169,
+      "is_space": false
+    },
+    {
+      "codepoint": 170,
+      "is_space": false
+    },
+    {
+      "codepoint": 171,
+      "is_space": false
+    },
+    {
+      "codepoint": 172,
+      "is_space": false
+    },
+    {
+      "codepoint": 173,
+      "is_space": false
+    },
+    {
+      "codepoint": 174,
+      "is_space": false
+    },
+    {
+      "codepoint": 175,
+      "is_space": false
+    },
+    {
+      "codepoint": 176,
+      "is_space": false
+    },
+    {
+      "codepoint": 177,
+      "is_space": false
+    },
+    {
+      "codepoint": 178,
+      "is_space": false
+    },
+    {
+      "codepoint": 179,
+      "is_space": false
+    },
+    {
+      "codepoint": 180,
+      "is_space": false
+    },
+    {
+      "codepoint": 181,
+      "is_space": false
+    },
+    {
+      "codepoint": 182,
+      "is_space": false
+    },
+    {
+      "codepoint": 183,
+      "is_space": false
+    },
+    {
+      "codepoint": 184,
+      "is_space": false
+    },
+    {
+      "codepoint": 185,
+      "is_space": false
+    },
+    {
+      "codepoint": 186,
+      "is_space": false
+    },
+    {
+      "codepoint": 187,
+      "is_space": false
+    },
+    {
+      "codepoint": 188,
+      "is_space": false
+    },
+    {
+      "codepoint": 189,
+      "is_space": false
+    },
+    {
+      "codepoint": 190,
+      "is_space": false
+    },
+    {
+      "codepoint": 191,
+      "is_space": false
+    },
+    {
+      "codepoint": 192,
+      "is_space": false
+    },
+    {
+      "codepoint": 193,
+      "is_space": false
+    },
+    {
+      "codepoint": 194,
+      "is_space": false
+    },
+    {
+      "codepoint": 195,
+      "is_space": false
+    },
+    {
+      "codepoint": 196,
+      "is_space": false
+    },
+    {
+      "codepoint": 197,
+      "is_space": false
+    },
+    {
+      "codepoint": 198,
+      "is_space": false
+    },
+    {
+      "codepoint": 199,
+      "is_space": false
+    },
+    {
+      "codepoint": 200,
+      "is_space": false
+    },
+    {
+      "codepoint": 201,
+      "is_space": false
+    },
+    {
+      "codepoint": 202,
+      "is_space": false
+    },
+    {
+      "codepoint": 203,
+      "is_space": false
+    },
+    {
+      "codepoint": 204,
+      "is_space": false
+    },
+    {
+      "codepoint": 205,
+      "is_space": false
+    },
+    {
+      "codepoint": 206,
+      "is_space": false
+    },
+    {
+      "codepoint": 207,
+      "is_space": false
+    },
+    {
+      "codepoint": 208,
+      "is_space": false
+    },
+    {
+      "codepoint": 209,
+      "is_space": false
+    },
+    {
+      "codepoint": 210,
+      "is_space": false
+    },
+    {
+      "codepoint": 211,
+      "is_space": false
+    },
+    {
+      "codepoint": 212,
+      "is_space": false
+    },
+    {
+      "codepoint": 213,
+      "is_space": false
+    },
+    {
+      "codepoint": 214,
+      "is_space": false
+    },
+    {
+      "codepoint": 215,
+      "is_space": false
+    },
+    {
+      "codepoint": 216,
+      "is_space": false
+    },
+    {
+      "codepoint": 217,
+      "is_space": false
+    },
+    {
+      "codepoint": 218,
+      "is_space": false
+    },
+    {
+      "codepoint": 219,
+      "is_space": false
+    },
+    {
+      "codepoint": 220,
+      "is_space": false
+    },
+    {
+      "codepoint": 221,
+      "is_space": false
+    },
+    {
+      "codepoint": 222,
+      "is_space": false
+    },
+    {
+      "codepoint": 223,
+      "is_space": false
+    },
+    {
+      "codepoint": 224,
+      "is_space": false
+    },
+    {
+      "codepoint": 225,
+      "is_space": false
+    },
+    {
+      "codepoint": 226,
+      "is_space": false
+    },
+    {
+      "codepoint": 227,
+      "is_space": false
+    },
+    {
+      "codepoint": 228,
+      "is_space": false
+    },
+    {
+      "codepoint": 229,
+      "is_space": false
+    },
+    {
+      "codepoint": 230,
+      "is_space": false
+    },
+    {
+      "codepoint": 231,
+      "is_space": false
+    },
+    {
+      "codepoint": 232,
+      "is_space": false
+    },
+    {
+      "codepoint": 233,
+      "is_space": false
+    },
+    {
+      "codepoint": 234,
+      "is_space": false
+    },
+    {
+      "codepoint": 235,
+      "is_space": false
+    },
+    {
+      "codepoint": 236,
+      "is_space": false
+    },
+    {
+      "codepoint": 237,
+      "is_space": false
+    },
+    {
+      "codepoint": 238,
+      "is_space": false
+    },
+    {
+      "codepoint": 239,
+      "is_space": false
+    },
+    {
+      "codepoint": 240,
+      "is_space": false
+    },
+    {
+      "codepoint": 241,
+      "is_space": false
+    },
+    {
+      "codepoint": 242,
+      "is_space": false
+    },
+    {
+      "codepoint": 243,
+      "is_space": false
+    },
+    {
+      "codepoint": 244,
+      "is_space": false
+    },
+    {
+      "codepoint": 245,
+      "is_space": false
+    },
+    {
+      "codepoint": 246,
+      "is_space": false
+    },
+    {
+      "codepoint": 247,
+      "is_space": false
+    },
+    {
+      "codepoint": 248,
+      "is_space": false
+    },
+    {
+      "codepoint": 249,
+      "is_space": false
+    },
+    {
+      "codepoint": 250,
+      "is_space": false
+    },
+    {
+      "codepoint": 251,
+      "is_space": false
+    },
+    {
+      "codepoint": 252,
+      "is_space": false
+    },
+    {
+      "codepoint": 253,
+      "is_space": false
+    },
+    {
+      "codepoint": 254,
+      "is_space": false
+    },
+    {
+      "codepoint": 255,
+      "is_space": false
+    },
+    {
+      "codepoint": 5760,
+      "is_space": true
+    },
+    {
+      "codepoint": 8192,
+      "is_space": true
+    },
+    {
+      "codepoint": 8193,
+      "is_space": true
+    },
+    {
+      "codepoint": 8194,
+      "is_space": true
+    },
+    {
+      "codepoint": 8195,
+      "is_space": true
+    },
+    {
+      "codepoint": 8196,
+      "is_space": true
+    },
+    {
+      "codepoint": 8197,
+      "is_space": true
+    },
+    {
+      "codepoint": 8198,
+      "is_space": true
+    },
+    {
+      "codepoint": 8199,
+      "is_space": true
+    },
+    {
+      "codepoint": 8200,
+      "is_space": true
+    },
+    {
+      "codepoint": 8201,
+      "is_space": true
+    },
+    {
+      "codepoint": 8202,
+      "is_space": true
+    },
+    {
+      "codepoint": 8232,
+      "is_space": true
+    },
+    {
+      "codepoint": 8233,
+      "is_space": true
+    },
+    {
+      "codepoint": 8239,
+      "is_space": true
+    },
+    {
+      "codepoint": 8287,
+      "is_space": true
+    },
+    {
+      "codepoint": 12288,
+      "is_space": true
+    },
+    {
+      "codepoint": 8203,
+      "is_space": false
+    },
+    {
+      "codepoint": 6158,
+      "is_space": false
+    },
+    {
+      "codepoint": 65279,
+      "is_space": false
+    }
+  ]
+}

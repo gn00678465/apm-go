@@ -283,7 +283,13 @@ func ParseDepString(s string) (*DependencyReference, error) {
 		return &DependencyReference{IsLocal: true, LocalPath: s, Source: "local"}, nil
 	}
 
-	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
+	// reference.py:1626,1635 (_parse_standard_url): `repo_url_lower =
+	// repo_url.lower()` then `repo_url_lower.startswith(("https://",
+	// "http://"))` -- the scheme match is CASE-INSENSITIVE. Ticket 11 eval
+	// attempt 6's reproducer 1: `HTTPS://x.io/owner/repo` is accepted by
+	// the Oracle (scheme normalizes to lowercase "https" in the result);
+	// apm-go previously matched only the literal lowercase prefix.
+	if hasFoldPrefix(s, "https://") || hasFoldPrefix(s, "http://") {
 		return parseHTTPURL(s)
 	}
 	// reference.py:541: `if not url.startswith("ssh://"): return None` -- no
@@ -292,6 +298,13 @@ func ParseDepString(s string) (*DependencyReference, error) {
 	// 11 eval attempt 4's reproducer 1: apm-go previously required the
 	// literal "ssh://git@" prefix, rejecting an arbitrary SSH user
 	// ("ssh://alice@host/owner/repo").
+	//
+	// Deliberately CASE-SENSITIVE, unlike the https/http check above --
+	// probed directly for ticket 11 eval attempt 6's scheme-case fix:
+	// "SSH://git@host.io/owner/repo" is REJECTED by the Oracle (it falls
+	// through to a shorthand-port parse error, since `url.startswith`
+	// above has no `.lower()`, unlike `_parse_standard_url`'s
+	// `repo_url_lower`). Do not "fix" this to be case-insensitive too.
 	if strings.HasPrefix(s, "ssh://") {
 		return parseSSHURL(s)
 	}
@@ -368,13 +381,21 @@ func utf8ReplaceInvalid(b []byte) string {
 	return sb.String()
 }
 
+// hasFoldPrefix reports whether s starts with prefix, ignoring ASCII case
+// -- ParseDepString's https/http dispatch (reference.py:1626's
+// `repo_url_lower.startswith(...)`).
+func hasFoldPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
 func parseHTTPURL(s string) (*DependencyReference, error) {
 	scheme := "https"
-	rest := strings.TrimPrefix(s, "https://")
-	if strings.HasPrefix(s, "http://") {
+	prefixLen := len("https://")
+	if hasFoldPrefix(s, "http://") {
 		scheme = "http"
-		rest = strings.TrimPrefix(s, "http://")
+		prefixLen = len("http://")
 	}
+	rest := s[prefixLen:]
 
 	ref, rest := splitRef(rest)
 	// urlparse structurally separates the query from the path (reference.py's

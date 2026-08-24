@@ -676,7 +676,7 @@ var tagPatternPlaceholderRe = regexp.MustCompile(`\{[^{}]*\}`)
 // FIRST key position, LAST value -- Python dict-update semantics, not raw
 // pair retention (ticket 11 eval attempt 4's reproducer 5).
 type orderedPair struct {
-	key string
+	key pyStr
 	val any
 }
 type orderedValues []orderedPair
@@ -693,6 +693,26 @@ type orderedValues []orderedPair
 // Unicode scalar value on its own -- it is never treated as a real
 // character, only ever fed back into pythonReprPyStr's escaper.
 type pyStr []rune
+
+// pyStrHashKey builds a Go string usable as a map key that is a 1:1
+// encoding of s's rune sequence -- unlike a plain `string(s)` conversion,
+// which collapses EVERY out-of-range rune (including every distinct lone
+// surrogate) to the same U+FFFD replacement bytes, incorrectly treating
+// two different surrogate-bearing strings as equal. Each rune is written
+// as its decimal code point followed by a NUL separator (a byte that can
+// never appear inside a base-10 digit run), so two rune sequences hash
+// equal here if and only if they are equal. Used only for map-key
+// purposes (jsonScanner.parseObject's duplicate-key detection); never
+// rendered to a user.
+func pyStrHashKey(s pyStr) string {
+	var sb strings.Builder
+	sb.Grow(len(s) * 4)
+	for _, r := range s {
+		sb.WriteString(strconv.Itoa(int(r)))
+		sb.WriteByte(0)
+	}
+	return sb.String()
+}
 
 // jsonNumber is a JSON number's ORIGINAL LEXEME (the source text, not a
 // parsed value) -- letting pythonReprNumber decide int-vs-float the same
@@ -849,6 +869,13 @@ func (sc *jsonScanner) parseArray() ([]any, error) {
 func (sc *jsonScanner) parseObject() (orderedValues, error) {
 	sc.pos++ // consume '{'
 	var pairs orderedValues
+	// index is keyed by pyStrHashKey(key), NOT string(key) -- ticket 11
+	// eval attempt 6 correction: a plain string(pyStr) conversion collapses
+	// EVERY lone surrogate to the same U+FFFD byte sequence, so two
+	// genuinely different surrogate keys (e.g. "\ud800" and "\ud801")
+	// would incorrectly collide as "duplicates" of each other. pyStrHashKey
+	// distinguishes them (see its own doc comment) while still being a
+	// valid, comparable Go map key.
 	index := make(map[string]int)
 	sc.skipWS()
 	if sc.pos < len(sc.data) && sc.data[sc.pos] == '}' {
@@ -857,16 +884,11 @@ func (sc *jsonScanner) parseObject() (orderedValues, error) {
 	}
 	for {
 		sc.skipWS()
-		keyRunes, err := sc.parseString()
+		key, err := sc.parseString()
 		if err != nil {
 			return nil, err
 		}
-		// Object KEYS are not reprred by any caller in this package (only
-		// tag_pattern VALUES are) -- a lone surrogate in a key position
-		// would lossily collapse to U+FFFD here, an accepted, documented
-		// limitation narrower than pyStr's real job of preserving
-		// surrogates in the value position reproducer 3 actually tests.
-		key := string(keyRunes)
+		hashKey := pyStrHashKey(key)
 		sc.skipWS()
 		if sc.pos >= len(sc.data) || sc.data[sc.pos] != ':' {
 			return nil, fmt.Errorf("expected ':' at byte %d", sc.pos)
@@ -876,10 +898,10 @@ func (sc *jsonScanner) parseObject() (orderedValues, error) {
 		if err != nil {
 			return nil, err
 		}
-		if i, dup := index[key]; dup {
+		if i, dup := index[hashKey]; dup {
 			pairs[i].val = val
 		} else {
-			index[key] = len(pairs)
+			index[hashKey] = len(pairs)
 			pairs = append(pairs, orderedPair{key, val})
 		}
 		sc.skipWS()
@@ -1023,7 +1045,7 @@ func pythonReprValue(v any) string {
 	case orderedValues:
 		parts := make([]string, len(x))
 		for i, p := range x {
-			parts[i] = pythonReprPyStr(pyStr(p.key)) + ": " + pythonReprValue(p.val)
+			parts[i] = pythonReprPyStr(p.key) + ": " + pythonReprValue(p.val)
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	default:
@@ -1150,18 +1172,31 @@ func pythonReprPyStr(s pyStr) string {
 	return sb.String()
 }
 
-// pyStrTrimSpace trims leading/trailing Unicode whitespace from a pyStr,
-// mirroring strings.TrimSpace for a []rune input (str.strip()'s exact
-// whitespace-class boundary is a deeper rabbit hole than this ticket's
-// reproducers need; unicode.IsSpace is the same test strings.TrimSpace
-// itself uses).
+// pyIsSpace ports Python's str.isspace() exactly -- ticket 11 eval attempt
+// 6 correction: an earlier version of pyStrTrimSpace used Go's
+// unicode.IsSpace directly, which agrees with Python's isspace() for every
+// Unicode White_Space character (the ASCII controls \t\n\v\f\r and space,
+// NEL U+0085, NBSP U+00A0, and the general categories Zs/Zl/Zp) EXCEPT the
+// four C1 control characters U+001C-U+001F (FS/GS/RS/US), which Python
+// additionally classifies as whitespace (verified directly: '\x1c'.isspace()
+// is True) but Go's Unicode tables do not. Verified directly against every
+// other candidate code point (0x09-0x0d, 0x20, 0x85, 0xa0, U+2028/U+2029,
+// U+2000, U+1680, and the non-whitespace U+200B/U+180E) that Go and Python
+// already agree everywhere else, so this is the one gap, not a sign of a
+// broader mismatch needing a full independent port.
+func pyIsSpace(r rune) bool {
+	return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f)
+}
+
+// pyStrTrimSpace trims leading/trailing Python-whitespace (pyIsSpace) from
+// a pyStr, mirroring str.strip()'s default (no-argument) behavior.
 func pyStrTrimSpace(s pyStr) pyStr {
 	start := 0
-	for start < len(s) && unicode.IsSpace(s[start]) {
+	for start < len(s) && pyIsSpace(s[start]) {
 		start++
 	}
 	end := len(s)
-	for end > start && unicode.IsSpace(s[end-1]) {
+	for end > start && pyIsSpace(s[end-1]) {
 		end--
 	}
 	return s[start:end]
