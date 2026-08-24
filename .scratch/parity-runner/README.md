@@ -25,7 +25,7 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: 01 02 03 04 08 10 11 12 15 ✅ · 06 07 ✅(command-local) · 11 closed at attempt 8 (d5f349c; re-scoped PASS per written ACs, parser follow-ups → 16) · 08 closed (attempt 2) · 10 closed (attempt 3; usage-error boilerplate addendum 2026-08-24) · 13 closed 2026-08-24 (3/4 findings; `--help` flag/feature gap → 17) · 05 command+evidence landed, gaps open (marketplaces.json tree, error wording) · 14 ready · 09 ready · 16 open (table-driven, non-blocking) · 17 open (pack flag/feature parity, spun out of 13).
+Status: 01 02 03 04 08 10 11 12 13 15 ✅ · 06 07 ✅(command-local) · 13 closed at attempt 2 (a0b3f82; help/feature backlog user-re-scoped to 17) · 11 closed (attempt 8, re-scoped PASS) · 05 command+evidence landed, gaps open · 14 ready · 09 ready · 16 17 open (backlog, non-blocking).
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 
