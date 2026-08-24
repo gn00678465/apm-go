@@ -236,6 +236,30 @@ DEPREF_INPUTS: list[dict] = [
         "apmgo_accepted": True,
         "apmgo_is_local": False,
     },
+    # --- attempt 7 (eval-ticket-11 Attempt 6 ruling): urlsplit netloc/path
+    # semantics the hand-split URL parser missed. Each class gets both the
+    # evaluator's reproducer and its nearby corners so the table locks the
+    # CLASS, not the instance.
+    {"input": "https://user:pass@x.io/owner/repo", "category": "url-userinfo"},
+    {"input": "https://user@x.io/owner/repo", "category": "url-userinfo"},
+    {"input": "ssh://%2Duser@host.io/owner/repo", "category": "ssh-userinfo-percent"},
+    {"input": "https://x.io//owner/repo", "category": "url-leading-double-slash"},
+    {"input": "https://x.io/owner//repo", "category": "url-internal-double-slash"},
+    {"input": "https://x.io/owner/repo/", "category": "url-trailing-slash"},
+    {"input": "ssh://host.io//owner/repo", "category": "ssh-leading-double-slash"},
+    {"input": "ssh://host.io/owner//repo", "category": "ssh-internal-double-slash"},
+    {"input": "ssh://host.io/owner/repo/", "category": "ssh-trailing-slash"},
+    {"input": "https://x.io:0/owner/repo", "category": "url-port-zero"},
+    {"input": "https://x.io:/owner/repo", "category": "url-port-empty"},
+    {"input": "https://x.io:65536/owner/repo", "category": "url-port-overflow"},
+    {"input": "ssh://host.io:0/owner/repo", "category": "ssh-port-zero"},
+    {"input": "x.io:0/owner/repo", "category": "shorthand-port-zero"},
+    {"input": "https://X.IO/owner/repo", "category": "url-uppercase-host"},
+    {"input": "https://x.io/owner/%2572epo", "category": "url-double-encoded"},
+    {"input": "owner/repo#%e0%a0", "category": "percent-truncated-utf8-ref"},
+    {"input": "owner/%e0%a0repo", "category": "percent-truncated-utf8-repo"},
+    {"input": "owner/%a0repo", "category": "percent-lone-continuation"},
+    {"input": "owner/%f0%90repo", "category": "percent-truncated-4byte"},
 ]
 
 

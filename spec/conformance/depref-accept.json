@@ -543,6 +543,126 @@
       "apmgo_is_local": false,
       "accepted": true,
       "is_local": false
+    },
+    {
+      "input": "https://user:pass@x.io/owner/repo",
+      "category": "url-userinfo",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://user@x.io/owner/repo",
+      "category": "url-userinfo",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://%2Duser@host.io/owner/repo",
+      "category": "ssh-userinfo-percent",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://x.io//owner/repo",
+      "category": "url-leading-double-slash",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner//repo",
+      "category": "url-internal-double-slash",
+      "accepted": false,
+      "error_type": "PathTraversalError"
+    },
+    {
+      "input": "https://x.io/owner/repo/",
+      "category": "url-trailing-slash",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host.io//owner/repo",
+      "category": "ssh-leading-double-slash",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host.io/owner//repo",
+      "category": "ssh-internal-double-slash",
+      "accepted": false,
+      "error_type": "PathTraversalError"
+    },
+    {
+      "input": "ssh://host.io/owner/repo/",
+      "category": "ssh-trailing-slash",
+      "accepted": false,
+      "error_type": "PathTraversalError"
+    },
+    {
+      "input": "https://x.io:0/owner/repo",
+      "category": "url-port-zero",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io:/owner/repo",
+      "category": "url-port-empty",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io:65536/owner/repo",
+      "category": "url-port-overflow",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://host.io:0/owner/repo",
+      "category": "ssh-port-zero",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x.io:0/owner/repo",
+      "category": "shorthand-port-zero",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://X.IO/owner/repo",
+      "category": "url-uppercase-host",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/%2572epo",
+      "category": "url-double-encoded",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo#%e0%a0",
+      "category": "percent-truncated-utf8-ref",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/%e0%a0repo",
+      "category": "percent-truncated-utf8-repo",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/%a0repo",
+      "category": "percent-lone-continuation",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/%f0%90repo",
+      "category": "percent-truncated-4byte",
+      "accepted": false,
+      "error_type": "ValueError"
     }
   ]
 }

@@ -551,3 +551,16 @@ Orchestrator verification (all first-hand, not relayed):
 - Fixture honesty: regenerated both fixtures against the pinned Oracle with the checked-in generator -- byte-identical to the committed files.
 - All three attempt-5 reproducers byte-identical across sides (modulo the pre-waived rich word-wrap): `HTTPS://x.io/owner/repo` -> Structure passed/exit 0 both sides; tag_pattern {"\ud800":1} -> got {'\ud800': 1} exit 1 both sides; tag_pattern "\u001c" -> must be a non-empty string, got '\x1c' exit 1 both sides.
 - `go test ./...` green (Windows-only exception), `-race` clean on internal/manifest, internal/marketplace, cmd/apm-go; gofmt/vet clean.
+
+## Attempt 7 (orchestrator-implemented, 2026-08-24)
+
+Attempt 6's ruling left four reproducers, all one root cause: the URL forms were hand-split instead of following urlsplit's netloc/path model. Orchestrator implemented directly (intervention protocol):
+
+- New `netlocHostPort` (urlsplit semantics): userinfo dropped after the LAST '@', hostname lowercased, empty port absent, digits-only port 0-65535 (port ZERO valid -- unlike shorthand's parseHostPort, whose grammar the Oracle also rejects port 0 in: conformance rows url-port-zero vs shorthand-port-zero).
+- `parseHTTPURL`: path.strip('/') both ends (leading '//' and trailing '/' collapse), terminal '.git' off the raw path pre-split, and every part percent-unquoted AGAIN on top of the entry-level whole-string unquote (reference.py:1748 then :1502 -- a genuine double decode, row url-double-encoded).
+- `parseSSHURL`: path.lstrip('/') LEFT-only + reject_empty (internal '//' and trailing '/' rejected, leading '//' collapses) -- deliberately asymmetric with https, matching _parse_ssh_protocol_url + validate_path_segments(reject_empty=True).
+- `utf8ReplaceInvalid` now implements Python bytes.decode('utf-8','replace')'s MAXIMAL-SUBPART rule (one U+FFFD per maximal ill-formed subsequence; new `maximalSubpartLen`): '%e0%a0' decodes to ONE replacement, not two.
+- Ref fragments now mirror reference.py:580-583 exactly: whitespace-stripped, empty means absent, NO parse-time charset gate (the old VCHAR-only `refRe` was removed -- probed the Oracle accepting '#-evil'/'#a b'/'#v1..2', and apm-go's git calls are already argument-injection-safe: gitops/clone.go passes the ref only as `--branch <ref>`'s value with `--` before positionals).
+- Generator: +20 rows locking the four classes and their corners (userinfo, double slashes both forms, ports 0/empty/65536 across url/ssh/shorthand, uppercase host, double-encoding, truncated-UTF-8 percent classes); fixtures regenerated from the pinned Oracle (108 depref rows).
+
+Orchestrator verification, all first-hand: 108-row conformance test passes; all four attempt-6 reproducers MATCH side-by-side at the marketplace layer (add+validate, isolated HOMEs: userinfo/double-slash/port-0/truncated-utf8 all 'Summary: 3 passed' exit 0 on both sides); go test ./... green (Windows-only exception), -race clean on manifest/marketplace/cmd, gofmt/vet clean.

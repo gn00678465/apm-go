@@ -84,7 +84,6 @@ var (
 	repoCharRe   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	hostCharRe   = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 	segmentRe    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	refRe        = regexp.MustCompile(`^[\x21-\x7e]+$`) // 1*VCHAR
 	portRangeMax = 65535
 
 	// fqdnRe is the Oracle's is_valid_fqdn regex, ported verbatim
@@ -370,15 +369,69 @@ func hexNibble(b byte) (byte, bool) {
 // invalid lead-plus-partial-continuation run) with U+FFFD one rune at a
 // time via utf8.DecodeRune -- the same "maximal subpart" algorithm
 // CPython's UTF-8 decoder uses for errors='replace'.
+// utf8ReplaceInvalid decodes b the way Python's bytes.decode("utf-8",
+// errors="replace") does: ONE U+FFFD per MAXIMAL ill-formed subsequence
+// (Unicode "maximal subpart" / WHATWG decode), not one per byte. A
+// truncated but otherwise well-formed prefix like E0 A0 consumes both
+// bytes for a single replacement, while each stray continuation byte gets
+// its own -- eval-ticket-11 Attempt 6 reproducer 4: Go's utf8.DecodeRune
+// replaces per byte, splitting "%e0%a0" into two U+FFFDs where the Oracle's
+// unquote(..., errors='replace') yields exactly one.
 func utf8ReplaceInvalid(b []byte) string {
 	var sb strings.Builder
 	sb.Grow(len(b))
-	for len(b) > 0 {
-		r, size := utf8.DecodeRune(b)
-		sb.WriteRune(r)
-		b = b[size:]
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
+		if r != utf8.RuneError || size != 1 {
+			sb.WriteRune(r)
+			i += size
+			continue
+		}
+		sb.WriteRune(utf8.RuneError)
+		i += maximalSubpartLen(b[i:])
 	}
 	return sb.String()
+}
+
+// maximalSubpartLen returns the byte length (>= 1) of the maximal subpart
+// of the ill-formed subsequence at the start of b: the longest prefix that
+// is also a prefix of SOME well-formed UTF-8 sequence (Unicode 15 §3.9
+// U+FFFD substitution of maximal subparts; CPython's UTF-8 'replace'
+// handler implements the same rule). Only the FIRST continuation byte has
+// a lead-byte-dependent constrained range; later ones are plain 80-BF.
+func maximalSubpartLen(b []byte) int {
+	var need int
+	var lo, hi byte
+	switch c := b[0]; {
+	case c >= 0xc2 && c <= 0xdf:
+		need, lo, hi = 1, 0x80, 0xbf
+	case c == 0xe0:
+		need, lo, hi = 2, 0xa0, 0xbf
+	case c >= 0xe1 && c <= 0xec:
+		need, lo, hi = 2, 0x80, 0xbf
+	case c == 0xed:
+		need, lo, hi = 2, 0x80, 0x9f
+	case c >= 0xee && c <= 0xef:
+		need, lo, hi = 2, 0x80, 0xbf
+	case c == 0xf0:
+		need, lo, hi = 3, 0x90, 0xbf
+	case c >= 0xf1 && c <= 0xf3:
+		need, lo, hi = 3, 0x80, 0xbf
+	case c == 0xf4:
+		need, lo, hi = 3, 0x80, 0x8f
+	default:
+		// Stray continuation byte, overlong lead C0/C1, or F5-FF: the
+		// maximal subpart is the single byte itself.
+		return 1
+	}
+	n := 1
+	for ; n <= need && n < len(b); n++ {
+		if b[n] < lo || b[n] > hi {
+			break
+		}
+		lo, hi = 0x80, 0xbf
+	}
+	return n
 }
 
 // hasFoldPrefix reports whether s starts with prefix, ignoring ASCII case
@@ -403,12 +456,16 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 	// eval attempt 4's reproducer 2: "https://x.io/owner/repo?x" must treat
 	// "repo" (not "repo?x") as the repository segment.
 	rest = stripQuery(rest)
-	parts := strings.SplitN(rest, "/", 4)
-	if len(parts) < 3 {
+
+	// urlsplit semantics (eval-ticket-11 Attempt 6): the netloc ends at the
+	// FIRST "/", and everything before it -- userinfo, host, port -- is
+	// parsed by netlocHostPort the way parsed_url.hostname/.port would be.
+	slash := strings.IndexByte(rest, '/')
+	if slash < 0 {
 		return nil, fmt.Errorf("dependency %q: url-form requires host/owner/repo", s)
 	}
-
-	host, port, err := parseHostPort(parts[0])
+	netloc, rawPath := rest[:slash], rest[slash+1:]
+	host, port, err := netlocHostPort(netloc)
 	if err != nil {
 		return nil, fmt.Errorf("dependency %q: %w", s, err)
 	}
@@ -419,8 +476,23 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 	if !isValidFQDN(host) {
 		return nil, fmt.Errorf("dependency %q: invalid Git host %q: not a valid FQDN", s, host)
 	}
-	owner := parts[1]
-	repo := strings.TrimSuffix(parts[2], ".git")
+
+	// _validate_url_repo_path (reference.py:1495-1502): the URL path is
+	// stripped of slashes on BOTH ends (so leading "//" and a trailing "/"
+	// both collapse -- conformance rows url-leading-double-slash and
+	// url-trailing-slash), a terminal ".git" comes off the raw path before
+	// splitting, and every part is percent-unquoted AGAIN on top of
+	// parse()'s whole-string unquote at reference.py:1748 -- a genuine
+	// double decode (conformance row url-double-encoded:
+	// "owner/%2572epo" -> "%72epo" -> "repo").
+	path := strings.Trim(rawPath, "/")
+	path = strings.TrimSuffix(path, ".git")
+	parts := strings.SplitN(path, "/", 3)
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("dependency %q: url-form requires host/owner/repo", s)
+	}
+	owner := lenientUnquote(parts[0])
+	repo := lenientUnquote(parts[1])
 
 	if !ownerCharRe.MatchString(owner) || isDotSegment(owner) {
 		return nil, fmt.Errorf("dependency %q: invalid owner %q", s, owner)
@@ -439,13 +511,16 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 		Source:  "git",
 	}
 	if ref != "" {
-		if !refRe.MatchString(ref) {
-			return nil, fmt.Errorf("dependency %q: invalid ref %q", s, ref)
-		}
 		d.Reference = ref
 	}
-	if len(parts) == 4 && parts[3] != "" {
-		vp := strings.TrimSuffix(parts[3], ".git")
+	if len(parts) == 3 && parts[2] != "" {
+		// _validate_url_repo_path unquotes EVERY path part (the terminal
+		// ".git" already came off the raw path end above, pre-split).
+		segs := strings.Split(parts[2], "/")
+		for i, sg := range segs {
+			segs[i] = lenientUnquote(sg)
+		}
+		vp := strings.Join(segs, "/")
 		if err := validateVirtualPath(vp); err != nil {
 			return nil, fmt.Errorf("dependency %q: %w", s, err)
 		}
@@ -474,17 +549,39 @@ func parseSSHURL(s string) (*DependencyReference, error) {
 
 	ref, rest := splitRef(rest)
 	rest = stripQuery(rest) // urlparse separates query from path -- reproducer 2
-	parts := strings.SplitN(rest, "/", 4)
-	if len(parts) < 3 {
+	slash := strings.IndexByte(rest, '/')
+	if slash < 0 {
 		return nil, fmt.Errorf("dependency %q: ssh url-form requires host/owner/repo", s)
 	}
+	netloc, rawPath := rest[:slash], rest[slash+1:]
 
-	host, port, err := parseHostPort(parts[0])
+	host, port, err := netlocHostPort(netloc)
 	if err != nil {
 		return nil, fmt.Errorf("dependency %q: %w", s, err)
 	}
-	owner := parts[1]
-	repo := strings.TrimSuffix(parts[2], ".git")
+
+	// _parse_ssh_protocol_url (reference.py:562-599): the path is
+	// lstrip("/")-ed -- LEFT only, so a leading "//" collapses (conformance
+	// row ssh-leading-double-slash) -- then a terminal ".git" comes off,
+	// then validate_path_segments(..., reject_empty=True) rejects ANY empty
+	// segment, so an internal "//" or a trailing "/" both fail
+	// (ssh-internal-double-slash / ssh-trailing-slash). Deliberately
+	// asymmetric with the https form's strip("/") + no reject_empty. No
+	// per-part unquote here either -- only _validate_url_repo_path (the
+	// https path) double-decodes.
+	path := strings.TrimLeft(rawPath, "/")
+	path = strings.TrimSuffix(path, ".git")
+	segs := strings.Split(path, "/")
+	if len(segs) < 2 {
+		return nil, fmt.Errorf("dependency %q: ssh url-form requires host/owner/repo", s)
+	}
+	for _, sg := range segs {
+		if sg == "" {
+			return nil, fmt.Errorf("dependency %q: empty segment in ssh repository path", s)
+		}
+	}
+	owner := segs[0]
+	repo := segs[1]
 
 	if !ownerCharRe.MatchString(owner) || isDotSegment(owner) {
 		return nil, fmt.Errorf("dependency %q: invalid owner %q", s, owner)
@@ -508,8 +605,9 @@ func parseSSHURL(s string) (*DependencyReference, error) {
 	if ref != "" {
 		d.Reference = ref
 	}
-	if len(parts) == 4 && parts[3] != "" {
-		vp := strings.TrimSuffix(parts[3], ".git")
+	if len(segs) > 2 {
+		// ".git" already stripped from the raw path end above, pre-split.
+		vp := strings.Join(segs[2:], "/")
 		if err := validateVirtualPath(vp); err != nil {
 			return nil, fmt.Errorf("dependency %q: %w", s, err)
 		}
@@ -642,9 +740,6 @@ func parseShorthand(s string) (*DependencyReference, error) {
 		d.Port = port
 	}
 	if ref != "" {
-		if !refRe.MatchString(ref) {
-			return nil, fmt.Errorf("dependency %q: invalid ref %q", s, ref)
-		}
 		d.Reference = ref
 	}
 	if len(vpParts) > 0 {
@@ -1000,12 +1095,60 @@ func classifyVirtualPath(vp string) string {
 	return "subdirectory"
 }
 
+// splitRef splits a trailing "#ref" fragment off s, mirroring the Oracle's
+// fragment handling (reference.py:580-583): the ref is WHITESPACE-STRIPPED
+// and an empty result means "no ref" (`fragment.strip() or None`), so a
+// bare trailing "#" or "#   " parses the same as no fragment at all. No
+// charset validation happens here or at any parse-time call site -- the
+// Oracle performs none (probed directly: '#-evil', '#a b', '#v1..2' all
+// parse), and apm-go's git invocations are already argument-injection-safe
+// without one (gitops/clone.go passes the ref only as `--branch <ref>`'s
+// value and terminates option parsing with `--` before positionals).
 func splitRef(s string) (ref, rest string) {
 	idx := strings.LastIndex(s, "#")
 	if idx < 0 {
 		return "", s
 	}
-	return s[idx+1:], s[:idx]
+	return strings.TrimSpace(s[idx+1:]), s[:idx]
+}
+
+// netlocHostPort ports urllib.parse's urlsplit netloc semantics for the
+// https/http/ssh URL forms (reference.py's _parse_standard_url and
+// _parse_ssh_protocol_url both read parsed.hostname / parsed.port):
+// userinfo -- everything through the LAST "@" -- is dropped (conformance
+// rows url-userinfo), the hostname is LOWERCASED (url-uppercase-host), an
+// empty port ("host:") counts as absent (url-port-empty), and a present
+// port must be all digits in 0-65535 -- port ZERO is valid
+// (url-port-zero/ssh-port-zero), unlike the shorthand form's
+// parseHostPort below, whose own grammar rejects it (shorthand-port-zero:
+// the Oracle's _split_shorthand_host_port raises for port 0 while
+// urlsplit does not).
+func netlocHostPort(netloc string) (host string, port int, err error) {
+	if at := strings.LastIndexByte(netloc, '@'); at >= 0 {
+		netloc = netloc[at+1:]
+	}
+	host = netloc
+	if idx := strings.LastIndexByte(netloc, ':'); idx >= 0 {
+		host = netloc[:idx]
+		ps := netloc[idx+1:]
+		if ps != "" {
+			for i := 0; i < len(ps); i++ {
+				if ps[i] < '0' || ps[i] > '9' {
+					return "", 0, fmt.Errorf("invalid port in %q", netloc)
+				}
+			}
+			p, e := strconv.Atoi(ps)
+			if e != nil || p > portRangeMax {
+				return "", 0, fmt.Errorf("invalid port in %q", netloc)
+			}
+			port = p
+		}
+	}
+	host = strings.ToLower(host)
+	if !hostCharRe.MatchString(host) {
+		return "", 0, fmt.Errorf("invalid host %q", host)
+	}
+	return host, port, nil
 }
 
 func parseHostPort(s string) (host string, port int, err error) {
