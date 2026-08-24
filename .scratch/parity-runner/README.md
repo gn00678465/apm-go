@@ -20,9 +20,12 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 | 13 | `pack` success output + `--help` parity (pre-existing) | 10 |
 | 14 | marketplace command wording parity (browse/list first) | 10 |
 | 15 | Runner: drop APM_CONFIG_DIR injection; registry root = sandbox HOME (F04) | 12 |
+| 16 | dep-parser full Oracle conformance (table-driven; spun out of 11) | — |
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
 Status: 01 02 03 04 10 12 15 ✅ · 06 07 ✅(command-local) · 10 closed at attempt 3 (6de0793; eval-ticket-10-r3 Round 4 PASS, evidence /tmp/p10-evidence @ bbf60df) · 08 closed (all 18 doctor-* cases waived-clean; 2 real apm-go bugs found+fixed: doctor's silent-exit contract, execGit's hang on an orphaned-grandchild-holding-pipes fixture; see .scratch/parity-runner/issues/08-doctor-backfill.md) · 11 closed (Structure check added, validate-help waived-clean, validate-checkrefs-off/-on/-structure-fail's own stdout/stderr gaps field-precisely waived; validate-checkrefs-off/-on/-structure-fail's `tree` stays open, unrelated pre-existing ticket-05 registry-serialization gap, confirmed zero regression; see .scratch/parity-runner/issues/11-validate-structure-check.md) · 05 command+evidence landed, convergence reduced by 10a3 ([>] progress + [i] prefix), remaining gaps open (marketplaces.json tree, error-case wording) · 13 14 ready · 09 unblocked (08 landed).
 
-Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`; orchestrator intervenes after 3 failed attempts on the same ticket.
+Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`; orchestrator takes over implementation after 3 failed attempts on the same ticket.
+
+Scope rule (added 2026-08-24, after ticket 11 ran to 8 attempts): a ticket's PASS/FAIL boundary is its WRITTEN acceptance criteria. A finding that is real but outside them — in particular any pre-existing gap on a shared, effectively unbounded semantic surface (e.g. the dep-string grammar) — is recorded as a new conformance-table row / new ticket, not a blocker on the current one. This is the same convention tickets 05/10/14 already used for wording and tree gaps.
