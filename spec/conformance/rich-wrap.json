@@ -1,0 +1,53 @@
+{
+  "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+  "rows": [
+    {
+      "name": "short text needs no wrap",
+      "text": "[x] short message",
+      "width": 80,
+      "wrapped": "[x] short message"
+    },
+    {
+      "name": "ordinary multi-token word-wrap",
+      "text": "[x] Failed to browse marketplace: Marketplace 'nonexistent' is not registered. Run 'apm-go marketplace add https://github.com/OWNER/REPO' or 'apm-go marketplace add OWNER/REPO' to register it, or 'apm-go marketplace list' to see registered marketplaces.",
+      "width": 80,
+      "wrapped": "[x] Failed to browse marketplace: Marketplace 'nonexistent' is not registered. \nRun 'apm-go marketplace add https://github.com/OWNER/REPO' or 'apm-go \nmarketplace add OWNER/REPO' to register it, or 'apm-go marketplace list' to see \nregistered marketplaces."
+    },
+    {
+      "name": "list-empty info line",
+      "text": "[i] No marketplaces registered. Use 'apm-go marketplace add SOURCE' to register one (OWNER/REPO, HTTPS URL, SSH URL, or local path).",
+      "width": 80,
+      "wrapped": "[i] No marketplaces registered. Use 'apm-go marketplace add SOURCE' to register \none (OWNER/REPO, HTTPS URL, SSH URL, or local path)."
+    },
+    {
+      "name": "single token longer than width (ASCII fold)",
+      "text": "[x] Failed to browse marketplace: Marketplace 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' is not registered. Run 'apm-go marketplace add https://github.com/OWNER/REPO' or 'apm-go marketplace add OWNER/REPO' to register it, or 'apm-go marketplace list' to see registered marketplaces.",
+      "width": 80,
+      "wrapped": "[x] Failed to browse marketplace: Marketplace \n'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' is not registered. Run 'apm-go \nmarketplace add https://github.com/OWNER/REPO' or 'apm-go marketplace add \nOWNER/REPO' to register it, or 'apm-go marketplace list' to see registered \nmarketplaces."
+    },
+    {
+      "name": "wide CJK ideographs fold at 2 cells each",
+      "text": "[x] Failed to browse marketplace: Marketplace '市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場' is not registered. Run 'apm-go marketplace add https://github.com/OWNER/REPO' or 'apm-go marketplace add OWNER/REPO' to register it, or 'apm-go marketplace list' to see registered marketplaces.",
+      "width": 80,
+      "wrapped": "[x] Failed to browse marketplace: Marketplace \n'市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市場市\n場' is not registered. Run 'apm-go marketplace add \nhttps://github.com/OWNER/REPO' or 'apm-go marketplace add OWNER/REPO' to \nregister it, or 'apm-go marketplace list' to see registered marketplaces."
+    },
+    {
+      "name": "embedded hard newline resets the line offset",
+      "text": "[x] Failed to browse marketplace: Marketplace 'one\ntwo' is not registered. Run 'apm-go marketplace add https://github.com/OWNER/REPO' or 'apm-go marketplace add OWNER/REPO' to register it, or 'apm-go marketplace list' to see registered marketplaces.",
+      "width": 80,
+      "wrapped": "[x] Failed to browse marketplace: Marketplace 'one\ntwo' is not registered. Run 'apm-go marketplace add \nhttps://github.com/OWNER/REPO' or 'apm-go marketplace add OWNER/REPO' to \nregister it, or 'apm-go marketplace list' to see registered marketplaces."
+    },
+    {
+      "name": "COLUMNS=100 widens the wrap",
+      "text": "[x] Failed to browse marketplace: Marketplace 'nonexistent' is not registered. Run 'apm-go marketplace add https://github.com/OWNER/REPO' or 'apm-go marketplace add OWNER/REPO' to register it, or 'apm-go marketplace list' to see registered marketplaces.",
+      "width": 100,
+      "wrapped": "[x] Failed to browse marketplace: Marketplace 'nonexistent' is not registered. Run 'apm-go \nmarketplace add https://github.com/OWNER/REPO' or 'apm-go marketplace add OWNER/REPO' to register \nit, or 'apm-go marketplace list' to see registered marketplaces."
+    },
+    {
+      "name": "narrow width forces heavy wrapping",
+      "text": "[!] Marketplace 'acme' has no plugins available to install right now",
+      "width": 24,
+      "wrapped": "[!] Marketplace 'acme' \nhas no plugins available\nto install right now"
+    }
+  ]
+}

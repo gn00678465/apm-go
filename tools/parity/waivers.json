@@ -382,5 +382,39 @@
     "reason": "Same fix and same single remaining rendering artifact as pack-format-conflict's own waiver (this case is --format nope instead of a --claude-plugin conflict; the Click Choice validation error text is byte-identical on both sides, error_body confirms no diff) -- see that entry for the full explanation.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
+  },
+  {
+    "id": "browse-unknown-marketplace",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Ticket 14 attempt 2: wrap.go's wrapOracleText now word-wraps apm-go's REAL rendered text (with its own real 'apm-go' hint-text spelling) at the Oracle's own resolved console width, matching rich's divide_line/chop_cells/COLUMNS/cell-width behavior faithfully (attempt 1's oracleLogicalLen fold -- measuring width as if 'apm-go' were 'apm' while rendering the real longer text -- was ruled not a truthful substitute for width parity and was removed). error_body (the message's own first sentence, unaffected by wrapping) matches the Oracle byte-for-byte with no diff at all, proving the wording fix itself is exact. What remains on raw `stdout`, and is why `normalized` (rewrite_binary_name folds 'apm-go' back to 'apm' for comparison but does not re-wrap) still shows a diff: apm-go's hint text says 'apm-go marketplace add ...'/'apm-go marketplace list' (3 cells longer per occurrence than the Oracle's 'apm marketplace add'/'apm marketplace list'), so the SECOND wrapped line's break point falls 3-6 cells earlier than the Oracle's own break for the identical 'apm'-spelled text -- purely a byte-count consequence of the sanctioned apm-go-in-place-of-apm hint-text substitution (AGENTS.md), not a wording or algorithm gap. Content is unaffected: every word present on the Oracle's side is present on apm-go's side, just distributed across the same number of lines at a slightly different column.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/14-marketplace-wording.md"
+  },
+  {
+    "id": "list-empty",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same mechanism as browse-unknown-marketplace's own waiver (this case is `marketplace list`'s empty-registry Info line instead of browse's error): apm-go's real, unfolded 'apm-go marketplace add SOURCE' hint (3 cells longer than the Oracle's 'apm marketplace add SOURCE') shifts the line-1/line-2 break point earlier once wrapped at the real resolved width -- see that entry for the full explanation of why the fold was removed and what specifically still differs.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/14-marketplace-wording.md"
+  },
+  {
+    "id": "search-unknown-marketplace",
+    "fields": [
+      "stdout",
+      "error_body"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "search.go's own \"Marketplace '%s' is not registered. Use 'apm-go marketplace list' to see registered marketplaces.\" (search.go:82, a separate string from marketplaceNotRegisteredErr -- ticket 05's own wording surface, not touched by this ticket) is long enough to wrap, and hits the identical mechanism as browse-unknown-marketplace/list-empty's own waivers: apm-go's real 'apm-go marketplace list' hint (3 cells longer than the Oracle's 'apm marketplace list') shifts the wrap's line-1/line-2 break point earlier once wrap.go stops folding 'apm-go' to 'apm' for width purposes (ticket 14 attempt 2). Here the shifted break happens to fall INSIDE the sentence error_body extracts (the Oracle's first line ends \"...marketplace list' to\", apm-go's ends one word earlier, \"...marketplace list'\"), so error_body shows the same single mechanism as stdout, not a second, independent wording gap -- both sides' full message content is otherwise identical. Not one of this ticket's two written findings (browse/list); recorded here only because removing the fold (this ticket's own change) is what surfaces it. `tree`'s home/.apm/marketplaces.json diff is deliberately NOT waived, unchanged: ticket 05's own open registry-serialization gap (already documented on search-basic-hit and others), unrelated to wrapping.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/14-marketplace-wording.md"
   }
 ]

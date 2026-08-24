@@ -97,13 +97,15 @@ func Error(w io.Writer, format string, a ...any) {
 
 // oracleLine renders "<prefix><message>" (prefix colored, message plain --
 // matching printLine's existing "color the symbol, not the message"
-// convention) to errWriter(w), word-wrapped to the Oracle's console width
-// (wrap.go) once prefix+message exceeds it -- verified directly against the
-// pinned Oracle (ticket 14): a long Info/Error/Warn line reflows exactly the
-// way Rich's Console.print would, not as one unwrapped line.
+// convention) to errWriter(w), word-wrapped to the Oracle's actual console
+// width (wrap.go's oracleConsoleWidth, which honors COLUMNS the same way
+// the pinned Oracle does) once prefix+message exceeds it -- verified
+// directly against the pinned Oracle (ticket 14): a long Info/Error/Warn
+// line reflows exactly the way Rich's Console.print would, not as one
+// unwrapped line.
 func oracleLine(w io.Writer, style lipgloss.Style, prefix, format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	wrapped := wrapOracleText(prefix+msg, oracleWrapWidth)
+	wrapped := wrapOracleText(prefix+msg, oracleConsoleWidth())
 	body := strings.TrimPrefix(wrapped, prefix)
 	line := style.Bold(true).Render(prefix) + body
 	lipgloss.Fprintln(errWriter(w), line)

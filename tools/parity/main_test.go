@@ -545,6 +545,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		"doctor-config-apmyml-malformed", "doctor-config-legacy-malformed", "doctor-config-duplicate-names",
 		"validate-help", "validate-checkrefs-off", "validate-checkrefs-on", "validate-structure-fail",
 		"pack-format-conflict", "pack-format-empty", "pack-format-unknown",
+		"browse-unknown-marketplace", "list-empty", "search-unknown-marketplace",
 	}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)

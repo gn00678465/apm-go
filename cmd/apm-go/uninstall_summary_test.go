@@ -43,7 +43,7 @@ func TestUninstall_Summary_NamesPackageAndReportsApmYMLPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, wantPath) {
+	if !containsUnwrappedPath(stdout, wantPath) {
 		t.Errorf("expected the apm.yml absolute path %q in the summary, got:\n%s", wantPath, stdout)
 	}
 	if !strings.Contains(stdout, "cleaned 1 integrated file") {

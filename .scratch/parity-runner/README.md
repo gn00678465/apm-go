@@ -22,10 +22,11 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 | 15 | Runner: drop APM_CONFIG_DIR injection; registry root = sandbox HOME (F04) | 12 |
 | 16 | dep-parser full Oracle conformance (table-driven; spun out of 11) | — |
 | 17 | `pack` flag/feature parity (spun out of 13) | — |
+| 18 | `marketplace audit` missing "Run with --verbose for details." hint (spun out of 14 attempt 2) | — |
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: 01 02 03 04 08 10 11 12 13 14 15 ✅ · 06 07 ✅(command-local) · 13 closed at attempt 2 (a0b3f82; help/feature backlog user-re-scoped to 17) · 14 closed (PASS; browse/list wording matched to Oracle, plus a generic console-width wrap fix in internal/ux that incidentally closed 5 stale ticket-13 pack-* waivers) · 11 closed (attempt 8, re-scoped PASS) · 05 command+evidence landed, gaps open · 09 ready · 16 17 open (backlog, non-blocking).
+Status: 01 02 03 04 08 10 11 12 13 14 15 ✅ · 06 07 ✅(command-local) · 13 closed at attempt 2 (a0b3f82; help/feature backlog user-re-scoped to 17) · 14 closed at attempt 2 (PASS; attempt 1's global wrap was ruled not Rich-faithful -- wrong effective width, ASCII-only cell counting, silent long-word truncation, no hard-newline reset; attempt 2 ports Rich's real algorithm (COLUMNS, rune cell width via go-runewidth, chop_cells folding, per-line reset), drops the apm/apm-go logical-length fold in favor of two field-precise stdout waivers naming the mechanism, and locks the surface with a rich-generated conformance fixture) · 11 closed (attempt 8, re-scoped PASS) · 05 command+evidence landed, gaps open · 09 ready · 16 17 18 open (backlog, non-blocking).
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 
