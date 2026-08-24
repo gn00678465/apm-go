@@ -1268,7 +1268,7 @@ func TestRunPack_NoLicenseField_WarnsEvenOnNothingToPack(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the usual nothing-to-pack error")
 	}
-	if !containsUnwrapped(out, wantLicenseUndeclaredWarning) {
+	if !strings.Contains(out, wantLicenseUndeclaredWarning) {
 		t.Errorf("output = %q, want the license-undeclared warning", out)
 	}
 }
@@ -1294,7 +1294,7 @@ func TestRunPack_EmptyLicenseField_StillWarns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pack returned error: %v (output: %s)", err, out)
 	}
-	if !containsUnwrapped(out, wantLicenseUndeclaredWarning) {
+	if !strings.Contains(out, wantLicenseUndeclaredWarning) {
 		t.Errorf("output = %q, want the license-undeclared warning for an empty license: value", out)
 	}
 }

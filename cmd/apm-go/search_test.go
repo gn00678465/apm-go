@@ -327,7 +327,7 @@ func TestSearchCmd_ZeroResultsWarningAndExit0(t *testing.T) {
 		t.Fatalf("runSearchCmd: expected exit 0 (nil error) for zero results, got %v", err)
 	}
 	want := "No plugins found matching 'doesnotexist12345' in 'skills'. Try 'apm-go marketplace browse skills' to see all plugins."
-	if !containsUnwrapped(out, want) {
+	if !strings.Contains(out, want) {
 		t.Errorf("output = %q, want it to contain %q", out, want)
 	}
 }

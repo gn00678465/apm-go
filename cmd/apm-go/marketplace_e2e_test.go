@@ -1516,7 +1516,7 @@ func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
 		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(validateErr))
 	}
 	wantMessage := "  Structure: plugins[1].source.tag_pattern: 'Plugin 'bad-plugin' source.tag_pattern' must contain exactly one {version} placeholder, got '{name}'"
-	if !containsUnwrapped(validateOut, wantMessage) {
+	if !strings.Contains(validateOut, wantMessage) {
 		t.Errorf("validate output = %q, want it to contain %q", validateOut, wantMessage)
 	}
 

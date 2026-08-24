@@ -544,6 +544,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		"doctor-config-none", "doctor-config-apmyml-valid", "doctor-config-legacy", "doctor-config-both",
 		"doctor-config-apmyml-malformed", "doctor-config-legacy-malformed", "doctor-config-duplicate-names",
 		"validate-help", "validate-checkrefs-off", "validate-checkrefs-on", "validate-structure-fail",
+		"pack-no-flag", "pack-claude-plugin-flag", "pack-format-claude", "pack-format-claude-plugin", "pack-format-plugin",
 		"pack-format-conflict", "pack-format-empty", "pack-format-unknown",
 		"browse-unknown-marketplace", "list-empty", "search-unknown-marketplace",
 	}

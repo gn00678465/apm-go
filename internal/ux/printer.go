@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"charm.land/lipgloss/v2"
 )
@@ -97,17 +96,25 @@ func Error(w io.Writer, format string, a ...any) {
 
 // oracleLine renders "<prefix><message>" (prefix colored, message plain --
 // matching printLine's existing "color the symbol, not the message"
-// convention) to errWriter(w), word-wrapped to the Oracle's actual console
-// width (wrap.go's oracleConsoleWidth, which honors COLUMNS the same way
-// the pinned Oracle does) once prefix+message exceeds it -- verified
-// directly against the pinned Oracle (ticket 14): a long Info/Error/Warn
-// line reflows exactly the way Rich's Console.print would, not as one
-// unwrapped line.
+// convention) to errWriter(w).
+//
+// Ticket 14 attempt 2 added a full port of Rich's console-width word-wrap
+// here (internal/ux/wrap.go) to chase byte-exact parity on two long
+// marketplace messages. Attempt 3 withdraws it: the evaluator's own
+// eval-plan §8.3 classifies Rich-vs-ux rendering-library differences as
+// compare-semantics-and-waive (the doctor-healthy precedent), and the wrap
+// port itself turned into an unbounded emulation surface -- four renderer
+// defects surfaced in one review round (effective width detection, cell
+// width, long-word folding, hard-newline handling), with more of the same
+// shape behind them (Unicode digit forms in COLUMNS, ZWJ/grapheme
+// clustering, tab expansion, ANSI-sequence passthrough). apm-go never
+// wrapped output before this ticket and no product requirement asks it to
+// emulate a terminal-width-aware renderer -- single-line messages are
+// apm-go's own UX contract going forward. See .scratch/parity-runner/
+// issues/14-marketplace-wording.md's "Attempt 3" section.
 func oracleLine(w io.Writer, style lipgloss.Style, prefix, format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	wrapped := wrapOracleText(prefix+msg, oracleConsoleWidth())
-	body := strings.TrimPrefix(wrapped, prefix)
-	line := style.Bold(true).Render(prefix) + body
+	line := style.Bold(true).Render(prefix) + msg
 	lipgloss.Fprintln(errWriter(w), line)
 }
 
