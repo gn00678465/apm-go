@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/apm-go/apm/internal/manifest"
 )
@@ -658,18 +659,98 @@ func pythonGetOr(src map[string]any, primary, fallback string) any {
 // braces, same as tagpattern.Compile's own placeholderRe.
 var tagPatternPlaceholderRe = regexp.MustCompile(`\{[^{}]*\}`)
 
-// pythonRepr renders v the way Python's repr() would for a JSON-decoded
-// scalar, matching the {pattern!r}/{normalized!r} f-string interpolations
-// inside validate_tag_pattern's own error messages (tag_pattern.py:65,:77)
-// byte-for-byte for every realistic tag_pattern input this reaches
-// (strings, and the occasional wrong-type number/bool/null a malformed
-// manifest might supply): a string in single quotes with no escaping (none
-// of those inputs need it), and Python's own literal spelling for the other
-// JSON scalar types.
-func pythonRepr(v any) string {
+// orderedPair and orderedValues are decodeOrderedJSON's insertion-order-
+// preserving stand-ins for encoding/json's map[string]any (whose iteration
+// order is unspecified) and []any (which IS already ordered, kept here only
+// for symmetry with orderedPair's element type).
+type orderedPair struct {
+	key string
+	val any
+}
+type orderedValues []orderedPair
+
+// decodeOrderedJSON decodes raw into a repr-ready value tree that preserves
+// JSON OBJECT KEY ORDER -- something encoding/json's ordinary map[string]any
+// decode cannot do (Go map iteration is unspecified) -- via json.Decoder's
+// token stream instead of Unmarshal. Ticket 11 attempt 4: needed because
+// tag_pattern.py's `{pattern!r}` reprs the pattern's ORIGINAL insertion
+// order for a dict value (`repr({'b': 1, 'a': 2}) == "{'b': 1, 'a': 2}"`,
+// verified directly against the pinned Oracle), and a single-key dict
+// happening to round-trip through an unordered map is not evidence the
+// port is correct for the general case.
+//
+// Object values decode to orderedValues; array values to []any (element
+// order is already preserved by the token stream); numbers to json.Number
+// (UseNumber) so pythonReprValue can tell an integer JSON lexeme from a
+// float one, matching Python's own int-vs-float distinction; everything
+// else (string/bool/nil) to its natural Go type.
+func decodeOrderedJSON(raw json.RawMessage) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	return decodeOrderedValue(dec, tok)
+}
+
+func decodeOrderedValue(dec *json.Decoder, tok json.Token) (any, error) {
+	delim, isDelim := tok.(json.Delim)
+	if !isDelim {
+		return tok, nil // string, json.Number, bool, or nil -- already the right type
+	}
+	switch delim {
+	case '{':
+		var pairs orderedValues
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, _ := keyTok.(string)
+			valTok, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			val, err := decodeOrderedValue(dec, valTok)
+			if err != nil {
+				return nil, err
+			}
+			pairs = append(pairs, orderedPair{key, val})
+		}
+		if _, err := dec.Token(); err != nil { // consume the closing '}'
+			return nil, err
+		}
+		return pairs, nil
+	case '[':
+		var items []any
+		for dec.More() {
+			valTok, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			val, err := decodeOrderedValue(dec, valTok)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, val)
+		}
+		if _, err := dec.Token(); err != nil { // consume the closing ']'
+			return nil, err
+		}
+		return items, nil
+	}
+	return nil, fmt.Errorf("unexpected JSON delimiter %v", delim)
+}
+
+// pythonReprValue recursively renders a decodeOrderedJSON value tree the
+// way Python's repr() would, for the {pattern!r}/{normalized!r} f-string
+// interpolations inside validate_tag_pattern's error messages
+// (tag_pattern.py:65,:77-78 -- both branches, not just the non-string one:
+// a wrong-{version}-count STRING pattern is also reported via its own
+// repr, e.g. `got '{name}'`).
+func pythonReprValue(v any) string {
 	switch x := v.(type) {
-	case string:
-		return "'" + x + "'"
 	case nil:
 		return "None"
 	case bool:
@@ -677,14 +758,134 @@ func pythonRepr(v any) string {
 			return "True"
 		}
 		return "False"
-	case float64:
-		if x == float64(int64(x)) {
-			return strconv.FormatInt(int64(x), 10)
+	case string:
+		return pythonReprString(x)
+	case json.Number:
+		return pythonReprNumber(x)
+	case []any:
+		parts := make([]string, len(x))
+		for i, e := range x {
+			parts[i] = pythonReprValue(e)
 		}
-		return strconv.FormatFloat(x, 'g', -1, 64)
+		return "[" + strings.Join(parts, ", ") + "]"
+	case orderedValues:
+		parts := make([]string, len(x))
+		for i, p := range x {
+			parts[i] = pythonReprString(p.key) + ": " + pythonReprValue(p.val)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	default:
 		return fmt.Sprintf("%v", x)
 	}
+}
+
+// pythonReprNumber distinguishes an int from a float JSON lexeme exactly
+// the way Python's json module does: any lexeme without '.'/'e'/'E' is an
+// integer (json.loads produces a Python int, whose repr is the lexeme
+// itself -- this also gets arbitrary-precision integers right for free,
+// with no bignum arithmetic, since the lexeme is echoed verbatim), anything
+// else is a float, reprred via pythonFloatRepr.
+func pythonReprNumber(n json.Number) string {
+	s := string(n)
+	if !strings.ContainsAny(s, ".eE") {
+		return s
+	}
+	f, err := n.Float64()
+	if err != nil {
+		return s
+	}
+	return pythonFloatRepr(f)
+}
+
+// pythonFloatRepr matches Python's float.__repr__ for the two properties
+// that matter for a shortest-round-trip decimal value: Go's
+// strconv.FormatFloat(f, 'g', -1, 64) already produces the same shortest
+// round-trip digits AND the same "e+NN"/"e-NN" two-digit-minimum exponent
+// spelling Python uses (verified directly: repr(1e20) == "1e+20",
+// repr(1e-5) == "1e-05", matching Go's FormatFloat output byte-for-byte) --
+// the one gap is a whole-number value with no fractional part and no
+// exponent, where Go omits the ".0" Python always keeps (repr(1.0) ==
+// "1.0", FormatFloat(1.0, ...) == "1").
+func pythonFloatRepr(f float64) string {
+	s := strconv.FormatFloat(f, 'g', -1, 64)
+	if !strings.ContainsAny(s, ".eE") {
+		s += ".0"
+	}
+	return s
+}
+
+// pythonReprString ports Python's str.__repr__ quote/escape rules: single
+// quotes unless the string contains a single quote and no double quote (in
+// which case double quotes avoid escaping); backslash, the chosen quote
+// character, \n, \r, \t get their short escapes; every other ASCII control
+// character (and DEL) becomes \xNN; a non-ASCII, non-printable character
+// becomes \xNN (<0x100), \uNNNN (BMP), or \UNNNNNNNN (astral) per Python's
+// str.isprintable() (approximated here via unicode.IsPrint, which agrees
+// with Python's category-based definition for every realistic case); a
+// non-ASCII PRINTABLE character is kept completely literal by repr()
+// itself -- callers embedding this in a Structure diagnostic apply
+// printableASCIIText afterward (models.py:533's own printable_ascii_text
+// wrapper), which is what actually squashes that literal character to '?'
+// in the final message, not this function.
+func pythonReprString(s string) string {
+	hasSingle := strings.ContainsRune(s, '\'')
+	hasDouble := strings.ContainsRune(s, '"')
+	quote := byte('\'')
+	if hasSingle && !hasDouble {
+		quote = '"'
+	}
+	var sb strings.Builder
+	sb.WriteByte(quote)
+	for _, r := range s {
+		switch {
+		case r == rune(quote):
+			sb.WriteByte('\\')
+			sb.WriteRune(r)
+		case r == '\\':
+			sb.WriteString(`\\`)
+		case r == '\n':
+			sb.WriteString(`\n`)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		case r < 0x100 && !unicode.IsPrint(r):
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		case r > 0xffff && !unicode.IsPrint(r):
+			fmt.Fprintf(&sb, `\U%08x`, r)
+		case r >= 0x100 && !unicode.IsPrint(r):
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteByte(quote)
+	return sb.String()
+}
+
+// printableASCIIText ports diagnostics.py:52-55's printable_ascii_text
+// exactly: encode as ASCII with '?' replacing any non-ASCII character
+// (Python's `.encode("ascii", "replace")`), then additionally replace any
+// remaining ASCII control character or DEL with '?'. _parse_plugin_entry
+// wraps EVERY TagPatternError's message in this before returning it
+// (models.py:533: `f"source.tag_pattern: {printable_ascii_text(str(exc))}"`)
+// -- the two-stage pipeline (repr(), which already turns most control
+// characters into ASCII \xNN escape TEXT, then this safety-net pass, which
+// only has non-ASCII-but-printable characters like 'é' left to squash) is
+// why pythonReprString above does not need to itself be ASCII-only.
+func printableASCIIText(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for _, r := range s {
+		if r > 127 || r < 0x20 || r == 0x7f {
+			sb.WriteByte('?')
+			continue
+		}
+		sb.WriteByte(byte(r))
+	}
+	return sb.String()
 }
 
 // tagPatternStructuralError ports validate_tag_pattern (tag_pattern.py:
@@ -696,24 +897,50 @@ func pythonRepr(v any) string {
 // against the pinned Oracle's own output (verified directly against
 // parse_marketplace_json for all three of validate_tag_pattern's error
 // branches: non-string/blank, unsupported placeholder, and wrong
-// {version}-placeholder count). Deliberately a standalone port, not a
-// wrapper around tagpattern.Validate (internal/marketplace/tagpattern):
-// that package's own error messages use Go's %q (double-quoted, Go-escaped)
-// for its OWN established callers (apm pack, marketplace init/package
-// add) -- reusing it here would mean either living with a wording mismatch
-// against the Oracle for a value this ticket's own acceptance criteria
-// requires byte-exact, or reformatting its error strings after the fact
-// (fragile: distinguishing which of the three branches fired from a
-// generic Go error would mean string-matching its own message).
-func tagPatternStructuralError(pluginName string, pattern any) string {
+// {version}-placeholder count).
+//
+// raw is the field's ORIGINAL JSON bytes, not a pre-decoded `any` --
+// ticket 11 attempt 4 correction: a plain map[string]any decode cannot
+// reproduce `{pattern!r}` for a dict-shaped pattern (Go map iteration order
+// is unspecified; Python's repr keeps insertion order), so the non-string
+// branch below re-decodes raw through decodeOrderedJSON instead. The final
+// message is passed through printableASCIIText, mirroring models.py:533's
+// own `printable_ascii_text(str(exc))` wrapper around the whole exception
+// message (not just the repr'd value).
+//
+// Deliberately a standalone port, not a wrapper around tagpattern.Validate
+// (internal/marketplace/tagpattern): that package's own error messages use
+// Go's %q (double-quoted, Go-escaped) for its OWN established callers (apm
+// pack, marketplace init/package add) -- reusing it here would mean either
+// living with a wording mismatch against the Oracle for a value this
+// ticket's own acceptance criteria requires byte-exact, or reformatting its
+// error strings after the fact (fragile: distinguishing which of the three
+// branches fired from a generic Go error would mean string-matching its own
+// message).
+func tagPatternStructuralError(pluginName string, raw json.RawMessage) string {
 	context := fmt.Sprintf("Plugin '%s' source.tag_pattern", pluginName)
 
-	s, isStr := pattern.(string)
-	trimmed := strings.TrimSpace(s)
-	if !isStr || trimmed == "" {
-		return fmt.Sprintf("source.tag_pattern: '%s' must be a non-empty string, got %s", context, pythonRepr(pattern))
+	var s string
+	isStr := json.Unmarshal(raw, &s) == nil
+
+	if !isStr || strings.TrimSpace(s) == "" {
+		var repr string
+		switch {
+		case isStr:
+			repr = pythonReprString(s)
+		default:
+			v, err := decodeOrderedJSON(raw)
+			if err != nil {
+				repr = "None"
+			} else {
+				repr = pythonReprValue(v)
+			}
+		}
+		inner := fmt.Sprintf("'%s' must be a non-empty string, got %s", context, repr)
+		return "source.tag_pattern: " + printableASCIIText(inner)
 	}
 
+	trimmed := strings.TrimSpace(s)
 	var unsupported []string
 	seen := make(map[string]bool)
 	for _, ph := range tagPatternPlaceholderRe.FindAllString(trimmed, -1) {
@@ -725,11 +952,13 @@ func tagPatternStructuralError(pluginName string, pattern any) string {
 	}
 	if len(unsupported) > 0 {
 		sort.Strings(unsupported)
-		return fmt.Sprintf("source.tag_pattern: '%s' contains unsupported placeholder(s): %s", context, strings.Join(unsupported, ", "))
+		inner := fmt.Sprintf("'%s' contains unsupported placeholder(s): %s", context, strings.Join(unsupported, ", "))
+		return "source.tag_pattern: " + printableASCIIText(inner)
 	}
 
 	if strings.Count(trimmed, "{version}") != 1 {
-		return fmt.Sprintf("source.tag_pattern: '%s' must contain exactly one {version} placeholder, got '%s'", context, trimmed)
+		inner := fmt.Sprintf("'%s' must contain exactly one {version} placeholder, got %s", context, pythonReprString(trimmed))
+		return "source.tag_pattern: " + printableASCIIText(inner)
 	}
 	return ""
 }
@@ -781,6 +1010,7 @@ func parsePluginEntry(obj map[string]json.RawMessage) (plugin MarketplacePlugin,
 	}
 
 	var source any
+	var tagPatternRaw json.RawMessage
 	if sourceRaw, hasSource := obj["source"]; hasSource {
 		switch jsonValueKind(sourceRaw) {
 		case "string":
@@ -796,6 +1026,14 @@ func parsePluginEntry(obj map[string]json.RawMessage) (plugin MarketplacePlugin,
 				return MarketplacePlugin{}, false, d
 			}
 			source = srcMap
+			// tagPatternStructuralError needs tag_pattern's ORIGINAL raw
+			// JSON bytes (not srcMap's already-decoded `any`) so it can
+			// re-decode a dict-shaped pattern through decodeOrderedJSON --
+			// see that function's doc comment for why a plain map decode
+			// cannot reproduce Python's insertion-order dict repr.
+			var srcRaw map[string]json.RawMessage
+			_ = json.Unmarshal(sourceRaw, &srcRaw)
+			tagPatternRaw = srcRaw["tag_pattern"]
 		default: // "null", "other" (number/array/bool)
 			return MarketplacePlugin{}, false, "source: expected a string or object"
 		}
@@ -826,13 +1064,16 @@ func parsePluginEntry(obj map[string]json.RawMessage) (plugin MarketplacePlugin,
 	// stays "": upstream's None explicitly means "old marketplace.json",
 	// with the default supplied by the resolver, not by this parser.
 	tagPattern := ""
-	if srcMap, isMap := source.(map[string]any); isMap {
-		if rawTP, present := srcMap["tag_pattern"]; present && rawTP != nil {
-			if d := tagPatternStructuralError(name, rawTP); d != "" {
-				return MarketplacePlugin{}, false, d
-			}
-			tagPattern = strings.TrimSpace(rawTP.(string))
+	if len(tagPatternRaw) > 0 && jsonValueKind(tagPatternRaw) != "null" {
+		if d := tagPatternStructuralError(name, tagPatternRaw); d != "" {
+			return MarketplacePlugin{}, false, d
 		}
+		// tagPatternStructuralError returning "" (valid) is only possible
+		// when tagPatternRaw decodes as a non-empty string -- validate_tag_
+		// pattern's own `isinstance(pattern, str)` guard, ported.
+		var tp string
+		_ = json.Unmarshal(tagPatternRaw, &tp)
+		tagPattern = strings.TrimSpace(tp)
 	}
 
 	return MarketplacePlugin{

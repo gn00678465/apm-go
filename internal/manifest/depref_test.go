@@ -217,6 +217,91 @@ func TestParseDepString_AbsolutePathSkipsEscapeGuard(t *testing.T) {
 	}
 }
 
+// TestParseDepString_PercentDecodeThenParse is ticket 11 eval attempt 4's
+// reproducer 1: reference.py:1748 percent-decodes the WHOLE dependency
+// string before any other parsing, so "owner/%72epo" ("%72" -> "r") must
+// parse identically to "owner/repo" -- verified directly against the
+// pinned Oracle (DependencyReference.parse("owner/%72epo") ->
+// repo_url="owner/repo"). Before this fix, apm-go's undecoded repoCharRe
+// check rejected "%72epo" outright ("invalid repo").
+func TestParseDepString_PercentDecodeThenParse(t *testing.T) {
+	d, err := ParseDepString("owner/%72epo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if d.Owner != "owner" || d.Repo != "repo" {
+		t.Errorf("Owner=%q Repo=%q, want owner/repo", d.Owner, d.Repo)
+	}
+
+	// An invalid escape ("%zz" is not two hex digits) is left completely
+	// unconsumed -- the literal "%zz" passes through as ordinary text,
+	// matching CPython's unquote_to_bytes -- so it fails repoCharRe just
+	// like it would if it had never been percent-adjacent at all.
+	if _, err := ParseDepString("owner/%zzrepo"); err == nil {
+		t.Error("expected an error for an invalid repo character (literal %%zzrepo), got nil")
+	}
+}
+
+// TestParseDepString_PercentEncodedTraversal is ticket 11 eval attempt 4's
+// explicit regression requirement: decoding the whole string BEFORE running
+// containsEscape must not let a percent-encoded traversal marker bypass it
+// -- a dependency string that decodes to "../../etc/passwd" is still
+// rejected with "escapes project root", the same as the literal form
+// (TestParseDepString_Rejection's "../../../etc/passwd" case).
+func TestParseDepString_PercentEncodedTraversal(t *testing.T) {
+	_, err := ParseDepString("%2e%2e/%2e%2e/etc/passwd")
+	if err == nil {
+		t.Fatal("expected an error for a percent-encoded traversal, got nil")
+	}
+	if !strings.Contains(err.Error(), "escapes project root") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "escapes project root")
+	}
+}
+
+// TestParseDepString_FQDNHostGate is ticket 11 eval attempt 4's reproducer
+// 2, probed directly against the pinned Oracle: the HTTPS/HTTP URL form and
+// shorthand's host-qualified form ("host.tld/owner/repo") both reject a
+// non-FQDN host (github_host.py:1074-1102's is_valid_fqdn, via
+// is_supported_git_host), while ssh:// and SCP (git@host:...) do NOT --
+// probed directly, both accept a bare non-dotted host verbatim (see
+// isValidFQDN's doc comment on manifest.ParseDepString for the full
+// evidence). TestParseDepString_URLForm's existing
+// "ssh://git@host:7999/..." cases already lock down the ungated forms.
+func TestParseDepString_FQDNHostGate(t *testing.T) {
+	rejected := []string{
+		"https://x/owner/repo", // no dot at all
+		"-x.io/owner/repo",     // label starts with a hyphen
+		"x-.io/owner/repo",     // label ends with a hyphen
+		"x..io/owner/repo",     // empty label (doubled dot)
+	}
+	for _, in := range rejected {
+		t.Run(in, func(t *testing.T) {
+			if _, err := ParseDepString(in); err == nil {
+				t.Error("expected an error for a non-FQDN host, got nil")
+			}
+		})
+	}
+
+	accepted := []struct {
+		input    string
+		wantHost string
+	}{
+		{"https://x.io/owner/repo", "x.io"},
+		{"github.com/owner/repo", "github.com"},
+	}
+	for _, tt := range accepted {
+		t.Run(tt.input, func(t *testing.T) {
+			d, err := ParseDepString(tt.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if d.Host != tt.wantHost {
+				t.Errorf("Host = %q, want %q", d.Host, tt.wantHost)
+			}
+		})
+	}
+}
+
 func TestParseDepDict_GitParent(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		entry := buildMappingNode(map[string]string{

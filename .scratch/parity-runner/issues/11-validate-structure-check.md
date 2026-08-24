@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — runner diff/gate (attempt 3: HOME capture so the registry tree diff disappears).
 
-**Status:** done (2026-08-24, attempt 3) — `.review/eval-ticket-11.md` FAILed attempt 1: the Structure check ported only the two top-level "plugins" diagnostics and silently passed structurally-invalid *elements* (`plugins:[null]`, `plugins:[{}]`, and "similar source-shape cases"). Attempt 2 ported the Oracle's complete per-element diagnostic set, but its own `isValidRemoteCoordinate` approximation, `repo`/`repository` fallback, and `tag_pattern` handling each still diverged from the Oracle in ways attempt 2's own stated scope boundary didn't own up to — attempt 3 closes those three (see "Attempt 3" section below). Attempts 1-2's other product-parity fixes (Structure/Schema/Names ordering, rendering, help parity, `withSilentExitCode`, the systemic F01 waivers, the `mkt-026` correction) were accepted and are unchanged.
+**Status:** done (2026-08-24, attempt 4, orchestrator intervention) — `.review/eval-ticket-11.md` FAILed attempt 1: the Structure check ported only the two top-level "plugins" diagnostics and silently passed structurally-invalid *elements* (`plugins:[null]`, `plugins:[{}]`, and "similar source-shape cases"). Attempt 2 ported the Oracle's complete per-element diagnostic set, but its own `isValidRemoteCoordinate` approximation, `repo`/`repository` fallback, and `tag_pattern` handling each still diverged from the Oracle in ways attempt 2's own stated scope boundary didn't own up to — attempt 3 closed those three. The orchestrator then pinned three deeper root causes with two-sided probe evidence: `manifest.ParseDepString` itself (the dep-string parser attempt 3 started reusing) was missing the Oracle's whole-string percent-decode and FQDN host gate, `pythonRepr` could not reproduce Python's insertion-order dict repr, and a test claimed coverage it didn't have — attempt 4 closes all three (see "Attempt 4" section below). Attempts 1-3's other product-parity fixes (Structure/Schema/Names ordering, rendering, help parity, `withSilentExitCode`, the systemic F01 waivers, the `mkt-026` correction) were accepted and are unchanged.
 
 **Origin:** runner cases from ticket 06 (`.review/eval-ticket-06.md` AC5): Oracle prints Structure/Schema/Names → "3 passed"; Target prints Schema/Names → "2 passed". `validate-help` shows a `help_semantic` diff. These are pre-existing M-06 gaps the runner exposed, not caused by ticket 06.
 
@@ -229,3 +229,133 @@ Root causes pinned by direct two-sided probes (orchestrator-run, not inferred):
 - Pin every branch with a table test whose expected bytes come from the Oracle (run `python -c "print(repr(...))"` per case to capture them).
 
 **C. Test-evidence gap (not a product blocker):** `TestMarketplaceValidate_TagPatternDeferral` claims browse/search/install coverage but never invokes the `marketplace add` command, root `search`, or `install`. The evaluator probed the real behavior and it MATCHES — complete the test to do what its comment says.
+
+## Attempt 4: dep-parser percent-decode + FQDN gate, true Python repr, test-evidence gap closed
+
+All three orchestrator-pinned root causes fixed in `internal/manifest/depref.go` (A) and `internal/marketplace/models.go` (B), plus C.
+
+**A1. Whole-string percent-decode, ordered correctly.** `ParseDepString` now
+runs `lenientUnquote` (a hand-port of `urllib.parse.unquote`/
+`unquote_to_bytes`: an invalid `%` escape — not followed by two hex digits —
+passes through completely unconsumed, then the resulting bytes are UTF-8-
+decoded with `errors='replace'` semantics via `utf8.DecodeRune`'s own
+maximal-subpart algorithm) ONCE, at the very top, before the control-char
+check, local-path detection, or any host/owner/repo parsing — matching
+`reference.py:1748-1751`'s exact order. `owner/%72epo` now parses to
+`owner/repo`, matching the Oracle exactly (verified directly). A percent-
+encoded traversal marker (`%2e%2e/%2e%2e/etc/passwd`) is still caught by
+`containsEscape` post-decode, not smuggled past it as an opaque `%2e%2e`
+segment — `TestParseDepString_PercentEncodedTraversal` locks this down.
+
+**A2. FQDN host gate — applied only where the Oracle actually applies it.**
+The user-provided lead named `github_host.py:202` as evidence that SCP/ssh
+forms should be gated identically to the HTTPS/HTTP form. Direct two-sided
+probing against the pinned Oracle (`DependencyReference.parse`, not just
+reading the source) showed this is **not correct**: `ssh://git@host:7999/
+owner/repo.git` and `git@host:owner/repo.git` (bare, non-dotted `"host"`)
+both **succeed** on the real Oracle, unchanged — neither
+`_parse_ssh_protocol_url` nor `_parse_ssh_url` ever calls
+`is_supported_git_host`, and `parse()`'s own post-parse validation
+(`_validate_final_repo_fields`) only checks `repo_url` segment characters,
+never host FQDN-ness. The gate genuinely fires in exactly two places,
+confirmed by direct probes and now ported to match:
+  - `_validate_url_repo_path` (`reference.py:1492-1493`): the HTTPS/HTTP URL
+    form. `https://x/owner/repo` → `Invalid Git host: 'x'.`;
+    `https://x.io/owner/repo` → succeeds, host `x.io`. Ported into
+    `parseHTTPURL`.
+  - `_detect_virtual_package` (`reference.py:1125-1141`): shorthand's own
+    `"." in first_segment` heuristic (the SAME one apm-go's `parseShorthand`
+    already used to decide "does this look like a host") gates on
+    `is_supported_git_host` once triggered. `-x.io/owner/repo`,
+    `x-.io/owner/repo` (hyphen-boundary labels), `x..io/owner/repo` (empty
+    label) all raise. Ported into `parseShorthand`'s existing host branch.
+
+  `isValidFQDN` ports `is_valid_fqdn` (`github_host.py:1074-1102`)
+  verbatim as a regex. `TestParseDepString_FQDNHostGate` and
+  `TestParseDepString_URLForm`'s existing `ssh://git@host:7999/...` cases
+  together lock down both halves: gated where the Oracle gates, ungated
+  where it doesn't. Existing tests survey: no manifest/install test used a
+  non-FQDN HTTPS host or a dotted-but-invalid shorthand host, so nothing
+  needed updating there — the only existing cases touching this code path
+  (`ssh://git@host:7999/...`, twice, in `TestParseDepString_URLForm`) stay
+  green precisely because ssh:// is confirmed ungated.
+
+**B. `pythonRepr` rewritten as a real recursive Python-repr port.** The
+prior version handled only plain scalars (a single-key Go map happened to
+round-trip correctly by accident, but Go map iteration order is
+unspecified — a multi-key dict would have been non-deterministic, not just
+misordered). Now:
+  - `decodeOrderedJSON`/`decodeOrderedValue` walk the raw JSON via
+    `json.Decoder`'s token stream (not `Unmarshal`) into an
+    insertion-order-preserving tree (`orderedValues` for objects, `[]any`
+    for arrays — already ordered — `json.Number` for numbers via
+    `UseNumber()`), so `pythonReprValue({'b':1,'a':2})` reprs `"{'b': 1, 'a':
+    2}"`, original key order, not alphabetical — verified directly against
+    the pinned Oracle for both a single-key and a multi-key dict.
+  - `pythonReprNumber` distinguishes int from float by JSON lexeme (no
+    `./e/E` → integer, echoed verbatim — this also gets arbitrary-precision
+    integers right for free, no bignum arithmetic needed); `pythonFloatRepr`
+    adds the `.0` Go's `FormatFloat` omits for a whole-number float
+    (`1.0` → `"1.0"` not `"1"`) — Go's shortest-round-trip digits and
+    `e+NN`/`e-NN` exponent spelling already match Python's byte-for-byte
+    (verified: `1e+20`, `1e-05`).
+  - `pythonReprString` ports the quote-selection (single unless the string
+    has `'` and no `"`), backslash/quote/`\n`/`\r`/`\t` escapes, `\xNN` for
+    other C0+DEL, and `\xNN`/`\uNNNN`/`\UNNNNNNNN` for non-ASCII
+    non-printable characters (`unicode.IsPrint` as the printability test).
+  - `printableASCIIText` ports `diagnostics.py:52-55`'s
+    `printable_ascii_text` — `_parse_plugin_entry` wraps EVERY
+    `TagPatternError` message in this (`models.py:533`) before returning
+    it, squashing any character `repr()` itself left as a literal non-ASCII
+    codepoint (e.g. `'é'`) down to `'?'`, while a `repr()`-produced ASCII
+    escape sequence (`\xNN`, `\uNNNN`) survives untouched since it's already
+    pure ASCII text. `tagPatternStructuralError` applies this to the whole
+    composed inner message, matching the Oracle's own two-stage pipeline
+    exactly, not just the repr'd value in isolation.
+  - `parsePluginEntry` now separately decodes `sourceRaw` into
+    `map[string]json.RawMessage` to get `tag_pattern`'s ORIGINAL bytes
+    (`tagPatternRaw`), passed to `tagPatternStructuralError` instead of the
+    already-decoded `any` from `srcMap` — the same "raw JSON vs. decoded
+    Go type loses information" class of fix as the ticket 11 attempt
+    2/3 null-vs-absent-key bugs.
+  - `TestPythonReprValue` (23 cases) and `TestPrintableASCIIText` (5 cases)
+    pin every branch against bytes captured directly from the pinned
+    Oracle via `python3 -c "print(repr(x))"` (not recomputed the way the
+    port itself computes them) — including the evaluator's exact
+    `{'x': 1}` case and a multi-key `{'b': 1, 'a': 2}` case.
+
+**C. Test-evidence gap closed.** `TestMarketplaceValidate_TagPatternDeferral`
+now runs the real `marketplace add` COMMAND (not `marketplace.AddSource`
+directly), root `search` (`plugin@broken`), and `install` (via
+`runInstall` with the same network-free `installDeps` mock pattern
+`TestRunInstall_MarketplacePackage_LockfileProvenanceAndPersistedCanonical`
+already uses) end to end: `add` succeeds, `browse`/`search` both list only
+the valid plugin, `install good-plugin@broken` succeeds, `install
+bad-plugin@broken` fails not-found, `validate` reports the Structure
+diagnostic. (`install` runs BEFORE `search` in the test body: `runSearchCmd`
+sets `CI=1` for the rest of the test via `t.Setenv`, which would otherwise
+push `install` into a frozen/lockfile-required mode it isn't set up for.)
+
+**Verification.** All three of the evaluator's named reproducers re-checked
+directly against the live pinned Oracle AND the built `apm-go` binary side
+by side, in one manifest: `url: "https://x/owner/repo"` →
+`Structure: plugins[0].source: url requires a valid non-local url field`
+on both, exit 1; `github repo "owner/%72epo"` → accepted on both (shows up
+as a registered plugin, no Structure error); `tag_pattern: {"x": 1}` →
+`Structure: plugins[N].source.tag_pattern: 'Plugin '<name>' source.tag_pattern'
+must be a non-empty string, got {'x': 1}` on both, byte-identical. All of
+attempt 3's own divergence-class probes (`owner/`, `owner//repo`,
+`owner/repo?x`, `url: "foo"`) re-verified still correctly rejected after
+this attempt's refactor of `isValidRemoteCoordinate`'s dependency
+(`ParseDepString` itself changed; the function that calls it did not).
+
+`go build`/`vet`/`gofmt` clean. `go test ./...` green (pre-existing
+Windows-only `TestParseDepString_AbsolutePath` excepted). `go test -race
+./cmd/apm-go/... ./internal/marketplace/... ./internal/manifest/...` clean.
+
+## Files touched (attempt 4 additions)
+- `internal/manifest/depref.go`: `isValidFQDN`/`fqdnRe` (new); `ParseDepString` decodes via `lenientUnquote` before the control-char check and all other parsing; `lenientUnquote`/`lenientUnquoteBytes`/`hexNibble`/`utf8ReplaceInvalid` (new); `parseHTTPURL` and `parseShorthand`'s host-qualified branch gate on `isValidFQDN` instead of (respectively, in addition to) `hostCharRe`; `parseSSHURL`/`parseSCPURL` deliberately left ungated (see isValidFQDN's doc comment for the probe evidence).
+- `internal/manifest/depref_test.go`: +`TestParseDepString_PercentDecodeThenParse`, +`TestParseDepString_PercentEncodedTraversal`, +`TestParseDepString_FQDNHostGate`.
+- `internal/marketplace/models.go`: `pythonRepr` replaced by `pythonReprValue`/`pythonReprNumber`/`pythonReprString` + `decodeOrderedJSON`/`decodeOrderedValue` (+`orderedPair`/`orderedValues` types) + `printableASCIIText`; `tagPatternStructuralError` takes `json.RawMessage` instead of a pre-decoded `any` and applies `printableASCIIText` to its composed message; `parsePluginEntry` extracts `tagPatternRaw` from a fresh `map[string]json.RawMessage` decode of `sourceRaw` instead of reading `srcMap["tag_pattern"]`.
+- `internal/marketplace/models_manifest_test.go`: +4 `TestMarketplaceManifest_StructuralErrors` cases (the evaluator's 3 reproducers plus a multi-key dict variant), +`TestPythonReprValue` (23 cases), +`TestPrintableASCIIText` (5 cases).
+- `cmd/apm-go/marketplace_e2e_test.go`: `TestMarketplaceValidate_TagPatternDeferral` rewritten to invoke the real `marketplace add`/`search`/`install` commands instead of `marketplace.AddSource` directly.

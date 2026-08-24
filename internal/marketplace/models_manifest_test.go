@@ -515,6 +515,29 @@ func TestMarketplaceManifest_StructuralErrors(t *testing.T) {
 			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":"{name}-v{version}"}}]}`,
 			want: nil,
 		},
+
+		// Ticket 11 eval attempt 4 (orchestrator intervention): three new
+		// reproducers, all verified directly against the pinned Oracle.
+		{
+			name: "eval attempt 4 reproducer 1: FQDN host gate -- url source with a non-FQDN host",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"url","url":"https://x/owner/repo"}}]}`,
+			want: []string{"plugins[0].source: url requires a valid non-local url field"},
+		},
+		{
+			name: "eval attempt 4 reproducer 1 (accept side): percent-decode -- github repo with a percent-encoded character is accepted",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/%72epo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "eval attempt 4 reproducer 2: dict-shaped tag_pattern reprs with insertion order preserved",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":{"x":1}}}]}`,
+			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'p' source.tag_pattern' must be a non-empty string, got {'x': 1}"},
+		},
+		{
+			name: "eval attempt 4 reproducer 2 (multi-key): dict-shaped tag_pattern preserves ORIGINAL key order, not alphabetical",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":{"b":1,"a":2}}}]}`,
+			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'p' source.tag_pattern' must be a non-empty string, got {'b': 1, 'a': 2}"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -610,4 +633,77 @@ func TestUnmarshalJSON_PluginSourceTagPattern(t *testing.T) {
 			t.Errorf("StructuralErrors = %v, want [%q]", m.StructuralErrors, want)
 		}
 	})
+}
+
+// TestPythonReprValue pins pythonReprValue/pythonReprNumber/pythonReprString
+// against the pinned Oracle's own repr() output (ticket 11 attempt 4:
+// `python3 -c "print(repr(x))"` run once per case to capture the expected
+// bytes, not recomputed the way the port itself computes them). Covers
+// every branch decodeOrderedJSON's doc comment names: dict insertion order
+// (not alphabetical), list element order, integer-vs-float JSON lexemes
+// (including a whole-number float needing ".0" Go's FormatFloat omits, and
+// large/small magnitudes needing scientific notation), and string quote/
+// escape selection.
+func TestPythonReprValue(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+		want string
+	}{
+		{"dict single key", `{"x": 1}`, `{'x': 1}`},
+		{"dict preserves insertion order, not alphabetical", `{"b": 1, "a": 2}`, `{'b': 1, 'a': 2}`},
+		{"list of mixed types", `[1, "a", null, true]`, `[1, 'a', None, True]`},
+		{"positive integer", `42`, `42`},
+		{"negative integer", `-7`, `-7`},
+		{"zero integer", `0`, `0`},
+		{"whole-number float keeps .0", `1.0`, `1.0`},
+		{"float with fraction", `1.5`, `1.5`},
+		{"negative float", `-0.5`, `-0.5`},
+		{"float many digits", `3.14159`, `3.14159`},
+		{"large float uses scientific notation", `1e20`, `1e+20`},
+		{"small float uses scientific notation", `1e-5`, `1e-05`},
+		{"null", `null`, `None`},
+		{"true", `true`, `True`},
+		{"false", `false`, `False`},
+		{"empty string", `""`, `''`},
+		{"plain string", `"hello"`, `'hello'`},
+		{"string with single quote uses double quotes", `"it's"`, `"it's"`},
+		{"string with double quote uses single quotes", `"say \"hi\""`, `'say "hi"'`},
+		{"string with both quotes escapes the single quote", `"both ' and \""`, `'both \' and "'`},
+		{"string with tab", `"tab\there"`, `'tab\there'`},
+		{"string with control char", `"\u0007"`, `'\x07'`},
+		{"string with non-ASCII printable stays literal", `"héllo"`, `'héllo'`},
+		{"string with newline", `"line\nbreak"`, `'line\nbreak'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, err := decodeOrderedJSON(json.RawMessage(tt.json))
+			if err != nil {
+				t.Fatalf("decodeOrderedJSON(%s): %v", tt.json, err)
+			}
+			if got := pythonReprValue(v); got != tt.want {
+				t.Errorf("pythonReprValue(%s) = %q, want %q", tt.json, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPrintableASCIIText pins printableASCIIText against
+// diagnostics.py:52-55's printable_ascii_text, verified directly (ticket 11
+// attempt 4): a non-ASCII printable character that pythonReprString leaves
+// literal (e.g. 'é') is squashed to a single '?' here, same as any
+// remaining ASCII control character/DEL.
+func TestPrintableASCIIText(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"hello", "hello"},
+		{"héllo", "h?llo"},
+		{"tab\ttab", "tab?tab"},
+		{"\x1b[31m", "?[31m"},
+		{"a\x7fb", "a?b"},
+	}
+	for _, tt := range tests {
+		if got := printableASCIIText(tt.in); got != tt.want {
+			t.Errorf("printableASCIIText(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
 }

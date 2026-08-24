@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -70,11 +71,70 @@ var (
 	segmentRe    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	refRe        = regexp.MustCompile(`^[\x21-\x7e]+$`) // 1*VCHAR
 	portRangeMax = 65535
+
+	// fqdnRe is the Oracle's is_valid_fqdn regex, ported verbatim
+	// (github_host.py:1099-1101): labels of alphanumerics/hyphens that
+	// neither start nor end with a hyphen, joined by dots, with AT LEAST
+	// ONE dot (a bare single-label host like "host" or "localhost" is
+	// therefore never a valid FQDN). See isValidFQDN's doc comment for
+	// exactly which ParseDepString branches gate on this.
+	fqdnRe = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+$`)
 )
+
+// isValidFQDN ports the Oracle's is_valid_fqdn (github_host.py:1074-1102).
+//
+// Ticket 11 attempt 4: probed directly against the pinned Oracle to find
+// exactly where this gate applies, since is_supported_git_host (which
+// wraps is_valid_fqdn) is NOT applied uniformly to every host-bearing
+// dependency-string form:
+//   - HTTPS/HTTP URL form (_validate_url_repo_path, reference.py:1492-1493):
+//     gated -- `https://x/owner/repo` raises "Invalid Git host: 'x'.",
+//     `https://x.io/owner/repo` succeeds with host "x.io". Ported into
+//     parseHTTPURL.
+//   - Shorthand's host-qualified form, e.g. "host.tld/owner/repo"
+//     (_detect_virtual_package, reference.py:1125-1141): also gated --
+//     `-x.io/owner/repo` and `x-.io/owner/repo` (hyphen-boundary labels)
+//     and `x..io/owner/repo` (empty label) all raise "Invalid Git host".
+//     Ported into parseShorthand.
+//   - ssh:// protocol URLs and SCP shorthand (git@host:owner/repo)
+//     (_parse_ssh_protocol_url, _parse_ssh_url): NOT gated at all -- probed
+//     directly, `ssh://git@host:7999/owner/repo.git` and
+//     `git@host:owner/repo.git` both succeed with the bare, non-FQDN host
+//     "host" kept verbatim. Neither function calls is_supported_git_host,
+//     and parse()'s own post-parse validation (_validate_final_repo_fields)
+//     only checks repo_url segment characters, never host FQDN-ness.
+//     parseSSHURL/parseSCPURL are therefore deliberately left ungated here
+//     (hostCharRe's existing looser character-class check is all the
+//     Oracle itself enforces for these two forms).
+func isValidFQDN(host string) bool {
+	if host == "" {
+		return false
+	}
+	return fqdnRe.MatchString(host)
+}
 
 func ParseDepString(s string) (*DependencyReference, error) {
 	if s == "" {
 		return nil, fmt.Errorf("empty dependency string")
+	}
+
+	// reference.py:1748: `dependency_str = urllib.parse.unquote(dependency_str)`
+	// runs ONCE on the whole string, before local-path detection, host
+	// parsing, everything -- so every check below (including error message
+	// interpolation) operates on the DECODED string, exactly like the
+	// Oracle reassigning its own local variable. Percent-decoding first
+	// (rather than, say, only within a virtual-path segment) is also what
+	// makes a percent-encoded traversal marker (e.g. "%2e%2e") visible to
+	// containsEscape below instead of slipping past it as an opaque
+	// "%2e%2e" segment -- see TestParseDepString_PercentEncodedTraversal.
+	s = lenientUnquote(s)
+
+	// reference.py:1750-1751: `if any(ord(c) < 32 for c in dependency_str)`
+	// runs AFTER the decode, on the decoded string.
+	for _, r := range s {
+		if r < 32 {
+			return nil, fmt.Errorf("dependency string contains invalid control characters")
+		}
 	}
 
 	// An OS-absolute filesystem path (POSIX "/...", Windows "C:\..."/"C:/...",
@@ -109,6 +169,69 @@ func ParseDepString(s string) (*DependencyReference, error) {
 	return parseShorthand(s)
 }
 
+// lenientUnquote ports Python's urllib.parse.unquote (used as
+// reference.py:1748's whole-string percent-decode) exactly: percent-decode
+// is lenient, not strict. An invalid escape (a "%" not followed by two hex
+// digits) is left completely unconsumed -- the literal "%" and whatever
+// follows it pass through unchanged, rather than erroring like
+// net/url.PathUnescape would. The resulting bytes are then UTF-8-decoded
+// with errors='replace' semantics: an invalid byte sequence becomes one
+// U+FFFD per Go's utf8.DecodeRune (which, like CPython's UTF-8 codec,
+// implements the Unicode "maximal subpart" replacement algorithm).
+func lenientUnquote(s string) string {
+	return utf8ReplaceInvalid(lenientUnquoteBytes(s))
+}
+
+// lenientUnquoteBytes is unquote_to_bytes's core loop: a percent sign
+// followed by two valid hex digits decodes to that byte; anything else
+// (including a "%" at the very end of the string, or followed by
+// non-hex characters) is copied through verbatim, exactly as CPython's
+// bits = string.split(b'%') / _hextobyte lookup does.
+func lenientUnquoteBytes(s string) []byte {
+	src := []byte(s)
+	out := make([]byte, 0, len(src))
+	for i := 0; i < len(src); i++ {
+		if src[i] == '%' && i+2 < len(src) {
+			hi, ok1 := hexNibble(src[i+1])
+			lo, ok2 := hexNibble(src[i+2])
+			if ok1 && ok2 {
+				out = append(out, hi<<4|lo)
+				i += 2
+				continue
+			}
+		}
+		out = append(out, src[i])
+	}
+	return out
+}
+
+func hexNibble(b byte) (byte, bool) {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0', true
+	case b >= 'a' && b <= 'f':
+		return b - 'a' + 10, true
+	case b >= 'A' && b <= 'F':
+		return b - 'A' + 10, true
+	}
+	return 0, false
+}
+
+// utf8ReplaceInvalid walks b as UTF-8, replacing each invalid byte (or
+// invalid lead-plus-partial-continuation run) with U+FFFD one rune at a
+// time via utf8.DecodeRune -- the same "maximal subpart" algorithm
+// CPython's UTF-8 decoder uses for errors='replace'.
+func utf8ReplaceInvalid(b []byte) string {
+	var sb strings.Builder
+	sb.Grow(len(b))
+	for len(b) > 0 {
+		r, size := utf8.DecodeRune(b)
+		sb.WriteRune(r)
+		b = b[size:]
+	}
+	return sb.String()
+}
+
 func parseHTTPURL(s string) (*DependencyReference, error) {
 	scheme := "https"
 	rest := strings.TrimPrefix(s, "https://")
@@ -126,6 +249,13 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 	host, port, err := parseHostPort(parts[0])
 	if err != nil {
 		return nil, fmt.Errorf("dependency %q: %w", s, err)
+	}
+	// reference.py:1492-1493 (_validate_url_repo_path): the HTTPS/HTTP URL
+	// form gates its host on is_supported_git_host, which falls through to
+	// is_valid_fqdn for any host outside the GitHub/Azure-DevOps allowlists
+	// -- see isValidFQDN's doc comment for the direct probe evidence.
+	if !isValidFQDN(host) {
+		return nil, fmt.Errorf("dependency %q: invalid Git host %q: not a valid FQDN", s, host)
 	}
 	owner := parts[1]
 	repo := strings.TrimSuffix(parts[2], ".git")
@@ -268,8 +398,17 @@ func parseShorthand(s string) (*DependencyReference, error) {
 
 	if len(parts) >= 3 && strings.Contains(parts[0], ".") {
 		host = parts[0]
-		if !hostCharRe.MatchString(host) {
-			return nil, fmt.Errorf("dependency %q: invalid host %q", s, host)
+		// reference.py:1125-1141 (_detect_virtual_package): the SAME
+		// `"." in first_segment` heuristic used above to decide "does this
+		// look like a host at all" gates the candidate on
+		// is_supported_git_host once triggered -- a dotted-but-invalid host
+		// (a leading/trailing hyphen label, an empty label from "..") is a
+		// hard "Invalid Git host" error here, not a fallthrough to treating
+		// it as a plain owner. Probed directly: "-x.io/owner/repo",
+		// "x-.io/owner/repo", and "x..io/owner/repo" all raise. See
+		// isValidFQDN's doc comment.
+		if !isValidFQDN(host) {
+			return nil, fmt.Errorf("dependency %q: invalid Git host %q: not a valid FQDN", s, host)
 		}
 		owner = parts[1]
 		repo = parts[2]

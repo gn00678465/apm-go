@@ -1486,25 +1486,34 @@ func TestMarketplaceValidate_StructurePerElementDiagnostics(t *testing.T) {
 // -- browse/search/install for EVERY plugin in that marketplace, including
 // perfectly valid ones, failed too. Verified against the real pinned
 // Oracle directly: `marketplace add` registers successfully (with a
-// CommandLogger warning naming the malformed-entry count), `browse` lists
-// only the valid plugin, and `validate` reports the Structure diagnostic.
+// CommandLogger warning naming the malformed-entry count), `browse` and
+// root `search` both list only the valid plugin, `install` succeeds for
+// the valid plugin and fails (not-found, same category on both sides) for
+// the malformed one, and `validate` reports the Structure diagnostic.
+//
+// Ticket 11 eval attempt 4 correction: attempt 3's version of this test
+// called marketplace.AddSource directly and never exercised search or
+// install, despite the doc comment above already claiming that coverage --
+// the eval verified the real behavior matches and asked for the test to
+// actually do what its comment says. It now runs the real `marketplace
+// add`, root `search`, and `install` COMMANDS end to end.
 func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
-	dir := writeLocalManifestDir(t, `{"name": "broken", "plugins": [`+
+	mktDir := writeLocalManifestDir(t, `{"name": "broken", "plugins": [`+
 		`{"name": "good-plugin", "source": {"type": "github", "repo": "acme/good"}},`+
 		`{"name": "bad-plugin", "source": {"type": "github", "repo": "acme/bad", "tag_pattern": "{name}"}}`+
 		`]}`)
 
-	// Act: registering the marketplace must succeed despite the malformed
-	// entry (the blast-radius regression this fix closes).
-	addErr := marketplace.AddSource(marketplace.MarketplaceSource{Name: "broken", URL: dir, Path: "marketplace.json"})
-
-	// Assert
+	// Act: registering the marketplace through the real `marketplace add`
+	// command must succeed despite the malformed entry (the blast-radius
+	// regression this fix closes).
+	addOut, addErr := runMarketplaceCmd(t, "add", mktDir, "--name", "broken")
 	if addErr != nil {
-		t.Fatalf("AddSource returned an error for a manifest with one malformed plugin entry: %v", addErr)
+		t.Fatalf("marketplace add returned error: %v (output: %s)", addErr, addOut)
 	}
 
+	// Assert -- browse.
 	browseOut, browseErr := runMarketplaceCmd(t, "browse", "broken")
 	if browseErr != nil {
 		t.Fatalf("marketplace browse returned error: %v", browseErr)
@@ -1516,6 +1525,7 @@ func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
 		t.Errorf("browse output = %q, must NOT list the tag_pattern-malformed plugin", browseOut)
 	}
 
+	// Assert -- validate reports the Structure diagnostic.
 	validateOut, validateErr := runMarketplaceCmd(t, "validate", "broken")
 	if validateErr == nil {
 		t.Fatal("marketplace validate returned no error for a manifest with a malformed tag_pattern")
@@ -1526,6 +1536,51 @@ func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
 	wantMessage := "  Structure: plugins[1].source.tag_pattern: 'Plugin 'bad-plugin' source.tag_pattern' must contain exactly one {version} placeholder, got '{name}'"
 	if !strings.Contains(validateOut, wantMessage) {
 		t.Errorf("validate output = %q, want it to contain %q", validateOut, wantMessage)
+	}
+
+	// Assert -- install: the valid plugin installs through the real
+	// `install` command (network-free via installDeps' mocked loader/tag
+	// lister, same pattern as TestRunInstall_MarketplacePackage_
+	// LockfileProvenanceAndPersistedCanonical); the malformed one is simply
+	// never found, the same "not found in marketplace" category on both
+	// apm-go and the Oracle (verified directly -- different exact wording,
+	// not a divergence this ticket is positioned to close). Run BEFORE
+	// root `search` below: runSearchCmd sets CI=1 for the rest of this
+	// test via t.Setenv, which would otherwise make install default to a
+	// frozen (lockfile-required) mode it isn't set up for here.
+	projDir := t.TempDir()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(projDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+
+	if err := runInstall(deps, false, true, "claude", nil, []string{"good-plugin@broken"}); err != nil {
+		t.Errorf("install of the valid plugin failed: %v", err)
+	}
+	if err := runInstall(deps, false, true, "claude", nil, []string{"bad-plugin@broken"}); err == nil {
+		t.Error("install of the tag_pattern-malformed plugin succeeded, want a not-found error")
+	}
+
+	// Assert -- root `search` (a separate top-level command tree from
+	// `marketplace browse`, sharing the same parsed manifest) also excludes
+	// the malformed entry.
+	searchOut, searchErr := runSearchCmd(t, "plugin@broken")
+	if searchErr != nil {
+		t.Fatalf("search returned error: %v", searchErr)
+	}
+	if !strings.Contains(searchOut, "good-plugin") {
+		t.Errorf("search output = %q, want it to list the valid plugin", searchOut)
+	}
+	if strings.Contains(searchOut, "bad-plugin") {
+		t.Errorf("search output = %q, must NOT list the tag_pattern-malformed plugin", searchOut)
 	}
 }
 
