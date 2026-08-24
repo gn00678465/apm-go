@@ -23,10 +23,11 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 | 16 | dep-parser full Oracle conformance (table-driven; spun out of 11) | — |
 | 17 | `pack` flag/feature parity (spun out of 13) | — |
 | 18 | `marketplace audit` missing "Run with --verbose for details." hint (spun out of 14 attempt 2) | — |
+| 19 | `init`/`plugin init` output-surface gaps: apm.yml YAML cosmetics, success-output stream split, help_semantic parser limitation (spun out of 09) | — |
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: 01 02 03 04 08 10 11 12 13 14 15 ✅ · 06 07 ✅(command-local) · 14 closed at attempt 3 (e762092; wording parity kept, Rich-wrap emulation withdrawn per eval-plan §8.3) · 05 command+evidence landed, gaps open · 09 next → beta.3 · 16 17 18 post-beta backlog.
+Status: 01 02 03 04 08 09 10 11 12 13 14 15 ✅ · 06 07 ✅(command-local) · 14 closed at attempt 3 (e762092; wording parity kept, Rich-wrap emulation withdrawn per eval-plan §8.3) · 09 closed (PASS; 20 `plugin-init-*` cases backfilled — 19 waived-clean + 1 byte-exact; `.github/workflows/parity.yml` added as the real CI parity gate, replacing "go test passed" — it is red on day one by design, surfacing the pre-existing 18-case backlog rather than hiding it; `go test ./...` now fully green via a Windows-only subtest skip; findings spun to ticket 19) · 05 command+evidence landed, gaps open · 16 17 18 19 post-beta backlog · **beta.3 release-ready: all release-blocking tickets closed.**
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 

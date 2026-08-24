@@ -37,7 +37,7 @@
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
     "reason": "Intentional rendering-library difference: upstream Click/Rich help and target Cobra/ux help use different Usage/Options/Flags ordering and wording. The doctor help semantic surface, flags, description, exit code, and non-TTY contract were compared separately; only stdout presentation is waived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".review/eval-plan.md §8.3 Rich/Clack vs ux/Cobra"
+    "eval_plan_ref": ".review/eval-plan.md \u00a78.3 Rich/Clack vs ux/Cobra"
   },
   {
     "id": "pack-refuse-agent-plugin",
@@ -49,9 +49,9 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "apm-go's pack command does not yet implement the Agent Plugins v1 exporter (bundle/formats.py BundleFormat.AGENT_PLUGIN / packer.py's agent-plugin route). `--format agent-plugin` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0) and writes a real Agent Plugin bundle (plugin.json, mcp.json, skills/, embedded apm.lock.yaml) under cwd/build/. Intentional deviation per .review/ticket-review.md §D: Claude path parity is closed; the Agent Plugin exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff. `fields` updated by ticket 10: apm-go's refusal now prints on stdout (matching the Oracle's channel), so `stderr` no longer differs and drops out; `error_body` (ticket 10's new body-only comparator) takes its place here purely because the two sides run entirely different code paths at different exit codes (Oracle succeeds and prints a completion line, apm-go refuses and prints an error) -- not a new gap, the same documented exporter-not-implemented difference the rest of this waiver already covers.",
+    "reason": "apm-go's pack command does not yet implement the Agent Plugins v1 exporter (bundle/formats.py BundleFormat.AGENT_PLUGIN / packer.py's agent-plugin route). `--format agent-plugin` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0) and writes a real Agent Plugin bundle (plugin.json, mcp.json, skills/, embedded apm.lock.yaml) under cwd/build/. Intentional deviation per .review/ticket-review.md \u00a7D: Claude path parity is closed; the Agent Plugin exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff. `fields` updated by ticket 10: apm-go's refusal now prints on stdout (matching the Oracle's channel), so `stderr` no longer differs and drops out; `error_body` (ticket 10's new body-only comparator) takes its place here purely because the two sides run entirely different code paths at different exit codes (Oracle succeeds and prints a completion line, apm-go refuses and prints an error) -- not a new gap, the same documented exporter-not-implemented difference the rest of this waiver already covers.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": "§8.3 row 1 / §2.2",
+    "eval_plan_ref": "\u00a78.3 row 1 / \u00a72.2",
     "tree_paths": [
       "cwd/build",
       "cwd/build/pack-parity-fixture-1.0.0",
@@ -78,9 +78,9 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "apm-go's pack command does not yet implement the legacy APM bundle layout exporter (bundle/formats.py BundleFormat.APM / packer.py's apm route). `--format apm` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0, \"No deployed files found -- empty bundle created\" since this fixture has no per-target deployed artifacts) and writes a real (if minimal) APM-format bundle under cwd/build/. Intentional deviation per .review/ticket-review.md §D: Claude path parity is closed; the APM exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff. `fields` updated by ticket 10: apm-go's refusal now prints on stdout (matching the Oracle's channel), so `stderr` no longer differs and drops out; `error_body` (ticket 10's new body-only comparator) takes its place here purely because the two sides run entirely different code paths at different exit codes (Oracle succeeds and prints a completion line, apm-go refuses and prints an error) -- not a new gap, the same documented exporter-not-implemented difference the rest of this waiver already covers.",
+    "reason": "apm-go's pack command does not yet implement the legacy APM bundle layout exporter (bundle/formats.py BundleFormat.APM / packer.py's apm route). `--format apm` is accepted by the shared 5-choice resolver and refused with exit 2 before any producer/lockfile/output-directory write, while the pinned Oracle's exporter runs to completion (exit 0, \"No deployed files found -- empty bundle created\" since this fixture has no per-target deployed artifacts) and writes a real (if minimal) APM-format bundle under cwd/build/. Intentional deviation per .review/ticket-review.md \u00a7D: Claude path parity is closed; the APM exporter is a tracked, out-of-scope gap, not silently hidden -- the CLI surface (help, flag parsing, exit code, exact refusal message) matches the Oracle's contract even though the export itself is unimplemented. tree_paths also names the ticket 12 home/.apm/config.json auto-create and the home/.cache/apm/last_version_check cache file the Oracle writes on every invocation -- neither is specific to --format, both are pre-existing global-footprint gaps this waiver must still name exactly per this case's tree diff. `fields` updated by ticket 10: apm-go's refusal now prints on stdout (matching the Oracle's channel), so `stderr` no longer differs and drops out; `error_body` (ticket 10's new body-only comparator) takes its place here purely because the two sides run entirely different code paths at different exit codes (Oracle succeeds and prints a completion line, apm-go refuses and prints an error) -- not a new gap, the same documented exporter-not-implemented difference the rest of this waiver already covers.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": "§8.3 row 1 / §2.2",
+    "eval_plan_ref": "\u00a78.3 row 1 / \u00a72.2",
     "tree_paths": [
       "cwd/build",
       "cwd/build/pack-parity-fixture-1.0.0",
@@ -99,7 +99,7 @@
     ],
     "taxonomy": "F04",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "apm-go honours APM_CONFIG_DIR as an explicit override; the Oracle has no such variable -- intentional environment-semantics extension, spec §Out of Scope to add. This case sets APM_CONFIG_DIR to a path under its own sandbox cwd (ticket 15's runner no longer forces the var on either side, so the Oracle's real behaviour -- ignoring it -- and apm-go's real behaviour -- honouring it -- are both captured as evidence rather than masked by the runner's own env choice). Target writes cwd/altcfg/marketplaces.json (RegistryPath honours APM_CONFIG_DIR directly, internal/marketplace/registry.go:108-121); Oracle ignores the var and writes home/.apm/marketplaces.json (home/.apm itself is baseline-excluded, but marketplaces.json is real product state outside the baseline). This entry covers the tree field for exactly the paths in tree_paths.",
+    "reason": "apm-go honours APM_CONFIG_DIR as an explicit override; the Oracle has no such variable -- intentional environment-semantics extension, spec \u00a7Out of Scope to add. This case sets APM_CONFIG_DIR to a path under its own sandbox cwd (ticket 15's runner no longer forces the var on either side, so the Oracle's real behaviour -- ignoring it -- and apm-go's real behaviour -- honouring it -- are both captured as evidence rather than masked by the runner's own env choice). Target writes cwd/altcfg/marketplaces.json (RegistryPath honours APM_CONFIG_DIR directly, internal/marketplace/registry.go:108-121); Oracle ignores the var and writes home/.apm/marketplaces.json (home/.apm itself is baseline-excluded, but marketplaces.json is real product state outside the baseline). This entry covers the tree field for exactly the paths in tree_paths.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/15-runner-config-root.md",
     "tree_paths": [
@@ -472,5 +472,291 @@
     "reason": "search.go's own \"Marketplace '%s' is not registered. Use 'apm-go marketplace list' to see registered marketplaces.\" (search.go:82, a separate string from marketplaceNotRegisteredErr -- ticket 05's own wording surface, not touched by this ticket) is long enough (>80 cells) to hit the identical Rich-wrap-vs-single-line rendering difference as browse-unknown-marketplace/list-empty's own waivers -- see that entry for the full precedent. `error_body` is waived for the same reason as browse's: the Oracle's first WRAPPED line ends mid-sentence (\"...marketplace list' to\"), apm-go's single unwrapped line is the whole message, so the 'first line' extraction captures different amounts of the SAME content, not a second wording gap. Not one of this ticket's two written findings (browse/list); recorded here only because it shares the identical >80-cell-message-plus-no-wrap shape. `tree`'s home/.apm/marketplaces.json diff is deliberately NOT waived, unchanged: ticket 05's own open registry-serialization gap (already documented on search-basic-hit and others), unrelated to rendering.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/14-marketplace-wording.md"
+  },
+  {
+    "id": "plugin-init-no-flag",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-format-plugin",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-format-claude",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-format-claude-plugin",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-claude-plugin-flag",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-format-agent-plugin",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-existing-apmyml-yes",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-existing-pluginjson-only-yes",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-existing-mcpjson-agent-yes",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-unicode-author",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-normalise-upper",
+    "fields": [
+      "stdout",
+      "stderr",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture/apm.yml"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Contrary to the ticket's original assumption, this is NOT an F12 spec-over-Oracle case: verified live, the pinned Oracle's `--format` Click Choice is case_sensitive=False, so 'AGENT-PLUGIN' (uppercase, hyphen-separated) is accepted by BOTH sides identically -- only normalise-underscore/normalise-space (which change the SEPARATOR, not just the case) are genuinely Oracle-rejected/apm-go-accepted. This case therefore hits the exact same rendering/channel/apm.yml-comment mechanism as every other success case below, not a format-acceptance difference. `plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-normalise-underscore",
+    "fields": [
+      "exit_code",
+      "stdout",
+      "stderr",
+      "error_body",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture",
+      "cwd/plugin-init-fixture/apm.yml",
+      "cwd/plugin-init-fixture/mcp.json",
+      "cwd/plugin-init-fixture/plugin.json"
+    ],
+    "taxonomy": "F12",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "F12 spec-over-Oracle (this ticket's own sanctioned category): 'agent_plugin' changes the '--format' selector's SEPARATOR (not just its case), which the pinned Oracle's Click Choice rejects outright (exit 2, 'Invalid value for --format: ... is not one of ...') before its own coerce_bundle_format normalization (bundle/formats.py:60-73, which WOULD accept this spelling) ever runs -- Click validates the raw token against the literal choice list first. apm-go's shared bundle-format resolver (ticket 04, cmd/apm-go/bundle_format.go's normalizeBundleFormatKey) applies that same space/underscore-to-hyphen normalization at the point equivalent to Click's own Choice validation, so it accepts a superset of what the Oracle's CLI layer permits and completes the same successful init the Oracle would perform if only its internal coerce_bundle_format ran. `exit_code` (2 vs 0), `stdout`/`stderr`/`error_body` (Oracle prints nothing but a Usage error; apm-go completes an init) and `tree` (Oracle creates nothing; apm-go creates the full plugin-init-fixture/ tree, byte-identical to every other agent-plugin-mode success case) are ALL a direct, intended consequence of this single sanctioned deviation, not four separate gaps.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-normalise-space",
+    "fields": [
+      "exit_code",
+      "stdout",
+      "stderr",
+      "error_body",
+      "tree"
+    ],
+    "tree_paths": [
+      "cwd/plugin-init-fixture",
+      "cwd/plugin-init-fixture/apm.yml",
+      "cwd/plugin-init-fixture/mcp.json",
+      "cwd/plugin-init-fixture/plugin.json"
+    ],
+    "taxonomy": "F12",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "F12 spec-over-Oracle (this ticket's own sanctioned category): 'agent plugin' changes the '--format' selector's SEPARATOR (not just its case), which the pinned Oracle's Click Choice rejects outright (exit 2, 'Invalid value for --format: ... is not one of ...') before its own coerce_bundle_format normalization (bundle/formats.py:60-73, which WOULD accept this spelling) ever runs -- Click validates the raw token against the literal choice list first. apm-go's shared bundle-format resolver (ticket 04, cmd/apm-go/bundle_format.go's normalizeBundleFormatKey) applies that same space/underscore-to-hyphen normalization at the point equivalent to Click's own Choice validation, so it accepts a superset of what the Oracle's CLI layer permits and completes the same successful init the Oracle would perform if only its internal coerce_bundle_format ran. `exit_code` (2 vs 0), `stdout`/`stderr`/`error_body` (Oracle prints nothing but a Usage error; apm-go completes an init) and `tree` (Oracle creates nothing; apm-go creates the full plugin-init-fixture/ tree, byte-identical to every other agent-plugin-mode success case) are ALL a direct, intended consequence of this single sanctioned deviation, not four separate gaps.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-conflict",
+    "fields": [
+      "stderr"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-format-conflict's own waiver (this is `plugin init`'s spelling of the identical shared --format selector conflict -- cmd/apm-go/bundle_format.go's setBundleFormatFlagErrorFunc/withUsageError apply to `plugin init` and `pack` identically): the Click/Cobra usage-error boilerplate's own \"Usage: apm plugin init [OPTIONS] [PROJECT_NAME]\" vs \"Usage: apm-go plugin init [project-name] [flags]\" Cobra-vs-Click spelling (rewrite_binary_name covers the binary-name half, [flags]/[OPTIONS] and [project-name]/[PROJECT_NAME] are the remaining tokens) -- verified directly, `error_body` (the Error: line itself) is byte-identical on both sides.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-empty",
+    "fields": [
+      "stderr"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-format-conflict's own waiver (this is `plugin init`'s spelling of the identical shared --format selector empty-value rejection -- cmd/apm-go/bundle_format.go's setBundleFormatFlagErrorFunc/withUsageError apply to `plugin init` and `pack` identically): the Click/Cobra usage-error boilerplate's own \"Usage: apm plugin init [OPTIONS] [PROJECT_NAME]\" vs \"Usage: apm-go plugin init [project-name] [flags]\" Cobra-vs-Click spelling (rewrite_binary_name covers the binary-name half, [flags]/[OPTIONS] and [project-name]/[PROJECT_NAME] are the remaining tokens) -- verified directly, `error_body` (the Error: line itself) is byte-identical on both sides.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-unknown",
+    "fields": [
+      "stderr"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-format-conflict's own waiver (this is `plugin init`'s spelling of the identical shared --format selector unknown-value rejection -- cmd/apm-go/bundle_format.go's setBundleFormatFlagErrorFunc/withUsageError apply to `plugin init` and `pack` identically): the Click/Cobra usage-error boilerplate's own \"Usage: apm plugin init [OPTIONS] [PROJECT_NAME]\" vs \"Usage: apm-go plugin init [project-name] [flags]\" Cobra-vs-Click spelling (rewrite_binary_name covers the binary-name half, [flags]/[OPTIONS] and [project-name]/[PROJECT_NAME] are the remaining tokens) -- verified directly, `error_body` (the Error: line itself) is byte-identical on both sides.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-format-apm",
+    "fields": [
+      "stderr"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-format-conflict's own waiver (this is `plugin init`'s spelling of the identical shared --format selector 'apm' rejection (not offered by plugin init's 4-choice list) -- cmd/apm-go/bundle_format.go's setBundleFormatFlagErrorFunc/withUsageError apply to `plugin init` and `pack` identically): the Click/Cobra usage-error boilerplate's own \"Usage: apm plugin init [OPTIONS] [PROJECT_NAME]\" vs \"Usage: apm-go plugin init [project-name] [flags]\" Cobra-vs-Click spelling (rewrite_binary_name covers the binary-name half, [flags]/[OPTIONS] and [project-name]/[PROJECT_NAME] are the remaining tokens) -- verified directly, `error_body` (the Error: line itself) is byte-identical on both sides.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-existing-pluginjson-no-yes",
+    "fields": [
+      "stdout",
+      "error_body"
+    ],
+    "taxonomy": "F08",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Both sides refuse to overwrite and leave plugin.json untouched (verified: `tree` shows no diff at all -- the fixture file survives byte-identical, `exit_code` matches at 1). The wording differs because the two sides detect \"cannot prompt\" differently: the pinned Oracle's `not yes` branch unconditionally calls `click.confirm(\"Continue and overwrite?\")` (commands/init.py:212) with no TTY check at all, so in this non-interactive sandbox it prints the prompt to stdout, reads immediate EOF from the empty stdin, and aborts with a message-less exception rendered as \"Error initializing project: \" (a real, verified-live capture, not a synthetic assumption). apm-go's runInitCore checks `ux.CanPrompt()` up front (false in this sandbox) and refuses immediately with its own descriptive message, \"Generated files already exist: plugin.json; use --yes to overwrite\", never printing a doomed prompt at all. Both are correct, intentional non-interactive-refusal behaviors; unifying the wording is a real but out-of-scope finding, not fixed here.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+  },
+  {
+    "id": "plugin-init-help",
+    "fields": [
+      "stdout",
+      "help_semantic"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`stdout`: Click's \"Options:\" vs Cobra's \"Flags:\" layout/ordering, the same established F01 rendering category as doctor-help/validate-help's own waivers -- the flag set and descriptions match once the layout is set aside. `help_semantic`: a PRE-EXISTING, cross-cutting limitation in the runner's own help-text parser (tools/parity/help_semantic.go's parseHelpFlags scans line by line and only captures a flag description's FIRST physical line -- when Click/Cobra wrap a long description across 2+ lines, e.g. this command's own --format flag whose choice-list metavar pushes its description onto a continuation line entirely, the flag is either truncated mid-sentence or dropped outright), not a real product difference and not introduced by this ticket -- verified: `pack-help`'s own (already unwaived, ticket-17-tracked) help_semantic diff shows the IDENTICAL truncation pattern on its own long flag descriptions. Recorded here for visibility; fixing the parser is cross-cutting tooling work, not owned by this ticket.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
   }
 ]

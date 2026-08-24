@@ -1,0 +1,108 @@
+name: Parity
+
+# The parity gate: runs tools/parity against the pinned Oracle checkout on
+# every push/PR (ticket 09). go-test below is a SEPARATE job -- it verifies
+# apm-go's own Go-level correctness, not Oracle byte-for-byte parity, and
+# passing it is never a substitute for a clean (or knowingly-waived) parity
+# run. See AGENTS.md's Testing patterns section.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout apm-go
+        uses: actions/checkout@v4
+
+      - name: Read the pinned Oracle commit
+        id: oracle-pin
+        run: echo "sha=$(cat tools/parity/oracle.pin)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Oracle (microsoft/apm) at the pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/apm
+          ref: ${{ steps.oracle-pin.outputs.sha }}
+          path: oracle
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: uv sync (Oracle)
+        working-directory: oracle
+        run: uv sync
+
+      - name: Build apm-go
+        run: go build -o bin/apm-go ./cmd/apm-go
+
+      # Network-free guarantee (ticket 09): every case must be runnable from
+      # local fixtures alone. This is a static guard on the case manifests
+      # themselves, not a live network check -- a case's argv referencing a
+      # real URL would mean a run's success secretly depends on network
+      # reachability, breaking reproducibility. fixture/ file CONTENTS are
+      # deliberately not scanned: a fixture can legitimately contain a
+      # documentation URL as data (e.g. a captured error message); it is
+      # never passed to a binary as an argument.
+      - name: Network-free guarantee -- no case argv references a network URL
+        run: |
+          if grep -rn "https://\|github\.com/" tools/parity/cases/*/case.json; then
+            echo "::error::a case's argv references a network URL (https:// or github.com/); parity cases must be runnable from local fixtures alone"
+            exit 1
+          fi
+          echo "ok: no case argv references a network URL"
+
+      - name: Run the parity runner against the pinned Oracle
+        env:
+          APM_TARGET_BIN: ${{ github.workspace }}/bin/apm-go
+          APM_ORACLE_CMD: uv run --project ${{ github.workspace }}/oracle apm
+        run: go run ./tools/parity -cases tools/parity/cases -out parity-out
+
+      # Runs even when the step above failed (an unwaived diff, a self-test
+      # failure, or a preflight failure all exit non-zero and fail the job by
+      # default) so the job log always ends with the human-readable table,
+      # not just "exit status 1".
+      - name: Print summary.txt
+        if: always()
+        run: |
+          if [ -f parity-out/summary.txt ]; then
+            cat parity-out/summary.txt
+          else
+            echo "no summary.txt written -- the runner failed before reaching the diff/report stage; see the previous step's own log"
+          fi
+
+      # Uploaded on success AND failure (ticket 09): the evidence is exactly
+      # as useful for auditing a clean run as for diagnosing a red one.
+      - name: Upload parity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-out
+          path: parity-out/
+          retention-days: 30
+
+  go-test:
+    # Deliberately separate from the parity job (ticket 09): go test verifies
+    # apm-go's own Go-level correctness, never Oracle parity, so it must
+    # never be read as a stand-in "parity passed" signal -- see this
+    # workflow's own top comment and AGENTS.md's Testing patterns section.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./... -race

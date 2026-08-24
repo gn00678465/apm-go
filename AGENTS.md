@@ -87,4 +87,6 @@ internal/
 
 Tests use `t.TempDir()` for filesystem isolation. No global test fixtures — each test builds its own `apm.yml` / directory tree inline. External seams are injected, not mocked globally: `installDeps`, `doctorDeps` (git/env), and the `*ForTest` hooks in `internal/ux/testhooks.go` and `internal/pluginjson/testhooks.go`. Expected values come from the oracle's source or output, never recomputed the way the code does.
 
-Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depend on conformance spec files under `spec/conformance/` — runtime inputs tracked in git, not generated. `TestParseDepString_AbsolutePath` in `internal/manifest` only passes on Windows.
+Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depend on conformance spec files under `spec/conformance/` — runtime inputs tracked in git, not generated. `TestParseDepString_AbsolutePath` in `internal/manifest` skips its two windows-drive-letter subtests outside `GOOS=windows` (ticket 09); everything else in it runs everywhere.
+
+`go test ./...` passing is not the parity gate — `.github/workflows/parity.yml` runs `tools/parity` against the pinned Oracle on every push/PR and is the authority on Oracle byte-for-byte parity; `go test` only verifies apm-go's own Go-level correctness (ticket 09).
