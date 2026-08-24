@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 )
@@ -96,10 +97,15 @@ func Error(w io.Writer, format string, a ...any) {
 
 // oracleLine renders "<prefix><message>" (prefix colored, message plain --
 // matching printLine's existing "color the symbol, not the message"
-// convention) to errWriter(w).
+// convention) to errWriter(w), word-wrapped to the Oracle's console width
+// (wrap.go) once prefix+message exceeds it -- verified directly against the
+// pinned Oracle (ticket 14): a long Info/Error/Warn line reflows exactly the
+// way Rich's Console.print would, not as one unwrapped line.
 func oracleLine(w io.Writer, style lipgloss.Style, prefix, format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	line := style.Bold(true).Render(prefix) + msg
+	wrapped := wrapOracleText(prefix+msg, oracleWrapWidth)
+	body := strings.TrimPrefix(wrapped, prefix)
+	line := style.Bold(true).Render(prefix) + body
 	lipgloss.Fprintln(errWriter(w), line)
 }
 

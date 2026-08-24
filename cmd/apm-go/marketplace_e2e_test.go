@@ -1073,22 +1073,18 @@ func TestMarketplaceUpdate_NamedNotRegisteredErrors(t *testing.T) {
 	}
 }
 
-// TestMarketplaceUpdate_NotRegistered_SuggestsAliasFromOwnerRepo covers the
-// UX bug fix: `marketplace add DietrichGebert/ponytail` registers under the
-// derived alias "ponytail" (fallbackMarketplaceAlias), never the raw
-// "OWNER/REPO" string, so querying update/browse/validate/remove/audit with
-// that same raw string must not just fail silently -- it should suggest the
-// alias it actually registered under and list what is registered.
-func TestMarketplaceUpdate_NotRegistered_SuggestsAliasFromOwnerRepo(t *testing.T) {
+// TestMarketplaceUpdate_NotRegistered_MatchesOracleFixedFormat replaces the
+// pre-ticket-14 SuggestsAliasFromOwnerRepo/NoSlashSkipsFuzzyMatch tests: the
+// Oracle's MarketplaceNotFoundError (marketplace/errors.py:10-24, wrapped by
+// commands/marketplace/__init__.py:1005's "Failed to update marketplace: "
+// prefix) is a FIXED-FORMAT message that never varies by registration state
+// -- no "Did you mean" fuzzy-alias hint, no "Registered: <list>"
+// enumeration, even when another marketplace happens to be registered under
+// the derived alias of the queried OWNER/REPO string.
+func TestMarketplaceUpdate_NotRegistered_MatchesOracleFixedFormat(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "ponytail", URL: "/abs/ponytail", Path: "marketplace.json"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "foo", URL: "/abs/foo", Path: "marketplace.json"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "bar", URL: "/abs/bar", Path: "marketplace.json"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1099,43 +1095,12 @@ func TestMarketplaceUpdate_NotRegistered_SuggestsAliasFromOwnerRepo(t *testing.T
 	if err == nil {
 		t.Fatal("marketplace update DietrichGebert/ponytail returned no error, want a not-registered error")
 	}
-	for _, want := range []string{
-		`is not registered`,
-		`Did you mean "ponytail"`,
-		`Registered: bar, foo, ponytail`,
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %q, want it to contain %q", err.Error(), want)
-		}
-	}
-}
-
-// TestMarketplaceUpdate_NotRegistered_NoSlashSkipsFuzzyMatch covers the
-// negative case: a NAME with no "/" never gets a "Did you mean" hint (there
-// is no OWNER/REPO shape to derive a candidate alias from), but the
-// registered-names list is still appended.
-func TestMarketplaceUpdate_NotRegistered_NoSlashSkipsFuzzyMatch(t *testing.T) {
-	// Arrange
-	isolatedMarketplaceRegistry(t)
-	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "ponytail", URL: "/abs/ponytail", Path: "marketplace.json"}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Act
-	_, err := runMarketplaceCmd(t, "update", "nope")
-
-	// Assert
-	if err == nil {
-		t.Fatal("marketplace update nope returned no error, want a not-registered error")
-	}
-	if !strings.Contains(err.Error(), "is not registered") {
-		t.Errorf("error = %q, want it to contain %q", err.Error(), "is not registered")
-	}
-	if !strings.Contains(err.Error(), "Registered: ponytail") {
-		t.Errorf("error = %q, want it to contain the registered-names list", err.Error())
-	}
-	if strings.Contains(err.Error(), "Did you mean") {
-		t.Errorf("error = %q, want no \"Did you mean\" hint for a NAME without a slash", err.Error())
+	want := "Failed to update marketplace: Marketplace 'DietrichGebert/ponytail' is not registered. " +
+		"Run 'apm-go marketplace add https://github.com/OWNER/REPO' or " +
+		"'apm-go marketplace add OWNER/REPO' to register it, or " +
+		"'apm-go marketplace list' to see registered marketplaces."
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }
 
@@ -1272,12 +1237,13 @@ func TestMarketplaceRemove_NotRegisteredErrors(t *testing.T) {
 	}
 }
 
-// TestMarketplaceRemove_NotRegistered_SuggestsAliasAndDoesNotRemove covers
-// the UX bug fix's remove case: `remove OWNER/REPO` where only the derived
-// alias is registered must suggest that alias -- and, critically, must not
-// remove the alias entry it merely *matched* by suggestion (the raw
-// OWNER/REPO string itself was never found).
-func TestMarketplaceRemove_NotRegistered_SuggestsAliasAndDoesNotRemove(t *testing.T) {
+// TestMarketplaceRemove_NotRegistered_DoesNotRemove covers the remove case
+// where only the derived alias is registered: `remove OWNER/REPO` must not
+// remove the alias entry it never actually matched (the raw OWNER/REPO
+// string itself was never found). Ticket 14 dropped the "Did you mean" hint
+// this test used to also assert on -- the Oracle's MarketplaceNotFoundError
+// never included one (marketplace/errors.py:10-24).
+func TestMarketplaceRemove_NotRegistered_DoesNotRemove(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "ponytail", URL: "/abs/ponytail", Path: "marketplace.json"}); err != nil {
@@ -1291,8 +1257,8 @@ func TestMarketplaceRemove_NotRegistered_SuggestsAliasAndDoesNotRemove(t *testin
 	if err == nil {
 		t.Fatal("marketplace remove DietrichGebert/ponytail returned no error, want a not-registered error")
 	}
-	if !strings.Contains(err.Error(), `Did you mean "ponytail"`) {
-		t.Errorf("error = %q, want it to suggest the registered alias %q", err.Error(), "ponytail")
+	if !strings.Contains(err.Error(), "is not registered") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "is not registered")
 	}
 	if src, _ := marketplace.FindByName("ponytail"); src == nil {
 		t.Error("ponytail was removed despite the raw OWNER/REPO string never matching a registered name")
@@ -1550,7 +1516,7 @@ func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
 		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(validateErr))
 	}
 	wantMessage := "  Structure: plugins[1].source.tag_pattern: 'Plugin 'bad-plugin' source.tag_pattern' must contain exactly one {version} placeholder, got '{name}'"
-	if !strings.Contains(validateOut, wantMessage) {
+	if !containsUnwrapped(validateOut, wantMessage) {
 		t.Errorf("validate output = %q, want it to contain %q", validateOut, wantMessage)
 	}
 

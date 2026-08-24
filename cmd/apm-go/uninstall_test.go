@@ -1211,7 +1211,7 @@ func TestRunUninstall_LocalPathDependencyRemovesModulesLockAndDeployedFiles(t *t
 			t.Fatalf("runUninstall: %v", err)
 		}
 	})
-	if !strings.Contains(stdout, "modified since deploy (hash mismatch)") {
+	if !containsUnwrapped(stdout, "modified since deploy (hash mismatch)") {
 		t.Errorf(`expected a stdout warning containing "modified since deploy (hash mismatch)" for the hand-edited local-dep file, got:\n%s`, stdout)
 	}
 

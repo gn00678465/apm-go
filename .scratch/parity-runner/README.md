@@ -25,7 +25,7 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: 01 02 03 04 08 10 11 12 13 15 ✅ · 06 07 ✅(command-local) · 13 closed at attempt 2 (a0b3f82; help/feature backlog user-re-scoped to 17) · 11 closed (attempt 8, re-scoped PASS) · 05 command+evidence landed, gaps open · 14 ready · 09 ready · 16 17 open (backlog, non-blocking).
+Status: 01 02 03 04 08 10 11 12 13 14 15 ✅ · 06 07 ✅(command-local) · 13 closed at attempt 2 (a0b3f82; help/feature backlog user-re-scoped to 17) · 14 closed (PASS; browse/list wording matched to Oracle, plus a generic console-width wrap fix in internal/ux that incidentally closed 5 stale ticket-13 pack-* waivers) · 11 closed (attempt 8, re-scoped PASS) · 05 command+evidence landed, gaps open · 09 ready · 16 17 open (backlog, non-blocking).
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 

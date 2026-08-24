@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/lockfile"
@@ -172,7 +171,7 @@ func TestRunUninstall_AntigravityTamperedManifestKeptWithWarning(t *testing.T) {
 			t.Fatalf("runUninstall: %v", err)
 		}
 	})
-	if !strings.Contains(stdout, "modified since deploy (hash mismatch)") {
+	if !containsUnwrapped(stdout, "modified since deploy (hash mismatch)") {
 		t.Errorf(`expected a stdout warning containing "modified since deploy (hash mismatch)", got:\n%s`, stdout)
 	}
 

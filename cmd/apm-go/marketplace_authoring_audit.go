@@ -39,7 +39,7 @@ func marketplaceAuditCmd() *cobra.Command {
 				return err
 			}
 			if src == nil {
-				return marketplaceNotRegisteredErr(name)
+				return marketplaceNotRegisteredErr("audit", name)
 			}
 			w := cmd.OutOrStdout()
 			// Mirrors upstream audit.py:36-40's progress lines around the

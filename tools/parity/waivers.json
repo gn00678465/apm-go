@@ -351,61 +351,6 @@
     "eval_plan_ref": ".scratch/parity-runner/issues/11-validate-structure-check.md"
   },
   {
-    "id": "pack-no-flag",
-    "fields": [
-      "stdout"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Ticket 13 fixed the real content gaps this fixture used to hide: apm-go now prints the Oracle's exact 3-line success set at default verbosity (`[*] Packed N file(s) -> <relative path>`, `[i] Claude plugin bundle ready -- ...`, `[i] Share with: apm install <relative path>`) instead of a `+`-prefixed line, an unconditional per-file listing, and an absolute path. What remains is a single pre-existing rendering artifact: the Oracle's Rich console word-wraps the \"Claude plugin bundle ready -- contains plugin.json plus plugin-native directories and an embedded apm.lock.yaml.\" line at its terminal width, inserting a literal newline mid-sentence (\"plugin-native \\ndirectories\"), while apm-go (ux.Info, no terminal-width-aware wrapping) prints it on one line -- box-drawing/line-wrap category, same F01 convention as every other rich-vs-lipgloss rendering difference in this corpus, verified byte-for-byte identical content once the wrap is accounted for. rewrite_binary_name covers the \"apm\"/\"apm-go\" hint token in the Share-with line.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
-  },
-  {
-    "id": "pack-claude-plugin-flag",
-    "fields": [
-      "stdout"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same fix and same single remaining rendering artifact as pack-no-flag's own waiver (this case is the explicit --claude-plugin spelling of the identical default-format success path) -- see that entry for the full explanation.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
-  },
-  {
-    "id": "pack-format-claude",
-    "fields": [
-      "stdout"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same fix and same single remaining rendering artifact as pack-no-flag's own waiver (this case is the explicit --format claude spelling of the identical default-format success path) -- see that entry for the full explanation.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
-  },
-  {
-    "id": "pack-format-claude-plugin",
-    "fields": [
-      "stdout"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same fix and same single remaining rendering artifact as pack-no-flag's own waiver (this case is the explicit --format claude-plugin spelling of the identical default-format success path) -- see that entry for the full explanation.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
-  },
-  {
-    "id": "pack-format-plugin",
-    "fields": [
-      "stdout"
-    ],
-    "taxonomy": "F01",
-    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Same fix and same single remaining rendering artifact as pack-no-flag's own waiver (this case is the --format plugin alias spelling of the identical default-format success path) -- see that entry for the full explanation.",
-    "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
-  },
-  {
     "id": "pack-format-conflict",
     "fields": [
       "stderr"
