@@ -191,6 +191,26 @@ func TestErrorBody_TableDriven(t *testing.T) {
 		{"body_only_on_stdout", "[x] error on stdout\n", "", "error on stdout"},
 		{"blank_stdout_falls_through_to_stderr", "\n", "[x] fallback from stderr\n", "fallback from stderr"},
 		{"both_empty", "", "", ""},
+		// Ticket 13: a Click/Cobra usage-error preamble ("Usage: ...",
+		// "Try '...' for help.") must be skipped so error_body still
+		// compares the real message, not the preamble's own
+		// Cobra-vs-Click wording (which is never going to match and was
+		// never the point -- see errorBody's doc comment).
+		{
+			"usage_preamble_skipped",
+			"", "Usage: apm pack [OPTIONS]\nTry 'apm pack --help' for help.\n\nError: bad value\n",
+			"bad value",
+		},
+		{
+			"usage_preamble_skipped_cobra_spelling",
+			"", "Usage: apm-go pack [flags]\nTry 'apm-go pack --help' for help.\n\nError: bad value\n",
+			"bad value",
+		},
+		{
+			"bare_usage_error_no_preamble_to_skip",
+			"", "Error: Option '--format' requires an argument.\n",
+			"Option '--format' requires an argument.",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

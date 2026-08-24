@@ -349,5 +349,93 @@
     "reason": "`{\"name\": \"broken\", \"plugins\": \"oops\"}`: both sides' Structure check fails with the identical message \"plugins: expected a list\" (models.py:595 verbatim / validator.go's new Structure check), the plugin count/verbose-detail/other-checks'-passing-lines are correctly suppressed on both (has_structure_errors), and `Summary: 0 passed, 0 warnings, 1 errors` plus exit code 1 match exactly -- confirming ticket 11's core acceptance criterion. What remains: `stdout` (and `error_body`, which is derived from stdout's own first line here) carry only the SAME pre-existing \"[*]\" vs \"[i]\" gear-icon and quote-style difference documented on validate-checkrefs-off/on's own waivers -- not new, not structure-check-specific. `stderr` is a genuine Oracle-only line this ticket does not attempt to replicate: `models.py`'s tolerant parser additionally calls Python's OWN standard-library `logging.warning(...)` (`marketplace.json 'plugins' field is not a list in 'broken'`, confirmed via a live capture to land on stderr, not the Rich/CommandLogger stdout channel at all) every time it retains a structural diagnostic -- a second, independent diagnostic channel (raw Python logging) alongside the structured ValidationResult the Structure check surfaces on stdout. apm-go's structural-error collection (models.go's parseManifestPlugins) has no equivalent second channel; the SAME diagnostic is already fully and correctly reported once, on stdout, via the Structure check itself. Replicating a redundant, framework-specific logging side-channel was judged out of this ticket's scope (the Structure check itself, not a second copy of its own diagnostic). `tree`'s home/.apm/marketplaces.json diff is the same ticket-05 registry-serialization gap as validate-checkrefs-off/on, deliberately not waived here either.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/11-validate-structure-check.md"
+  },
+  {
+    "id": "pack-no-flag",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Ticket 13 fixed the real content gaps this fixture used to hide: apm-go now prints the Oracle's exact 3-line success set at default verbosity (`[*] Packed N file(s) -> <relative path>`, `[i] Claude plugin bundle ready -- ...`, `[i] Share with: apm install <relative path>`) instead of a `+`-prefixed line, an unconditional per-file listing, and an absolute path. What remains is a single pre-existing rendering artifact: the Oracle's Rich console word-wraps the \"Claude plugin bundle ready -- contains plugin.json plus plugin-native directories and an embedded apm.lock.yaml.\" line at its terminal width, inserting a literal newline mid-sentence (\"plugin-native \\ndirectories\"), while apm-go (ux.Info, no terminal-width-aware wrapping) prints it on one line -- box-drawing/line-wrap category, same F01 convention as every other rich-vs-lipgloss rendering difference in this corpus, verified byte-for-byte identical content once the wrap is accounted for. rewrite_binary_name covers the \"apm\"/\"apm-go\" hint token in the Share-with line.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
+  },
+  {
+    "id": "pack-claude-plugin-flag",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-no-flag's own waiver (this case is the explicit --claude-plugin spelling of the identical default-format success path) -- see that entry for the full explanation.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
+  },
+  {
+    "id": "pack-format-claude",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-no-flag's own waiver (this case is the explicit --format claude spelling of the identical default-format success path) -- see that entry for the full explanation.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
+  },
+  {
+    "id": "pack-format-claude-plugin",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-no-flag's own waiver (this case is the explicit --format claude-plugin spelling of the identical default-format success path) -- see that entry for the full explanation.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
+  },
+  {
+    "id": "pack-format-plugin",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-no-flag's own waiver (this case is the --format plugin alias spelling of the identical default-format success path) -- see that entry for the full explanation.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
+  },
+  {
+    "id": "pack-format-conflict",
+    "fields": [
+      "stderr"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Ticket 13's usage-error boilerplate decision (recorded in .scratch/parity-runner/issues/10-error-output-contract.md): apm-go now prints Click's own \"Usage: ...\\nTry '<cmd> --help' for help.\\n\\nError: <message>\" block on stderr for this resolveBundleFormat conflict, exit 2, matching the Oracle's click.UsageError.show() contract exactly -- verified directly, the message text itself (\"Choose one bundle format selector; received: --format agent-plugin, --claude-plugin\") is byte-identical (error_body, which now skips the Usage/Try-help preamble to compare the real message, shows no diff at all). What remains on `stderr` is the Usage line's own Cobra-vs-Click spelling (\"apm-go pack [flags]\" vs \"apm pack [OPTIONS]\") -- the same rendering-convention category as --help's \"Flags:\" vs \"Options:\", rewrite_binary_name covers the binary-name half, [flags]/[OPTIONS] is the one token left.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
+  },
+  {
+    "id": "pack-format-empty",
+    "fields": [
+      "stderr"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-format-conflict's own waiver (this case is --format= instead of a --claude-plugin conflict; the Click Choice validation error text is byte-identical on both sides, error_body confirms no diff) -- see that entry for the full explanation.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
+  },
+  {
+    "id": "pack-format-unknown",
+    "fields": [
+      "stderr"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Same fix and same single remaining rendering artifact as pack-format-conflict's own waiver (this case is --format nope instead of a --claude-plugin conflict; the Click Choice validation error text is byte-identical on both sides, error_body confirms no diff) -- see that entry for the full explanation.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/13-pack-output-parity.md"
   }
 ]

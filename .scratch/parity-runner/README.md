@@ -21,10 +21,11 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 | 14 | marketplace command wording parity (browse/list first) | 10 |
 | 15 | Runner: drop APM_CONFIG_DIR injection; registry root = sandbox HOME (F04) | 12 |
 | 16 | dep-parser full Oracle conformance (table-driven; spun out of 11) | — |
+| 17 | `pack` flag/feature parity (spun out of 13) | — |
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: 01 02 03 04 08 10 11 12 15 ✅ · 06 07 ✅(command-local) · 11 closed at attempt 8 (d5f349c; re-scoped PASS per written ACs, parser follow-ups → 16) · 08 closed (attempt 2) · 10 closed (attempt 3) · 05 command+evidence landed, gaps open (marketplaces.json tree, error wording) · 13 14 ready · 09 ready · 16 open (table-driven, non-blocking).
+Status: 01 02 03 04 08 10 11 12 15 ✅ · 06 07 ✅(command-local) · 11 closed at attempt 8 (d5f349c; re-scoped PASS per written ACs, parser follow-ups → 16) · 08 closed (attempt 2) · 10 closed (attempt 3; usage-error boilerplate addendum 2026-08-24) · 13 closed 2026-08-24 (3/4 findings; `--help` flag/feature gap → 17) · 05 command+evidence landed, gaps open (marketplaces.json tree, error wording) · 14 ready · 09 ready · 16 open (table-driven, non-blocking) · 17 open (pack flag/feature parity, spun out of 13).
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 

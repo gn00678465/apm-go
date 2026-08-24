@@ -42,8 +42,29 @@ func main() {
 	root.AddCommand(doctorCmd())
 	root.AddCommand(searchCmd())
 
-	if err := root.Execute(); err != nil {
-		if !isSilentExit(err) {
+	cmd, err := root.ExecuteC()
+	if err != nil {
+		switch {
+		case isSilentExit(err):
+			// nothing to print
+		case isUsageError(err):
+			// Click's own UsageError.show() (ticket 13, decision recorded
+			// in .scratch/parity-runner/issues/10-error-output-contract.md):
+			// a "Usage: ...\nTry '<path> --help' for help.\n\n" block
+			// followed by a plain "Error: " line, all on STDERR --
+			// verified directly against the pinned Oracle, distinct from
+			// decision (A)'s stdout/"[x] " contract for ordinary runtime
+			// errors (CommandLogger._rich_error), which Click's own
+			// exception-handling layer never goes through. isBareUsageError
+			// skips the preamble for the one verified exception (a flag
+			// missing its argument, raised before Click has a Context to
+			// render a Usage line from -- see withBareUsageError).
+			if !isBareUsageError(err) {
+				fmt.Fprintf(os.Stderr, "Usage: %s\n", cmd.UseLine())
+				fmt.Fprintf(os.Stderr, "Try '%s --help' for help.\n\n", cmd.CommandPath())
+			}
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		default:
 			ux.Error(os.Stderr, "%s", err)
 		}
 		os.Exit(exitCodeOf(err))

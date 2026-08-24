@@ -249,20 +249,41 @@ func normalizedField(oracleCaseDir, targetCaseDir, field, oCwd, oCfg, oHome, tCw
 // shorter entry.
 var errorBodyPrefixes = []string{"[x] ", "[!] ", "Error: ", "!"}
 
-// errorBody extracts the first non-empty line of stdout-then-stderr
-// (already normalized by the caller) and strips one leading severity
-// prefix plus surrounding whitespace, so a channel/prefix-only difference
-// between the Oracle and apm-go leaves error_body equal even when the raw
-// stdout/stderr fields still differ.
+// errorBody extracts the first non-empty, non-preamble line of stdout-
+// then-stderr (already normalized by the caller) and strips one leading
+// severity prefix plus surrounding whitespace, so a channel/prefix-only
+// difference between the Oracle and apm-go leaves error_body equal even
+// when the raw stdout/stderr fields still differ.
+//
+// Ticket 13: a Click/Cobra "Usage: ...\nTry '... --help' for help.\n\n"
+// block (present on some, not all, usage errors -- see
+// isUsagePreambleLine) precedes the actual "Error: ..." line on both
+// sides once apm-go mirrors it. That block's own wording is itself
+// ANOTHER sanctioned Cobra-vs-Click rendering difference ("apm pack
+// [OPTIONS]" vs "apm pack [flags]", same F01 category as "Options:" vs
+// "Flags:" in --help output) -- skipping past it here, not just skipping
+// blank lines, is what keeps error_body doing its actual job (verifying
+// the real error MESSAGE matches) instead of comparing two preamble lines
+// that were never going to match syntactically and were never the point.
 func errorBody(normalizedStdout, normalizedStderr string) string {
 	for _, line := range strings.Split(normalizedStdout+"\n"+normalizedStderr, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "" || isUsagePreambleLine(line) {
 			continue
 		}
 		return stripErrorBodyPrefix(line)
 	}
 	return ""
+}
+
+// isUsagePreambleLine reports whether line is part of a Click/Cobra usage-
+// error preamble ("Usage: ..." or "Try '...' for help.") rather than the
+// actual error message -- see errorBody's doc comment.
+func isUsagePreambleLine(line string) bool {
+	if strings.HasPrefix(line, "Usage: ") {
+		return true
+	}
+	return strings.HasPrefix(line, "Try '") && strings.HasSuffix(line, "for help.")
 }
 
 func stripErrorBodyPrefix(line string) string {

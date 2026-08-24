@@ -177,8 +177,8 @@ func (f bundleFormatChoiceValue) Type() string {
 func setBundleFormatFlagErrorFunc(cmd *cobra.Command) {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		if name, ok := strings.CutPrefix(err.Error(), "flag needs an argument: "); ok {
-			return withExitCode(2, fmt.Errorf("Option '%s' requires an argument.", name))
+			return withBareUsageError(fmt.Errorf("Option '%s' requires an argument.", name))
 		}
-		return withExitCode(2, err)
+		return withUsageError(err)
 	})
 }

@@ -36,11 +36,32 @@ const (
 	oracleWarnPrefix    = "[!] "
 	oracleInfoPrefix    = "[i] "
 	oracleRunningPrefix = "[>] "
+	oracleSparklePrefix = "[*] "
 )
 
 // Success prints a "+ ..." line to w.
 func Success(w io.Writer, format string, a ...any) {
 	printLine(w, successStyle, SymbolSuccess, format, a...)
+}
+
+// Sparkle prints a "[*] ..." line to w, redirected to stdout if w is the
+// process's stderr stream (see errWriter) -- ticket 13: CommandLogger.
+// success's OWN default symbol is "sparkles" (core/command_logger.py:120,
+// `def success(self, message, symbol="sparkles")`), which STATUS_SYMBOLS
+// maps to "[*]" (utils/console.py:37-61) -- NOT the "[+]" a reader might
+// expect from Success's name. `apm pack`'s own "Packed N file(s) -> ..."
+// and "Built marketplace.json [...] -> ..." lines both call
+// logger.success(...) with no symbol override, so they render "[*]",
+// verified directly against the pinned Oracle. A different call site can
+// still override to symbol="check" ("[+]", e.g. `marketplace validate`'s
+// per-check "passed" lines, rendered directly rather than through a shared
+// helper) -- Sparkle is deliberately scoped to the "sparkles"/default
+// case, not a blanket replacement for every existing Success call site
+// (most of which have not been individually verified against their own
+// Oracle counterpart's symbol; see this function's ticket for the survey
+// that would be needed before widening this further).
+func Sparkle(w io.Writer, format string, a ...any) {
+	oracleLine(w, successStyle, oracleSparklePrefix, format, a...)
 }
 
 // Info prints a "[i] ..." line to w, redirected to stdout if w is the

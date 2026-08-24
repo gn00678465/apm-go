@@ -40,10 +40,14 @@ func pluginInitCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Upstream raises click.UsageError (exit 2) before touching the
-			// filesystem (commands/plugin/init.py:58-61).
+			// filesystem (commands/plugin/init.py:58-61) -- ticket 13's
+			// withUsageError (Usage/Try-help block, stderr, plain
+			// "Error: " prefix), verified directly against pack's shared
+			// --format selector and applied here too since both commands
+			// go through the same resolve*Format/click.UsageError path.
 			pm, err := resolvePluginFormat(format, cmd.Flags().Changed("format"), claudePlugin)
 			if err != nil {
-				return withExitCode(2, err)
+				return withUsageError(err)
 			}
 			mode := pluginMode
 			if pm == pluginModeAgent {

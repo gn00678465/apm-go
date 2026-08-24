@@ -75,7 +75,7 @@ nothing.`,
 			// probing.
 			bf, err := resolveBundleFormat(format, cmd.Flags().Changed("format"), claudePlugin, packFormatChoices)
 			if err != nil {
-				return withExitCode(2, err)
+				return withUsageError(err)
 			}
 			switch bf {
 			case pluginModeAgent:
@@ -324,22 +324,55 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		ux.BulletList(w, items)
 		return nil
 	}
-	ux.Success(w, "Packed %d file(s) -> %s", len(result.Files), result.BundleDir)
-	// R12a (prd.md/design.md §3): the dry-run branch above already lists
-	// every packed file via ux.BulletList -- the real run used to only
-	// print the count, dropping the exact same result.Files list it had
-	// right here (presentation-only: no new computation, just printing
-	// what --dry-run already demonstrates how to print).
-	items := make([]ux.Item, len(result.Files))
-	for i, f := range result.Files {
-		items[i] = ux.Item{Text: f}
+	displayDir := displayPath(result.BundleDir)
+	ux.Sparkle(w, "Packed %d file(s) -> %s", len(result.Files), displayDir)
+	// pack.py:679-680 (_render_bundle_result): the real (non-dry-run) file
+	// listing is `logger.verbose_detail`, gated on -v -- unlike dry-run's
+	// `logger.tree_item` a few lines up in the same function, which is
+	// unconditional (ticket 13 finding 1, verified directly: a plain
+	// `apm pack` prints only the 3-line summary; the per-file list only
+	// shows under `apm pack --verbose`). R12a's original "always list"
+	// behavior is preserved for --dry-run (ux.BulletList a few lines
+	// above this function's dry-run branch, unaffected) and now also
+	// gated the same way for the real run.
+	if opts.verbose {
+		items := make([]ux.Item, len(result.Files))
+		for i, f := range result.Files {
+			items[i] = ux.Item{Text: f}
+		}
+		ux.BulletList(w, items)
 	}
-	ux.BulletList(w, items)
-	ux.Info(w, "Plugin bundle ready -- contains plugin.json plus plugin-native directories "+
-		"(agents/, skills/, commands/, ...) and an embedded apm.lock.yaml for install-time "+
-		"integrity verification.")
-	ux.Info(w, "Share with: apm-go install %s", result.BundleDir)
+	// pack.py:695-699: the Claude-plugin wording branch -- the ONLY one
+	// reachable through apm-go pack today. Agent Plugin and legacy APM
+	// bundles are refused before this function is ever called
+	// (bundle_format.go's own comment: "agent-plugin and apm are refused
+	// before any lockfile write"; pack-refuse-agent-plugin/pack-refuse-apm
+	// cover that), so their own distinct Oracle wording
+	// ("Agent Plugin bundle ready...") and the legacy APM format's total
+	// absence of this line are both dead code here, not an omission.
+	ux.Info(w, "Claude plugin bundle ready -- contains plugin.json plus "+
+		"plugin-native directories and an embedded apm.lock.yaml.")
+	ux.Info(w, "Share with: apm-go install %s", displayDir)
 	return nil
+}
+
+// displayPath renders an absolute bundle/output path the way the Oracle's
+// own success/share-with lines do: relative to the current working
+// directory (ticket 13 finding 2 -- apm-go printed the absolute
+// filesystem path; the Oracle's `bundle_path` is built directly from the
+// user-facing `--output`/default "./build" without ever being resolved to
+// absolute). Falls back to the absolute path unchanged if Rel fails (e.g.
+// a different volume on Windows) rather than erroring a successful pack.
+func displayPath(abs string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return abs
+	}
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil {
+		return abs
+	}
+	return rel
 }
 
 // loadPackLockfile reads apm.lock.yaml, if present, mirroring install.go's
@@ -504,7 +537,10 @@ func packOneOutput(
 	if err := build.WriteOutput(absPath, doc); err != nil {
 		return err
 	}
-	ux.Success(w, "Built marketplace.json [%s] (%d package(s)) -> %s", format, len(resolved), outputPath)
+	// pack.py's _render_marketplace_result: logger.success(f"Built {message}")
+	// with no symbol override -- the same "[*]" default as the bundle
+	// producer's success line (ux.Sparkle's own doc comment).
+	ux.Sparkle(w, "Built marketplace.json [%s] (%d package(s)) -> %s", format, len(resolved), outputPath)
 	return nil
 }
 

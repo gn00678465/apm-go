@@ -207,7 +207,12 @@ func TestRunPack_DependenciesOnly_BuildsRealBundle(t *testing.T) {
 // (prd.md/design.md §3): --dry-run already lists every file result.Produce
 // would pack via ux.BulletList -- the real (non-dry-run) run must print the
 // SAME list, not just the aggregate count, matching its own dry-run preview.
-func TestRunPack_DependenciesOnly_ListsPackedFiles(t *testing.T) {
+// TestRunPack_DependenciesOnly_DefaultVerbosityOmitsFileList is ticket 13
+// finding 1: pack.py's _render_bundle_result lists the real (non-dry-run)
+// run's packed files via logger.verbose_detail, gated on -v -- verified
+// directly against the pinned Oracle (a plain `apm pack` prints only the
+// 3-line summary). apm-go previously printed the file list unconditionally.
+func TestRunPack_DependenciesOnly_DefaultVerbosityOmitsFileList(t *testing.T) {
 	dir := chdirTemp(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
 		t.Fatal(err)
@@ -218,6 +223,38 @@ func TestRunPack_DependenciesOnly_ListsPackedFiles(t *testing.T) {
 	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
 
 	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "Packed 2 file(s)") {
+		t.Errorf("output = %q, want the summary count line", out)
+	}
+	// "plugin.json" also appears inside the fixed "bundle ready" wording
+	// line itself, so check for the bulleted per-file listing form
+	// specifically (ux.BulletList's own "* <item>" rendering), not a bare
+	// substring match.
+	if strings.Contains(out, "* plugin.json") {
+		t.Errorf("output = %q, must NOT list plugin.json at default verbosity", out)
+	}
+	if strings.Contains(out, filepath.ToSlash(filepath.Join("agents", "foo.md"))) {
+		t.Errorf("output = %q, must NOT list agents/foo.md at default verbosity", out)
+	}
+}
+
+// TestRunPack_DependenciesOnly_Verbose_ListsPackedFiles is the -v
+// counterpart of the test above: the same run, with --verbose, must list
+// every packed file (pack.py's logger.verbose_detail firing per file).
+func TestRunPack_DependenciesOnly_Verbose_ListsPackedFiles(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+
+	out, err := runPackCmd(t, "--verbose")
 	if err != nil {
 		t.Fatalf("pack returned error: %v (output: %s)", err, out)
 	}
@@ -1336,5 +1373,18 @@ func TestPackCmd_DependenciesTruthinessMatrix(t *testing.T) {
 				t.Errorf("err = %q, want %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestDisplayPath is ticket 13 finding 2: pack's success/share-with lines
+// print the bundle path relative to cwd, matching the Oracle's own
+// bundle_path (built directly from --output's relative default "./build",
+// never resolved to absolute) instead of apm-go's previous absolute
+// filesystem path.
+func TestDisplayPath(t *testing.T) {
+	dir := chdirTemp(t)
+	abs := filepath.Join(dir, "build", "demo-1.0.0")
+	if got, want := displayPath(abs), filepath.Join("build", "demo-1.0.0"); got != want {
+		t.Errorf("displayPath(%q) = %q, want %q", abs, got, want)
 	}
 }
