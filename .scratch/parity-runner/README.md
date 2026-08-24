@@ -26,6 +26,8 @@ Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
 Status: 01 02 03 04 08 10 11 12 15 ✅ · 06 07 ✅(command-local) · 11 closed at attempt 8 (d5f349c; re-scoped PASS per written ACs, parser follow-ups → 16) · 08 closed (attempt 2) · 10 closed (attempt 3) · 05 command+evidence landed, gaps open (marketplaces.json tree, error wording) · 13 14 ready · 09 ready · 16 open (table-driven, non-blocking).
 
-Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`; orchestrator takes over implementation after 3 failed attempts on the same ticket.
+Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
+
+Escalation ladder (finalized 2026-08-24): (1) implementor implements, evaluator verifies, orchestrator coordinates/integrates; (2) after 3 implementor FAILs on the same ticket, the orchestrator takes over implementation directly; (3) after 3 further FAILs on the orchestrator's own work, STOP iterating and re-audit the spec/eval documents themselves (three-hypothesis diagnosis: capability / evaluator interpretation / document defect — ticket 11's root cause was an AC phrase with no depth bound).
 
 Scope rule (added 2026-08-24, after ticket 11 ran to 8 attempts): a ticket's PASS/FAIL boundary is its WRITTEN acceptance criteria. A finding that is real but outside them — in particular any pre-existing gap on a shared, effectively unbounded semantic surface (e.g. the dep-string grammar) — is recorded as a new conformance-table row / new ticket, not a blocker on the current one. This is the same convention tickets 05/10/14 already used for wording and tree gaps.
