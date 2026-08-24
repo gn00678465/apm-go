@@ -663,6 +663,42 @@
       "category": "percent-truncated-4byte",
       "accepted": false,
       "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://one@two@host.io/owner/repo",
+      "category": "ssh-userinfo-double-at",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://one@@host.io/owner/repo",
+      "category": "ssh-userinfo-double-at",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://alice:pw@host.io/owner/repo",
+      "category": "ssh-userinfo-password",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://alice:@host.io/owner/repo",
+      "category": "ssh-userinfo-password",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://@host.io/owner/repo",
+      "category": "ssh-userinfo-empty",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://:pw@host.io/owner/repo",
+      "category": "ssh-userinfo-empty",
+      "accepted": true,
+      "is_local": false
     }
   ]
 }

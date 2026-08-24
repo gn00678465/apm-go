@@ -533,20 +533,6 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 func parseSSHURL(s string) (*DependencyReference, error) {
 	rest := strings.TrimPrefix(s, "ssh://")
 
-	// reference.py:558-571 (_parse_ssh_protocol_url): userinfo is whatever
-	// precedes the first "@" that itself precedes the first "/" (the host
-	// boundary) -- ANY valid SSH user, defaulting to "git" when absent.
-	// Ticket 11 eval attempt 4's reproducer 1.
-	user := "git"
-	if at, slash := strings.IndexByte(rest, '@'), strings.IndexByte(rest, '/'); at >= 0 && (slash < 0 || at < slash) {
-		candidate := rest[:at]
-		if err := validateSSHUser(candidate); err != nil {
-			return nil, fmt.Errorf("dependency %q: %w", s, err)
-		}
-		user = candidate
-		rest = rest[at+1:]
-	}
-
 	ref, rest := splitRef(rest)
 	rest = stripQuery(rest) // urlparse separates query from path -- reproducer 2
 	slash := strings.IndexByte(rest, '/')
@@ -554,6 +540,31 @@ func parseSSHURL(s string) (*DependencyReference, error) {
 		return nil, fmt.Errorf("dependency %q: ssh url-form requires host/owner/repo", s)
 	}
 	netloc, rawPath := rest[:slash], rest[slash+1:]
+
+	// _parse_ssh_protocol_url (reference.py:558-575) reads parsed.username
+	// from ONE urlsplit of the netloc -- eval-ticket-11 Attempt 7: userinfo
+	// is everything before the LAST "@" (so "one@two@host" has username
+	// "one@two", which validate_ssh_user then rejects), the username is the
+	// userinfo up to the FIRST ":" (a ":password" is split off and ignored,
+	// so "alice:pw@host" validates just "alice"), and an EMPTY username
+	// falls back to the default "git" with no validation at all
+	// (`validate_ssh_user(raw_user) if raw_user else "git"` --
+	// "ssh://@host/..." parses). The old code took the FIRST "@" as the
+	// user boundary and validated the raw userinfo whole, diverging on all
+	// three shapes.
+	user := "git"
+	if at := strings.LastIndexByte(netloc, '@'); at >= 0 {
+		userinfo := netloc[:at]
+		if colon := strings.IndexByte(userinfo, ':'); colon >= 0 {
+			userinfo = userinfo[:colon]
+		}
+		if userinfo != "" {
+			if err := validateSSHUser(userinfo); err != nil {
+				return nil, fmt.Errorf("dependency %q: %w", s, err)
+			}
+			user = userinfo
+		}
+	}
 
 	host, port, err := netlocHostPort(netloc)
 	if err != nil {

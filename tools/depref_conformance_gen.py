@@ -260,6 +260,15 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "owner/%e0%a0repo", "category": "percent-truncated-utf8-repo"},
     {"input": "owner/%a0repo", "category": "percent-lone-continuation"},
     {"input": "owner/%f0%90repo", "category": "percent-truncated-4byte"},
+    # --- attempt 8 (eval-ticket-11 Attempt 7 ruling): SSH userinfo must come
+    # from ONE urlsplit-equivalent netloc split (last-'@' boundary, username
+    # up to the first ':', empty username -> default "git").
+    {"input": "ssh://one@two@host.io/owner/repo", "category": "ssh-userinfo-double-at"},
+    {"input": "ssh://one@@host.io/owner/repo", "category": "ssh-userinfo-double-at"},
+    {"input": "ssh://alice:pw@host.io/owner/repo", "category": "ssh-userinfo-password"},
+    {"input": "ssh://alice:@host.io/owner/repo", "category": "ssh-userinfo-password"},
+    {"input": "ssh://@host.io/owner/repo", "category": "ssh-userinfo-empty"},
+    {"input": "ssh://:pw@host.io/owner/repo", "category": "ssh-userinfo-empty"},
 ]
 
 
