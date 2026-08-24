@@ -1,0 +1,170 @@
+[
+  {
+    "json": "null",
+    "repr": "None"
+  },
+  {
+    "json": "true",
+    "repr": "True"
+  },
+  {
+    "json": "false",
+    "repr": "False"
+  },
+  {
+    "json": "\"\"",
+    "repr": "''"
+  },
+  {
+    "json": "\"hello\"",
+    "repr": "'hello'"
+  },
+  {
+    "json": "42",
+    "repr": "42"
+  },
+  {
+    "json": "-7",
+    "repr": "-7"
+  },
+  {
+    "json": "0",
+    "repr": "0"
+  },
+  {
+    "json": "-0",
+    "repr": "0"
+  },
+  {
+    "json": "1.0",
+    "repr": "1.0"
+  },
+  {
+    "json": "-0.0",
+    "repr": "-0.0"
+  },
+  {
+    "json": "1.5",
+    "repr": "1.5"
+  },
+  {
+    "json": "-0.5",
+    "repr": "-0.5"
+  },
+  {
+    "json": "3.14159",
+    "repr": "3.14159"
+  },
+  {
+    "json": "1e20",
+    "repr": "1e+20"
+  },
+  {
+    "json": "1e-5",
+    "repr": "1e-05"
+  },
+  {
+    "json": "1e400",
+    "repr": "inf"
+  },
+  {
+    "json": "-1e400",
+    "repr": "-inf"
+  },
+  {
+    "json": "123456789012345678901234567890",
+    "repr": "123456789012345678901234567890"
+  },
+  {
+    "json": "\"it's\"",
+    "repr": "\"it's\""
+  },
+  {
+    "json": "\"say \\\"hi\\\"\"",
+    "repr": "'say \"hi\"'"
+  },
+  {
+    "json": "\"both ' and \\\"\"",
+    "repr": "'both \\' and \"'"
+  },
+  {
+    "json": "\"tab\\there\"",
+    "repr": "'tab\\there'"
+  },
+  {
+    "json": "\"line\\nbreak\"",
+    "repr": "'line\\nbreak'"
+  },
+  {
+    "json": "\"cr\\rreturn\"",
+    "repr": "'cr\\rreturn'"
+  },
+  {
+    "json": "\"back\\\\slash\"",
+    "repr": "'back\\\\slash'"
+  },
+  {
+    "json": "\"\\u0007\"",
+    "repr": "'\\x07'"
+  },
+  {
+    "json": "\"\\u001b[31m\"",
+    "repr": "'\\x1b[31m'"
+  },
+  {
+    "json": "\"h\\u00e9llo\"",
+    "repr": "'h\u00e9llo'"
+  },
+  {
+    "json": "\"\\ud800\"",
+    "repr": "'\\ud800'"
+  },
+  {
+    "json": "\"\\udc00\"",
+    "repr": "'\\udc00'"
+  },
+  {
+    "json": "\"\\ud83d\\ude00\"",
+    "repr": "'\ud83d\ude00'"
+  },
+  {
+    "json": "\"\\u200b\"",
+    "repr": "'\\u200b'"
+  },
+  {
+    "json": "[1, 2, 3]",
+    "repr": "[1, 2, 3]"
+  },
+  {
+    "json": "[1, \"a\", null, true, false]",
+    "repr": "[1, 'a', None, True, False]"
+  },
+  {
+    "json": "[]",
+    "repr": "[]"
+  },
+  {
+    "json": "{}",
+    "repr": "{}"
+  },
+  {
+    "json": "{\"x\": 1}",
+    "repr": "{'x': 1}"
+  },
+  {
+    "json": "{\"b\": 1, \"a\": 2}",
+    "repr": "{'b': 1, 'a': 2}"
+  },
+  {
+    "json": "{\"a\": 1, \"b\": 2, \"a\": 3}",
+    "repr": "{'a': 3, 'b': 2}"
+  },
+  {
+    "json": "{\"a\": [1, 2], \"b\": {\"c\": 3}}",
+    "repr": "{'a': [1, 2], 'b': {'c': 3}}"
+  },
+  {
+    "json": "[{\"x\": 1}, {\"y\": 2}]",
+    "repr": "[{'x': 1}, {'y': 2}]"
+  }
+]

@@ -1,0 +1,494 @@
+[
+  {
+    "input": "owner/repo",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/repo#v1.0.0",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/repo#^1.0.0",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/repo.git",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/REPO",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "a_b/c-d.e",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "1/2",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/repo/sub/dir",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/repo/prompts/review.prompt.md",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/repo/skills/my-skill",
+    "category": "shorthand",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "just-one-word",
+    "category": "shorthand",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "owner/repo?x",
+    "category": "shorthand",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "pkg@mkt",
+    "category": "shorthand",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "owner/",
+    "category": "shorthand",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "owner//repo",
+    "category": "shorthand",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "github.com/owner/repo",
+    "category": "shorthand-host",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "gitlab.com/owner/repo#main",
+    "category": "shorthand-host",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "gitlab.com/owner/repo/skills/my-skill",
+    "category": "shorthand-host",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "x.io/owner/repo",
+    "category": "shorthand-host",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "x/owner/repo",
+    "category": "shorthand-host",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "x/owner/repo/sub/dir",
+    "category": "shorthand-host",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "-x.io/owner/repo",
+    "category": "shorthand-host",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "x-.io/owner/repo",
+    "category": "shorthand-host",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "x..io/owner/repo",
+    "category": "shorthand-host",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "x.io:443/owner/repo",
+    "category": "shorthand-port",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "x.io:8443/owner/repo",
+    "category": "shorthand-port",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "x.io:70000/owner/repo",
+    "category": "shorthand-port",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "x.io:abc/owner/repo",
+    "category": "shorthand-port",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "owner:1234/repo",
+    "category": "shorthand-port",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": ":443/owner/repo",
+    "category": "shorthand-port",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "https://gitlab.com/acme/repo.git",
+    "category": "https",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://gitlab.com/acme/repo.git#v2.0",
+    "category": "https",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "http://internal.example.com/team/project",
+    "category": "https",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://x/owner/repo",
+    "category": "https",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "https://x.io/owner/repo",
+    "category": "https",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://x.io/owner/repo?x",
+    "category": "https-query",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://x.io/owner/repo?x=1&y=2",
+    "category": "https-query",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://x.io/owner/repo?x#ref",
+    "category": "https-query",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://x.io/owner/repo#ref?notquery",
+    "category": "https-query",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://x.io:8443/owner/repo",
+    "category": "https-port",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://x.io:99999/owner/repo",
+    "category": "https-port",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "https://-x.io/owner/repo",
+    "category": "https",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "https://",
+    "category": "https",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "https:///owner/repo",
+    "category": "https",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "https://x.io/owner/repo.git",
+    "category": "https",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://x.io/owner/repo/sub/dir",
+    "category": "https",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://1.2.3.4/owner/repo",
+    "category": "https-ip",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "https://[::1]/owner/repo",
+    "category": "https-ipv6",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "ssh://git@host/owner/repo",
+    "category": "ssh",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "ssh://alice@host/owner/repo",
+    "category": "ssh-user",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "ssh://host/owner/repo",
+    "category": "ssh-user",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "ssh://git@host:7999/owner/repo.git",
+    "category": "ssh-port",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "ssh://alice@host/owner/repo?x",
+    "category": "ssh-query",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "ssh://alice@host/owner/repo#ref",
+    "category": "ssh",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "ssh://-alice@host/owner/repo",
+    "category": "ssh-user",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "ssh://%2DoProxyCommand=evil@host/owner/repo",
+    "category": "ssh-user",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "ssh://a.b+c_d@host/owner/repo",
+    "category": "ssh-user",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "git@github.com:owner/repo.git",
+    "category": "scp",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "git@github.com:owner/repo.git#v1.0.0",
+    "category": "scp",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "alice@host:owner/repo",
+    "category": "scp-user",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "-alice@host:owner/repo",
+    "category": "scp-user",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "git@gitlab.com:acme/repo/sub/path.git",
+    "category": "scp",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/%72epo",
+    "category": "percent",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "owner/%zzrepo",
+    "category": "percent",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "owner/%2e%2e/repo",
+    "category": "percent-traversal",
+    "accepted": false,
+    "error_type": "PathTraversalError"
+  },
+  {
+    "input": "owner/%00repo",
+    "category": "percent-control",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "./packages/local",
+    "category": "local",
+    "accepted": true,
+    "is_local": true
+  },
+  {
+    "input": "./foo/bar",
+    "category": "local",
+    "accepted": true,
+    "is_local": true
+  },
+  {
+    "input": "../../../etc/passwd",
+    "category": "local-traversal",
+    "known_gap": "The Oracle's is_local_path branch (reference.py:1754-1768) accepts ANY relative local path whose basename isn't '.'/'..' -- it performs NO traversal/escape check at all, so a '../'-climbing path is accepted as a local dependency (is_local=True). apm-go's containsEscape is a DELIBERATE, pre-existing security hardening beyond the Oracle (see depref.go's own doc comment) that rejects this outright; matching the Oracle here would be a security regression, not a parity fix, so this row's rejection is kept and NOT relaxed to match.",
+    "accepted": true,
+    "is_local": true
+  },
+  {
+    "input": "../secret",
+    "category": "local-traversal",
+    "known_gap": "Same intentional divergence as '../../../etc/passwd' above.",
+    "accepted": true,
+    "is_local": true
+  },
+  {
+    "input": "%2e%2e/%2e%2e/etc/passwd",
+    "category": "local-traversal",
+    "known_gap": "Same intentional divergence as '../../../etc/passwd' above: after percent-decoding it is the same is_local_path-accepted shape on the Oracle side.",
+    "accepted": true,
+    "is_local": true
+  },
+  {
+    "input": "~/my-skills",
+    "category": "local",
+    "accepted": true,
+    "is_local": true
+  },
+  {
+    "input": "/etc/passwd",
+    "category": "local-absolute",
+    "accepted": true,
+    "is_local": true
+  },
+  {
+    "input": "/absolute/path",
+    "category": "local-absolute",
+    "accepted": true,
+    "is_local": true
+  },
+  {
+    "input": "",
+    "category": "empty",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "   ",
+    "category": "empty",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "owner/repo\u0001",
+    "category": "control",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "owner/repo\t",
+    "category": "control",
+    "accepted": false,
+    "error_type": "ValueError"
+  },
+  {
+    "input": "dev.azure.com/org/project/repo",
+    "category": "ado",
+    "known_gap": "Accepted on both sides, but apm-go has no ADO-specific org/project/repo segment-count handling -- see comment above.",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "myorg.visualstudio.com/project/repo",
+    "category": "ado-legacy",
+    "known_gap": "Accepted on both sides, but apm-go has no Azure DevOps legacy *.visualstudio.com segment-count handling -- see comment above.",
+    "accepted": true,
+    "is_local": false
+  },
+  {
+    "input": "gitlab.com/group/subgroup/repo",
+    "category": "gitlab-nested",
+    "known_gap": "Accepted on both sides, but apm-go's shorthand parser has no GitLab nested-group (>2 path segments) handling -- see comment above.",
+    "accepted": true,
+    "is_local": false
+  }
+]

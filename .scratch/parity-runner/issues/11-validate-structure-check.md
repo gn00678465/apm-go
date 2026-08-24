@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — runner diff/gate (attempt 3: HOME capture so the registry tree diff disappears).
 
-**Status:** done (2026-08-24, attempt 4, orchestrator intervention) — `.review/eval-ticket-11.md` FAILed attempt 1: the Structure check ported only the two top-level "plugins" diagnostics and silently passed structurally-invalid *elements* (`plugins:[null]`, `plugins:[{}]`, and "similar source-shape cases"). Attempt 2 ported the Oracle's complete per-element diagnostic set, but its own `isValidRemoteCoordinate` approximation, `repo`/`repository` fallback, and `tag_pattern` handling each still diverged from the Oracle in ways attempt 2's own stated scope boundary didn't own up to — attempt 3 closed those three. The orchestrator then pinned three deeper root causes with two-sided probe evidence: `manifest.ParseDepString` itself (the dep-string parser attempt 3 started reusing) was missing the Oracle's whole-string percent-decode and FQDN host gate, `pythonRepr` could not reproduce Python's insertion-order dict repr, and a test claimed coverage it didn't have — attempt 4 closes all three (see "Attempt 4" section below). Attempts 1-3's other product-parity fixes (Structure/Schema/Names ordering, rendering, help parity, `withSilentExitCode`, the systemic F01 waivers, the `mkt-026` correction) were accepted and are unchanged.
+**Status:** done (2026-08-24, attempt 5, orchestrator strategy change: conformance tables replace reproducer-chasing) — `.review/eval-ticket-11.md` FAILed attempt 1: the Structure check ported only the two top-level "plugins" diagnostics and silently passed structurally-invalid *elements* (`plugins:[null]`, `plugins:[{}]`, and "similar source-shape cases"). Attempt 2 ported the Oracle's complete per-element diagnostic set, but its own `isValidRemoteCoordinate` approximation, `repo`/`repository` fallback, and `tag_pattern` handling each still diverged from the Oracle in ways attempt 2's own stated scope boundary didn't own up to — attempt 3 closed those three. The orchestrator then pinned three deeper root causes with two-sided probe evidence: `manifest.ParseDepString` itself (the dep-string parser attempt 3 started reusing) was missing the Oracle's whole-string percent-decode and FQDN host gate, `pythonRepr` could not reproduce Python's insertion-order dict repr, and a test claimed coverage it didn't have — attempt 4 closed all three. Attempt 4's own eval round found FIVE MORE reproducers (arbitrary SSH users, URL query stripping, shorthand host:port splitting, lone-surrogate repr, numeric overflow/negative-zero, duplicate dict keys) — evidence the reproducer-by-reproducer loop was not converging. Attempt 5 changes strategy: fixes all five, then builds and commits a genuine Oracle-generated conformance table (`spec/conformance/depref-accept.json`, `spec/conformance/python-repr.json`) so future gaps surface as a fixture diff instead of another eval round (see "Attempt 5" section below) — and the conformance sweep itself found and fixed a real pre-existing bug beyond the five (a literal `".."` repo/virtual-path segment was silently accepted instead of rejected as path traversal). Attempts 1-3's other product-parity fixes (Structure/Schema/Names ordering, rendering, help parity, `withSilentExitCode`, the systemic F01 waivers, the `mkt-026` correction) were accepted and are unchanged.
 
 **Origin:** runner cases from ticket 06 (`.review/eval-ticket-06.md` AC5): Oracle prints Structure/Schema/Names → "3 passed"; Target prints Schema/Names → "2 passed". `validate-help` shows a `help_semantic` diff. These are pre-existing M-06 gaps the runner exposed, not caused by ticket 06.
 
@@ -359,3 +359,183 @@ Windows-only `TestParseDepString_AbsolutePath` excepted). `go test -race
 - `internal/marketplace/models.go`: `pythonRepr` replaced by `pythonReprValue`/`pythonReprNumber`/`pythonReprString` + `decodeOrderedJSON`/`decodeOrderedValue` (+`orderedPair`/`orderedValues` types) + `printableASCIIText`; `tagPatternStructuralError` takes `json.RawMessage` instead of a pre-decoded `any` and applies `printableASCIIText` to its composed message; `parsePluginEntry` extracts `tagPatternRaw` from a fresh `map[string]json.RawMessage` decode of `sourceRaw` instead of reading `srcMap["tag_pattern"]`.
 - `internal/marketplace/models_manifest_test.go`: +4 `TestMarketplaceManifest_StructuralErrors` cases (the evaluator's 3 reproducers plus a multi-key dict variant), +`TestPythonReprValue` (23 cases), +`TestPrintableASCIIText` (5 cases).
 - `cmd/apm-go/marketplace_e2e_test.go`: `TestMarketplaceValidate_TagPatternDeferral` rewritten to invoke the real `marketplace add`/`search`/`install` commands instead of `marketplace.AddSource` directly.
+
+## Attempt 5: five more reproducers, then conformance tables to end the loop
+
+`.review/eval-ticket-11.md`'s attempt-4 ruling found FIVE new reproducers
+in the same two files attempt 4 had just rewritten. The orchestrator's
+framing for this attempt was explicit: stop fixing reproducers one at a
+time and build a table generated directly from the Oracle instead, so the
+NEXT gap (there will always be a next gap in a ~2000-line multi-form
+parser) shows up as a fixture-regeneration diff, not another eval round.
+
+### Part 1: the five reproducers
+
+1. **Arbitrary SSH user, both ssh:// and SCP.** `_parse_ssh_protocol_url`
+   (reference.py:558-571) accepts any user matching `validate_ssh_user`,
+   defaulting to `"git"` only when userinfo is absent; SCP shorthand's
+   `SCP_LIKE_RE` (cache/url_normalize.py) is the same story. apm-go's
+   `parseSSHURL`/`parseSCPURL` required the literal `"git@"`/`"ssh://git@"`
+   prefix. Fixed: `ParseDepString` now dispatches on a bare `"ssh://"`
+   prefix and on `scpLikeRe` (SCP_LIKE_RE ported verbatim) instead of a
+   hardcoded user; both parsers extract and `validateSSHUser` the actual
+   userinfo (github_host.py's `_SSH_USER_RE`/`_SSH_USER_MAX_LEN` ported
+   verbatim), stored on a new `DependencyReference.SSHUser` field (empty
+   for the implicit `"git"` default, so every existing caller/serialization
+   stays byte-identical) -- NOT yet wired into the actual git-clone URL
+   builder (`internal/gitops/clone.go` hardcodes `"git@"`), which is a
+   materialize-time concern the doc comment marks as a separate, later
+   scope.
+2. **URL query strings, and shorthand host:port.** `_parse_standard_url`/
+   `_parse_ssh_protocol_url` both parse via `urllib.parse.urlparse`, which
+   structurally separates `?query` from the path for free; apm-go's manual
+   string-splitting treated `repo?x` as one repo segment. Fixed: a new
+   `stripQuery` helper cuts the path at the first `?`, applied in
+   `parseHTTPURL` and `parseSSHURL` (NOT `parseShorthand` or `parseSCPURL`
+   -- confirmed the Oracle doesn't apply it there either; a bare
+   `owner/repo?x` shorthand stays rejected, `_parse_ssh_url` has no
+   `urlparse` call at all). Separately, `identity.py`'s
+   `_split_shorthand_host_port` splits an optional `":port"` suffix off
+   shorthand's leading segment BEFORE it is checked for host-shape at all
+   (`"x.io:443/owner/repo"` -> host `"x.io"`, port 443 normalized away as
+   the HTTPS default) -- ported as `splitShorthandHostPort`, called
+   unconditionally at the top of `parseShorthand` exactly where the Oracle
+   calls it, including its "even a segment that turns out to be a plain
+   owner still gets port-shape-validated" quirk (`owner:1234/repo` is
+   accepted with the port silently discarded, matching a direct probe).
+3. **Lone UTF-16 surrogate repr.** A Python str can hold an unpaired
+   `\uXXXX` surrogate; `repr('\ud800')` is `'\ud800'`. Go strings must be
+   valid UTF-8, so `encoding/json`'s own string decoder replaces a lone
+   surrogate with U+FFFD before any caller can intervene. Fixed: replaced
+   `decodeOrderedJSON`'s `encoding/json`-based token walk with a hand-
+   rolled recursive-descent JSON parser (`jsonScanner`) whose string
+   decoder combines a valid UTF-16 surrogate PAIR into one astral rune (the
+   ordinary case) but keeps a lone surrogate as a bare `rune` value in
+   0xD800-0xDFFF (`pyStr`, a `[]rune`, not a Go `string`) -- unreachable via
+   `encoding/json.Decoder.Token()` no matter how the caller post-processes
+   its result, since the normalization already happened inside the
+   tokenizer.
+4. **Numeric overflow and negative zero.** `float("1e400")` is `inf` in
+   Python; `strconv.ParseFloat`/`json.Number.Float64` returns an
+   out-of-range error apm-go's old `pythonReprNumber` treated as "fall back
+   to the original lexeme", producing `got 1e400` instead of `got inf`.
+   Separately, `int("-0")` is `0`, but a JSON integer lexeme `-0` is not.
+   Fixed: `pythonReprNumber` now uses `strconv.ParseFloat` directly and
+   USES its returned value even on `ErrRange` (verified directly: Go's
+   `ParseFloat` still returns the correctly saturated `+Inf`/`-Inf`), and
+   special-cases an all-zero integer lexeme (with or without a leading
+   `-`) to `"0"`. A float lexeme's own negative zero (`-0.0`) is unaffected
+   and correctly stays `"-0.0"` (Python: `repr(-0.0) == '-0.0'`, distinct
+   from `repr(int('-0')) == '0'` -- verified both are already right without
+   further special-casing, since `strconv.FormatFloat(-0.0, ...)` already
+   emits `"-0"`).
+5. **Duplicate JSON object keys.** `json.loads('{"a":1,"b":2,"a":3}')`
+   builds its dict via repeated `d[key] = value`: first key POSITION, last
+   VALUE. The `jsonScanner` rewrite (item 3 above) also fixed this as part
+   of replacing `decodeOrderedJSON`'s object-decoding loop: `parseObject`
+   tracks each key's index and overwrites `pairs[i].val` on a repeat
+   instead of appending a second pair.
+
+All five verified byte-for-byte against the pinned Oracle directly before
+being encoded as new `TestMarketplaceManifest_StructuralErrors` cases
+(marketplace-level) and `TestPythonReprValue`/`TestParseDepString_*`
+cases (unit-level).
+
+**A sixth fix, found by the conformance sweep itself, not the eval:**
+`owner/../repo` (and its percent-encoded form `owner/%2e%2e/repo`) parsed
+successfully as `Repo=".."` `VirtualPath="repo"` instead of being rejected
+-- `ownerCharRe`/`repoCharRe`'s character class (`[A-Za-z0-9._-]+`) and
+`validateVirtualPath`'s `segmentRe` both happen to accept a literal `".."`
+segment (it consists only of allowed `.` characters), and nothing else
+checked for the exact value. The Oracle's `validate_path_segments`
+(path_security.py:32-77) rejects any `"."`/`".."` segment in a repo_url or
+virtual path outright (`PathTraversalError`), confirmed directly:
+`DependencyReference.parse("owner/../repo")` raises. Fixed: a new
+`isDotSegment` helper, checked alongside the existing char-class check at
+all four owner/repo validation call sites and inside
+`validateVirtualPath`'s per-segment loop.
+
+**A genuine, pre-existing, INTENTIONAL divergence the conformance sweep
+also surfaced and did NOT "fix":** the Oracle's `is_local_path` branch
+(reference.py:1754-1768) performs no traversal check at all -- ANY
+relative path whose basename isn't `"."`/`".."` is accepted as a local
+dependency, so `DependencyReference.parse("../../../etc/passwd")`
+succeeds with `is_local=True` on the Oracle. apm-go's `containsEscape`
+(depref.go, pre-dating this ticket) is a deliberate security hardening
+beyond the Oracle that rejects this outright. Matching the Oracle here
+would be a security regression, not a parity fix -- this row is recorded
+in the conformance fixture as a `known_gap` with that reasoning, not
+silently passed over.
+
+### Part 2: the conformance tables
+
+- `tools/depref_conformance_gen.py`: a one-shot generator, run via
+  `uv run --project <oracle> python3 tools/depref_conformance_gen.py
+  --oracle-src <oracle>/src --out-accept spec/conformance/depref-accept.json
+  --out-repr spec/conformance/python-repr.json`. `DEPREF_INPUTS` enumerates
+  every accept/reject branch reachable from a marketplace source
+  coordinate: shorthand (bare/ref/virtual-path/host-qualified/host:port),
+  https/http/ssh/SCP (users, ports, queries/fragments), percent-encoding
+  (valid/invalid escapes, traversal, control chars), local paths
+  (relative/absolute/home/UNC/Windows-drive), empty/whitespace, IPv6/IP-
+  literal/odd hosts, and Azure-DevOps/GitLab-nested-group/Artifactory
+  shapes the Oracle supports but apm-go's shorthand parser does not
+  attempt (each such row carries a `known_gap` string explaining why, so
+  the gap is a recorded finding, not a silent one -- AGENTS.md: "a
+  deviation that is not recorded there is a finding, not a feature").
+  `PYTHON_REPR_INPUTS` covers every JSON value shape `pythonReprValue` is
+  meant to reproduce Python's `repr()` for: scalars, quote/escape
+  selection (including surrogate pairs, lone surrogates, non-printable
+  non-ASCII), int-vs-float/overflow/negative-zero, nested lists/dicts, and
+  duplicate keys. `python-repr.json`'s repr values come from CPython's OWN
+  builtin `repr()`; `depref-accept.json`'s come from the pinned Oracle's
+  own `DependencyReference.parse`, never re-derived.
+- `spec/conformance/depref-accept.json` (81 rows, 6 `known_gap`),
+  `spec/conformance/python-repr.json` (42 rows): committed fixtures
+  (runtime inputs tracked in git, not generated at test time -- same
+  pattern as `internal/marketplace/build`'s schema-sync tests, AGENTS.md).
+- `internal/manifest/depref_conformance_test.go`
+  (`TestParseDepString_OracleConformance`) and
+  `internal/marketplace/python_repr_conformance_test.go`
+  (`TestPythonReprValue_OracleConformance`): assert every non-`known_gap`
+  row's `accepted`/`is_local` (dep-string) or `repr` (Python-repr) output
+  matches the fixture; a `known_gap` row is logged, not asserted, so a
+  future accidental narrowing OR widening of a documented gap surfaces the
+  next time the fixture is regenerated and re-diffed, not silently.
+- Comment corrections (the eval's "Standards: FAIL -- comments claim an
+  exact port but omit accepted grammar and JSON-representation cases"):
+  `isValidRemoteCoordinate`'s doc comment no longer claims
+  `manifest.ParseDepString` is "a full port of this exact grammar" or "the
+  one remaining explicitly documented partial-parity boundary" -- both
+  false after four rounds of finding more accepted-Oracle-grammar gaps.
+  `ParseDepString` itself gained a doc comment (it had none) stating its
+  true scope and pointing at the conformance table as the actual, living
+  scope statement instead of a historical claim. `tagPatternStructuralError`
+  now also points at `TestPythonReprValue_OracleConformance` for the same
+  reason.
+- `TestMarketplaceValidate_TagPatternDeferral`'s doc comment corrected: its
+  install assertion calls the internal `runInstall` function (mocked,
+  network-free), not the root Cobra `install` command -- `installCmd()`'s
+  RunE hardcodes `gitops.RealTagLister`/`RealPackageLoader` with no seam to
+  inject the same mocks, and the fixture's plugin sources aren't real
+  repositories, so routing through the real command would trade a fast
+  hermetic test for a flaky network-dependent one. Not changed to use the
+  real command; the comment now says so instead of overclaiming.
+
+**Verification.** All five reproducers plus the sixth (dot-segment
+traversal) fix verified directly against the pinned Oracle. Fresh
+full-corpus evidence from the clean committed tree, five-point provenance
+verified, diffed against `/tmp/ticket11a4-evidence-6aaa47c-review` (the
+orchestrator's own attempt-4 baseline): zero `(fields, waived)` regression
+across all 49 cases. `go build`/`vet`/`gofmt` clean; `go test ./...` green
+(pre-existing Windows-only `TestParseDepString_AbsolutePath` excepted);
+`go test -race ./cmd/apm-go/... ./internal/marketplace/...
+./internal/manifest/...` clean.
+
+## Files touched (attempt 5 additions)
+- `internal/manifest/depref.go`: `DependencyReference.SSHUser` (new field); `scpLikeRe`/`sshUserRe`/`shorthandPortRe` (new); `validateSSHUser`, `stripQuery`, `splitShorthandHostPort`, `isDotSegment` (new); `ParseDepString` dispatches on bare `"ssh://"` and `scpLikeRe` instead of hardcoded `"git@"`; `parseHTTPURL`/`parseSSHURL` call `stripQuery`; `parseSSHURL`/`parseSCPURL` extract and validate an arbitrary user; `parseShorthand` calls `splitShorthandHostPort` unconditionally on its leading segment; all four owner/repo validation call sites and `validateVirtualPath` additionally reject `isDotSegment`; `ParseDepString` gained a doc comment stating its true (approximate, conformance-table-tracked) scope.
+- `internal/marketplace/models.go`: `decodeOrderedJSON`/`decodeOrderedValue` (json.Decoder-based) replaced by `jsonScanner` (a hand-rolled recursive-descent JSON parser) + `pyStr`/`jsonNumber` leaf types, preserving lone UTF-16 surrogates and implementing Python's first-key-position/last-value duplicate-key semantics; `pythonReprString` renamed `pythonReprPyStr` (operates on `pyStr`, not `string`) plus `pyStrTrimSpace`; `pythonReprNumber` uses `strconv.ParseFloat` directly with `ErrRange` handled as "use the saturated Inf" and an all-zero-lexeme special case; `pythonFloatRepr` adds `math.IsInf`/`IsNaN` handling; `tagPatternStructuralError` decodes via `decodeOrderedJSON` throughout (including its own "is this a string" check) instead of `encoding/json.Unmarshal`; `isValidRemoteCoordinate`'s and `tagPatternStructuralError`'s doc comments corrected to point at the conformance tables instead of claiming a fixed, now-false scope.
+- `internal/marketplace/models_manifest_test.go`: +6 `TestMarketplaceManifest_StructuralErrors` cases (the five reproducers plus the SCP-form variant of reproducer 1), +6 `TestPythonReprValue` cases (surrogate, +inf/-inf, integer -0, float -0.0, duplicate keys).
+- `internal/manifest/depref_conformance_test.go` (new), `internal/marketplace/python_repr_conformance_test.go` (new): the conformance test suite, see "Part 2" above.
+- `tools/depref_conformance_gen.py` (new), `spec/conformance/depref-accept.json` (new), `spec/conformance/python-repr.json` (new): the conformance fixtures, see "Part 2" above.
+- `cmd/apm-go/marketplace_e2e_test.go`: `TestMarketplaceValidate_TagPatternDeferral`'s doc comment corrected (install-command claim).

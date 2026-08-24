@@ -538,6 +538,45 @@ func TestMarketplaceManifest_StructuralErrors(t *testing.T) {
 			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":{"b":1,"a":2}}}]}`,
 			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'p' source.tag_pattern' must be a non-empty string, got {'b': 1, 'a': 2}"},
 		},
+
+		// Ticket 11 eval attempt 5 (orchestrator strategy change: five
+		// reproducers from '## Attempt 4' of the eval, all verified
+		// byte-for-byte against the pinned Oracle directly).
+		{
+			name: "eval attempt 5 reproducer 1: ssh:// url source with an arbitrary (non-git) user is accepted",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"url","url":"ssh://alice@host/owner/repo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "eval attempt 5 reproducer 1 (SCP form): arbitrary user is accepted",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"url","url":"alice@host:owner/repo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "eval attempt 5 reproducer 2: url query string is stripped, not treated as part of the repo path",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"url","url":"https://x.io/owner/repo?x"}}]}`,
+			want: nil,
+		},
+		{
+			name: "eval attempt 5 reproducer 2 (shorthand host:port): port is split off before FQDN validation",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"x.io:443/owner/repo"}}]}`,
+			want: nil,
+		},
+		{
+			name: "eval attempt 5 reproducer 3: lone UTF-16 surrogate in tag_pattern survives repr byte-for-byte",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":"\ud800"}}]}`,
+			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'p' source.tag_pattern' must contain exactly one {version} placeholder, got '\\ud800'"},
+		},
+		{
+			name: "eval attempt 5 reproducer 4: float lexeme overflow becomes Python inf, not the raw lexeme",
+			doc:  `{"name":"m","plugins":[{"name":"big","source":{"type":"github","repo":"owner/repo","tag_pattern":1e400}}]}`,
+			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'big' source.tag_pattern' must be a non-empty string, got inf"},
+		},
+		{
+			name: "eval attempt 5 reproducer 5: duplicate tag_pattern dict keys keep first position, last value",
+			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/repo","tag_pattern":{"a":1,"b":2,"a":3}}}]}`,
+			want: []string{"plugins[0].source.tag_pattern: 'Plugin 'p' source.tag_pattern' must be a non-empty string, got {'a': 3, 'b': 2}"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -674,6 +713,16 @@ func TestPythonReprValue(t *testing.T) {
 		{"string with control char", `"\u0007"`, `'\x07'`},
 		{"string with non-ASCII printable stays literal", `"héllo"`, `'héllo'`},
 		{"string with newline", `"line\nbreak"`, `'line\nbreak'`},
+
+		// Ticket 11 eval attempt 4 (orchestrator intervention round 2):
+		// five new reproducers, all verified byte-for-byte against the
+		// pinned Oracle directly.
+		{"lone UTF-16 surrogate survives repr, not replaced with U+FFFD", `"\ud800"`, `'\ud800'`},
+		{"float lexeme overflow becomes Python +inf", `1e400`, `inf`},
+		{"float lexeme overflow becomes Python -inf", `-1e400`, `-inf`},
+		{"integer -0 normalizes to 0 (Python int semantics)", `-0`, `0`},
+		{"float -0.0 keeps its sign (distinct from integer -0)", `-0.0`, `-0.0`},
+		{"duplicate object keys: first position, last value wins", `{"a":1,"b":2,"a":3}`, `{'a': 3, 'b': 2}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

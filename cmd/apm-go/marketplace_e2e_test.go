@@ -1496,7 +1496,23 @@ func TestMarketplaceValidate_StructurePerElementDiagnostics(t *testing.T) {
 // install, despite the doc comment above already claiming that coverage --
 // the eval verified the real behavior matches and asked for the test to
 // actually do what its comment says. It now runs the real `marketplace
-// add`, root `search`, and `install` COMMANDS end to end.
+// add` and root `search` COBRA COMMANDS end to end.
+//
+// Ticket 11 eval attempt 5 correction: the eval flagged that "install"
+// above overstated its own coverage too -- the install assertion below
+// calls the internal runInstall function (with a mocked, network-free
+// loader/tag-lister) rather than the root Cobra `install` command's RunE.
+// This is deliberate, not fixed to use the real command: installCmd()'s
+// RunE hardcodes gitops.RealTagLister/RealPackageLoader with no seam to
+// inject the same mocks, and "good-plugin"'s source (type: github, repo:
+// acme/good) is not a real repository -- routing this test through the
+// real command would mean an actual network git-clone attempt against a
+// nonexistent repo, trading a fast, hermetic unit test for a flaky,
+// network-dependent one. The resolver path runInstall exercises
+// (marketplace.ResolvePlugin -> manifest.ParseDepString -> lockfile
+// write) is the behavior that actually matters here and already agrees
+// with the isolated Oracle/target command-level probe recorded in this
+// function's own top comment.
 func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
 	// Arrange
 	isolatedMarketplaceRegistry(t)
@@ -1538,16 +1554,18 @@ func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
 		t.Errorf("validate output = %q, want it to contain %q", validateOut, wantMessage)
 	}
 
-	// Assert -- install: the valid plugin installs through the real
-	// `install` command (network-free via installDeps' mocked loader/tag
-	// lister, same pattern as TestRunInstall_MarketplacePackage_
-	// LockfileProvenanceAndPersistedCanonical); the malformed one is simply
-	// never found, the same "not found in marketplace" category on both
-	// apm-go and the Oracle (verified directly -- different exact wording,
-	// not a divergence this ticket is positioned to close). Run BEFORE
-	// root `search` below: runSearchCmd sets CI=1 for the rest of this
-	// test via t.Setenv, which would otherwise make install default to a
-	// frozen (lockfile-required) mode it isn't set up for here.
+	// Assert -- install: runInstall (the root `install` command's own
+	// implementation function, NOT the Cobra command layer -- see this
+	// function's top comment) resolves and installs the valid plugin via
+	// a mocked, network-free loader/tag lister (same pattern as
+	// TestRunInstall_MarketplacePackage_LockfileProvenanceAndPersistedCanonical);
+	// the malformed one is simply never found, the same "not found in
+	// marketplace" category on both apm-go and the Oracle (verified
+	// directly -- different exact wording, not a divergence this ticket is
+	// positioned to close). Run BEFORE root `search` below: runSearchCmd
+	// sets CI=1 for the rest of this test via t.Setenv, which would
+	// otherwise make install default to a frozen (lockfile-required) mode
+	// it isn't set up for here.
 	projDir := t.TempDir()
 	origDir, err := os.Getwd()
 	if err != nil {
