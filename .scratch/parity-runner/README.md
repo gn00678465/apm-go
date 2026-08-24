@@ -26,7 +26,7 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: 01 02 03 04 08 10 11 12 13 14 15 ✅ · 06 07 ✅(command-local) · 13 closed at attempt 2 (a0b3f82; help/feature backlog user-re-scoped to 17) · 14 closed at attempt 3 (PASS; wording fixes from attempt 1 stand -- marketplaceNotRegisteredErr's Oracle-fixed-format rewrite, `marketplace list`'s empty-registry sentence. Attempt 2's Rich-console-wrap emulation, added to chase byte-exact parity on the two long messages, was withdrawn by orchestrator direction after fixing 4 renderer defects still left an unbounded emulation surface behind them (Unicode COLUMNS digits, ZWJ graphemes, tab stops, ANSI passthrough) -- the ticket-11 pattern. Per eval-plan §8.3, Rich-vs-ux rendering differences are compare-semantics-and-waive territory (doctor-healthy precedent), not chase-byte-parity; apm-go's messages are single-line by product contract. wrap.go and its conformance fixture deleted; the 5 pack-* stdout waivers and browse/list/search-unknown's stdout(+error_body) waivers restored/updated to name the single-line-vs-wrapped mechanism) · 11 closed (attempt 8, re-scoped PASS) · 05 command+evidence landed, gaps open · 09 ready · 16 17 18 open (backlog, non-blocking).
+Status: 01 02 03 04 08 10 11 12 13 14 15 ✅ · 06 07 ✅(command-local) · 14 closed at attempt 3 (e762092; wording parity kept, Rich-wrap emulation withdrawn per eval-plan §8.3) · 05 command+evidence landed, gaps open · 09 next → beta.3 · 16 17 18 post-beta backlog.
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 
