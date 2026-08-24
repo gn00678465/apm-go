@@ -34,19 +34,29 @@ func (r ValidationResult) Passed() bool { return len(r.Findings) == 0 }
 
 // ValidateChecks runs the same checks as Validate but grouped per named
 // check, mirroring Python's validate_marketplace returning one
-// ValidationResult per check: "Schema" (validate_plugin_schema) and "Names"
-// (validate_no_duplicate_names). The manifest-level name check has no Python
-// equivalent -- the original's JSON parser always defaults a missing name to
-// the source's repo name (or "unknown"), so validate_marketplace never sees
-// an empty manifest.Name; apm-go's json.Unmarshal-based parsing does not
-// backfill a default, so an empty name is a real state, folded into the
-// "Schema" check here.
+// ValidationResult per check, IN ORDER: "Structure"
+// (validate_marketplace_structure, ticket 11), "Schema"
+// (validate_plugin_schema), and "Names" (validate_no_duplicate_names). The
+// manifest-level name check has no Python equivalent -- the original's JSON
+// parser always defaults a missing name to the source's repo name (or
+// "unknown"), so validate_marketplace never sees an empty manifest.Name;
+// apm-go's json.Unmarshal-based parsing does not backfill a default, so an
+// empty name is a real state, folded into the "Schema" check here.
 func ValidateChecks(m *MarketplaceManifest) []ValidationResult {
 	if m == nil {
 		return []ValidationResult{{
 			CheckName: "Schema",
 			Findings:  []Finding{{Level: LevelError, Message: "marketplace manifest is nil"}},
 		}}
+	}
+
+	// validate_marketplace_structure (marketplace/validator.go:40-45 in the
+	// Oracle): reports the raw manifest-shape diagnostics the tolerant
+	// parser retained (models.go's MarketplaceManifest.StructuralErrors),
+	// verbatim, one error per entry.
+	var structure []Finding
+	for _, e := range m.StructuralErrors {
+		structure = append(structure, Finding{Level: LevelError, Message: e})
 	}
 
 	var schema []Finding
@@ -83,6 +93,7 @@ func ValidateChecks(m *MarketplaceManifest) []ValidationResult {
 	}
 
 	return []ValidationResult{
+		{CheckName: "Structure", Findings: structure},
 		{CheckName: "Schema", Findings: schema},
 		{CheckName: "Names", Findings: names},
 	}

@@ -638,8 +638,12 @@ func marketplaceValidateCmd() *cobra.Command {
 	var verbose bool
 	var checkRefs bool
 	cmd := &cobra.Command{
+		// Ticket 11: matches validate.py:13's Click `help=` string verbatim
+		// -- help_semantic's description_paragraph comparison requires it
+		// byte-for-byte, and Click uses this same string for both the
+		// parent `marketplace --help` one-liner and validate's own --help.
 		Use:          "validate NAME",
-		Short:        "Validate a registered marketplace's manifest",
+		Short:        "Validate marketplace structure and plugin schema",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -659,9 +663,35 @@ func marketplaceValidateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
-			ux.Info(w, "Found %d plugins", len(m.Plugins))
 
-			if verbose {
+			// Per-check rendering, mirroring upstream validate.py:54-80:
+			// every check prints a line -- a passing check included -- and
+			// the Summary counts passed checks and individual warning/error
+			// messages, not an approximation.
+			checks := marketplace.ValidateChecks(m)
+
+			// has_structure_errors (validate.py:31-33): gates the plugin
+			// count, verbose per-plugin detail, and every OTHER check's
+			// passing line below -- a broken manifest means "N plugins"
+			// (and Schema/Names having "passed") is misleading noise, not
+			// useful signal (ticket 11).
+			hasStructureErrors := false
+			for _, c := range checks {
+				if c.CheckName != "Structure" {
+					continue
+				}
+				for _, f := range c.Findings {
+					if f.Level == marketplace.LevelError {
+						hasStructureErrors = true
+					}
+				}
+			}
+
+			if !hasStructureErrors {
+				ux.Info(w, "Found %d plugins", len(m.Plugins))
+			}
+
+			if verbose && !hasStructureErrors {
 				// Mirrors Python's validate.py:38-42 per-plugin verbose
 				// detail (source type: dict vs string), printed after the
 				// fetch and before the validation results.
@@ -676,12 +706,6 @@ func marketplaceValidateCmd() *cobra.Command {
 				ux.BulletList(w, items)
 			}
 
-			// Per-check rendering, mirroring upstream validate.py:54-80:
-			// every check prints a line -- a passing check included -- and
-			// the Summary counts passed checks and individual warning/error
-			// messages, not an approximation.
-			checks := marketplace.ValidateChecks(m)
-
 			// check-refs placeholder: mirrors upstream validate.py:49-54
 			// exactly -- results are already computed above, this warning
 			// prints before they're rendered, and it performs no ref lookup
@@ -694,33 +718,68 @@ func marketplaceValidateCmd() *cobra.Command {
 			fmt.Fprintln(w)
 			ux.Info(w, "Validation Results:")
 			for _, check := range checks {
-				if check.Passed() {
-					ux.Success(w, "%s: all plugins valid", check.CheckName)
-					passed++
-					continue
-				}
+				hasErr, hasWarn := false, false
 				for _, f := range check.Findings {
 					if f.Level == marketplace.LevelError {
-						ux.Error(w, "%s: %s", check.CheckName, f.Message)
-						errs++
+						hasErr = true
 					} else {
-						ux.Warn(w, "%s: %s", check.CheckName, f.Message)
+						hasWarn = true
+					}
+				}
+				switch {
+				case !hasErr && !hasWarn:
+					// validate.py:60-64: a fully-passing check is skipped
+					// entirely (not just uncounted) once Structure itself
+					// has already failed -- "Schema: passed" would be
+					// misleading when the manifest couldn't even parse.
+					if hasStructureErrors {
+						continue
+					}
+					ux.Success(w, "  %s: passed", check.CheckName)
+					passed++
+				case hasWarn && !hasErr:
+					for _, f := range check.Findings {
+						ux.Warn(w, "  %s: %s", check.CheckName, f.Message)
 						warnings++
+					}
+				default:
+					// validate.py:70-74: errors first, then warnings --
+					// Python's ValidationResult keeps them in two separate
+					// lists; Findings is one mixed slice, so filter twice
+					// to reproduce that grouping regardless of append order.
+					for _, f := range check.Findings {
+						if f.Level == marketplace.LevelError {
+							ux.Error(w, "  %s: %s", check.CheckName, f.Message)
+							errs++
+						}
+					}
+					for _, f := range check.Findings {
+						if f.Level == marketplace.LevelWarning {
+							ux.Warn(w, "  %s: %s", check.CheckName, f.Message)
+							warnings++
+						}
 					}
 				}
 			}
 			fmt.Fprintln(w)
 			ux.Info(w, "Summary: %d passed, %d warnings, %d errors", passed, warnings, errs)
 			if errs > 0 {
-				return fmt.Errorf("marketplace %q failed validation with %d error(s)", name, errs)
+				// validate.py:81-82: `sys.exit(1)` with no additional
+				// message -- the Results/Summary lines above already said
+				// everything. withSilentExitCode matches that contract
+				// (see its own doc comment; first added for ticket 08's
+				// doctor, same "[x] <message>" extra-line bug shape here).
+				return withSilentExitCode(1, fmt.Errorf("marketplace %q failed validation with %d error(s)", name, errs))
 			}
 			return nil
 		},
 	}
 	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
 	// subcommand; validate was missing it entirely (an unknown-flag hard
-	// error).
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print each plugin's source type before the validation results")
+	// error). Description matches validate.py:18's Click option help
+	// verbatim (ticket 11: help_semantic requires per-flag description
+	// equality, not just the flag/alias/default set).
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output")
 	// Ticket 06: upstream validate.py:16-18 accepts --check-refs as a
 	// hidden, not-yet-implemented placeholder (network ref reachability
 	// checking); ported as a hidden no-op for CLI surface parity, not a

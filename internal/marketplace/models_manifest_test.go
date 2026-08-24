@@ -222,6 +222,72 @@ func TestMarketplaceManifest_PluginSourceWrongType_Dropped(t *testing.T) {
 	}
 }
 
+// TestMarketplaceManifest_StructuralErrors covers ticket 11's two
+// diagnostics: Python's parse_marketplace_json (models.py:589-609) records
+// "plugins: expected a list" when the "plugins" key is present but not a
+// JSON array (including explicit null, since isinstance(None, list) is
+// False) and "plugins[N]: expected an object" per non-object element,
+// while a wholly ABSENT "plugins" key is not an error either side.
+func TestMarketplaceManifest_StructuralErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  string
+		want []string
+	}{
+		{
+			name: "plugins absent is not a structural error",
+			doc:  `{"name":"m"}`,
+			want: nil,
+		},
+		{
+			name: "plugins is an object, not an array",
+			doc:  `{"name":"m","plugins":{"a":1}}`,
+			want: []string{"plugins: expected a list"},
+		},
+		{
+			name: "plugins is a string, not an array",
+			doc:  `{"name":"m","plugins":"oops"}`,
+			want: []string{"plugins: expected a list"},
+		},
+		{
+			name: "plugins is a number, not an array",
+			doc:  `{"name":"m","plugins":42}`,
+			want: []string{"plugins: expected a list"},
+		},
+		{
+			name: "plugins is explicit null",
+			doc:  `{"name":"m","plugins":null}`,
+			want: []string{"plugins: expected a list"},
+		},
+		{
+			name: "plugins is an empty array is not a structural error",
+			doc:  `{"name":"m","plugins":[]}`,
+			want: nil,
+		},
+		{
+			name: "non-object plugin elements are named by index, valid siblings kept",
+			doc:  `{"name":"m","plugins":[{"name":"a","source":"./a"},"not-an-object",42,{"name":"b","source":"./b"}]}`,
+			want: []string{"plugins[1]: expected an object", "plugins[2]: expected an object"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m MarketplaceManifest
+			if err := json.Unmarshal([]byte(tt.doc), &m); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(m.StructuralErrors) != len(tt.want) {
+				t.Fatalf("StructuralErrors = %v, want %v", m.StructuralErrors, tt.want)
+			}
+			for i, w := range tt.want {
+				if m.StructuralErrors[i] != w {
+					t.Errorf("StructuralErrors[%d] = %q, want %q", i, m.StructuralErrors[i], w)
+				}
+			}
+		})
+	}
+}
+
 // TestUnmarshalJSON_PluginSourceTagPattern locks the consumer half of upstream
 // v0.27.0's tag_pattern propagation (models.py:325-330 field, :459-467 parse).
 //

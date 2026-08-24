@@ -503,9 +503,11 @@ func TestRealCases_FixtureDirLoads(t *testing.T) {
 // unwaived on purpose), plus (ticket 08: fault-injection evidence backfill
 // for doctor -- git-missing/nonzero, the four network-failure-kind cases,
 // network-timeout, token-present/absent, and the seven marketplace-config
-// cases) each of that ticket's own doctor-* waivers, every one field-precise
-// per its own reason -- no other case ever earns a bulk/wildcard waiver
-// here.
+// cases) each of that ticket's own doctor-* waivers, plus (ticket 11: the
+// missing Structure check + help drift) validate-help/-checkrefs-off/
+// -checkrefs-on/-structure-fail's own `stdout`-only (`stderr`/`error_body`
+// too for -structure-fail) waivers -- every one field-precise per its own
+// reason -- no other case ever earns a bulk/wildcard waiver here.
 func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	pin, err := pinnedOracleCommit()
 	if err != nil {
@@ -541,6 +543,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		"doctor-token-present", "doctor-token-absent",
 		"doctor-config-none", "doctor-config-apmyml-valid", "doctor-config-legacy", "doctor-config-both",
 		"doctor-config-apmyml-malformed", "doctor-config-legacy-malformed", "doctor-config-duplicate-names",
+		"validate-help", "validate-checkrefs-off", "validate-checkrefs-on", "validate-structure-fail",
 	}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)

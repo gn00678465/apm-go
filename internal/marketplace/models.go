@@ -7,6 +7,7 @@
 package marketplace
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -285,6 +286,22 @@ type MarketplaceManifest struct {
 	// manifest JSON.
 	SourceURL    string `json:"-"`
 	SourceDigest string `json:"-"`
+
+	// StructuralErrors are raw manifest-shape diagnostics retained by the
+	// tolerant parser above (ticket 11), mirroring Python's
+	// MarketplaceManifest.structural_errors (marketplace/models.py:396):
+	// this is what `apm marketplace validate`'s "Structure" check
+	// (validator.go) reports. Only the two cases documented on
+	// parseManifestPlugins below are populated -- a "plugins" value that
+	// isn't a JSON array, and a "plugins[N]" element that isn't a JSON
+	// object -- not every per-field diagnostic Python's _parse_plugin_entry
+	// can raise (a wrong-shaped "source"/"repository" within an otherwise
+	// valid plugin object is still silently dropped, unchanged from before
+	// this ticket): those finer-grained messages would need this parser's
+	// per-entry tolerant field access rewritten to distinguish "wrong type"
+	// from "absent", which is a larger, separate refactor than ticket 11's
+	// scope (a missing Structure check + help drift).
+	StructuralErrors []string `json:"-"`
 }
 
 // UnmarshalJSON parses a marketplace.json document, normalizing the
@@ -327,11 +344,12 @@ func (m *MarketplaceManifest) UnmarshalJSON(data []byte) error {
 	m.Description = raw.Description
 	m.PluginRoot = parseManifestPluginRoot(raw.Metadata)
 	m.Owner = parseManifestOwner(raw.Owner)
-	plugins, err := parseManifestPlugins(raw.Plugins)
+	plugins, structuralErrors, err := parseManifestPlugins(raw.Plugins)
 	if err != nil {
 		return err
 	}
 	m.Plugins = plugins
+	m.StructuralErrors = structuralErrors
 	return nil
 }
 
@@ -365,29 +383,48 @@ func parseManifestPluginRoot(raw json.RawMessage) string {
 // unrecognised source, but raises TagPatternError for a bad tag_pattern, and
 // its caller (models.py:531) does not catch it. Skipping would silently change
 // which tag a version range resolves to.
-func parseManifestPlugins(raw json.RawMessage) ([]MarketplacePlugin, error) {
+// parseManifestPlugins additionally collects the two structural diagnostics
+// documented on MarketplaceManifest.StructuralErrors, mirroring Python's
+// parse_marketplace_json (models.py:589-609) for exactly these two cases:
+// a "plugins" value that is present but not a JSON array or JSON null
+// (Python: `if not isinstance(raw_plugins, list)`, which is also true for
+// None) becomes "plugins: expected a list"; a "plugins[N]" element that is
+// not a JSON object becomes "plugins[N]: expected an object" -- both
+// messages verbatim from models.py:595/601. A "plugins" key that is simply
+// ABSENT is not an error either side (Python's `data.get("plugins", [])`
+// default), matching this function's pre-ticket-11 len(raw)==0 check.
+func parseManifestPlugins(raw json.RawMessage) ([]MarketplacePlugin, []string, error) {
 	if len(raw) == 0 {
-		return nil, nil
+		return nil, nil, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, []string{"plugins: expected a list"}, nil
 	}
 	var entries []json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
-		return nil, nil
+		return nil, []string{"plugins: expected a list"}, nil
 	}
 	var plugins []MarketplacePlugin
-	for _, entry := range entries {
+	var structuralErrors []string
+	for i, entry := range entries {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(entry, &obj); err != nil {
+			structuralErrors = append(structuralErrors, fmt.Sprintf("plugins[%d]: expected an object", i))
+			continue
+		}
 		var rp rawPlugin
 		if err := json.Unmarshal(entry, &rp); err != nil {
 			continue
 		}
 		p, ok, err := rp.normalize()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if ok {
 			plugins = append(plugins, p)
 		}
 	}
-	return plugins, nil
+	return plugins, structuralErrors, nil
 }
 
 // rawPlugin is a plugin entry as found on disk, before Copilot-shape

@@ -162,7 +162,7 @@ func TestValidate(t *testing.T) {
 // mirroring Python validate_marketplace's [Schema, Names] ValidationResult
 // list.
 func TestValidateChecks(t *testing.T) {
-	t.Run("clean manifest: two named checks, both passed", func(t *testing.T) {
+	t.Run("clean manifest: three named checks, all passed", func(t *testing.T) {
 		m := &MarketplaceManifest{
 			Name: "acme-tools",
 			Plugins: []MarketplacePlugin{
@@ -171,11 +171,11 @@ func TestValidateChecks(t *testing.T) {
 			},
 		}
 		got := ValidateChecks(m)
-		if len(got) != 2 || got[0].CheckName != "Schema" || got[1].CheckName != "Names" {
-			t.Fatalf("ValidateChecks() checks = %#v, want [Schema, Names]", got)
+		if len(got) != 3 || got[0].CheckName != "Structure" || got[1].CheckName != "Schema" || got[2].CheckName != "Names" {
+			t.Fatalf("ValidateChecks() checks = %#v, want [Structure, Schema, Names]", got)
 		}
-		if !got[0].Passed() || !got[1].Passed() {
-			t.Errorf("ValidateChecks() = %#v, want both checks passed", got)
+		if !got[0].Passed() || !got[1].Passed() || !got[2].Passed() {
+			t.Errorf("ValidateChecks() = %#v, want all three checks passed", got)
 		}
 	})
 
@@ -188,15 +188,33 @@ func TestValidateChecks(t *testing.T) {
 			},
 		}
 		got := ValidateChecks(m)
-		if len(got) != 2 {
-			t.Fatalf("ValidateChecks() returned %d checks, want 2", len(got))
+		if len(got) != 3 {
+			t.Fatalf("ValidateChecks() returned %d checks, want 3", len(got))
 		}
-		schema, names := got[0], got[1]
+		structure, schema, names := got[0], got[1], got[2]
+		if !structure.Passed() {
+			t.Errorf("Structure check = %#v, want passed (no structural errors)", structure)
+		}
 		if schema.Passed() || len(schema.Findings) != 1 {
 			t.Errorf("Schema check = %#v, want exactly the missing-source finding", schema)
 		}
 		if names.Passed() || len(names.Findings) != 1 {
 			t.Errorf("Names check = %#v, want exactly the duplicate-name finding", names)
+		}
+	})
+
+	t.Run("structural errors land in the Structure check, in manifest order", func(t *testing.T) {
+		m := &MarketplaceManifest{
+			Name:             "acme-tools",
+			StructuralErrors: []string{"plugins: expected a list"},
+		}
+		got := ValidateChecks(m)
+		structure := got[0]
+		if structure.CheckName != "Structure" || structure.Passed() || len(structure.Findings) != 1 {
+			t.Fatalf("Structure check = %#v, want exactly one failing finding", structure)
+		}
+		if structure.Findings[0].Message != "plugins: expected a list" || structure.Findings[0].Level != LevelError {
+			t.Errorf("Structure finding = %#v, want the structural error verbatim as an error", structure.Findings[0])
 		}
 	})
 

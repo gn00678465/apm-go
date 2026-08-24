@@ -1337,18 +1337,22 @@ func TestMarketplaceValidate_HappyPathPrintsSummaryAndSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace validate returned error for a valid manifest: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "Summary: 2 passed, 0 warnings, 0 errors") {
+	if !strings.Contains(out, "Summary: 3 passed, 0 warnings, 0 errors") {
 		t.Errorf("output = %q, want the passing summary line", out)
 	}
 	// Upstream validate.py:54-63: passing checks each print their own line
 	// under a "Validation Results:" header, and the fetch is bracketed by
 	// progress lines -- a clean manifest must not collapse to a bare Summary.
+	// Ticket 11: Structure joins Schema/Names as a third passing check, in
+	// that order, each line reading "  <name>: passed" (validate.py's own
+	// f"  {check_name}: passed" literal, not "all plugins valid").
 	for _, want := range []string{
 		`Validating marketplace "acme"...`,
 		"Found 1 plugins",
 		"Validation Results:",
-		"Schema: all plugins valid",
-		"Names: all plugins valid",
+		"  Structure: passed",
+		"  Schema: passed",
+		"  Names: passed",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)
@@ -1373,6 +1377,46 @@ func TestMarketplaceValidate_ErrorsFailTheCommand(t *testing.T) {
 	}
 	if !strings.Contains(out, "Summary:") || !strings.Contains(out, "1 errors") {
 		t.Errorf("output = %q, want the Summary line to report 1 error", out)
+	}
+}
+
+// TestMarketplaceValidate_StructureCheckFailsOnBrokenManifest is ticket
+// 11's core case: a "plugins" value that isn't a JSON array is a Structure
+// error (models.py:595/validator.go's Structure check), reported with the
+// Oracle's own message, and -- validate.py:31-42/60-64 -- suppresses the
+// plugin count, the verbose per-plugin detail, and every OTHER check's
+// passing line, since a broken manifest can't meaningfully say "N plugins"
+// or "Schema: passed".
+func TestMarketplaceValidate_StructureCheckFailsOnBrokenManifest(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": "oops"}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "validate", "acme")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace validate returned no error for a manifest with plugins not a list")
+	}
+	if exitCodeOf(err) != 1 {
+		t.Errorf("exitCodeOf(err) = %d, want 1", exitCodeOf(err))
+	}
+	for _, want := range []string{
+		"  Structure: plugins: expected a list",
+		"Summary: 0 passed, 0 warnings, 1 errors",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q", out, want)
+		}
+	}
+	for _, notWant := range []string{"Found ", "Schema:", "Names:"} {
+		if strings.Contains(out, notWant) {
+			t.Errorf("output = %q, must not contain %q once Structure failed", out, notWant)
+		}
 	}
 }
 

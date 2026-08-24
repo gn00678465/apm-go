@@ -303,5 +303,51 @@
     "reason": "Two packages named `learning`/`Learning` (case-insensitively equal). On the Oracle side, `_build_config`'s own packages loop (yml_schema.py: `raise MarketplaceYmlError(f\"Duplicate package name '{entry.name}' (packages[{seen_names[lower_name]}] and packages[{idx}])\")`) rejects the duplicate DURING LOADING, so the marketplace config row itself fails (\"apm.yml marketplace block has errors: Duplicate package name 'Learning' (packages[0] and packages[\", truncated at 60 chars per doctor.py:212-214) and yml_obj is never built -- so doctor's own separate check 6 (`_find_duplicate_names`, doctor.py:266-286/__init__.py:186-198) never runs against real input in production at all; it is only ever exercised by the Oracle's OWN test suite via a mocked `load_marketplace_yml` that bypasses the real loader's duplicate rejection (test_marketplace_doctor.py's TestDoctorDuplicateNames class). apm-go's LoadAuthoringConfig has no load-time duplicate rejection (authoring/schema.go's parsePackages accepts them), so its marketplace config row succeeds (\"apm.yml 'marketplace:' block found and valid\") and its OWN separate checkDuplicateNames (doctor.go's \"defence-in-depth\" comment) is what actually fires, correctly reporting \"Duplicate names: 'Learning' (packages[0] and packages[1])\". This is an intentional design choice, not an oversight: authoring/schema.go's own doc comment notes LoadAuthoringConfig is shared by `apm pack` and `apm marketplace package add/remove/set`, none of which should gain a new hard-reject-on-duplicate-name gate as a side effect of doctor's own evidence backfill. This is a real, structural difference in WHEN duplicate names are caught (at load time vs. a later defence-in-depth check), not merely message wording -- recorded here rather than silently fixed, since closing it would mean changing a widely-shared loader's validation contract, a decision beyond this ticket's scope. `executable trust` also appears on the Oracle side (apm.yml exists), the same out-of-scope-checks waiver doctor-config-apmyml-valid documents. GITHUB_TOKEN is fixed to skip the `gh` fallback. Beyond that, the remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "validate-help",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "help_semantic is empty (verified on a fresh corpus run: no help_semantic key on this case's diff at all) -- the flag set (-v/--verbose \"Show detailed output\", --check-refs hidden on both), short alias, and description paragraph (\"Validate marketplace structure and plugin schema\", ticket 11's fix) all match byte-for-byte. What remains on `stdout` is purely Click's \"Usage: ... / Options:\" layout vs Cobra's \"Usage: / Flags:\" layout -- the same class of framework-rendering difference already documented on doctor-help's own waiver, not wording or flag-set drift.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/11-validate-structure-check.md"
+  },
+  {
+    "id": "validate-checkrefs-off",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Ticket 11 added the missing Structure check: a fresh corpus run confirms the Oracle's and apm-go's stdout now agree on every line's CONTENT -- \"Found 5 plugins\", \"Validation Results:\", \"Structure: passed\", \"Schema: passed\", \"Names: passed\", \"Summary: 3 passed, 0 warnings, 0 errors\" are byte-identical. Two pre-existing, systemic rendering gaps remain, neither introduced by or specific to this ticket: (1) validate.py:29's `logger.start(..., symbol=\"gear\")` maps to STATUS_SYMBOLS[\"gear\"] = \"[*]\", while apm-go's equivalent progress line uses `ux.Info` (\"[i]\") -- apm-go has no printer for the Oracle's distinct gear/success/sparkles \"[*]\" glyph at all yet (confirmed system-wide: `apm-go marketplace add`'s own \"Registering marketplace...\" line has the exact same gap), a separate, wider fix than this ticket's Structure-check/help-drift scope; (2) validate.py's `f\"  {check_name}: passed\"` renders via `logger.success(..., symbol=\"check\")` -> \"[+] \", while apm-go's `ux.Success` still uses colors.go's pre-ticket-10 centered-symbol convention (\" + \", not bracketed) -- printer.go's own doc comment on `oracleErrorPrefix` already records this as a known, deliberately-deferred gap (\"Success was never found to differ, so it keeps the existing centered-symbol convention untouched\"); this is the first case to actually exercise a passing check and prove it does differ, but fixing `ux.Success` touches 14+ call sites across the whole CLI, well beyond this ticket. Also purely cosmetic: Python's f-string quotes the marketplace name with single quotes ('skills'), Go's %q verb with double quotes (\"skills\") -- exactly the \"quote differences\" this ticket's acceptance criteria anticipated waiving. `tree`'s home/.apm/marketplaces.json diff is deliberately NOT waived here, unchanged from before this ticket: it is ticket 05's own open registry-serialization gap (the Oracle stores a registered source's URL as a file:// URI, apm-go a bare filesystem path), already documented and left open on search-basic-hit's own waiver -- this case exercises the identical `marketplace add` code path via setup_argv, not a new or ticket-11-caused difference.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/11-validate-structure-check.md"
+  },
+  {
+    "id": "validate-checkrefs-on",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Identical to validate-checkrefs-off's own waiver (same fixture, same setup_argv, `--check-refs`'s own placeholder warning line -- \"[!] Ref checking not yet implemented -- skipping ref reachability checks\" -- matches byte-for-byte on both sides already, per TestMarketplaceValidate_CheckRefsPrintsPlaceholderWarning): the two pre-existing, systemic \"[*]\" gear-icon and \" + \"-vs-\"[+] \" success-icon rendering gaps, plus the 'skills' vs \"skills\" quote-style difference, are the entire remaining `stdout` diff. `tree`'s home/.apm/marketplaces.json diff is deliberately NOT waived here either, for the same ticket-05 reason.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/11-validate-structure-check.md"
+  },
+  {
+    "id": "validate-structure-fail",
+    "fields": [
+      "stdout",
+      "stderr",
+      "error_body"
+    ],
+    "taxonomy": "F08",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`{\"name\": \"broken\", \"plugins\": \"oops\"}`: both sides' Structure check fails with the identical message \"plugins: expected a list\" (models.py:595 verbatim / validator.go's new Structure check), the plugin count/verbose-detail/other-checks'-passing-lines are correctly suppressed on both (has_structure_errors), and `Summary: 0 passed, 0 warnings, 1 errors` plus exit code 1 match exactly -- confirming ticket 11's core acceptance criterion. What remains: `stdout` (and `error_body`, which is derived from stdout's own first line here) carry only the SAME pre-existing \"[*]\" vs \"[i]\" gear-icon and quote-style difference documented on validate-checkrefs-off/on's own waivers -- not new, not structure-check-specific. `stderr` is a genuine Oracle-only line this ticket does not attempt to replicate: `models.py`'s tolerant parser additionally calls Python's OWN standard-library `logging.warning(...)` (`marketplace.json 'plugins' field is not a list in 'broken'`, confirmed via a live capture to land on stderr, not the Rich/CommandLogger stdout channel at all) every time it retains a structural diagnostic -- a second, independent diagnostic channel (raw Python logging) alongside the structured ValidationResult the Structure check surfaces on stdout. apm-go's structural-error collection (models.go's parseManifestPlugins) has no equivalent second channel; the SAME diagnostic is already fully and correctly reported once, on stdout, via the Structure check itself. Replicating a redundant, framework-specific logging side-channel was judged out of this ticket's scope (the Structure check itself, not a second copy of its own diagnostic). `tree`'s home/.apm/marketplaces.json diff is the same ticket-05 registry-serialization gap as validate-checkrefs-off/on, deliberately not waived here either.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/11-validate-structure-check.md"
   }
 ]
