@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -352,11 +354,36 @@ func TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen(t *tes
 		t.Skip("needs sh")
 	}
 	bin := t.TempDir()
-	script := "#!/bin/sh\n(sleep 30) &\nsleep 30\n"
+	// Both sleeps are explicitly backgrounded (not tail-call-optimized into
+	// the shell's own PID by some /bin/sh implementations) and the script
+	// itself just waits on them, so ctx cancellation killing the shell
+	// process orphans BOTH -- reparented to init, still holding the
+	// inherited stdout/stderr pipe open, which is exactly the defect
+	// cmd.WaitDelay (execGit) has to survive. pidFile records both
+	// children's PIDs so the test can reap them instead of leaking them
+	// (ticket 08 eval attempt 2, finding 3).
+	pidFile := filepath.Join(bin, "children.pid")
+	script := fmt.Sprintf("#!/bin/sh\nsleep 30 &\necho $! >> '%s'\nsleep 30 &\necho $! >> '%s'\nwait\n", pidFile, pidFile)
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	t.Cleanup(func() {
+		data, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		for _, field := range strings.Fields(string(data)) {
+			pid, err := strconv.Atoi(field)
+			if err != nil {
+				continue
+			}
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Kill()
+			}
+		}
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()

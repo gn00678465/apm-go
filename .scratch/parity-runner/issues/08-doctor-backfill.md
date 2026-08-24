@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — runner diff/gate; 03 — Oracle pin preflight.
 
-**Status:** done (2026-08-24)
+**Status:** attempt-2 (2026-08-24) — `.review/eval-ticket-08.md` FAILed attempt 1 on 4 findings (fail-closed gaps in `forbid_substrings`, an env-delta token leak into evidence, orphan test processes, auth-sample/`.review`-delta provenance); all 4 resolved below, product-parity fixes and the 18-case waiver evidence from attempt 1 were already accepted and are unchanged.
 
 **Oracle:** `commands/doctor.py`, `commands/marketplace/doctor.py:103-329`, `marketplace/git_stderr.py`. Spec section "doctor" (earlier spec `.review/spec-plugin-init-format-and-doctor.md` stories 15–31). Evaluator guardrails: `.review/ticket-review.md` §F "06A".
 
@@ -40,8 +40,120 @@
 - [x] `diff.jsonl` clean (waived) for every `doctor-*` case. Full-corpus run against the pinned Oracle (real subprocess, no mocks), before → after this ticket's fixes: 29/48 → 27/48 unwaived overall, with the delta being exactly the two apm-go bugs this ticket found and fixed (`doctor-git-missing`'s `error_body` diff, `doctor-network-timeout`'s `exit_code`/`stdout`/`error_body` diff from the `execGit` hang). All 18 `doctor-*` cases (2 pre-existing + 16 new) show `waived: true`; zero `doctor-*` cases are unwaived. The remaining 27 unwaived cases are pre-existing, non-doctor gaps (search-*/pack-*/validate-*/browse-*/list-empty/registry-explicit-config-dir) — confirmed identical before and after this ticket's changes (diffed the two runs' unwaived-id sets), i.e. genuinely out of this ticket's scope, not a regression introduced here. Waivers beyond the two pre-approved categories (binary-name-substitution residual; the three out-of-scope informational checks, `stdout` only, taxonomy `F01`, citing "spec Out of Scope") were needed and added, each field-precise with its own cited reason: `doctor-git-missing` (`F08`, the GitPython-crash Oracle bug), and a wording-divergence waiver on the two malformed-config cases plus the structural duplicate-name-detection-order waiver on `doctor-config-duplicate-names` (both `F01`, independent hand-rolled validators producing different-but-equally-correct text/ordering — see investigation notes).
 - [x] The earlier manual reports (`.review/eval-report-plugin-init-doctor*.md`) are annotated at the top with "superseded by runner evidence <out>/diff.jsonl @ <commit>".
 
+## Attempt 2 (`.review/eval-ticket-08.md` FAIL — 4 blocking findings)
+
+Attempt 1's product-parity fixes and 18-case waiver evidence were accepted
+unchanged; only the findings below required work.
+
+1. **`checkForbiddenSubstrings` was not fail-closed** (`tools/parity/runner.go`).
+   An empty `forbid_substrings` entry `continue`d past itself instead of
+   erroring (silently disabling the gate for that entry), and an unreadable
+   tree "file" entry (`os.ReadFile` error) also `continue`d instead of
+   failing — exactly the case where the gate matters most, since an
+   unscannable file is indistinguishable from one hiding a leak. Both now
+   return a contextual error. Regression tests added verbatim from the
+   evaluator's own reproducer (`TestCheckForbiddenSubstrings_
+   UnreadableTreeFileFailsClosed`) plus the empty-entry case
+   (`TestCheckForbiddenSubstrings_EmptySubstringIsRejected`).
+2. **The token-non-leak claim never covered the runner's own written
+   evidence.** `checkForbiddenSubstrings` scans stdout/stderr/fs — what the
+   *product* wrote — but `env_delta` (what the *case* itself configured,
+   e.g. a fixture `GITHUB_TOKEN` literal) was written into every side's
+   `record.json`/`*.jsonl` unconditionally, regardless of whether the scan
+   passed. Fixed with a new `redactEnvDelta` (`runner.go`) with two layers:
+   (a) any env value under a sensitive-*looking key* (`TOKEN`/`SECRET`/
+   `PASSWORD`/`CREDENTIAL`, case-insensitive substring match) is always
+   redacted, regardless of the case's own `ForbidSubstrings`; (b) any value
+   CONTAINING one of the case's own `ForbidSubstrings` entries is also
+   redacted, as defense-in-depth for a secret under a non-obvious key name.
+   Layer (a) is the one that actually matters for "the whole captured
+   corpus": nearly every `doctor-*` fixture sets a fixed `GITHUB_TOKEN`
+   literal purely to skip the Oracle's `gh auth token` fallback (per their
+   own `waivers.json` entries) and does NOT declare `ForbidSubstrings` —
+   only `doctor-token-present` does, since it is the one case testing the
+   non-leak property itself. An attempt-2-of-attempt-2 pass caught this:
+   the first fix only redacted for cases that opted in via
+   `ForbidSubstrings`, so a fresh evidence run still showed the literal in
+   ~15 other cases' `record.json` before layer (a) was added. `HOME`/
+   `APM_CONFIG_DIR` (which `diff.go`'s `sandboxPathsFromEnvDelta` and
+   several tests read directly out of `EnvDelta`) are never touched by
+   either layer. `TestRunCaseSide_ForbidSubstrings_RedactsEnvDeltaInWrittenRecord`
+   and `TestRunCaseSide_GithubTokenRedactedInRecordEvenWithoutForbidSubstrings`
+   both prove the literal is absent from the actual bytes written to disk
+   (with and without `ForbidSubstrings` declared), not just the in-memory
+   `Record`.
+3. **The `WaitDelay` regression test leaked two orphan `sleep 30`
+   processes.** `TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen`'s
+   fixture now backgrounds both sleeps explicitly (`sleep 30 & echo $! >>
+   pidFile`, twice, then `wait`) instead of relying on shell tail-call
+   optimization for one of them, and the test's own `t.Cleanup` reads
+   `pidFile` and `os.FindProcess(pid).Kill()`s every PID it names —
+   portable (no `syscall.Kill`/process-group assumptions), so it still
+   compiles on non-Unix. Verified with the evaluator's own reproducer
+   (`ps -eo pid=,ppid=,etimes=,args= | grep 'sleep 30'`, immediately after
+   a `-count=1` run and after the full `cmd/apm-go` `-race` suite): zero
+   matches either time.
+4. **Auth-fail stderr and the `.review` annotation delta were not
+   auditable.**
+   - a. A bad credential against a *public* repo (`github.com/git/git.git`,
+     the URL doctor's network check actually calls) succeeds anonymously —
+     GitHub never inspects it, so that is not a valid way to reproduce an
+     auth failure, and the fixture's sample had no checked-in provenance.
+     Re-captured live with synthetic (never-real) credentials against a
+     nonexistent, fixture-namespaced repo path — GitHub cannot disclose
+     private-vs-nonexistent to a misauthenticated caller, so it returns the
+     same generic auth-challenge either way. The exact command, date, git
+     version, full output, and exit code are checked in at
+     `tools/parity/cases/doctor-network-auth-fail/AUTH-CAPTURE.md`; the
+     fixture's `auth-fail` stderr text is that capture's two lines verbatim
+     (only the repo URL generalized to the one doctor's own network check
+     actually invokes).
+   - b. `.review/*` is gitignored, so the "only a top-level annotation was
+     added" claim for the 3 superseded manual reports couldn't be verified
+     from the commit. Chosen resolution (of the two the evaluator offered):
+     checked-in before-images, since a reviewer can then directly diff a
+     tracked file against the live gitignored one rather than trusting a
+     hash in prose. The exact pre-annotation content of all 3 reports is
+     now at `.scratch/parity-runner/issues/08-review-report-before-images/
+     *.md.before` (reconstructed byte-for-byte from this session's own edit
+     history, since the Edit tool's `old_string`/`new_string` fully
+     determines the diff — verified by re-removing the known 2 inserted
+     lines from the current `.review` file and confirming it matches the
+     `.before` copy exactly). SHA256, before → after:
+     - `eval-report-plugin-init-doctor.md`:
+       `834539639fd9519ed589dcb1b97b1d2ccb9f1b01012c9bd39efa3763c9b0e7d5` →
+       `13799582d97cb054a1d52d2af5270b28396a0ffe26ab65438fd6127eb962b660`
+     - `eval-report-plugin-init-doctor-round2.md`:
+       `0f5a6efae437c9cf5010177c4f701f6c78e2fc41ec798bff52032d7a6560641a` →
+       `1bfea6f436a04651fbec0a9c4ed5a43148f9da9d6b3ae2da980f866177093da6`
+     - `eval-report-plugin-init-doctor-round3.md`:
+       `0ade4b2bc05b7e1d1e8fcc176e1945ba1264ae6e423c78ee81c24e044920b143` →
+       `f56b9491d83ef55f98313199edd87db4cf8e7d5c420e0ace4c762ac5a20b51ef`
+     ("before" = the checked-in `.before` copy; "after" = the live
+     gitignored `.review` file. Reproduce with `sha256sum
+     .scratch/parity-runner/issues/08-review-report-before-images/*.before
+     .review/eval-report-plugin-init-doctor*.md`.)
+
+**Note on prior evidence:** the `/tmp/ticket08-evidence-6365fe5-clean` corpus
+the evaluator captured for attempt 1, this session's own earlier
+`/tmp/.../parity-run-full{,2}` corpora, AND this session's own first
+attempt at the finding-2 fix's fresh evidence run (`ForbidSubstrings`-only
+redaction, before layer (a) above was added) all contain the literal
+`GITHUB_TOKEN` fixture value in one or more `record.json` files — none of
+these predate-or-partial corpora are current evidence. The fresh
+full-corpus run below is the first capture with both redaction layers in
+place, verified with a repo-wide `grep -rl` for the literal across the
+entire output directory (not just `doctor-token-present`) returning
+nothing.
+
 ## Files touched
 - `cmd/apm-go/exitcode.go` (+`withSilentExitCode`/`isSilentExit`), `cmd/apm-go/main.go` (silent-exit check), `cmd/apm-go/doctor.go` (silent exit on critical failure; 120-char truncation on the mutually-exclusive-config message; `execGit`'s `WaitDelay`), `cmd/apm-go/exitcode_test.go` (new), `cmd/apm-go/doctor_test.go` (+4 tests).
 - `tools/parity/case.go` (`PathExclusive`, `TimeoutS`, `ForbidSubstrings`), `tools/parity/runner.go` (`path_exclusive` PATH handling, `checkForbiddenSubstrings`), `tools/parity/main.go` (`timeout_s` wiring in `runCaseAllSides`), `tools/parity/case_test.go`, `tools/parity/runner_test.go`, `tools/parity/main_test.go` (+tests; `TestRealWaiversJSON_ValidatesAgainstPin`'s `wantIDs` extended).
 - `tools/parity/cases/doctor-{git-missing,git-nonzero,network-dns-fail,network-auth-fail,network-not-found,network-tls-fail,network-timeout,token-present,token-absent,config-none,config-apmyml-valid,config-legacy,config-both,config-apmyml-malformed,config-legacy-malformed,config-duplicate-names}/` (new).
 - `tools/parity/waivers.json` (+16 entries).
+
+### Attempt 2 additions
+- `tools/parity/runner.go` (`checkForbiddenSubstrings` fail-closed on empty entries/unreadable files; new `redactEnvDelta`), `tools/parity/runner_test.go` (+5 tests).
+- `cmd/apm-go/doctor_test.go` (`TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen` now publishes and reaps child PIDs).
+- `tools/parity/cases/doctor-network-auth-fail/AUTH-CAPTURE.md` (new: live auth-failure capture transcript).
+- `.scratch/parity-runner/issues/08-review-report-before-images/*.md.before` (new: tracked pre-annotation copies of the 3 gitignored `.review` reports).

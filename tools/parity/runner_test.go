@@ -378,6 +378,171 @@ func TestCheckForbiddenSubstrings_CleanRunPasses(t *testing.T) {
 	}
 }
 
+// TestCheckForbiddenSubstrings_UnreadableTreeFileFailsClosed is ticket 08
+// eval attempt 2's finding 1 reproducer, verbatim: a "file" tree entry
+// naming a path that does not actually exist (or is otherwise unreadable)
+// used to `continue` past it silently, treating an unscannable file as if
+// it had been scanned clean. The gate must fail closed instead -- an
+// unscannable file is exactly the case where a leak could be hiding.
+func TestCheckForbiddenSubstrings_UnreadableTreeFileFailsClosed(t *testing.T) {
+	err := checkForbiddenSubstrings(
+		Case{ID: "unreadable", ForbidSubstrings: []string{"SECRET"}},
+		"target", nil, nil,
+		[]TreeEntry{{Path: "cwd/missing.txt", Kind: "file"}},
+		map[string]string{"cwd": t.TempDir()},
+	)
+	if err == nil {
+		t.Fatal("checkForbiddenSubstrings: expected a contextual error for an unreadable tree file, got nil (fail-open regression)")
+	}
+	if !strings.Contains(err.Error(), "missing.txt") {
+		t.Errorf("error = %q, want it to name the unreadable path", err.Error())
+	}
+}
+
+// TestCheckForbiddenSubstrings_EmptySubstringIsRejected is ticket 08 eval
+// attempt 2's finding 1, second half: an empty forbid_substrings entry
+// used to `continue` past itself, silently disabling the whole gate for
+// that entry instead of erroring on what is almost certainly a
+// misconfigured case.json.
+func TestCheckForbiddenSubstrings_EmptySubstringIsRejected(t *testing.T) {
+	err := checkForbiddenSubstrings(
+		Case{ID: "empty-substring", ForbidSubstrings: []string{""}},
+		"target", []byte("anything"), nil, nil, nil,
+	)
+	if err == nil {
+		t.Fatal("checkForbiddenSubstrings: expected an error for an empty forbid_substrings entry, got nil")
+	}
+}
+
+// TestRunCaseSide_ForbidSubstrings_RedactsEnvDeltaInWrittenRecord is ticket
+// 08 eval attempt 2's finding 2 reproducer: checkForbiddenSubstrings only
+// ever scanned stdout/stderr/fs, never env_delta, so a case's own secret
+// literal (e.g. a fixture GITHUB_TOKEN) was written into record.json
+// unconditionally -- the runner's non-leak claim never actually covered
+// its own captured evidence. redactEnvDelta must replace it before
+// writeRecordJSON ever sees it.
+func TestRunCaseSide_ForbidSubstrings_RedactsEnvDeltaInWrittenRecord(t *testing.T) {
+	const secret = "ghp-parity-fixture-DO-NOT-LEAK-0123456789"
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `echo "all clear"`)
+
+	c := Case{
+		ID:               "redact-env",
+		Argv:             []string{},
+		Env:              map[string]string{"GITHUB_TOKEN": secret},
+		ForbidSubstrings: []string{secret},
+	}
+
+	outDir := t.TempDir()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+	if rec.EnvDelta["GITHUB_TOKEN"] == secret {
+		t.Fatalf("EnvDelta[GITHUB_TOKEN] = %q, want it redacted (in-memory Record)", rec.EnvDelta["GITHUB_TOKEN"])
+	}
+	if strings.Contains(rec.EnvDelta["GITHUB_TOKEN"], secret) {
+		t.Fatalf("EnvDelta[GITHUB_TOKEN] = %q, still contains the secret", rec.EnvDelta["GITHUB_TOKEN"])
+	}
+
+	recordPath := filepath.Join(outDir, "target", "redact-env", "record.json")
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", recordPath, err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("record.json at %s contains the literal secret:\n%s", recordPath, data)
+	}
+	if !strings.Contains(string(data), "REDACTED") {
+		t.Errorf("record.json = %s, want a REDACTED placeholder for GITHUB_TOKEN", data)
+	}
+}
+
+// TestRedactEnvDelta_NoOpWhenNoForbiddenSubstrings proves every case
+// without a secret to protect keeps its exact env_delta -- HOME,
+// APM_CONFIG_DIR, etc. must never be touched by a case that sets no
+// ForbidSubstrings, since diff.go's sandboxPathsFromEnvDelta and several
+// tests read those values directly out of the record.
+func TestRedactEnvDelta_NoOpWhenNoForbiddenSubstrings(t *testing.T) {
+	env := map[string]string{"HOME": "/sandbox/home", "PATH": "/usr/bin"}
+	got := redactEnvDelta(env, nil)
+	if got["HOME"] != "/sandbox/home" || got["PATH"] != "/usr/bin" {
+		t.Errorf("redactEnvDelta(env, nil) = %v, want env unchanged", got)
+	}
+}
+
+// TestRedactEnvDelta_RedactsOnlyMatchingValues proves a value that happens
+// to CONTAIN a forbidden substring under a non-sensitive-looking key is
+// still replaced (the value-based path, independent of key name), while
+// every unrelated value passes through untouched.
+func TestRedactEnvDelta_RedactsOnlyMatchingValues(t *testing.T) {
+	env := map[string]string{
+		"WEIRDLY_NAMED_VAR": "ghp-secret-abc",
+		"HOME":              "/sandbox/home",
+	}
+	got := redactEnvDelta(env, []string{"ghp-secret-abc"})
+	if got["WEIRDLY_NAMED_VAR"] != "REDACTED" {
+		t.Errorf("WEIRDLY_NAMED_VAR = %q, want REDACTED", got["WEIRDLY_NAMED_VAR"])
+	}
+	if got["HOME"] != "/sandbox/home" {
+		t.Errorf("HOME = %q, want unchanged", got["HOME"])
+	}
+}
+
+// TestRedactEnvDelta_RedactsSensitiveKeyEvenWithoutForbidSubstrings proves
+// the "whole captured corpus" fix directly: a GITHUB_TOKEN-shaped key gets
+// redacted unconditionally, with no forbidden substrings declared at all --
+// this is what actually covers every doctor-* case that sets GITHUB_TOKEN
+// purely to skip the Oracle's `gh auth token` fallback (per their own
+// waivers.json entries), not just doctor-token-present (the one case that
+// ALSO declares ForbidSubstrings to test the non-leak property itself).
+func TestRedactEnvDelta_RedactsSensitiveKeyEvenWithoutForbidSubstrings(t *testing.T) {
+	env := map[string]string{"GITHUB_TOKEN": "ghp-some-fixture-value", "HOME": "/sandbox/home"}
+	got := redactEnvDelta(env, nil)
+	if got["GITHUB_TOKEN"] != "REDACTED" {
+		t.Errorf("GITHUB_TOKEN = %q, want REDACTED even with no forbid_substrings declared", got["GITHUB_TOKEN"])
+	}
+	if got["HOME"] != "/sandbox/home" {
+		t.Errorf("HOME = %q, want unchanged", got["HOME"])
+	}
+}
+
+// TestRunCaseSide_GithubTokenRedactedInRecordEvenWithoutForbidSubstrings is
+// the end-to-end reproduction of the actual attempt-2 gap: a case that sets
+// GITHUB_TOKEN but does NOT declare ForbidSubstrings (as nearly every
+// doctor-* fixture in this corpus does, since ForbidSubstrings is only
+// ever declared by doctor-token-present) must still never write the
+// literal into its written record.json.
+func TestRunCaseSide_GithubTokenRedactedInRecordEvenWithoutForbidSubstrings(t *testing.T) {
+	const secret = "ghp-parity-fixture-DO-NOT-LEAK-0123456789"
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `echo "all clear"`)
+
+	c := Case{
+		ID:   "no-forbid-declared",
+		Argv: []string{},
+		Env:  map[string]string{"GITHUB_TOKEN": secret},
+	}
+
+	outDir := t.TempDir()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+	if rec.EnvDelta["GITHUB_TOKEN"] == secret {
+		t.Fatalf("EnvDelta[GITHUB_TOKEN] = %q, want it redacted even without ForbidSubstrings declared", rec.EnvDelta["GITHUB_TOKEN"])
+	}
+
+	recordPath := filepath.Join(outDir, "target", "no-forbid-declared", "record.json")
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", recordPath, err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("record.json at %s contains the literal secret despite no ForbidSubstrings declared:\n%s", recordPath, data)
+	}
+}
+
 // TestRunCaseSide_PathPrependShadowsRealBinary proves case.path_prepend
 // (ticket 08's fault-injection mechanism, added here per ticket 10 attempt
 // 2 for doctor-healthy) puts its case-relative directory at the FRONT of

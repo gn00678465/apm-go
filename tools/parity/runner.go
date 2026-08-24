@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -65,7 +66,7 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 		return Record{}, err
 	}
 
-	rec := NewRecord(c.ID, argv, env, res.ExitCode, res.TimedOut, res.Stdout, res.Stderr, tree)
+	rec := NewRecord(c.ID, argv, redactEnvDelta(env, c.ForbidSubstrings), res.ExitCode, res.TimedOut, res.Stdout, res.Stderr, tree)
 
 	caseOutDir := filepath.Join(outDir, side, c.ID)
 	if err := writeRecordJSON(caseOutDir, rec); err != nil {
@@ -88,13 +89,23 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 // since the tree's "file" entries are read from roots (still-live sandbox
 // directories), not from copied evidence. A no-op when the case sets no
 // ForbidSubstrings.
+//
+// Both failure paths below are deliberately fail-closed (ticket 08 eval
+// attempt 2, finding 1): an empty forbid_substrings entry would otherwise
+// match nothing (bytes.Contains(x, []byte("")) is always true, but the old
+// code's `continue` on it silently disabled the check instead of either
+// matching everything or erroring), and an unreadable tree "file" entry
+// used to `continue` past a file the scan literally could not inspect --
+// exactly the case where the gate matters most, since an unscannable file
+// is indistinguishable from one hiding the very leak this check exists to
+// catch.
 func checkForbiddenSubstrings(c Case, side string, stdout, stderr []byte, tree []TreeEntry, roots map[string]string) error {
 	if len(c.ForbidSubstrings) == 0 {
 		return nil
 	}
 	for _, sub := range c.ForbidSubstrings {
 		if sub == "" {
-			continue
+			return fmt.Errorf("case %s (%s): forbid_substrings contains an empty entry -- refusing to run a token-leak scan that would silently match nothing", c.ID, side)
 		}
 		needle := []byte(sub)
 		if bytes.Contains(stdout, needle) {
@@ -117,7 +128,7 @@ func checkForbiddenSubstrings(c Case, side string, stdout, stderr []byte, tree [
 			}
 			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 			if err != nil {
-				continue
+				return fmt.Errorf("case %s (%s): reading fs file %s for forbidden-substring scan: %w", c.ID, side, e.Path, err)
 			}
 			if bytes.Contains(data, needle) {
 				return fmt.Errorf("case %s (%s): forbidden substring %q found in fs file %s", c.ID, side, sub, e.Path)
@@ -125,6 +136,60 @@ func checkForbiddenSubstrings(c Case, side string, stdout, stderr []byte, tree [
 		}
 	}
 	return nil
+}
+
+// sensitiveEnvKeySubstrings names env var KEYS the runner always redacts
+// from evidence, regardless of whether the running case bothers to declare
+// ForbidSubstrings -- ticket 08 eval attempt 2, finding 2's "the claim
+// [must cover] the whole captured corpus": nearly every doctor-* fixture
+// sets a fixed GITHUB_TOKEN literal in case.env purely to skip the
+// Oracle's `gh auth token` fallback (documented on their own waivers.json
+// entries), whether or not that particular case is the one testing the
+// non-leak property itself (only doctor-token-present declares
+// ForbidSubstrings). Redacting by key name, unconditionally, is what
+// actually makes the claim true for every case, not just the one that
+// opted in.
+var sensitiveEnvKeySubstrings = []string{"TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"}
+
+func isSensitiveEnvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, s := range sensitiveEnvKeySubstrings {
+		if strings.Contains(upper, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactEnvDelta returns a copy of env with (a) any value under a
+// sensitive-looking key (see sensitiveEnvKeySubstrings) and (b) any value
+// that CONTAINS one of forbidden, replaced by a fixed placeholder --
+// ticket 08 eval attempt 2, finding 2: checkForbiddenSubstrings only scans
+// stdout/stderr/fs (what the PRODUCT wrote), never env_delta (what the
+// CASE itself configured), so a fixture secret was written into every
+// side's record.json/*.jsonl unconditionally regardless of whether the
+// scan passed -- the runner's own non-leak claim never actually covered
+// its own captured evidence. Every other value (e.g. HOME/APM_CONFIG_DIR,
+// which diff.go's sandboxPathsFromEnvDelta and several tests read directly
+// out of EnvDelta) passes through untouched.
+func redactEnvDelta(env map[string]string, forbidden []string) map[string]string {
+	redacted := make(map[string]string, len(env))
+	for k, v := range env {
+		out := v
+		switch {
+		case isSensitiveEnvKey(k):
+			out = "REDACTED"
+		default:
+			for _, sub := range forbidden {
+				if sub != "" && strings.Contains(out, sub) {
+					out = "REDACTED"
+					break
+				}
+			}
+		}
+		redacted[k] = out
+	}
+	return redacted
 }
 
 // postRunTree walks cwd and HOME after the run, merges them with the
