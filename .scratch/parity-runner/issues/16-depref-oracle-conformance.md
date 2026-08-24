@@ -14,3 +14,9 @@ Attempts 2-8 landed: per-element Structure diagnostics; coordinate grammar via t
 
 - New divergence found (by anyone) => add a row to the generator, regenerate against `tools/parity/oracle.pin`, then either fix apm-go to match or record a documented `known_gap` (apm-go-side security hardening only, both directions behaviorally locked). The conformance tests keep every settled row from regressing.
 - Known open areas never probed exhaustively: ADO org/project/repo URL shapes, artifactory prefixes, GitLab nested groups (known_gap today), IPv6 hosts, SCP corner forms, registry-routed entries, alias/fragment interplay, virtual-path extension rules.
+
+## Row backlog from eval-ticket-11 Re-scoped ruling (2026-08-24, verified real by orchestrator probe)
+
+- `ssh://host.io/owner/repo@alias` (+ SCP equivalent): Oracle accepts path-level alias; apm-go repo-segment parser rejects.
+- `ssh://alice:p%25@host.io/owner/repo`: Oracle's raw percent-userinfo safeguard rejects after first decode; apm-go accepts after password discard.
+- SSH host charset: `ssh://host!bang/...`, `ssh://host_name/...`, decoded `ssh://host%20name/...` — Oracle's SSH path accepts; apm-go hostCharRe rejects (orchestrator verified host_name: Oracle exit 0 vs apm-go exit 1).
