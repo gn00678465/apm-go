@@ -185,6 +185,40 @@ func readSoleJSONLRecord(t *testing.T, path string) jsonlRecord {
 	return rec
 }
 
+// TestRunCaseAllSides_TimeoutSOverridesConfigTimeout proves Case.TimeoutS
+// (ticket 08) is what actually reaches runCaseSide via runCaseAllSides,
+// not just cfg.Timeout: cfg.Timeout here is generously long (30s), so a
+// stub sleeping 5s only gets killed early if the case's own timeout_s (1s)
+// is the one actually applied.
+func TestRunCaseAllSides_TimeoutSOverridesConfigTimeout(t *testing.T) {
+	scriptDir := t.TempDir()
+	oracle := writeStubScript(t, scriptDir, "oracle.sh", `sleep 5; echo "should not print"`)
+	target := writeStubScript(t, scriptDir, "target.sh", `sleep 5; echo "should not print"`)
+
+	c := Case{ID: "timeout-s-wiring", Argv: []string{}, TimeoutS: 1}
+
+	outDir := t.TempDir()
+	cfg := Config{
+		OutDir:    outDir,
+		OracleCmd: []string{oracle},
+		TargetBin: []string{target},
+		Timeout:   30 * time.Second,
+	}
+
+	start := time.Now()
+	pair, err := runCaseAllSides(cfg, c)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("runCaseAllSides: %v", err)
+	}
+	if !pair.Oracle.TimedOut || !pair.Target.TimedOut {
+		t.Fatalf("TimedOut = oracle:%v target:%v, want both true", pair.Oracle.TimedOut, pair.Target.TimedOut)
+	}
+	if elapsed >= 20*time.Second {
+		t.Errorf("elapsed = %v, want well under cfg.Timeout (case's own timeout_s=1 must have applied)", elapsed)
+	}
+}
+
 func TestResolveCmd_DefaultsAndEnvOverride(t *testing.T) {
 	os.Unsetenv("APM_PARITY_TEST_CMD")
 	got := resolveCmd("APM_PARITY_TEST_CMD", "./bin/apm-go")
@@ -466,7 +500,11 @@ func TestRealCases_FixtureDirLoads(t *testing.T) {
 // diff legitimate -- box-drawing/padding only, same shape as
 // doctor-healthy's) search-basic-hit's `stdout`-only entry (its `tree` diff,
 // ticket 05's open file:// vs bare-path registry-serialization gap, stays
-// unwaived on purpose) -- no other case ever earns a bulk/wildcard waiver
+// unwaived on purpose), plus (ticket 08: fault-injection evidence backfill
+// for doctor -- git-missing/nonzero, the four network-failure-kind cases,
+// network-timeout, token-present/absent, and the seven marketplace-config
+// cases) each of that ticket's own doctor-* waivers, every one field-precise
+// per its own reason -- no other case ever earns a bulk/wildcard waiver
 // here.
 func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	pin, err := pinnedOracleCommit()
@@ -495,7 +533,15 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	for _, w := range waivers {
 		gotIDs = append(gotIDs, w.ID)
 	}
-	wantIDs := []string{"version", "doctor-healthy", "doctor-help", "pack-refuse-agent-plugin", "pack-refuse-apm", "registry-explicit-config-dir", "search-basic-hit"}
+	wantIDs := []string{
+		"version", "doctor-healthy", "doctor-help", "pack-refuse-agent-plugin", "pack-refuse-apm",
+		"registry-explicit-config-dir", "search-basic-hit",
+		"doctor-git-missing", "doctor-git-nonzero",
+		"doctor-network-dns-fail", "doctor-network-auth-fail", "doctor-network-not-found", "doctor-network-tls-fail", "doctor-network-timeout",
+		"doctor-token-present", "doctor-token-absent",
+		"doctor-config-none", "doctor-config-apmyml-valid", "doctor-config-legacy", "doctor-config-both",
+		"doctor-config-apmyml-malformed", "doctor-config-legacy-malformed", "doctor-config-duplicate-names",
+	}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)
 	}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestRunCaseSide_RunsSetupArgvBeforeMainArgv proves setup_argv steps run,
@@ -228,6 +229,152 @@ func TestRunCaseSide_LoadCasesRelativeDir_PathPrependStillResolves(t *testing.T)
 	}
 	if rec.Stdout == nil || !strings.Contains(*rec.Stdout, "git version 9.9.9 (fixture)") {
 		t.Errorf("stdout = %v, want the fixture git's output (a relative -cases flag must not break path_prepend)", rec.Stdout)
+	}
+}
+
+// TestRunCaseSide_PathExclusive_HidesRealBinary proves case.path_exclusive
+// (ticket 08's doctor-git-missing mechanism) replaces PATH entirely with
+// PathPrepend's directory, instead of merely leading it: a `git` reachable
+// via the runner's own inherited PATH must NOT be found by the subprocess
+// when path_exclusive is set and the fixture directory itself has no `git`.
+func TestRunCaseSide_PathExclusive_HidesRealBinary(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `
+if command -v git >/dev/null 2>&1; then
+  echo "git found: $(command -v git)"
+else
+  echo "git not found"
+fi
+`)
+
+	// A real `git` reachable via PATH, standing in for the runner host's
+	// actual git -- path_exclusive must hide this even though it would
+	// otherwise be found (a plain path_prepend does not: see
+	// TestRunCaseSide_PathPrependShadowsRealBinary above, which relies on
+	// exactly the opposite behaviour).
+	realGitDir := t.TempDir()
+	writeStubScript(t, realGitDir, "git", `echo "git version 1.0.0 (real)"`)
+
+	caseDir := t.TempDir()
+	emptyPathDir := filepath.Join(caseDir, "path")
+	if err := os.MkdirAll(emptyPathDir, 0o755); err != nil {
+		t.Fatalf("mkdir empty path fixture dir: %v", err)
+	}
+
+	c := Case{ID: "path-exclusive", Argv: []string{}, PathPrepend: "path", PathExclusive: true, Dir: caseDir}
+
+	t.Setenv("PATH", realGitDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	outDir := t.TempDir()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+	if rec.Stdout == nil || strings.TrimSpace(*rec.Stdout) != "git not found" {
+		t.Errorf("stdout = %v, want \"git not found\" (path_exclusive must hide every other PATH entry)", rec.Stdout)
+	}
+}
+
+// TestRunCaseSide_TimeoutS_OverridesPerCase proves Case.TimeoutS (ticket
+// 08) is honored as the per-run kill-timeout passed to runCaseSide's
+// caller, independent of the default the caller would otherwise use --
+// exercised here by passing a short duration derived from TimeoutS
+// directly, the same way main.go's runCaseAllSides computes it.
+func TestRunCaseSide_TimeoutS_OverridesPerCase(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `sleep 5; echo "should not print"`)
+
+	c := Case{ID: "timeout-s", Argv: []string{}, TimeoutS: 1}
+
+	outDir := t.TempDir()
+	timeout := time.Duration(c.TimeoutS) * time.Second
+	start := time.Now()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", timeout)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+	if !rec.TimedOut {
+		t.Fatalf("TimedOut = false, want true (a 1s timeout must kill a 5s sleep)")
+	}
+	if elapsed >= 4*time.Second {
+		t.Errorf("elapsed = %v, want well under the stub's 5s sleep (TimeoutS=1 must have applied)", elapsed)
+	}
+}
+
+// TestCheckForbiddenSubstrings_DetectsInStdout proves a forbidden
+// substring appearing in stdout fails the case closed with a clear error,
+// even though the case's own exit code and everything else about the run
+// was otherwise unremarkable.
+func TestCheckForbiddenSubstrings_DetectsInStdout(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `echo "token=SECRET-VALUE-123"`)
+
+	c := Case{ID: "leak-stdout", Argv: []string{}, ForbidSubstrings: []string{"SECRET-VALUE-123"}}
+
+	outDir := t.TempDir()
+	_, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err == nil {
+		t.Fatal("runCaseSide: expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "SECRET-VALUE-123") || !strings.Contains(err.Error(), "stdout") {
+		t.Errorf("error = %q, want it to name the substring and stdout", err.Error())
+	}
+}
+
+// TestCheckForbiddenSubstrings_DetectsInStderr mirrors the stdout case for
+// stderr -- both streams are raw-output, either can leak a secret.
+func TestCheckForbiddenSubstrings_DetectsInStderr(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `echo "token=SECRET-VALUE-123" >&2`)
+
+	c := Case{ID: "leak-stderr", Argv: []string{}, ForbidSubstrings: []string{"SECRET-VALUE-123"}}
+
+	outDir := t.TempDir()
+	_, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err == nil {
+		t.Fatal("runCaseSide: expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "SECRET-VALUE-123") || !strings.Contains(err.Error(), "stderr") {
+		t.Errorf("error = %q, want it to name the substring and stderr", err.Error())
+	}
+}
+
+// TestCheckForbiddenSubstrings_DetectsInFsFile proves the scan also covers
+// on-disk tree evidence (cwd/home), not just the two output streams --
+// ticket 08's "fs" in "NEITHER side's stdout/stderr/fs".
+func TestCheckForbiddenSubstrings_DetectsInFsFile(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `echo "SECRET-VALUE-123" > leaked.txt`)
+
+	c := Case{ID: "leak-fs", Argv: []string{}, ForbidSubstrings: []string{"SECRET-VALUE-123"}}
+
+	outDir := t.TempDir()
+	_, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err == nil {
+		t.Fatal("runCaseSide: expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "SECRET-VALUE-123") || !strings.Contains(err.Error(), "leaked.txt") {
+		t.Errorf("error = %q, want it to name the substring and the leaking fs path", err.Error())
+	}
+}
+
+// TestCheckForbiddenSubstrings_CleanRunPasses proves the gate does not
+// false-positive: a run whose output/fs never mentions the forbidden
+// substring must succeed normally.
+func TestCheckForbiddenSubstrings_CleanRunPasses(t *testing.T) {
+	scriptDir := t.TempDir()
+	stub := writeStubScript(t, scriptDir, "stub.sh", `echo "all clear"`)
+
+	c := Case{ID: "leak-none", Argv: []string{}, ForbidSubstrings: []string{"SECRET-VALUE-123"}}
+
+	outDir := t.TempDir()
+	rec, err := runCaseSide([]string{stub}, c, outDir, "target", defaultTimeout)
+	if err != nil {
+		t.Fatalf("runCaseSide: %v", err)
+	}
+	if rec.Stdout == nil || strings.TrimSpace(*rec.Stdout) != "all clear" {
+		t.Errorf("stdout = %v, want \"all clear\"", rec.Stdout)
 	}
 }
 

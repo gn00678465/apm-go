@@ -43,7 +43,9 @@ func main() {
 	root.AddCommand(searchCmd())
 
 	if err := root.Execute(); err != nil {
-		ux.Error(os.Stderr, "%s", err)
+		if !isSilentExit(err) {
+			ux.Error(os.Stderr, "%s", err)
+		}
 		os.Exit(exitCodeOf(err))
 	}
 }

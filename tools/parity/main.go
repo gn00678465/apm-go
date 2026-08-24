@@ -249,9 +249,18 @@ func runCaseAllSides(cfg Config, c Case) (CasePair, error) {
 		{"target", cfg.TargetBin},
 	}
 
+	// Case.TimeoutS (ticket 08) overrides the runner's default per-run
+	// timeout for a case that needs a longer outer backstop than usual
+	// (doctor-network-timeout: doctor's own internal timeout is 5s, so the
+	// outer kill-timeout must exceed that to let it fire first).
+	timeout := cfg.Timeout
+	if c.TimeoutS > 0 {
+		timeout = time.Duration(c.TimeoutS) * time.Second
+	}
+
 	pair := CasePair{Case: c}
 	for _, s := range sides {
-		rec, err := runCaseSide(s.bin, c, cfg.OutDir, s.name, cfg.Timeout)
+		rec, err := runCaseSide(s.bin, c, cfg.OutDir, s.name, timeout)
 		if err != nil {
 			return CasePair{}, err
 		}

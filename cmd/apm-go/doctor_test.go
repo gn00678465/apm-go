@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeGit scripts `git <args...>` by the first argument ("--version",
@@ -245,6 +246,51 @@ func TestDoctor_MarketplaceConfig_BothExist_Flagged_StillExit0(t *testing.T) {
 	}
 }
 
+// Ticket 08 investigation: the pinned Oracle's own CLI wrapper
+// (commands/doctor.py:26-30) does `sys.exit(exit_code)` with no extra
+// message on a critical-check failure -- run_doctor's table is the only
+// output. A plain withExitCode here would make main()'s root.Execute()
+// error branch print an extra "[x] critical environment check failed"
+// line the Oracle never has, on every failing doctor-* runner case. Only
+// main() (not this package's own doctorCmdWith-based test harness) prints
+// from a returned error, so this asserts the returned error itself
+// carries the silent signal main() checks.
+func TestDoctor_CriticalFailure_ReturnsSilentExitCode(t *testing.T) {
+	chdirTemp(t)
+	git := healthyGit()
+	git.version = gitResult{notFound: true}
+	git.lsRemote = gitResult{notFound: true}
+	deps := doctorDeps{runGit: git.run, getenv: func(string) string { return "" }}
+	err := runDoctor(deps, false)
+	if !isSilentExit(err) {
+		t.Fatalf("runDoctor's critical-failure error must be silent, got %v", err)
+	}
+	if exitCodeOf(err) != 1 {
+		t.Fatalf("exitCodeOf(err) = %d, want 1", exitCodeOf(err))
+	}
+}
+
+// doctor.py:227-229's outer `except MarketplaceYmlError as exc:
+// config_detail = str(exc)[:120]` truncates the mutually-exclusive-config
+// message to 120 chars -- distinct from the two inner 60-char truncations
+// just below it (TestDoctor_MalformedConfig_UpstreamPrefix_StillExit0).
+// apm-go used to print this message in full (ticket 08 investigation).
+func TestDoctor_MarketplaceConfig_BothExist_TruncatedTo120(t *testing.T) {
+	dir := chdirTemp(t)
+	os.WriteFile(filepath.Join(dir, "apm.yml"), []byte("name: m\nversion: 1.0.0\nmarketplace:\n  name: m\n  packages: []\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "marketplace.yml"), []byte("name: m\npackages: []\n"), 0o644)
+	cfgCheck, _ := checkMarketplaceConfig()
+	if cfgCheck.passed {
+		t.Fatal("mutually-exclusive config must not pass")
+	}
+	if len(cfgCheck.detail) != 120 {
+		t.Fatalf("detail length = %d, want 120 (got %q)", len(cfgCheck.detail), cfgCheck.detail)
+	}
+	if !strings.HasPrefix(cfgCheck.detail, "Both apm.yml (with a 'marketplace:' block) and marketplace.yml exist.") {
+		t.Errorf("got:\n%s", cfgCheck.detail)
+	}
+}
+
 func TestDoctor_Help_MatchesUpstream(t *testing.T) {
 	cmd := doctorCmd()
 	var sb strings.Builder
@@ -290,6 +336,41 @@ func TestDoctor_ExecGit_UsesSecureGitEnv(t *testing.T) {
 		if !strings.Contains(string(env), want+"\n") && !strings.Contains(string(env), want) {
 			t.Errorf("git env missing %s:\n%s", want, env)
 		}
+	}
+}
+
+// Ticket 08 investigation (doctor-network-timeout): a `git` that forks a
+// grandchild which outlives it (the fixture's `sleep`, run in the
+// background before the script's own last command) keeps the stdout/
+// stderr pipe open even after ctx cancellation kills the direct child --
+// without cmd.WaitDelay, cmd.Run() blocks until that orphaned grandchild
+// exits on its own, well past ctx's deadline, instead of returning once
+// ctx is done. Real git has no reason to do this; this only matters for a
+// fixture/mock git that hangs.
+func TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("needs sh")
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\n(sleep 30) &\nsleep 30\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	done := make(chan gitResult, 1)
+	go func() { done <- execGit(ctx, "ls-remote") }()
+
+	select {
+	case r := <-done:
+		if !r.timedOut {
+			t.Errorf("gitResult = %+v, want timedOut=true", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("execGit did not return within 5s of a 200ms ctx deadline -- an orphaned grandchild holding stdout/stderr open must not block Wait() forever (cmd.WaitDelay regression)")
 	}
 }
 

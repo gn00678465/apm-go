@@ -1,0 +1,91 @@
+#!/bin/sh
+# Deterministic fake `git` for ticket 08's fault-injection doctor-* cases,
+# selected by $FAKE_GIT_MODE (case.env). GitPython's own import-time probe
+# (git/cmd.py Git.refresh -> Git().version() -> bare `git version`, invoked
+# from git/__init__.py:296 before the Oracle's own CLI dispatch -- and
+# hence doctor.py -- ever runs) must always succeed, or the whole Oracle
+# CLI dies with an ImportError traceback instead of reaching doctor.py's
+# own subprocess-based checks (doctor.py:112-176) at all. Confirmed
+# empirically during ticket 08's investigation (see
+# .scratch/parity-runner/issues/08-doctor-backfill.md); the doctor-git-missing
+# case relies on exactly this crash as its own parity contract, for a git
+# genuinely absent from PATH. Every mode below answers that bare `version`
+# probe successfully and only fails the specific invocation doctor.go /
+# doctor.py actually check: `--version` for the git check, `ls-remote ...`
+# for the network check.
+case "$1" in
+  version)
+    echo "git version 2.45.0"
+    exit 0
+    ;;
+esac
+
+case "${FAKE_GIT_MODE:-ok}" in
+  nonzero)
+    case "$1" in
+      --version)
+        exit 1
+        ;;
+      *)
+        echo "fatal: fake git nonzero failure" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  hang)
+    case "$1" in
+      --version) echo "git version 2.45.0"; exit 0 ;;
+      ls-remote) sleep 600 ;;
+      *) exit 0 ;;
+    esac
+    ;;
+  dns-fail)
+    case "$1" in
+      --version) echo "git version 2.45.0"; exit 0 ;;
+      ls-remote)
+        echo "fatal: unable to access 'https://github.com/git/git.git/': Could not resolve host: this-host-definitely-does-not-exist-abc123xyz.invalid" >&2
+        exit 128
+        ;;
+      *) exit 0 ;;
+    esac
+    ;;
+  auth-fail)
+    case "$1" in
+      --version) echo "git version 2.45.0"; exit 0 ;;
+      ls-remote)
+        echo "remote: Invalid username or token. Password authentication is not supported for Git operations." >&2
+        echo "fatal: Authentication failed for 'https://github.com/git/git.git/'" >&2
+        exit 128
+        ;;
+      *) exit 0 ;;
+    esac
+    ;;
+  not-found)
+    case "$1" in
+      --version) echo "git version 2.45.0"; exit 0 ;;
+      ls-remote)
+        echo "remote: Repository not found." >&2
+        echo "fatal: repository 'https://github.com/git/git.git/' not found" >&2
+        exit 128
+        ;;
+      *) exit 0 ;;
+    esac
+    ;;
+  tls-fail)
+    case "$1" in
+      --version) echo "git version 2.45.0"; exit 0 ;;
+      ls-remote)
+        echo "fatal: unable to access 'https://github.com/git/git.git/': server certificate verification failed. CAfile: none CRLfile: none" >&2
+        exit 128
+        ;;
+      *) exit 0 ;;
+    esac
+    ;;
+  *)
+    case "$1" in
+      --version) echo "git version 2.45.0"; exit 0 ;;
+      ls-remote) printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\tHEAD\n'; exit 0 ;;
+      *) exit 0 ;;
+    esac
+    ;;
+esac

@@ -69,6 +69,52 @@ func TestLoadCases_ParsesManifestAndSortsByDirName(t *testing.T) {
 	}
 }
 
+// TestLoadCases_ParsesFaultInjectionFields covers ticket 08's three new
+// case.json fields: path_exclusive, timeout_s, forbid_substrings.
+func TestLoadCases_ParsesFaultInjectionFields(t *testing.T) {
+	casesDir := t.TempDir()
+	writeCase(t, casesDir, "fault-injection", `{
+		"id": "fault-injection",
+		"argv": ["doctor"],
+		"path_prepend": "path",
+		"path_exclusive": true,
+		"timeout_s": 8,
+		"forbid_substrings": ["ghp-fixture-token"]
+	}`)
+	writeCase(t, casesDir, "defaults", `{"id": "defaults", "argv": []}`)
+
+	cases, err := LoadCases(casesDir)
+	if err != nil {
+		t.Fatalf("LoadCases: %v", err)
+	}
+	byID := map[string]Case{}
+	for _, c := range cases {
+		byID[c.ID] = c
+	}
+
+	fi := byID["fault-injection"]
+	if !fi.PathExclusive {
+		t.Error("path_exclusive = false, want true")
+	}
+	if fi.TimeoutS != 8 {
+		t.Errorf("timeout_s = %d, want 8", fi.TimeoutS)
+	}
+	if len(fi.ForbidSubstrings) != 1 || fi.ForbidSubstrings[0] != "ghp-fixture-token" {
+		t.Errorf("forbid_substrings = %v, want [ghp-fixture-token]", fi.ForbidSubstrings)
+	}
+
+	defaults := byID["defaults"]
+	if defaults.PathExclusive {
+		t.Error("defaults: path_exclusive = true, want false (field omitted)")
+	}
+	if defaults.TimeoutS != 0 {
+		t.Errorf("defaults: timeout_s = %d, want 0 (field omitted)", defaults.TimeoutS)
+	}
+	if defaults.ForbidSubstrings != nil {
+		t.Errorf("defaults: forbid_substrings = %v, want nil (field omitted)", defaults.ForbidSubstrings)
+	}
+}
+
 func TestLoadCases_MissingIDIsError(t *testing.T) {
 	casesDir := t.TempDir()
 	writeCase(t, casesDir, "broken", `{"argv": ["--version"]}`)

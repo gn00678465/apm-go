@@ -44,6 +44,36 @@ type Case struct {
 	// inherited value); empty means PATH is left as the runner's own value.
 	PathPrepend string `json:"path_prepend"`
 
+	// PathExclusive, when true, makes PathPrepend's directory the ENTIRE
+	// PATH for both sides instead of merely leading it -- ticket 08's
+	// doctor-git-missing case needs this: an empty PathPrepend directory
+	// alone does not hide a real `git` further down the inherited PATH
+	// (investigated during ticket 08: exec.Command/subprocess.run both
+	// keep searching past an empty leading directory), so the only way to
+	// make git genuinely absent from a subprocess's view is to not hand it
+	// any other PATH entry at all. Ignored when PathPrepend is "".
+	PathExclusive bool `json:"path_exclusive"`
+
+	// TimeoutS, when non-zero, overrides the runner's own default per-run
+	// timeout (exec_run.go's defaultTimeout) for this case's Argv run on
+	// both sides, in seconds. Ticket 08's doctor-network-timeout case needs
+	// this: doctor's own internal network-check timeout is 5s
+	// (doctor.go/doctor.py), so the runner's outer kill-timeout must be
+	// longer than that (the ticket specifies 8) to let the product's own
+	// graceful timeout handling fire first -- the outer timeout only exists
+	// as a backstop against the fixture's `git` hanging forever if that
+	// graceful handling doesn't fire for some reason.
+	TimeoutS int `json:"timeout_s"`
+
+	// ForbidSubstrings is ticket 08's token-non-leak gate: after a side's
+	// run completes, the runner scans that side's raw stdout, raw stderr,
+	// and every "file" tree entry's on-disk content (before the sandbox is
+	// cleaned up) for each of these substrings, failing the whole run
+	// closed (a runner error, same class as a non-zero setup_argv) if any
+	// is found. Meant for a case.env secret value (e.g. GITHUB_TOKEN) that
+	// must never appear in a doctor auth check's output on either side.
+	ForbidSubstrings []string `json:"forbid_substrings"`
+
 	// Dir is the absolute path to the case directory (not part of case.json).
 	// LoadCases guarantees this via filepath.Abs -- a relative -cases flag
 	// (the normal CLI shape) must not leave Dir relative, because

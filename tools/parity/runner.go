@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,7 +23,12 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 
 	env := buildEnv(expandCaseEnv(c.Env, sb.Cwd), sb.Home, sb.LauncherCache)
 	if c.PathPrepend != "" {
-		env["PATH"] = filepath.Join(c.Dir, c.PathPrepend) + string(os.PathListSeparator) + env["PATH"]
+		prepend := filepath.Join(c.Dir, c.PathPrepend)
+		if c.PathExclusive {
+			env["PATH"] = prepend
+		} else {
+			env["PATH"] = prepend + string(os.PathListSeparator) + env["PATH"]
+		}
 	}
 
 	// Setup runs happen before the pre-run tree snapshot: they seed state
@@ -55,6 +61,10 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 		return Record{}, fmt.Errorf("case %s (%s): walking post-run tree: %w", c.ID, side, err)
 	}
 
+	if err := checkForbiddenSubstrings(c, side, res.Stdout, res.Stderr, tree, roots); err != nil {
+		return Record{}, err
+	}
+
 	rec := NewRecord(c.ID, argv, env, res.ExitCode, res.TimedOut, res.Stdout, res.Stderr, tree)
 
 	caseOutDir := filepath.Join(outDir, side, c.ID)
@@ -69,6 +79,52 @@ func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Dur
 	}
 
 	return rec, nil
+}
+
+// checkForbiddenSubstrings is ticket 08's token-non-leak gate (Case.
+// ForbidSubstrings): fails closed the moment any listed substring turns up
+// in this side's raw stdout, raw stderr, or any "file" tree entry's on-disk
+// content. Runs before the sandbox is cleaned up (runCaseSide's defer),
+// since the tree's "file" entries are read from roots (still-live sandbox
+// directories), not from copied evidence. A no-op when the case sets no
+// ForbidSubstrings.
+func checkForbiddenSubstrings(c Case, side string, stdout, stderr []byte, tree []TreeEntry, roots map[string]string) error {
+	if len(c.ForbidSubstrings) == 0 {
+		return nil
+	}
+	for _, sub := range c.ForbidSubstrings {
+		if sub == "" {
+			continue
+		}
+		needle := []byte(sub)
+		if bytes.Contains(stdout, needle) {
+			return fmt.Errorf("case %s (%s): forbidden substring %q found in stdout", c.ID, side, sub)
+		}
+		if bytes.Contains(stderr, needle) {
+			return fmt.Errorf("case %s (%s): forbidden substring %q found in stderr", c.ID, side, sub)
+		}
+		for _, e := range tree {
+			if e.Kind != "file" {
+				continue
+			}
+			label, rel, ok := splitLabel(e.Path)
+			if !ok {
+				continue
+			}
+			root, ok := roots[label]
+			if !ok {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+			if err != nil {
+				continue
+			}
+			if bytes.Contains(data, needle) {
+				return fmt.Errorf("case %s (%s): forbidden substring %q found in fs file %s", c.ID, side, sub, e.Path)
+			}
+		}
+	}
+	return nil
 }
 
 // postRunTree walks cwd and HOME after the run, merges them with the

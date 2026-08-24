@@ -41,6 +41,16 @@ func defaultDoctorDeps() doctorDeps {
 	return doctorDeps{runGit: execGit, getenv: os.Getenv}
 }
 
+// execGitWaitDelay bounds how long execGit waits, after ctx's deadline
+// fires, for a killed git's own I/O pipes to actually close (ticket 08
+// investigation: a `git` that forks a child which outlives it -- the
+// doctor-network-timeout fixture's `sleep` -- keeps the stdout/stderr pipe
+// open even after exec.CommandContext kills the direct child, so without
+// this cmd.Run() blocks until that grandchild exits on its own, well past
+// doctorTimeout, instead of returning once ctx is done). Real git has no
+// reason to do this, so it is invisible in ordinary use.
+const execGitWaitDelay = 1 * time.Second
+
 // execGit is the production runGit: `git <args>` under ctx's deadline with
 // the hardened environment gitops already uses for clones.
 func execGit(ctx context.Context, args ...string) gitResult {
@@ -48,6 +58,7 @@ func execGit(ctx context.Context, args ...string) gitResult {
 	// Finding 7 (F07): same hardening as every other git subprocess in the
 	// project -- no credential prompts, no remote-helper transports.
 	gitops.ApplySecureGitEnv(cmd)
+	cmd.WaitDelay = execGitWaitDelay
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -129,7 +140,10 @@ func runDoctor(deps doctorDeps, verbose bool) error {
 
 	for _, c := range checks {
 		if !c.informational && !c.passed {
-			return withExitCode(1, errors.New("critical environment check failed"))
+			// commands/doctor.py:26-30's `sys.exit(exit_code)` prints nothing
+			// beyond the table itself -- withSilentExitCode matches that
+			// (see its own doc comment for the ticket 08 finding this fixes).
+			return withSilentExitCode(1, errors.New("critical environment check failed"))
 		}
 	}
 	return nil
@@ -206,7 +220,13 @@ func checkMarketplaceConfig() (doctorCheck, *authoring.AuthoringConfig) {
 		c.detail = "No marketplace authoring config in current directory"
 	case authoring.IsConfigsMutuallyExclusiveError(err):
 		c.passed = false
-		c.detail = "Both apm.yml (with a 'marketplace:' block) and marketplace.yml exist. Remove marketplace.yml or run 'apm-go marketplace migrate --force' to consolidate."
+		// doctor.py:227-229's OUTER except MarketplaceYmlError truncates to
+		// 120 chars (distinct from the two INNER excepts' 60-char cap just
+		// below), since detect_config_source's mutually-exclusive error
+		// surfaces there, not from load_marketplace_from_apm_yml/
+		// load_marketplace_yml. ticket 08 investigation: apm-go used to
+		// print this message in full, unlike the Oracle.
+		c.detail = truncate("Both apm.yml (with a 'marketplace:' block) and marketplace.yml exist. Remove marketplace.yml or run 'apm-go marketplace migrate --force' to consolidate.", 120)
 	default:
 		// doctor.py:212-214 (apm.yml) / :222-224 (legacy), attributed to the
 		// source LoadAuthoringConfig was actually reading (Round-2 F8).

@@ -118,5 +118,190 @@
     "reason": "Ticket 10 attempt 3 fixed the two real gaps that used to mask this case's true remaining diff: the [>]-prefixed progress line (ux.Running, \"Searching '<marketplace>' for '<query>'...\", matching CommandLogger.start's symbol=\"search\") and the [i] Info channel/prefix now both match the Oracle byte-for-byte (rewrite_binary_name covers the apm/apm-go hint token). What remains on `stdout` is exactly the same pre-existing, already-documented rendering-library difference recorded on doctor-healthy's and browse's own tables (rich's HEAVY_HEAD box style vs ux.Table's ROUNDED style, rich's centered title line vs apm-go's left-aligned one, rich's per-cell word-wrap vs ux.Table's column-widening) -- box-drawing and padding only, nothing textual. `tree` is deliberately NOT waived here: home/.apm/marketplaces.json differs because the Oracle serializes a registered source's URL as a file:// URI while apm-go stores a bare filesystem path -- ticket 05's own open registry-serialization gap, unrelated to this ticket's output-contract scope.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/10-error-output-contract.md"
+  },
+  {
+    "id": "doctor-git-missing",
+    "fields": [
+      "stdout",
+      "stderr",
+      "error_body"
+    ],
+    "taxonomy": "F08",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Ticket 08 investigation (fake `git` genuinely absent from PATH, via path_exclusive: true -- an empty leading PATH entry alone does not hide a real git further down an inherited PATH). The pinned Oracle's own `import git` (deps/github_downloader.py:16, deps/bare_cache.py:34) runs GitPython's mandatory import-time refresh (git/__init__.py:263-298, git/cmd.py Git.refresh:741-905), which shells out to a bare `git version` before the Oracle's own CLI dispatch -- and hence doctor.py's own try/except FileNotFoundError (doctor.py:112-140) -- ever runs. When git is genuinely absent, that probe raises GitCommandNotFound, Git.refresh's default GIT_PYTHON_REFRESH=\"raise\" mode converts it to ImportError, and the whole Oracle CLI dies with an unhandled Python traceback (confirmed empirically by running the pinned Oracle directly) instead of ever reaching run_doctor. apm-go has no such import-time git dependency -- its checkGit only shells out inside runDoctor itself -- so it renders its normal table with both critical rows [x] and exits 1: the SAME exit code the Oracle's crash happens to produce, but on a completely different stdout/stderr. `error_body` (ticket 10's first-non-blank-line comparator) also differs as a direct consequence: the Oracle's is the traceback's own first line (its stdout is empty, so errorBody falls through to stderr), apm-go's is its table's title line \"Environment Diagnostics\" (its stdout is the whole table). This is an Oracle-side precondition failure (GitPython's own import-time contract, not something doctor.py chose), not a gap in apm-go's doctor implementation to fix; apm-go's clean behaviour is an intentional, recorded deviation. `exit_code` is deliberately NOT waived: both sides exit 1.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-git-nonzero",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "path/git answers GitPython's own bare `git version` import-time probe (see doctor-git-missing's own waiver) successfully but fails the specific invocations doctor.go/doctor.py actually check (`--version` for the git check, any other args -- including `ls-remote` -- for the network check): a fixture that failed EVERY invocation, including the bare probe, would crash the Oracle's CLI at import instead of ever exercising doctor's own git-nonzero handling (ticket 08 investigation). With that avoided, both rows fail identically: git shows \"git returned non-zero exit code\" on both sides (doctor.py:126 / doctor.go's checkGit, neither depends on stderr content), and network shows the same fixed UNKNOWN-kind hint \"Git failed during ls-remote. See raw stderr above.\" on both sides (git_stderr.py:153-154 / stderr.go:142-144, likewise independent of the actual stderr text). GITHUB_TOKEN is fixed in case.env so the auth check resolves from the env var directly and never falls back to `gh auth token` -- doctor-healthy's own home/.local/state/gh/device-id tree footprint (its own waiver) does not apply here. The only remaining `stdout` difference is the same pre-existing, already-documented rendering-library gap recorded on doctor-healthy's own waiver (rich's HEAVY_HEAD box style vs ux.Table's ROUNDED style, rich's centered title vs apm-go's left-aligned one) -- box-drawing and padding only, nothing textual.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-network-dns-fail",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "path/git's ls-remote arm emits a real git stderr sample captured during ticket 08's investigation (`git ls-remote` against a nonexistent host): \"fatal: unable to access '...': Could not resolve host: ...\". git_stderr.py's `_classify` (git_stderr.py:101-123) and stderr.go's `classifyGitStderr` both route \"could not resolve host\" to the TIMEOUT kind, not NOT_FOUND, despite it also matching the shorter \"could not resolve\" pattern -- the explicit skip is shared by both implementations -- producing the identical hint \"Network issue contacting the remote. Retry or check your connection.\" on both sides. Git/network checks otherwise behave exactly as doctor-git-nonzero's own waiver documents (bare `version` probe answered separately from the failing `ls-remote`, GITHUB_TOKEN fixed to skip the `gh` fallback). The only remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-network-auth-fail",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "path/git's ls-remote arm emits a real git stderr sample captured during ticket 08's investigation (an unauthenticated `git ls-remote` against a GitHub repo path that returns an auth challenge): \"remote: Invalid username or token. ...\\nfatal: Authentication failed for '...'\". Both git_stderr.py's and stderr.go's classifiers match \"fatal: authentication\" (AUTH pattern, checked first, priority order) producing the identical hint \"Check your GITHUB_TOKEN / gh auth / SSH key. Run 'apm[-go] doctor' to diagnose.\" (rewrite_binary_name covers the apm/apm-go substitution). Git/network checks otherwise behave exactly as doctor-git-nonzero's own waiver documents. The only remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-network-not-found",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "path/git's ls-remote arm emits a real git stderr sample captured during ticket 08's investigation (`git ls-remote` against a nonexistent GitHub repo): \"remote: Repository not found.\\nfatal: repository '...' not found\". Both git_stderr.py's and stderr.go's classifiers match \"repository not found\" (NOT_FOUND pattern) producing the identical hint \"Verify the remote 'github.com' exists and the ref is spelled correctly.\" Git/network checks otherwise behave exactly as doctor-git-nonzero's own waiver documents. The only remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-network-tls-fail",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "path/git's ls-remote arm emits a real git stderr sample captured during ticket 08's investigation (`git ls-remote` against badssl.com's self-signed-certificate host): \"fatal: unable to access '...': server certificate verification failed. CAfile: none CRLfile: none\". Neither git_stderr.py nor stderr.go defines a dedicated TLS GitErrorKind (git_stderr.py:35-41 / stderr.go:12-17 only define AUTH/NOT_FOUND/TIMEOUT/UNKNOWN) and no pattern in either classifier's tables matches certificate-verification wording, so both sides classify this as UNKNOWN and produce the identical hint \"Git failed during ls-remote. See raw stderr above.\" -- a real, deliberately-verified case of the fallback path both implementations use for the general failure kind, not just the three named ones. Git/network checks otherwise behave exactly as doctor-git-nonzero's own waiver documents. The only remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-network-timeout",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "FAKE_GIT_MODE=hang's ls-remote arm sleeps well past doctor's own internal per-check timeout (5s: doctor.go's doctorTimeout / doctor.py's subprocess.run(..., timeout=5)); timeout_s: 8 is the runner's OUTER kill-timeout, deliberately greater than 5s so the product's own graceful timeout handling (Python's subprocess.TimeoutExpired / Go's context deadline) fires first on both sides, each producing the identical detail \"Network check timed out (5s)\" -- the outer timeout exists only as a backstop in case that graceful handling doesn't fire for some reason. The git check itself (`--version`) is answered normally, so only the network row differs from a healthy run. GITHUB_TOKEN is fixed to skip the `gh` fallback, as doctor-git-nonzero's own waiver documents. The only remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-token-present",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "GITHUB_TOKEN is set to a fixed, obviously-fake literal (\"ghp-parity-fixture-DO-NOT-LEAK-...\"); both sides report auth: [i] \"Token detected\" without ever printing the value (neither doctor.py's nor doctor.go's auth check renders the token itself), and case.forbid_substrings (ticket 08's new raw-output/fs scan) asserts this holds for stdout, stderr, AND the sandbox's on-disk fs on both sides, not just what a one-off manual review happened to notice. The only remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-token-absent",
+    "fields": [
+      "stdout",
+      "tree"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "GITHUB_TOKEN (and GH_TOKEN/GITHUB_APM_PAT) are left unset, exactly reproducing doctor-healthy's own no-token scenario: the Oracle's AuthResolver falls back to `gh auth token`, and `gh` persists a device-id file under $HOME/.local/state/gh the first time it runs regardless of login state; apm-go's auth check never invokes `gh` at all. See doctor-healthy's own waiver for the full analysis of this mechanism -- it is recorded again here, on its own case/waiver pair, because ticket 08 treats doctor-token-absent as its own dedicated, self-documenting case in the auth-check matrix rather than relying on a reader to know doctor-healthy (a different, earlier ticket) already exercises the no-token path. `stdout`'s remaining difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md",
+    "tree_paths": [
+      "home/.local",
+      "home/.local/state",
+      "home/.local/state/gh",
+      "home/.local/state/gh/device-id"
+    ]
+  },
+  {
+    "id": "doctor-config-none",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "No apm.yml/marketplace.yml fixture at all -- both sides report marketplace config: [i] \"No marketplace authoring config in current directory\" identically (doctor.py:226 / doctor.go's IsNoConfigError branch). GITHUB_TOKEN is fixed in case.env to skip the `gh` fallback (see doctor-git-nonzero's own waiver), so this case differs from doctor-healthy/doctor-token-absent only in that one env var, isolating the config-check matrix from the auth-check matrix. The only remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-config-apmyml-valid",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "A valid apm.yml `marketplace:` block with one package: both sides report marketplace config: [i] \"apm.yml 'marketplace:' block found and valid\" identically, and duplicate names: [i] \"No duplicate package names\" identically (both real checks apm-go implements). Because this fixture's yml_obj parses successfully, the Oracle additionally renders three informational rows apm-go has no subsystem for and intentionally omits (doctor.go's own comment: \"format coverage / version alignment / executable trust have no apm-go subsystem yet ... (spec Out of Scope)\"): `format coverage` (output_profiles.py's known_output_names() coverage report), `version alignment` (version_check.py's lockstep/tag_pattern strategy report), and `executable trust` (security/executables.py's org-policy drift probe, which renders for ANY apm.yml regardless of a marketplace: block). This is exactly the ticket's pre-approved waiver category: \"the three out-of-scope informational checks the Oracle prints and apm-go does not\". GITHUB_TOKEN is fixed to skip the `gh` fallback. Beyond those 3 missing rows, the remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-config-legacy",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "A valid legacy marketplace.yml (name/description/version/owner/one remote package, no apm.yml): both sides report marketplace config: [i] \"marketplace.yml found (legacy). Run 'apm[-go] marketplace migrate' to fold it into apm.yml.\" identically (rewrite_binary_name covers the apm/apm-go substitution) and duplicate names: [i] \"No duplicate package names\" identically. The Oracle additionally renders 2 of the same 3 out-of-scope rows doctor-config-apmyml-valid's own waiver documents -- `format coverage` and `version alignment` -- but NOT `executable trust`, since _executable_trust_drift_check requires apm.yml to literally exist (confirmed empirically: only 2 extra rows appear for a legacy-only project). This is the same ticket-pre-approved out-of-scope-checks waiver category. GITHUB_TOKEN is fixed to skip the `gh` fallback. Beyond those 2 missing rows, the remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-config-both",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "apm.yml (a valid marketplace: block) AND marketplace.yml both present: both sides report the mutually-exclusive-config error at marketplace config: [i], correctly truncated to the SAME LENGTH but not byte-identical. doctor.py's outer `except MarketplaceYmlError as exc: config_detail = str(exc)[:120]` (doctor.py:227-229, distinct from the two inner branches' 60-char cap) truncates the Oracle's own message (which says \"apm\") at byte 120; apm-go's newly-added identical truncation of its own message (which says \"apm-go\", per rewrite_binary_name's substitution target -- ticket 08 investigation found and fixed a real apm-go bug here: it used to print this message in FULL, unbounded) truncates at the same byte 120, but the 3 extra characters of \"-go\" shift everything after that point earlier by 3 bytes, so the two 120-char tails differ even though both are now correctly capped at the same length. This is exactly the ticket's pre-approved \"apm-go binary-name substitution in hint text ... any residual is waived per case/field\" category -- the normalizer's binary-name rewrite operates on whole-string substitution, not on re-deriving where an upstream truncation boundary would have landed, so this residual cannot be closed by the normalizer alone. `executable trust` also appears on the Oracle side only (apm.yml exists), the same out-of-scope-checks waiver doctor-config-apmyml-valid documents. GITHUB_TOKEN is fixed to skip the `gh` fallback. Beyond that, the remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-config-apmyml-malformed",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "`marketplace.packages: oops` (a bare string, not a list) fails validation on both sides at the same conceptual field, via each implementation's own independent, hand-rolled validator: doctor.py's \"apm.yml marketplace block has errors: \" prefix (doctor.py:212-214) wraps Python's `raise MarketplaceYmlError(\"'packages' must be a list\")` (yml_schema.py's `_build_config`, packages-type check); apm-go's identically-shaped prefix (doctor.go's default branch) wraps its own `fmt.Errorf(\"marketplace.packages must be a list\")` (authoring/schema.go's parsePackages). Both correctly reject the same malformed input, but the two validators word it differently -- neither message is a bug, they are simply not the same implementation, and this ticket does not attempt to hand-align independent validation-error wording (established precedent: doctor-help's, search-basic-hit's, and both pack-refuse-* waivers all accept the same class of wording divergence between independent code paths). `executable trust` also appears on the Oracle side (apm.yml exists even though its marketplace: block fails to parse -- _executable_trust_drift_check only requires the file, confirmed empirically), the same out-of-scope-checks waiver doctor-config-apmyml-valid documents. GITHUB_TOKEN is fixed to skip the `gh` fallback. Beyond that, the remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-config-legacy-malformed",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "The same `packages: oops` malformed input as doctor-config-apmyml-malformed, routed through the legacy loader (Python's `_build_config` is shared between load_marketplace_from_apm_yml and load_marketplace_from_legacy_yml, yml_schema.py): \"marketplace.yml has errors: \" prefix (doctor.py:222-224) wraps the identical \"'packages' must be a list\" message; apm-go's \"marketplace.yml has errors: \" prefix (doctor.go's default branch, ConfigSourceLegacy) wraps its own \"marketplace.packages must be a list\". Same independent-validator wording difference as doctor-config-apmyml-malformed's own waiver -- see its reason for the full analysis. No apm.yml exists here, so none of the 3 out-of-scope rows appear on either side (confirmed empirically). GITHUB_TOKEN is fixed to skip the `gh` fallback. Beyond the wording difference, the remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
+  },
+  {
+    "id": "doctor-config-duplicate-names",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Two packages named `learning`/`Learning` (case-insensitively equal). On the Oracle side, `_build_config`'s own packages loop (yml_schema.py: `raise MarketplaceYmlError(f\"Duplicate package name '{entry.name}' (packages[{seen_names[lower_name]}] and packages[{idx}])\")`) rejects the duplicate DURING LOADING, so the marketplace config row itself fails (\"apm.yml marketplace block has errors: Duplicate package name 'Learning' (packages[0] and packages[\", truncated at 60 chars per doctor.py:212-214) and yml_obj is never built -- so doctor's own separate check 6 (`_find_duplicate_names`, doctor.py:266-286/__init__.py:186-198) never runs against real input in production at all; it is only ever exercised by the Oracle's OWN test suite via a mocked `load_marketplace_yml` that bypasses the real loader's duplicate rejection (test_marketplace_doctor.py's TestDoctorDuplicateNames class). apm-go's LoadAuthoringConfig has no load-time duplicate rejection (authoring/schema.go's parsePackages accepts them), so its marketplace config row succeeds (\"apm.yml 'marketplace:' block found and valid\") and its OWN separate checkDuplicateNames (doctor.go's \"defence-in-depth\" comment) is what actually fires, correctly reporting \"Duplicate names: 'Learning' (packages[0] and packages[1])\". This is an intentional design choice, not an oversight: authoring/schema.go's own doc comment notes LoadAuthoringConfig is shared by `apm pack` and `apm marketplace package add/remove/set`, none of which should gain a new hard-reject-on-duplicate-name gate as a side effect of doctor's own evidence backfill. This is a real, structural difference in WHEN duplicate names are caught (at load time vs. a later defence-in-depth check), not merely message wording -- recorded here rather than silently fixed, since closing it would mean changing a widely-shared loader's validation contract, a decision beyond this ticket's scope. `executable trust` also appears on the Oracle side (apm.yml exists), the same out-of-scope-checks waiver doctor-config-apmyml-valid documents. GITHUB_TOKEN is fixed to skip the `gh` fallback. Beyond that, the remaining `stdout` difference is the same pre-existing rendering-library gap documented on doctor-healthy's own waiver.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/08-doctor-backfill.md"
   }
 ]
