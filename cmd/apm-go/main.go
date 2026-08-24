@@ -13,9 +13,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func main() {
-	ux.Init()
-
+// buildRootCmd assembles the full apm-go command tree -- extracted from
+// main() so a test can build the SAME tree (ticket 13 attempt 2's
+// command-level regression test needs a real root.ExecuteC() to reproduce
+// cobra's own flag-parse errors, not a re-derivation of them).
+func buildRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "apm-go",
 		Short:   "Agent Package Manager (Go)",
@@ -23,7 +25,7 @@ func main() {
 		// SilenceErrors: this app owns error printing (ux.Error, stdout with
 		// "[x] ", ticket 10 decision A) instead of cobra's own
 		// c.PrintErrln(c.ErrPrefix(), err.Error()) default, which writes
-		// "Error: ..." to stderr -- see the root.Execute() error branch below.
+		// "Error: ..." to stderr -- see renderRootError below.
 		SilenceErrors: true,
 	}
 
@@ -41,33 +43,48 @@ func main() {
 	root.AddCommand(compileCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(searchCmd())
+	return root
+}
 
+// renderRootError prints err's user-facing message for cmd (the command
+// root.ExecuteC() reports as having failed) and returns the process exit
+// code -- extracted from main() so a test can exercise this exact
+// rendering (wrapped in captureStdout/captureStderr, which redirect the
+// real os.Stdout/os.Stderr this function writes to) without spawning a
+// real apm-go subprocess.
+func renderRootError(cmd *cobra.Command, err error) int {
+	switch {
+	case isSilentExit(err):
+		// nothing to print
+	case isUsageError(err):
+		// Click's own UsageError.show() (ticket 13, decision recorded
+		// in .scratch/parity-runner/issues/10-error-output-contract.md):
+		// a "Usage: ...\nTry '<path> --help' for help.\n\n" block
+		// followed by a plain "Error: " line, all on STDERR --
+		// verified directly against the pinned Oracle, distinct from
+		// decision (A)'s stdout/"[x] " contract for ordinary runtime
+		// errors (CommandLogger._rich_error), which Click's own
+		// exception-handling layer never goes through. isBareUsageError
+		// skips the preamble for the one verified exception (a flag
+		// missing its argument, raised before Click has a Context to
+		// render a Usage line from -- see withBareUsageError).
+		if !isBareUsageError(err) {
+			fmt.Fprintf(os.Stderr, "Usage: %s\n", cmd.UseLine())
+			fmt.Fprintf(os.Stderr, "Try '%s --help' for help.\n\n", cmd.CommandPath())
+		}
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+	default:
+		ux.Error(os.Stderr, "%s", err)
+	}
+	return exitCodeOf(err)
+}
+
+func main() {
+	ux.Init()
+	root := buildRootCmd()
 	cmd, err := root.ExecuteC()
 	if err != nil {
-		switch {
-		case isSilentExit(err):
-			// nothing to print
-		case isUsageError(err):
-			// Click's own UsageError.show() (ticket 13, decision recorded
-			// in .scratch/parity-runner/issues/10-error-output-contract.md):
-			// a "Usage: ...\nTry '<path> --help' for help.\n\n" block
-			// followed by a plain "Error: " line, all on STDERR --
-			// verified directly against the pinned Oracle, distinct from
-			// decision (A)'s stdout/"[x] " contract for ordinary runtime
-			// errors (CommandLogger._rich_error), which Click's own
-			// exception-handling layer never goes through. isBareUsageError
-			// skips the preamble for the one verified exception (a flag
-			// missing its argument, raised before Click has a Context to
-			// render a Usage line from -- see withBareUsageError).
-			if !isBareUsageError(err) {
-				fmt.Fprintf(os.Stderr, "Usage: %s\n", cmd.UseLine())
-				fmt.Fprintf(os.Stderr, "Try '%s --help' for help.\n\n", cmd.CommandPath())
-			}
-			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		default:
-			ux.Error(os.Stderr, "%s", err)
-		}
-		os.Exit(exitCodeOf(err))
+		os.Exit(renderRootError(cmd, err))
 	}
 }
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 10 — error/warning output contract (so channel/prefix are already aligned and only content remains).
 
-**Status:** done (2026-08-24) — three of four written findings closed; the fourth (`--help` semantic parity) found a real, much larger pre-existing gap than assumed and is spun out to ticket 17 per the Scope rule (`.scratch/parity-runner/README.md`).
+**Status:** done (2026-08-24, attempt 2) — `.review/eval-ticket-13.md` FAILed attempt 1 on two findings. Finding 1 (help AC) was formally re-scoped to ticket 17 by the orchestrator (see that item below). Finding 2 (the usage-preamble hook's fallback branch introduced unverified message drift for every OTHER flag-parse error) is fixed in attempt 2 — see "Attempt 2" section below. Everything else attempt 1 verified (success lines, `displayPath`, `errorBody` cases, the nine `pack-*` tuple improvements, zero regression elsewhere) stands unchanged.
 
 **Origin:** runner cases from ticket 07 (`.review/eval-ticket-07.md` §7.3). Selector/refusal/lockfile/next-steps all PASS; these are pre-existing `pack` gaps the runner exposed.
 
@@ -25,11 +25,65 @@
   (original spin-out note follows)** Verified directly (`diff/pack-help.json`, both sides' live `--help`): the finding as written ("empty except the ticket-07 `--format` sentence") was WRONG -- apm-go is missing NINE flags entirely (`-o`/`--output`, `--archive`, `--archive-format`, `-t`/`--target`, `--check-versions`, `--check-clean`, `--json`, `--legacy-skill-paths`, plus a completely different `Long` description paragraph), several representing real unimplemented features (archive creation, a JSON output mode, release gates), not wording drift. `TestPackCmd_DoesNotExposeDeferredFlags` already independently confirms `check-versions`/`check-clean` are a KNOWN, pre-existing, intentional deferral (design.md), corroborating this isn't a new regression -- just a bigger, already-somewhat-tracked gap than this ticket's own finding assumed. Per the Scope rule, recorded as `.scratch/parity-runner/issues/17-pack-flag-parity.md` rather than implementing 6+ new features inline. `--format`'s own description IS correctly just the Oracle's wording plus the one ticket-07-sanctioned trailing sentence -- that part of the original finding was right.
 - [x] **Runner evidence.** All 12 `pack-*` cases: `pack-format-missing-arg` is now a perfect clean match (no diff at all). Five bundle-success cases (`pack-no-flag`, `pack-claude-plugin-flag`, `pack-format-claude`, `pack-format-claude-plugin`, `pack-format-plugin`) carry one new field-precise `stdout` F01 waiver each (the Oracle's Rich console word-wraps the "Claude plugin bundle ready..." line at terminal width; apm-go doesn't). Three usage-error cases (`pack-format-conflict`, `pack-format-empty`, `pack-format-unknown`) carry one new field-precise `stderr` F01 waiver each (the Usage line's own "apm pack [OPTIONS]" vs "apm-go pack [flags]" spelling, same category as `--help`'s "Options:"/"Flags:" convention) -- `error_body` on all three now shows NO diff (the real error text matches byte-for-byte). `pack-help` is deliberately left UNWAIVED on `stdout`/`help_semantic` -- a real, tracked gap (ticket 17), not a rendering artifact. `pack-refuse-agent-plugin`/`pack-refuse-apm` unchanged (still the two pre-existing, already-waived exporter-not-implemented refusals). No ticket-12 `tree` paths appear on any pack-* case beyond what was already true before this ticket.
 
+## Attempt 2: constrain the usage-preamble hook to verified selector errors
+
+`.review/eval-ticket-13.md`'s attempt-1 finding 2: `setBundleFormatFlagErrorFunc`'s
+FALLBACK branch wrapped `err` in `withUsageError(err)` for absolutely ANY
+cobra flag-parse error on `pack`/`plugin init`, not just the verified
+`--format`/`--claude-plugin` cases — so an unrelated mistake like `pack
+--bogus` got the Usage/Try-help preamble treatment based on cobra's own
+raw error text, with no Oracle verification that the preamble (or the
+message itself) was even correct there. Probed directly:
+
+- `pack --bogus` on the pinned Oracle: `No such option: --bogus Did you
+  mean --verbose?` — Click's own "did you mean" suggestion machinery,
+  nothing like cobra's `unknown flag: --bogus`.
+- `pack -m` (a shorthand missing its argument): the Oracle says `Option
+  '-m' requires an argument.`; apm-go's EXISTING (pre-ticket-13) "flag
+  needs an argument" reformatting — unconditional, not gated on the flag
+  name — already produced the wrong, garbled `Option ''m' in -m' requires
+  an argument.` before this ticket ever touched the file. Ticket 13
+  attempt 1 additionally wrapped this in the Usage preamble via the SAME
+  unverified fallback path this attempt fixes.
+
+Fixed by narrowing `setBundleFormatFlagErrorFunc` to gate the
+preamble/bare-usage-error treatment on the exact verified flag name
+(`"--format"` only): a missing `--format` argument still gets
+`withBareUsageError` (unchanged, correct); every OTHER "flag needs an
+argument" case keeps the pre-existing (still-buggy, NOT this ticket's job
+to fix) reformatted message but reverts to plain `withExitCode(2, ...)`
+(no preamble, `ux.Error`/`"[x] "` on stdout); every non-"flag needs an
+argument" flag-parse error (unknown flag, etc.) also reverts to plain
+`withExitCode(2, err)` with cobra's raw, untouched message. Verified
+byte-for-byte against a binary built from `843bbc5` (f3ff78f's parent,
+the last pre-ticket-13 commit) for `pack --bogus`, `pack -m`, and `plugin
+init --bogus`: all three now match EXACTLY, including the pre-existing
+`-m` wording bug (deliberately not fixed here — that's ticket 17's "did
+you mean"/missing-argument-wording backlog item, added in this attempt).
+`plugin init`'s own four selector-error shapes (conflict/empty/unknown/
+missing-arg) re-verified directly against the Oracle too — all four
+still carry the correct, unchanged preamble shapes (its own 4-choice list
+renders correctly since `coerceBundleFormat`'s message is built from the
+caller's own `choices` slice).
+
+New regression test `TestRootError_UnverifiedFlagErrorsMatchPreTicket13Shape`
+(`cmd/apm-go/root_error_test.go`) locks down the reverted shape for all
+three probed cases; `TestRootError_VerifiedFormatSelectorErrorsKeepPreambleShape`
+locks down that the verified `--format` cases still render correctly
+through the same code path. Both exercise `main()`'s actual error-
+rendering logic (extracted into a new `renderRootError`/`buildRootCmd`
+pair specifically so this is testable via the existing `captureStdout`/
+`captureStderr` helpers, without spawning a real subprocess).
+
 ## Evidence
 
-Fresh full-corpus run against the pinned Oracle, clean tree at this ticket's commit, five-point provenance verified, diffed against `/tmp/ticket11a8-evidence-d5f349c-exact` (see the commit for the exact before/after tuple diff — zero regressions outside the `pack-*` ids this ticket touched). `go test ./...` and `-race` on `cmd/apm-go`, `internal/ux`, `tools/parity` green (pre-existing Windows-only `internal/manifest:TestParseDepString_AbsolutePath` excepted).
+Attempt 1: fresh full-corpus run against the pinned Oracle, clean tree at that commit, five-point provenance verified, diffed against `/tmp/ticket11a8-evidence-d5f349c-exact` (zero regressions outside the `pack-*` ids this ticket touched).
+
+Attempt 2: fresh full-corpus run against the pinned Oracle, clean tree at this attempt's commit, five-point provenance verified, diffed against `/tmp/ticket13-evidence-f3ff78f-cleanoracle2` (the evaluator's own attempt-1 baseline): `pack-format-missing-arg` still a perfect clean match, the three selector rows (`pack-format-conflict`/`-empty`/`-unknown`) still `stderr`-only waived, zero `(fields, waived)` drift anywhere else. `go test ./...` and `-race` on `cmd/apm-go`, `internal/ux`, `tools/parity` green (pre-existing Windows-only `internal/manifest:TestParseDepString_AbsolutePath` excepted).
 
 ## Files touched
+
+### Attempt 1
 - `internal/ux/printer.go`: `oracleSparklePrefix`, `Sparkle` (new).
 - `cmd/apm-go/pack.go`: `runBundleProducer`'s success/file-listing/wording/share-with lines; `packOneOutput`'s success line; `displayPath` (new); `resolveBundleFormat`'s error wrapped via `withUsageError`.
 - `cmd/apm-go/bundle_format.go`: `setBundleFormatFlagErrorFunc`'s two branches now `withBareUsageError`/`withUsageError`.
@@ -44,3 +98,9 @@ Fresh full-corpus run against the pinned Oracle, clean tree at this ticket's com
 - `tools/parity/main_test.go`: `TestRealWaiversJSON_ValidatesAgainstPin`'s `wantIDs` extended with the 8 new ids.
 - `.scratch/parity-runner/issues/10-error-output-contract.md`: new dated decision addendum for the Usage-error boilerplate.
 - `.scratch/parity-runner/issues/17-pack-flag-parity.md` (new): the spun-out `--help` flag/feature gap.
+
+### Attempt 2
+- `cmd/apm-go/bundle_format.go`: `setBundleFormatFlagErrorFunc` narrowed -- the preamble/bare treatment now gates on `name == "--format"`; every other flag-parse error (including any other "flag needs an argument" case) reverts to plain `withExitCode(2, ...)`.
+- `cmd/apm-go/main.go`: `buildRootCmd`/`renderRootError` extracted from `main()` (same logic, now independently testable).
+- `cmd/apm-go/root_error_test.go` (new): `TestRootError_UnverifiedFlagErrorsMatchPreTicket13Shape`, `TestRootError_VerifiedFormatSelectorErrorsKeepPreambleShape`.
+- `.scratch/parity-runner/issues/17-pack-flag-parity.md`: +note that unknown-flag "did you mean" wording and per-flag missing-argument wording are part of ticket 17's Click-parity backlog.

@@ -171,14 +171,51 @@ func (f bundleFormatChoiceValue) Type() string {
 }
 
 // setBundleFormatFlagErrorFunc maps cobra's plain "flag needs an argument"
-// parse error to Click's usage-error wording and exit code 2 ("Option
-// '--format' requires an argument."). Shared by any command using the
-// --format/--claude-plugin selector pair.
+// parse error for --format specifically to Click's usage-error wording and
+// exit code 2 ("Option '--format' requires an argument."), verified
+// byte-for-byte against the pinned Oracle (no Usage/Try-help preamble at
+// all -- withBareUsageError). Shared by any command using the
+// --format/--claude-plugin selector pair (pack, plugin init).
+//
+// Ticket 13 attempt 2 correction (eval-ticket-13.md finding 2): the
+// original version of this function applied withUsageError to EVERY OTHER
+// cobra flag-parse error on the command -- an unknown flag (`--bogus`), a
+// shorthand missing its argument (`-m`), anything -- none of which were
+// ever verified against the Oracle. Probed directly: `pack --bogus`'s
+// Oracle message is "No such option: --bogus Did you mean --verbose?",
+// completely different wording from cobra's own "unknown flag: --bogus"
+// that the old fallback wrapped verbatim with a preamble neither side had
+// agreed on. The fix narrows the "flag needs an argument" branch to the
+// exact verified name ("--format" only -- a shorthand like "-m" produces a
+// differently-shaped cobra message, "flag needs an argument: 'm' in -m",
+// which was NEVER verified either: probed directly, apm-go's existing
+// `Option ”m' in -m' requires an argument.` wording is already wrong
+// independent of this ticket, a pre-existing bug left untouched here) and
+// reverts every other flag-parse error to the exact pre-ticket-13 shape
+// (plain withExitCode(2, err), rendered via ux.Error/"[x] " on stdout, no
+// preamble) -- this ticket introduces zero unverified message drift.
+// Unknown-flag wording/suggestions ("No such option ... Did you mean") is
+// its own Click-parity surface, tracked in ticket 17's backlog, not fixed
+// here.
 func setBundleFormatFlagErrorFunc(cmd *cobra.Command) {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		if name, ok := strings.CutPrefix(err.Error(), "flag needs an argument: "); ok {
-			return withBareUsageError(fmt.Errorf("Option '%s' requires an argument.", name))
+			// The "Option 'X' requires an argument." reformat itself
+			// pre-dates ticket 13 and applies to any flag name -- keep it
+			// unconditional (a shorthand's raw cobra message, "flag needs
+			// an argument: 'm' in -m", is not something to expose
+			// verbatim either). Only the PREAMBLE treatment is gated on
+			// the one verified name: "--format" gets the Oracle-verified
+			// bare usage error (no preamble); every other flag falls back
+			// to the plain, pre-ticket-13 withExitCode(2, ...) shape
+			// (ux.Error/"[x] " on stdout) since its own Oracle wording was
+			// never checked.
+			reformatted := fmt.Errorf("Option '%s' requires an argument.", name)
+			if name == "--format" {
+				return withBareUsageError(reformatted)
+			}
+			return withExitCode(2, reformatted)
 		}
-		return withUsageError(err)
+		return withExitCode(2, err)
 	})
 }
