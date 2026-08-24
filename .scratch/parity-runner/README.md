@@ -27,7 +27,7 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: 01 02 03 04 08 09 10 11 12 13 14 15 ✅ · 06 07 ✅(command-local) · 14 closed at attempt 3 (e762092; wording parity kept, Rich-wrap emulation withdrawn per eval-plan §8.3) · 09 closed (PASS; 20 `plugin-init-*` cases backfilled — 19 waived-clean + 1 byte-exact; `.github/workflows/parity.yml` added as the real CI parity gate, replacing "go test passed" — it is red on day one by design, surfacing the pre-existing 18-case backlog rather than hiding it; `go test ./...` now fully green via a Windows-only subtest skip; findings spun to ticket 19) · 05 command+evidence landed, gaps open · 16 17 18 19 post-beta backlog · **beta.3 release-ready: all release-blocking tickets closed.**
+Status: ALL TICKETS CLOSED (01-15 ✅; eval-ticket-09.md PASS) — released as v0.3.0-beta.3. Post-beta backlog: 16 (dep-parser conformance rows), 17 (pack flags/features), 18 (audit verbose hint), 05's marketplaces.json tree gap. CI parity gate (parity.yml) is red by design until the 18-case backlog closes.
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 
