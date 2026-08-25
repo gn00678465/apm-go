@@ -37,6 +37,7 @@ const (
 	oracleInfoPrefix    = "[i] "
 	oracleRunningPrefix = "[>] "
 	oracleSparklePrefix = "[*] "
+	oracleCheckPrefix   = "[+] "
 )
 
 // Success prints a "+ ..." line to w.
@@ -62,6 +63,36 @@ func Success(w io.Writer, format string, a ...any) {
 // that would be needed before widening this further).
 func Sparkle(w io.Writer, format string, a ...any) {
 	oracleLine(w, successStyle, oracleSparklePrefix, format, a...)
+}
+
+// Gear prints a "[*] ..." line to w, styled like Info (blue, not bold) --
+// ticket 22: `marketplace validate`'s header is
+// CommandLogger.start(f"Validating marketplace '{name}'...", symbol="gear")
+// (commands/marketplace/validate.py:29), which delegates to _rich_info
+// (utils/console.py:170-172, color="blue") -- NOT a CommandLogger.success
+// call the way ticket 22 first assumed from the observed bytes alone (AC1):
+// "gear" is an INFO-channel symbol. It happens to render the identical
+// "[*] " glyph Sparkle's "sparkles"/default case does (STATUS_SYMBOLS,
+// utils/console.py:37-61, maps both "gear" and "sparkles" to "[*]"), so the
+// printed bytes match Sparkle's -- but the styling source is Info's
+// _rich_info channel, not Success's _rich_success one, so this is its own
+// function rather than a second call to Sparkle. Redirected to stdout if w
+// is the process's stderr stream (see errWriter), same as every other
+// oracleLine-backed printer.
+func Gear(w io.Writer, format string, a ...any) {
+	oracleLine(w, infoStyle, oracleSparklePrefix, format, a...)
+}
+
+// Check prints a "[+] ..." line to w, styled like Success (green, bold) --
+// ticket 22: `marketplace validate`'s per-check "passed" rows are
+// CommandLogger.success(f"  {check}: passed", symbol="check")
+// (commands/marketplace/validate.py:66), which STATUS_SYMBOLS maps to "[+]"
+// (utils/console.py:37-61) -- the exact bracketed-symbol override Sparkle's
+// own doc comment already names as the counter-example to its "sparkles"
+// default (ticket 13). Redirected to stdout if w is the process's stderr
+// stream (see errWriter), same as every other oracleLine-backed printer.
+func Check(w io.Writer, format string, a ...any) {
+	oracleLine(w, successStyle, oracleCheckPrefix, format, a...)
 }
 
 // Info prints a "[i] ..." line to w, redirected to stdout if w is the

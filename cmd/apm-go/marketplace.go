@@ -630,8 +630,11 @@ func marketplaceValidateCmd() *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			// Mirrors upstream validate.py:29-36's pre-fetch progress and
-			// post-fetch plugin count.
-			ux.Info(w, "Validating marketplace %q...", name)
+			// post-fetch plugin count. validate.py:29's
+			// logger.start(..., symbol="gear") uses the Oracle's single-quote
+			// convention and its "gear" symbol (STATUS_SYMBOLS -> "[*]",
+			// ux.Gear's own doc comment) -- ticket 22.
+			ux.Gear(w, "Validating marketplace '%s'...", name)
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
@@ -708,7 +711,10 @@ func marketplaceValidateCmd() *cobra.Command {
 					if hasStructureErrors {
 						continue
 					}
-					ux.Success(w, "  %s: passed", check.CheckName)
+					// validate.py:66: logger.success(..., symbol="check") ->
+					// "[+] " (ux.Check's own doc comment), not the
+					// width-3-centered " + " ux.Success renders -- ticket 22.
+					ux.Check(w, "  %s: passed", check.CheckName)
 					passed++
 				case hasWarn && !hasErr:
 					for _, f := range check.Findings {

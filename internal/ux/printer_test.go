@@ -103,6 +103,9 @@ func TestOracleLine_BracketPrefixNoExtraSpace(t *testing.T) {
 		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "msg") }, prefix: oracleRunningPrefix},
 		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "msg") }, prefix: oracleWarnPrefix},
 		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "msg") }, prefix: oracleErrorPrefix},
+		{name: "Sparkle", fn: func(buf *bytes.Buffer) { Sparkle(buf, "msg") }, prefix: oracleSparklePrefix},
+		{name: "Gear", fn: func(buf *bytes.Buffer) { Gear(buf, "msg") }, prefix: oracleSparklePrefix},
+		{name: "Check", fn: func(buf *bytes.Buffer) { Check(buf, "msg") }, prefix: oracleCheckPrefix},
 	}
 
 	for _, tt := range tests {

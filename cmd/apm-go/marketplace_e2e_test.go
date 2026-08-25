@@ -1313,7 +1313,7 @@ func TestMarketplaceValidate_HappyPathPrintsSummaryAndSucceeds(t *testing.T) {
 	// that order, each line reading "  <name>: passed" (validate.py's own
 	// f"  {check_name}: passed" literal, not "all plugins valid").
 	for _, want := range []string{
-		`Validating marketplace "acme"...`,
+		`Validating marketplace 'acme'...`,
 		"Found 1 plugins",
 		"Validation Results:",
 		"  Structure: passed",
@@ -1322,6 +1322,48 @@ func TestMarketplaceValidate_HappyPathPrintsSummaryAndSucceeds(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)
+		}
+	}
+}
+
+// TestMarketplaceValidate_HeaderAndPassRows_ExactOracleBytes is ticket 22
+// AC7's byte-exact regression: the header line uses the Oracle's "[*]" glyph
+// (validate.py:29's logger.start(..., symbol="gear"), NOT "[i]") and single
+// quotes (NOT the %q double-quote apm-go used to render), and each passing
+// check row uses the Oracle's "[+]" glyph (validate.py:66's
+// logger.success(..., symbol="check")), preserving the exact three-space gap
+// before the check name -- not ux.Success's centered " + " convention.
+func TestMarketplaceValidate_HeaderAndPassRows_ExactOracleBytes(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`)
+	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: dir, Path: "marketplace.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "validate", "acme")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace validate returned error for a valid manifest: %v (output: %s)", err, out)
+	}
+	for _, line := range []string{
+		`[*] Validating marketplace 'acme'...`,
+		"[+]   Structure: passed",
+		"[+]   Schema: passed",
+		"[+]   Names: passed",
+	} {
+		if !strings.Contains(out, line) {
+			t.Errorf("output = %q, want it to contain the exact line %q", out, line)
+		}
+	}
+	for _, notWant := range []string{
+		`Validating marketplace "acme"`, // the old %q double-quote rendering
+		"[i] Validating marketplace",    // the old ux.Info glyph
+	} {
+		if strings.Contains(out, notWant) {
+			t.Errorf("output = %q, want it NOT to contain the pre-ticket-22 rendering %q", out, notWant)
 		}
 	}
 }
