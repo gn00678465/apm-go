@@ -280,8 +280,8 @@ func TestMarketplaceAdd_LocalPath_FallsBackToManifestNameAlias(t *testing.T) {
 	if src == nil {
 		t.Fatal("FindByName(acme-tools) = nil, want the newly added source")
 	}
-	if src.URL != dir {
-		t.Errorf("registered URL = %q, want %q", src.URL, dir)
+	if want := "file://" + dir; src.URL != want {
+		t.Errorf("registered URL = %q, want %q (ticket 24 AC2)", src.URL, want)
 	}
 }
 
@@ -451,8 +451,8 @@ func TestMarketplaceAdd_SameNameSilentlyReplaces(t *testing.T) {
 	if len(sources) != 1 {
 		t.Fatalf("LoadRegistry() = %d entries, want 1 (same-name add must replace, not append)", len(sources))
 	}
-	if sources[0].URL != dir2 {
-		t.Errorf("registered URL = %q, want %q (the replacement)", sources[0].URL, dir2)
+	if want := "file://" + dir2; sources[0].URL != want {
+		t.Errorf("registered URL = %q, want %q (the replacement, ticket 24 AC2)", sources[0].URL, want)
 	}
 }
 
@@ -934,6 +934,37 @@ func TestMarketplaceList_TableIncludesEveryRegisteredSource(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)
 		}
+	}
+}
+
+// TestMarketplaceList_LocalSource_ShowsPlainPathNotFileURI is ticket 24's
+// display-side consequence of AC2: `marketplace add ./local-dir` now stores
+// a "file://" URI (AC2), but `list`'s SOURCE column must keep showing the
+// plain filesystem path apm-go always has -- mirroring the Oracle's own
+// display_source/local_path properties (models.py:267-296), which strip the
+// "file://" scheme before ever printing a source to the user. Without this,
+// registering a local marketplace would newly leak an internal storage
+// detail into the CLI's user-facing output.
+func TestMarketplaceList_LocalSource_ShowsPlainPathNotFileURI(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	dir := writeLocalManifestDir(t, `{"name": "acme-tools"}`)
+	if _, err := runMarketplaceCmd(t, "add", dir); err != nil {
+		t.Fatalf("marketplace add returned error: %v", err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "list")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace list returned error: %v", err)
+	}
+	if !strings.Contains(out, dir) {
+		t.Errorf("output = %q, want it to contain the plain path %q", out, dir)
+	}
+	if strings.Contains(out, "file://") {
+		t.Errorf("output = %q, want no \"file://\" scheme leaking into the SOURCE column", out)
 	}
 }
 

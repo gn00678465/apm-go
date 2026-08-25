@@ -63,6 +63,36 @@ func TestFetchLocal_ProbePathOrder(t *testing.T) {
 	}
 }
 
+// TestFetchLocal_AcceptsBarePathAndFileURI_SameDirectory is ticket 24 AC3's
+// core Compatibility regression: a bare-path entry (written by any apm-go
+// release before this ticket, or already present on a user's disk) and a
+// "file://"-prefixed one (this ticket's new writes) must resolve to the
+// exact same directory -- indefinitely, not as a one-time migration.
+func TestFetchLocal_AcceptsBarePathAndFileURI_SameDirectory(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	want := MarketplaceManifest{Name: "acme", Owner: "acme-owner"}
+	writeLocalManifest(t, dir, defaultManifestPath, want)
+
+	barePath := &MarketplaceSource{URL: dir, Path: defaultManifestPath}
+	fileURI := &MarketplaceSource{URL: "file://" + dir, Path: defaultManifestPath}
+
+	// Act
+	gotBare, errBare := fetchLocal(context.Background(), barePath)
+	gotURI, errURI := fetchLocal(context.Background(), fileURI)
+
+	// Assert
+	if errBare != nil {
+		t.Fatalf("fetchLocal(bare path) returned error: %v", errBare)
+	}
+	if errURI != nil {
+		t.Fatalf("fetchLocal(file:// URI) returned error: %v", errURI)
+	}
+	if gotBare.Name != want.Name || gotURI.Name != want.Name {
+		t.Errorf("fetchLocal manifests = %+v / %+v, want both Name=%q", gotBare, gotURI, want.Name)
+	}
+}
+
 // TestFetchLocal_PrefersEarlierCandidate covers the "first match wins, not
 // closest match" probing rule: when more than one candidate path exists,
 // the earliest one in mkt-003's order is used.

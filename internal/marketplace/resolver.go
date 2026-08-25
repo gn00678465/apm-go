@@ -150,10 +150,14 @@ func resolveLocalRelativeSource(source string, mkt *MarketplaceSource) (string, 
 	if mkt.URL == "" {
 		return "", fmt.Errorf("marketplace %q is kind=local but has no resolvable filesystem path; cannot resolve relative plugin source %q", mkt.Name, source)
 	}
+	// Ticket 24 AC3: mkt.URL may be a bare path (pre-existing registry
+	// entries, or a legacy apm-go write) or a "file://" URI (this ticket's
+	// new writes) -- LocalFilesystemPath accepts both indefinitely.
+	root := LocalFilesystemPath(mkt.URL)
 	if rel != "" && rel != "." {
-		return filepath.Join(mkt.URL, filepath.FromSlash(rel)), nil
+		return filepath.Join(root, filepath.FromSlash(rel)), nil
 	}
-	return mkt.URL, nil
+	return root, nil
 }
 
 // resolveGitHubSource resolves a dict source whose coerced type is "github"

@@ -238,7 +238,7 @@ func marketplaceAddCmd() *cobra.Command {
 			ux.Success(w, "Marketplace %q registered (%d plugins)", effectiveName, len(m.Plugins))
 			if verbose {
 				items := []ux.Item{
-					{Text: fmt.Sprintf("source: %s", src.URL)},
+					{Text: fmt.Sprintf("source: %s", displaySource(src))},
 					{Text: fmt.Sprintf("source type: %s", src.Kind())},
 					{Text: fmt.Sprintf("ref: %s", src.Ref)},
 					{Text: fmt.Sprintf("alias source: %s", aliasSourceLabel(name, effectiveName, m.Name))},
@@ -340,6 +340,23 @@ func aliasSourceLabel(explicitName, effectiveName, manifestName string) string {
 	}
 }
 
+// displaySource renders src's Source column/bullet value for a
+// user-facing message: a KindLocal source's on-disk "file://" URI (ticket
+// 24) is shown as the plain filesystem path it names, matching apm-go's own
+// pre-ticket-24 display (a bare path was, until now, also what was stored).
+// The Oracle does the equivalent stripping in its own display_source/
+// local_path properties (models.py:267-296) before ever printing a source
+// to the user, for the same reason: the "file://" scheme is a storage
+// detail, not something a user who typed a bare local path should see
+// echoed back. Every other Kind is unchanged from apm-go's existing
+// behaviour (the raw URL), which this ticket does not touch.
+func displaySource(src *marketplace.MarketplaceSource) string {
+	if src.Kind() == marketplace.KindLocal {
+		return marketplace.LocalFilesystemPath(src.URL)
+	}
+	return src.URL
+}
+
 // fallbackMarketplaceAlias derives a repo-name-shaped alias from src when
 // neither --name nor a usable manifest name is available: Owner/Repo for
 // every remote Kind that has them (SCP, full URL, shorthand), the local
@@ -394,11 +411,12 @@ func marketplaceListCmd() *cobra.Command {
 				headers = []string{"NAME", "SOURCE", "REF", "HOST", "PATH"}
 			}
 			rows := make([][]string, 0, len(sources))
-			for _, s := range sources {
+			for i := range sources {
+				s := &sources[i]
 				if verbose {
-					rows = append(rows, []string{s.Name, s.URL, s.Ref, s.Host, s.Path})
+					rows = append(rows, []string{s.Name, displaySource(s), s.Ref, s.Host, s.Path})
 				} else {
-					rows = append(rows, []string{s.Name, s.URL, s.Ref, s.Path})
+					rows = append(rows, []string{s.Name, displaySource(s), s.Ref, s.Path})
 				}
 			}
 			ux.Table(w, headers, rows)
@@ -501,7 +519,7 @@ func marketplaceUpdateCmd() *cobra.Command {
 				}
 				ux.Success(w, "Refreshed marketplace %q (%d plugins)", name, len(m.Plugins))
 				if verbose {
-					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", src.URL)}})
+					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(src))}})
 				}
 				return nil
 			}
@@ -518,15 +536,15 @@ func marketplaceUpdateCmd() *cobra.Command {
 			}
 			ux.Info(w, "Refreshing %d marketplace(s)...", len(sources))
 			for i := range sources {
-				s := sources[i]
-				m, ferr := marketplace.Fetch(context.Background(), &s)
+				s := &sources[i]
+				m, ferr := marketplace.Fetch(context.Background(), s)
 				if ferr != nil {
 					ux.Error(cmd.ErrOrStderr(), "failed to refresh marketplace %q: %v", s.Name, ferr)
 					continue
 				}
 				ux.Success(w, "Refreshed marketplace %q (%d plugins)", s.Name, len(m.Plugins))
 				if verbose {
-					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", s.URL)}})
+					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(s))}})
 				}
 			}
 			// Upstream __init__.py:993's closing line.
@@ -573,7 +591,7 @@ func marketplaceRemoveCmd() *cobra.Command {
 				// Upstream __init__.py:1023-1026's prompt names the source
 				// alongside the alias, and a decline prints "Cancelled".
 				proceed, err := confirmOrRequireYes(
-					fmt.Sprintf("Remove marketplace %q (%s)?", name, src.URL),
+					fmt.Sprintf("Remove marketplace %q (%s)?", name, displaySource(src)),
 					"marketplace remove requires -y/--yes in a non-interactive environment",
 				)
 				if err != nil {
@@ -589,7 +607,7 @@ func marketplaceRemoveCmd() *cobra.Command {
 			}
 			ux.Success(cmd.OutOrStdout(), "Removed marketplace %q", name)
 			if verbose {
-				ux.BulletList(cmd.OutOrStdout(), []ux.Item{{Text: fmt.Sprintf("source: %s", src.URL)}})
+				ux.BulletList(cmd.OutOrStdout(), []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(src))}})
 			}
 			return nil
 		},

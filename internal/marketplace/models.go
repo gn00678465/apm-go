@@ -114,6 +114,27 @@ func looksLikeLocalPath(value string) bool {
 	return false
 }
 
+// LocalFilesystemPath strips a "file://" prefix from a KindLocal source's
+// stored URL, if present, returning a value safe to pass to os.Stat/
+// filepath.Join. A value with no such prefix is returned unchanged.
+//
+// Ticket 24 AC3 (Compatibility): `marketplaces.json` is a file that already
+// exists on disk for anyone running an earlier apm-go, with every local
+// entry's url stored as a bare path (source.go's parseLocalSource wrote it
+// that way before this ticket). Changing new writes to the Oracle's
+// "file://"+abspath form (registry.py's add_marketplace,
+// commands/marketplace/__init__.py:288) must not orphan those existing
+// entries -- every reader of a KindLocal source's URL (fetchLocal,
+// client_local.go; resolveLocalRelativeSource, resolver.go; the audit
+// command's local-root detection, cmd/apm-go/marketplace_authoring_audit.go)
+// calls this first, so a bare path and a "file://" URI resolve to the exact
+// same directory, indefinitely -- this is not a one-time migration with an
+// end date, matching looksLikeLocalPath's own already-permanent acceptance
+// of both shapes.
+func LocalFilesystemPath(rawURL string) string {
+	return strings.TrimPrefix(rawURL, "file://")
+}
+
 // urlNamesRemoteManifest reports whether raw is a direct hosted
 // marketplace.json document: HTTPS scheme, a host, and a path (ignoring
 // any trailing slashes) ending in "/marketplace.json". Any other JSON

@@ -345,6 +345,26 @@ func TestResolveLocalRelativeSource(t *testing.T) {
 	}
 }
 
+// TestResolveLocalRelativeSource_FileURI is ticket 24 AC3's compatibility
+// regression for this consumer specifically: mkt.URL as a "file://" URI
+// (this ticket's new writes) must resolve to the exact same path a bare
+// path (pre-existing registry entries) does.
+func TestResolveLocalRelativeSource_FileURI(t *testing.T) {
+	root := t.TempDir()
+	mkt := &MarketplaceSource{Name: "local-mkt", URL: "file://" + root}
+	if mkt.Kind() != KindLocal {
+		t.Fatalf("test setup: MarketplaceSource{URL: %q}.Kind() = %v, want KindLocal", mkt.URL, mkt.Kind())
+	}
+
+	got, err := resolveLocalRelativeSource("plugins/foo", mkt)
+	if err != nil {
+		t.Fatalf("resolveLocalRelativeSource returned unexpected error: %v", err)
+	}
+	if want := filepath.Join(root, "plugins", "foo"); got != want {
+		t.Errorf("resolveLocalRelativeSource(file:// URI) = %q, want %q", got, want)
+	}
+}
+
 // TestResolveLocalRelativeSource_Errors covers the fast path's error cases:
 // a marketplace with no resolvable filesystem path, and a traversal
 // attempt in the relative source.

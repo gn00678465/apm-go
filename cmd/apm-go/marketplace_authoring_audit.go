@@ -60,7 +60,10 @@ func marketplaceAuditCmd() *cobra.Command {
 			// being skipped; localRoot flags that mode.
 			localRoot := ""
 			if src.Kind() == marketplace.KindLocal {
-				localRoot = src.URL
+				// Ticket 24 AC3: src.URL may be a bare path or a "file://"
+				// URI (this ticket's new writes) -- LocalFilesystemPath
+				// accepts both, indefinitely.
+				localRoot = marketplace.LocalFilesystemPath(src.URL)
 			}
 			reports := authoring.RunAudit(m, name, src.Host, localRoot, authoring.DefaultApmYMLFetcher)
 
