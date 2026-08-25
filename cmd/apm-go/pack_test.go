@@ -47,7 +47,7 @@ func packRevParse(t *testing.T, dir, ref string) string {
 
 func TestPackCmd_FlagsWired(t *testing.T) {
 	cmd := packCmd()
-	for _, name := range []string{"offline", "include-prerelease", "dry-run", "marketplace", "marketplace-path"} {
+	for _, name := range []string{"offline", "include-prerelease", "dry-run", "marketplace", "marketplace-path", "output", "target"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("pack is missing --%s", name)
 		}
@@ -57,6 +57,12 @@ func TestPackCmd_FlagsWired(t *testing.T) {
 	}
 	if cmd.Flags().ShorthandLookup("v") == nil {
 		t.Error("pack is missing the -v shorthand for --verbose")
+	}
+	if cmd.Flags().ShorthandLookup("o") == nil {
+		t.Error("pack is missing the -o shorthand for --output")
+	}
+	if cmd.Flags().ShorthandLookup("t") == nil {
+		t.Error("pack is missing the -t shorthand for --target")
 	}
 }
 
@@ -143,24 +149,39 @@ func TestPackCmd_NoApmYMLAtAll_ExitsOne(t *testing.T) {
 
 // ── pack --help documents all three producers ────────────────────────────
 
-func TestPackCmd_HelpDocumentsThreeProducers(t *testing.T) {
+// TestPackCmd_HelpMatchesOraclePackHelpDocstring is ticket 17 phase 1's
+// Long-text regression: packCmd's Long field is now the Oracle's own
+// _PACK_HELP docstring (commands/pack.py:25-66) verbatim ("apm" ->
+// "apm-go"), not apm-go's previous self-authored three-bullet summary.
+// Locks the first description paragraph (the exact string help_semantic's
+// own parseHelpDescriptionParagraph extracts and compares) plus every
+// section header and the exit-code table, so a future edit can't silently
+// drift back toward paraphrasing.
+func TestPackCmd_HelpMatchesOraclePackHelpDocstring(t *testing.T) {
 	out, err := runPackCmd(t, "--help")
 	if err != nil {
 		t.Fatalf("pack --help returned error: %v", err)
 	}
-	for _, token := range []string{"marketplace.json", "dependencies:", "plugin.json", "target:"} {
-		if !strings.Contains(out, token) {
-			t.Errorf("pack --help output missing %q:\n%s", token, out)
-		}
+	if !strings.Contains(out, "Pack distributable artifacts from your APM project.") {
+		t.Errorf("pack --help output missing the Oracle's first description paragraph verbatim:\n%s", out)
 	}
-	// Full scope lines locked verbatim -- must stay in sync with packCmd's
-	// Long text.
 	for _, line := range []string{
-		"a plugin-native bundle, from a 'dependencies:' block",
-		"a standalone plugin.json, from 'target:'/'targets:' containing",
+		"dependencies: block  ->  bundle (directory or archive; see --archive and --archive-format)",
+		"marketplace: block   ->  selected marketplace artifacts",
+		"target: / targets:   ->  ecosystem-specific plugin.json (claude/copilot)",
+		"both blocks present  ->  bundle plus selected marketplace artifacts",
+		"The lockfile (apm.lock.yaml) pins bundle contents.",
+		"Examples:",
+		"apm-go pack --format apm -o ./dist       # Legacy APM bundle layout",
+		"Exit codes:",
+		"0  Success",
+		"1  Build or runtime error",
+		"2  Manifest schema validation error",
+		"3  Version alignment check failed (--check-versions)",
+		"4  Marketplace working-tree drift detected (--check-clean)",
 	} {
 		if !strings.Contains(out, line) {
-			t.Errorf("pack --help output missing scope line %q:\n%s", line, out)
+			t.Errorf("pack --help output missing %q:\n%s", line, out)
 		}
 	}
 }
@@ -200,6 +221,148 @@ func TestRunPack_DependenciesOnly_BuildsRealBundle(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "build", "demo-1.0.0", "agents", "foo.md")); statErr != nil {
 		t.Errorf("expected local .apm/agents content bundled: %v", statErr)
+	}
+}
+
+// ── --output/-o (ticket 17 phase 1) ─────────────────────────────────────
+
+// TestPackCmd_OutputFlag_WritesToCustomDirectory proves --output/-o is
+// actually wired through to the bundle producer, not just parsed and
+// dropped.
+func TestPackCmd_OutputFlag_WritesToCustomDirectory(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+
+	out, err := runPackCmd(t, "--output", "./custom-out")
+	if err != nil {
+		t.Fatalf("pack --output returned error: %v (output: %s)", err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "custom-out", "demo-1.0.0", "plugin.json")); statErr != nil {
+		t.Errorf("expected the bundle under custom-out/, not build/: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Errorf("build/ should not exist when --output overrides it (stat err: %v)", statErr)
+	}
+}
+
+// TestPackCmd_OutputFlag_DefaultsToBuildWhenNotGiven locks the pre-ticket-17
+// default: omitting --output must keep writing under ./build, unchanged.
+func TestPackCmd_OutputFlag_DefaultsToBuildWhenNotGiven(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build", "demo-1.0.0", "plugin.json")); statErr != nil {
+		t.Errorf("expected the default build/ location unchanged: %v", statErr)
+	}
+}
+
+// TestPackCmd_OutputFlag_RejectsPathEscapingProjectRoot is the AC-required
+// security regression: --output is a DELIBERATE apm-go-only hardening
+// beyond the Oracle (which places no restriction on -o at all,
+// commands/pack.py:206-211's bare click.Path()) -- both a relative ".."
+// climb and an absolute path outside the project root must be rejected,
+// reusing the same build.EnsureWithinRoot containment helper this producer
+// already applies one level down (OutputDir/bundleRel).
+func TestPackCmd_OutputFlag_RejectsPathEscapingProjectRoot(t *testing.T) {
+	dir := chdirTemp(t)
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{"relative traversal", "../outside"},
+		{"absolute path outside root", filepath.Join(filepath.Dir(dir), "absolute-escape")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runPackCmd(t, "--output", tt.output)
+			if err == nil {
+				t.Fatalf("pack --output %q succeeded, want a rejection (output: %s)", tt.output, out)
+			}
+			if !strings.Contains(err.Error(), "escapes the project root") {
+				t.Errorf("error = %v, want it to name the containment violation", err)
+			}
+		})
+	}
+}
+
+// ── --target/-t (ticket 17 phase 1) ─────────────────────────────────────
+
+// TestPackCmd_TargetFlag_RecordsInEmbeddedLockfile proves --target/-t is
+// wired through to the embedded apm.lock.yaml's pack.target metadata field
+// (internal/pack/bundle/lockfile_pack.go's NewPackMetadata) -- a real
+// apm.lock.yaml must already exist on disk for embedPackLockfile to run at
+// all (bundle/producer.go:220's `if opts.Lockfile != nil` guard).
+func TestPackCmd_TargetFlag_RecordsInEmbeddedLockfile(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+	if err := os.WriteFile(filepath.Join(dir, "apm.lock.yaml"), []byte("lockfile_version: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runPackCmd(t, "--target", "claude")
+	if err != nil {
+		t.Fatalf("pack --target returned error: %v (output: %s)", err, out)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "build", "demo-1.0.0", "apm.lock.yaml"))
+	if rerr != nil {
+		t.Fatalf("expected an embedded apm.lock.yaml: %v", rerr)
+	}
+	if !strings.Contains(string(data), "target: claude") {
+		t.Errorf("embedded apm.lock.yaml = %q, want pack.target: claude", string(data))
+	}
+}
+
+// TestPackCmd_TargetFlag_DefaultsToAllWhenNotGiven locks the pre-ticket-17
+// default: omitting --target must keep recording pack.target: all,
+// unchanged -- apm-go does not replicate the Oracle's detect_target()
+// auto-fill (commands/pack.py:361-368) when --target is absent.
+func TestPackCmd_TargetFlag_DefaultsToAllWhenNotGiven(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+	if err := os.WriteFile(filepath.Join(dir, "apm.lock.yaml"), []byte("lockfile_version: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "build", "demo-1.0.0", "apm.lock.yaml"))
+	if rerr != nil {
+		t.Fatalf("expected an embedded apm.lock.yaml: %v", rerr)
+	}
+	if !strings.Contains(string(data), "target: all") {
+		t.Errorf("embedded apm.lock.yaml = %q, want the unchanged default pack.target: all", string(data))
 	}
 }
 

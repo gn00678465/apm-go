@@ -44,26 +44,62 @@ func packCmd() *cobra.Command {
 		verbose           bool
 		format            string
 		claudePlugin      bool
+		output            string
+		target            string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "pack",
 		Short: "Build marketplace.json, a plugin bundle, and/or a standalone plugin.json from apm.yml",
-		Long: `Build whichever of apm.yml's three artifacts apply -- any subset may fire
-in the same invocation:
+		// Ticket 17 phase 1: this is the Oracle's own _PACK_HELP docstring
+		// (commands/pack.py:25-66) verbatim, "apm" -> "apm-go" (folded back
+		// by the parity runner's rewrite_binary_name normalization for
+		// comparison) -- replacing apm-go's previously self-authored
+		// three-bullet summary. help_semantic only compares the first
+		// paragraph ("Pack distributable artifacts..."), but the ticket
+		// asks for the whole docstring (examples, exit-code table) for
+		// genuine --help parity, not just to satisfy that narrow check.
+		// The docstring references --archive/--check-versions/--check-clean,
+		// which this phase does not implement yet (ticket 17's later
+		// phases) -- textually accurate to the Oracle regardless of what
+		// apm-go has actually wired up so far, same as the Oracle's own
+		// docstring is unconditional on nothing else in the file.
+		Long: `Pack distributable artifacts from your APM project.
 
-  - marketplace.json, from a 'marketplace:' block (or a legacy
-    marketplace.yml) -- written under .claude-plugin/ and/or .agents/plugins/.
-  - a plugin-native bundle, from a 'dependencies:' block -- written under
-    ./build/<name>-<version>/, containing plugin.json plus plugin-native
-    directories (agents/, skills/, commands/, ...) and an embedded
-    apm.lock.yaml for install-time integrity verification.
-  - a standalone plugin.json, from 'target:'/'targets:' containing "claude"
-    and/or "copilot" -- written at .claude-plugin/plugin.json and/or
-    .github/plugin/plugin.json.
+Reads apm.yml to decide what to produce:
 
-If none of the three apply, pack fails (exit 1) instead of silently doing
-nothing.`,
+  dependencies: block  ->  bundle (directory or archive; see --archive and --archive-format)
+  marketplace: block   ->  selected marketplace artifacts
+  target: / targets:   ->  ecosystem-specific plugin.json (claude/copilot)
+  both blocks present  ->  bundle plus selected marketplace artifacts
+
+The lockfile (apm.lock.yaml) pins bundle contents. An enriched copy
+is embedded in each bundle.
+
+Examples:
+
+  # Bundle only (most common -- just dependencies: in apm.yml):
+  apm-go pack                              # Legacy Claude plugin bundle (current default)
+  apm-go pack --format agent-plugin        # Portable Agent Plugins v1 bundle
+  apm-go pack --format apm -o ./dist       # Legacy APM bundle layout
+
+  # Marketplace only (marketplace: in apm.yml, no dependencies:):
+  apm-go pack
+  apm-go pack --offline --dry-run
+
+  # Both (apm.yml has dependencies: AND marketplace: blocks):
+  apm-go pack
+  apm-go pack --archive --offline
+
+  # Marketplace output paths are normally configured in apm.yml:
+  # marketplace.claude.output / marketplace.codex.output
+
+Exit codes:
+  0  Success
+  1  Build or runtime error
+  2  Manifest schema validation error
+  3  Version alignment check failed (--check-versions)
+  4  Marketplace working-tree drift detected (--check-clean)`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -92,6 +128,8 @@ nothing.`,
 				pathOverrideArgs:  pathOverrideArgs,
 				verbose:           verbose,
 				bundleFormat:      bundleFormatLockValue(bf),
+				output:            output,
+				target:            target,
 			})
 		},
 	}
@@ -115,6 +153,30 @@ nothing.`,
 			"legacy APM bundle layout. The current no-flag default is 'claude-plugin'. "+
 			"apm-go currently implements only the Claude plugin bundle; agent-plugin and apm are accepted but refused.")
 	cmd.Flags().BoolVar(&claudePlugin, "claude-plugin", false, "Select the legacy Claude plugin bundle output (current no-flag default).")
+	// Ticket 17 phase 1: exact Oracle help text (commands/pack.py:206-211).
+	// The Cobra/pflag default is deliberately "" (the zero value), not
+	// "./build" -- pflag auto-appends its own `(default "X")` annotation to
+	// a flag's help line whenever the default is non-zero, which would
+	// double up with (and mismatch the format of) the literal
+	// "(default: ./build)" already baked into this string, breaking
+	// help_semantic's DefaultIfShown comparison. runBundleProducer applies
+	// the "./build" fallback itself when output == "".
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Bundle output directory (default: ./build).")
+	// Ticket 17 phase 1: exact Oracle help text (commands/pack.py:177-183).
+	// Wired through to bundle.ProduceOptions.Target (embedded in the
+	// bundle's apm.lock.yaml as pack.target, internal/pack/bundle/
+	// lockfile_pack.go's NewPackMetadata) only when explicitly given --
+	// apm-go does not replicate the Oracle's detect_target()-based
+	// auto-fill when --target is absent (commands/pack.py:361-368, a real,
+	// separate auto-detection feature, not "wire an existing value through
+	// a flag"); the absent-flag default stays "all", unchanged from before
+	// this ticket. Also not replicated: TargetParamType's comma-separated
+	// multi-value parsing and "copilot"->"vscode" alias resolution
+	// (target_detection.py:744-765) -- apm-go stores whatever single string
+	// is given, verbatim. Both simplifications are deliberately out of this
+	// phase's "no new logic" scope; the Oracle's own deprecation warning
+	// (pack.py:370-374) is likewise not reproduced here.
+	cmd.Flags().StringVarP(&target, "target", "t", "", "[Deprecated] Target platform filter. Bundles are now target-agnostic; the consumer's project decides where files land at install time. Value is recorded in pack.target as informational metadata only and is ignored by 'apm-go install'. The flag will be removed in a future release.")
 	return cmd
 }
 
@@ -132,6 +194,11 @@ type packOptions struct {
 	// 07) -- always "claude-plugin" today, since RunE refuses
 	// agent-plugin/apm before runPack is ever called.
 	bundleFormat string
+	// output is --output/-o's raw value ("" when not given, meaning
+	// runBundleProducer's own "./build" default applies -- ticket 17).
+	output string
+	// target is --target/-t's raw value ("" when not given -- ticket 17).
+	target string
 }
 
 // runPack reads apm.yml once, routes to whichever of the three producers
@@ -267,6 +334,31 @@ func loadPackManifest() (m *manifest.Manifest, root *yamllib.Node, err error) {
 	return m, doc.Content[0], nil
 }
 
+// resolvePackOutputDir implements --output/-o (ticket 17 phase 1): raw's
+// own empty-string default means the pre-existing "./build" behavior;
+// otherwise raw must resolve within the project root (".").
+//
+// The Oracle places NO such restriction on -o at all (commands/pack.py:
+// 206-211's `type=click.Path()` is a bare path-shape validator, then
+// `bundle_output=Path(output)` is used completely unrestricted, including
+// an absolute path or one that climbs outside the project via "..") -- this
+// is a DELIBERATE apm-go-only hardening beyond the Oracle, not a parity
+// fix: an unrestricted, CLI-flag-controlled write-anywhere is a real
+// footgun (a wrapper script or CI job interpolating an unsanitized -o
+// value could point a build step at an arbitrary path) even for a local
+// CLI tool the invoking user already has filesystem permissions for. Reuses
+// the same build.EnsureWithinRoot containment helper this exact function
+// already calls one level down (OutputDir/bundleRel, producer.go:174) --
+// the same convention internal/marketplace/authoring/refcheck.go's
+// resolveLocalSourceAgainstRoot applies to a local marketplace source --
+// rather than a second, hand-rolled check.
+func resolvePackOutputDir(raw string) (string, error) {
+	if raw == "" {
+		return filepath.Join(".", "build"), nil
+	}
+	return build.EnsureWithinRoot(".", raw)
+}
+
 // runBundleProducer builds the plugin-native bundle from apm.yml's
 // dependencies: block, mirroring BundleProducer.produce
 // (core/build_orchestrator.py:93-124) -> export_plugin_bundle. m is never
@@ -295,12 +387,17 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		pkgVersion = "0.0.0"
 	}
 
+	outputDir, err := resolvePackOutputDir(opts.output)
+	if err != nil {
+		return err
+	}
+
 	result, err := bundle.Produce(w, bundle.ProduceOptions{
 		ProjectRoot:                   ".",
-		OutputDir:                     filepath.Join(".", "build"),
+		OutputDir:                     outputDir,
 		PkgName:                       m.Name,
 		PkgVersion:                    pkgVersion,
-		Target:                        "all",
+		Target:                        opts.target,
 		Force:                         opts.force,
 		DryRun:                        opts.dryRun,
 		HasLocalDep:                   hasLocalDep,
