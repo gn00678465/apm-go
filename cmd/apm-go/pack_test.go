@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -583,6 +584,94 @@ func TestPackCmd_ArchiveFormat_MissingArgument_BareUsageError(t *testing.T) {
 	want := "Option '--archive-format' requires an argument."
 	if err.Error() != want {
 		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+}
+
+// archiveSizeSuffixRe matches bundleSizeSuffix's three rendered shapes:
+// " (N bytes)", " (X.Y KiB)", " (X.Y MiB)".
+var archiveSizeSuffixRe = regexp.MustCompile(`\((\d+ bytes|\d+\.\d KiB|\d+\.\d MiB)\)`)
+
+// TestPackCmd_ArchiveFlag_PrintsSizeSuffix mirrors _bundle_size_suffix
+// (commands/pack.py:617-629): the success line for an ARCHIVE gets a size
+// annotation the directory-bundle success line never had.
+func TestPackCmd_ArchiveFlag_PrintsSizeSuffix(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive")
+	if err != nil {
+		t.Fatalf("pack --archive returned error: %v (output: %s)", err, out)
+	}
+	if !archiveSizeSuffixRe.MatchString(out) {
+		t.Errorf("output = %q, want a size suffix matching %s", out, archiveSizeSuffixRe)
+	}
+}
+
+// TestPackCmd_NoArchive_NoSizeSuffix locks the OTHER half of
+// _bundle_size_suffix's own guard (`if not path.is_file(): return ""`): a
+// plain directory bundle must never get a size annotation.
+func TestPackCmd_NoArchive_NoSizeSuffix(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, out)
+	}
+	if archiveSizeSuffixRe.MatchString(out) {
+		t.Errorf("output = %q, a directory bundle must not get a size suffix", out)
+	}
+}
+
+const zipMigrationNoticeText = "Note: --archive now produces .zip by default. Use --archive-format tar.gz to restore the previous format for legacy pipelines."
+
+// TestPackCmd_ArchiveImplicitZip_PrintsMigrationNotice mirrors
+// show_zip_migration_notice's positive case (commands/pack.py:566-570):
+// --archive with NO --archive-format given resolves to the implicit "zip"
+// default and shows the one-time migration notice.
+func TestPackCmd_ArchiveImplicitZip_PrintsMigrationNotice(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive")
+	if err != nil {
+		t.Fatalf("pack --archive returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, zipMigrationNoticeText) {
+		t.Errorf("output = %q, want the zip-migration notice", out)
+	}
+}
+
+// TestPackCmd_ArchiveExplicitZip_SuppressesMigrationNotice mirrors
+// show_zip_migration_notice's negative case: an EXPLICIT
+// `--archive-format zip` (ctx.get_parameter_source is COMMANDLINE) must NOT
+// show the notice, even though the resolved format is still "zip".
+func TestPackCmd_ArchiveExplicitZip_SuppressesMigrationNotice(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive", "--archive-format", "zip")
+	if err != nil {
+		t.Fatalf("pack --archive --archive-format zip returned error: %v (output: %s)", err, out)
+	}
+	if strings.Contains(out, zipMigrationNoticeText) {
+		t.Errorf("output = %q, an explicit --archive-format zip must not show the migration notice", out)
+	}
+}
+
+// TestPackCmd_ArchiveTarGz_NoMigrationNotice: the notice is "zip"-specific
+// (it advertises restoring the tar.gz default) -- --archive-format tar.gz
+// must never show it.
+func TestPackCmd_ArchiveTarGz_NoMigrationNotice(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive", "--archive-format", "tar.gz")
+	if err != nil {
+		t.Fatalf("pack --archive --archive-format tar.gz returned error: %v (output: %s)", err, out)
+	}
+	if strings.Contains(out, zipMigrationNoticeText) {
+		t.Errorf("output = %q, --archive-format tar.gz must not show the zip-migration notice", out)
 	}
 }
 

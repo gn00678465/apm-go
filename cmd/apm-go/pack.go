@@ -129,7 +129,8 @@ Exit codes:
 			// was actually given (cmd.Flags().Changed) -- an absent flag
 			// keeps archiveFormat as "" (bundle.Produce's own
 			// effectiveArchiveFormat applies the "zip" default).
-			if cmd.Flags().Changed("archive-format") {
+			archiveFormatExplicit := cmd.Flags().Changed("archive-format")
+			if archiveFormatExplicit {
 				if err := validateArchiveFormatChoice(archiveFormat); err != nil {
 					return withUsageError(err)
 				}
@@ -139,19 +140,33 @@ Exit codes:
 						archiveFormat))
 				}
 			}
+			// Ticket 17 phase 2 (eval follow-up): mirrors show_zip_migration_notice
+			// (commands/pack.py:566-570) exactly -- both of the Oracle's own
+			// conditions, not a simplified version: --archive was given, the
+			// EFFECTIVE archive format resolves to "zip" (the no-flag
+			// default), AND --archive-format was NOT itself given explicitly
+			// (ctx.get_parameter_source(...) is not COMMANDLINE) -- an
+			// explicit `--archive --archive-format zip` does NOT show the
+			// notice, only the implicit-default path does.
+			effectiveArchiveFormat := archiveFormat
+			if effectiveArchiveFormat == "" {
+				effectiveArchiveFormat = "zip"
+			}
+			showZipMigrationNotice := archiveFlag && effectiveArchiveFormat == "zip" && !archiveFormatExplicit
 			return runPack(cmd, packOptions{
-				offline:           offline,
-				includePrerelease: includePrerelease,
-				dryRun:            dryRun,
-				force:             force,
-				marketplaceFilter: marketplaceFilter,
-				pathOverrideArgs:  pathOverrideArgs,
-				verbose:           verbose,
-				bundleFormat:      bundleFormatLockValue(bf),
-				output:            output,
-				target:            target,
-				archive:           archiveFlag,
-				archiveFormat:     archiveFormat,
+				offline:                offline,
+				includePrerelease:      includePrerelease,
+				dryRun:                 dryRun,
+				force:                  force,
+				marketplaceFilter:      marketplaceFilter,
+				pathOverrideArgs:       pathOverrideArgs,
+				verbose:                verbose,
+				bundleFormat:           bundleFormatLockValue(bf),
+				output:                 output,
+				target:                 target,
+				archive:                archiveFlag,
+				archiveFormat:          archiveFormat,
+				showZipMigrationNotice: showZipMigrationNotice,
 			})
 		},
 	}
@@ -274,6 +289,12 @@ type packOptions struct {
 	// (bundle.Produce's effectiveArchiveFormat applies the "zip" default).
 	archive       bool
 	archiveFormat string
+	// showZipMigrationNotice mirrors show_zip_migration_notice
+	// (commands/pack.py:566-570), computed once in RunE (where
+	// cmd.Flags().Changed("archive-format") is available) and threaded
+	// through so runBundleProducer's rendering doesn't need cobra flag
+	// access itself.
+	showZipMigrationNotice bool
 }
 
 // runPack reads apm.yml once, routes to whichever of the three producers
@@ -499,7 +520,7 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		return nil
 	}
 	displayDir := displayPath(result.BundleDir)
-	ux.Sparkle(w, "Packed %d file(s) -> %s", len(result.Files), displayDir)
+	ux.Sparkle(w, "Packed %d file(s) -> %s%s", len(result.Files), displayDir, bundleSizeSuffix(result.BundleDir))
 	// pack.py:679-680 (_render_bundle_result): the real (non-dry-run) file
 	// listing is `logger.verbose_detail`, gated on -v -- unlike dry-run's
 	// `logger.tree_item` a few lines up in the same function, which is
@@ -516,6 +537,17 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		}
 		ux.BulletList(w, items)
 	}
+	// pack.py:566-570/681-687: the zip-migration notice, shown only when
+	// --archive was given, the EFFECTIVE format resolved to "zip" (the
+	// no-flag default -- opts.showZipMigrationNotice, computed in RunE
+	// where cmd.Flags().Changed("archive-format") is available), AND (the
+	// Oracle's own SECOND, independent check at render time) the produced
+	// bundle path itself ends in ".zip" -- both conditions kept, not
+	// simplified into just one.
+	if opts.showZipMigrationNotice && strings.HasSuffix(result.BundleDir, ".zip") {
+		ux.Info(w, "Note: --archive now produces .zip by default. Use --archive-format tar.gz "+
+			"to restore the previous format for legacy pipelines.")
+	}
 	// pack.py:695-699: the Claude-plugin wording branch -- the ONLY one
 	// reachable through apm-go pack today. Agent Plugin and legacy APM
 	// bundles are refused before this function is ever called
@@ -528,6 +560,31 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		"plugin-native directories and an embedded apm.lock.yaml.")
 	ux.Info(w, "Share with: apm-go install %s", displayDir)
 	return nil
+}
+
+// bundleSizeSuffix mirrors _bundle_size_suffix (commands/pack.py:617-629):
+// a directory bundle (path.is_file() false) gets no suffix at all -- only
+// an archive FILE does. Three branches, exact Oracle thresholds/formatting
+// (one decimal place, the literal " (" / ")" wrapping): <1024 bytes plain
+// integer, <1 MiB in KiB, otherwise in MiB. The absolute byte count will
+// generally differ from the Oracle's own archive of logically-equivalent
+// content (different DEFLATE encoders, different embedded timestamps
+// pre-compression) -- that is a documented, expected residual, not
+// something this function tries to normalize away.
+func bundleSizeSuffix(path string) string {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	size := info.Size()
+	switch {
+	case size < 1024:
+		return fmt.Sprintf(" (%d bytes)", size)
+	case size < 1024*1024:
+		return fmt.Sprintf(" (%.1f KiB)", float64(size)/1024)
+	default:
+		return fmt.Sprintf(" (%.1f MiB)", float64(size)/(1024*1024))
+	}
 }
 
 // displayPath renders an absolute bundle/output path the way the Oracle's
