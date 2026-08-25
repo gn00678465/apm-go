@@ -25,10 +25,11 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 | 18 | `marketplace audit` missing "Run with --verbose for details." hint (spun out of 14 attempt 2) | — |
 | 19 | `init`/`plugin init` output-surface gaps: apm.yml YAML cosmetics, success-output stream split, help_semantic parser limitation (spun out of 09) | — |
 | 20 | `marketplace package add ./<path>\` writes a broken name/source; local sources are never stat-ed (user-reported) | — |
+| 21 | derived-name rejection blames the name, not the source the user typed (spun out of 20's evaluator follow-up) | 20 |
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: ALL TICKETS CLOSED (01-15 ✅; eval-ticket-09.md PASS) — released as v0.3.0-beta.3. 20 closed (user-reported bug, not a parity gap: `marketplace package add`/`check` now require a local source to resolve to an existing directory, and reject a broken package name; zero parity-corpus drift, no cases exist for these commands). Post-beta backlog: 16 (dep-parser conformance rows), 17 (pack flags/features), 18 (audit verbose hint), 05's marketplaces.json tree gap. CI parity gate (parity.yml) is red by design until the 18-case backlog closes.
+Status: ALL TICKETS CLOSED (01-15 ✅; eval-ticket-09.md PASS) — released as v0.3.0-beta.3. 20 closed (user-reported bug, not a parity gap: `marketplace package add`/`check` now require a local source to resolve to an existing directory, and reject a broken package name; zero parity-corpus drift, no cases exist for these commands). 21 closed (evaluator follow-up on 20's diagnostic wording: a derived-name rejection now blames the source the user typed instead of the derived name, and no message doubles a backslash via `%q`; zero behavior change, zero parity-corpus drift). Post-beta backlog: 16 (dep-parser conformance rows), 17 (pack flags/features), 18 (audit verbose hint), 05's marketplaces.json tree gap. CI parity gate (parity.yml) is red by design until the 18-case backlog closes.
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 

@@ -1389,6 +1389,11 @@ func TestMarketplacePackageAdd_LocalSourceEscapingRoot_Rejected(t *testing.T) {
 // trailing "\") exists must fail with exit 2, and apm.yml must be left
 // byte-for-byte unchanged -- not the pre-fix behaviour of silently writing
 // `name: "llm-wiki\\"` / `source: "./llm-wiki\\"`.
+//
+// Ticket 21 (evaluator follow-up): also locks the diagnostic itself -- the
+// error must name the source the user actually typed (AC1), not just the
+// name derived from it, and must not render the single backslash as two the
+// way Go's `%q` would (AC3).
 func TestMarketplacePackageAdd_LocalSourceTrailingSeparator_RejectedEndToEnd(t *testing.T) {
 	// Arrange
 	chdirTemp(t)
@@ -1409,6 +1414,12 @@ func TestMarketplacePackageAdd_LocalSourceTrailingSeparator_RejectedEndToEnd(t *
 	}
 	if got := exitCodeOf(err); got != 2 {
 		t.Errorf("exitCodeOf(err) = %d, want 2 (AC1)", got)
+	}
+	if wantSource := `local source "./llm-wiki\"`; !strings.Contains(err.Error(), wantSource) {
+		t.Errorf("error = %v, want it to name the raw source %s, not just the derived name (ticket 21 AC1)", err, wantSource)
+	}
+	if strings.Contains(err.Error(), `\\`) {
+		t.Errorf(`error = %v, want no doubled backslash / %%q rendering (ticket 21 AC3)`, err)
 	}
 	data, rerr := os.ReadFile("apm.yml")
 	if rerr != nil {

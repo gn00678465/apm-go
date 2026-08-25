@@ -396,31 +396,88 @@ func verifyLocalSourceExists(source, resolvedPath string) error {
 // path segment, on either POSIX or Windows.
 const packageNameSeparators = "/\\"
 
-// validatePackageName implements ticket 20 AC3: marketplace/yml_schema.py:216
-// places no charset requirement on PackageEntry.name at all -- it is only
-// required to be a non-empty string -- so a name derived from a source with
-// a trailing separator (defaultNameFromSource's `llm-wiki\` in ticket 20's
-// reproducer) or an explicit --name containing one rides straight into
-// apm.yml/marketplace.json unrejected on both the Oracle and (until now)
-// apm-go. This is a DELIBERATE apm-go-only hardening beyond the Oracle, not
-// a parity fix: it rejects only names that could never be a legitimate
-// single path segment -- a path separator, "." or "..", whitespace, or a
-// control character -- deliberately NOT `init`'s much stricter pluginNameRe
+// packageNameProblem names the specific reason packageNameIssue rejected a
+// name, as a ready-to-print predicate phrase ("name %s <problem>"). Ticket
+// 21 AC1: shared between validatePackageName's own message and AddPackage's
+// derived-name diagnostic (packageNameDerivedError below) so both describe
+// the SAME violation in the same words, instead of AddPackage re-deriving
+// or string-matching validatePackageName's error text.
+type packageNameProblem string
+
+const (
+	packageNameProblemNone       packageNameProblem = ""
+	packageNameProblemDotSegment packageNameProblem = "is not a valid name"
+	packageNameProblemSeparator  packageNameProblem = "must not contain a path separator"
+	packageNameProblemControl    packageNameProblem = "must not contain whitespace or control characters"
+)
+
+// packageNameIssue implements ticket 20 AC3's charset rule:
+// marketplace/yml_schema.py:216 places no charset requirement on
+// PackageEntry.name at all -- it is only required to be a non-empty string
+// -- so a name derived from a source with a trailing separator
+// (defaultNameFromSource's `llm-wiki\` in ticket 20's reproducer) or an
+// explicit --name containing one rides straight into apm.yml/
+// marketplace.json unrejected on both the Oracle and (until now) apm-go.
+// This is a DELIBERATE apm-go-only hardening beyond the Oracle, not a
+// parity fix: it rejects only names that could never be a legitimate single
+// path segment -- a path separator, "." or "..", whitespace, or a control
+// character -- deliberately NOT `init`'s much stricter pluginNameRe
 // (`^[a-z][a-z0-9-]{0,63}$`, cmd/apm-go/init.go), which would reject
 // existing legitimate marketplace package names like "My_Tool".
-func validatePackageName(name string) error {
-	if name == "." || name == ".." {
-		return fmt.Errorf("package name %q is not a valid name", name)
-	}
-	if strings.ContainsAny(name, packageNameSeparators) {
-		return fmt.Errorf("package name %q must not contain a path separator", name)
+func packageNameIssue(name string) packageNameProblem {
+	switch {
+	case name == "." || name == "..":
+		return packageNameProblemDotSegment
+	case strings.ContainsAny(name, packageNameSeparators):
+		return packageNameProblemSeparator
 	}
 	for _, r := range name {
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
-			return fmt.Errorf("package name %q must not contain whitespace or control characters", name)
+			return packageNameProblemControl
 		}
 	}
+	return packageNameProblemNone
+}
+
+// packageNameDiagnosticQuote wraps s in plain double quotes for a
+// user-facing diagnostic, with NO escaping at all -- ticket 21 AC3: Go's
+// `%q` renders a single backslash as two (`\` -> `\\`), a faithful quoted
+// literal but one that makes a user decode Go string-escaping to recognise
+// their own `./llm-wiki\` input (ticket 20's reproducer). These strings are
+// printed into diagnostics only, never re-parsed, so there is nothing to
+// protect by escaping them.
+func packageNameDiagnosticQuote(s string) string {
+	return `"` + s + `"`
+}
+
+// packageNameError renders problem (from packageNameIssue) as an error for
+// name itself -- e.g. an explicit --name rejection, where name is already
+// the right thing to blame (ticket 21 AC2, unchanged from ticket 20 except
+// for the %q -> packageNameDiagnosticQuote fix, AC3).
+func packageNameError(name string, problem packageNameProblem) error {
+	return fmt.Errorf("package name %s %s", packageNameDiagnosticQuote(name), problem)
+}
+
+// validatePackageName rejects name per packageNameIssue's rule, in the
+// caller-blaming shape appropriate for an explicit --name (AddPackage's
+// derived-name path builds its own, source-blaming message instead --
+// packageNameDerivedError below).
+func validatePackageName(name string) error {
+	if problem := packageNameIssue(name); problem != packageNameProblemNone {
+		return packageNameError(name, problem)
+	}
 	return nil
+}
+
+// packageNameDerivedError implements ticket 21 AC1: when the rejected name
+// came from defaultNameFromSource (no explicit --name given), the earlier
+// message blamed the derived name alone -- e.g. `package name "llm-wiki\\"
+// must not contain a path separator` -- which points at nothing the user
+// actually typed (they gave `./llm-wiki\`, a source, not a --name). This
+// names the source as given instead, and points at the remedy.
+func packageNameDerivedError(source, name string, problem packageNameProblem) error {
+	return fmt.Errorf("local source %s derives package name %s, which %s; pass --name to set it explicitly",
+		packageNameDiagnosticQuote(source), packageNameDiagnosticQuote(name), problem)
 }
 
 // ── F4: mutable-ref auto-resolution (marketplace.md:253-254's documented
@@ -782,9 +839,10 @@ type AddOptions struct {
 // source (req-mf-017, via manifest.ValidateMarketplaceSource), a local
 // source that escapes the project root or does not resolve to an existing
 // directory (ticket 20 AC1/AC2, via verifyPackageSource), an unreachable
-// remote source, an invalid resolved name (ticket 20 AC3, via
-// validatePackageName), a duplicate (case-insensitive) name, or a
-// write/validate failure.
+// remote source, an invalid resolved name (ticket 20 AC3's packageNameIssue
+// rule; a derived name's error blames the source, not the name itself --
+// ticket 21 AC1), a duplicate (case-insensitive) name, or a write/validate
+// failure.
 func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name string, fallbackUsed bool, err error) {
 	if opts.Version != "" && opts.Ref != "" {
 		return "", false, fmt.Errorf("--version and --ref are mutually exclusive; use --version for a semver range or --ref for a git ref")
@@ -807,11 +865,19 @@ func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name str
 	}
 
 	name = opts.Name
-	if name == "" {
+	derivedFromSource := name == ""
+	if derivedFromSource {
 		name = defaultNameFromSource(source)
 	}
-	if err := validatePackageName(name); err != nil {
-		return "", false, err
+	// Ticket 21 AC1: a name derived from source gets a diagnostic naming
+	// the source the user actually typed (packageNameDerivedError), not
+	// just the derived name -- an explicit --name rejection (AC2) keeps
+	// blaming the name itself, unchanged.
+	if problem := packageNameIssue(name); problem != packageNameProblemNone {
+		if derivedFromSource {
+			return "", false, packageNameDerivedError(source, name, problem)
+		}
+		return "", false, packageNameError(name, problem)
 	}
 	if findPackageIndex(cfg, name) != -1 {
 		return "", false, fmt.Errorf("package %q already exists", name)

@@ -1342,11 +1342,23 @@ func TestAddPackage_LocalSource_NonexistentPath_Rejected(t *testing.T) {
 
 // TestAddPackage_LocalSource_TrailingSeparator_Rejected is ticket 20's exact
 // reported reproducer: `./llm-wiki\` (a trailing backslash, e.g. a Windows/
-// PowerShell tab-completion artifact) where only "llm-wiki" (without the
+// PowerShell tab-completion artifact) where "llm-wiki" (without the
 // trailing "\") exists on disk. The Oracle accepts this verbatim (utils/
 // path_security.py:64-82's reject_empty=False lets the trailing separator's
-// empty path segment through); apm-go now refuses it because the resolved
-// path "llm-wiki\" itself does not exist.
+// empty path segment through).
+//
+// Ticket 21 (evaluator follow-up on ticket 20, AC4): this comment used to
+// claim the resolved path "llm-wiki\" itself does not exist, and that the
+// rejection came from AC1's existence check. That was wrong --
+// resolveLocalSourceAgainstRoot normalises "\" -> "/" before resolving, so
+// "./llm-wiki\" resolves to the real, existing "llm-wiki" directory and
+// clears AC1 cleanly. The rejection actually comes from AC3's
+// packageNameIssue check on the DERIVED name: defaultNameFromSource only
+// trims a trailing "/" or ".git", never "\", so the derived name stays
+// "llm-wiki\" -- which contains a path separator. This test also locks
+// ticket 21's fix: the error must name the source as the user typed it
+// (AC1), not just the derived name, and must not double the backslash the
+// way `%q` would (AC3).
 func TestAddPackage_LocalSource_TrailingSeparator_Rejected(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
@@ -1360,7 +1372,13 @@ func TestAddPackage_LocalSource_TrailingSeparator_Rejected(t *testing.T) {
 
 	// Assert
 	if err == nil {
-		t.Fatal(`AddPackage("./llm-wiki\\") = nil error, want a rejection (the literal path "llm-wiki\" does not exist)`)
+		t.Fatal(`AddPackage("./llm-wiki\\") = nil error, want a rejection (the derived name "llm-wiki\" contains a path separator)`)
+	}
+	if wantSource := `local source "./llm-wiki\"`; !strings.Contains(err.Error(), wantSource) {
+		t.Errorf("error = %v, want it to name the source as typed (%s), not just the derived name (ticket 21 AC1)", err, wantSource)
+	}
+	if strings.Contains(err.Error(), `\\`) {
+		t.Errorf(`error = %v, want no doubled backslash / %%q rendering (ticket 21 AC3)`, err)
 	}
 }
 
@@ -1458,6 +1476,9 @@ func TestValidatePackageName_AcceptsLegitimateNames(t *testing.T) {
 
 // TestAddPackage_NameFlag_TrailingSeparator_Rejected proves AC3 applies to
 // an explicit --name too, not just a defaultNameFromSource-derived one.
+// Ticket 21 AC2: an explicit --name rejection must keep blaming the name
+// itself (not the source) -- unchanged behavior, just verified explicitly
+// now that AddPackage has two different message shapes to choose between.
 func TestAddPackage_NameFlag_TrailingSeparator_Rejected(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
@@ -1472,6 +1493,47 @@ func TestAddPackage_NameFlag_TrailingSeparator_Rejected(t *testing.T) {
 	// Assert
 	if err == nil {
 		t.Fatal(`AddPackage(--name "tool/evil") = nil error, want a rejection (embedded path separator)`)
+	}
+	if !strings.Contains(err.Error(), `"tool/evil"`) {
+		t.Errorf(`error = %v, want it to name the rejected --name value`, err)
+	}
+	if strings.Contains(err.Error(), "local source") {
+		t.Errorf("error = %v, want an explicit --name rejection to blame the name, not the source (ticket 21 AC2)", err)
+	}
+}
+
+// TestAddPackage_LocalSource_DerivedNameControlChar_SafeWithPercentSign is
+// ticket 21 AC3's format-string-safety half: --name is attacker/user
+// controlled, and ux.Error (the CLI's eventual printer for this error) takes
+// a format string -- a name containing a literal "%" must never be treated
+// as one. AddPackage builds this error via fmt.Errorf's own %s verb, so a
+// "%s"/"%d"-bearing name is interpolated as a plain value, never
+// re-interpreted as a nested format directive; this asserts the resulting
+// message contains the name verbatim rather than, say, garbled or expanded
+// output.
+func TestAddPackage_LocalSource_DerivedNameControlChar_SafeWithPercentSign(t *testing.T) {
+	// Arrange: resolveLocalSourceAgainstRoot normalises "\" -> "/" before
+	// resolving containment, so the on-disk fixture for "./100%\done" is
+	// the two-level "100%/done", not a single "100%\done" directory name --
+	// defaultNameFromSource, in contrast, derives the name from the
+	// ORIGINAL (un-normalised) source string, so the derived name stays the
+	// single segment "100%\done" and is rejected as containing a path
+	// separator.
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	if err := os.MkdirAll(filepath.Join(dir, "100%", "done"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, _, err := AddPackage(dir, `./100%\done`, AddOptions{}, panicLister{})
+
+	// Assert
+	if err == nil {
+		t.Fatal(`AddPackage("./100%\\done") = nil error, want a rejection (derived name contains a path separator)`)
+	}
+	if !strings.Contains(err.Error(), `100%\done`) {
+		t.Errorf(`error = %v, want the "%%"-bearing name/source rendered verbatim, not treated as a format directive`, err)
 	}
 }
 
