@@ -121,12 +121,9 @@ func extractInto(tr *tar.Reader, stage string, lim Limits) ([]string, error) {
 		}
 
 		// Path guard (req-sc-002).
-		clean := path.Clean(hdr.Name)
-		if path.IsAbs(clean) || filepath.IsAbs(hdr.Name) || hasVolume(hdr.Name) {
-			return nil, fmt.Errorf("archive: entry %q has an absolute path; rejected", hdr.Name)
-		}
-		if clean == ".." || strings.HasPrefix(clean, "../") || containsDotDot(clean) {
-			return nil, fmt.Errorf("archive: entry %q escapes extraction root (contains \"..\"); rejected", hdr.Name)
+		clean, err := ValidatedRelPath(hdr.Name)
+		if err != nil {
+			return nil, err
 		}
 		target := filepath.Join(stage, filepath.FromSlash(clean))
 		if !withinRoot(stage, target) {
@@ -174,6 +171,26 @@ func copyCapped(target string, tr io.Reader, remaining int64) (int64, error) {
 		return n, fmt.Errorf("archive: write %q: %w", target, err)
 	}
 	return n, nil
+}
+
+// ValidatedRelPath cleans a POSIX-style archive entry name and rejects it
+// if it is absolute (including a Windows drive-letter form) or escapes its
+// root via any ".." segment -- the exact path invariant SafeExtract/
+// SafeExtractZip enforce on every entry they read. Exported so archive-
+// WRITING callers (internal/pack/bundle's --archive support, ticket 17
+// phase 2) can defense-in-depth-validate an entry name against the SAME
+// rule set this package already established for reading, rather than a
+// second, independently maintained copy of it ("don't open a new rule
+// set" -- ticket 17 phase 2's own instruction).
+func ValidatedRelPath(name string) (string, error) {
+	clean := path.Clean(name)
+	if path.IsAbs(clean) || filepath.IsAbs(name) || hasVolume(name) {
+		return "", fmt.Errorf("archive: entry %q has an absolute path; rejected", name)
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") || containsDotDot(clean) {
+		return "", fmt.Errorf("archive: entry %q escapes extraction root (contains \"..\"); rejected", name)
+	}
+	return clean, nil
 }
 
 func containsDotDot(p string) bool {

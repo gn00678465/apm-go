@@ -211,7 +211,14 @@ func setBundleFormatFlagErrorFunc(cmd *cobra.Command) {
 			// (ux.Error/"[x] " on stdout) since its own Oracle wording was
 			// never checked.
 			reformatted := fmt.Errorf("Option '%s' requires an argument.", name)
-			if name == "--format" {
+			// Ticket 17 phase 2: "--archive-format" verified live against
+			// the pinned Oracle to produce the IDENTICAL bare shape as
+			// "--format" (`pack --archive-format` at end of argv ->
+			// "Error: Option '--archive-format' requires an argument."
+			// with no Usage/Try preamble) -- a narrow, directly-checked
+			// addition, not a broadening to every flag (still unverified
+			// and left alone, per this function's own doc comment).
+			if name == "--format" || name == "--archive-format" {
 				return withBareUsageError(reformatted)
 			}
 			return withExitCode(2, reformatted)

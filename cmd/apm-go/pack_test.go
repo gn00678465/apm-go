@@ -6,8 +6,12 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +51,7 @@ func packRevParse(t *testing.T, dir, ref string) string {
 
 func TestPackCmd_FlagsWired(t *testing.T) {
 	cmd := packCmd()
-	for _, name := range []string{"offline", "include-prerelease", "dry-run", "marketplace", "marketplace-path", "output", "target"} {
+	for _, name := range []string{"offline", "include-prerelease", "dry-run", "marketplace", "marketplace-path", "output", "target", "archive", "archive-format"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("pack is missing --%s", name)
 		}
@@ -363,6 +367,222 @@ func TestPackCmd_TargetFlag_DefaultsToAllWhenNotGiven(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "target: all") {
 		t.Errorf("embedded apm.lock.yaml = %q, want the unchanged default pack.target: all", string(data))
+	}
+}
+
+// ── --archive/--archive-format (ticket 17 phase 2) ──────────────────────
+
+// TestPackCmd_HelpMatchesOracleArchiveFlagsText locks --archive/
+// --archive-format's --help description text to the Oracle's own wording
+// (commands/pack.py:184-205), including the Choice metavar and the baked-in
+// "  [default: zip]" annotation (two leading spaces, Click's own
+// show_default=True rendering).
+func TestPackCmd_HelpMatchesOracleArchiveFlagsText(t *testing.T) {
+	out, err := runPackCmd(t, "--help")
+	if err != nil {
+		t.Fatalf("pack --help returned error: %v", err)
+	}
+	for _, want := range []string{
+		"--archive",
+		"Produce a .zip archive instead of a directory (previous default: .tar.gz; use --archive-format tar.gz for legacy CI pipelines).",
+		"--archive-format [zip|tar.gz]",
+		"Archive format when --archive is set. 'zip' (default) is Claude Code and plugin-host compatible and matches apm publish output. 'tar.gz' is typically smaller for text-heavy bundles and preserves the previous default for CI pipelines that rely on it.  [default: zip]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("pack --help output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// archiveFixtureApmYML/writeArchiveFixture set up a minimal project whose
+// pack --archive run has something real to bundle plus an on-disk
+// apm.lock.yaml (needed for embedPackLockfile to run at all).
+func writeArchiveFixture(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+	if err := os.WriteFile(filepath.Join(dir, "apm.lock.yaml"), []byte("lockfile_version: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPackCmd_ArchiveFlag_ProducesRealZipAndRemovesDirectory proves --archive
+// actually writes a real .zip (not just accepting the flag), with the
+// Oracle's own naming/prefix convention (projected_archive_path: "<bundle
+// name>.zip" under the output directory; write_zip_archive's
+// f"{bundle_dir.name}/{...}" entry-name prefix) and removes the intermediate
+// directory, mirroring export_plugin_bundle's real-run sequence.
+func TestPackCmd_ArchiveFlag_ProducesRealZipAndRemovesDirectory(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive")
+	if err != nil {
+		t.Fatalf("pack --archive returned error: %v (output: %s)", err, out)
+	}
+
+	archivePath := filepath.Join(dir, "build", "demo-1.0.0.zip")
+	if !strings.Contains(out, "demo-1.0.0.zip") {
+		t.Errorf("output = %q, want it to report the archive path", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build", "demo-1.0.0")); !os.IsNotExist(statErr) {
+		t.Errorf("intermediate bundle directory should be removed after archiving (stat err: %v)", statErr)
+	}
+
+	zr, zerr := zip.OpenReader(archivePath)
+	if zerr != nil {
+		t.Fatalf("open produced zip: %v", zerr)
+	}
+	defer zr.Close()
+
+	names := make(map[string]bool, len(zr.File))
+	for _, f := range zr.File {
+		names[f.Name] = true
+	}
+	for _, want := range []string{"demo-1.0.0/plugin.json", "demo-1.0.0/agents/foo.md", "demo-1.0.0/apm.lock.yaml"} {
+		if !names[want] {
+			t.Errorf("zip entries = %v, want %q present", names, want)
+		}
+	}
+}
+
+// TestPackCmd_ArchiveFormatFlag_TarGz proves --archive-format tar.gz
+// switches the container format and suffix.
+func TestPackCmd_ArchiveFormatFlag_TarGz(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive", "--archive-format", "tar.gz")
+	if err != nil {
+		t.Fatalf("pack --archive --archive-format tar.gz returned error: %v (output: %s)", err, out)
+	}
+
+	archivePath := filepath.Join(dir, "build", "demo-1.0.0.tar.gz")
+	f, oerr := os.Open(archivePath)
+	if oerr != nil {
+		t.Fatalf("open produced tar.gz: %v", oerr)
+	}
+	defer f.Close()
+	gz, gerr := gzip.NewReader(f)
+	if gerr != nil {
+		t.Fatalf("gzip.NewReader: %v", gerr)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	names := map[string]bool{}
+	for {
+		hdr, terr := tr.Next()
+		if terr == io.EOF {
+			break
+		}
+		if terr != nil {
+			t.Fatalf("tar read: %v", terr)
+		}
+		names[hdr.Name] = true
+	}
+	if !names["demo-1.0.0/plugin.json"] {
+		t.Errorf("tar entries = %v, want demo-1.0.0/plugin.json present", names)
+	}
+}
+
+// TestPackCmd_ArchiveFlag_DryRun_WritesNothing proves dry-run reports the
+// PROJECTED archive path without writing anything at all, mirroring
+// export_plugin_bundle's dry-run branch.
+func TestPackCmd_ArchiveFlag_DryRun_WritesNothing(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive", "--dry-run")
+	if err != nil {
+		t.Fatalf("pack --archive --dry-run returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "demo-1.0.0.zip") {
+		t.Errorf("dry-run output = %q, want the projected archive path", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Errorf("--dry-run must not write anything, but build/ exists (stat err: %v)", statErr)
+	}
+}
+
+// TestPackCmd_ArchiveFormat_WithoutArchive_Errors mirrors pack.py:329-337's
+// UsageError, exit 2, with the Usage/Try-help preamble -- confirmed live
+// against the pinned Oracle (ctx.get_parameter_source check: only fires when
+// --archive-format was EXPLICITLY given on the command line).
+func TestPackCmd_ArchiveFormat_WithoutArchive_Errors(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive-format", "tar.gz")
+	if err == nil {
+		t.Fatalf("expected an error (output: %s)", out)
+	}
+	if exitCodeOf(err) != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", exitCodeOf(err))
+	}
+	want := "--archive-format has no effect without --archive; add --archive to produce a .tar.gz archive."
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestPackCmd_ArchiveFormat_InvalidChoice_Errors mirrors Click's Choice
+// validation error text, verified live against the pinned Oracle:
+// "Invalid value for '--archive-format': 'bogus' is not one of 'zip', 'tar.gz'."
+func TestPackCmd_ArchiveFormat_InvalidChoice_Errors(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive", "--archive-format", "bogus")
+	if err == nil {
+		t.Fatalf("expected an error (output: %s)", out)
+	}
+	if exitCodeOf(err) != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", exitCodeOf(err))
+	}
+	want := "Invalid value for '--archive-format': 'bogus' is not one of 'zip', 'tar.gz'."
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestPackCmd_ArchiveFormat_CaseSensitive proves --archive-format's Choice
+// is case-SENSITIVE, unlike --format's case-insensitive Choice -- verified
+// live: `--archive-format ZIP` (uppercase) is rejected on the pinned Oracle.
+func TestPackCmd_ArchiveFormat_CaseSensitive(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive", "--archive-format", "ZIP")
+	if err == nil {
+		t.Fatalf("--archive-format ZIP should be rejected (case-sensitive Choice), output: %s", out)
+	}
+	if !strings.Contains(err.Error(), "'ZIP' is not one of") {
+		t.Errorf("err = %v, want the Choice error naming the rejected uppercase value", err)
+	}
+}
+
+// TestPackCmd_ArchiveFormat_MissingArgument_BareUsageError mirrors the
+// bare (no Usage:/Try-help preamble) shape verified live to be identical to
+// --format's own missing-argument case.
+func TestPackCmd_ArchiveFormat_MissingArgument_BareUsageError(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	out, err := runPackCmd(t, "--archive", "--archive-format")
+	if err == nil {
+		t.Fatalf("expected an error (output: %s)", out)
+	}
+	if exitCodeOf(err) != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", exitCodeOf(err))
+	}
+	want := "Option '--archive-format' requires an argument."
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q", err.Error(), want)
 	}
 }
 

@@ -78,6 +78,19 @@ type ProduceOptions struct {
 	// (embedPackLockfile) -- every caller of Produce today only ever
 	// builds the Claude-compatible bundle.
 	Format string
+
+	// Archive mirrors --archive (ticket 17 phase 2): when true, the built
+	// bundle directory is compressed into a single archive file and the
+	// intermediate directory is removed, mirroring export_plugin_bundle's
+	// own real-run sequence (plugin_exporter.py: build directory -> embed
+	// lockfile -> archive -> shutil.rmtree(bundle_dir)).
+	Archive bool
+	// ArchiveFormat mirrors --archive-format ("zip" or "tar.gz"); only
+	// meaningful when Archive is true. Empty defaults to "zip" (Oracle's
+	// own Click default), mirrored here rather than by the caller so
+	// dry-run's projected path and the real write agree on the same
+	// fallback.
+	ArchiveFormat string
 }
 
 // ProduceResult mirrors Python's PackResult.
@@ -177,7 +190,15 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	}
 
 	if opts.DryRun {
-		return &ProduceResult{BundleDir: absBundleDir, Files: outputFiles}, nil
+		// Mirrors export_plugin_bundle's dry-run branch (plugin_exporter.py:
+		// ~988): when --archive is set, report the archive's PROJECTED path
+		// without writing anything at all -- not the directory that would
+		// have been built.
+		bundlePath := absBundleDir
+		if opts.Archive {
+			bundlePath = projectedArchivePath(opts.OutputDir, bundleRel, effectiveArchiveFormat(opts.ArchiveFormat))
+		}
+		return &ProduceResult{BundleDir: bundlePath, Files: outputFiles}, nil
 	}
 
 	scanBundleSources(w, fileMap, opts.Force)
@@ -223,7 +244,37 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 		}
 	}
 
-	return &ProduceResult{BundleDir: absBundleDir, Files: outputFiles}, nil
+	bundlePath := absBundleDir
+	if opts.Archive {
+		// Mirrors export_plugin_bundle's real-run sequence
+		// (plugin_exporter.py: ~1050-1061): the directory bundle is always
+		// built and lockfile-embedded FIRST (above), THEN archived, THEN
+		// the intermediate directory is deleted, and the ARCHIVE path (not
+		// the directory) is reported as the bundle path.
+		archiveFormat := effectiveArchiveFormat(opts.ArchiveFormat)
+		archivePath := projectedArchivePath(opts.OutputDir, bundleRel, archiveFormat)
+		if err := writeArchive(absBundleDir, archivePath, archiveFormat); err != nil {
+			return nil, err
+		}
+		if err := os.RemoveAll(absBundleDir); err != nil {
+			return nil, fmt.Errorf("remove intermediate bundle directory: %w", err)
+		}
+		bundlePath = archivePath
+	}
+
+	return &ProduceResult{BundleDir: bundlePath, Files: outputFiles}, nil
+}
+
+// effectiveArchiveFormat applies Oracle's own Click default ("zip") when
+// ArchiveFormat is empty (ticket 17 phase 2: the Cobra/pflag flag default
+// is deliberately "" -- see cmd/apm-go/pack.go -- so this fallback lives in
+// exactly one place shared by both the dry-run projection and the real
+// write).
+func effectiveArchiveFormat(v string) string {
+	if v == "" {
+		return "zip"
+	}
+	return v
 }
 
 // PrintSecretWarning mirrors _sanitize_mcp_servers's warning

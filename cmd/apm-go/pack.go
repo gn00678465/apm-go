@@ -46,6 +46,8 @@ func packCmd() *cobra.Command {
 		claudePlugin      bool
 		output            string
 		target            string
+		archiveFlag       bool
+		archiveFormat     string
 	)
 
 	cmd := &cobra.Command{
@@ -119,6 +121,24 @@ Exit codes:
 			case bundleModeApm:
 				return withExitCode(2, fmt.Errorf("bundle format 'apm' is not yet supported by apm-go; use --format claude-plugin"))
 			}
+			// Ticket 17 phase 2: --archive-format's Choice validation runs
+			// BEFORE the "no effect without --archive" check -- verified
+			// live against the pinned Oracle (`--archive-format bogus
+			// --dry-run`, no --archive: reports the Choice error, never
+			// reaches the no-effect check). Only validated when the flag
+			// was actually given (cmd.Flags().Changed) -- an absent flag
+			// keeps archiveFormat as "" (bundle.Produce's own
+			// effectiveArchiveFormat applies the "zip" default).
+			if cmd.Flags().Changed("archive-format") {
+				if err := validateArchiveFormatChoice(archiveFormat); err != nil {
+					return withUsageError(err)
+				}
+				if !archiveFlag {
+					return withUsageError(fmt.Errorf(
+						"--archive-format has no effect without --archive; add --archive to produce a .%s archive.",
+						archiveFormat))
+				}
+			}
 			return runPack(cmd, packOptions{
 				offline:           offline,
 				includePrerelease: includePrerelease,
@@ -130,6 +150,8 @@ Exit codes:
 				bundleFormat:      bundleFormatLockValue(bf),
 				output:            output,
 				target:            target,
+				archive:           archiveFlag,
+				archiveFormat:     archiveFormat,
 			})
 		},
 	}
@@ -177,7 +199,55 @@ Exit codes:
 	// phase's "no new logic" scope; the Oracle's own deprecation warning
 	// (pack.py:370-374) is likewise not reproduced here.
 	cmd.Flags().StringVarP(&target, "target", "t", "", "[Deprecated] Target platform filter. Bundles are now target-agnostic; the consumer's project decides where files land at install time. Value is recorded in pack.target as informational metadata only and is ignored by 'apm-go install'. The flag will be removed in a future release.")
+	// Ticket 17 phase 2: exact Oracle help text (commands/pack.py:184-194).
+	// --archive itself needs no default annotation: Click never shows one
+	// for an is_flag=True option with default=False (verified live), and
+	// pflag's own bool zero-value ("false") triggers no auto-annotation
+	// either -- a plain BoolVar is enough, unlike --output/--archive-format.
+	cmd.Flags().BoolVar(&archiveFlag, "archive", false,
+		"Produce a .zip archive instead of a directory (previous default: .tar.gz; "+
+			"use --archive-format tar.gz for legacy CI pipelines).")
+	// Exact Oracle help text (commands/pack.py:195-205), including Click's
+	// own show_default=True auto-suffix ("  [default: zip]", note two
+	// leading spaces -- confirmed via direct Click introspection, since a
+	// terminal-width-wrapped --help capture alone hid it). Same "empty
+	// pflag default + baked-in literal text" pattern as --output/--target
+	// (ticket 17 phase 1): the Cobra/pflag default is deliberately "", not
+	// "zip", so pflag's own `(default "X")` auto-annotation (parens+quotes,
+	// a format that would never match Click's own) never fires; bundle.
+	// Produce's effectiveArchiveFormat applies the real "zip" default in
+	// code. --archive-format is a case-SENSITIVE Choice on the Oracle side
+	// (no case_sensitive=False, unlike --format) -- validated separately in
+	// RunE via validateArchiveFormatChoice, not coerceBundleFormat (which
+	// normalizes case/aliases, wrong for this flag).
+	cmd.Flags().Var(bundleFormatChoiceValue{&archiveFormat, archiveFormatChoices}, "archive-format",
+		"Archive format when --archive is set. 'zip' (default) is Claude Code and "+
+			"plugin-host compatible and matches apm publish output. 'tar.gz' is "+
+			"typically smaller for text-heavy bundles and preserves the previous "+
+			"default for CI pipelines that rely on it.  [default: zip]")
 	return cmd
+}
+
+// archiveFormatChoices mirrors --archive-format's Click Choice values
+// (commands/pack.py:197: type=click.Choice(["zip", "tar.gz"])) -- a
+// case-sensitive, alias-free list distinct from packFormatChoices/
+// bundleFormatAliases (bundle_format.go), which apply only to --format.
+var archiveFormatChoices = []string{"zip", "tar.gz"}
+
+// validateArchiveFormatChoice mirrors Click's Choice validation for
+// --archive-format: case-sensitive, exact membership only (no
+// normalization, no aliases -- unlike coerceBundleFormat). Verified live
+// against the pinned Oracle: `--archive-format ZIP` (uppercase) is
+// rejected, and the error text is
+// "Invalid value for '--archive-format': 'bogus' is not one of 'zip', 'tar.gz'."
+func validateArchiveFormatChoice(value string) error {
+	for _, c := range archiveFormatChoices {
+		if value == c {
+			return nil
+		}
+	}
+	return fmt.Errorf("Invalid value for '--archive-format': '%s' is not one of %s.",
+		value, quoteJoin(archiveFormatChoices))
 }
 
 // packOptions carries packCmd's parsed flag values into runPack.
@@ -199,6 +269,11 @@ type packOptions struct {
 	output string
 	// target is --target/-t's raw value ("" when not given -- ticket 17).
 	target string
+	// archive/archiveFormat mirror --archive/--archive-format (ticket 17
+	// phase 2); archiveFormat is "" when --archive-format was not given
+	// (bundle.Produce's effectiveArchiveFormat applies the "zip" default).
+	archive       bool
+	archiveFormat string
 }
 
 // runPack reads apm.yml once, routes to whichever of the three producers
@@ -407,6 +482,8 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		Lockfile:                      lf,
 		LockfileNode:                  lockNode,
 		Format:                        opts.bundleFormat,
+		Archive:                       opts.archive,
+		ArchiveFormat:                 opts.archiveFormat,
 	})
 	if err != nil {
 		return err
