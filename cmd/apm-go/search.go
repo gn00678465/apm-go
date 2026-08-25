@@ -25,21 +25,34 @@ var searchTableHeaders = []string{"Plugin", "Description", "Install"}
 // searchCmd implements mkt-060: a TOP-LEVEL `apm-go search QUERY@MARKETPLACE`
 // command (registered directly on root in main.go, deliberately NOT nested
 // under marketplaceCmd() -- see marketplace.go's package doc comment), ported
-// from Oracle commands/marketplace/__init__.py:1351-1444's `search` (the same
-// click command object the Oracle itself registers under two names: `apm
-// marketplace search` and, via cli.py:224, top-level `apm search`).
+// from Oracle commands/marketplace/__init__.py:1351-1444's `search`.
 //
-// The Oracle's own hint strings are hardcoded to the `apm marketplace
-// search ...` invocation form regardless of which alias actually ran the
-// command (it's one Python function, one literal f-string). apm-go's search
-// has no `marketplace search` alias at all, so its three hint strings below
-// read `apm-go search ...`/`apm-go marketplace list` -- reflecting apm-go's
-// actual invocation surface -- rather than a literal `apm-go marketplace
-// search ...` transliteration of the Oracle's string. This is the ticket's
-// only sanctioned wording deviation; every other message is copied verbatim
-// (with `apm-go` in place of `apm`). The parity runner's search-missing-at/
-// search-empty-query/search-empty-marketplace/search-unknown-marketplace
-// cases carry a waiver on this exact, deliberate difference.
+// The Oracle registers that command at the TOP LEVEL ONLY -- cli.py:224's
+// `cli.add_command(marketplace_search, name="search")`, and nowhere else.
+// Unlike every other command in that file, it is declared with a bare
+// `@click.command(...)` rather than `@marketplace.command(...)`, so it is
+// never attached to the `marketplace` group: `apm marketplace search` does
+// not exist. The Oracle's own `search --help` agrees, printing
+// `Usage: apm search [OPTIONS] QUERY@MARKETPLACE`.
+//
+// Yet the Oracle's three hint strings (__init__.py:1361, 1371, 1379) are
+// hardcoded to `apm marketplace search security@skills` -- an invocation
+// that would fail if a user typed it. It is an upstream copy-paste slip, not
+// a real invocation surface. apm-go's hints below therefore read `apm-go
+// search ...`/`apm-go marketplace list`, naming the command path that
+// actually works, rather than transliterating a dead one. This is the
+// ticket's only sanctioned wording deviation; every other message is copied
+// verbatim (with `apm-go` in place of `apm`).
+//
+// Recorded in tools/parity/waivers.json for search-missing-at,
+// search-empty-query, and search-empty-marketplace. An earlier version of
+// this comment claimed two things that were not true, both corrected here
+// (ticket 23): that the Oracle also registers the command as `apm
+// marketplace search`, and that search-unknown-marketplace carries a waiver
+// on this difference -- that case's waiver is about the separate
+// "Marketplace '%s' is not registered..." string at search.go:82. Ticket 23
+// itself proposed "fixing" apm-go's wording to match the Oracle's; it was
+// closed as invalid on the evidence above.
 func searchCmd() *cobra.Command {
 	var limit int
 	var verbose bool

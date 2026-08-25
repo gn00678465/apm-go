@@ -27,7 +27,7 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 | 20 | `marketplace package add ./<path>\` writes a broken name/source; local sources are never stat-ed (user-reported) | — |
 | 21 | derived-name rejection blames the name, not the source the user typed (spun out of 20's evaluator follow-up) | 20 |
 | 22 | `marketplace validate` output: `[*]`/`[+]` glyphs and single quotes (parity backlog) | — |
-| 23 | `search` usage-error hints name `apm marketplace search` (parity backlog) | — |
+| 23 | ~~`search` usage-error hints~~ CLOSED INVALID — Oracle's hint names a command path that does not exist; waivers added instead | — |
 | 24 | `marketplaces.json`: `file://` URI form + create-when-empty (parity backlog; was 05's tree gap) | — |
 | 25 | record the rendering-library residue as field-scoped waivers (parity backlog) | 22, 23, 24 |
 
