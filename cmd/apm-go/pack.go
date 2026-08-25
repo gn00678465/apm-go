@@ -240,6 +240,30 @@ Exit codes:
 			"plugin-host compatible and matches apm publish output. 'tar.gz' is "+
 			"typically smaller for text-heavy bundles and preserves the previous "+
 			"default for CI pipelines that rely on it.  [default: zip]")
+	// Ticket 17 phase 3: --legacy-skill-paths, exact Oracle help text
+	// (commands/pack.py:286-295). Deliberately a pure accept-and-ignore flag,
+	// with NO Go variable bound to its value at all (unlike every other flag
+	// on this command) -- this is not a shortcut, it FAITHFULLY mirrors the
+	// Oracle's own behavior for `pack` specifically: `legacy_skill_paths` is
+	// a declared parameter of pack_cmd (pack.py:314) but is never read
+	// anywhere else in that file's body, and its real effect
+	// (apply_legacy_skill_paths, integration/targets.py:994) is wired ONLY
+	// into `install`/`deps update` (install.py:1221-1225, deps/cli.py:
+	// 1047-1051) -- commands that deploy files into per-client target
+	// directories, a concept `pack`'s own producers (which build a single,
+	// target-agnostic bundle -- see this command's own Long text) never
+	// have. Verified LIVE against the pinned Oracle, not assumed from
+	// reading the source alone: `pack --legacy-skill-paths` and a plain
+	// `pack` produce byte-identical output and an identical bundle tree, in
+	// BOTH the BundleProducer path (a dependencies:-only apm.yml with a real
+	// .apm/skills/hello/SKILL.md) and the PluginManifestProducer path (a
+	// target: claude apm.yml) -- the flag is a genuine no-op on this
+	// command on the Oracle side, so apm-go's own no-op is the correct,
+	// parity-matching implementation, not a stub.
+	cmd.Flags().Bool("legacy-skill-paths", false,
+		"Deploy skill files to per-client paths (e.g. .cursor/skills/) instead of "+
+			"the shared .agents/skills/ directory. Compatibility flag for projects "+
+			"that need per-client skill layouts.")
 	return cmd
 }
 

@@ -1,0 +1,5 @@
+{
+  "id": "pack-legacy-skill-paths",
+  "argv": ["pack", "--legacy-skill-paths"],
+  "rewrite_binary_name": true
+}

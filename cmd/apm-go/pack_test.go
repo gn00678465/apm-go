@@ -52,7 +52,7 @@ func packRevParse(t *testing.T, dir, ref string) string {
 
 func TestPackCmd_FlagsWired(t *testing.T) {
 	cmd := packCmd()
-	for _, name := range []string{"offline", "include-prerelease", "dry-run", "marketplace", "marketplace-path", "output", "target", "archive", "archive-format"} {
+	for _, name := range []string{"offline", "include-prerelease", "dry-run", "marketplace", "marketplace-path", "output", "target", "archive", "archive-format", "legacy-skill-paths"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("pack is missing --%s", name)
 		}
@@ -673,6 +673,139 @@ func TestPackCmd_ArchiveTarGz_NoMigrationNotice(t *testing.T) {
 	if strings.Contains(out, zipMigrationNoticeText) {
 		t.Errorf("output = %q, --archive-format tar.gz must not show the zip-migration notice", out)
 	}
+}
+
+// ── --legacy-skill-paths (ticket 17 phase 3) ────────────────────────────
+
+// TestPackCmd_HelpMatchesOracleLegacySkillPathsText locks --legacy-skill-
+// paths' --help description to the Oracle's own wording
+// (commands/pack.py:286-295).
+func TestPackCmd_HelpMatchesOracleLegacySkillPathsText(t *testing.T) {
+	out, err := runPackCmd(t, "--help")
+	if err != nil {
+		t.Fatalf("pack --help returned error: %v", err)
+	}
+	want := "Deploy skill files to per-client paths (e.g. .cursor/skills/) instead of the shared .agents/skills/ directory. Compatibility flag for projects that need per-client skill layouts."
+	if !strings.Contains(out, want) {
+		t.Errorf("pack --help output missing %q:\n%s", want, out)
+	}
+}
+
+// TestPackCmd_LegacySkillPaths_IsANoOp locks the Oracle-verified behavior:
+// --legacy-skill-paths is accepted by `pack_cmd` (commands/pack.py:314) but
+// never read anywhere in its body -- its real effect (apply_legacy_skill_
+// paths, integration/targets.py:994) is wired only into `install`/`deps
+// update`, commands that deploy to per-client target directories, a concept
+// `pack`'s own target-agnostic bundle producers never have. Verified live
+// against the pinned Oracle: `pack --legacy-skill-paths` and a plain `pack`
+// produce byte-identical output and an identical bundle tree. This test
+// locks the SAME no-op on apm-go's side -- a future change that wires this
+// flag into real per-client behavior on `pack` without updating this test
+// (and the Oracle-parity finding it documents) would be a regression, not
+// a fix.
+func TestPackCmd_LegacySkillPaths_IsANoOp(t *testing.T) {
+	dir := chdirTemp(t)
+	writeArchiveFixture(t, dir)
+
+	withoutFlag, err := runPackCmd(t)
+	if err != nil {
+		t.Fatalf("pack returned error: %v (output: %s)", err, withoutFlag)
+	}
+	withoutTree := readTreeUnderBuild(t, dir)
+	if err := os.RemoveAll(filepath.Join(dir, "build")); err != nil {
+		t.Fatal(err)
+	}
+
+	withFlag, err := runPackCmd(t, "--legacy-skill-paths")
+	if err != nil {
+		t.Fatalf("pack --legacy-skill-paths returned error: %v (output: %s)", err, withFlag)
+	}
+	withTree := readTreeUnderBuild(t, dir)
+
+	if withoutFlag != withFlag {
+		t.Errorf("output differs with --legacy-skill-paths:\nwithout: %q\nwith:    %q", withoutFlag, withFlag)
+	}
+	if len(withoutTree) != len(withTree) {
+		t.Fatalf("bundle file count differs: without=%d with=%d", len(withoutTree), len(withTree))
+	}
+	for relPath, wantContent := range withoutTree {
+		gotContent, ok := withTree[relPath]
+		if !ok {
+			t.Errorf("bundle file %q present without the flag, missing with it", relPath)
+			continue
+		}
+		if gotContent != wantContent {
+			t.Errorf("bundle file %q content differs with --legacy-skill-paths", relPath)
+		}
+	}
+}
+
+// TestPackCmd_LegacySkillPaths_IsANoOp_PluginManifestPath is the
+// PluginManifestProducer counterpart of TestPackCmd_LegacySkillPaths_IsANoOp
+// -- verified live against the pinned Oracle too (a target: claude apm.yml
+// produces a byte-identical .claude-plugin/plugin.json with and without the
+// flag).
+func TestPackCmd_LegacySkillPaths_IsANoOp_PluginManifestPath(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "skills", "hello"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "skills", "hello", "SKILL.md"),
+		[]byte("---\nname: hello\ndescription: test skill\n---\nHello.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ntarget:\n  - claude\n")
+
+	if _, err := runPackCmd(t); err != nil {
+		t.Fatalf("pack returned error: %v", err)
+	}
+	without, rerr := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json"))
+	if rerr != nil {
+		t.Fatalf("expected a real plugin.json: %v", rerr)
+	}
+	if err := os.RemoveAll(filepath.Join(dir, ".claude-plugin")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runPackCmd(t, "--legacy-skill-paths"); err != nil {
+		t.Fatalf("pack --legacy-skill-paths returned error: %v", err)
+	}
+	with, rerr := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json"))
+	if rerr != nil {
+		t.Fatalf("expected a real plugin.json: %v", rerr)
+	}
+
+	if string(without) != string(with) {
+		t.Errorf("plugin.json differs with --legacy-skill-paths:\nwithout: %s\nwith:    %s", without, with)
+	}
+}
+
+// readTreeUnderBuild returns every regular file's relative path -> content
+// under dir/build, for a byte-level "did --legacy-skill-paths change
+// anything" comparison.
+func readTreeUnderBuild(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	root := filepath.Join(dir, "build")
+	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		data, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return rerr
+		}
+		tree[rel] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	return tree
 }
 
 // TestRunPack_DependenciesOnly_ListsPackedFiles is the R12a regression
