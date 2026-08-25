@@ -406,9 +406,18 @@ func marketplaceListCmd() *cobra.Command {
 				ux.Info(w, "No marketplaces registered. Use 'apm-go marketplace add SOURCE' to register one (OWNER/REPO, HTTPS URL, SSH URL, or local path).")
 				return nil
 			}
-			headers := []string{"NAME", "SOURCE", "REF", "PATH"}
+			// Ticket 26: header casing now matches the Oracle's own
+			// `table.add_column("Name"/"Source"/"Ref"/"Path", ...)`
+			// (__init__.py:878-881) verbatim -- Title Case, the same
+			// convention browse's/search's own tables already use
+			// correctly (marketplace_browse_table.go, search.go). The
+			// verbose-only "Host" column has no Oracle counterpart at all
+			// (list_cmd's verbose flag only affects exception-traceback
+			// printing) -- an apm-go-only superset column, untouched by
+			// this ticket; only its casing is aligned for consistency.
+			headers := []string{"Name", "Source", "Ref", "Path"}
 			if verbose {
-				headers = []string{"NAME", "SOURCE", "REF", "HOST", "PATH"}
+				headers = []string{"Name", "Source", "Ref", "Host", "Path"}
 			}
 			rows := make([][]string, 0, len(sources))
 			for i := range sources {
@@ -419,6 +428,14 @@ func marketplaceListCmd() *cobra.Command {
 					rows = append(rows, []string{s.Name, displaySource(s), s.Ref, s.Path})
 				}
 			}
+			// Ticket 26: upstream's table carries a title
+			// (`Table(title="Registered Marketplaces", ...)`,
+			// __init__.py:877) that apm-go's list table never printed at
+			// all -- unlike browse/search's own tables (renderBrowseTable/
+			// renderSearchTable), which already print an equivalent title
+			// line before calling ux.Table. This is the same convention
+			// those two already use, not a new one.
+			fmt.Fprintln(w, "Registered Marketplaces")
 			ux.Table(w, headers, rows)
 			// Upstream __init__.py:883-886's post-table usage hint.
 			ux.Info(w, "Use 'apm-go marketplace browse <name>' to see plugins")

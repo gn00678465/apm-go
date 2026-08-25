@@ -930,10 +930,98 @@ func TestMarketplaceList_TableIncludesEveryRegisteredSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace list returned error: %v", err)
 	}
-	for _, want := range []string{"unrelated-one", "unrelated-two", "NAME", "SOURCE", "REF", "PATH"} {
+	for _, want := range []string{"Registered Marketplaces", "unrelated-one", "unrelated-two", "Name", "Source", "Ref", "Path"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)
 		}
+	}
+}
+
+// TestMarketplaceList_PrintsRegisteredMarketplacesTitle is ticket 26 AC1/AC3:
+// upstream's list table carries a title (`Table(title="Registered
+// Marketplaces", ...)`, commands/marketplace/__init__.py:877) that apm-go's
+// table never printed at all -- unlike browse's/search's own tables, which
+// already print an equivalent title line before their own ux.Table call.
+// Asserts the exact line, immediately before the table's top border, and
+// that the empty-registry path (a completely separate message, ticket 24)
+// is unaffected.
+func TestMarketplaceList_PrintsRegisteredMarketplacesTitle(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	writeMarketplaceRegistryFixture(t, unrelatedFixtureEntries())
+
+	// Act
+	out, err := runMarketplaceCmd(t, "list")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace list returned error: %v", err)
+	}
+	lines := strings.Split(out, "\n")
+	titleIdx := -1
+	for i, line := range lines {
+		if line == "Registered Marketplaces" {
+			titleIdx = i
+			break
+		}
+	}
+	if titleIdx == -1 {
+		t.Fatalf("output = %q, want a line reading exactly %q", out, "Registered Marketplaces")
+	}
+	if titleIdx+1 >= len(lines) || !strings.HasPrefix(lines[titleIdx+1], "╭") {
+		t.Errorf("output = %q, want the title line immediately followed by the table's top border", out)
+	}
+}
+
+// TestMarketplaceList_HeaderCasingMatchesOracle is ticket 26's second AC2
+// finding: apm-go's own list table used to hardcode ALL-CAPS headers
+// ("NAME"/"SOURCE"/"REF"/"PATH"), diverging from the Oracle's Title Case
+// column names (`table.add_column("Name"/"Source"/"Ref"/"Path", ...)`,
+// commands/marketplace/__init__.py:878-881) -- and from browse's/search's
+// own tables, which already use Title Case correctly. Verbose's "Host"
+// column has no Oracle counterpart at all and is untouched; only its
+// casing is aligned for consistency.
+func TestMarketplaceList_HeaderCasingMatchesOracle(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+	writeMarketplaceRegistryFixture(t, unrelatedFixtureEntries())
+
+	// Act
+	out, err := runMarketplaceCmd(t, "list", "--verbose")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace list --verbose returned error: %v", err)
+	}
+	for _, want := range []string{"Name", "Source", "Ref", "Host", "Path"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want header %q (Title Case, matching the Oracle)", out, want)
+		}
+	}
+	for _, notWant := range []string{"NAME", "SOURCE", "REF", "HOST", "PATH"} {
+		if strings.Contains(out, notWant) {
+			t.Errorf("output = %q, want no ALL-CAPS header %q", out, notWant)
+		}
+	}
+}
+
+// TestMarketplaceList_EmptyRegistry_NoTitlePrinted proves ticket 26's title
+// line is scoped to the non-empty path only -- the empty-registry message
+// (ticket 24) is a completely different code path and must not gain a
+// spurious title.
+func TestMarketplaceList_EmptyRegistry_NoTitlePrinted(t *testing.T) {
+	// Arrange
+	isolatedMarketplaceRegistry(t)
+
+	// Act
+	out, err := runMarketplaceCmd(t, "list")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace list returned error: %v", err)
+	}
+	if strings.Contains(out, "Registered Marketplaces") {
+		t.Errorf("output = %q, want no title line on the empty-registry path", out)
 	}
 }
 
