@@ -31,6 +31,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v4"
 
@@ -440,14 +441,59 @@ func packageNameIssue(name string) packageNameProblem {
 }
 
 // packageNameDiagnosticQuote wraps s in plain double quotes for a
-// user-facing diagnostic, with NO escaping at all -- ticket 21 AC3: Go's
-// `%q` renders a single backslash as two (`\` -> `\\`), a faithful quoted
-// literal but one that makes a user decode Go string-escaping to recognise
-// their own `./llm-wiki\` input (ticket 20's reproducer). These strings are
-// printed into diagnostics only, never re-parsed, so there is nothing to
-// protect by escaping them.
+// user-facing diagnostic, leaving every printable rune -- backslash and
+// double quote included -- verbatim, and escaping ONLY control characters
+// and invalid UTF-8 bytes.
+//
+// Ticket 21 AC3: Go's `%q` renders a single backslash as two (`\` -> `\\`),
+// a faithful quoted literal but one that makes a user decode Go
+// string-escaping to recognise their own `./llm-wiki\` input (ticket 20's
+// reproducer). Hence the verbatim backslash.
+//
+// The control-character escaping is deliberate and must not be dropped in
+// pursuit of that same readability. AC3's first implementation escaped
+// nothing at all, reasoning that these strings are printed and never
+// re-parsed -- but the terminal itself is a parser. A `--name` (or a
+// source-derived name) containing a raw newline split the single-line
+// diagnostic into two, the second carrying no `[x] ` prefix and therefore
+// forgeable as an independent status line; a raw ESC could open an ANSI
+// sequence. Both reached the writer verbatim. The escaping is also what
+// makes the message self-consistent: packageNameProblemControl's own text
+// says the name "must not contain whitespace or control characters", so
+// printing those characters raw is the one thing it must not do.
+//
+// The predicate is unicode.IsPrint, not unicode.IsControl, and the
+// difference matters: IsPrint is false for U+2028 LINE SEPARATOR, U+0085
+// NEL, and U+00A0 NO-BREAK SPACE, none of which are category-Cc controls
+// but all of which are line-breaking or invisible in a terminal -- exactly
+// the class this is guarding against. IsPrint is true for the plain ASCII
+// space (left verbatim: unambiguous inside the quotes, and what the user
+// typed) and for every non-ASCII letter, so a legitimately non-English name
+// still renders as itself.
 func packageNameDiagnosticQuote(s string) string {
-	return `"` + s + `"`
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			// An invalid UTF-8 byte: render the byte itself, since there is
+			// no rune to render.
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case !unicode.IsPrint(r):
+			if r <= 0xFF {
+				fmt.Fprintf(&b, `\x%02x`, r)
+			} else {
+				fmt.Fprintf(&b, `\u%04x`, r)
+			}
+		default:
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // packageNameError renders problem (from packageNameIssue) as an error for

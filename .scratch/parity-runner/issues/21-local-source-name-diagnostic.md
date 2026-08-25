@@ -63,6 +63,52 @@ New: `TestAddPackage_LocalSource_DerivedNameControlChar_SafeWithPercentSign` (AC
 - `go build ./...`: clean. `go test ./...`: all packages `ok`. `go test ./cmd/apm-go/... ./internal/marketplace/authoring/... -race -count=1`: both `ok`.
 - Parity corpus: built the pre-fix (`99bfbd0`, stashed) and post-fix binaries, ran all 69 `tools/parity` cases against the pinned Oracle (`c8d6cdec...`) for each. Both report the same pre-existing "18 of 69 unwaived". A tuple-level `(fields, waived)` diff across all 69 case ids: **zero changes**. Confirmed (not assumed): no case invokes `marketplace package add` or `marketplace check`.
 
+## Orchestrator follow-up (2026-08-25) — control-character escaping restored
+
+The evaluator hit its usage cap mid-verification (resets Aug 31), so the
+orchestrator verified this ticket directly. The result: **behaviour is
+unchanged** (an 18-input pre/post matrix over `99bfbd0` vs `1f3383e` shows
+identical exit codes and byte-identical `apm.yml` for every input, with only
+message text differing), but the AC3 implementation as committed had gone one
+step too far.
+
+`packageNameDiagnosticQuote` escaped **nothing at all**, on the reasoning that
+these strings are printed and never re-parsed. The terminal is a parser. The
+pre/post matrix caught it directly:
+
+| `--name` | `99bfbd0` (`%q`) | `1f3383e` (no escaping) |
+|---|---|---|
+| `bad\nname` | `"bad\nname"` | `"bad` + a real newline + `name"` — the diagnostic now spans two lines, the second with no `[x] ` prefix and therefore forgeable as an independent status line |
+| `bad\aname` | `"bad\aname"` | a raw BEL byte written to the terminal |
+| `bad\x1b[31mred` | `"bad\x1b[31mred"` | a raw ESC reached the writer (only incidentally neutralised downstream by colorprofile stripping on a non-TTY) |
+
+That also made the message contradict itself: the branch that emits these is
+`packageNameProblemControl`, whose text is *"must not contain whitespace or
+control characters"*.
+
+Fixed in the follow-up commit: quote plainly, leave every **printable** rune —
+backslash, quote, `%`, ASCII space, non-ASCII letters — verbatim, and escape
+only non-printables and invalid UTF-8 bytes. The predicate is
+`unicode.IsPrint`, not `unicode.IsControl`, so U+2028 LINE SEPARATOR, U+0085
+NEL, U+00A0 NBSP and U+200B ZWSP are escaped too — none are category-Cc
+controls, all are line-breaking or invisible. AC3's readability requirement is
+untouched: `./llm-wiki\` still renders with exactly one backslash.
+
+New tests: `TestPackageNameDiagnosticQuote_EscapesOnlyControlCharacters`
+(13 rows, both directions) and
+`TestAddPackage_NameFlag_ControlCharacter_NotEmittedRaw` (end-to-end: no raw
+control character survives into any rejection message).
+
+Orchestrator-run evidence: `go build ./...` clean; `go test ./...` 26/26 `ok`;
+`go test ./cmd/apm-go/... ./internal/marketplace/authoring/... -race -count=1`
+clean; full 69-case `tools/parity` corpus run against the pinned Oracle both
+pre and post — 18/69 unwaived both times, identical id sets, `(fields, waived)`
+tuple drift **NONE**.
+
+**Status: awaiting independent evaluator ruling** (`.review/eval-ticket-21.md`
+not written; evaluator unavailable until Aug 31). Do not mark 21 closed until
+that ruling exists.
+
 ## Non-goals
 
 - Re-litigating ticket 20's AC1/AC3 boundary. The rejection point is correct; only the message changes.

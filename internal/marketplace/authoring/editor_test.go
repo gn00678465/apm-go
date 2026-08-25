@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/apm-go/apm/internal/semver"
 )
@@ -1534,6 +1535,78 @@ func TestAddPackage_LocalSource_DerivedNameControlChar_SafeWithPercentSign(t *te
 	}
 	if !strings.Contains(err.Error(), `100%\done`) {
 		t.Errorf(`error = %v, want the "%%"-bearing name/source rendered verbatim, not treated as a format directive`, err)
+	}
+}
+
+// TestPackageNameDiagnosticQuote_EscapesOnlyControlCharacters pins the two
+// halves of ticket 21 AC3 that pull in opposite directions: a backslash (and
+// every other printable rune) must survive verbatim so the user recognises
+// what they typed, while a control character must NOT -- the terminal is a
+// parser, and a raw newline in a rejected name splits the single-line
+// diagnostic into a second, unprefixed line that could be mistaken for an
+// independent status line. AC3's first implementation escaped nothing at
+// all and let both a raw newline and a raw ESC reach the writer.
+func TestPackageNameDiagnosticQuote_EscapesOnlyControlCharacters(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"backslash stays single", `llm-wiki\`, `"llm-wiki\"`},
+		{"double quote stays verbatim", `a"b`, `"a"b"`},
+		{"percent stays verbatim", `100%done`, `"100%done"`},
+		{"space stays verbatim", "bad name", `"bad name"`},
+		{"non-ascii stays verbatim", "套件-名稱", `"套件-名稱"`},
+		{"newline escaped", "bad\nname", `"bad\x0aname"`},
+		{"tab escaped", "bad\tname", `"bad\x09name"`},
+		{"escape byte escaped", "bad\x1b[31mred", `"bad\x1b[31mred"`},
+		{"bell escaped", "bad\aname", `"bad\x07name"`},
+		{"del escaped", "bad\x7fname", `"bad\x7fname"`},
+		{"u+0085 nel escaped", "badname", `"bad\x85name"`},
+		// The three below are not category-Cc controls, so unicode.IsControl
+		// would let them through raw -- they are why the predicate is
+		// unicode.IsPrint.
+		{"u+2028 line separator escaped", "bad name", `"bad\u2028name"`},
+		{"u+00a0 no-break space escaped", "bad name", `"bad\xa0name"`},
+		{"u+200b zero-width space escaped", "bad​name", `"bad\u200bname"`},
+		{"invalid utf-8 byte escaped", "bad\xffname", `"bad\xffname"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := packageNameDiagnosticQuote(tt.in); got != tt.want {
+				t.Errorf("packageNameDiagnosticQuote(%q) = %s, want %s", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAddPackage_NameFlag_ControlCharacter_NotEmittedRaw is the end-to-end
+// half of the test above: the rejection message for a control-bearing name
+// must not itself contain that control character. Rejecting a name for
+// containing control characters and then printing them raw is the one thing
+// packageNameProblemControl's own wording rules out.
+func TestAddPackage_NameFlag_ControlCharacter_NotEmittedRaw(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, bad := range []string{"tool\nname", "tool\x1b[31mname", "tool\aname"} {
+		// Act
+		_, _, err := AddPackage(dir, "./pkgs/tool", AddOptions{Name: bad}, panicLister{})
+
+		// Assert
+		if err == nil {
+			t.Fatalf("AddPackage(--name %q) = nil error, want a rejection", bad)
+		}
+		for _, r := range err.Error() {
+			if unicode.IsControl(r) {
+				t.Errorf("AddPackage(--name %q) error = %q, want no raw control character in the message", bad, err.Error())
+				break
+			}
+		}
 	}
 }
 
