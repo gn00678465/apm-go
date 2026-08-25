@@ -24,10 +24,11 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 | 17 | `pack` flag/feature parity (spun out of 13) | — |
 | 18 | `marketplace audit` missing "Run with --verbose for details." hint (spun out of 14 attempt 2) | — |
 | 19 | `init`/`plugin init` output-surface gaps: apm.yml YAML cosmetics, success-output stream split, help_semantic parser limitation (spun out of 09) | — |
+| 20 | `marketplace package add ./<path>\` writes a broken name/source; local sources are never stat-ed (user-reported) | — |
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: ALL TICKETS CLOSED (01-15 ✅; eval-ticket-09.md PASS) — released as v0.3.0-beta.3. Post-beta backlog: 16 (dep-parser conformance rows), 17 (pack flags/features), 18 (audit verbose hint), 05's marketplaces.json tree gap. CI parity gate (parity.yml) is red by design until the 18-case backlog closes.
+Status: ALL TICKETS CLOSED (01-15 ✅; eval-ticket-09.md PASS) — released as v0.3.0-beta.3. 20 closed (user-reported bug, not a parity gap: `marketplace package add`/`check` now require a local source to resolve to an existing directory, and reject a broken package name; zero parity-corpus drift, no cases exist for these commands). Post-beta backlog: 16 (dep-parser conformance rows), 17 (pack flags/features), 18 (audit verbose hint), 05's marketplaces.json tree gap. CI parity gate (parity.yml) is red by design until the 18-case backlog closes.
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 

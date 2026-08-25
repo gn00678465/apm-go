@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"go.yaml.in/yaml/v4"
 
@@ -332,16 +333,92 @@ func packageEntryNode(entry PackageEntry) *yaml.Node {
 // not from proving its resolved path stays inside the project root. This now
 // reuses resolveCloneURL's shared resolveLocalSourceAgainstRoot (refcheck.go)
 // instead of a second, hand-rolled copy of that check.
+//
+// Ticket 20 (2026-08-25, user-reported): the Oracle's own add_plugin_entry
+// never stats a local source at all -- utils/path_security.py:64-82's
+// validate_path_segments(source, allow_current_dir=True) runs with
+// reject_empty=False, so a trailing separator's empty path segment (e.g.
+// `./llm-wiki\`, a Windows/PowerShell tab-completion artifact) passes
+// straight through untouched, and marketplace/yml_schema.py:216 places no
+// charset/existence requirement on the stored value at all -- the broken
+// name and source both ride verbatim into apm.yml, then into `pack`'s
+// marketplace.json (marketplace/builder.py:613-628 short-circuits
+// `entry.is_local` with no stat either) and `check` reports it REACHABLE
+// (commands/marketplace/check.py:121-134, same unconditional local pass).
+// This is a DELIBERATE apm-go-only hardening beyond the Oracle, not a parity
+// fix -- apm-go refuses outright, before ever writing apm.yml, instead of
+// reproducing that gap. --no-verify skips only the existence check below (it
+// already means "skip the reachability check" for a remote source); the
+// containment/traversal guard above runs unconditionally either way.
 func verifyPackageSource(dir, source string, lister RefLister, noVerify bool) error {
 	if isLocalPackageSource(source) {
-		_, err := resolveLocalSourceAgainstRoot(dir, source)
-		return err
+		abs, err := resolveLocalSourceAgainstRoot(dir, source)
+		if err != nil {
+			return err
+		}
+		if noVerify {
+			return nil
+		}
+		return verifyLocalSourceExists(source, abs)
 	}
 	if noVerify {
 		return nil
 	}
 	if _, err := lister.ListRefs(source); err != nil {
 		return fmt.Errorf("source %q is not reachable: %w", source, err)
+	}
+	return nil
+}
+
+// verifyLocalSourceExists implements ticket 20 AC1: resolvedPath (already
+// containment-checked by resolveLocalSourceAgainstRoot) must exist and be a
+// directory, or AddPackage refuses to write the entry at all. Shared with
+// checkPackage (refcheck.go), which re-runs this same check at `check` time
+// for the same "a local source can be written before its directory exists,
+// then never re-verified" reason ResolveLocalSourceAgainstRoot's own doc
+// comment already documents for the containment half of this check.
+func verifyLocalSourceExists(source, resolvedPath string) error {
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("local source %q does not exist", source)
+		}
+		return fmt.Errorf("local source %q: %w", source, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("local source %q is not a directory", source)
+	}
+	return nil
+}
+
+// packageNameSeparators are the characters ticket 20 AC3 rejects in a
+// package name outright: a path separator can never be a legitimate single
+// path segment, on either POSIX or Windows.
+const packageNameSeparators = "/\\"
+
+// validatePackageName implements ticket 20 AC3: marketplace/yml_schema.py:216
+// places no charset requirement on PackageEntry.name at all -- it is only
+// required to be a non-empty string -- so a name derived from a source with
+// a trailing separator (defaultNameFromSource's `llm-wiki\` in ticket 20's
+// reproducer) or an explicit --name containing one rides straight into
+// apm.yml/marketplace.json unrejected on both the Oracle and (until now)
+// apm-go. This is a DELIBERATE apm-go-only hardening beyond the Oracle, not
+// a parity fix: it rejects only names that could never be a legitimate
+// single path segment -- a path separator, "." or "..", whitespace, or a
+// control character -- deliberately NOT `init`'s much stricter pluginNameRe
+// (`^[a-z][a-z0-9-]{0,63}$`, cmd/apm-go/init.go), which would reject
+// existing legitimate marketplace package names like "My_Tool".
+func validatePackageName(name string) error {
+	if name == "." || name == ".." {
+		return fmt.Errorf("package name %q is not a valid name", name)
+	}
+	if strings.ContainsAny(name, packageNameSeparators) {
+		return fmt.Errorf("package name %q must not contain a path separator", name)
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return fmt.Errorf("package name %q must not contain whitespace or control characters", name)
+		}
 	}
 	return nil
 }
@@ -702,8 +779,11 @@ type AddOptions struct {
 // derived from source's final path segment via defaultNameFromSource),
 // whether editPackagesFile's whole-value fallback was used (so callers can
 // warn), or a non-nil error for: --version/--ref both given, an invalid
-// source (req-mf-017, via manifest.ValidateMarketplaceSource), an
-// unreachable remote source, a duplicate (case-insensitive) name, or a
+// source (req-mf-017, via manifest.ValidateMarketplaceSource), a local
+// source that escapes the project root or does not resolve to an existing
+// directory (ticket 20 AC1/AC2, via verifyPackageSource), an unreachable
+// remote source, an invalid resolved name (ticket 20 AC3, via
+// validatePackageName), a duplicate (case-insensitive) name, or a
 // write/validate failure.
 func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name string, fallbackUsed bool, err error) {
 	if opts.Version != "" && opts.Ref != "" {
@@ -729,6 +809,9 @@ func AddPackage(dir, source string, opts AddOptions, lister RefLister) (name str
 	name = opts.Name
 	if name == "" {
 		name = defaultNameFromSource(source)
+	}
+	if err := validatePackageName(name); err != nil {
+		return "", false, err
 	}
 	if findPackageIndex(cfg, name) != -1 {
 		return "", false, fmt.Errorf("package %q already exists", name)

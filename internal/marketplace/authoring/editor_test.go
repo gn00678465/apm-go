@@ -25,6 +25,9 @@ func TestAddPackage_LocalSource_NoFlags_NeverTouchesNetwork(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
 		"  owner:\n    name: acme\n  packages:\n    - name: existing\n      source: ./pkgs/existing\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	name, fallbackUsed, err := AddPackage(dir, "./pkgs/tool", AddOptions{}, panicLister{})
@@ -211,13 +214,16 @@ func TestAddPackage_DuplicateNameCaseInsensitive_Errors(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
 		"  owner:\n    name: acme\n  packages:\n    - name: Foo\n      source: ./pkgs/foo\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, _, err := AddPackage(dir, "./pkgs/other", AddOptions{Name: "foo"}, panicLister{})
 
 	// Assert
-	if err == nil {
-		t.Fatal("expected a case-insensitive duplicate name to be rejected")
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("error = %v, want a case-insensitive duplicate name to be rejected", err)
 	}
 }
 
@@ -227,6 +233,9 @@ func TestAddPackage_NameFlagOverridesSourceDerivedDefault(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	name, _, err := AddPackage(dir, "./pkgs/tool", AddOptions{Name: "custom-name"}, panicLister{})
@@ -354,6 +363,9 @@ func TestAddPackage_SubdirLegitimateRelative_Succeeds(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, _, err := AddPackage(dir, "./pkgs/tool", AddOptions{Subdir: "src/skills"}, panicLister{})
@@ -455,12 +467,12 @@ func TestVerifyPackageSource_LocalSourceEscapingRoot_Rejected(t *testing.T) {
 
 // TestAddPackage_LocalSource_LegitimateNestedExistingPath_Succeeds is the
 // regression companion to TestVerifyPackageSource_LocalSourceEscapingRoot_
-// Rejected above: the new containment check in verifyPackageSource must not
-// reject an ordinary, legitimate local source that genuinely stays within
-// the project root, whether or not its directory already exists on disk
-// (TestAddPackage_LocalSource_NoFlags_NeverTouchesNetwork already covers the
-// "doesn't exist yet" case; this one uses a real, existing nested directory
-// to prove the other half).
+// Rejected above: the containment check in verifyPackageSource must not
+// reject an ordinary, legitimate, existing local source that genuinely
+// stays within the project root -- a real, existing nested directory here,
+// as opposed to that test's escaping ones. (Ticket 20 AC1 later made
+// existence itself a requirement -- see verifyLocalSourceExists -- so
+// "doesn't exist yet" is no longer a case any AddPackage call succeeds on.)
 func TestAddPackage_LocalSource_LegitimateNestedExistingPath_Succeeds(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
@@ -646,6 +658,9 @@ func TestAddPackage_HandAuthoredFixture_OnlyAppendsTargetEntry(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", handAuthoredPackagesApmYML)
+	if err := os.MkdirAll(filepath.Join(dir, "packages", "qux"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, fallbackUsed, err := AddPackage(dir, "./packages/qux", AddOptions{Name: "qux"}, panicLister{})
@@ -742,6 +757,9 @@ func TestAddPackage_LegacyMarketplaceYML_EditsRootDocument(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "marketplace.yml", "owner:\n  name: acme\npackages:\n  - name: foo\n    source: ./pkgs/foo\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "bar"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, _, err := AddPackage(dir, "./pkgs/bar", AddOptions{}, panicLister{})
@@ -767,6 +785,9 @@ func TestAddPackage_BothConfigsExist_ReturnsMutualExclusionError(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
 	writeFile(t, dir, "marketplace.yml", "owner:\n  name: acme\npackages: []\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "foo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, _, err := AddPackage(dir, "./pkgs/foo", AddOptions{}, panicLister{})
@@ -780,6 +801,9 @@ func TestAddPackage_BothConfigsExist_ReturnsMutualExclusionError(t *testing.T) {
 func TestAddPackage_NoConfigAtAll_PointsAtInit(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "foo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, _, err := AddPackage(dir, "./pkgs/foo", AddOptions{}, panicLister{})
@@ -796,6 +820,9 @@ func TestAddPackage_NoPackagesKeyYet_UsesFallbackAndSucceeds(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, fallbackUsed, err := AddPackage(dir, "./pkgs/tool", AddOptions{}, panicLister{})
@@ -820,6 +847,9 @@ func TestAddPackage_EmptyFlowStylePackagesList_UsesFallbackAndSucceeds(t *testin
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, fallbackUsed, err := AddPackage(dir, "./pkgs/tool", AddOptions{}, panicLister{})
@@ -856,6 +886,9 @@ func TestEditPackagesFile_ForcedValidationFailure_LeavesFileByteExactUnchanged(t
 		"  packages:\n" +
 		"    - name: foo\n      source: ./pkgs/foo\n"
 	writeFile(t, dir, "apm.yml", original)
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "bar"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	origValidate := packageEditValidate
 	packageEditValidate = func(out []byte, prefix []string) error {
@@ -867,8 +900,8 @@ func TestEditPackagesFile_ForcedValidationFailure_LeavesFileByteExactUnchanged(t
 	_, _, err := AddPackage(dir, "./pkgs/bar", AddOptions{}, panicLister{})
 
 	// Assert
-	if err == nil {
-		t.Fatal("expected AddPackage to fail when post-edit validation is forced to fail")
+	if err == nil || !strings.Contains(err.Error(), "forced validation failure") {
+		t.Fatalf("error = %v, want the forced validation failure to be surfaced", err)
 	}
 	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
 	if rerr != nil {
@@ -1276,6 +1309,169 @@ func TestAddPackage_RefHEAD_ResolvesToConcreteSHA(t *testing.T) {
 	}
 	if len(cfg.Packages) != 1 || cfg.Packages[0].Ref != wantSHA {
 		t.Errorf("Packages = %+v, want a single entry pinned to HEAD's actual SHA %q", cfg.Packages, wantSHA)
+	}
+}
+
+// ── ticket 20 (user-reported, 2026-08-25): local source existence (AC1/
+// AC2) and package name charset (AC3) ────────────────────────────────────
+
+// TestAddPackage_LocalSource_NonexistentPath_Rejected is AC1's direct
+// regression: a local source whose resolved path does not exist on disk
+// must be refused, and apm.yml must stay byte-for-byte unchanged.
+func TestAddPackage_LocalSource_NonexistentPath_Rejected(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	original := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	writeFile(t, dir, "apm.yml", original)
+
+	// Act
+	_, _, err := AddPackage(dir, "./llm-wiki", AddOptions{}, panicLister{})
+
+	// Assert
+	if err == nil || !strings.Contains(err.Error(), "./llm-wiki") {
+		t.Fatalf("error = %v, want AddPackage to reject a local source that does not exist, naming the path", err)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != original {
+		t.Errorf("apm.yml was modified despite the rejected nonexistent local source;\ngot:\n%s\nwant unchanged:\n%s", string(data), original)
+	}
+}
+
+// TestAddPackage_LocalSource_TrailingSeparator_Rejected is ticket 20's exact
+// reported reproducer: `./llm-wiki\` (a trailing backslash, e.g. a Windows/
+// PowerShell tab-completion artifact) where only "llm-wiki" (without the
+// trailing "\") exists on disk. The Oracle accepts this verbatim (utils/
+// path_security.py:64-82's reject_empty=False lets the trailing separator's
+// empty path segment through); apm-go now refuses it because the resolved
+// path "llm-wiki\" itself does not exist.
+func TestAddPackage_LocalSource_TrailingSeparator_Rejected(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	if err := os.MkdirAll(filepath.Join(dir, "llm-wiki"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, _, err := AddPackage(dir, `./llm-wiki\`, AddOptions{}, panicLister{})
+
+	// Assert
+	if err == nil {
+		t.Fatal(`AddPackage("./llm-wiki\\") = nil error, want a rejection (the literal path "llm-wiki\" does not exist)`)
+	}
+}
+
+// TestAddPackage_LocalSource_ExistsButIsAFile_Rejected covers the "exists
+// but is not a directory" half of AC1.
+func TestAddPackage_LocalSource_ExistsButIsAFile_Rejected(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, _, err := AddPackage(dir, "./notadir", AddOptions{}, panicLister{})
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected AddPackage to reject a local source that exists but is not a directory")
+	}
+}
+
+// TestAddPackage_LocalSource_NoVerify_SkipsExistenceCheck is AC2: --no-verify
+// already means "skip the reachability check" for a remote source, and it
+// extends to the new existence check for a local one -- a nonexistent local
+// path is accepted with --no-verify, exactly like an unreachable remote one
+// is.
+func TestAddPackage_LocalSource_NoVerify_SkipsExistenceCheck(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+	// Act: panicLister proves --no-verify still never touches the network.
+	name, _, err := AddPackage(dir, "./not-yet-created", AddOptions{NoVerify: true}, panicLister{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("AddPackage with --no-verify rejected a nonexistent local source: %v", err)
+	}
+	if name != "not-yet-created" {
+		t.Errorf("name = %q, want %q", name, "not-yet-created")
+	}
+}
+
+// TestAddPackage_LocalSource_NoVerify_ContainmentGuardStillRuns is AC2's
+// other half: --no-verify must NOT bypass the containment/traversal guard --
+// only the existence check is behind the flag.
+func TestAddPackage_LocalSource_NoVerify_ContainmentGuardStillRuns(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+
+	// Act
+	_, _, err := AddPackage(dir, `./..\..\outside`, AddOptions{NoVerify: true}, panicLister{})
+
+	// Assert
+	if err == nil {
+		t.Fatal("AddPackage with --no-verify accepted a local source escaping the project root, want the containment guard to still run")
+	}
+}
+
+// TestValidatePackageName_RejectsBrokenNames is AC3's table: a name that
+// could never be a legitimate single path segment must be rejected,
+// regardless of whether it came from --name or defaultNameFromSource.
+func TestValidatePackageName_RejectsBrokenNames(t *testing.T) {
+	tests := []string{
+		"llm-wiki\\", // ticket 20's exact reproducer (trailing backslash)
+		"foo/bar",    // embedded forward slash
+		"foo\\bar",   // embedded backslash
+		".",          // current-dir sentinel
+		"..",         // parent-dir sentinel
+		"foo bar",    // whitespace
+		"foo\tbar",   // control character (tab)
+		"foo\nbar",   // control character (newline)
+	}
+	for _, name := range tests {
+		if err := validatePackageName(name); err == nil {
+			t.Errorf("validatePackageName(%q) = nil, want a rejection", name)
+		}
+	}
+}
+
+// TestValidatePackageName_AcceptsLegitimateNames is AC3's explicit
+// non-goal: apm-go's own charset guard here must stay looser than init's
+// pluginNameRe (`^[a-z][a-z0-9-]{0,63}$`) -- an existing legitimate
+// marketplace package name like "My_Tool" must keep working.
+func TestValidatePackageName_AcceptsLegitimateNames(t *testing.T) {
+	tests := []string{"tool", "My_Tool", "tool-a", "tool.js", "a1b2c3", "工具"}
+	for _, name := range tests {
+		if err := validatePackageName(name); err != nil {
+			t.Errorf("validatePackageName(%q) = %v, want nil (legitimate name)", name, err)
+		}
+	}
+}
+
+// TestAddPackage_NameFlag_TrailingSeparator_Rejected proves AC3 applies to
+// an explicit --name too, not just a defaultNameFromSource-derived one.
+func TestAddPackage_NameFlag_TrailingSeparator_Rejected(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n")
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	_, _, err := AddPackage(dir, "./pkgs/tool", AddOptions{Name: "tool/evil"}, panicLister{})
+
+	// Assert
+	if err == nil {
+		t.Fatal(`AddPackage(--name "tool/evil") = nil error, want a rejection (embedded path separator)`)
 	}
 }
 

@@ -625,6 +625,12 @@ func TestMarketplaceCheck_AllLocalPackages_SucceedsWithoutNetwork(t *testing.T) 
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	out, err := runMarketplaceCmd(t, "check")
@@ -732,6 +738,9 @@ func TestMarketplaceCheck_Offline_LocalPackagesStillSucceed(t *testing.T) {
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, err := runMarketplaceCmd(t, "check", "--offline")
@@ -739,6 +748,34 @@ func TestMarketplaceCheck_Offline_LocalPackagesStillSucceed(t *testing.T) {
 	// Assert
 	if err != nil {
 		t.Fatalf("marketplace check --offline returned error for a local-only marketplace: %v", err)
+	}
+}
+
+// TestMarketplaceCheck_LocalPackageMissingPath_FailsWithDetail is ticket 20
+// AC4's end-to-end CLI regression: `check` used to report REACHABLE for a
+// local package whose directory does not exist (user-reported, 2026-08-25).
+// It must now fail the same way a missing remote ref does -- a non-zero
+// exit and a table row naming the package with a detail naming the path.
+func TestMarketplaceCheck_LocalPackageMissingPath_FailsWithDetail(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n" +
+		"  packages:\n" +
+		"    - name: gone\n      source: ./llm-wiki\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "check")
+
+	// Assert
+	if err == nil {
+		t.Fatalf("marketplace check with a missing local package source returned no error, want a failure (output: %s)", out)
+	}
+	if !strings.Contains(out, "gone") || !strings.Contains(out, "./llm-wiki") {
+		t.Errorf("output = %q, want a table row naming the package and the missing path", out)
 	}
 }
 
@@ -777,6 +814,9 @@ func TestMarketplaceCheck_TableListsPassingPackagesByDefault(t *testing.T) {
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	out, err := runMarketplaceCmd(t, "check")
@@ -802,6 +842,9 @@ func TestMarketplaceCheck_OfflinePrintsModeNotice(t *testing.T) {
 		"  packages:\n" +
 		"    - name: local-a\n      source: ./pkgs/a\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -836,6 +879,12 @@ func TestMarketplaceCheck_DuplicatePackageNames_WarnsButExitsZero(t *testing.T) 
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	out, err := runMarketplaceCmd(t, "check")
@@ -861,6 +910,12 @@ func TestMarketplaceCheck_UniqueNames_NoDuplicateWarning(t *testing.T) {
 		"    - name: tool-a\n      source: ./pkgs/a\n" +
 		"    - name: tool-b\n      source: ./pkgs/b\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "b"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

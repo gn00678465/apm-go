@@ -64,6 +64,12 @@ func (panicLister) ListRefs(source string) ([]semver.TagInfo, error) {
 
 func TestCheckPackages_LocalSource_NeverCallsLister(t *testing.T) {
 	// Arrange
+	dir := t.TempDir()
+	for _, p := range []string{"a", "b", "c"} {
+		if err := os.MkdirAll(filepath.Join(dir, "pkgs", p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cfg := &AuthoringConfig{Packages: []PackageEntry{
 		{Name: "local-a", Source: "./pkgs/a", Version: "^1.0.0"},
 		{Name: "local-b", Source: "./pkgs/b", Ref: "v1.0.0"},
@@ -71,7 +77,7 @@ func TestCheckPackages_LocalSource_NeverCallsLister(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, panicLister{}, false)
+	results := CheckPackages(dir, cfg, panicLister{}, false)
 
 	// Assert
 	if len(results) != 3 {
@@ -93,7 +99,7 @@ func TestCheckPackages_UnpinnedRemotePackage_NothingToVerify(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, panicLister{}, false)
+	results := CheckPackages(t.TempDir(), cfg, panicLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
@@ -110,7 +116,7 @@ func TestCheckPackages_Offline_FailsPinnedRemotePackageWithoutNetwork(t *testing
 	}}
 
 	// Act: panicLister proves --offline never reaches the lister at all.
-	results := CheckPackages(cfg, panicLister{}, true)
+	results := CheckPackages(t.TempDir(), cfg, panicLister{}, true)
 
 	// Assert
 	if len(results) != 1 || results[0].Err == nil {
@@ -120,16 +126,90 @@ func TestCheckPackages_Offline_FailsPinnedRemotePackageWithoutNetwork(t *testing
 
 func TestCheckPackages_Offline_LocalPackageStillPasses(t *testing.T) {
 	// Arrange
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &AuthoringConfig{Packages: []PackageEntry{
 		{Name: "local-tool", Source: "./pkgs/a", Version: "^1.0.0"},
 	}}
 
 	// Act
-	results := CheckPackages(cfg, panicLister{}, true)
+	results := CheckPackages(dir, cfg, panicLister{}, true)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
 		t.Fatalf("results = %+v, want --offline to leave a local package unaffected", results)
+	}
+}
+
+// ── ticket 20 AC4: a local package whose directory no longer exists must
+// fail `check` -- the same class of pin failure a missing remote ref is,
+// not an unconditional pass (user-reported, 2026-08-25) ───────────────────
+
+func TestCheckPackages_LocalSource_MissingPath_FailsCheck(t *testing.T) {
+	// Arrange: dir is a real project root, but "pkgs/gone" is never created
+	// -- panicLister proves the failure is detected without ever touching
+	// the network.
+	dir := t.TempDir()
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "gone", Source: "./pkgs/gone"},
+	}}
+
+	// Act
+	results := CheckPackages(dir, cfg, panicLister{}, false)
+
+	// Assert
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatalf("results = %+v, want a missing local source to fail check", results)
+	}
+	if results[0].Reachable {
+		t.Error("Reachable = true, want false for a local source that does not exist")
+	}
+	if !strings.Contains(results[0].Err.Error(), "./pkgs/gone") {
+		t.Errorf("error = %v, want it to name the missing path", results[0].Err)
+	}
+}
+
+// TestCheckPackages_LocalSource_ExistsButIsAFile_FailsCheck covers the
+// "exists but is not a directory" half of ticket 20 AC4/AC1's shared
+// verifyLocalSourceExists helper.
+func TestCheckPackages_LocalSource_ExistsButIsAFile_FailsCheck(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "bad", Source: "./notadir"},
+	}}
+
+	// Act
+	results := CheckPackages(dir, cfg, panicLister{}, false)
+
+	// Assert
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatal("expected a local source pointing at a file (not a directory) to fail check")
+	}
+}
+
+// TestCheckPackages_LocalSource_EscapesRoot_FailsCheck proves `check`
+// re-runs the same containment guard `add` does (ticket 20's read-time
+// re-verification, per ResolveLocalSourceAgainstRoot's own doc comment) --
+// a local source is not just re-stat-ed, it is re-resolved against dir too.
+func TestCheckPackages_LocalSource_EscapesRoot_FailsCheck(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "escaping", Source: `./..\..\outside`},
+	}}
+
+	// Act
+	results := CheckPackages(dir, cfg, panicLister{}, false)
+
+	// Assert
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatal("expected a local source escaping the project root to fail check")
 	}
 }
 
@@ -144,7 +224,7 @@ func TestCheckPackages_RemoteRef_FoundOnRealGitRepo(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
@@ -208,7 +288,7 @@ func TestCheckPackages_RemoteRef_MissingFailsCheck(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err == nil {
@@ -231,7 +311,7 @@ func TestCheckPackages_RemoteVersionRange_MatchesRealTag(t *testing.T) {
 	}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
@@ -248,7 +328,7 @@ func TestCheckPackages_RemoteVersionRange_NoMatchFailsCheck(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err == nil {
@@ -269,7 +349,7 @@ func TestCheckPackages_RemoteVersionRange_UsesPackageTagPatternOverBuildDefault(
 	}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
@@ -291,7 +371,7 @@ func TestCheckPackages_RemoteSource_LsRemoteFailureFailsCheck(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err == nil {
@@ -303,6 +383,10 @@ func TestCheckPackages_RemoteSource_LsRemoteFailureFailsCheck(t *testing.T) {
 
 func TestCheckPackages_AggregatesEveryPackageIndependently(t *testing.T) {
 	// Arrange
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "local"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	goodDir := t.TempDir()
 	initGitRepoWithTags(t, goodDir, "v1.0.0")
 	badDir := t.TempDir()
@@ -315,7 +399,7 @@ func TestCheckPackages_AggregatesEveryPackageIndependently(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 3 {

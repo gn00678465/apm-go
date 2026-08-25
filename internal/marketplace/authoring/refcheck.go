@@ -7,6 +7,8 @@
 // mirrors mkt-046's lesson (package add must not require network access for
 // a local source) applied symmetrically on the read side, and is proven by
 // this file's own tests via a RefLister fake that panics if ever called.
+// `check`'s local branch does stat the resolved path on disk (ticket 20
+// AC4) -- a local filesystem read, never a network call.
 package authoring
 
 import (
@@ -770,28 +772,55 @@ func isLocalPackageSource(source string) bool {
 
 // CheckPackages implements mkt-041: for every package in cfg, verify a
 // remote package's pinned Ref or Version range genuinely exists on the
-// remote via lister.ListRefs. Local packages are always OK and are
-// resolved *before* the offline/lister branches below, so a caller's
-// lister that panics on any call -- proving zero network I/O -- stays
-// silent for an all-local marketplace (or for remote packages with nothing
-// pinned to verify). offline=true fails every remote package that has a
-// Ref or Version pinned to verify: this MVP keeps no on-disk ref cache to
-// fall back on (design.md: "無快取可用視為失敗,不寬貸").
-func CheckPackages(cfg *AuthoringConfig, lister RefLister, offline bool) []CheckResult {
+// remote via lister.ListRefs. Local packages never touch the network -- a
+// caller's lister that panics on any call proves zero network I/O for an
+// all-local marketplace (or for remote packages with nothing pinned to
+// verify) -- but ARE now resolved and stat-ed against dir (ticket 20 AC4,
+// see checkPackage's own doc comment). offline=true fails every remote
+// package that has a Ref or Version pinned to verify: this MVP keeps no
+// on-disk ref cache to fall back on (design.md: "無快取可用視為失敗,不寬
+// 貸"). dir is the project root a local ("./...") package's Source is
+// resolved against -- CheckPackages' only caller (marketplaceCheckCmd)
+// passes ".", matching the LoadAuthoringConfig(".") call that produced cfg.
+func CheckPackages(dir string, cfg *AuthoringConfig, lister RefLister, offline bool) []CheckResult {
 	results := make([]CheckResult, 0, len(cfg.Packages))
 	for _, pkg := range cfg.Packages {
-		results = append(results, checkPackage(cfg, pkg, lister, offline))
+		results = append(results, checkPackage(dir, cfg, pkg, lister, offline))
 	}
 	return results
 }
 
-func checkPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offline bool) CheckResult {
+func checkPackage(dir string, cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offline bool) CheckResult {
 	pass := CheckResult{Package: pkg, Reachable: true, VersionFound: true, RefOK: true}
 	fail := func(reachable, versionFound bool, err error) CheckResult {
 		return CheckResult{Package: pkg, Err: err, Reachable: reachable, VersionFound: versionFound}
 	}
 
+	// Ticket 20 AC4 (user-reported, 2026-08-25): this branch used to
+	// `return pass` unconditionally, the same unconditional local-pass shape
+	// as the Oracle's own commands/marketplace/check.py:121-134
+	// (`entry.is_local` -> `_CheckResult(reachable=True, ...)` with no stat
+	// at all) -- so `check` reported REACHABLE for a package whose local
+	// directory did not exist (ticket 20's reproducer: `./llm-wiki\`, a
+	// trailing-separator artifact `package add` itself now also refuses,
+	// but any local path deleted or renamed after being added would hit
+	// this same gap). This is a DELIBERATE apm-go-only hardening beyond the
+	// Oracle: `check`'s whole purpose is to catch a pin that no longer
+	// resolves, and a local path is exactly as "pin" as a remote ref is.
+	// Reuses AddPackage's own resolveLocalSourceAgainstRoot +
+	// verifyLocalSourceExists (editor.go) rather than a second check --
+	// ResolveLocalSourceAgainstRoot's own doc comment already documents why
+	// every reader of a local source must re-run this at its own read time
+	// instead of trusting `add` having checked it once (B-BLOCKING-1,
+	// external audit round 6, 2026-07-31 follow-up).
 	if isLocalPackageSource(pkg.Source) {
+		abs, err := resolveLocalSourceAgainstRoot(dir, pkg.Source)
+		if err != nil {
+			return fail(false, false, fmt.Errorf("package %q: %w", pkg.Name, err))
+		}
+		if err := verifyLocalSourceExists(pkg.Source, abs); err != nil {
+			return fail(false, false, fmt.Errorf("package %q: %w", pkg.Name, err))
+		}
 		return pass
 	}
 	if pkg.Ref == "" && pkg.Version == "" {

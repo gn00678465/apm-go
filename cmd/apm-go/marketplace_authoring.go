@@ -254,10 +254,11 @@ func appendMarketplaceBlock(src []byte, blockText string) []byte {
 // marketplaceCheckCmd implements mkt-041: verify every remote package's
 // pinned ref or version range genuinely exists on its remote via `git
 // ls-remote` (authoring.CheckPackages/authoring.DefaultRefLister). Local
-// (./...) packages always pass without touching the network. Any failure
-// returns a non-nil error, which main()'s root.Execute() error path turns
-// into exit 1 (mkt-041's "任何失敗 exit 1" -- no distinct exit code needed
-// here, unlike package add/remove/set's exit 2 in a later step).
+// (./...) packages never touch the network, but their resolved path is now
+// stat-ed on disk and must exist (ticket 20 AC4). Any failure returns a
+// non-nil error, which main()'s root.Execute() error path turns into exit 1
+// (mkt-041's "任何失敗 exit 1" -- no distinct exit code needed here, unlike
+// package add/remove/set's exit 2 in a later step).
 func marketplaceCheckCmd() *cobra.Command {
 	var offline, verbose bool
 
@@ -290,7 +291,7 @@ func marketplaceCheckCmd() *cobra.Command {
 				ux.Info(w, "Offline mode -- only schema and cached-ref checks")
 			}
 
-			results := authoring.CheckPackages(cfg, authoring.DefaultRefLister, offline)
+			results := authoring.CheckPackages(".", cfg, authoring.DefaultRefLister, offline)
 			failed := 0
 			// Upstream's Entry Health Check table (__init__.py:1246-1287):
 			// one row per entry -- passing entries included -- with the

@@ -140,6 +140,9 @@ func TestMarketplacePackageAdd_VerboseFlagAccepted(t *testing.T) {
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool", "-v")
@@ -491,6 +494,9 @@ func TestMarketplacePackageAdd_LocalSource_NoFlags_SucceedsEndToEnd(t *testing.T
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	out, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool")
@@ -588,13 +594,16 @@ func TestMarketplacePackageAdd_DuplicateName_ExitsCode2(t *testing.T) {
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool")
 
 	// Assert
-	if err == nil {
-		t.Fatal("expected a duplicate package name to error")
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("err = %v, want a duplicate package name error", err)
 	}
 	if got := exitCodeOf(err); got != 2 {
 		t.Errorf("exitCodeOf(err) = %d, want 2 (mkt-045)", got)
@@ -913,6 +922,9 @@ func TestMarketplacePackageAdd_LocalSource_ExplicitRefHead_NoMutableRefWarning(t
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll("localpkg", 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	out, err := runMarketplaceCmd(t, "package", "add", "./localpkg", "--name", "loc2", "--ref", "HEAD")
@@ -1127,6 +1139,9 @@ func TestMarketplacePackageAdd_CategoryFlag_WritesCategory(t *testing.T) {
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool", "--category", "Productivity")
@@ -1177,6 +1192,9 @@ func TestMarketplacePackageAdd_OutputsIncludeCodex_NoCategory_WarnsButSucceeds(t
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	out, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool")
@@ -1216,6 +1234,9 @@ func TestMarketplacePackageAdd_CategoryGiven_OutputsIncludeCodex_NoWarning(t *te
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	out, err := runMarketplaceCmd(t, "package", "add", "./pkgs/tool", "--category", "Productivity")
@@ -1240,6 +1261,9 @@ func TestMarketplacePackageAdd_NoCategory_OutputsExcludeCodex_NoWarning(t *testi
 	chdirTemp(t)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "tool"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1348,6 +1372,73 @@ func TestMarketplacePackageAdd_LocalSourceEscapingRoot_Rejected(t *testing.T) {
 	// Assert
 	if addErr == nil {
 		t.Fatalf("package add ./linked (a junction escaping the project root) succeeded, want rejection (output: %s)", out)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != apmYML {
+		t.Errorf("apm.yml was modified despite the rejected add;\ngot:\n%s\nwant unchanged:\n%s", string(data), apmYML)
+	}
+}
+
+// TestMarketplacePackageAdd_LocalSourceTrailingSeparator_RejectedEndToEnd is
+// ticket 20's user-reported reproducer, driven through the real CLI end to
+// end: `package add './llm-wiki\'` (a trailing backslash, e.g. a Windows/
+// PowerShell tab-completion artifact) when only "llm-wiki" (without the
+// trailing "\") exists must fail with exit 2, and apm.yml must be left
+// byte-for-byte unchanged -- not the pre-fix behaviour of silently writing
+// `name: "llm-wiki\\"` / `source: "./llm-wiki\\"`.
+func TestMarketplacePackageAdd_LocalSourceTrailingSeparator_RejectedEndToEnd(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	if err := os.MkdirAll("llm-wiki", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", `./llm-wiki\`)
+
+	// Assert
+	if err == nil {
+		t.Fatalf(`package add "./llm-wiki\\" succeeded, want rejection (output: %s)`, out)
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2 (AC1)", got)
+	}
+	data, rerr := os.ReadFile("apm.yml")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(data) != apmYML {
+		t.Errorf("apm.yml was modified despite the rejected add;\ngot:\n%s\nwant unchanged:\n%s", string(data), apmYML)
+	}
+}
+
+// TestMarketplacePackageAdd_NonexistentLocalSource_RejectedEndToEnd is AC1's
+// plain "the path just doesn't exist at all" case (no backslash artifact),
+// also called out explicitly in ticket 20's reproducer.
+func TestMarketplacePackageAdd_NonexistentLocalSource_RejectedEndToEnd(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "package", "add", "./totally-missing")
+
+	// Assert
+	if err == nil {
+		t.Fatalf("package add ./totally-missing succeeded, want rejection (output: %s)", out)
+	}
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2 (AC1)", got)
 	}
 	data, rerr := os.ReadFile("apm.yml")
 	if rerr != nil {
