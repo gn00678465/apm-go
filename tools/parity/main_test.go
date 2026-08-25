@@ -554,6 +554,8 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		"plugin-init-conflict", "plugin-init-empty", "plugin-init-unknown", "plugin-init-format-apm",
 		"plugin-init-existing-pluginjson-no-yes", "plugin-init-help",
 		"search-missing-at", "search-empty-query", "search-empty-marketplace",
+		"search-zero-results", "search-last-at-split", "search-limit-1", "search-tag-hit",
+		"search-description-truncation", "search-help",
 	}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)
