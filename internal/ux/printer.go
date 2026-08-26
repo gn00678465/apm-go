@@ -159,13 +159,31 @@ func oracleLine(w io.Writer, style lipgloss.Style, prefix, format string, a ...a
 // os.Stderr/cmd.ErrOrStderr() unchanged; this is the one place that
 // redirects it to os.Stdout instead. A writer that isn't literally the
 // process's os.Stderr (a test's bytes.Buffer, cmd.OutOrStdout(), ...)
-// passes through untouched.
+// passes through untouched. SetConsoleStderr (below) flips this off for
+// `pack --json`, the mode upstream reserves _console_stderr for.
 func errWriter(w io.Writer) io.Writer {
-	if w == io.Writer(os.Stderr) {
+	if w == io.Writer(os.Stderr) && !consoleStderr {
 		return os.Stdout
 	}
 	return w
 }
+
+// consoleStderr mirrors the Oracle's module-level _console_stderr
+// (commands/_helpers.py:72-93). It defaults false -- ordinary errors and
+// warnings land on stdout -- and is flipped by SetConsoleStderr.
+var consoleStderr bool
+
+// SetConsoleStderr moves the error/warning/info channel to stderr, mirroring
+// the Oracle's set_console_stderr.
+//
+// errWriter's own doc comment used to note that this switch was "reserved
+// for a --json mode apm-go doesn't have yet". `pack --json` is that mode:
+// its help text is "Emit machine-readable JSON to stdout; logs go to
+// stderr", and the Oracle enforces the second half precisely by flipping
+// this flag, so the JSON envelope is the only thing a consuming pipeline
+// reads on stdout. Callers pair it with a writer switch of their own for
+// the non-ux lines they print directly.
+func SetConsoleStderr(on bool) { consoleStderr = on }
 
 // Plain prints a line with no severity symbol, for callers whose status
 // glyph is part of the message itself (e.g. doctor's upstream
