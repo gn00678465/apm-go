@@ -112,6 +112,22 @@ func ExtractVersion(re *regexp.Regexp, tagName string) (string, bool) {
 	return m[idx], true
 }
 
+// RenderTag mirrors render_tag (tag_pattern.py:82-101): expands the
+// "{version}" and "{name}" placeholders in pattern with literal
+// substitution (order matters -- version first, matching the Oracle's own
+// replace order, though the two placeholders can never collide since
+// neither's own text contains the other's literal brace form). Used by the
+// version-alignment release gate (`apm pack --check-versions`,
+// internal/marketplace/build/version_check.go) to render the tag a
+// tag_pattern-strategy package's version is EXPECTED to produce, the
+// inverse operation of ExtractVersion/Compile (which go the other way,
+// tag name -> extracted version).
+func RenderTag(pattern, name, version string) string {
+	result := strings.ReplaceAll(pattern, "{version}", version)
+	result = strings.ReplaceAll(result, "{name}", name)
+	return result
+}
+
 // FilterTags compiles pattern (for name) and returns only the tags in tags
 // that match it, with each result's Name replaced by the *extracted
 // version* (ready for internal/semver.MaxSatisfying/Satisfies) while

@@ -96,6 +96,21 @@ type Build struct {
 	TagPattern string
 }
 
+// Versioning is the marketplace.versioning block: the release-time
+// version-alignment gate's strategy (`apm pack --check-versions`), mirroring
+// yml_schema.py's MarketplaceVersioning (a single field, "strategy").
+type Versioning struct {
+	Strategy string
+}
+
+// VersioningStrategies mirrors yml_schema.py's _VERSIONING_STRATEGIES
+// frozenset -- the only three legal marketplace.versioning.strategy values.
+var VersioningStrategies = map[string]bool{
+	"lockstep":    true,
+	"tag_pattern": true,
+	"per_package": true,
+}
+
 // PackageEntry is one entry of marketplace.packages[]. Version and Ref are
 // mutually exclusive pins (enforced at the CLI/editor layer for
 // `package add/set`, mkt-045 -- not at load time here).
@@ -151,8 +166,9 @@ type AuthoringConfig struct {
 	// (arbitrary caller-defined keys, including "pluginRoot") for
 	// ClaudeMapper to pass through to marketplace.json's top-level
 	// "metadata" key.
-	Metadata map[string]any
-	Packages []PackageEntry
+	Metadata   map[string]any
+	Packages   []PackageEntry
+	Versioning Versioning
 }
 
 // LoadAuthoringConfig loads the marketplace authoring config for the
@@ -331,6 +347,10 @@ func parseAuthoringNode(node *yaml.Node, inherited topLevelFields, isLegacy bool
 	if err != nil {
 		return nil, err
 	}
+	versioning, err := parseVersioning(node)
+	if err != nil {
+		return nil, err
+	}
 
 	name, nameOverridden := overridableString(node, "name")
 	if !nameOverridden {
@@ -362,7 +382,31 @@ func parseAuthoringNode(node *yaml.Node, inherited topLevelFields, isLegacy bool
 		Outputs:               outputs,
 		Metadata:              metadata,
 		Packages:              packages,
+		Versioning:            versioning,
 	}, nil
+}
+
+// parseVersioning reads the marketplace.versioning block (yml_schema.py:
+// 618-634, _parse_versioning): a single "strategy" key, defaulting to
+// "lockstep" when the block or key is absent, validated against
+// VersioningStrategies.
+func parseVersioning(node *yaml.Node) (Versioning, error) {
+	v := mappingValue(node, "versioning")
+	if v == nil {
+		return Versioning{Strategy: "lockstep"}, nil
+	}
+	strategy := scalarString(v, "strategy")
+	if strategy == "" {
+		strategy = "lockstep"
+	}
+	if !VersioningStrategies[strategy] {
+		// Oracle's error text (yml_schema.py:629-632): sorted(_VERSIONING_
+		// STRATEGIES) alphabetically, and Python's {strategy!r} repr (single
+		// quotes for a plain ASCII string) -- not Go's %q (double quotes).
+		return Versioning{}, fmt.Errorf(
+			"'versioning.strategy' must be one of: lockstep, per_package, tag_pattern; got '%s'", strategy)
+	}
+	return Versioning{Strategy: strategy}, nil
 }
 
 // overridableString returns key's scalar value on node and whether key was

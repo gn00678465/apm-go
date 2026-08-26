@@ -48,6 +48,8 @@ func packCmd() *cobra.Command {
 		target            string
 		archiveFlag       bool
 		archiveFormat     string
+		checkVersions     bool
+		checkClean        bool
 	)
 
 	cmd := &cobra.Command{
@@ -167,6 +169,8 @@ Exit codes:
 				archive:                archiveFlag,
 				archiveFormat:          archiveFormat,
 				showZipMigrationNotice: showZipMigrationNotice,
+				checkVersions:          checkVersions,
+				checkClean:             checkClean,
 			})
 		},
 	}
@@ -264,6 +268,24 @@ Exit codes:
 		"Deploy skill files to per-client paths (e.g. .cursor/skills/) instead of "+
 			"the shared .agents/skills/ directory. Compatibility flag for projects "+
 			"that need per-client skill layouts.")
+	// Ticket 17 phase 4: exact Oracle help text (commands/pack.py:305-320).
+	// Both are release gates: pure verification, never write anything of
+	// their own (--check-clean's own MarketplaceBuilder is unconditionally
+	// dry-run, matching the Oracle's, regardless of this command's own
+	// --dry-run). Exit codes 3 (version)/4 (drift) are applied at the very
+	// end of runReleaseGates' caller, after every producer's own output has
+	// rendered -- 3 wins over 4 when both fail simultaneously, per the
+	// Oracle's own explicit "Gate exit codes... 3 wins over 4" comment
+	// (pack.py:576-580), confirmed live.
+	cmd.Flags().BoolVar(&checkVersions, "check-versions", false,
+		"Release gate: verify per-package versions agree with the configured "+
+			"marketplace.versioning.strategy (lockstep | tag_pattern | per_package). "+
+			"Exits 3 on misalignment. Composes with --check-clean and --dry-run.")
+	cmd.Flags().BoolVar(&checkClean, "check-clean", false,
+		"Release gate: regenerate every configured marketplace output to a "+
+			"temp representation and diff against the effective on-disk path, "+
+			"including --marketplace-path overrides. Exits 4 for drift. Use "+
+			"with --dry-run to check without normal pack output generation.")
 	return cmd
 }
 
@@ -319,6 +341,10 @@ type packOptions struct {
 	// through so runBundleProducer's rendering doesn't need cobra flag
 	// access itself.
 	showZipMigrationNotice bool
+	// checkVersions/checkClean mirror --check-versions/--check-clean
+	// (ticket 17 phase 4): release gates run by runReleaseGates.
+	checkVersions bool
+	checkClean    bool
 }
 
 // runPack reads apm.yml once, routes to whichever of the three producers
@@ -377,13 +403,29 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 		}
 	}
 
+	// Ticket 17 phase 4: build/write every producer FIRST (including their
+	// own inline messages -- a bundle's "No plugin.json found;
+	// synthesising..." notice, marketplace's collision/secret warnings,
+	// plugin-manifest's own completion line), matching the Oracle's own
+	// orchestrator.run() step; the --check-versions/--check-clean release
+	// gates run strictly AFTER that (their own, independent config
+	// load/resolve, never reusing whatever a producer above already
+	// built); each producer's own completion/dry-run TAIL line is deferred
+	// past the gates too (renderBundleResult/renderMarketplaceOutput) --
+	// verified live against the pinned Oracle, in this exact order,
+	// including with plugin-manifest and a failing gate combined.
+	var bundleResult *bundle.ProduceResult
+	var err error
 	if doBundle {
-		if err := runBundleProducer(cmd, m, apmYMLRoot, hasMarketplace, opts); err != nil {
+		bundleResult, err = runBundleProducer(cmd, m, apmYMLRoot, hasMarketplace, opts)
+		if err != nil {
 			return err
 		}
 	}
+	var marketplaceRenders []marketplaceRender
 	if doMarketplace {
-		if err := runMarketplaceProducer(cmd, opts); err != nil {
+		marketplaceRenders, err = runMarketplaceProducer(cmd, opts)
+		if err != nil {
 			return err
 		}
 	}
@@ -392,6 +434,36 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 		if _, err := pluginmanifest.Produce(w, ".", apmYMLRoot, targets, opts.force, opts.dryRun); err != nil {
 			return err
 		}
+	}
+
+	versionGateFailed, driftGateFailed, err := runReleaseGates(cmd, opts)
+	if err != nil {
+		return err
+	}
+
+	w := cmd.OutOrStdout()
+	if doBundle {
+		renderBundleResult(w, bundleResult, opts)
+	}
+	for _, r := range marketplaceRenders {
+		renderMarketplaceOutput(w, r)
+	}
+
+	// Gate exit codes, applied after every producer's own output has
+	// rendered (pack.py:576-580's own comment: "3 wins over 4") -- verified
+	// live that Click's ctx.exit(3) short-circuits before the drift check's
+	// own ctx.exit(4) line ever runs when both gates fail simultaneously.
+	// Silent: the Oracle's ctx.exit(N) is a bare process exit with no
+	// additional message -- runReleaseGates' own renderVersionAlignment/
+	// renderDrift calls already printed every detail; a plain withExitCode
+	// here would append a redundant "[x] ..." line the Oracle never prints
+	// (doctor's own exit-code contract, cmd/apm-go/withSilentExitCode's doc
+	// comment, is the same pattern).
+	if versionGateFailed {
+		return withSilentExitCode(3, fmt.Errorf("version alignment check failed"))
+	}
+	if driftGateFailed {
+		return withSilentExitCode(4, fmt.Errorf("marketplace drift check failed"))
 	}
 	return nil
 }
@@ -484,7 +556,19 @@ func resolvePackOutputDir(raw string) (string, error) {
 // (core/build_orchestrator.py:93-124) -> export_plugin_bundle. m is never
 // nil here (DetectOutputs' hasDeps can only be true when apm.yml parsed
 // successfully).
-func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yamllib.Node, hasMarketplaceBlock bool, opts packOptions) error {
+//
+// Ticket 17 phase 4: this function used to also print the "Packed N
+// file(s) -> ..." tail (dry-run summary or the real 3-line success set)
+// immediately after producing. It no longer does: the Oracle's own
+// _render_bundle_result is called strictly AFTER the --check-versions/
+// --check-clean release gates run (pack.py:558-566), verified live --
+// `orchestrator.run()` (which performs the actual build, including this
+// function's own inline messages, e.g. "No plugin.json found;
+// synthesising...") completes BEFORE the gates, but the bundle's own
+// completion/summary lines print AFTER them. renderBundleResult (below)
+// is the deferred half, called from runPack once the gates have already
+// printed their own output.
+func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yamllib.Node, hasMarketplaceBlock bool, opts packOptions) (*bundle.ProduceResult, error) {
 	w := cmd.OutOrStdout()
 
 	hasLocalDep := false
@@ -497,7 +581,7 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 
 	lf, lockNode, err := loadPackLockfile()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	deps := bundleDepSources(m, lf)
@@ -509,10 +593,10 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 
 	outputDir, err := resolvePackOutputDir(opts.output)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	result, err := bundle.Produce(w, bundle.ProduceOptions{
+	return bundle.Produce(w, bundle.ProduceOptions{
 		ProjectRoot:                   ".",
 		OutputDir:                     outputDir,
 		PkgName:                       m.Name,
@@ -530,10 +614,12 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 		Archive:                       opts.archive,
 		ArchiveFormat:                 opts.archiveFormat,
 	})
-	if err != nil {
-		return err
-	}
+}
 
+// renderBundleResult prints runBundleProducer's deferred tail (see that
+// function's doc comment for why it's deferred at all): the dry-run
+// summary, or the real-run "Packed N file(s) -> ..." 3-line success set.
+func renderBundleResult(w io.Writer, result *bundle.ProduceResult, opts packOptions) {
 	if opts.dryRun {
 		ux.Section(w, fmt.Sprintf("dry-run: Would pack %d file(s) -> %s", len(result.Files), result.BundleDir))
 		items := make([]ux.Item, len(result.Files))
@@ -541,7 +627,7 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 			items[i] = ux.Item{Text: f}
 		}
 		ux.BulletList(w, items)
-		return nil
+		return
 	}
 	displayDir := displayPath(result.BundleDir)
 	ux.Sparkle(w, "Packed %d file(s) -> %s%s", len(result.Files), displayDir, bundleSizeSuffix(result.BundleDir))
@@ -583,7 +669,6 @@ func runBundleProducer(cmd *cobra.Command, m *manifest.Manifest, apmYMLNode *yam
 	ux.Info(w, "Claude plugin bundle ready -- contains plugin.json plus "+
 		"plugin-native directories and an embedded apm.lock.yaml.")
 	ux.Info(w, "Share with: apm-go install %s", displayDir)
-	return nil
 }
 
 // bundleSizeSuffix mirrors _bundle_size_suffix (commands/pack.py:617-629):
@@ -679,17 +764,36 @@ func bundleDepSources(m *manifest.Manifest, lf *lockfile.Lockfile) []bundle.DepS
 	return deps
 }
 
+// marketplaceRender carries packOneOutput's already-computed (and, unless
+// dry-run, already-written) result to renderMarketplaceOutput -- the
+// deferred tail-print half, called from runPack after the release gates
+// (see runBundleProducer's doc comment for why this split exists at all).
+type marketplaceRender struct {
+	format     string
+	outputPath string
+	count      int
+	dryRun     bool
+}
+
 // runMarketplaceProducer builds marketplace.json from apm.yml's
 // marketplace: block (or a legacy marketplace.yml), mirroring mkt-054/055's
-// original single-producer packCmd body -- unchanged behavior, only
-// extracted into its own function so runPack can call it conditionally
-// alongside the two new producers.
-func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
+// original single-producer packCmd body -- unchanged behavior except that
+// (ticket 17 phase 4) each output's own completion/dry-run line is no
+// longer printed here: it's deferred to renderMarketplaceOutput, called
+// from runPack after the --check-versions/--check-clean release gates run
+// (verified live: the Oracle's own marketplace success/dry-run lines print
+// AFTER the gates too). The "-m none" early return keeps printing inline,
+// unchanged -- that's a pre-existing, unrelated convention (mkt-054/055),
+// not part of what this phase restructures, and Oracle itself has no
+// producer_result at all for a zero-output selection (verified live:
+// "-m none" combined with the gates produces no marketplace-related
+// output on either side).
+func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplaceRender, error) {
 	w := cmd.OutOrStdout()
 
 	cfg, src, err := authoring.LoadAuthoringConfig(".")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if src == authoring.ConfigSourceLegacy {
 		ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
@@ -697,11 +801,11 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
 
 	cliOverrides, err := parseMarketplacePathOverrides(opts.pathOverrideArgs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	filterSet, buildAll, err := parseMarketplaceFilter(opts.marketplaceFilter)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	configuredOutputs := cfg.Outputs
@@ -720,7 +824,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
 	}
 	if len(activeOutputs) == 0 {
 		ux.Info(w, "No marketplace outputs selected; nothing to write.")
-		return nil
+		return nil, nil
 	}
 
 	resolved, warnings, err := build.ResolvePackages(cfg, build.Options{
@@ -729,7 +833,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
 		ProjectRoot:       ".",
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, warning := range warnings {
 		ux.Warn(cmd.ErrOrStderr(), "%s", warning)
@@ -744,19 +848,23 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) error {
 
 	configPaths, err := build.LoadOutputPathOverrides(".", src)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	renders := make([]marketplaceRender, 0, len(activeOutputs))
 	for _, format := range activeOutputs {
-		if err := packOneOutput(cmd, format, cfg, resolved, configPaths, cliOverrides, opts); err != nil {
-			return err
+		r, err := packOneOutput(cmd, format, cfg, resolved, configPaths, cliOverrides, opts)
+		if err != nil {
+			return nil, err
 		}
+		renders = append(renders, r)
 	}
-	return nil
+	return renders, nil
 }
 
 // packOneOutput composes and (unless dry-run) writes a single output
-// profile's marketplace.json.
+// profile's marketplace.json, returning what renderMarketplaceOutput needs
+// to print its deferred tail line.
 func packOneOutput(
 	cmd *cobra.Command,
 	format string,
@@ -764,54 +872,57 @@ func packOneOutput(
 	resolved []build.ResolvedPackage,
 	configPaths, cliOverrides map[string]string,
 	opts packOptions,
-) error {
-	w := cmd.OutOrStdout()
-
+) (marketplaceRender, error) {
 	outputPath, err := build.ResolveOutputPath(format, configPaths, cliOverrides)
 	if err != nil {
-		return err
+		return marketplaceRender{}, err
 	}
 	absPath, err := build.EnsureWithinRoot(".", outputPath)
 	if err != nil {
-		return err
+		return marketplaceRender{}, err
 	}
 
 	doc, docWarnings, err := composeMarketplaceDocument(format, cfg, resolved)
 	if err != nil {
-		return err
+		return marketplaceRender{}, err
 	}
 	for _, warning := range docWarnings {
 		ux.Warn(cmd.ErrOrStderr(), "%s", warning)
 	}
 
+	render := marketplaceRender{format: format, outputPath: outputPath, count: len(resolved), dryRun: opts.dryRun}
 	if opts.dryRun {
-		ux.Info(w, "dry-run: Would write marketplace.json [%s] (%d package(s)) -> %s", format, len(resolved), outputPath)
-		return nil
+		return render, nil
 	}
 
 	if err := build.WriteOutput(absPath, doc); err != nil {
-		return err
+		return marketplaceRender{}, err
 	}
-	// pack.py's _render_marketplace_result: logger.success(f"Built {message}")
-	// with no symbol override -- the same "[*]" default as the bundle
-	// producer's success line (ux.Sparkle's own doc comment).
-	ux.Sparkle(w, "Built marketplace.json [%s] (%d package(s)) -> %s", format, len(resolved), outputPath)
-	return nil
+	return render, nil
+}
+
+// renderMarketplaceOutput prints packOneOutput's deferred tail: the
+// dry-run notice, or the real-run success line -- mirroring
+// _render_marketplace_result's per-output line (pack.py's own
+// logger.success(f"Built {message}") uses no symbol override, the same
+// "[*]" default as the bundle producer's success line, ux.Sparkle's own
+// doc comment).
+func renderMarketplaceOutput(w io.Writer, r marketplaceRender) {
+	if r.dryRun {
+		ux.Info(w, "dry-run: Would write marketplace.json [%s] (%d package(s)) -> %s", r.format, r.count, r.outputPath)
+		return
+	}
+	ux.Sparkle(w, "Built marketplace.json [%s] (%d package(s)) -> %s", r.format, r.count, r.outputPath)
 }
 
 // composeMarketplaceDocument dispatches to the mkt-050/052/053 mapper for
 // format ("claude" or "codex" -- parseMarketplaceFilter/
 // build.KnownOutputFormats already reject anything else before this is ever
-// reached).
+// reached). A thin wrapper around build.ComposeDocument (ticket 17 phase 4
+// exported it so the check-clean drift gate shares this exact dispatch
+// instead of a second copy).
 func composeMarketplaceDocument(format string, cfg *authoring.AuthoringConfig, resolved []build.ResolvedPackage) (any, []string, error) {
-	switch format {
-	case "claude":
-		return build.ClaudeMapper{}.Compose(cfg, resolved)
-	case "codex":
-		return build.CodexMapper{}.Compose(cfg, resolved)
-	default:
-		return nil, nil, fmt.Errorf("unknown marketplace output format %q", format)
-	}
+	return build.ComposeDocument(format, cfg, resolved)
 }
 
 // parseMarketplacePathOverrides parses --marketplace-path's repeatable
@@ -869,6 +980,199 @@ func parseMarketplaceFilter(value string) (filter map[string]bool, buildAll bool
 		filter[f] = true
 	}
 	return filter, false, nil
+}
+
+// runReleaseGates mirrors pack.py's "-- Release gates (--check-versions /
+// --check-clean) --" block (pack.py:396-527): runs whichever of the two
+// gates the caller requested against their OWN, independently loaded
+// marketplace config -- never reusing whatever runMarketplaceProducer
+// already built this same invocation, matching the Oracle's own dedicated
+// (always-dry-run, for --check-clean) MarketplaceBuilder. Returns whether
+// each gate failed; runPack applies the exit-3/exit-4 precedence after
+// rendering every producer's own output, matching the Oracle's own
+// ordering (verified live).
+func runReleaseGates(cmd *cobra.Command, opts packOptions) (versionGateFailed, driftGateFailed bool, err error) {
+	if !opts.checkVersions && !opts.checkClean {
+		return false, false, nil
+	}
+	w := cmd.OutOrStdout()
+
+	cfg, src, loadErr := authoring.LoadAuthoringConfig(".")
+	if loadErr != nil {
+		if !authoring.IsNoConfigError(loadErr) {
+			return false, false, loadErr
+		}
+		// gate_config is None (pack.py:427-436): skip both requested gates
+		// with an [i] info line each, never an error -- a dependencies:-only
+		// project asking for a release gate that only makes sense with a
+		// marketplace: block is a no-op, not a failure.
+		if opts.checkVersions {
+			ux.Info(w, "Version alignment check skipped: no marketplace block; nothing to check.")
+		}
+		if opts.checkClean {
+			ux.Info(w, "Marketplace drift check skipped: no marketplace block; nothing to check.")
+		}
+		return false, false, nil
+	}
+	if opts.checkVersions {
+		report := build.CheckVersionAlignment(cfg, ".")
+		renderVersionAlignment(w, report)
+		if !report.OK {
+			versionGateFailed = true
+		}
+	}
+
+	if opts.checkClean {
+		cliOverrides, perr := parseMarketplacePathOverrides(opts.pathOverrideArgs)
+		if perr != nil {
+			return versionGateFailed, false, perr
+		}
+		configPaths, perr := build.LoadOutputPathOverrides(".", src)
+		if perr != nil {
+			return versionGateFailed, false, perr
+		}
+		// The drift gate always resolves packages fresh, independent of
+		// whether the marketplace producer also ran this invocation --
+		// mirrors the Oracle's own dedicated MarketplaceBuilder.from_config
+		// (drift_check.py's own doc comment: "the gate writes nothing").
+		resolved, warnings, rerr := build.ResolvePackages(cfg, build.Options{
+			IncludePrerelease: opts.includePrerelease,
+			Offline:           opts.offline,
+			ProjectRoot:       ".",
+		})
+		if rerr != nil {
+			return versionGateFailed, false, rerr
+		}
+		for _, warning := range warnings {
+			ux.Warn(cmd.ErrOrStderr(), "%s", warning)
+		}
+		report, derr := build.CheckMarketplaceDrift(cfg, resolved, ".", configPaths, cliOverrides)
+		if derr != nil {
+			return versionGateFailed, false, derr
+		}
+		renderDrift(w, report, cliOverrides)
+		if !report.OK {
+			driftGateFailed = true
+		}
+	}
+
+	return versionGateFailed, driftGateFailed, nil
+}
+
+// renderVersionAlignment mirrors the check_versions half of pack.py's gate
+// block (pack.py:439-465): the header line (success or error, with or
+// without an "expected=" clause depending on strategy), one detail row per
+// package, and (failure only) one error line per ErrorMessages() entry.
+func renderVersionAlignment(w io.Writer, report build.VersionAlignmentReport) {
+	if report.OK {
+		if report.Expected != "" {
+			ux.Sparkle(w, "Version alignment OK [strategy=%s, expected=%s]", report.Strategy, report.Expected)
+		} else {
+			ux.Sparkle(w, "Version alignment OK [strategy=%s]", report.Strategy)
+		}
+		for _, row := range report.Packages {
+			ux.Info(w, "    %s  %s%s  [%s]", row.Path, row.Version, tagSuffix(row.RenderedTag), row.Reason)
+		}
+		return
+	}
+
+	if report.Expected != "" {
+		ux.Error(w, "Version alignment failed [strategy=%s, expected=%s]", report.Strategy, report.Expected)
+	} else {
+		ux.Error(w, "Version alignment failed [strategy=%s]", report.Strategy)
+	}
+	for _, row := range report.Packages {
+		versionStr := row.Version
+		if versionStr == "" {
+			versionStr = "<none>"
+		}
+		ux.Info(w, "    %s  %s%s  [%s]", row.Path, versionStr, tagSuffix(row.RenderedTag), row.Reason)
+	}
+	for _, msg := range report.ErrorMessages() {
+		ux.Error(w, "    %s", msg)
+	}
+}
+
+// tagSuffix mirrors pack.py's `tag_str = f"  -> tag {row.rendered_tag}" if
+// row.rendered_tag else ""` (repeated at pack.py:449/463).
+func tagSuffix(tag string) string {
+	if tag == "" {
+		return ""
+	}
+	return "  -> tag " + tag
+}
+
+// renderDrift mirrors the check_clean half of pack.py's gate block
+// (pack.py:479-527): the header line (success or error, naming only the
+// non-unchanged outputs on failure), one detail row per output (plus a
+// recovery recipe for "missing"/"drift" rows), matching the Oracle's own
+// per-status branching exactly.
+func renderDrift(w io.Writer, report build.DriftReport, outputOverrides map[string]string) {
+	if report.OK {
+		formats := make([]string, len(report.Outputs))
+		for i, out := range report.Outputs {
+			formats[i] = out.Format
+		}
+		ux.Sparkle(w, "Marketplace working tree clean [outputs=%s]", strings.Join(formats, ", "))
+		for _, out := range report.Outputs {
+			ux.Info(w, "    %s  [unchanged]", out.Path)
+		}
+		return
+	}
+
+	var dirtyFormats []string
+	for _, out := range report.Outputs {
+		if out.Status != "unchanged" {
+			dirtyFormats = append(dirtyFormats, out.Format)
+		}
+	}
+	ux.Error(w, "Marketplace working tree dirty [outputs=%s]", strings.Join(dirtyFormats, ", "))
+	for _, out := range report.Outputs {
+		switch out.Status {
+		case "unchanged":
+			ux.Info(w, "    %s  [unchanged]", out.Path)
+		case "missing":
+			ux.Info(w, "    %s  [missing on disk; would be created]", out.Path)
+			emitDriftRecipe(w, out.Path, out.Format, outputOverrides[out.Format])
+		default: // "drift"
+			ux.Info(w, "    %s  [drift: %d differences]", out.Path, len(out.Differences))
+			for _, line := range build.RenderDiffLines(out, 20) {
+				ux.Info(w, "%s", line)
+			}
+			emitDriftRecipe(w, out.Path, out.Format, outputOverrides[out.Format])
+		}
+	}
+}
+
+// emitDriftRecipe mirrors _emit_drift_recipe (pack.py:583-613) verbatim,
+// including its exact literal spacing -- "apm-go" in place of "apm" (this
+// binary's own name, matching every other self-referential hint text in
+// this command, e.g. "Share with: apm-go install ..."; rewrite_binary_name
+// folds it back for parity comparison). outputOverride is "" unless the
+// caller passed --marketplace-path FORMAT=PATH for this exact format.
+func emitDriftRecipe(w io.Writer, outPath, outputFormat, outputOverride string) {
+	packCommand := "apm-go pack"
+	if outputOverride != "" {
+		packCommand += fmt.Sprintf(" --marketplace-path %s=%s", outputFormat, outputOverride)
+	}
+	stageCommand := "git add -- " + outPath
+
+	ux.Info(w, "")
+	ux.Info(w, "    To recover cleanly (fold into the current commit):")
+	ux.Info(w, "")
+	ux.Info(w, "      %s                       # regenerate locally", packCommand)
+	ux.Info(w, "      %s", stageCommand)
+	ux.Info(w, "      git commit --amend --no-edit   # fold into the current commit")
+	ux.Info(w, "      git push --force-with-lease    # safe re-push")
+	ux.Info(w, "")
+	ux.Info(w, "    Or as a follow-up commit:")
+	ux.Info(w, "")
+	ux.Info(w, "      %s && %s", packCommand, stageCommand)
+	ux.Info(w, "      git commit -m 'chore(marketplace): regen'")
+	ux.Info(w, "")
+	ux.Info(w, "    Why this exists: marketplace.json is checked in (lockfile pattern)")
+	ux.Info(w, "    so consumers can resolve packages without running 'apm pack'. CI")
+	ux.Info(w, "    enforces that the checked-in copy matches the apm.yml source of truth.")
 }
 
 // hasMarketplaceConfig reports whether dir has a marketplace: block in

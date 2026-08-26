@@ -23,5 +23,25 @@
     "path": "home/.cache/apm/last_version_check",
     "reason": "The Oracle touches ~/.cache/apm/last_version_check (save_version_check_timestamp()) whenever check_for_updates() runs and should_check_for_updates() finds no cache file or one older than 86400s -- gated by _check_and_notify_updates() in the CLI's post-command callback (cli.py:178), so it appears on commands that reach that callback (e.g. doctor) but not on --version/--help, which exit before it runs. apm-go has no self-update/version-check feature: no code path calls GitHub to compare versions or persists a check timestamp. Decision B (ticket 12): baseline exclusion, not mirrored.",
     "oracle_ref": "utils/version_checker.py:301-308 (save_version_check_timestamp), utils/version_checker.py:311-338 (check_for_updates), commands/_helpers.py:453-486 (_check_and_notify_updates)"
+  },
+  {
+    "path": "home/.local",
+    "reason": "First observed on ticket 17 phase 4's pack-check-versions-fail/pack-check-clean-fail cases -- the first cases in this corpus to exercise MarketplaceBuilder.resolve() with a real packages: list at all (every earlier pack-* case's fixture is bundle-only or has no packages:). Verified this is NOT apm_cli's own application code: grepped every marketplace/*.py file for a gh/subprocess/git-credential-helper call and found none. Reproduced directly outside the parity runner too: a bare `uv run --project <oracle> apm pack -m claude --dry-run` (no --check-versions/--check-clean at all) against a fresh HOME also creates ~/.local/state/gh/device-id -- confirming this is a side effect of `uv run` itself (the parity harness's own Oracle-invocation wrapper, main.go's defaultOracleCmd), most likely `uv`'s own dependency/interpreter resolution touching a git-credential-helper path on this machine, not the Oracle CLI's own behavior a real installed `apm` binary would ever exhibit. apm-go has no uv-equivalent wrapper and no gh CLI dependency at all, so it can never produce this path regardless of how faithfully it ports the Oracle's own command behavior. Decision B (ticket 12's own precedent): baseline exclusion, not mirrored.",
+    "oracle_ref": "main.go's defaultOracleCmd (\"uv run --project ... apm\") -- a parity-harness artifact, not an apm_cli source location"
+  },
+  {
+    "path": "home/.local/state",
+    "reason": "See home/.local: the same uv-invocation side effect, one level down.",
+    "oracle_ref": "main.go's defaultOracleCmd (\"uv run --project ... apm\") -- a parity-harness artifact, not an apm_cli source location"
+  },
+  {
+    "path": "home/.local/state/gh",
+    "reason": "See home/.local: the same uv-invocation side effect, one level down.",
+    "oracle_ref": "main.go's defaultOracleCmd (\"uv run --project ... apm\") -- a parity-harness artifact, not an apm_cli source location"
+  },
+  {
+    "path": "home/.local/state/gh/device-id",
+    "reason": "See home/.local: the actual file uv's (or a transitively-invoked gh's) own device-registration side effect creates -- random per-run content (confirmed: two separate runs produced two different sha256 sums for the same 36-byte file), so it could never compare equal between two independent invocations even if apm-go somehow also created it.",
+    "oracle_ref": "main.go's defaultOracleCmd (\"uv run --project ... apm\") -- a parity-harness artifact, not an apm_cli source location"
   }
 ]

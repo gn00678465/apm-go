@@ -52,7 +52,7 @@ func packRevParse(t *testing.T, dir, ref string) string {
 
 func TestPackCmd_FlagsWired(t *testing.T) {
 	cmd := packCmd()
-	for _, name := range []string{"offline", "include-prerelease", "dry-run", "marketplace", "marketplace-path", "output", "target", "archive", "archive-format", "legacy-skill-paths"} {
+	for _, name := range []string{"offline", "include-prerelease", "dry-run", "marketplace", "marketplace-path", "output", "target", "archive", "archive-format", "legacy-skill-paths", "check-versions", "check-clean"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("pack is missing --%s", name)
 		}
@@ -71,9 +71,12 @@ func TestPackCmd_FlagsWired(t *testing.T) {
 	}
 }
 
+// TestPackCmd_DoesNotExposeDeferredFlags: check-versions/check-clean were
+// removed from this list in ticket 17 phase 4 (now implemented, see
+// TestPackCmd_FlagsWired) -- allow-head remains deferred.
 func TestPackCmd_DoesNotExposeDeferredFlags(t *testing.T) {
 	cmd := packCmd()
-	for _, name := range []string{"check-versions", "check-clean", "allow-head"} {
+	for _, name := range []string{"allow-head"} {
 		if cmd.Flags().Lookup(name) != nil {
 			t.Errorf("pack must not expose --%s (deferred to a later sub-task, see design.md)", name)
 		}
@@ -806,6 +809,230 @@ func readTreeUnderBuild(t *testing.T, dir string) map[string]string {
 		t.Fatalf("walk %s: %v", root, err)
 	}
 	return tree
+}
+
+// ── --check-versions/--check-clean (ticket 17 phase 4) ──────────────────
+
+// writeLockstepFixture sets up a marketplace: block using the "lockstep"
+// versioning strategy (marketplace.version must equal every local
+// package's own apm.yml version) plus one local package pkgs/a whose own
+// version is pkgVersion.
+func writeLockstepFixture(t *testing.T, dir, marketplaceVersion, pkgVersion string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pkgs", "a", "apm.yml"),
+		[]byte("name: pkg-a\nversion: "+pkgVersion+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: "+marketplaceVersion+"\nlicense: MIT\n"+
+		"marketplace:\n  owner:\n    name: Acme\n  outputs:\n    - claude\n"+
+		"  versioning:\n    strategy: lockstep\n  packages:\n    - name: pkg-a\n      source: ./pkgs/a\n")
+}
+
+func TestPackCmd_HelpMatchesOracleCheckFlagsText(t *testing.T) {
+	out, err := runPackCmd(t, "--help")
+	if err != nil {
+		t.Fatalf("pack --help returned error: %v", err)
+	}
+	for _, want := range []string{
+		"Release gate: verify per-package versions agree with the configured marketplace.versioning.strategy (lockstep | tag_pattern | per_package). Exits 3 on misalignment. Composes with --check-clean and --dry-run.",
+		"Release gate: regenerate every configured marketplace output to a temp representation and diff against the effective on-disk path, including --marketplace-path overrides. Exits 4 for drift. Use with --dry-run to check without normal pack output generation.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("pack --help output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPackCmd_CheckVersions_Lockstep_Success(t *testing.T) {
+	dir := chdirTemp(t)
+	writeLockstepFixture(t, dir, "1.0.0", "1.0.0")
+
+	out, err := runPackCmd(t, "--check-versions", "-m", "none")
+	if err != nil {
+		t.Fatalf("pack --check-versions returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "Version alignment OK [strategy=lockstep, expected=1.0.0]") {
+		t.Errorf("output = %q, want the success header", out)
+	}
+	if !strings.Contains(out, "pkgs/a  1.0.0  [matches]") {
+		t.Errorf("output = %q, want the matching package row", out)
+	}
+}
+
+// TestPackCmd_CheckVersions_Lockstep_Failure_Exit3 proves a real mismatch
+// exits 3 with the Oracle's exact wording. runReleaseGates' own error
+// (wrapped via withSilentExitCode, not withExitCode -- Oracle's own
+// ctx.exit(3) is a bare process exit with no additional message) is only
+// silenced by main()'s own root Execute() path (root.go's SilenceErrors:
+// true); packCmd() in isolation has no such setting, so cobra's own
+// default "Error: <err>" echo still appears in THIS test harness's
+// captured output -- that's a property of calling packCmd().Execute()
+// directly, not of withSilentExitCode itself, which was verified silent
+// against the REAL binary end-to-end.
+func TestPackCmd_CheckVersions_Lockstep_Failure_Exit3(t *testing.T) {
+	dir := chdirTemp(t)
+	writeLockstepFixture(t, dir, "1.0.0", "2.0.0")
+
+	out, err := runPackCmd(t, "--check-versions", "--dry-run", "-m", "none")
+	if err == nil {
+		t.Fatalf("expected an error (output: %s)", out)
+	}
+	if exitCodeOf(err) != 3 {
+		t.Errorf("exitCodeOf(err) = %d, want 3", exitCodeOf(err))
+	}
+	if !isSilentExit(err) {
+		t.Error("err is not a silent exit -- main()'s root Execute() would print a redundant \"[x] ...\" line the Oracle's bare ctx.exit(3) never does")
+	}
+	for _, want := range []string{
+		"Version alignment failed [strategy=lockstep, expected=1.0.0]",
+		"pkgs/a  2.0.0  [drift:expected=1.0.0]",
+		"pkgs/a: expected 1.0.0, found 2.0.0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestPackCmd_CheckVersions_NoMarketplaceBlock_SkipsWithInfo(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+
+	out, err := runPackCmd(t, "--check-versions")
+	if err != nil {
+		t.Fatalf("pack --check-versions returned error: %v (output: %s)", err, out)
+	}
+	want := "Version alignment check skipped: no marketplace block; nothing to check."
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestPackCmd_CheckClean_NoMarketplaceBlock_SkipsWithInfo(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".apm", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".apm", "agents", "foo.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/tool\n")
+
+	out, err := runPackCmd(t, "--check-clean")
+	if err != nil {
+		t.Fatalf("pack --check-clean returned error: %v (output: %s)", err, out)
+	}
+	want := "Marketplace drift check skipped: no marketplace block; nothing to check."
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestPackCmd_CheckClean_Success(t *testing.T) {
+	dir := chdirTemp(t)
+	writeLockstepFixture(t, dir, "1.0.0", "1.0.0")
+
+	// Seed a matching marketplace.json by actually packing once.
+	if _, err := runPackCmd(t); err != nil {
+		t.Fatalf("seed pack returned error: %v", err)
+	}
+
+	out, err := runPackCmd(t, "--check-clean", "--dry-run", "-m", "none")
+	if err != nil {
+		t.Fatalf("pack --check-clean returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "Marketplace working tree clean [outputs=claude]") {
+		t.Errorf("output = %q, want the clean-tree success header", out)
+	}
+}
+
+// TestPackCmd_CheckClean_Failure_Exit4 proves a real drift (the on-disk
+// marketplace.json no longer matches apm.yml) exits 4 with the Oracle's
+// exact recovery-recipe text, silently (withSilentExitCode).
+func TestPackCmd_CheckClean_Failure_Exit4(t *testing.T) {
+	dir := chdirTemp(t)
+	writeLockstepFixture(t, dir, "1.0.0", "1.0.0")
+	if _, err := runPackCmd(t); err != nil {
+		t.Fatalf("seed pack returned error: %v", err)
+	}
+	// Introduce drift: change the marketplace owner after the seed pack.
+	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "apm.yml"), []byte(strings.Replace(string(data), "Acme", "Acme Renamed", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runPackCmd(t, "--check-clean", "--dry-run", "-m", "none")
+	if err == nil {
+		t.Fatalf("expected an error (output: %s)", out)
+	}
+	if exitCodeOf(err) != 4 {
+		t.Errorf("exitCodeOf(err) = %d, want 4", exitCodeOf(err))
+	}
+	if !isSilentExit(err) {
+		t.Error("err is not a silent exit -- main()'s root Execute() would print a redundant \"[x] ...\" line the Oracle's bare ctx.exit(4) never does")
+	}
+	for _, want := range []string{
+		"Marketplace working tree dirty [outputs=claude]",
+		"drift: 1 differences",
+		`owner.name  "Acme" -> "Acme Renamed"`,
+		"To recover cleanly (fold into the current commit):",
+		"apm-go pack                       # regenerate locally",
+		"git commit --amend --no-edit   # fold into the current commit",
+		"Why this exists: marketplace.json is checked in (lockfile pattern)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestPackCmd_CheckVersionsAndCheckClean_BothFail_Exit3Wins mirrors
+// pack.py's own "Gate exit codes... 3 wins over 4" comment, confirmed live
+// against the pinned Oracle: when both gates fail simultaneously, exit 3
+// (version) takes precedence over exit 4 (drift).
+func TestPackCmd_CheckVersionsAndCheckClean_BothFail_Exit3Wins(t *testing.T) {
+	dir := chdirTemp(t)
+	writeLockstepFixture(t, dir, "1.0.0", "1.0.0")
+	if _, err := runPackCmd(t); err != nil {
+		t.Fatalf("seed pack returned error: %v", err)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	// Break BOTH gates: bump the marketplace version (lockstep drift) AND
+	// rename the owner (marketplace.json drift) in one edit.
+	newContent := strings.Replace(string(data), "version: 1.0.0", "version: 9.9.9", 1)
+	newContent = strings.Replace(newContent, "Acme", "Acme Renamed", 1)
+	if err := os.WriteFile(filepath.Join(dir, "apm.yml"), []byte(newContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runPackCmd(t, "--check-versions", "--check-clean", "--dry-run", "-m", "none")
+	if err == nil {
+		t.Fatalf("expected an error (output: %s)", out)
+	}
+	if exitCodeOf(err) != 3 {
+		t.Errorf("exitCodeOf(err) = %d, want 3 (version wins over drift)", exitCodeOf(err))
+	}
+	if !strings.Contains(out, "Version alignment failed") {
+		t.Errorf("output = %q, want the version-alignment failure too (both gates still render)", out)
+	}
+	if !strings.Contains(out, "Marketplace working tree dirty") {
+		t.Errorf("output = %q, want the drift failure too (both gates still render even though exit 3 wins)", out)
+	}
 }
 
 // TestRunPack_DependenciesOnly_ListsPackedFiles is the R12a regression

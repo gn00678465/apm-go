@@ -32,6 +32,25 @@ import (
 // names ("claude", "codex") -- mirroring Python's known_output_names().
 var KnownOutputFormats = map[string]bool{"claude": true, "codex": true}
 
+// ComposeDocument dispatches to the mkt-050/052/053 mapper for format
+// ("claude" or "codex" -- callers already reject anything else before this
+// is ever reached). Exported so both `apm-go pack`'s own marketplace
+// producer (cmd/apm-go/pack.go's composeMarketplaceDocument, a thin
+// wrapper around this) and the release-time drift-check gate
+// (drift_check.go's CheckMarketplaceDrift, ticket 17 phase 4) share the
+// exact same compose path rather than two independently-drifting copies of
+// this dispatch.
+func ComposeDocument(format string, cfg *authoring.AuthoringConfig, resolved []ResolvedPackage) (any, []string, error) {
+	switch format {
+	case "claude":
+		return ClaudeMapper{}.Compose(cfg, resolved)
+	case "codex":
+		return CodexMapper{}.Compose(cfg, resolved)
+	default:
+		return nil, nil, fmt.Errorf("unknown marketplace output format %q", format)
+	}
+}
+
 // DefaultOutputPath returns format's default output path (mkt-054: never
 // the repo root) and whether format is a known profile name at all.
 func DefaultOutputPath(format string) (string, bool) {
