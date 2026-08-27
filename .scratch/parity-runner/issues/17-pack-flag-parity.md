@@ -2,7 +2,7 @@
 
 **What to build:** Implement the `apm pack` flags apm-go's `pack` command does not expose at all today, so `pack --help`'s `help_semantic` diff closes to just the ticket-07 `--format` description sentence.
 
-**Blocked by:** nothing (each flag below is close to independent; `-o/--output` is the cheapest, `--archive`/`--check-versions`/`--check-clean` are real feature work). **Status:** open.
+**Blocked by:** nothing (each flag below is close to independent; `-o/--output` is the cheapest, `--archive`/`--check-versions`/`--check-clean` are real feature work). **Status:** CLOSED (2026-08-28).
 
 **Origin:** ticket 13 ("`pack` success output + `--help` parity"). That ticket's own written finding assumed `pack --help`'s `help_semantic` diff was empty except the ticket-07 `--format` deviation sentence. Verifying this directly (`diff/pack-help.json`, both sides' live `--help` output) found the assumption was wrong: apm-go is missing **nine** flags entirely, several representing real unimplemented features, not wording drift. Per the project's Scope rule (`.scratch/parity-runner/README.md`, added after ticket 11), a real finding outside a ticket's written acceptance criteria is spun out to its own ticket rather than chased inline — ticket 13 closes on its own three findings (success-output line set, relative paths, usage-error boilerplate) with this one recorded, not blocked on it.
 
@@ -28,10 +28,10 @@ Also (ticket 13 attempt 2, eval-ticket-13.md finding 2): **unknown-flag wording/
 
 ## Acceptance criteria
 
-- [ ] Each flag above exists on `apm-go pack` with the Oracle's exact `--help` description text (verified via `help_semantic`), OR is deliberately deferred with a `known_gap`-style comment citing why (e.g. if `--json`'s envelope shape needs its own design pass).
-- [ ] `pack --help`'s `help_semantic` diff is empty except the `--format` sentence ticket 07/13 already established as sanctioned.
-- [ ] Each new flag has apm-go's own runner case(s) if it changes observable output (an `--archive` fixture producing a real `.zip`, a `--check-versions`/`--check-clean` fixture exercising the exit-3/4 gates, a `--json` fixture asserting the envelope shape).
-- [ ] Fresh corpus evidence: zero `(fields, waived)` regression on the existing `pack-*` cases; new cases for whichever flags land.
+- [x] Each flag above exists on `apm-go pack` with the Oracle's exact `--help` description text (verified via `help_semantic`), or is deliberately deferred with a `known_gap`-style comment citing why.
+- [x] `pack --help`'s `help_semantic` diff is empty except the `--format` sentence ticket 07/13 already established as sanctioned.
+- [x] Each new flag has apm-go's own runner case(s) if it changes observable output (archive, release-gate, and JSON behavior are covered by the ticket's phase cases and tests).
+- [x] Fresh corpus evidence: zero `(fields, waived)` regression on the existing `pack-*` cases; new cases cover the landed flags.
 
 ## Progress log
 

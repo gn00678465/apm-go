@@ -793,6 +793,26 @@ marketplace:
 	}
 }
 
+func TestValidateOutputRequirements_CodexMissingCategoryMatchesOracle(t *testing.T) {
+	cfg := &AuthoringConfig{
+		Outputs: []string{"claude", "codex"},
+		Packages: []PackageEntry{
+			{Name: "pkg-a"},
+			{Name: "pkg-b", Category: "tools"},
+			{Name: "pkg-c"},
+		},
+	}
+
+	got := ValidateOutputRequirements(cfg)
+	if got == nil {
+		t.Fatal("ValidateOutputRequirements() = nil, want missing-category error")
+	}
+	want := "marketplace config error: packages must define 'category' when marketplace.outputs includes 'codex' (missing: pkg-a, pkg-c)"
+	if got.Error() != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+}
+
 func TestLoadAuthoringConfig_CodexOutput_AllPackagesHaveCategory_NoError(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()

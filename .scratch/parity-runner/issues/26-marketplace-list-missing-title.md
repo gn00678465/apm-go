@@ -2,7 +2,7 @@
 
 **What to build:** `marketplace list`'s table needs a title line naming "Registered Marketplaces", the same way `marketplace browse`'s table already carries "Plugins in '<name>'".
 
-**Blocked by:** none. **Status:** open (found during ticket 25's own investigation — a real content gap, not something ticket 25 is allowed to waive).
+**Blocked by:** none. **Status:** CLOSED (2026-08-28) (found during ticket 25's own investigation — a real content gap, not something ticket 25 is allowed to waive).
 
 **Origin:** ticket 25's fresh-corpus re-derivation of `registry-explicit-config-dir`'s residual `stdout` diff, 2026-08-26.
 

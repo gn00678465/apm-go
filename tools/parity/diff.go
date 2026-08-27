@@ -266,6 +266,13 @@ var errorBodyPrefixes = []string{"[x] ", "[!] ", "Error: ", "!"}
 // the real error MESSAGE matches) instead of comparing two preamble lines
 // that were never going to match syntactically and were never the point.
 func errorBody(normalizedStdout, normalizedStderr string) string {
+	// Rich may wrap one status-marked message across physical lines. Fold
+	// continuation lines before selecting the body so a permitted stdout
+	// wrap cannot become a false wording diff (the waiver proof uses this
+	// same mechanical rule: lines not starting with '[' are concatenated
+	// onto their status-marked predecessor).
+	normalizedStdout = foldStatusWrappedLines(normalizedStdout)
+	normalizedStderr = foldStatusWrappedLines(normalizedStderr)
 	for _, line := range strings.Split(normalizedStdout+"\n"+normalizedStderr, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || isUsagePreambleLine(line) {
@@ -274,6 +281,24 @@ func errorBody(normalizedStdout, normalizedStderr string) string {
 		return stripErrorBodyPrefix(line)
 	}
 	return ""
+}
+
+// foldStatusWrappedLines removes only physical line breaks in a status-marked
+// message: every following line that does not begin with '[' is concatenated
+// to the preceding status line. Lines beginning with '[' remain independent
+// output records. This is intentionally byte-mechanical rather than a
+// whitespace normalizer, matching the Rich-wrap waiver proof.
+func foldStatusWrappedLines(output string) string {
+	lines := strings.Split(output, "\n")
+	folded := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if len(folded) > 0 && strings.HasPrefix(folded[len(folded)-1], "[") && !strings.HasPrefix(line, "[") {
+			folded[len(folded)-1] += line
+			continue
+		}
+		folded = append(folded, line)
+	}
+	return strings.Join(folded, "\n")
 }
 
 // isUsagePreambleLine reports whether line is part of a Click/Cobra usage-

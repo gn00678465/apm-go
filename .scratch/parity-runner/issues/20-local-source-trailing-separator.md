@@ -2,7 +2,7 @@
 
 **What to build:** a local (`./…`) package source must be verified to exist at `add` time, and a package name must not contain a path separator. Today a trailing `\` (a Windows/PowerShell tab-completion artifact) rides through `add` → `apm.yml` → `pack` → `marketplace.json` and produces a plugin Claude Code cannot load.
 
-**Blocked by:** none. **Status:** open (user-reported, 2026-08-25).
+**Blocked by:** none. **Status:** CLOSED (2026-08-28) (user-reported, 2026-08-25).
 
 **Origin:** user bug report — "使用 `apm-go marketplace package add ./<local_path>\` 會寫入結尾的 `\`, 然後使用 `apm-go pack` 所產生的 marketplace 設定會出現 `llm-wiki\`".
 

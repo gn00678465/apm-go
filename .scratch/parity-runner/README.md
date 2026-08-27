@@ -32,16 +32,18 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 | 25 | record the rendering-library residue as field-scoped waivers (parity backlog) | 22, 23, 24 |
 | 26 | `marketplace list` missing its "Registered Marketplaces" title (spun out of 25) | — |
 | 27 | embedded/serialized `apm.lock.yaml` omits `generated_at`/`deployments` when the source lockfile never had them (spun out of 17 phase 2) | — |
+| 28 | marketplace producer success output: catalog, absolute paths, and Claude key order | — |
+| 29 | `pack` Codex category-required error wording | — |
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: CI IS GREEN (2026-08-26). Both jobs pass: `go-test` since 57e5a9f (CI-detection env pinned in TestMain -- 116 failures that had been red since beta.3 were ambient `CI`/`GITHUB_ACTIONS` leaking into tests, not product bugs), `parity` since c8f8316 (**74 cases, 0 unwaived**, down from 18/69).
+Status: verification gates are GREEN (2026-08-28). `go vet ./...` and `CI=true GITHUB_ACTIONS=true go test ./... -race` pass; the pinned-Oracle parity run reports **78 cases, 0 unwaived**. CI-detection env remains pinned in TestMain so ambient `CI`/`GITHUB_ACTIONS` cannot change local-vs-Actions results.
 
-Tickets 01-27 closed. The 18-case backlog was triaged into root causes rather than symptoms and cleared: 22 (validate `[*]`/`[+]` glyphs + single quotes), 23 (CLOSED INVALID -- the Oracle's `apm marketplace search` hint names a command that was never registered; apm-go's wording was already right, and the deviation comment asserting otherwise was corrected), 24 (`marketplaces.json` `file://` form + materialise-on-read, 11 cases' tree), 25 (rendering-class waivers -- which refused to waive `registry-explicit-config-dir`'s stdout and spun off 26 instead), 26 (`marketplace list`'s missing "Registered Marketplaces" title and ALL-CAPS headers), 17 (all 8 missing `pack` flags across 5 phases), 27 (bundle lockfile's `generated_at`/`deployments`, fixed in the pack-only wrapping layer after the round-trip tests caught the first attempt a layer too low).
+Tickets 01-29 are closed, with 23 CLOSED INVALID. The 18-case backlog was triaged into root causes rather than symptoms and cleared: 17 (all 8 missing `pack` flags across 5 phases), 18 (audit verbose hint), 22 (validate `[*]`/`[+]` glyphs + single quotes), 23 (the Oracle's `apm marketplace search` hint names a command that was never registered), 24 (`marketplaces.json` `file://` form + materialise-on-read, 11 cases' tree), 25 (rendering-class waivers), 26 (`marketplace list`'s missing "Registered Marketplaces" title and ALL-CAPS headers), 27 (bundle lockfile's `generated_at`/`deployments`), 28 (marketplace success catalog, absolute paths, and Claude key order), and 29 (Codex category-required wording).
 
 Two waivers were REJECTED during this run for hiding real gaps behind honest-sounding reasons (`pack-archive`'s missing size suffix and zip-migration notice; ticket 25's would-be `registry-explicit-config-dir` stdout). Both became fixes. The rule that held: a difference in WORDS is a bug; only line breaks, box-drawing, padding, timestamps, compressor output and apm-go-only flags get waived.
 
-Open, non-blocking: 16 (dep-parser conformance rows), 18 (audit verbose hint), 19 (init output-surface gaps), 21 (implemented, awaiting an independent evaluator ruling -- codex was over quota), 28 (marketplace producer's apm-go-only "No marketplace outputs selected" line, seen via pack-check-*'s `-m none` fixtures).
+Open, non-blocking: 16 (dep-parser conformance rows), 19 (init output-surface gaps), 21 (implemented, awaiting an independent evaluator ruling -- codex was over quota).
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 

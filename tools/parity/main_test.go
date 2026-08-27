@@ -558,6 +558,8 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		"search-description-truncation", "search-help",
 		"pack-archive", "pack-legacy-skill-paths",
 		"pack-check-versions-fail", "pack-check-clean-fail", "pack-help",
+		"pack-marketplace-success", "pack-marketplace-multi-output",
+		"marketplace-audit-unregistered",
 	}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)

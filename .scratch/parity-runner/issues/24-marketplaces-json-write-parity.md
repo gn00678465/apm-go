@@ -2,7 +2,7 @@
 
 **What to build:** the registry file `~/.apm/marketplaces.json` must match the Oracle's bytes: a local source is stored as a `file://` URI, and the file exists (as `{"marketplaces": []}`) after any command that reads the registry, even when nothing is registered.
 
-**Blocked by:** none. **Status:** open. **Clears:** the `tree` field of 11 of the 18 backlog cases — every `search-*` hit case, both `validate-checkrefs-*`, `list-empty`, and `browse-unknown-marketplace`.
+**Blocked by:** none. **Status:** CLOSED (2026-08-28). **Clears:** the `tree` field of 11 of the 18 backlog cases — every `search-*` hit case, both `validate-checkrefs-*`, `list-empty`, and `browse-unknown-marketplace`.
 
 **Origin:** orchestrator triage of the standing 18 unwaived parity cases, 2026-08-25. Sub-gap (a) is the item recorded against ticket 05 as "the `home/.apm/marketplaces.json` tree gap (Oracle stores a `file://` URI, apm-go a bare path)"; sub-gap (b) surfaced in the same triage.
 

@@ -2,7 +2,7 @@
 
 **What to build:** `marketplace validate` must use the Oracle's status symbols and quote style on its header line and its per-check result rows.
 
-**Blocked by:** none. **Status:** open. **Clears:** the `stdout`/`error_body` fields of `validate-checkrefs-off`, `validate-checkrefs-on`, `validate-structure-fail` (3 of the 18-case parity backlog).
+**Blocked by:** none. **Status:** CLOSED (2026-08-28). **Clears:** the `stdout`/`error_body` fields of `validate-checkrefs-off`, `validate-checkrefs-on`, `validate-structure-fail` (3 of the 18-case parity backlog).
 
 **Origin:** orchestrator triage of the standing 18 unwaived parity cases, 2026-08-25. These are *not* rendering-library differences — they are apm-go emitting a different glyph and a different quote character from the same logical call, i.e. the ticket-10/13 output-contract family.
 

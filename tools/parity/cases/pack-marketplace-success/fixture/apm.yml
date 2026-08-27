@@ -1,0 +1,11 @@
+name: marketplace-success-fixture
+version: 1.0.0
+license: MIT
+marketplace:
+  owner:
+    name: Parity Fixture Owner
+  outputs:
+    - claude
+  packages:
+    - name: pkg-a
+      source: ./pkg-a

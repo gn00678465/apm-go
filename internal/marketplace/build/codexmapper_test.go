@@ -126,8 +126,8 @@ func TestCodexMapper_Plugin_MissingCategory_ReturnsCategoryRequiredError(t *test
 	if catErr.Package != "tool" {
 		t.Errorf("CategoryRequiredError.Package = %q, want tool", catErr.Package)
 	}
-	if !strings.Contains(err.Error(), "tool") {
-		t.Errorf("error message %q must name the package", err.Error())
+	if got, want := err.Error(), "package 'tool' is missing category required for Codex output"; got != want {
+		t.Errorf("error message = %q, want %q", got, want)
 	}
 }
 

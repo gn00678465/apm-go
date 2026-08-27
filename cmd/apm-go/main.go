@@ -73,6 +73,8 @@ func renderRootError(cmd *cobra.Command, err error) int {
 			fmt.Fprintf(os.Stderr, "Try '%s --help' for help.\n\n", cmd.CommandPath())
 		}
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+	case isStderrError(err):
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 	default:
 		ux.Error(os.Stderr, "%s", err)
 	}

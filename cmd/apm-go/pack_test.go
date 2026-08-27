@@ -1938,13 +1938,11 @@ marketplace:
 	}
 }
 
-// TestPackCmd_MFilterExcludesCodex_MissingCategorySucceeds is F3's
-// regression test: the codex category-required gate must only trigger once
-// codex is actually still in the active outputs after -m filtering. Here
-// `outputs:` configures codex, but `-m claude` filters it back out before
-// ClaudeMapper/CodexMapper ever composes anything, so pack must succeed and
-// build claude's output despite tool-a having no category at all.
-func TestPackCmd_MFilterExcludesCodex_MissingCategorySucceeds(t *testing.T) {
+// TestPackCmd_MFilterExcludesCodex_MissingCategoryMatchesOracle locks the
+// producer/configuration validation order: yml_schema.py validates every
+// configured output before pack's -m filter is applied, so even -m claude
+// rejects a marketplace config that declares codex without package categories.
+func TestPackCmd_MFilterExcludesCodex_MissingCategoryMatchesOracle(t *testing.T) {
 	// Arrange
 	dir := chdirTemp(t)
 	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "a"), 0o755); err != nil {
@@ -1966,14 +1964,15 @@ marketplace:
 	out, err := runPackCmd(t, "-m", "claude")
 
 	// Assert
-	if err != nil {
-		t.Fatalf("pack -m claude returned error: %v (output: %s) (F3: codex category gate must not fire when codex is filtered out)", err, out)
+	if err == nil {
+		t.Fatalf("pack -m claude returned nil (output: %s), want Oracle's config validation error", out)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, ".claude-plugin", "marketplace.json")); statErr != nil {
-		t.Errorf("expected claude output to be written: %v", statErr)
+	want := "marketplace config error: packages must define 'category' when marketplace.outputs includes 'codex' (missing: tool-a)"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err, want)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, ".agents", "plugins", "marketplace.json")); !os.IsNotExist(statErr) {
-		t.Errorf("-m claude must not write codex output (stat err = %v)", statErr)
+	if _, statErr := os.Stat(filepath.Join(dir, ".claude-plugin", "marketplace.json")); !os.IsNotExist(statErr) {
+		t.Errorf("config validation must happen before writing claude output (stat err = %v)", statErr)
 	}
 }
 

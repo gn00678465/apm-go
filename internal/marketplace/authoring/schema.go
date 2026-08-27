@@ -10,15 +10,11 @@
 // yml_schema.py.
 //
 // mkt-053's codex-output `category` required-field gate deliberately does
-// NOT live here (F3 fix): LoadAuthoringConfig is shared by `apm pack`'s
-// config loading, `apm marketplace package add/remove/set`'s pre-edit load
-// (editor.go), and `apm marketplace migrate` -- none of which should be
-// blocked by a rule that only matters once a codex build is actually
-// composed (e.g. `apm pack -m claude` with a codex-missing-category package
-// must succeed). That gate is enforced compose-time-only, in
-// internal/marketplace/build/codexmapper.go's CodexMapper.Compose, mirroring
-// the Python original's own compose-time-only BuildError
-// (output_mappers.py, not yml_schema.py).
+// NOT run inside LoadAuthoringConfig (F3): that loader is shared by
+// `apm marketplace package add/remove/set`'s pre-edit load (editor.go) and
+// `apm marketplace migrate`. Pack invokes ValidateOutputRequirements after
+// loading, matching the Oracle's producer/configuration validation, while
+// CodexMapper.Compose retains its own defensive check for direct callers.
 package authoring
 
 import (
@@ -26,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.yaml.in/yaml/v4"
 
@@ -169,6 +166,32 @@ type AuthoringConfig struct {
 	Metadata   map[string]any
 	Packages   []PackageEntry
 	Versioning Versioning
+}
+
+// ValidateOutputRequirements applies the producer-time required-field check
+// from the Oracle's yml_schema.py:1294-1304. It is deliberately separate
+// from LoadAuthoringConfig: that loader is shared by commands which may read
+// a config without composing every configured output, while `pack` must
+// reject a configured Codex output before resolution or writing begins.
+func ValidateOutputRequirements(cfg *AuthoringConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	for _, output := range cfg.Outputs {
+		if output != "codex" {
+			continue
+		}
+		missing := make([]string, 0)
+		for _, entry := range cfg.Packages {
+			if entry.Category == "" {
+				missing = append(missing, entry.Name)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("marketplace config error: packages must define 'category' when marketplace.outputs includes 'codex' (missing: %s)", strings.Join(missing, ", "))
+		}
+	}
+	return nil
 }
 
 // LoadAuthoringConfig loads the marketplace authoring config for the

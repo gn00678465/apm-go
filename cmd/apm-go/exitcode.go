@@ -13,6 +13,7 @@ type exitCodeError struct {
 	silent bool
 	usage  bool
 	bare   bool
+	stderr bool
 }
 
 func (e *exitCodeError) Error() string { return e.err.Error() }
@@ -101,6 +102,22 @@ func withBareUsageError(err error) error {
 		return nil
 	}
 	return &exitCodeError{code: 2, err: err, usage: true, bare: true}
+}
+
+// withStderrError marks a producer/configuration error whose Oracle contract
+// is a bare "Error: ..." line on stderr without Click's usage preamble. The
+// marketplace producer uses this for the BuildError path corresponding to
+// core/build_orchestrator.py:168 and commands/marketplace/__init__.py:165.
+func withStderrError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &exitCodeError{code: 1, err: err, stderr: true}
+}
+
+func isStderrError(err error) bool {
+	var ec *exitCodeError
+	return errors.As(err, &ec) && ec.stderr
 }
 
 // isUsageError reports whether err requests withUsageError's Click-native

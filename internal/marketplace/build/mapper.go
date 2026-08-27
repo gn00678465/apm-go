@@ -52,32 +52,41 @@ type ClaudeOwner struct {
 // a *RemoteSource (a remote package's structured source dict) -- mirroring
 // the Python original's Union[str, dict] "source" value.
 type ClaudePlugin struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	// Category mirrors upstream apm 0.26.0's claude marketplace.json output
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Version     string            `json:"version,omitempty"`
+	Author      map[string]string `json:"author,omitempty"`
+	License     string            `json:"license,omitempty"`
+	Repository  string            `json:"repository,omitempty"`
+	Tags        []string          `json:"tags,omitempty"`
+	// Category mirrors upstream's claude marketplace.json output
 	// (eval-real-run-20260728.md:243-263: "category 在 claude 輸出裡也會被帶
-	// 出（雖然只有 codex 才強制要求）", corroborated verbatim by
-	// testdata/upstream-claude-marketplace.golden.json, which places it
-	// exactly here -- immediately after "description", before "source" --
-	// the only real upstream example on file, so this is the strongest
-	// available evidence for its position). This field used to be
-	// deliberately omitted here (mkt-052 修訂版's prior ruling, tracked by
-	// this file's own now-updated file-header comment and
-	// mapper_test.go's TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON) --
-	// that was a real gap relative to upstream, not a considered design
-	// choice with a documented tradeoff; see agent-schema.md's now-removed
-	// "與上游的刻意差異：category" callout for the corrected record. Emitting
-	// it here also retires apm-claude-marketplace.schema.json's "category is
-	// schema-only" whitelist exception (schema_sync_test.go's
-	// wantSchemaOnlyAllowed).
-	Category   string            `json:"category,omitempty"`
-	Version    string            `json:"version,omitempty"`
-	Author     map[string]string `json:"author,omitempty"`
-	License    string            `json:"license,omitempty"`
-	Repository string            `json:"repository,omitempty"`
-	Tags       []string          `json:"tags,omitempty"`
-	Homepage   string            `json:"homepage,omitempty"`
-	Source     any               `json:"source"`
+	// 出（雖然只有 codex 才強制要求）"). This field used to be deliberately
+	// omitted here (mkt-052 修訂版's prior ruling, tracked by this file's own
+	// now-updated file-header comment and mapper_test.go's
+	// TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON) -- that was a real
+	// gap relative to upstream, not a considered design choice with a
+	// documented tradeoff; see agent-schema.md's now-removed "與上游的刻意差
+	// 異：category" callout for the corrected record. Emitting it here also
+	// retires apm-claude-marketplace.schema.json's "category is schema-only"
+	// whitelist exception (schema_sync_test.go's wantSchemaOnlyAllowed).
+	//
+	// POSITION (ticket 28): between "tags" and "homepage", NOT immediately
+	// after "description" where it sat until now. The pinned Oracle builds
+	// this dict by insertion order -- name, description, version, author,
+	// license, repository, tags, category, homepage, source
+	// (marketplace/output_mappers.py:197-208) -- and `pack -m all` on a
+	// package declaring both a version and a category proves it live:
+	// Oracle emits name/version/category/source, apm-go emitted
+	// name/category/version/source. The earlier "immediately after
+	// description" reading came from testdata/upstream-claude-marketplace
+	// .golden.json, whose single entry has no version/author/license/
+	// repository/tags at all -- so it renders identically under BOTH
+	// orderings and never actually pinned the position. It still passes
+	// unchanged.
+	Category string `json:"category,omitempty"`
+	Homepage string `json:"homepage,omitempty"`
+	Source   any    `json:"source"`
 }
 
 // RemoteSource is a remote package's structured plugin.source dict

@@ -2,7 +2,7 @@
 
 **What to build:** waiver entries for the parity residue that this project has *already decided* is compare-semantics-and-waive, but never recorded. This ticket writes down existing decisions; it does not make new ones.
 
-**Blocked by:** 22, 23, 24 — every field those three fix must actually be fixed first, so no waiver here ever covers a field a fix would have closed. **Status:** open. **Clears:** the remaining fields of the 18-case backlog once 22/23/24 land.
+**Blocked by:** 22, 23, 24 — every field those three fix must actually be fixed first, so no waiver here ever covers a field a fix would have closed. **Status:** CLOSED (2026-08-28). **Clears:** the remaining fields of the 18-case backlog once 22/23/24 land.
 
 **Origin:** orchestrator triage of the standing 18 unwaived parity cases, 2026-08-25.
 

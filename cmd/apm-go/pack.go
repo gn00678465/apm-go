@@ -21,6 +21,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// marketplaceDocsURL is the docs anchor renderMarketplaceCatalog points at,
+// copied verbatim from the Oracle's MARKETPLACE_DOCS_URL (pack.py:21-23).
+// The Oracle deliberately never names a vendor CLI inline here -- APM is
+// vendor-agnostic and the install command varies by AI assistant -- so this
+// single link stands in for every per-assistant install recipe.
+const marketplaceDocsURL = "https://microsoft.github.io/apm/producer/publish-to-a-marketplace/#consume-from-any-assistant"
+
 // packCmd implements `apm pack`'s three independent, non-exclusive
 // producers (Phase 2-5, research/pack-parity-findings.md §1.3): a
 // dependencies: block builds a plugin-native bundle under ./build/
@@ -475,6 +482,7 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 		for _, r := range marketplaceRenders {
 			renderMarketplaceOutput(w, r)
 		}
+		renderMarketplaceCatalog(w, marketplaceRenders)
 	}
 
 	// --json: one envelope on stdout, then the gates' own exit codes -- the
@@ -834,10 +842,18 @@ type marketplaceRender struct {
 	outputPath string
 	count      int
 	dryRun     bool
-	// absPath is outputPath resolved against the project root. The text
-	// completion line prints the RELATIVE outputPath (ticket 13), but the
-	// Oracle's JSON payload carries str(out.output_path), which is
-	// absolute -- verified live, same invocation, both shapes.
+	// absPath is outputPath resolved against the project root, and is what
+	// EVERY user-facing rendering of this path uses -- the completion line,
+	// the catalog row, and the `--json` payload alike. The Oracle has only
+	// one path value here: resolve_effective_output_path
+	// (marketplace/output_profiles.py:134-136) joins any relative
+	// configured path onto the absolute project root before returning, so
+	// MarketplaceOutputReport.output_path is absolute at every use site
+	// (pack.py:738 success line, pack.py:771 catalog row, builder.py:242
+	// JSON). Ticket 13's displayPath relativisation is BUNDLE-only and must
+	// not be applied here: the Oracle's bundle_path genuinely is the
+	// unresolved user-facing "./build" string, but this one is not. Ticket
+	// 28 -- verified live, both lines absolute in the same invocation.
 	absPath string
 	// diff carries the per-plugin classification `--json`'s
 	// marketplace.outputs entry reports (Oracle
@@ -865,6 +881,9 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 	cfg, src, err := authoring.LoadAuthoringConfig(".")
 	if err != nil {
 		return nil, err
+	}
+	if err := authoring.ValidateOutputRequirements(cfg); err != nil {
+		return nil, withStderrError(err)
 	}
 	if src == authoring.ConfigSourceLegacy {
 		ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
@@ -991,10 +1010,51 @@ func packOneOutput(
 // doc comment).
 func renderMarketplaceOutput(w io.Writer, r marketplaceRender) {
 	if r.dryRun {
-		ux.Info(w, "dry-run: Would write marketplace.json [%s] (%d package(s)) -> %s", r.format, r.count, r.outputPath)
+		ux.Info(w, "dry-run: Would write marketplace.json [%s] (%d package(s)) -> %s", r.format, r.count, r.absPath)
 		return
 	}
-	ux.Sparkle(w, "Built marketplace.json [%s] (%d package(s)) -> %s", r.format, r.count, r.outputPath)
+	ux.Sparkle(w, "Built marketplace.json [%s] (%d package(s)) -> %s", r.format, r.count, r.absPath)
+}
+
+// renderMarketplaceCatalog appends the vendor-neutral artifact catalog the
+// Oracle prints after its per-output success lines
+// (_render_marketplace_catalog, pack.py:763-777), called from the same
+// place its own caller is (_render_marketplace_result's tail,
+// pack.py:748-749): only when at least one output was actually WRITTEN and
+// the run is not a dry-run, since a dry-run wrote no files to catalogue.
+//
+// The Oracle's `written` list carries an optional profile per row and
+// branches on whether ANY row has one (pack.py:768). apm-go's
+// activeOutputs are always named profiles ("claude"/"codex" --
+// build.KnownOutputFormats rejects everything else long before this), so
+// only the tagged branch is reachable here; the Oracle's untagged fallback
+// exists for its `outputs`-without-`output_reports` path (pack.py:729-736),
+// which apm-go has no equivalent of. Tag width is the widest profile name,
+// left-justified, matching Python's str.ljust.
+func renderMarketplaceCatalog(w io.Writer, renders []marketplaceRender) {
+	written := make([]marketplaceRender, 0, len(renders))
+	for _, r := range renders {
+		if !r.dryRun {
+			written = append(written, r)
+		}
+	}
+	if len(written) == 0 {
+		return
+	}
+
+	labelWidth := 0
+	for _, r := range written {
+		if len(r.format) > labelWidth {
+			labelWidth = len(r.format)
+		}
+	}
+
+	ux.Info(w, "Marketplace artifacts ready:")
+	for _, r := range written {
+		ux.Info(w, "  [%-*s] %s", labelWidth, r.format, r.absPath)
+	}
+	ux.Info(w, "How consumers install from this marketplace varies by AI assistant.")
+	ux.Info(w, "See: %s", marketplaceDocsURL)
 }
 
 // composeMarketplaceDocument dispatches to the mkt-050/052/053 mapper for

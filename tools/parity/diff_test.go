@@ -211,6 +211,11 @@ func TestErrorBody_TableDriven(t *testing.T) {
 			"", "Error: Option '--format' requires an argument.\n",
 			"Option '--format' requires an argument.",
 		},
+		{
+			"rich_status_continuation_lines_are_folded",
+			"[x] first line. \ncontinued without a status glyph\n[i] next record\n", "",
+			"first line. continued without a status glyph",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
