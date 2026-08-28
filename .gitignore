@@ -48,3 +48,6 @@ apm_modules/
 .gitmodules
 
 bin/
+
+# Per-machine agent notes (local-only, not committed)
+CLAUDE.local.md
