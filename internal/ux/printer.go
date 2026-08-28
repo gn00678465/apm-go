@@ -45,6 +45,20 @@ func Success(w io.Writer, format string, a ...any) {
 	printLine(w, successStyle, SymbolSuccess, format, a...)
 }
 
+// Progress is the project-TUI counterpart of Running: the same "step is
+// underway" record with SymbolProgress (" > ") in place of the Oracle's
+// literal "[>] " prefix. Used where apm-go owns the surface (the clack
+// transcript), never on an Oracle-compared path.
+func Progress(w io.Writer, format string, a ...any) {
+	printLine(w, infoStyle, SymbolProgress, format, a...)
+}
+
+// Hint is the project-TUI counterpart of Info: SymbolInfo (" i ") in place
+// of the Oracle's literal "[i] " prefix. Same scope rule as Progress.
+func Hint(w io.Writer, format string, a ...any) {
+	printLine(w, infoStyle, SymbolInfo, format, a...)
+}
+
 // Sparkle prints a "[*] ..." line to w, redirected to stdout if w is the
 // process's stderr stream (see errWriter) -- ticket 13: CommandLogger.
 // success's OWN default symbol is "sparkles" (core/command_logger.py:120,

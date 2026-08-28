@@ -474,16 +474,18 @@ func buildInitSuccessContent(mode initMode, projectRoot string) initSuccessConte
 // bytes: its table, box, tips, and footer remain on stdout for --yes and
 // non-TTY runs.
 func oracleStdoutRenderer(title string, content initSuccessContent) {
-	renderOracleBlock(os.Stdout, title, content)
+	renderSuccessBlock(os.Stdout, title, content, oracleGlyphs)
 }
 
-// renderOracleBlock writes the Oracle's success surface (commands/init.py:
-// 291-400) to w: the "[*]" title, the Created Files table, the Next Steps
+// renderSuccessBlock writes the Oracle's success surface (commands/init.py:
+// 291-400) to w: the title record, the Created Files table, the Next Steps
 // panel, the conditional tips and the Docs/Star footer. The --yes path
-// streams it to stdout; the interactive path renders it into a buffer and
-// embeds it in the clack transcript, so both paths show the same bytes.
-func renderOracleBlock(w io.Writer, title string, content initSuccessContent) {
-	ux.Sparkle(w, "%s", title)
+// streams it to stdout with oracleGlyphs; the interactive path renders it
+// into a buffer with tuiGlyphs and embeds it in the clack transcript. The
+// words, table and panel are identical on both paths; only the status
+// glyphs differ.
+func renderSuccessBlock(w io.Writer, title string, content initSuccessContent, g blockGlyphs) {
+	g.title(w, "%s", title)
 
 	rows := make([][]string, 0, len(content.files))
 	for _, file := range content.files {
@@ -502,10 +504,10 @@ func renderOracleBlock(w io.Writer, title string, content initSuccessContent) {
 	}
 	ux.Box(w, "Next Steps", body)
 	if content.agentrcTip != "" {
-		ux.Info(w, "%s", content.agentrcTip)
+		g.info(w, "%s", content.agentrcTip)
 	}
 	if content.codexTip != "" {
-		ux.Info(w, "%s", content.codexTip)
+		g.info(w, "%s", content.codexTip)
 	}
 	ux.Plain(w, "  %s", content.docsLine)
 }
@@ -516,16 +518,32 @@ func renderOracleBlock(w io.Writer, title string, content initSuccessContent) {
 // transcript.
 func clackRenderer(ck *ux.Clack, title string, content initSuccessContent) {
 	var buf bytes.Buffer
-	renderOracleBlock(&buf, title, content)
+	renderSuccessBlock(&buf, title, content, tuiGlyphs)
 	ck.Embed(buf.String())
 }
+
+// blockGlyphs selects the status-line printers a success block uses. The
+// --yes path is Oracle-compared and must print the Oracle's literal "[*] "
+// / "[i] " / "[>] " prefixes; the interactive clack transcript is apm-go's
+// own TUI and uses the project symbol set (ux.Success/Hint/Progress:
+// " + ", " i ", " > ") so the frame reads as one design, not two.
+type blockGlyphs struct {
+	title    func(io.Writer, string, ...any)
+	info     func(io.Writer, string, ...any)
+	progress func(io.Writer, string, ...any)
+}
+
+var (
+	oracleGlyphs = blockGlyphs{title: ux.Sparkle, info: ux.Info, progress: ux.Running}
+	tuiGlyphs    = blockGlyphs{title: ux.Success, info: ux.Hint, progress: ux.Progress}
+)
 
 // embedProgress hangs one Oracle "[>] ..." progress record off the clack
 // connecting line, so an interactive run shows the same status glyph the
 // --yes path prints (ux.Running) without breaking the transcript border.
 func embedProgress(ck *ux.Clack, format string, a ...any) {
 	var buf bytes.Buffer
-	ux.Running(&buf, format, a...)
+	tuiGlyphs.progress(&buf, format, a...)
 	ck.Embed(buf.String())
 }
 

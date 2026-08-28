@@ -111,3 +111,15 @@ the two `[>]` progress records go through `embedProgress` the same way.
 Interactive and non-interactive runs therefore show identical bytes for
 the block, the only difference being the `│  ` gutter. Tests assert the
 glyphs and box lines are present AND never start at column 0.
+
+### Follow-up 3 (2026-08-28): project TUI symbols inside the frame
+
+User direction: inside apm-go's own clack frame the status records must use
+the project TUI symbol set, not the Oracle's literal `[>]`/`[*]`/`[i]`
+prefixes. `renderSuccessBlock` now takes a glyph set: `oracleGlyphs`
+(ux.Sparkle/Info/Running) on the Oracle-compared `--yes` path, `tuiGlyphs`
+(ux.Success/Hint/Progress: ` + `, ` i `, ` > `) on the interactive path;
+`embedProgress` uses the same TUI progress printer. Words, table and panel
+stay identical across both paths. ux gains `Progress` and `Hint` as the
+TUI counterparts of `Running` and `Info`. Tests reject any `[>] `/`[*] `/
+`[i] ` inside the transcript and require the ` + `/` > ` records.

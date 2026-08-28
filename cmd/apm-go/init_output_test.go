@@ -274,8 +274,8 @@ func TestInitInteractiveFinalSuccessBlockUsesClackTranscript(t *testing.T) {
 		t.Errorf("interactive native-source warning missing:\nstdout=%s\nstderr=%s", stdout, stderr)
 	}
 	assertClackTranscript(t, stderr, []string{
-		"[>] Initializing APM project: interactive",
-		"[*] APM project initialized successfully!",
+		" > Initializing APM project: interactive",
+		" + APM project initialized successfully!",
 		"    Created Files",
 		"│ File",
 		"apm.yml",
@@ -287,8 +287,13 @@ func TestInitInteractiveFinalSuccessBlockUsesClackTranscript(t *testing.T) {
 	// but every one of its lines hangs off the gutter. A "[>]", "[*]" or box
 	// corner at column 0 is the frame break this test guards against.
 	for i, line := range strings.Split(stderr, "\n") {
-		if strings.HasPrefix(line, "[") || strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "╰") || strings.HasPrefix(line, "    Created Files") {
+		if strings.HasPrefix(line, " + ") || strings.HasPrefix(line, " > ") || strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "╰") || strings.HasPrefix(line, "    Created Files") {
 			t.Errorf("transcript line %d is outside the clack gutter: %q", i+1, line)
+		}
+	}
+	for _, oracle := range []string{"[>] ", "[*] ", "[i] "} {
+		if strings.Contains(stderr, oracle) {
+			t.Errorf("interactive transcript uses the Oracle prefix %q instead of the project TUI symbol:\n%s", oracle, stderr)
 		}
 	}
 }
