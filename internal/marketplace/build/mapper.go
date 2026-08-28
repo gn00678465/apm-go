@@ -111,9 +111,20 @@ type RemoteSource struct {
 	TagPattern string `json:"tag_pattern,omitempty"`
 }
 
+// ClaudeSourceStyle selects how Claude marketplace entries refer to GitHub.
+// The zero value intentionally means github, preserving the Oracle's output.
+type ClaudeSourceStyle string
+
+const (
+	ClaudeSourceStyleGithub ClaudeSourceStyle = "github"
+	ClaudeSourceStyleURL    ClaudeSourceStyle = "url"
+)
+
 // ClaudeMapper implements mkt-050/052 修訂版's Claude Code marketplace.json
 // output composition.
-type ClaudeMapper struct{}
+type ClaudeMapper struct {
+	SourceStyle ClaudeSourceStyle
+}
 
 // Compose produces the Claude marketplace.json document for resolved,
 // against cfg's owner/metadata/packages[] declarations. The returned
@@ -123,7 +134,12 @@ type ClaudeMapper struct{}
 // subtractPluginRoot's PluginRootError -- pluginRoot subtraction yielding
 // an empty, absolute, or traversal-containing path, design.md's "結果為
 // 空/絕對/含 .. -> BuildError").
-func (ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedPackage) (ClaudeDocument, []string, error) {
+func (m ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedPackage) (ClaudeDocument, []string, error) {
+	sourceStyle, err := normalizeClaudeSourceStyle(m.SourceStyle)
+	if err != nil {
+		return ClaudeDocument{}, nil, err
+	}
+
 	doc := ClaudeDocument{Name: cfg.Name}
 	if cfg.DescriptionOverridden && cfg.Description != "" {
 		doc.Description = cfg.Description
@@ -141,7 +157,7 @@ func (ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedP
 	var warnings []string
 	plugins := make([]ClaudePlugin, 0, len(resolved))
 	for _, pkg := range resolved {
-		plugin, warning, err := composeClaudePlugin(pkg, pluginRoot)
+		plugin, warning, err := composeClaudePlugin(pkg, pluginRoot, sourceStyle)
 		if err != nil {
 			return ClaudeDocument{}, nil, err
 		}
@@ -156,9 +172,19 @@ func (ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedP
 	return doc, warnings, nil
 }
 
+func normalizeClaudeSourceStyle(style ClaudeSourceStyle) (ClaudeSourceStyle, error) {
+	if style == "" {
+		return ClaudeSourceStyleGithub, nil
+	}
+	if style == ClaudeSourceStyleGithub || style == ClaudeSourceStyleURL {
+		return style, nil
+	}
+	return "", fmt.Errorf("unknown Claude source style %q", style)
+}
+
 // composeClaudePlugin builds one plugins[] entry for pkg, per design.md's
 // plugin-level field table.
-func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string) (ClaudePlugin, string, error) {
+func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string, sourceStyle ClaudeSourceStyle) (ClaudePlugin, string, error) {
 	entry := pkg.Entry
 	plugin := ClaudePlugin{Name: entry.Name, Category: entry.Category}
 
@@ -224,7 +250,7 @@ func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string) (ClaudePlugin, 
 		}
 		plugin.Source = sourceValue
 	} else {
-		plugin.Source = composeRemoteSource(pkg)
+		plugin.Source = composeRemoteSource(pkg, sourceStyle)
 	}
 
 	return plugin, warning, nil
@@ -239,15 +265,21 @@ func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string) (ClaudePlugin, 
 //     github.com) -> {"source":"url", "url"}
 //  4. otherwise -> {"source":"github", "repo"}
 //
+// The URL style is a deliberate apm-go-only superset of the Oracle's
+// output_mappers.py:247-257: it gives github.com packages an HTTPS URL for
+// consumers whose Claude Code install cannot authenticate over SSH.
+//
 // ref/sha are appended to whichever of 2-4 fired, when known.
 // ResolvedPackage carries no SourceURL/sourceBase field (design.md's
 // explicit "sourceBase 明確延後"), so the URL a non-default host emits is
 // always derived from Host+SourceRepo, never a curator-composed
 // sourceBase URL.
-func composeRemoteSource(pkg ResolvedPackage) *RemoteSource {
+func composeRemoteSource(pkg ResolvedPackage, style ClaudeSourceStyle) *RemoteSource {
 	remoteURL := ""
 	if pkg.Host != "" {
 		remoteURL = "https://" + pkg.Host + "/" + pkg.SourceRepo
+	} else if style == ClaudeSourceStyleURL {
+		remoteURL = "https://github.com/" + pkg.SourceRepo
 	}
 
 	src := &RemoteSource{}

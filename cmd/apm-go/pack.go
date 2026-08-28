@@ -58,6 +58,7 @@ func packCmd() *cobra.Command {
 		checkVersions     bool
 		checkClean        bool
 		jsonOutput        bool
+		claudeSourceStyle string
 	)
 
 	cmd := &cobra.Command{
@@ -115,6 +116,9 @@ Exit codes:
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateClaudeSourceStyleChoice(claudeSourceStyle); err != nil {
+				return withUsageError(err)
+			}
 			// resolve_bundle_format runs before ANY producer, lockfile
 			// read/write, marketplace build, or output-directory creation
 			// (commands/pack.py:318-326; ticket 07 §D of .review/
@@ -180,6 +184,7 @@ Exit codes:
 				checkVersions:          checkVersions,
 				checkClean:             checkClean,
 				jsonOutput:             jsonOutput,
+				claudeSourceStyle:      build.ClaudeSourceStyle(claudeSourceStyle),
 			})
 		},
 	}
@@ -195,6 +200,11 @@ Exit codes:
 	cmd.Flags().BoolVar(&force, "force", false, "Allow overwriting on collision: last-writer-wins in plugin bundles; overwrites any existing plugin.json at the generated manifest path.")
 	cmd.Flags().StringVarP(&marketplaceFilter, "marketplace", "m", "", "Comma-separated marketplace outputs to build (e.g. 'claude,codex'). Use 'all' for every configured output, 'none' to skip marketplace. Default: build all configured outputs.")
 	cmd.Flags().StringArrayVar(&pathOverrideArgs, "marketplace-path", nil, "Override output path for a format: FORMAT=PATH (repeatable). Example: --marketplace-path claude=dist/marketplace.json")
+	// DELIBERATE apm-go-only superset: the Oracle's
+	// output_mappers.py:247-257 always emits github shorthand for github.com;
+	// url lets consumers without Claude Code SSH credentials install over HTTPS.
+	claudeSourceStyle = string(build.ClaudeSourceStyleGithub)
+	cmd.Flags().Var(bundleFormatChoiceValue{&claudeSourceStyle, claudeSourceStyleChoices}, "claude-source-style", "Claude source style (apm-go-only): use url to install GitHub packages over HTTPS when SSH keys are unavailable.")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed packing information.")
 	cmd.Flags().Var(bundleFormatChoiceValue{&format, packFormatChoices}, "format",
 		"Bundle format selector. 'agent-plugin' emits portable Agent Plugins v1; "+
@@ -306,6 +316,19 @@ Exit codes:
 // bundleFormatAliases (bundle_format.go), which apply only to --format.
 var archiveFormatChoices = []string{"zip", "tar.gz"}
 
+var claudeSourceStyleChoices = []string{"github", "url"}
+
+// validateClaudeSourceStyleChoice mirrors the pack selector's usage-error
+// contract for an invalid choice (exit 2, Click-style wording).
+func validateClaudeSourceStyleChoice(value string) error {
+	for _, choice := range claudeSourceStyleChoices {
+		if value == choice {
+			return nil
+		}
+	}
+	return fmt.Errorf("Invalid value for '--claude-source-style': '%s' is not one of %s.", value, quoteJoin(claudeSourceStyleChoices))
+}
+
 // validateArchiveFormatChoice mirrors Click's Choice validation for
 // --archive-format: case-sensitive, exact membership only (no
 // normalization, no aliases -- unlike coerceBundleFormat). Verified live
@@ -358,7 +381,8 @@ type packOptions struct {
 	checkClean    bool
 	// jsonOutput mirrors --json (ticket 17 phase 5): the envelope becomes
 	// the only thing on stdout and every human line moves to stderr.
-	jsonOutput bool
+	jsonOutput        bool
+	claudeSourceStyle build.ClaudeSourceStyle
 }
 
 // runPack reads apm.yml once, routes to whichever of the three producers
@@ -972,7 +996,7 @@ func packOneOutput(
 		return marketplaceRender{}, err
 	}
 
-	doc, docWarnings, err := composeMarketplaceDocument(format, cfg, resolved)
+	doc, docWarnings, err := composeMarketplaceDocument(format, cfg, resolved, opts.claudeSourceStyle)
 	if err != nil {
 		return marketplaceRender{}, err
 	}
@@ -1063,8 +1087,10 @@ func renderMarketplaceCatalog(w io.Writer, renders []marketplaceRender) {
 // reached). A thin wrapper around build.ComposeDocument (ticket 17 phase 4
 // exported it so the check-clean drift gate shares this exact dispatch
 // instead of a second copy).
-func composeMarketplaceDocument(format string, cfg *authoring.AuthoringConfig, resolved []build.ResolvedPackage) (any, []string, error) {
-	return build.ComposeDocument(format, cfg, resolved)
+func composeMarketplaceDocument(format string, cfg *authoring.AuthoringConfig, resolved []build.ResolvedPackage, claudeSourceStyle build.ClaudeSourceStyle) (any, []string, error) {
+	return build.ComposeDocument(format, cfg, resolved, build.ComposeOptions{
+		ClaudeSourceStyle: claudeSourceStyle,
+	})
 }
 
 // parseMarketplacePathOverrides parses --marketplace-path's repeatable
@@ -1189,7 +1215,9 @@ func runReleaseGates(cmd *cobra.Command, opts packOptions) (gates packGateResult
 		for _, warning := range warnings {
 			ux.Warn(cmd.ErrOrStderr(), "%s", warning)
 		}
-		report, derr := build.CheckMarketplaceDrift(cfg, resolved, ".", configPaths, cliOverrides)
+		report, derr := build.CheckMarketplaceDrift(cfg, resolved, ".", configPaths, cliOverrides, build.ComposeOptions{
+			ClaudeSourceStyle: opts.claudeSourceStyle,
+		})
 		if derr != nil {
 			return gates, derr
 		}

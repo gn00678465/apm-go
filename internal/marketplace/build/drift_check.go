@@ -156,6 +156,7 @@ func CheckMarketplaceDrift(
 	resolved []ResolvedPackage,
 	projectRoot string,
 	configPaths, outputOverrides map[string]string,
+	options ...ComposeOptions,
 ) (DriftReport, error) {
 	configured := cfg.Outputs
 	if len(configured) == 0 {
@@ -177,7 +178,7 @@ func CheckMarketplaceDrift(
 			return DriftReport{}, err
 		}
 
-		doc, _, err := ComposeDocument(format, cfg, resolved)
+		doc, _, err := ComposeDocument(format, cfg, resolved, options...)
 		if err != nil {
 			return DriftReport{}, err
 		}

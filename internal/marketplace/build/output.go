@@ -32,6 +32,13 @@ import (
 // names ("claude", "codex") -- mirroring Python's known_output_names().
 var KnownOutputFormats = map[string]bool{"claude": true, "codex": true}
 
+// ComposeOptions carries output-mapper options. The variadic form keeps the
+// existing default call sites byte-identical while allowing pack's Claude
+// source-style selector to reach both the producer and drift gate.
+type ComposeOptions struct {
+	ClaudeSourceStyle ClaudeSourceStyle
+}
+
 // ComposeDocument dispatches to the mkt-050/052/053 mapper for format
 // ("claude" or "codex" -- callers already reject anything else before this
 // is ever reached). Exported so both `apm-go pack`'s own marketplace
@@ -40,10 +47,14 @@ var KnownOutputFormats = map[string]bool{"claude": true, "codex": true}
 // (drift_check.go's CheckMarketplaceDrift, ticket 17 phase 4) share the
 // exact same compose path rather than two independently-drifting copies of
 // this dispatch.
-func ComposeDocument(format string, cfg *authoring.AuthoringConfig, resolved []ResolvedPackage) (any, []string, error) {
+func ComposeDocument(format string, cfg *authoring.AuthoringConfig, resolved []ResolvedPackage, options ...ComposeOptions) (any, []string, error) {
+	var opts ComposeOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	switch format {
 	case "claude":
-		return ClaudeMapper{}.Compose(cfg, resolved)
+		return ClaudeMapper{SourceStyle: opts.ClaudeSourceStyle}.Compose(cfg, resolved)
 	case "codex":
 		return CodexMapper{}.Compose(cfg, resolved)
 	default:
