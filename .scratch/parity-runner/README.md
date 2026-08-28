@@ -43,7 +43,7 @@ Tickets 01-29 are closed, with 23 CLOSED INVALID. The 18-case backlog was triage
 
 Two waivers were REJECTED during this run for hiding real gaps behind honest-sounding reasons (`pack-archive`'s missing size suffix and zip-migration notice; ticket 25's would-be `registry-explicit-config-dir` stdout). Both became fixes. The rule that held: a difference in WORDS is a bug; only line breaks, box-drawing, padding, timestamps, compressor output and apm-go-only flags get waived.
 
-Open, non-blocking: 16 (dep-parser conformance rows), 19 (init output-surface gaps), 21 (implemented, awaiting an independent evaluator ruling -- codex was over quota).
+Open, non-blocking: 16 (dep-parser conformance rows), 19 (init output-surface gaps). Ticket 21 closed 2026-08-28 on an independent evaluator PASS (`.review/eval-ticket-21.md`).
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 

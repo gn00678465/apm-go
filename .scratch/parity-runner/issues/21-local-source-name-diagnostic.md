@@ -2,7 +2,7 @@
 
 **What to build:** when `marketplace package add` rejects a package name that was *derived* from a local source, the error must name the source the user actually typed, and must not render a single backslash as two.
 
-**Blocked by:** ticket 20 (`99bfbd0`). **Status:** open.
+**Blocked by:** ticket 20 (`99bfbd0`). **Status:** CLOSED (2026-08-28) — independent evaluator PASS, `.review/eval-ticket-21.md`.
 
 **Origin:** `.review/eval-ticket-20.md`, "Diagnostic follow-up (not an AC blocker)". Ticket 20 PASSed on all seven ACs; this is the quality item it explicitly deferred.
 
@@ -105,9 +105,8 @@ clean; full 69-case `tools/parity` corpus run against the pinned Oracle both
 pre and post — 18/69 unwaived both times, identical id sets, `(fields, waived)`
 tuple drift **NONE**.
 
-**Status: awaiting independent evaluator ruling** (`.review/eval-ticket-21.md`
-not written; evaluator unavailable until Aug 31). Do not mark 21 closed until
-that ruling exists.
+**Status: CLOSED (2026-08-28)** — independent evaluator ruling PASS on
+`05bd288`, all six ACs reproduced from scratch (`.review/eval-ticket-21.md`).
 
 ## Non-goals
 
