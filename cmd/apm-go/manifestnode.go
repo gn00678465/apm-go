@@ -1,12 +1,9 @@
 package main
 
 import (
-	"sort"
 	"strings"
 
 	yamllib "go.yaml.in/yaml/v4"
-
-	"github.com/apm-go/apm/internal/manifest"
 )
 
 // manifestSpec bundles the metadata and target selection needed to build a
@@ -22,33 +19,42 @@ type manifestSpec struct {
 	Plugin      bool
 }
 
+// oracleManifestTargetNames is the sorted manifest target catalog used by
+// the Oracle's apm.yml comment (commands/_helpers.py:718-721 and
+// core/target_catalog.py:258-264). It is intentionally broader than
+// manifest.SupportedTargets, which is apm-go's adapter/--target whitelist.
+var oracleManifestTargetNames = []string{
+	"agent-skills", "antigravity", "claude", "codex", "copilot",
+	"cursor", "gemini", "grok-build", "kiro", "opencode", "windsurf",
+}
+
 // targetsCommentLines returns the three header lines placed above the
-// targets: key (R2.2). The "Accepted values" line is derived from
-// manifest.SupportedTargets (sorted) rather than a fourth independent
-// literal (R2.3) -- replacing manifest.SupportedTargets in a test changes
-// this output (AC26).
+// targets: key. The text and accepted-target catalog reproduce the Oracle's
+// _create_minimal_apm_yml post-processing byte-for-byte.
 func targetsCommentLines() []string {
-	sorted := append([]string(nil), manifest.SupportedTargets...)
-	sort.Strings(sorted)
 	return []string{
 		"Which agent platforms to deploy to.",
 		"Resolution order: --target flag > this field > auto-detect from filesystem.",
-		"Accepted values: " + strings.Join(sorted, ", "),
+		"Accepted values: " + strings.Join(oracleManifestTargetNames, ", "),
 	}
 }
 
 // targetsSkeletonComment is the commented-out targets: block inserted after
-// author when no target was selected (R2.4), design.md §2: the same three
-// header lines plus two commented-out example lines.
+// author when no target was selected. This is the exact Oracle skeleton
+// (commands/_helpers.py:731-737), including its two examples.
 func targetsSkeletonComment() string {
-	lines := append(targetsCommentLines(), "targets:", "  - claude")
-	return strings.Join(lines, "\n")
+	return strings.Join([]string{
+		"Which agent platforms to deploy to (uncomment to pin):",
+		"targets:",
+		"  - copilot",
+		"  - claude",
+	}, "\n")
 }
 
 // buildManifestNode builds a fresh apm.yml *yaml.Node tree in semantic key
 // order: name -> version -> description -> author -> targets ->
 // dependencies -> includes -> [devDependencies] -> scripts (R2.1). Callers
-// must round-trip the result through yamlcore.SafeDump -> SafeLoad ->
+// must round-trip the result through yamlcore.SafeDumpManifest -> SafeLoad ->
 // manifest.ParseManifest before writing it to disk, so the validated bytes
 // are exactly the bytes written (design.md §2).
 func buildManifestNode(spec manifestSpec) *yamllib.Node {
@@ -56,8 +62,9 @@ func buildManifestNode(spec manifestSpec) *yamllib.Node {
 		manifestKeyNode("name"), manifestStrNode(spec.Name),
 		manifestKeyNode("version"), manifestStrNode(spec.Version),
 		manifestKeyNode("description"), manifestStrNode(spec.Description),
-		manifestKeyNode("author"), manifestStrNode(spec.Author),
 	}
+	authorKey := manifestKeyNode("author")
+	pairs = append(pairs, authorKey, manifestStrNode(spec.Author))
 
 	depsKey := manifestKeyNode("dependencies")
 	if len(spec.Targets) > 0 {
@@ -65,18 +72,10 @@ func buildManifestNode(spec manifestSpec) *yamllib.Node {
 		targetsKey.HeadComment = strings.Join(targetsCommentLines(), "\n")
 		pairs = append(pairs, targetsKey, manifestSeqNode(spec.Targets))
 	} else {
-		// Deliberate deviation from design.md §2's literal suggestion of a
-		// FootComment on author (codex-audit low finding): a FootComment
-		// (on either the author key or its value -- both were probed)
-		// forces the yaml dumper to emit a blank line between the comment
-		// block and the next key, breaking AC7's verbatim five-line
-		// skeleton. A HeadComment on the following key (dependencies, the
-		// only key ever adjacent to author in this fixed order) has no
-		// such artifact and produces the exact required bytes. Tracked so
-		// this isn't later read as an oversight: if a future key is ever
-		// inserted between author and dependencies, this HeadComment must
-		// move with it.
-		depsKey.HeadComment = targetsSkeletonComment()
+		// PyYAML inserts a blank line after the comment block. A FootComment
+		// on the author value reproduces that placement and keeps the
+		// skeleton attached to the field it documents.
+		authorKey.FootComment = targetsSkeletonComment()
 	}
 
 	pairs = append(pairs, depsKey, manifestDependenciesNode())
@@ -92,7 +91,17 @@ func buildManifestNode(spec manifestSpec) *yamllib.Node {
 }
 
 func manifestStrNode(v string) *yamllib.Node {
-	return &yamllib.Node{Kind: yamllib.ScalarNode, Tag: "!!str", Value: v}
+	n := &yamllib.Node{Kind: yamllib.ScalarNode, Tag: "!!str", Value: v}
+	// PyYAML's resolver treats YAML 1.1 boolean spellings such as "yes" as
+	// values that need quoting even though they are strings in the manifest.
+	// go-yaml's programmatic Node path uses YAML 1.2 resolution here, so make
+	// the Oracle-required quote explicit (the same applies to the other legacy
+	// boolean spellings).
+	switch v {
+	case "y", "Y", "yes", "Yes", "YES", "n", "N", "no", "No", "NO", "on", "On", "ON", "off", "Off", "OFF":
+		n.Style = yamllib.SingleQuotedStyle
+	}
+	return n
 }
 
 func manifestKeyNode(v string) *yamllib.Node {

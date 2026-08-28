@@ -547,6 +547,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		"pack-no-flag", "pack-claude-plugin-flag", "pack-format-claude", "pack-format-claude-plugin", "pack-format-plugin",
 		"pack-format-conflict", "pack-format-empty", "pack-format-unknown",
 		"browse-unknown-marketplace", "list-empty", "search-unknown-marketplace",
+		"init-yes",
 		"plugin-init-no-flag", "plugin-init-format-plugin", "plugin-init-format-claude", "plugin-init-format-claude-plugin",
 		"plugin-init-claude-plugin-flag", "plugin-init-format-agent-plugin",
 		"plugin-init-existing-apmyml-yes", "plugin-init-existing-pluginjson-only-yes", "plugin-init-existing-mcpjson-agent-yes",

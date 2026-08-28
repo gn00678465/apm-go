@@ -10,12 +10,12 @@
 
 ### 1. `apm.yml`'s YAML-serialization cosmetics diverge from the Oracle's PyYAML output
 
-Two independent, purely-cosmetic differences, both verified live for `plugin init` (and presumably `init` too, same shared `runInitCore`/`yamlcore.SafeDump` path):
+Two independent, purely-cosmetic differences, both verified live for `plugin init` (and `init` too, through the shared `runInitCore`/`yamlcore.SafeDumpManifest` path):
 
-- The `# Which agent platforms to deploy to...` comment block's wording differs entirely (apm-go's is a 4-line block naming `--target`/field/auto-detect resolution order and the accepted target values; the Oracle's is a 2-line block with a commented-out example list).
-- A non-ASCII `author` value gets rendered differently: the Oracle writes it as a bare, literal-UTF-8 scalar (`author: 名😀<`); apm-go's YAML emitter (`go.yaml.in/yaml`) double-quotes it with `\U`-escapes (`author: "名\U0001F600<"`). Both are valid, semantically-identical YAML.
+- The `# Which agent platforms to deploy to...` comment block's wording differs entirely (apm-go's was a 4-line block naming `--target`/field/auto-detect resolution order and the accepted target values; the Oracle's no-target form is the exact four-line commented skeleton with `copilot`/`claude` examples, while its selected-target form is the exact three-line header followed by an indentless sequence).
+- A non-ASCII `author` value was rendered differently: the Oracle writes it as a bare, literal-UTF-8 scalar (`author: 名😀<`); apm-go's YAML emitter (`go.yaml.in/yaml`) used to double-quote it with `\U`-escapes (`author: "名\U0001F600<"`). Both are valid, semantically-identical YAML; the emitter now matches the Oracle.
 
-Every `plugin-init-*` runner case that writes `apm.yml` (11 of them) carries a `tree_paths: ["cwd/plugin-init-fixture/apm.yml"]` waiver for this — `plugin.json`/`mcp.json` are unaffected and compared byte-exact.
+Before this verifier, every `plugin-init-*` runner case that writes `apm.yml` (11 of them) carried a `tree_paths: ["cwd/plugin-init-fixture/apm.yml"]` waiver for this. The waiver is now removed from all 11 cases; `plugin.json`/`mcp.json` remain compared byte-exact.
 
 ### 2. `init`/`plugin init`'s plain (non-interactive) success path writes to the wrong stream relative to the Oracle
 
@@ -25,7 +25,7 @@ apm-go's `runInitCore` (`cmd/apm-go/init.go`, Phase 7) splits: `ux.Info(os.Stder
 
 **This is NOT simply a bug to fix on sight**: `cmd/apm-go/init_clack_test.go`'s own `captureStderr` doc comment states "init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract §3)" — a deliberate, pre-existing apm-go design decision (the referenced doc is not currently in the tree to consult). Revisiting it is a real design question — does apm-go's `init`/`plugin init` output contract change to match the Oracle's single-stdout-stream behavior, given ticket 10's own established "errors/warnings land on stdout" precedent might reasonably extend to success output too — not a ticket-09-sized fix.
 
-Every `plugin-init-*` success/existing-*-yes/normalise-upper case (11 of them) carries a `stdout`+`stderr` waiver for this, alongside finding 1's `tree` waiver.
+Every `plugin-init-*` success/existing-*-yes/normalise-upper case (11 of them) carries a `stdout`+`stderr` waiver for this; historically those sat alongside Finding 1's now-removed `tree` waiver.
 
 ### 3. The runner's own `help_semantic` parser doesn't handle multi-line-wrapped flag descriptions
 
@@ -35,11 +35,19 @@ Not new to ticket 09: `pack-help`'s own (already unwaived, ticket-17-tracked) `h
 
 ## Acceptance criteria
 
-- [ ] Finding 1: decide whether to match the Oracle's comment wording / bare-UTF-8 author quoting exactly, or record a permanent, dated deviation (style: `search.go`'s hint-text comment). Update `waivers.json` accordingly if closed.
+- [x] Finding 1: match the Oracle's comment wording, target-list serialization, blank-line placement, and bare-UTF-8 author quoting exactly. The 11 plugin-init tree waivers were removed; Finding 2's stdout/stderr waivers remain unchanged.
 - [ ] Finding 2: decide `init`/`plugin init`'s success-output stream contract — match the Oracle's single-stdout-stream behavior (revisit `terminal-ux-contract §3`, if recoverable, or make a fresh decision), or keep the current stderr-for-chrome design and record it as a permanent, cited deviation. If changed, `cmd/apm-go/init_clack_test.go` and every other test relying on `captureStderr` for init's plain-path output need updating in the same commit.
 - [x] Finding 3: `parseHelpFlags` now joins indented continuation lines for Click and Cobra output, including Click's long-metavar `--format` shape. Real `apm pack --help` and `apm-go pack --help` excerpts cover wrapped `--archive`, `--check-clean`, and `--format` descriptions. Reverification leaves `pack-help` with only the sanctioned apm-go-only `--format` wording difference; `plugin-init-help` has no `help_semantic` difference.
-- [x] Fresh corpus evidence: after the parser fix, `plugin-init-help`'s waiver drops `help_semantic` and retains only `stdout`; the corpus remains at 78 cases and zero unwaived differences, with no other waiver tuple changes.
+- [x] Fresh corpus evidence: after the parser fix, `plugin-init-help`'s waiver drops `help_semantic` and retains only `stdout`; the corpus now has 79 cases (the verifier added `init-yes`) and zero unwaived differences, with no other waiver tuple changes.
 
 ## Evidence
 
 The parser regression test is `go test ./tools/parity`; the manifest conformance and SSH row tests are `go test ./internal/manifest`. The corpus command was rerun with output under `/tmp/parity-verifier-2-afterparser`; its `pack-help` semantic diff contains only the expected `--format` wording, while `plugin-init-help` has no semantic diff.
+
+### Finding 1 closure evidence (verifier brief 4, 2026-08-28)
+
+- Oracle source inspection pinned the template and emitter to `src/apm_cli/commands/_helpers.py:665-737` and `src/apm_cli/utils/yaml_io.py:28-32` (`yaml.safe_dump(..., sort_keys=False, allow_unicode=True)`), with the accepted target catalog from `src/apm_cli/core/target_catalog.py:258-264`.
+- Live Oracle probes for zero, one, and several detected targets established the exact bytes: the no-target skeleton is `# Which agent platforms to deploy to (uncomment to pin):`, commented `targets:`, commented `copilot`/`claude` examples, then one blank line; selected targets use the three-line header, the sorted accepted values `agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf`, and an indentless sequence. Both `init` and `plugin init` share this helper.
+- Live scalar probes recorded Oracle bytes for `a: b`, `#x`, leading/trailing spaces, `yes`, `1.0`, empty, emoji-only, and `line\x01char`. `internal/yamlcore.SafeDumpManifest` now explicitly uses Unicode, single-quote, and compact-sequence settings, repairs go-yaml's astral-rune escape limitation, and `manifestStrNode` preserves PyYAML's legacy-boolean quoting. Exact byte tables are locked in `cmd/apm-go/manifestnode_test.go`.
+- `internal/manifest.DetectTargets` now sorts the detected list to match the Oracle's `sorted(...)` resolution path. `go test ./cmd/apm-go ./internal/yamlcore ./internal/manifest` and `go test ./tools/parity` pass.
+- The parity corpus grew from 78 to 79 with `init-yes` (`["init", "init-fixture", "--yes"]`). The 11 existing plugin-init waivers retain only `stdout`/`stderr`; the new case waives only `stdout`/`stderr` with Finding 2's missing success-output lines listed, leaving its `apm.yml` tree unwaived. Final pinned-Oracle parity reports 79 cases and 0 unwaived differences.

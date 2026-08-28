@@ -475,14 +475,22 @@
     "eval_plan_ref": ".scratch/parity-runner/issues/14-marketplace-wording.md"
   },
   {
+    "id": "init-yes",
+    "fields": [
+      "stdout",
+      "stderr"
+    ],
+    "taxonomy": "F01",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Finding 2 (init/plugin init success-output content+channel) remains pending and is intentionally outside Finding 1. The Oracle's stdout-only Rich output includes the success title 'APM project initialized successfully!', the Created Files table, the 'Next Steps' panel header, and these consumer guidance lines: 'Install a package:               apm install <owner>/<repo>', 'Run a script:                    apm run <script>', 'Build a plugin? Scaffold one:    apm plugin init', and 'Publishing a marketplace?:       apm marketplace init'. apm-go's plain path keeps its deliberate stderr chrome/stdout split and currently exposes only its apm-go-normalized install guidance, so only stdout/stderr are waived here. Finding 1's apm.yml tree is intentionally unwaived and must match byte-for-byte.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
+  },
+  {
     "id": "plugin-init-no-flag",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -494,11 +502,7 @@
     "id": "plugin-init-format-plugin",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -510,11 +514,7 @@
     "id": "plugin-init-format-claude",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -526,11 +526,7 @@
     "id": "plugin-init-format-claude-plugin",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -542,11 +538,7 @@
     "id": "plugin-init-claude-plugin-flag",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -558,11 +550,7 @@
     "id": "plugin-init-format-agent-plugin",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -574,11 +562,7 @@
     "id": "plugin-init-existing-apmyml-yes",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -590,11 +574,7 @@
     "id": "plugin-init-existing-pluginjson-only-yes",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -606,11 +586,7 @@
     "id": "plugin-init-existing-mcpjson-agent-yes",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -622,11 +598,7 @@
     "id": "plugin-init-unicode-author",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
@@ -638,11 +610,7 @@
     "id": "plugin-init-normalise-upper",
     "fields": [
       "stdout",
-      "stderr",
-      "tree"
-    ],
-    "tree_paths": [
-      "cwd/plugin-init-fixture/apm.yml"
+      "stderr"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",

@@ -358,7 +358,7 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		Targets:     selectedTargets,
 		Plugin:      mode.plugin,
 	})
-	out, err := yamlcore.SafeDump(node)
+	out, err := yamlcore.SafeDumpManifest(node)
 	if err != nil {
 		return fmt.Errorf("serialize: %w", err)
 	}

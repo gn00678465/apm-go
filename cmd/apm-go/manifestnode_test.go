@@ -17,7 +17,7 @@ func TestBuildManifestNode_KeySemanticOrder(t *testing.T) {
 		Name: "shape-probe", Version: "1.0.0", Description: "desc", Author: "author",
 		Targets: []string{"claude", "codex", "opencode"},
 	})
-	out, err := yamlcore.SafeDump(node)
+	out, err := yamlcore.SafeDumpManifest(node)
 	if err != nil {
 		t.Fatalf("SafeDump: %v", err)
 	}
@@ -42,15 +42,15 @@ func TestBuildManifestNode_KeySemanticOrder(t *testing.T) {
 	}
 }
 
-// TestBuildManifestNode_TargetsCommentThreeLines is AC6: targets: is
-// preceded by three comment lines, the third listing the six
-// apm-go-supported targets in alphabetical order.
+// TestBuildManifestNode_TargetsCommentThreeLines is Finding 1's selected
+// target assertion: the target comment is the Oracle's three-line block and
+// its manifest catalog, not apm-go's smaller adapter whitelist.
 func TestBuildManifestNode_TargetsCommentThreeLines(t *testing.T) {
 	node := buildManifestNode(manifestSpec{
 		Name: "p", Version: "1.0.0", Description: "d", Author: "a",
 		Targets: []string{"claude"},
 	})
-	out, err := yamlcore.SafeDump(node)
+	out, err := yamlcore.SafeDumpManifest(node)
 	if err != nil {
 		t.Fatalf("SafeDump: %v", err)
 	}
@@ -58,30 +58,27 @@ func TestBuildManifestNode_TargetsCommentThreeLines(t *testing.T) {
 
 	want := "# Which agent platforms to deploy to.\n" +
 		"# Resolution order: --target flag > this field > auto-detect from filesystem.\n" +
-		"# Accepted values: agent-skills, antigravity, claude, codex, copilot, opencode\n" +
-		"targets:\n"
+		"# Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf\n" +
+		"targets:\n- claude\n"
 	if !strings.Contains(content, want) {
 		t.Fatalf("targets: comment block = %q, want it to contain:\n%s", content, want)
 	}
 }
 
-// TestBuildManifestNode_NoTargets_CommentedSkeleton is AC7: when no target
-// is selected, the output contains the verbatim five-line commented-out
-// skeleton (three explainer lines + "# targets:" + "#   - claude") -- not
-// just "some comment starting with # targets:".
+// TestBuildManifestNode_NoTargets_CommentedSkeleton locks the Oracle's
+// four-line no-target skeleton and its blank line before dependencies.
 func TestBuildManifestNode_NoTargets_CommentedSkeleton(t *testing.T) {
 	node := buildManifestNode(manifestSpec{Name: "p", Version: "1.0.0", Description: "d", Author: "a"})
-	out, err := yamlcore.SafeDump(node)
+	out, err := yamlcore.SafeDumpManifest(node)
 	if err != nil {
 		t.Fatalf("SafeDump: %v", err)
 	}
 	content := string(out)
 
-	want := "# Which agent platforms to deploy to.\n" +
-		"# Resolution order: --target flag > this field > auto-detect from filesystem.\n" +
-		"# Accepted values: agent-skills, antigravity, claude, codex, copilot, opencode\n" +
+	want := "# Which agent platforms to deploy to (uncomment to pin):\n" +
 		"# targets:\n" +
-		"#   - claude\n"
+		"#   - copilot\n" +
+		"#   - claude\n\n"
 	if !strings.Contains(content, want) {
 		t.Fatalf("output = %q, want it to contain the verbatim skeleton:\n%s", content, want)
 	}
@@ -90,27 +87,18 @@ func TestBuildManifestNode_NoTargets_CommentedSkeleton(t *testing.T) {
 	}
 }
 
-// TestBuildManifestNode_NoTargets_SkeletonHasNoBlankLineBeforeDependencies is
-// the 2026-07-30 round-4 claim-evidence regression for manifestnode.go's
-// HeadComment-on-dependencies choice (see its comment: a FootComment on
-// author was rejected because it "forces the yaml dumper to emit a blank
-// line between the comment block and the next key"). The prior AC7 test
-// above uses strings.Contains on just the 5-line comment block, which would
-// NOT notice an extra blank line appended after it (Contains only requires
-// the substring to appear somewhere) -- so a future regression back to
-// FootComment could silently reintroduce the artifact undetected. This test
-// asserts the skeleton's last line is immediately followed by "dependencies:"
-// with no intervening blank line.
-func TestBuildManifestNode_NoTargets_SkeletonHasNoBlankLineBeforeDependencies(t *testing.T) {
+// TestBuildManifestNode_NoTargets_SkeletonHasOracleBlankLineBeforeDependencies
+// guards the exact blank line emitted by the Oracle's post-processing.
+func TestBuildManifestNode_NoTargets_SkeletonHasOracleBlankLineBeforeDependencies(t *testing.T) {
 	node := buildManifestNode(manifestSpec{Name: "p", Version: "1.0.0", Description: "d", Author: "a"})
-	out, err := yamlcore.SafeDump(node)
+	out, err := yamlcore.SafeDumpManifest(node)
 	if err != nil {
 		t.Fatalf("SafeDump: %v", err)
 	}
 	content := string(out)
 
-	if !strings.Contains(content, "#   - claude\ndependencies:\n") {
-		t.Errorf("expected the commented-out skeleton's last line to be followed IMMEDIATELY by dependencies: (no blank line); got:\n%s", content)
+	if !strings.Contains(content, "#   - claude\n\ndependencies:\n") {
+		t.Errorf("expected the commented-out skeleton's last line to be followed by one blank line before dependencies: got:\n%s", content)
 	}
 }
 
@@ -123,7 +111,7 @@ func TestBuildManifestNode_PluginMode_DevDependenciesKeyOrder(t *testing.T) {
 		Name: "p", Version: "1.0.0", Description: "d", Author: "a",
 		Targets: []string{"claude"}, Plugin: true,
 	})
-	out, err := yamlcore.SafeDump(node)
+	out, err := yamlcore.SafeDumpManifest(node)
 	if err != nil {
 		t.Fatalf("SafeDump: %v", err)
 	}
@@ -153,14 +141,9 @@ func TestBuildManifestNode_PluginMode_DevDependenciesKeyOrder(t *testing.T) {
 }
 
 // TestBuildManifestNode_NoTargets_AuthorImmediatelyPrecedesDependencies is
-// the 2026-07-30 codex Tier 2 M5 fix: buildManifestNode's no-targets branch
-// deliberately attaches the commented-out targets skeleton as a HeadComment
-// on the dependencies key rather than a FootComment on author (see the
-// comment at manifestnode.go's depsKey.HeadComment assignment), because
-// dependencies is assumed to be the very next key after author in this fixed
-// order. This test locks that adjacency assumption: if a future key is ever
-// inserted between author and dependencies, this test goes red as a signal
-// that the HeadComment placement must move with it.
+// the no-target skeleton remains attached to the author field's rendered
+// position. The fixed key order still keeps dependencies immediately after
+// author in the node tree.
 func TestBuildManifestNode_NoTargets_AuthorImmediatelyPrecedesDependencies(t *testing.T) {
 	node := buildManifestNode(manifestSpec{Name: "p", Version: "1.0.0", Description: "d", Author: "a"})
 
@@ -266,23 +249,97 @@ func TestSupportedTargetsSet_MatchesAdapterTargetsAndPromptMenu(t *testing.T) {
 	}
 }
 
-// TestTargetsCommentLines_DerivedFromInput is AC26: the Accepted values line
-// must be derived from manifest.SupportedTargets, not an independent
-// literal. This is a behavioral test (not a grep for the current six
-// values): temporarily replacing manifest.SupportedTargets with a
-// different slice must change targetsCommentLines' output accordingly.
-func TestTargetsCommentLines_DerivedFromInput(t *testing.T) {
-	orig := manifest.SupportedTargets
-	t.Cleanup(func() { manifest.SupportedTargets = orig })
-
-	manifest.SupportedTargets = []string{"zzz-fake-target", "aaa-fake-target"}
-
+// TestTargetsCommentLines_MatchesOracle locks the pinned Oracle catalog used
+// in the generated comment, including targets that do not yet have apm-go
+// deploy adapters.
+func TestTargetsCommentLines_MatchesOracle(t *testing.T) {
 	lines := targetsCommentLines()
-	if len(lines) != 3 {
-		t.Fatalf("targetsCommentLines() = %v, want 3 lines", lines)
+	want := []string{
+		"Which agent platforms to deploy to.",
+		"Resolution order: --target flag > this field > auto-detect from filesystem.",
+		"Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf",
 	}
-	want := "Accepted values: aaa-fake-target, zzz-fake-target"
-	if lines[2] != want {
-		t.Errorf("targetsCommentLines()[2] = %q, want %q (fake target list not reflected)", lines[2], want)
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("targetsCommentLines() = %q, want %q", lines, want)
+	}
+}
+
+const oracleNoTargetManifestPrefix = "name: p\nversion: 1.0.0\ndescription: d\nauthor: "
+
+const oracleNoTargetManifestSuffix = "\n# Which agent platforms to deploy to (uncomment to pin):\n# targets:\n#   - copilot\n#   - claude\n\ndependencies:\n  apm: []\n  mcp: []\nincludes: auto\nscripts: {}\n"
+
+// TestBuildManifestNode_OracleScalarBytes records the Oracle's exact scalar
+// rendering for values that commonly expose YAML emitter differences. The
+// full byte sequence is compared, not just the parsed value.
+func TestBuildManifestNode_OracleScalarBytes(t *testing.T) {
+	tests := []struct {
+		name   string
+		author string
+		value  string
+	}{
+		{"colon", "a: b", "'a: b'"},
+		{"hash", "#x", "'#x'"},
+		{"leading space", " leading", "' leading'"},
+		{"trailing space", "trailing ", "'trailing '"},
+		{"yaml boolean word", "yes", "'yes'"},
+		{"float-looking", "1.0", "'1.0'"},
+		{"empty", "", "''"},
+		{"emoji-only", "😀", "😀"},
+		{"control character", "line\x01char", `"line\x01char"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := yamlcore.SafeDumpManifest(buildManifestNode(manifestSpec{
+				Name: "p", Version: "1.0.0", Description: "d", Author: tt.author,
+			}))
+			if err != nil {
+				t.Fatalf("SafeDump: %v", err)
+			}
+			want := oracleNoTargetManifestPrefix + tt.value + oracleNoTargetManifestSuffix
+			if string(out) != want {
+				t.Fatalf("bytes = %q, want Oracle bytes %q", out, want)
+			}
+			loaded, err := yamlcore.SafeLoad(out)
+			if err != nil {
+				t.Fatalf("SafeLoad: %v", err)
+			}
+			m, _, err := manifest.ParseManifest(loaded)
+			if err != nil {
+				t.Fatalf("ParseManifest: %v", err)
+			}
+			if m.Author != tt.author {
+				t.Errorf("round-trip author = %q, want %q", m.Author, tt.author)
+			}
+		})
+	}
+}
+
+// TestBuildManifestNode_OracleSelectedAndPluginBytes locks both shared init
+// modes and the detected-target sequence observed from the pinned Oracle.
+func TestBuildManifestNode_OracleSelectedAndPluginBytes(t *testing.T) {
+	const selectedPrefix = "name: p\nversion: 1.0.0\ndescription: d\nauthor: 名😀<\n# Which agent platforms to deploy to.\n# Resolution order: --target flag > this field > auto-detect from filesystem.\n# Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf\ntargets:\n- claude\n- codex\n- copilot\n- opencode\ndependencies:\n  apm: []\n  mcp: []\nincludes: auto\n"
+	const consumerWant = selectedPrefix + "scripts: {}\n"
+	const pluginWant = selectedPrefix + "devDependencies:\n  apm: []\nscripts: {}\n"
+
+	for _, tt := range []struct {
+		name   string
+		plugin bool
+		want   string
+	}{
+		{"consumer", false, consumerWant},
+		{"plugin", true, pluginWant},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := yamlcore.SafeDumpManifest(buildManifestNode(manifestSpec{
+				Name: "p", Version: "1.0.0", Description: "d", Author: "名😀<",
+				Targets: []string{"claude", "codex", "copilot", "opencode"}, Plugin: tt.plugin,
+			}))
+			if err != nil {
+				t.Fatalf("SafeDump: %v", err)
+			}
+			if string(out) != tt.want {
+				t.Fatalf("bytes = %q, want Oracle bytes %q", out, tt.want)
+			}
+		})
 	}
 }

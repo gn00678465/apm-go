@@ -338,6 +338,64 @@ func TestSafeDump_DoesNotWrapLongFlowContent(t *testing.T) {
 	}
 }
 
+func TestSafeDumpManifest_OracleUnicodeScalarStyles(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"plain astral scalar", "author: 名😀<\n", "author: 名😀<\n"},
+		{"quoted astral scalar with control", "author: \"😀\\x01\"\n", "author: \"😀\\x01\"\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node, err := SafeLoad([]byte(tt.src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := SafeDumpManifest(node)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(out) != tt.want {
+				t.Errorf("SafeDumpManifest = %q, want %q", out, tt.want)
+			}
+		})
+	}
+}
+
+func TestAstralScalarNormalization_Guards(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"non-quoted value", "author: plain\n", "author: plain\n"},
+		{"unterminated quote", "author: \"unterminated\n", "author: \"unterminated\n"},
+		{"quoted without astral escape", "author: \"plain\"\n", "author: \"plain\"\n"},
+		{"invalid astral escape", `author: "\U00000041"` + "\n", `author: "\U00000041"` + "\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeAstralScalarLine(tt.line); got != tt.want {
+				t.Errorf("normalizeAstralScalarLine(%q) = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+
+	for _, value := range []string{"-😀", "a: b", "a #b", "yes", "\\path"} {
+		if plainScalarSafe(value) {
+			t.Errorf("plainScalarSafe(%q) = true, want false", value)
+		}
+	}
+	if got, changed := decodeAstralEscapes(`\U00000041`); changed || got != `\U00000041` {
+		t.Errorf("decodeAstralEscapes(non-astral) = (%q, %v), want unchanged", got, changed)
+	}
+	if got := quotedScalarEnd(`"unterminated`); got != -1 {
+		t.Errorf("quotedScalarEnd(unterminated) = %d, want -1", got)
+	}
+}
+
 // Round-trip determinism: parse+dump twice must produce identical output.
 func TestRoundTrip_Deterministic(t *testing.T) {
 	src := readOracle(t, filepath.Join("manifest", "x-extension-roundtrip.yml"))
