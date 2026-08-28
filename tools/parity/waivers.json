@@ -751,12 +751,11 @@
   {
     "id": "plugin-init-help",
     "fields": [
-      "stdout",
-      "help_semantic"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`stdout`: Click's \"Options:\" vs Cobra's \"Flags:\" layout/ordering, the same established F01 rendering category as doctor-help/validate-help's own waivers -- the flag set and descriptions match once the layout is set aside. `help_semantic`: a PRE-EXISTING, cross-cutting limitation in the runner's own help-text parser (tools/parity/help_semantic.go's parseHelpFlags scans line by line and only captures a flag description's FIRST physical line -- when Click/Cobra wrap a long description across 2+ lines, e.g. this command's own --format flag whose choice-list metavar pushes its description onto a continuation line entirely, the flag is either truncated mid-sentence or dropped outright), not a real product difference and not introduced by this ticket -- verified: `pack-help`'s own (already unwaived, ticket-17-tracked) help_semantic diff shows the IDENTICAL truncation pattern on its own long flag descriptions. Recorded here for visibility; fixing the parser is cross-cutting tooling work, not owned by this ticket.",
+    "reason": "`stdout`: Click's \"Options:\" vs Cobra's \"Flags:\" layout/ordering, the same established F01 rendering category as doctor-help/validate-help's own waivers -- the flag set and descriptions match once the layout is set aside. The help_semantic parser now joins wrapped descriptions, so plugin-init-help has no remaining semantic help difference.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
   },

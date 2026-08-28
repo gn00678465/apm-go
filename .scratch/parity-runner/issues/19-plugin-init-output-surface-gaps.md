@@ -37,5 +37,9 @@ Not new to ticket 09: `pack-help`'s own (already unwaived, ticket-17-tracked) `h
 
 - [ ] Finding 1: decide whether to match the Oracle's comment wording / bare-UTF-8 author quoting exactly, or record a permanent, dated deviation (style: `search.go`'s hint-text comment). Update `waivers.json` accordingly if closed.
 - [ ] Finding 2: decide `init`/`plugin init`'s success-output stream contract — match the Oracle's single-stdout-stream behavior (revisit `terminal-ux-contract §3`, if recoverable, or make a fresh decision), or keep the current stderr-for-chrome design and record it as a permanent, cited deviation. If changed, `cmd/apm-go/init_clack_test.go` and every other test relying on `captureStderr` for init's plain-path output need updating in the same commit.
-- [ ] Finding 3: fix `parseHelpFlags` (or replace it) to handle a flag description that spans multiple physical lines, for both Click's and Cobra's wrapping conventions. Add a case-based regression fixture (a flag with a description long enough to wrap under both frameworks). Re-verify `pack-help`'s and `plugin-init-help`'s `help_semantic` diffs shrink to genuine content gaps only (if any remain).
-- [ ] Fresh corpus evidence for whichever findings are closed: the affected cases' waivers drop the closed field(s), zero `(fields, waived)` regression elsewhere.
+- [x] Finding 3: `parseHelpFlags` now joins indented continuation lines for Click and Cobra output, including Click's long-metavar `--format` shape. Real `apm pack --help` and `apm-go pack --help` excerpts cover wrapped `--archive`, `--check-clean`, and `--format` descriptions. Reverification leaves `pack-help` with only the sanctioned apm-go-only `--format` wording difference; `plugin-init-help` has no `help_semantic` difference.
+- [x] Fresh corpus evidence: after the parser fix, `plugin-init-help`'s waiver drops `help_semantic` and retains only `stdout`; the corpus remains at 78 cases and zero unwaived differences, with no other waiver tuple changes.
+
+## Evidence
+
+The parser regression test is `go test ./tools/parity`; the manifest conformance and SSH row tests are `go test ./internal/manifest`. The corpus command was rerun with output under `/tmp/parity-verifier-2-afterparser`; its `pack-help` semantic diff contains only the expected `--format` wording, while `plugin-init-help` has no semantic diff.

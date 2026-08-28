@@ -106,6 +106,37 @@ func TestParseDepString_URLForm(t *testing.T) {
 	}
 }
 
+func TestParseDepString_Ticket16SSHRows(t *testing.T) {
+	accepted := []struct {
+		input, scheme, host, alias string
+	}{
+		{"ssh://host.io/owner/repo@alias", "ssh", "host.io", "alias"},
+		{"git@host.io:owner/repo@alias", "git", "host.io", "alias"},
+		{"ssh://host!bang/owner/repo", "ssh", "host!bang", ""},
+		{"ssh://host_name/owner/repo", "ssh", "host_name", ""},
+		{"ssh://host%20name/owner/repo", "ssh", "host name", ""},
+	}
+	for _, tt := range accepted {
+		t.Run(tt.input, func(t *testing.T) {
+			d, err := ParseDepString(tt.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if d.Scheme != tt.scheme || d.Host != tt.host || d.Owner != "owner" || d.Repo != "repo" || d.Alias != tt.alias {
+				t.Errorf("parsed reference = %+v, want scheme=%q host=%q owner/repo and alias=%q", d, tt.scheme, tt.host, tt.alias)
+			}
+		})
+	}
+
+	_, err := ParseDepString("ssh://alice:p%25@host.io/owner/repo")
+	const wantError = "Percent-encoded characters are not allowed in SSH userinfo. Use the literal username (e.g. 'ssh://myuser@host/...')."
+	if err == nil {
+		t.Fatal("expected the Oracle's percent-encoded SSH userinfo rejection")
+	} else if err.Error() != wantError {
+		t.Errorf("error = %q, want %q", err, wantError)
+	}
+}
+
 func TestParseDepString_LocalPath(t *testing.T) {
 	tests := []struct {
 		input     string

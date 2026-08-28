@@ -19,6 +19,7 @@ type depRefConformanceRow struct {
 	Accepted      bool   `json:"accepted"`
 	IsLocal       bool   `json:"is_local"`
 	ErrorType     string `json:"error_type"`
+	OracleError   string `json:"error"`
 	KnownGap      string `json:"known_gap"`
 	ApmgoAccepted bool   `json:"apmgo_accepted"`
 	ApmgoIsLocal  bool   `json:"apmgo_is_local"`
@@ -104,6 +105,12 @@ func TestParseDepString_OracleConformance(t *testing.T) {
 					row.Input, gotAccepted, err, row.Accepted)
 				return
 			}
+			if row.OracleError != "" {
+				if err == nil || err.Error() != row.OracleError {
+					t.Errorf("ParseDepString(%q): error = %q, want Oracle error %q",
+						row.Input, errorString(err), row.OracleError)
+				}
+			}
 			if gotAccepted && ref.IsLocal != row.IsLocal {
 				t.Errorf("ParseDepString(%q): IsLocal = %v, want %v (Oracle)", row.Input, ref.IsLocal, row.IsLocal)
 			}
@@ -112,4 +119,11 @@ func TestParseDepString_OracleConformance(t *testing.T) {
 	if knownGaps == 0 {
 		t.Log("no known-gap rows in this fixture revision")
 	}
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

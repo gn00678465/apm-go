@@ -532,6 +532,14 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 
 func parseSSHURL(s string) (*DependencyReference, error) {
 	rest := strings.TrimPrefix(s, "ssh://")
+	// ParseDepString performs the Oracle's first whole-string unquote before
+	// dispatch (reference.py:1748). Check the resulting raw userinfo before
+	// interpreting it: an input such as p%25 becomes p%, and the Oracle still
+	// rejects that decoded percent as encoded SSH userinfo
+	// (reference.py:544-555).
+	if at := strings.IndexByte(rest, '@'); at >= 0 && strings.Contains(rest[:at], "%") {
+		return nil, fmt.Errorf("Percent-encoded characters are not allowed in SSH userinfo. Use the literal username (e.g. 'ssh://myuser@host/...').")
+	}
 
 	ref, rest := splitRef(rest)
 	rest = stripQuery(rest) // urlparse separates query from path -- reproducer 2
@@ -566,7 +574,7 @@ func parseSSHURL(s string) (*DependencyReference, error) {
 		}
 	}
 
-	host, port, err := netlocHostPort(netloc)
+	host, port, err := netlocHostPortSSH(netloc)
 	if err != nil {
 		return nil, fmt.Errorf("dependency %q: %w", s, err)
 	}
@@ -580,7 +588,8 @@ func parseSSHURL(s string) (*DependencyReference, error) {
 	// asymmetric with the https form's strip("/") + no reject_empty. No
 	// per-part unquote here either -- only _validate_url_repo_path (the
 	// https path) double-decodes.
-	path := strings.TrimLeft(rawPath, "/")
+	path, alias := splitPathAlias(rawPath)
+	path = strings.TrimLeft(path, "/")
 	path = strings.TrimSuffix(path, ".git")
 	segs := strings.Split(path, "/")
 	if len(segs) < 2 {
@@ -616,6 +625,9 @@ func parseSSHURL(s string) (*DependencyReference, error) {
 	if ref != "" {
 		d.Reference = ref
 	}
+	if alias != "" {
+		d.Alias = alias
+	}
 	if len(segs) > 2 {
 		// ".git" already stripped from the raw path end above, pre-split.
 		vp := strings.Join(segs[2:], "/")
@@ -644,6 +656,7 @@ func parseSCPURL(s string) (*DependencyReference, error) {
 		return nil, fmt.Errorf("dependency %q: invalid host %q", s, host)
 	}
 	ref, path := splitRef(path)
+	path, alias := splitPathAlias(path)
 	parts := strings.SplitN(path, "/", 3)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("dependency %q: SCP form requires user@host:owner/repo", s)
@@ -671,6 +684,9 @@ func parseSCPURL(s string) (*DependencyReference, error) {
 	}
 	if ref != "" {
 		d.Reference = ref
+	}
+	if alias != "" {
+		d.Alias = alias
 	}
 	if len(parts) == 3 && parts[2] != "" {
 		vp := strings.TrimSuffix(parts[2], ".git")
@@ -1123,6 +1139,18 @@ func splitRef(s string) (ref, rest string) {
 	return strings.TrimSpace(s[idx+1:]), s[:idx]
 }
 
+// splitPathAlias ports the Oracle's path-level @alias handling for explicit
+// SSH forms (reference.py:564-580 and 1254-1259). The alias is separated
+// after the URL fragment has been removed, so both ssh://host/owner/repo@name
+// and git@host:owner/repo@name preserve the same Alias field.
+func splitPathAlias(s string) (path, alias string) {
+	idx := strings.LastIndexByte(s, '@')
+	if idx < 0 {
+		return s, ""
+	}
+	return s[:idx], strings.TrimSpace(s[idx+1:])
+}
+
 // netlocHostPort ports urllib.parse's urlsplit netloc semantics for the
 // https/http/ssh URL forms (reference.py's _parse_standard_url and
 // _parse_ssh_protocol_url both read parsed.hostname / parsed.port):
@@ -1135,6 +1163,19 @@ func splitRef(s string) (ref, rest string) {
 // the Oracle's _split_shorthand_host_port raises for port 0 while
 // urlsplit does not).
 func netlocHostPort(netloc string) (host string, port int, err error) {
+	return parseNetlocHostPort(netloc, true)
+}
+
+// netlocHostPortSSH matches urllib.parse.urlsplit's SSH behavior: the
+// Oracle's ssh:// parser accepts the host string returned by urlsplit without
+// applying the HTTP/shorthand host character or FQDN gates (reference.py:
+// 558-560). SSH hosts such as "host!bang", "host_name", and the decoded
+// "host name" therefore remain accepted verbatim.
+func netlocHostPortSSH(netloc string) (host string, port int, err error) {
+	return parseNetlocHostPort(netloc, false)
+}
+
+func parseNetlocHostPort(netloc string, validateHost bool) (host string, port int, err error) {
 	if at := strings.LastIndexByte(netloc, '@'); at >= 0 {
 		netloc = netloc[at+1:]
 	}
@@ -1156,7 +1197,7 @@ func netlocHostPort(netloc string) (host string, port int, err error) {
 		}
 	}
 	host = strings.ToLower(host)
-	if !hostCharRe.MatchString(host) {
+	if host == "" || (validateHost && !hostCharRe.MatchString(host)) {
 		return "", 0, fmt.Errorf("invalid host %q", host)
 	}
 	return host, port, nil

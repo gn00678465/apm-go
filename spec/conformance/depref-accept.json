@@ -386,6 +386,43 @@
       "is_local": false
     },
     {
+      "input": "ssh://host.io/owner/repo@alias",
+      "category": "ssh-path-alias",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "git@host.io:owner/repo@alias",
+      "category": "scp-path-alias",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://alice:p%25@host.io/owner/repo",
+      "category": "ssh-userinfo-percent-after-decode",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Percent-encoded characters are not allowed in SSH userinfo. Use the literal username (e.g. 'ssh://myuser@host/...')."
+    },
+    {
+      "input": "ssh://host!bang/owner/repo",
+      "category": "ssh-host-charset",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host_name/owner/repo",
+      "category": "ssh-host-charset",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host%20name/owner/repo",
+      "category": "ssh-host-charset",
+      "accepted": true,
+      "is_local": false
+    },
+    {
       "input": "git@github.com:owner/repo.git",
       "category": "scp",
       "accepted": true,

@@ -46,6 +46,72 @@ Flags:
   -v, --verbose   Show detailed output
 `
 
+// These are exact flag-section excerpts captured from the real pack help
+// commands at the pinned Oracle and current apm-go revisions. The Click
+// sample exercises both ordinary wrapped descriptions and Click's
+// long-metavar form, where --format's description starts on the next line;
+// the Cobra sample exercises the corresponding target output.
+//
+//	uv run --project /home/madao/projects/apm-mesh/apm apm pack --help
+//	bin/apm-go pack --help
+const clickPackHelpWrappedFlags = `Options:
+  --archive                       Produce a .zip archive instead of a
+                                  directory (previous default: .tar.gz; use
+                                  --archive-format tar.gz for legacy CI
+                                  pipelines).
+  --format [plugin|agent-plugin|claude|claude-plugin|apm]
+                                  Bundle format selector. 'agent-plugin' emits
+                                  portable Agent Plugins v1; 'plugin' is the
+                                  compatibility alias for the legacy Claude
+                                  plugin bundle; 'claude' / 'claude-plugin'
+                                  also emit that bundle; and 'apm' emits the
+                                  legacy APM bundle layout. The current no-
+                                  flag default is 'claude-plugin'.
+  --check-clean                   Release gate: regenerate every configured
+                                  marketplace output to a temp representation
+                                  and diff against the effective on-disk path,
+                                  including --marketplace-path overrides.
+`
+
+const cobraPackHelpFlags = `Flags:
+      --archive                                                 Produce a .zip archive instead of a directory (previous default: .tar.gz; use --archive-format tar.gz for legacy CI pipelines).
+      --format [plugin|agent-plugin|claude|claude-plugin|apm]   Bundle format selector. 'agent-plugin' emits portable Agent Plugins v1; 'plugin' is the compatibility alias for the legacy Claude plugin bundle; 'claude' / 'claude-plugin' also emit that bundle; and 'apm' emits the legacy APM bundle layout. The current no-flag default is 'claude-plugin'. apm-go currently implements only the Claude plugin bundle; agent-plugin and apm are accepted but refused.
+`
+
+func TestParseHelpFlags_RealPackSamplesJoinWrappedDescriptions(t *testing.T) {
+	click := parseHelpFlags(clickPackHelpWrappedFlags)
+	cobra := parseHelpFlags(cobraPackHelpFlags)
+	clickByLong := make(map[string]helpFlagInfo, len(click))
+	for _, flag := range click {
+		clickByLong[flag.LongFlag] = flag
+	}
+	cobraByLong := make(map[string]helpFlagInfo, len(cobra))
+	for _, flag := range cobra {
+		cobraByLong[flag.LongFlag] = flag
+	}
+
+	wantClick := map[string]string{
+		"archive":     "Produce a .zip archive instead of a directory (previous default: .tar.gz; use --archive-format tar.gz for legacy CI pipelines).",
+		"check-clean": "Release gate: regenerate every configured marketplace output to a temp representation and diff against the effective on-disk path, including --marketplace-path overrides.",
+		"format":      "Bundle format selector. 'agent-plugin' emits portable Agent Plugins v1; 'plugin' is the compatibility alias for the legacy Claude plugin bundle; 'claude' / 'claude-plugin' also emit that bundle; and 'apm' emits the legacy APM bundle layout. The current no-flag default is 'claude-plugin'.",
+	}
+	for long, want := range wantClick {
+		if got := clickByLong[long].Description; got != want {
+			t.Errorf("Click --%s description = %q, want %q", long, got, want)
+		}
+	}
+
+	wantCobra := map[string]string{
+		"archive": "Produce a .zip archive instead of a directory (previous default: .tar.gz; use --archive-format tar.gz for legacy CI pipelines).",
+		"format":  "Bundle format selector. 'agent-plugin' emits portable Agent Plugins v1; 'plugin' is the compatibility alias for the legacy Claude plugin bundle; 'claude' / 'claude-plugin' also emit that bundle; and 'apm' emits the legacy APM bundle layout. The current no-flag default is 'claude-plugin'. apm-go currently implements only the Claude plugin bundle; agent-plugin and apm are accepted but refused.",
+	}
+	for long, want := range wantCobra {
+		if got := cobraByLong[long].Description; got != want {
+			t.Errorf("Cobra --%s description = %q, want %q", long, got, want)
+		}
+	}
+}
+
 func TestParseHelpFlags_ClickAndCobraAgreeOnSameSemanticFlags(t *testing.T) {
 	clickFlags := parseHelpFlags(clickDoctorHelp)
 	cobraFlags := parseHelpFlags(cobraDoctorHelp)

@@ -63,6 +63,8 @@ import sys
 #                   the current, documented apm-go accept/reject verdict
 #   apmgo_is_local: only meaningful when known_gap is set AND apmgo_accepted
 #                   is True
+#   record_error: when true, preserve the Oracle's exact rejection message in
+#                 the generated row so the Go conformance test can assert it
 DEPREF_INPUTS: list[dict] = [
     # -- shorthand: bare, ref, virtual path --------------------------------
     {"input": "owner/repo", "category": "shorthand"},
@@ -139,6 +141,17 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "ssh://-alice@host/owner/repo", "category": "ssh-user"},
     {"input": "ssh://%2DoProxyCommand=evil@host/owner/repo", "category": "ssh-user"},
     {"input": "ssh://a.b+c_d@host/owner/repo", "category": "ssh-user"},
+    # -- SSH path aliases and host spelling (ticket 16 row backlog) ---------
+    {"input": "ssh://host.io/owner/repo@alias", "category": "ssh-path-alias"},
+    {"input": "git@host.io:owner/repo@alias", "category": "scp-path-alias"},
+    {
+        "input": "ssh://alice:p%25@host.io/owner/repo",
+        "category": "ssh-userinfo-percent-after-decode",
+        "record_error": True,
+    },
+    {"input": "ssh://host!bang/owner/repo", "category": "ssh-host-charset"},
+    {"input": "ssh://host_name/owner/repo", "category": "ssh-host-charset"},
+    {"input": "ssh://host%20name/owner/repo", "category": "ssh-host-charset"},
     # -- SCP shorthand ----------------------------------------------------------
     {"input": "git@github.com:owner/repo.git", "category": "scp"},
     {"input": "git@github.com:owner/repo.git#v1.0.0", "category": "scp"},
@@ -376,6 +389,8 @@ def gen_depref_accept(oracle_src: str, oracle_commit: str) -> dict:
         except Exception as exc:  # noqa: BLE001 -- record any rejection reason
             row["accepted"] = False
             row["error_type"] = type(exc).__name__
+            if entry.get("record_error"):
+                row["error"] = str(exc)
         rows.append(row)
     return {"oracle_commit": oracle_commit, "rows": rows}
 

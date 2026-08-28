@@ -84,27 +84,30 @@ const helpFlagOwnHelp = "help"
 // listings compare equal when their content matches.
 func parseHelpFlags(text string) []helpFlagInfo {
 	seen := make(map[string]helpFlagInfo)
+	var pending *pendingHelpFlag
+	flush := func() {
+		if pending == nil || pending.long == helpFlagOwnHelp || strings.TrimSpace(pending.description) == "" {
+			pending = nil
+			return
+		}
+		seen[pending.long] = normaliseHelpFlag(*pending)
+		pending = nil
+	}
+
 	for _, line := range strings.Split(text, "\n") {
-		short, long, desc, ok := parseFlagLine(line)
-		if !ok || long == helpFlagOwnHelp {
+		short, long, desc, _, ok := parseFlagSpecLine(line)
+		if ok {
+			flush()
+			pending = &pendingHelpFlag{short: short, long: long, description: desc}
 			continue
 		}
-		info := helpFlagInfo{LongFlag: long, ShortAlias: short}
-		if dm := defaultAnnotationRe.FindStringSubmatch(desc); dm != nil {
-			if dm[1] != "" {
-				info.DefaultIfShown = strings.TrimSpace(dm[1])
-			} else {
-				info.DefaultIfShown = strings.TrimSpace(dm[2])
-			}
+		if pending != nil && isHelpContinuationLine(line) {
+			pending.description = appendHelpContinuation(pending.description, strings.TrimSpace(line))
+			continue
 		}
-		// Strip the annotation itself out of the prose, then collapse the
-		// whitespace it leaves behind -- otherwise Click's "[default: 20]"
-		// and Cobra/pflag's "(default 20)" describe the exact same default
-		// but leave the two sides' Description unequal purely on framework
-		// syntax (ticket 02 attempt 3: eval-ticket-02-r2.md Issue 2).
-		info.Description = strings.Join(strings.Fields(defaultAnnotationRe.ReplaceAllString(desc, "")), " ")
-		seen[long] = info
+		flush()
 	}
+	flush()
 
 	flags := make([]helpFlagInfo, 0, len(seen))
 	for _, f := range seen {
@@ -112,6 +115,56 @@ func parseHelpFlags(text string) []helpFlagInfo {
 	}
 	sort.Slice(flags, func(i, j int) bool { return flags[i].LongFlag < flags[j].LongFlag })
 	return flags
+}
+
+// pendingHelpFlag holds a flag while its indented continuation lines are
+// collected. Click wraps descriptions beneath the description column, and it
+// also puts a long-metavar flag's description on the following line; Cobra
+// uses the same continuation convention when its output wraps. Keeping the
+// pending state here makes both layouts feed the same normalisation path.
+type pendingHelpFlag struct {
+	short, long string
+	description string
+}
+
+func normaliseHelpFlag(p pendingHelpFlag) helpFlagInfo {
+	desc := p.description
+	info := helpFlagInfo{LongFlag: p.long, ShortAlias: p.short}
+	if dm := defaultAnnotationRe.FindStringSubmatch(desc); dm != nil {
+		if dm[1] != "" {
+			info.DefaultIfShown = strings.TrimSpace(dm[1])
+		} else {
+			info.DefaultIfShown = strings.TrimSpace(dm[2])
+		}
+	}
+	// Strip the annotation itself out of the prose, then collapse the
+	// whitespace it leaves behind -- otherwise Click's "[default: 20]"
+	// and Cobra/pflag's "(default 20)" describe the exact same default
+	// but leave the two sides' Description unequal purely on framework
+	// syntax (ticket 02 attempt 3: eval-ticket-02-r2.md Issue 2).
+	info.Description = strings.Join(strings.Fields(defaultAnnotationRe.ReplaceAllString(desc, "")), " ")
+	return info
+}
+
+// isHelpContinuationLine identifies the indented description lines emitted
+// by both Click and Cobra. Blank lines terminate a pending flag before this
+// helper is called, and an unindented heading/paragraph also terminates it.
+func isHelpContinuationLine(line string) bool {
+	return line != "" && (line[0] == ' ' || line[0] == '\t')
+}
+
+func appendHelpContinuation(description, continuation string) string {
+	if description == "" {
+		return continuation
+	}
+	if strings.HasSuffix(description, "-") && continuation != "" {
+		// Click/Cobra may wrap a hyphenated word at the hyphen (for example
+		// "no-" followed by "flag"). Rejoin that word before the final
+		// whitespace normalisation, just as a reader does when de-wrapping
+		// terminal output.
+		return description + continuation
+	}
+	return strings.TrimSpace(strings.Join([]string{description, continuation}, " "))
 }
 
 // parseFlagLine splits one --help line into its short alias (if any), long
@@ -122,21 +175,41 @@ func parseHelpFlags(text string) []helpFlagInfo {
 // discarded, since it varies by CLI framework and isn't part of the
 // semantic surface this comparison cares about.
 func parseFlagLine(line string) (short, long, desc string, ok bool) {
+	short, long, desc, hasDescription, ok := parseFlagSpecLine(line)
+	if !ok || !hasDescription {
+		return "", "", "", false
+	}
+	return short, long, desc, true
+}
+
+// parseFlagSpecLine parses the flag name and optional inline description.
+// A flag spec with no inline description is still useful to parseHelpFlags:
+// Click emits that shape for a long-metavar option before placing its prose
+// on the following indented line.
+func parseFlagSpecLine(line string) (short, long, desc string, hasDescription, ok bool) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if len(line)-len(trimmed) > 8 {
+		// A continuation line can mention another option (for example
+		// "--archive-format") in its prose. Flag definitions in both
+		// Click and Cobra help output start near the left margin, so a deeply
+		// indented option-looking phrase is description text, not a new flag.
+		return "", "", "", false, false
+	}
 	m := flagSpecRe.FindStringSubmatch(line)
 	if m == nil {
-		return "", "", "", false
+		return "", "", "", false, false
 	}
 	short, long, rest := m[1], m[2], m[3]
 
 	loc := flagDescGapRe.FindStringIndex(rest)
 	if loc == nil {
-		return "", "", "", false
+		return short, long, "", false, true
 	}
 	desc = strings.TrimSpace(rest[loc[1]:])
 	if desc == "" {
-		return "", "", "", false
+		return short, long, "", false, true
 	}
-	return short, long, desc, true
+	return short, long, desc, true, true
 }
 
 // helpHeaderBlockRe matches a paragraph's opening line that marks it as

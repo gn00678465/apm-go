@@ -1,6 +1,6 @@
 # 16 — dep-parser full Oracle conformance (spun out of ticket 11)
 
-**What to build:** Complete semantic equivalence between `manifest.ParseDepString` (+ `pythonRepr*` diagnostics rendering) and the pinned Oracle's `DependencyReference.parse` / CPython `repr()`, driven entirely by the checked-in conformance tables (`spec/conformance/depref-accept.json`, 114 rows; `spec/conformance/python-repr.json`, 46 rows + 276-cp isspace sweep) and their generator (`tools/depref_conformance_gen.py`).
+**What to build:** Complete semantic equivalence between `manifest.ParseDepString` (+ `pythonRepr*` diagnostics rendering) and the pinned Oracle's `DependencyReference.parse` / CPython `repr()`, driven entirely by the checked-in conformance tables (`spec/conformance/depref-accept.json`, 120 rows; `spec/conformance/python-repr.json`, 46 rows + 276-cp isspace sweep) and their generator (`tools/depref_conformance_gen.py`).
 
 **Blocked by:** nothing. **Status:** open — table-driven, incremental.
 
@@ -17,6 +17,8 @@ Attempts 2-8 landed: per-element Structure diagnostics; coordinate grammar via t
 
 ## Row backlog from eval-ticket-11 Re-scoped ruling (2026-08-24, verified real by orchestrator probe)
 
-- `ssh://host.io/owner/repo@alias` (+ SCP equivalent): Oracle accepts path-level alias; apm-go repo-segment parser rejects.
-- `ssh://alice:p%25@host.io/owner/repo`: Oracle's raw percent-userinfo safeguard rejects after first decode; apm-go accepts after password discard.
-- SSH host charset: `ssh://host!bang/...`, `ssh://host_name/...`, decoded `ssh://host%20name/...` — Oracle's SSH path accepts; apm-go hostCharRe rejects (orchestrator verified host_name: Oracle exit 0 vs apm-go exit 1).
+- [x] `ssh://host.io/owner/repo@alias` (+ SCP equivalent): Oracle accepts path-level alias and returns `repo_url='owner/repo'`, `host='host.io'`, `explicit_scheme='ssh'`, `reference=None`, `alias='alias'`, `ssh_user='git'`. apm-go now preserves the alias for both forms.
+- [x] `ssh://alice:p%25@host.io/owner/repo`: Oracle rejects after its first decode with the exact message `Percent-encoded characters are not allowed in SSH userinfo. Use the literal username (e.g. 'ssh://myuser@host/...').` apm-go now matches this message.
+- [x] SSH host charset: `ssh://host!bang/owner/repo`, `ssh://host_name/owner/repo`, and decoded `ssh://host%20name/owner/repo` — Oracle accepts with `host='host!bang'`, `host='host_name'`, and `host='host name'` respectively, each with `repo_url='owner/repo'`, `explicit_scheme='ssh'`, `reference=None`, `alias=None`, `ssh_user='git'`; apm-go now accepts the same inputs.
+
+The rows above were probed first against Oracle commit `c8d6cdec` and then added to `tools/depref_conformance_gen.py`; the regenerated `spec/conformance/depref-accept.json` records all six rows, including the exact rejection text for the percent-userinfo case. `go test ./internal/manifest -run TestParseDepString_OracleConformance -count=1` passes.
