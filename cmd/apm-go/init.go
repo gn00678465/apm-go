@@ -157,6 +157,21 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		return fmt.Errorf("cannot determine directory: %w", err)
 	}
 
+	// Every prompt and progress record of an interactive run belongs to one
+	// clack transcript (issue #14). Create the frame before Phase 1 so the
+	// named-project progress record has the same gutter as the later form,
+	// confirmation, and success records. Non-interactive runs keep the plain
+	// stdout path unchanged.
+	var ck *ux.Clack
+	if !yes && ux.CanPrompt() {
+		ck = ux.NewClack(os.Stderr)
+		fmt.Fprintln(os.Stderr)
+		ck.Banner(apmGoBanner)
+		ck.Intro(mode.introTitle)
+		ck.Detail("Press ^C at any time to quit.")
+		ck.Bar()
+	}
+
 	// Phase 1: Project name resolution
 	if len(args) > 0 && args[0] != "." {
 		pn := args[0]
@@ -173,7 +188,11 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		// named project directory is entered. The pinned Oracle currently
 		// emits it even when mkdir(exist_ok=True) found an existing directory;
 		// preserve that observed behavior.
-		ux.Running(os.Stdout, "Created project directory: %s", pn)
+		if ck != nil {
+			ck.Detail(fmt.Sprintf("Created project directory: %s", pn))
+		} else {
+			ux.Running(os.Stdout, "Created project directory: %s", pn)
+		}
 	} else if mode.plugin {
 		// R3.2/AC31: PROJECT-NAME is optional; when omitted, plugin mode
 		// still validates the implied name (the current directory's
@@ -194,19 +213,6 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 	_, existsErr := os.Stat("apm.yml")
 	apmYmlExists := existsErr == nil
 	existingGenerated := existingGeneratedFiles(mode)
-
-	// Every prompt of an interactive run is recorded on one clack-style
-	// connecting line (issue #14). ck stays nil for --yes and
-	// non-interactive runs, which keep their plain output verbatim.
-	var ck *ux.Clack
-	if !yes && ux.CanPrompt() {
-		ck = ux.NewClack(os.Stderr)
-		fmt.Fprintln(os.Stderr)
-		ck.Banner(apmGoBanner)
-		ck.Intro(mode.introTitle)
-		ck.Detail("Press ^C at any time to quit.")
-		ck.Bar()
-	}
 
 	// Finding 4 (F09): gate on ANY generated file, not just apm.yml
 	// (commands/init.py:205-215). Upstream's notice is "apm.yml already
@@ -350,7 +356,11 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 
 	// Oracle commands/init.py:249 starts the actual initialization phase
 	// after confirmation and before its native-source warning/file writes.
-	ux.Running(os.Stdout, "Initializing APM project: %s", name)
+	if ck != nil {
+		ck.Detail(fmt.Sprintf("Initializing APM project: %s", name))
+	} else {
+		ux.Running(os.Stdout, "Initializing APM project: %s", name)
+	}
 	// R4: plugin-native root directory warning, shared by both modes
 	// (R4.1). Purely informational -- it never blocks (R4.3, AC14 requires
 	// exit 0). It follows the Oracle's start/progress ordering.
@@ -400,7 +410,7 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 	// Phase 7: Success output
 	if ck != nil {
 		ck.Bar()
-		renderInitSuccess(mode, cwd)
+		clackRenderer(ck, mode.successTitle, buildInitSuccessContent(mode, cwd))
 		ck.Outro("Done!")
 		return nil
 	}
@@ -408,22 +418,65 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 	return nil
 }
 
-// renderInitSuccess emits the shared success surface for `init` and
-// `plugin init`. The pinned Oracle's CommandLogger/console path sends every
-// success record, table, panel, tip, and footer to its default stdout console
-// (commands/init.py:291-400). In particular, do not route any of this block
-// through the old plain-init stderr design: ticket 10's stdout precedent now
-// governs this Oracle-alignment decision, and the former contract citation is
-// retired in init_clack_test.go.
-func renderInitSuccess(mode initMode, projectRoot string) {
-	ux.Sparkle(os.Stdout, "%s", mode.successTitle)
+type initSuccessContent struct {
+	files      []string
+	nextSteps  []string
+	agentrcTip string
+	codexTip   string
+	docsLine   string
+}
 
-	rows := [][]string{{"*", "apm.yml"}}
+// renderInitSuccess emits the shared success surface for non-interactive
+// `init` and `plugin init`. The content is computed once, then handed to the
+// Oracle stdout renderer; the interactive path hands the same content to
+// clackRenderer so the two modes cannot drift (commands/init.py:291-400).
+func renderInitSuccess(mode initMode, projectRoot string) {
+	oracleStdoutRenderer(mode.successTitle, buildInitSuccessContent(mode, projectRoot))
+}
+
+// buildInitSuccessContent computes the words shared by the Oracle-style
+// stdout renderer and the interactive clack renderer. Conditional tips use
+// the same project-root checks as the former renderInitSuccess body.
+func buildInitSuccessContent(mode initMode, projectRoot string) initSuccessContent {
+	content := initSuccessContent{
+		files:     []string{"apm.yml"},
+		nextSteps: append([]string(nil), mode.nextSteps...),
+		docsLine:  "Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
+	}
 	if mode.plugin {
-		rows = append(rows, []string{"*", "plugin.json"})
+		content.files = append(content.files, "plugin.json")
 		if mode.pluginFormat == pluginModeAgent {
-			rows = append(rows, []string{"*", "mcp.json"})
+			content.files = append(content.files, "mcp.json")
 		}
+	}
+
+	if !mode.plugin {
+		agentrcInstalled, hasInstructions := detectAgentrc(projectRoot)
+		if !hasInstructions {
+			if agentrcInstalled {
+				content.nextSteps = append(content.nextSteps[:1], append([]string{
+					"Generate agent instructions:     agentrc init",
+				}, content.nextSteps[1:]...)...)
+			} else {
+				content.agentrcTip = "Tip: Use agentrc to generate tailored agent instructions from your codebase. https://github.com/microsoft/agentrc"
+			}
+		}
+	}
+	if info, err := os.Stat(filepath.Join(projectRoot, ".codex")); err == nil && info.IsDir() {
+		content.codexTip = "Tip: Use '--target agent-skills' to also deploy skills to .agents/skills/ for other clients."
+	}
+	return content
+}
+
+// oracleStdoutRenderer preserves the pinned Oracle's non-interactive output
+// bytes: its table, box, tips, and footer remain on stdout for --yes and
+// non-TTY runs.
+func oracleStdoutRenderer(title string, content initSuccessContent) {
+	ux.Sparkle(os.Stdout, "%s", title)
+
+	rows := make([][]string, 0, len(content.files))
+	for _, file := range content.files {
+		rows = append(rows, []string{"*", file})
 	}
 	// _create_files_table receives (*, filename, description) tuples in the
 	// Oracle, but its two-column renderer uses only tuple positions 0 and 1
@@ -432,33 +485,38 @@ func renderInitSuccess(mode initMode, projectRoot string) {
 	ux.Table(os.Stdout, []string{"File", "Description"}, rows)
 	ux.Plain(os.Stdout, "")
 
-	nextSteps := append([]string(nil), mode.nextSteps...)
-	var agentrcTip string
-	if !mode.plugin {
-		agentrcInstalled, hasInstructions := detectAgentrc(projectRoot)
-		if !hasInstructions {
-			if agentrcInstalled {
-				nextSteps = append(nextSteps[:1], append([]string{
-					"Generate agent instructions:     agentrc init",
-				}, nextSteps[1:]...)...)
-			} else {
-				agentrcTip = "Tip: Use agentrc to generate tailored agent instructions from your codebase. https://github.com/microsoft/agentrc"
-			}
-		}
-	}
-
-	body := make([]string, len(nextSteps))
-	for i, step := range nextSteps {
+	body := make([]string, len(content.nextSteps))
+	for i, step := range content.nextSteps {
 		body[i] = "* " + step
 	}
 	ux.Box(os.Stdout, "Next Steps", body)
-	if agentrcTip != "" {
-		ux.Info(os.Stdout, "%s", agentrcTip)
+	if content.agentrcTip != "" {
+		ux.Info(os.Stdout, "%s", content.agentrcTip)
 	}
-	if info, err := os.Stat(filepath.Join(projectRoot, ".codex")); err == nil && info.IsDir() {
-		ux.Info(os.Stdout, "Tip: Use '--target agent-skills' to also deploy skills to .agents/skills/ for other clients.")
+	if content.codexTip != "" {
+		ux.Info(os.Stdout, "%s", content.codexTip)
 	}
-	ux.Plain(os.Stdout, "  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm")
+	ux.Plain(os.Stdout, "  %s", content.docsLine)
+}
+
+// clackRenderer renders the same success words as one completed transcript
+// step. Clack supplies the frame and prefixes every body line with its
+// gutter, so no Oracle table/panel drawing can leak outside the interactive
+// transcript.
+func clackRenderer(ck *ux.Clack, title string, content initSuccessContent) {
+	body := []string{
+		"Created files: " + strings.Join(content.files, ", "),
+		"Next steps:",
+	}
+	body = append(body, content.nextSteps...)
+	if content.agentrcTip != "" {
+		body = append(body, content.agentrcTip)
+	}
+	if content.codexTip != "" {
+		body = append(body, content.codexTip)
+	}
+	body = append(body, content.docsLine)
+	ck.Step(title, strings.Join(body, "\n"))
 }
 
 // detectAgentrc mirrors init.py:40-55. shutil.which checks PATH without

@@ -227,7 +227,7 @@ func TestInitSuccessOutput_AgentrcAndInstructionBranches(t *testing.T) {
 	}
 }
 
-func TestInitInteractiveFinalSuccessBlockUsesStdout(t *testing.T) {
+func TestInitInteractiveFinalSuccessBlockUsesClackTranscript(t *testing.T) {
 	dir := t.TempDir()
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -267,17 +267,20 @@ func TestInitInteractiveFinalSuccessBlockUsesStdout(t *testing.T) {
 		}
 	})
 
-	assertContainsAll(t, stdout, []string{
-		"[*] APM project initialized successfully!",
-		"    Created Files",
-		"Next Steps",
-		"* Install a package:               apm-go install <owner>/<repo>",
-		"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
-	})
+	if stdout != "" {
+		t.Fatalf("interactive success block leaked to stdout outside the clack frame:\n%s", stdout)
+	}
 	if !strings.Contains(stdout+stderr, "plugin-native") {
 		t.Errorf("interactive native-source warning missing:\nstdout=%s\nstderr=%s", stdout, stderr)
 	}
-	if strings.Contains(stderr, "APM project initialized successfully!") || strings.Contains(stderr, "Next steps") {
-		t.Errorf("interactive final success block leaked to stderr:\n%s", stderr)
+	assertClackTranscript(t, stderr, []string{
+		"APM project initialized successfully!",
+		"Created files: apm.yml",
+		"Next steps:",
+		"Install a package:               apm-go install <owner>/<repo>",
+		"Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
+	})
+	if strings.Contains(stderr, "╭") || strings.Contains(stderr, "│ File") {
+		t.Errorf("interactive final success rendered the Oracle table/panel inside the clack transcript:\n%s", stderr)
 	}
 }

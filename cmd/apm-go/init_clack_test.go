@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/ux"
+	"github.com/spf13/cobra"
 )
 
 // captureStderr redirects os.Stderr for the duration of fn and returns what
@@ -98,4 +99,109 @@ func TestInitCmd_NonInteractiveRunsPrintNoBannerOrTranscript(t *testing.T) {
 			}
 		})
 	}
+}
+
+// captureInteractiveInit drives the production init path with the existing
+// prompt seams while capturing both process streams. Clack writes its
+// transcript to os.Stderr, so this proves the command does not bypass the
+// frame through a direct stdout printer.
+func captureInteractiveInit(t *testing.T, cmd *cobra.Command, args []string) (stdout, transcript string, cap *interactiveCapture) {
+	t.Helper()
+	stdout, transcript = "", ""
+	stdout, transcript = captureInitOutput(t, func() {
+		cap = driveInteractiveInit(t, cmd, args, true)
+	})
+	return stdout, transcript, cap
+}
+
+// assertClackTranscript checks the frame rather than a particular Unicode
+// capability. NewClack deliberately has an ASCII fallback, so both its ASCII
+// and Unicode clack glyphs are accepted while every line between Intro and
+// Outro must still belong to the connected transcript.
+func assertClackTranscript(t *testing.T, transcript string, want []string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimSuffix(transcript, "\n"), "\n")
+	intro, outro := -1, -1
+	for i, line := range lines {
+		if strings.Contains(line, "Setting up your APM") && (strings.HasPrefix(line, "┌  ") || strings.HasPrefix(line, "T  ")) {
+			intro = i
+		}
+		if strings.HasSuffix(line, "  Done!") && (strings.HasPrefix(line, "└  ") || strings.HasPrefix(line, "-  ")) {
+			outro = i
+			break
+		}
+	}
+	if intro < 0 || outro <= intro {
+		t.Fatalf("transcript has no ordered Intro/Outro frame:\n%s", transcript)
+	}
+
+	for i := intro + 1; i < outro; i++ {
+		line := lines[i]
+		if line == "" {
+			t.Errorf("transcript line %d is empty inside Intro/Outro frame", i+1)
+			continue
+		}
+		if !strings.ContainsAny(string([]rune(line)[:1]), "│|◇o├+╮╯─-") {
+			t.Errorf("transcript line %d escapes the clack frame: %q", i+1, line)
+		}
+	}
+	for _, text := range want {
+		if !strings.Contains(transcript, text) {
+			t.Errorf("transcript missing %q:\n%s", text, transcript)
+		}
+	}
+}
+
+func TestInteractiveInitSuccessStaysInsideClackFrame(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	tests := []struct {
+		name string
+		cmd  func() *cobra.Command
+		args []string
+		mode initMode
+	}{
+		{name: "init", cmd: initCmd, args: []string{"demo"}, mode: consumerMode},
+		{name: "plugin init", cmd: pluginInitCmd, args: []string{"pf"}, mode: pluginMode},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, transcript, cap := captureInteractiveInit(t, tt.cmd(), tt.args)
+			if cap.runErr != nil {
+				t.Fatalf("interactive command failed: %v", cap.runErr)
+			}
+			if stdout != "" {
+				t.Fatalf("interactive success leaked outside the clack frame to stdout:\n%s", stdout)
+			}
+
+			want := append([]string{
+				tt.mode.successTitle,
+				"Created files:",
+				"Next steps:",
+				"Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
+				"Created project directory: " + tt.args[0],
+				"Initializing APM project: " + tt.args[0],
+			}, tt.mode.nextSteps...)
+			assertClackTranscript(t, transcript, want)
+			if strings.Contains(transcript, "╭") || strings.Contains(transcript, "│ File") {
+				t.Fatalf("interactive success rendered the Oracle table/panel inside the transcript:\n%s", transcript)
+			}
+		})
+	}
+}
+
+func TestClackRendererIncludesCodexTip(t *testing.T) {
+	_, transcript := captureInitOutput(t, func() {
+		ck := ux.NewClack(os.Stderr)
+		ck.Intro("Setting up your APM project")
+		clackRenderer(ck, "APM project initialized successfully!", initSuccessContent{
+			files:     []string{"apm.yml"},
+			nextSteps: []string{"Install a package: apm-go install <owner>/<repo>"},
+			codexTip:  "Tip: Use '--target agent-skills' to also deploy skills to .agents/skills/ for other clients.",
+			docsLine:  "Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
+		})
+		ck.Outro("Done!")
+	})
+	assertClackTranscript(t, transcript, []string{
+		"Tip: Use '--target agent-skills' to also deploy skills to .agents/skills/ for other clients.",
+	})
 }

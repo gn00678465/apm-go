@@ -61,3 +61,40 @@ The parser regression test is `go test ./tools/parity`; the manifest conformance
 - Live scalar probes recorded Oracle bytes for `a: b`, `#x`, leading/trailing spaces, `yes`, `1.0`, empty, emoji-only, and `line\x01char`. `internal/yamlcore.SafeDumpManifest` now explicitly uses Unicode, single-quote, and compact-sequence settings, repairs go-yaml's astral-rune escape limitation, and `manifestStrNode` preserves PyYAML's legacy-boolean quoting. Exact byte tables are locked in `cmd/apm-go/manifestnode_test.go`.
 - `internal/manifest.DetectTargets` now sorts the detected list to match the Oracle's `sorted(...)` resolution path. `go test ./cmd/apm-go ./internal/yamlcore ./internal/manifest` and `go test ./tools/parity` pass.
 - The parity corpus grew from 78 to 79 with `init-yes` (`["init", "init-fixture", "--yes"]`). The 11 existing plugin-init waivers retain only `stdout`/`stderr`; the new case waives only `stdout`/`stderr` with Finding 2's missing success-output lines listed, leaving its `apm.yml` tree unwaived. Final pinned-Oracle parity reports 79 cases and 0 unwaived differences.
+
+### Follow-up (interactive frame) (verifier brief 8, 2026-08-28)
+
+The prior stdout renderer was correct for noninteractive runs but leaked the success block out of the interactive Clack frame. A real interactive `plugin init pf` transcript before this follow-up contained progress in the frame, followed by an unframed stdout block:
+
+```text
+|  Initializing APM project: pf
+|
+╭──────────────────────────────────────────╮
+│ APM project initialized successfully!    │
+│ File                                     │
+│ * apm.yml                                │
+│ * plugin.json                            │
+╰──────────────────────────────────────────╯
+╭ Next steps ──────────────────────────────╮
+│ Add dev dependencies: apm-go install ... │
+╰──────────────────────────────────────────╯
+Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm
+```
+
+The follow-up computes the success content once, retains the Oracle table/panel renderer for stdout, and uses a Clack step renderer for interactive output. The same real interactive flow now ends inside the frame:
+
+```text
+|  Initializing APM project: pf
+|
+o  APM project initialized successfully!
+|  Created files: apm.yml, plugin.json
+|  Next steps:
+|  Add dev dependencies:    apm-go install --dev <owner>/<repo>
+|  Pack as Agent Plugins v1:             apm-go pack --format agent-plugin
+|  Pack as Claude plugin:                apm-go pack --format claude-plugin
+|  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm
+|
+-  Done!
+```
+
+Named-project progress (`Created project directory` and `Initializing APM project`) is also routed through the interactive frame. `init` and `plugin init` share the same frame contract; successful interactive runs emit an empty stdout stream, retain the noninteractive stdout contract, and contain no table/panel markers in the transcript.
