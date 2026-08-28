@@ -697,11 +697,14 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 				// a stale/tampered checkout is replaced rather than
 				// silently trusted.
 				ref := &manifest.DependencyReference{
-					RepoURL:     dep.RepoURL,
-					VirtualPath: dep.VirtualPath,
-					Owner:       ownerFromRepoURL(dep.RepoURL),
-					Repo:        repoFromRepoURL(dep.RepoURL),
-					Source:      "git",
+					RepoURL:           dep.RepoURL,
+					Host:              dep.Host,
+					Port:              dep.Port,
+					ArtifactoryPrefix: dep.RegistryPrefix,
+					VirtualPath:       dep.VirtualPath,
+					Owner:             ownerFromRepoURL(dep.RepoURL),
+					Repo:              repoFromRepoURL(dep.RepoURL),
+					Source:            "git",
 				}
 				// Frozen mode already has the authoritative locked commit;
 				// prefer it over resolved_ref (which may name a mutable
@@ -1556,6 +1559,9 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 	for _, dep := range result.Deps {
 		ld := lockfile.LockedDep{
 			RepoURL:        dep.RepoURL,
+			Host:           dep.Host,
+			Port:           dep.Port,
+			RegistryPrefix: dep.ArtifactoryPrefix,
 			VirtualPath:    dep.VirtualPath,
 			Source:         kindToSource(dep.Kind),
 			ResolvedTag:    dep.ResolvedTag,
@@ -2128,7 +2134,12 @@ func depVersionLabel(dep resolver.ResolvedDep) string {
 func toLockDeps(deps []resolver.ResolvedDep) []lockfile.LockedDep {
 	result := make([]lockfile.LockedDep, len(deps))
 	for i, d := range deps {
-		result[i] = lockfile.LockedDep{Source: kindToSource(d.Kind)}
+		result[i] = lockfile.LockedDep{
+			Host:           d.Host,
+			Port:           d.Port,
+			RegistryPrefix: d.ArtifactoryPrefix,
+			Source:         kindToSource(d.Kind),
+		}
 	}
 	return result
 }

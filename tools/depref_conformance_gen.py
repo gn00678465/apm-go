@@ -26,11 +26,10 @@ internal/marketplace's pythonRepr* family are meant to reproduce: shorthand
 URL forms (including mixed-case schemes -- ticket 11 attempt 6's
 reproducer 1), SSH users, ports, query/fragment stripping,
 percent-encoding, control characters, empty/whitespace, IPv6/odd hosts,
-path traversal, and a few GitLab/Azure-DevOps/Artifactory shapes that are
-Oracle-only grammar apm-go's port deliberately does not implement (see
-AGENTS.md's "deliberate but partial" parity philosophy) -- those rows are
-still generated and recorded, tagged `known_gap` with a reason, precisely
-so the gap is a documented finding rather than a silent one. Each
+path traversal, and GitLab/Azure-DevOps/Artifactory shapes. Rows that are
+intentionally security-hardened beyond the Oracle are generated and
+recorded as `known_gap` with a reason, precisely so the gap is a documented
+finding rather than a silent one. Each
 known_gap row ALSO carries apmgo_accepted/apmgo_is_local: the CURRENT,
 deliberately-diverging apm-go behavior, verified by hand against the
 implementation and hard-coded here (this script only ever calls the
@@ -158,6 +157,48 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "alice@host:owner/repo", "category": "scp-user"},
     {"input": "-alice@host:owner/repo", "category": "scp-user"},
     {"input": "git@gitlab.com:acme/repo/sub/path.git", "category": "scp"},
+    # -- ticket 16 backlog round 2: SCP port rejection --------------------
+    {"input": "git@host.io:2222/owner/repo", "category": "scp-port", "record_error": True},
+    {"input": "git@host.io:2222", "category": "scp-port", "record_error": True},
+    {"input": "git@host.io:2222/owner/repo.git", "category": "scp-port", "record_error": True},
+    {"input": "git@host.io:2222/owner/repo#main", "category": "scp-port", "record_error": True},
+    {"input": "git@host.io:2222/owner/repo@alias", "category": "scp-port", "record_error": True},
+    {"input": "git@host.io:0/owner/repo", "category": "scp-port"},
+    {"input": "git@host.io:65536/owner/repo", "category": "scp-port"},
+    {"input": "git@host.io:abc/owner/repo", "category": "scp-port"},
+    # -- ticket 16 backlog round 2: retired bare @alias syntax ------------
+    {"input": "owner/repo@alias", "category": "bare-alias", "record_error": True},
+    {"input": "owner/repo#v1@alias", "category": "bare-alias", "record_error": True},
+    {"input": "owner/repo#package@v1.0.1", "category": "bare-alias-version"},
+    {"input": "owner/repo#package@v1.0.1-rc.1", "category": "bare-alias-version"},
+    {"input": "owner/repo#package@v1.0.1+build", "category": "bare-alias-version"},
+    # The pinned Oracle regex does not accept a second separator after the
+    # first prerelease/build suffix. Keep this observed rejection explicit;
+    # the verifier brief's +build boundary wording is broader than the pin.
+    {"input": "owner/repo#package@v1.0.1-rc.1+build", "category": "bare-alias-version", "record_error": True},
+    {"input": "owner/repo#package@notaversion", "category": "bare-alias-version", "record_error": True},
+    {"input": "owner/repo@bad\x7f", "category": "bare-alias-preview", "record_error": True},
+    {"input": "owner/" + "r" * 200 + "@alias", "category": "bare-alias-preview", "record_error": True},
+    {"input": "https://x.io/owner/repo@alias", "category": "bare-alias-url", "record_error": True},
+    {"input": "http://x.io/owner/repo@alias", "category": "bare-alias-url", "record_error": True},
+    # -- ticket 16 backlog round 2: virtual package extension whitelist ----
+    {"input": "owner/repo/prompts/x.prompt.md", "category": "virtual-extension"},
+    {"input": "owner/repo/prompts/x.instructions.md", "category": "virtual-extension"},
+    {"input": "owner/repo/agents/x.agent.md", "category": "virtual-extension"},
+    {"input": "owner/repo/prompts/x.chatmode.md", "category": "virtual-extension", "record_error": True},
+    {"input": "owner/repo/prompts/x.md", "category": "virtual-extension", "record_error": True},
+    {"input": "owner/repo/prompts/x.yml", "category": "virtual-extension", "record_error": True},
+    {"input": "owner/repo/prompts/x.txt", "category": "virtual-extension", "record_error": True},
+    {"input": "owner/repo/prompts/x.collection.yml", "category": "virtual-collection", "record_error": True},
+    {"input": "owner/repo/prompts/x.collection.yaml", "category": "virtual-collection", "record_error": True},
+    # -- ticket 16 backlog round 2: Artifactory VCS prefixes ---------------
+    {"input": "art.corp/artifactory/github/owner/repo", "category": "artifactory"},
+    {"input": "art.corp/artifactory/github/owner/repo/sub", "category": "artifactory"},
+    {"input": "Art.corp/Artifactory/GitHub/owner/repo", "category": "artifactory"},
+    {"input": "art.corp/artifactory/github/owner", "category": "artifactory"},
+    {"input": "https://art.corp/artifactory/github/owner/repo", "category": "artifactory"},
+    {"input": "https://art.corp/artifactory/github/owner/repo/sub", "category": "artifactory"},
+    {"input": "art.corp/notartifactory/github/owner/repo", "category": "artifactory"},
     # -- percent-encoding ---------------------------------------------------------
     {"input": "owner/%72epo", "category": "percent"},
     {"input": "owner/%zzrepo", "category": "percent"},
@@ -206,49 +247,28 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "   ", "category": "empty"},
     {"input": "owner/repo\x01", "category": "control"},
     {"input": "owner/repo\t", "category": "control"},
-    # -- GitLab / Azure DevOps / Artifactory (Oracle-only grammar) ----------------
-    # These three all happen to be ACCEPTED by both sides (apm-go's generic
-    # 3-segment host-qualified shorthand branch parses SOME dependency
-    # reference out of them), so the accepted/is_local booleans this
-    # fixture actually asserts already match -- but the STRUCTURED FIELDS
-    # diverge (apm-go has no ADO org/project/repo or GitLab nested-group
-    # segment-count logic, so owner/repo/virtual_path get assigned
-    # differently than the Oracle's own semantics). Recorded as known_gap
-    # to document that narrower, deeper divergence honestly rather than
-    # implying full semantic parity this ticket does not claim
-    # (deliberately bounded, AGENTS.md "deliberate but partial";
-    # isValidRemoteCoordinate's own doc comment already named this corner).
-    {
-        "input": "dev.azure.com/org/project/repo",
-        "category": "ado",
-        "known_gap": (
-            "Accepted on both sides, but apm-go has no ADO-specific "
-            "org/project/repo segment-count handling -- see comment above."
-        ),
-        "apmgo_accepted": True,
-        "apmgo_is_local": False,
-    },
-    {
-        "input": "myorg.visualstudio.com/project/repo",
-        "category": "ado-legacy",
-        "known_gap": (
-            "Accepted on both sides, but apm-go has no Azure DevOps legacy "
-            "*.visualstudio.com segment-count handling -- see comment above."
-        ),
-        "apmgo_accepted": True,
-        "apmgo_is_local": False,
-    },
-    {
-        "input": "gitlab.com/group/subgroup/repo",
-        "category": "gitlab-nested",
-        "known_gap": (
-            "Accepted on both sides, but apm-go's shorthand parser has no "
-            "GitLab nested-group (>2 path segments) handling -- see comment "
-            "above."
-        ),
-        "apmgo_accepted": True,
-        "apmgo_is_local": False,
-    },
+    # -- ticket 16 backlog round 2: Azure DevOps path boundaries -----------
+    {"input": "dev.azure.com/org/project/_git/repo", "category": "ado"},
+    {"input": "dev.azure.com/org/project/repo", "category": "ado"},
+    {"input": "dev.azure.com/org/project/_git/repo/sub/path", "category": "ado"},
+    {"input": "dev.azure.com/org/project/_git/repo/x.prompt.md", "category": "ado"},
+    {"input": "myorg.visualstudio.com/project/_git/repo", "category": "ado-legacy"},
+    {"input": "myorg.visualstudio.com/project/repo", "category": "ado-legacy"},
+    {"input": "https://dev.azure.com/org/project/_git/repo", "category": "ado"},
+    {"input": "https://dev.azure.com/org/project/repo", "category": "ado"},
+    {"input": "https://dev.azure.com/org/project/_git/repo/sub/path", "category": "ado"},
+    {"input": "https://dev.azure.com/org/project/_git/repo/x.prompt.md", "category": "ado"},
+    {"input": "https://myorg.visualstudio.com/project/_git/repo", "category": "ado-legacy"},
+    {"input": "https://myorg.visualstudio.com/project/repo", "category": "ado-legacy"},
+    # -- ticket 16 backlog round 2: GitLab nested groups -------------------
+    {"input": "gitlab.com/group/repo", "category": "gitlab-nested"},
+    {"input": "gitlab.com/group/subgroup/repo", "category": "gitlab-nested"},
+    {"input": "gitlab.com/group/subgroup/deep/repo", "category": "gitlab-nested"},
+    {"input": "gitlab.com/group/repo/prompts/x.prompt.md", "category": "gitlab-nested"},
+    {"input": "gitlab.com/group/subgroup/repo/prompts/x.prompt.md", "category": "gitlab-nested"},
+    {"input": "gitlab.com/group/subgroup/deep/repo/prompts/x.prompt.md", "category": "gitlab-nested"},
+    {"input": "x.io/group/subgroup/repo", "category": "generic-nested"},
+    {"input": "x.io/group/subgroup/repo/prompts/x.prompt.md", "category": "generic-nested"},
     # --- attempt 7 (eval-ticket-11 Attempt 6 ruling): urlsplit netloc/path
     # semantics the hand-split URL parser missed. Each class gets both the
     # evaluator's reproducer and its nearby corners so the table locks the

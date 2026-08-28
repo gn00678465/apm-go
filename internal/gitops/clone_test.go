@@ -51,6 +51,28 @@ func TestCheckoutMatchesRef_TrueWhenHeadMatchesTag(t *testing.T) {
 	}
 }
 
+func TestResolveCloneURL_UsesArtifactoryPrefixAndRepositoryPath(t *testing.T) {
+	loader := &RealPackageLoader{DefaultHost: "github.com"}
+	tests := []struct {
+		input, want string
+	}{
+		{"art.corp/artifactory/github/owner/repo", "https://art.corp/artifactory/github/owner/repo.git"},
+		{"https://art.corp/artifactory/github/owner/repo", "https://art.corp/artifactory/github/owner/repo.git"},
+		{"art.corp/artifactory/github/owner/repo/sub", "https://art.corp/artifactory/github/owner/repo.git"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			ref, err := manifest.ParseDepString(tt.input)
+			if err != nil {
+				t.Fatalf("ParseDepString(%q): %v", tt.input, err)
+			}
+			if got := loader.resolveCloneURL(ref); got != tt.want {
+				t.Errorf("resolveCloneURL(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckoutMatchesRef_FalseWhenRefNotFoundLocally(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithTag(t, dir, "v1", "v1.0.0")

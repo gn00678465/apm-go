@@ -18,17 +18,16 @@ func TestParseDepString_Shorthand(t *testing.T) {
 		wantVP    string
 		wantVT    string
 	}{
-		{"owner/repo", "owner", "repo", "", "", "", ""},
-		{"owner/repo#v1.0.0", "owner", "repo", "", "v1.0.0", "", ""},
-		{"owner/repo#^1.0.0", "owner", "repo", "", "^1.0.0", "", ""},
+		{"owner/repo", "owner", "repo", "github.com", "", "", ""},
+		{"owner/repo#v1.0.0", "owner", "repo", "github.com", "v1.0.0", "", ""},
+		{"owner/repo#^1.0.0", "owner", "repo", "github.com", "^1.0.0", "", ""},
 		{"github.com/owner/repo", "owner", "repo", "github.com", "", "", ""},
 		{"gitlab.com/owner/repo#main", "owner", "repo", "gitlab.com", "main", "", ""},
-		{"gitlab.com/owner/repo/skills/my-skill", "owner", "repo", "gitlab.com", "", "skills/my-skill", "subdirectory"},
-		{"owner/repo/prompts/review.prompt.md", "owner", "repo", "", "", "prompts/review.prompt.md", "file"},
-		{"owner/repo/instructions/demo.instructions.md", "owner", "repo", "", "", "instructions/demo.instructions.md", "file"},
-		{"owner/repo/agents/helper.agent.md", "owner", "repo", "", "", "agents/helper.agent.md", "file"},
-		{"owner/repo/modes/pair.chatmode.md", "owner", "repo", "", "", "modes/pair.chatmode.md", "file"},
-		{"owner/repo/sub/dir", "owner", "repo", "", "", "sub/dir", "subdirectory"},
+		{"gitlab.com/owner/repo/skills/my-skill", "owner/repo/skills", "my-skill", "gitlab.com", "", "", ""},
+		{"owner/repo/prompts/review.prompt.md", "owner", "repo", "github.com", "", "prompts/review.prompt.md", "file"},
+		{"owner/repo/instructions/demo.instructions.md", "owner", "repo", "github.com", "", "instructions/demo.instructions.md", "file"},
+		{"owner/repo/agents/helper.agent.md", "owner", "repo", "github.com", "", "agents/helper.agent.md", "file"},
+		{"owner/repo/sub/dir", "owner", "repo", "github.com", "", "sub/dir", "subdirectory"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -137,6 +136,83 @@ func TestParseDepString_Ticket16SSHRows(t *testing.T) {
 	}
 }
 
+// TestParseDepString_Ticket16BacklogRound2 locks the six verifier-brief
+// divergences against the pinned Oracle: SCP port diagnostics, retired bare
+// aliases, the three-file virtual whitelist, Artifactory route prefixes,
+// Azure DevOps path boundaries, and nested GitLab/generic-host paths.
+func TestParseDepString_Ticket16BacklogRound2(t *testing.T) {
+	t.Run("accepted fields", func(t *testing.T) {
+		tests := []struct {
+			input, host, repoURL, owner, repo, reference, alias, virtualPath, virtualType, artPrefix string
+			port                                                                                     int
+		}{
+			{"git@host.io:0/owner/repo", "host.io", "0/owner/repo", "0", "owner", "", "", "", "", "", 0},
+			{"git@host.io:65536/owner/repo", "host.io", "65536/owner/repo", "65536", "owner", "", "", "", "", "", 0},
+			{"git@host.io:abc/owner/repo", "host.io", "abc/owner/repo", "abc", "owner", "", "", "", "", "", 0},
+			{"art.corp/artifactory/github/owner/repo", "art.corp", "owner/repo", "owner", "repo", "", "", "", "", "artifactory/github", 0},
+			{"art.corp/artifactory/github/owner/repo/sub", "art.corp", "owner/repo", "owner", "repo", "", "", "sub", "subdirectory", "artifactory/github", 0},
+			{"Art.corp/Artifactory/GitHub/owner/repo", "Art.corp", "owner/repo", "owner", "repo", "", "", "", "", "artifactory/GitHub", 0},
+			{"art.corp/artifactory/github/owner", "art.corp", "artifactory/github/owner", "artifactory/github", "owner", "", "", "", "", "", 0},
+			{"https://art.corp/artifactory/github/owner/repo", "art.corp", "owner/repo", "owner", "repo", "", "", "", "", "artifactory/github", 0},
+			{"https://art.corp/artifactory/github/owner/repo/sub", "art.corp", "owner/repo/sub", "owner/repo", "sub", "", "", "", "", "artifactory/github", 0},
+			{"dev.azure.com/org/project/_git/repo", "dev.azure.com", "org/project/repo", "org/project", "repo", "", "", "", "", "", 0},
+			{"dev.azure.com/org/project/repo", "dev.azure.com", "org/project/repo", "org/project", "repo", "", "", "", "", "", 0},
+			{"dev.azure.com/org/project/_git/repo/sub/path", "dev.azure.com", "org/project/repo", "org/project", "repo", "", "", "sub/path", "subdirectory", "", 0},
+			{"dev.azure.com/org/project/_git/repo/x.prompt.md", "dev.azure.com", "org/project/repo", "org/project", "repo", "", "", "x.prompt.md", "file", "", 0},
+			{"myorg.visualstudio.com/project/_git/repo", "myorg.visualstudio.com", "myorg/project/repo", "myorg/project", "repo", "", "", "", "", "", 0},
+			{"myorg.visualstudio.com/project/repo", "myorg.visualstudio.com", "myorg/project/repo", "myorg/project", "repo", "", "", "", "", "", 0},
+			{"https://dev.azure.com/org/project/_git/repo/sub/path", "dev.azure.com", "org/project/repo", "org/project", "repo", "", "", "sub/path", "subdirectory", "", 0},
+			{"https://myorg.visualstudio.com/project/_git/repo", "myorg.visualstudio.com", "myorg/project/repo", "myorg/project", "repo", "", "", "", "", "", 0},
+			{"gitlab.com/group/repo", "gitlab.com", "group/repo", "group", "repo", "", "", "", "", "", 0},
+			{"gitlab.com/group/subgroup/repo", "gitlab.com", "group/subgroup/repo", "group/subgroup", "repo", "", "", "", "", "", 0},
+			{"gitlab.com/group/subgroup/deep/repo", "gitlab.com", "group/subgroup/deep/repo", "group/subgroup/deep", "repo", "", "", "", "", "", 0},
+			{"gitlab.com/group/repo/prompts/x.prompt.md", "gitlab.com", "group/repo", "group", "repo", "", "", "prompts/x.prompt.md", "file", "", 0},
+			{"gitlab.com/group/subgroup/repo/prompts/x.prompt.md", "gitlab.com", "group/subgroup/repo", "group/subgroup", "repo", "", "", "prompts/x.prompt.md", "file", "", 0},
+			{"gitlab.com/group/subgroup/deep/repo/prompts/x.prompt.md", "gitlab.com", "group/subgroup/deep/repo", "group/subgroup/deep", "repo", "", "", "prompts/x.prompt.md", "file", "", 0},
+			{"x.io/group/subgroup/repo", "x.io", "group/subgroup/repo", "group/subgroup", "repo", "", "", "", "", "", 0},
+			{"x.io/group/subgroup/repo/prompts/x.prompt.md", "x.io", "group/subgroup", "group", "subgroup", "", "", "repo/prompts/x.prompt.md", "file", "", 0},
+		}
+		for _, tt := range tests {
+			t.Run(tt.input, func(t *testing.T) {
+				got, err := ParseDepString(tt.input)
+				if err != nil {
+					t.Fatalf("ParseDepString(%q): %v", tt.input, err)
+				}
+				if got.Host != tt.host || got.RepoURL != tt.repoURL || got.Owner != tt.owner || got.Repo != tt.repo || got.Reference != tt.reference || got.Alias != tt.alias || got.VirtualPath != tt.virtualPath || got.VirtualType != tt.virtualType || got.ArtifactoryPrefix != tt.artPrefix || got.Port != tt.port {
+					t.Errorf("parsed reference = %+v, want host=%q repo_url=%q owner=%q repo=%q ref=%q alias=%q virtual=%q/%q artifactory=%q port=%d", got, tt.host, tt.repoURL, tt.owner, tt.repo, tt.reference, tt.alias, tt.virtualPath, tt.virtualType, tt.artPrefix, tt.port)
+				}
+			})
+		}
+	})
+
+	t.Run("exact rejection messages", func(t *testing.T) {
+		tests := []struct {
+			input, want string
+		}{
+			{"git@host.io:2222/owner/repo", "It looks like '2222' in 'git@host.io:2222/owner/repo' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  ssh://git@host.io:2222/owner/repo"},
+			{"git@host.io:2222", "It looks like '2222' in 'git@host.io:2222' is a port number, but no repository path follows it. SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form: ssh://git@host.io:2222/<owner>/<repo>.git"},
+			{"git@host.io:2222/owner/repo.git", "It looks like '2222' in 'git@host.io:2222/owner/repo' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  ssh://git@host.io:2222/owner/repo.git"},
+			{"git@host.io:2222/owner/repo#main", "It looks like '2222' in 'git@host.io:2222/owner/repo' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  ssh://git@host.io:2222/owner/repo#main"},
+			{"git@host.io:2222/owner/repo@alias", "It looks like '2222' in 'git@host.io:2222/owner/repo' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  ssh://git@host.io:2222/owner/repo@alias"},
+			{"owner/repo@alias", "Shorthand '@alias' is not supported in 'owner/repo@alias'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"},
+			{"owner/repo#v1@alias", "Shorthand '@alias' is not supported in 'owner/repo#v1@alias'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"},
+			{"owner/repo#package@v1.0.1-rc.1+build", "Shorthand '@alias' is not supported in 'owner/repo#package@v1.0.1-rc.1+build'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"},
+			{"owner/repo#package@notaversion", "Shorthand '@alias' is not supported in 'owner/repo#package@notaversion'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"},
+			{"owner/repo/prompts/x.chatmode.md", "Invalid virtual package path 'prompts/x.chatmode.md'. Individual files must end with one of: .prompt.md, .instructions.md, .agent.md. For subdirectory packages, the path should not have a file extension."},
+			{"owner/repo/prompts/x.md", "Invalid virtual package path 'prompts/x.md'. Individual files must end with one of: .prompt.md, .instructions.md, .agent.md. For subdirectory packages, the path should not have a file extension."},
+			{"owner/repo/prompts/x.collection.yml", ".collection.yml is no longer supported. Convert 'prompts/x.collection.yml' to an apm.yml with a 'dependencies' section. See: https://microsoft.github.io/apm/guides/dependencies/"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.input, func(t *testing.T) {
+				_, err := ParseDepString(tt.input)
+				if err == nil || err.Error() != tt.want {
+					t.Errorf("error = %q (len=%d), want %q (len=%d)", errorString(err), len(errorString(err)), tt.want, len(tt.want))
+				}
+			})
+		}
+	})
+}
+
 func TestParseDepString_LocalPath(t *testing.T) {
 	tests := []struct {
 		input     string
@@ -175,7 +251,7 @@ func TestParseDepString_Rejection(t *testing.T) {
 		// mkt-033 negative test (a): apm.yml never accepts the CLI's
 		// PLUGIN@MARKETPLACE shorthand as a dependencies.apm string -- only
 		// the dict form ({name, marketplace, version}) is supported there.
-		{"pkg@mkt", "does not match"},
+		{"pkg@mkt", "Shorthand '@alias' is not supported"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -496,7 +572,7 @@ func TestClassifyVirtualPath(t *testing.T) {
 		{"prompts/review.prompt.md", "file"},
 		{"instructions/demo.instructions.md", "file"},
 		{"agents/helper.agent.md", "file"},
-		{"modes/pair.chatmode.md", "file"},
+		{"modes/pair.chatmode.md", "subdirectory"},
 		{"skills/my-skill", "subdirectory"},
 		{"some/other/path", "subdirectory"},
 		{"file.md", "subdirectory"},

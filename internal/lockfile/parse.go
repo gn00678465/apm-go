@@ -163,6 +163,14 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 				return nil, err
 			}
 			d.RepoURL = val.Value
+		case "host":
+			d.Host = val.Value
+		case "port":
+			if n, err := strconv.Atoi(val.Value); err == nil && n > 0 {
+				d.Port = n
+			}
+		case "registry_prefix":
+			d.RegistryPrefix = val.Value
 		case "virtual_path":
 			if err := validatePathComponent("dependency virtual_path", val.Value); err != nil {
 				return nil, err

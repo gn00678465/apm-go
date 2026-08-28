@@ -1,6 +1,6 @@
 # 16 — dep-parser full Oracle conformance (spun out of ticket 11)
 
-**What to build:** Complete semantic equivalence between `manifest.ParseDepString` (+ `pythonRepr*` diagnostics rendering) and the pinned Oracle's `DependencyReference.parse` / CPython `repr()`, driven entirely by the checked-in conformance tables (`spec/conformance/depref-accept.json`, 120 rows; `spec/conformance/python-repr.json`, 46 rows + 276-cp isspace sweep) and their generator (`tools/depref_conformance_gen.py`).
+**What to build:** Complete semantic equivalence between `manifest.ParseDepString` (+ `pythonRepr*` diagnostics rendering) and the pinned Oracle's `DependencyReference.parse` / CPython `repr()`, driven entirely by the checked-in conformance tables (`spec/conformance/depref-accept.json`, 172 rows; `spec/conformance/python-repr.json`, 46 rows + 276-cp isspace sweep) and their generator (`tools/depref_conformance_gen.py`).
 
 **Blocked by:** nothing. **Status:** open — table-driven, incremental.
 
@@ -22,3 +22,12 @@ Attempts 2-8 landed: per-element Structure diagnostics; coordinate grammar via t
 - [x] SSH host charset: `ssh://host!bang/owner/repo`, `ssh://host_name/owner/repo`, and decoded `ssh://host%20name/owner/repo` — Oracle accepts with `host='host!bang'`, `host='host_name'`, and `host='host name'` respectively, each with `repo_url='owner/repo'`, `explicit_scheme='ssh'`, `reference=None`, `alias=None`, `ssh_user='git'`; apm-go now accepts the same inputs.
 
 The rows above were probed first against Oracle commit `c8d6cdec` and then added to `tools/depref_conformance_gen.py`; the regenerated `spec/conformance/depref-accept.json` records all six rows, including the exact rejection text for the percent-userinfo case. `go test ./internal/manifest -run TestParseDepString_OracleConformance -count=1` passes.
+
+## Backlog round 2
+
+- [x] SCP port rejection: `git@host.io:2222/owner/repo` and the no-path, `.git`, `#ref`, and `@alias` variants now match the Oracle's actionable errors; `0`, `65536`, and non-numeric first segments retain the Oracle's fall-through behavior.
+- [x] Bare shorthand `@alias` rejection: the exact migration message, printable preview sanitization/truncation, explicit URL/SCP pass-through, and version-suffix exception are covered. The pinned Oracle rejects `v1.0.1-rc.1+build` because its `_REF_VERSION_SUFFIX_RE` does not admit a second separator; this is recorded despite the verifier brief's broader boundary wording.
+- [x] Virtual file extension whitelist: dependency references now accept only `.prompt.md`, `.instructions.md`, and `.agent.md`, with exact generic and legacy `.collection.yml` rejection messages. `.chatmode.md` handling inside compiled packages remains in compile/deploy code and is intentionally unchanged.
+- [x] Artifactory VCS prefix: `artifactory/{repo-key}` is parsed into `ArtifactoryPrefix`, removed from `RepoURL`, and restored for clone URLs across shorthand and URL forms, including case-insensitive detection and the three-segment non-match.
+- [x] Azure DevOps segment handling: `dev.azure.com` and legacy `*.visualstudio.com` forms normalize `_git`, organization, project, repository, and virtual tails identically for shorthand and HTTPS inputs; the former known-gap rows are settled.
+- [x] GitLab nested groups: extensionless 3-, 4-, and 5-segment paths remain repository paths; recognized virtual-file tails split at the Oracle's observed boundary, including the generic-host comparison. The former known-gap row is settled.

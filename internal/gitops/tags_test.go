@@ -2,6 +2,8 @@ package gitops
 
 import (
 	"testing"
+
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 func TestParseTagsOutput(t *testing.T) {
@@ -28,5 +30,20 @@ func TestParseTagsOutput_Empty(t *testing.T) {
 	tags := parseTagsOutput("")
 	if len(tags) != 0 {
 		t.Errorf("expected 0 tags, got %d", len(tags))
+	}
+}
+
+func TestRealTagListerResolveCloneURLForRef_PreservesArtifactoryRoute(t *testing.T) {
+	ref := &manifest.DependencyReference{
+		Host:              "art.corp",
+		RepoURL:           "owner/repo",
+		Owner:             "owner",
+		Repo:              "repo",
+		ArtifactoryPrefix: "artifactory/github",
+		Source:            "git",
+	}
+	want := "https://art.corp/artifactory/github/owner/repo.git"
+	if got := (&RealTagLister{}).resolveCloneURLForRef(ref); got != want {
+		t.Errorf("resolveCloneURLForRef() = %q, want %q", got, want)
 	}
 }

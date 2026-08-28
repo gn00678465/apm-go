@@ -10,7 +10,7 @@ import (
 
 // Field order derived from oracle fixtures (tree_sha256 before depth).
 var entryFieldOrder = []string{
-	"repo_url", "host", "port", "source",
+	"repo_url", "host", "port", "registry_prefix", "source",
 	"resolved_commit", "resolved_ref", "resolved_tag",
 	"resolved_url", "resolved_hash",
 	"discovered_via", "marketplace_plugin_name", "source_url", "source_digest",
@@ -151,6 +151,8 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 	// Write fields in canonical order, omitting empty values
 	fields := map[string]string{
 		"repo_url":                dep.RepoURL,
+		"host":                    dep.Host,
+		"registry_prefix":         dep.RegistryPrefix,
 		"source":                  dep.Source,
 		"resolved_commit":         dep.ResolvedCommit,
 		"resolved_ref":            dep.ResolvedRef,
@@ -170,6 +172,9 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 		"package_type":            dep.PackageType,
 		"content_hash":            "",
 		"local_path":              "",
+	}
+	if dep.Port > 0 {
+		fields["port"] = strconv.Itoa(dep.Port)
 	}
 
 	for _, key := range entryFieldOrder {
@@ -321,6 +326,9 @@ func IsSemanticEqual(a, b *Lockfile) bool {
 
 func depSemanticEqual(a, b *LockedDep) bool {
 	return a.RepoURL == b.RepoURL &&
+		a.Host == b.Host &&
+		a.Port == b.Port &&
+		a.RegistryPrefix == b.RegistryPrefix &&
 		a.VirtualPath == b.VirtualPath &&
 		a.Source == b.Source &&
 		a.ResolvedCommit == b.ResolvedCommit &&
@@ -497,14 +505,14 @@ func extractEntryKey(entry *yaml.Node) string {
 
 // knownEntryFields lists fields that the serializer explicitly handles.
 // Fields NOT listed here are preserved verbatim from the original node (passthrough).
-// Deliberately excludes: host, port, is_virtual, is_dev, content_hash,
-// local_path — these are spec-recognized optional fields that the serializer
-// does not yet model but must survive round-trip (req-lk-011). package_type
+// Deliberately excludes: is_virtual, is_dev, content_hash, local_path —
+// these are spec-recognized optional fields that the serializer does not yet
+// model but must survive round-trip (req-lk-011). package_type
 // (R9.4/AC45) IS modeled via LockedDep.PackageType/the fields map above, so
 // it is listed here (previously it was in the excluded list above, per
 // design.md §11.3: declared in the whitelist but never emitted).
 var knownEntryFields = map[string]bool{
-	"repo_url": true, "source": true,
+	"repo_url": true, "host": true, "port": true, "registry_prefix": true, "source": true,
 	"resolved_commit": true, "resolved_ref": true, "resolved_tag": true,
 	"resolved_url": true, "resolved_hash": true,
 	"discovered_via": true, "marketplace_plugin_name": true,

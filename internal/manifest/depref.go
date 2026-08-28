@@ -13,16 +13,20 @@ import (
 )
 
 type DependencyReference struct {
-	RepoURL     string
-	Host        string
-	Owner       string
-	Repo        string
-	Reference   string
-	VirtualPath string
-	VirtualType string // "file" or "subdirectory"
-	Alias       string
-	IsLocal     bool
-	LocalPath   string
+	RepoURL string
+	// ArtifactoryPrefix is the VCS route prefix (for example,
+	// "artifactory/github") stripped from RepoURL. It is populated only for
+	// Artifactory coordinates and is used when rebuilding the clone URL.
+	ArtifactoryPrefix string
+	Host              string
+	Owner             string
+	Repo              string
+	Reference         string
+	VirtualPath       string
+	VirtualType       string // "file" or "subdirectory"
+	Alias             string
+	IsLocal           bool
+	LocalPath         string
 	// LocalSourcePath is a RUNTIME-ONLY materialization detail: for a
 	// dependency that must be vendored into apm_modules by COPYING a local
 	// directory (rather than git-cloning), it holds the real absolute
@@ -76,7 +80,7 @@ type DependencyReference struct {
 }
 
 var virtualFileExtensions = []string{
-	".prompt.md", ".instructions.md", ".agent.md", ".chatmode.md",
+	".prompt.md", ".instructions.md", ".agent.md",
 }
 
 var (
@@ -84,6 +88,7 @@ var (
 	repoCharRe   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	hostCharRe   = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 	segmentRe    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	adoSegmentRe = regexp.MustCompile(`^[A-Za-z0-9._\- ]+$`)
 	portRangeMax = 65535
 
 	// fqdnRe is the Oracle's is_valid_fqdn regex, ported verbatim
@@ -106,6 +111,11 @@ var (
 	// shorthandPortRe matches _split_shorthand_host_port's own
 	// `re.fullmatch(r"[0-9]{1,5}", raw_port)` port-shape check.
 	shorthandPortRe = regexp.MustCompile(`^[0-9]{1,5}$`)
+
+	// refVersionSuffixRe ports reference.py:52's _REF_VERSION_SUFFIX_RE.
+	// It is used only to preserve the one version-shaped @ suffix exception
+	// in the bare-shorthand alias guard (reference.py:487-518).
+	refVersionSuffixRe = regexp.MustCompile(`^v?\d+(?:\.\d+)*(?:[-+][A-Za-z0-9][A-Za-z0-9._-]*)?$`)
 )
 
 // sshUserMaxLen ports github_host.py's _SSH_USER_MAX_LEN.
@@ -222,23 +232,12 @@ func isValidFQDN(host string) bool {
 // prefix, or virtual-path suffix), and https/http/ssh:// URLs and SCP
 // (user@host:path) shorthand.
 //
-// This is an APPROXIMATION of the Oracle's DependencyReference.parse
-// (reference.py), not a claimed exact port -- that function is its own
-// multi-hundred-line module covering GitLab nested groups, Azure DevOps
-// org/project/repo and legacy *.visualstudio.com shapes, and Artifactory
-// VCS paths that this function does not implement at all. The actual,
-// current scope statement is spec/conformance/depref-accept.json: a table
-// generated directly from the pinned Oracle's own parse() (see
-// tools/depref_conformance_gen.py), asserted against this function by
-// TestParseDepString_OracleConformance. Every row without a `known_gap`
-// entry must match; every row with one names a specific, deliberate
-// remaining divergence. Earlier comments in this file and in
-// internal/marketplace/models.go claimed narrower, one-off "ports X
-// exactly" scopes that each turned out to still be missing accepted Oracle
-// grammar (an arbitrary SSH user, a URL query string, a shorthand
-// host:port split) -- the conformance table exists specifically so a
-// future gap shows up as a fixture-regeneration diff instead of another
-// evaluator-supplied reproducer.
+// The parser follows the pinned Oracle's DependencyReference.parse
+// (reference.py), including its host-specific GitLab, Azure DevOps, and
+// Artifactory path boundaries. The checked-in conformance table is generated
+// directly from that Oracle (tools/depref_conformance_gen.py) and asserted by
+// TestParseDepString_OracleConformance; any intentional security hardening
+// remains explicitly documented as a known gap there.
 func ParseDepString(s string) (*DependencyReference, error) {
 	if s == "" {
 		return nil, fmt.Errorf("empty dependency string")
@@ -282,6 +281,14 @@ func ParseDepString(s string) (*DependencyReference, error) {
 		return &DependencyReference{IsLocal: true, LocalPath: s, Source: "local"}, nil
 	}
 
+	// reference.py:1775 calls _reject_shorthand_alias after local-path
+	// detection and before URL parsing. Bare shorthand retired @alias syntax
+	// must produce the Oracle's migration text, while explicit URL/SCP
+	// parsers retain their own userinfo/path-alias handling.
+	if err := rejectBareShorthandAlias(s); err != nil {
+		return nil, err
+	}
+
 	// reference.py:1626,1635 (_parse_standard_url): `repo_url_lower =
 	// repo_url.lower()` then `repo_url_lower.startswith(("https://",
 	// "http://"))` -- the scheme match is CASE-INSENSITIVE. Ticket 11 eval
@@ -315,6 +322,48 @@ func ParseDepString(s string) (*DependencyReference, error) {
 	}
 
 	return parseShorthand(s)
+}
+
+// rejectBareShorthandAlias ports reference.py:487-518 exactly. The version
+// suffix exception intentionally uses the Oracle's regex verbatim: notably,
+// v1.0.1-rc.1+build contains two separators and is rejected by that regex,
+// despite the broader boundary wording in the verifier brief.
+func rejectBareShorthandAlias(s string) error {
+	stripped := strings.TrimSpace(s)
+	if !strings.Contains(stripped, "@") {
+		return nil
+	}
+	lower := strings.ToLower(stripped)
+	if strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "ssh://") {
+		return nil
+	}
+	if scpLikeRe.MatchString(stripped) {
+		return nil
+	}
+	shorthandPart, refPart := stripped, ""
+	if idx := strings.IndexByte(stripped, '#'); idx >= 0 {
+		shorthandPart, refPart = stripped[:idx], stripped[idx+1:]
+	}
+	if !strings.Contains(shorthandPart, "@") {
+		if idx := strings.LastIndexByte(refPart, '@'); idx >= 0 && refVersionSuffixRe.MatchString(refPart[idx+1:]) {
+			return nil
+		}
+	}
+
+	runes := []rune(stripped)
+	for i, r := range runes {
+		if r < 32 || r > 126 {
+			runes[i] = '?'
+		}
+	}
+	if len(runes) > 160 {
+		runes = append(runes[:157], '.', '.', '.')
+	}
+	preview := string(runes)
+	return fmt.Errorf(
+		"Shorthand '@alias' is not supported in '%s'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats",
+		preview,
+	)
 }
 
 // lenientUnquote ports Python's urllib.parse.unquote (used as
@@ -487,45 +536,64 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 	// "owner/%2572epo" -> "%72epo" -> "repo").
 	path := strings.Trim(rawPath, "/")
 	path = strings.TrimSuffix(path, ".git")
-	parts := strings.SplitN(path, "/", 3)
-	if len(parts) < 2 {
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || anyEmpty(parts) {
 		return nil, fmt.Errorf("dependency %q: url-form requires host/owner/repo", s)
 	}
-	owner := lenientUnquote(parts[0])
-	repo := lenientUnquote(parts[1])
-
-	if !ownerCharRe.MatchString(owner) || isDotSegment(owner) {
-		return nil, fmt.Errorf("dependency %q: invalid owner %q", s, owner)
-	}
-	if !repoCharRe.MatchString(repo) || isDotSegment(repo) {
-		return nil, fmt.Errorf("dependency %q: invalid repo %q", s, repo)
+	for i := range parts {
+		parts[i] = lenientUnquote(parts[i])
 	}
 
 	d := &DependencyReference{
-		Host:    host,
-		Port:    port,
-		Owner:   owner,
-		Repo:    repo,
-		RepoURL: owner + "/" + repo,
-		Scheme:  scheme,
-		Source:  "git",
+		Host:   host,
+		Port:   port,
+		Scheme: scheme,
+		Source: "git",
 	}
 	if ref != "" {
 		d.Reference = ref
 	}
-	if len(parts) == 3 && parts[2] != "" {
-		// _validate_url_repo_path unquotes EVERY path part (the terminal
-		// ".git" already came off the raw path end above, pre-split).
-		segs := strings.Split(parts[2], "/")
-		for i, sg := range segs {
-			segs[i] = lenientUnquote(sg)
+
+	// reference.py:1503-1559 removes an ADO `_git` marker, uses the
+	// host-specific repository width, injects the legacy Visual Studio org,
+	// and treats any remaining segments as a virtual package path.
+	if isAzureDevOpsHost(host) {
+		parts = removeGitMarker(parts)
+		baseLen := 3
+		if isVisualStudioLegacyHost(host) {
+			baseLen = 2
 		}
-		vp := strings.Join(segs, "/")
-		if err := validateVirtualPath(vp); err != nil {
-			return nil, fmt.Errorf("dependency %q: %w", s, err)
+		if len(parts) < baseLen {
+			return nil, fmt.Errorf("Invalid Azure DevOps repository path: expected 'org/project/repo', got '%s'", path)
 		}
-		d.VirtualPath = vp
-		d.VirtualType = classifyVirtualPath(vp)
+		repoParts := append([]string(nil), parts[:baseLen]...)
+		if isVisualStudioLegacyHost(host) {
+			repoParts = append([]string{strings.Split(host, ".")[0]}, repoParts...)
+		}
+		d.RepoURL = strings.Join(repoParts, "/")
+		if len(parts) > baseLen {
+			vp := strings.Join(parts[baseLen:], "/")
+			if err := validateVirtualPath(vp); err != nil {
+				return nil, err
+			}
+			d.VirtualPath = vp
+			d.VirtualType = classifyVirtualPath(vp)
+		}
+	} else if prefix, ok := artifactoryPathPrefix(parts); ok {
+		// reference.py:1565-1572 strips the Artifactory route from the
+		// repository identity. Unlike ADO, the HTTPS parser keeps every
+		// remaining segment in repo_url (reference.py:1573-1590); the prefix
+		// is recovered separately at reference.py:1824-1842.
+		d.ArtifactoryPrefix = prefix
+		d.RepoURL = strings.Join(parts[2:], "/")
+	} else {
+		// reference.py:1560-1589 treats non-ADO URL paths as repository
+		// coordinates, including nested GitLab groups; URL virtual packages
+		// are handled only by the ADO branch above.
+		d.RepoURL = strings.Join(parts, "/")
+	}
+	if err := setRepositoryFields(d, d.RepoURL, isAzureDevOpsHost(host)); err != nil {
+		return nil, err
 	}
 	return d, nil
 }
@@ -657,12 +725,41 @@ func parseSCPURL(s string) (*DependencyReference, error) {
 	}
 	ref, path := splitRef(path)
 	path, alias := splitPathAlias(path)
-	parts := strings.SplitN(path, "/", 3)
+	repoURL := strings.TrimSpace(strings.TrimSuffix(path, ".git"))
+	parts := strings.Split(repoURL, "/")
+	if first := parts[0]; allDigits(first) {
+		portCandidate, convErr := strconv.Atoi(first)
+		if convErr == nil && portCandidate >= 1 && portCandidate <= 65535 {
+			remainingPath := strings.Join(parts[1:], "/")
+			if remainingPath != "" {
+				gitSuffix := ""
+				if strings.HasSuffix(path, ".git") {
+					gitSuffix = ".git"
+				}
+				refSuffix := ""
+				if ref != "" {
+					refSuffix = "#" + ref
+				}
+				aliasSuffix := ""
+				if alias != "" {
+					aliasSuffix = "@" + alias
+				}
+				suggested := fmt.Sprintf("ssh://%s@%s:%d/%s%s%s%s", user, host, portCandidate, remainingPath, gitSuffix, refSuffix, aliasSuffix)
+				return nil, fmt.Errorf("It looks like '%s' in '%s@%s:%s' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  %s", first, user, host, repoURL, suggested)
+			}
+			return nil, fmt.Errorf("It looks like '%s' in '%s@%s:%s' is a port number, but no repository path follows it. SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form: ssh://%s@%s:%d/<owner>/<repo>.git", first, user, host, first, user, host, portCandidate)
+		}
+	}
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("dependency %q: SCP form requires user@host:owner/repo", s)
 	}
+	for _, part := range parts {
+		if !repoCharRe.MatchString(part) || isDotSegment(part) {
+			return nil, fmt.Errorf("dependency %q: invalid repository path component %q", s, part)
+		}
+	}
 	owner := parts[0]
-	repo := strings.TrimSuffix(parts[1], ".git")
+	repo := parts[1]
 
 	if !ownerCharRe.MatchString(owner) || isDotSegment(owner) {
 		return nil, fmt.Errorf("dependency %q: invalid owner %q", s, owner)
@@ -675,7 +772,7 @@ func parseSCPURL(s string) (*DependencyReference, error) {
 		Host:    host,
 		Owner:   owner,
 		Repo:    repo,
-		RepoURL: owner + "/" + repo,
+		RepoURL: repoURL,
 		Scheme:  "git",
 		Source:  "git",
 	}
@@ -687,14 +784,6 @@ func parseSCPURL(s string) (*DependencyReference, error) {
 	}
 	if alias != "" {
 		d.Alias = alias
-	}
-	if len(parts) == 3 && parts[2] != "" {
-		vp := strings.TrimSuffix(parts[2], ".git")
-		if err := validateVirtualPath(vp); err != nil {
-			return nil, fmt.Errorf("dependency %q: %w", s, err)
-		}
-		d.VirtualPath = vp
-		d.VirtualType = classifyVirtualPath(vp)
 	}
 	return d, nil
 }
@@ -716,9 +805,11 @@ func parseShorthand(s string) (*DependencyReference, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dependency %q: %w", s, err)
 	}
+	normalizedParts := append([]string(nil), parts...)
+	normalizedParts[0] = first
 
-	var host, owner, repo string
-	var vpParts []string
+	var host string
+	var repoParts, vpParts []string
 
 	if len(parts) >= 3 && strings.Contains(first, ".") {
 		host = first
@@ -734,45 +825,87 @@ func parseShorthand(s string) (*DependencyReference, error) {
 		if !isValidFQDN(host) {
 			return nil, fmt.Errorf("dependency %q: invalid Git host %q: not a valid FQDN", s, host)
 		}
-		owner = parts[1]
-		repo = parts[2]
-		if len(parts) > 3 {
-			vpParts = parts[3:]
+		pathParts := append([]string(nil), parts[1:]...)
+		if isAzureDevOpsHost(host) {
+			pathParts = removeGitMarker(pathParts)
+			baseLen := 3
+			if isVisualStudioLegacyHost(host) {
+				baseLen = 2
+			}
+			if len(pathParts) < baseLen {
+				return nil, fmt.Errorf("Invalid Azure DevOps repository format: %s. Expected 'org/project/repo'", rest)
+			}
+			repoParts = append([]string(nil), pathParts[:baseLen]...)
+			if isVisualStudioLegacyHost(host) {
+				repoParts = append([]string{strings.Split(host, ".")[0]}, repoParts...)
+			}
+			if len(pathParts) > baseLen {
+				vpParts = pathParts[baseLen:]
+			}
+		} else if _, ok := artifactoryPathPrefix(pathParts); ok {
+			// github_host.py:911-917,973-990 recognizes
+			// artifactory/{repo-key}/{owner}/{repo} when the first path
+			// segment is case-insensitively "artifactory" and at least four
+			// path segments follow the host.
+			repoParts = pathParts[2:4]
+			vpParts = pathParts[4:]
+		} else if isGitLabHost(host) {
+			// reference.py:1047-1059 keeps extensionless GitLab paths as
+			// the repository, but recognizes virtual-file tails using known
+			// layout roots or the 3/4/5-segment fallback boundary.
+			baseLen := gitLabRepoSegmentCount(pathParts)
+			repoParts = pathParts[:baseLen]
+			if baseLen < len(pathParts) {
+				vpParts = pathParts[baseLen:]
+			}
+		} else if isGitHubHost(host) {
+			repoParts = pathParts[:2]
+			vpParts = pathParts[2:]
+		} else if virtualFileTail(pathParts) {
+			repoParts = pathParts[:2]
+			vpParts = pathParts[2:]
+		} else {
+			// reference.py:1182-1185 and 1403-1421 keep all
+			// extensionless generic-host segments in repo_url.
+			repoParts = pathParts
 		}
 	} else {
-		owner = first
-		repo = parts[1]
-		if len(parts) > 2 {
-			vpParts = parts[2:]
+		host = "github.com"
+		repoParts = normalizedParts[:2]
+		if len(normalizedParts) > 2 {
+			vpParts = normalizedParts[2:]
 		}
 	}
 
-	repo = strings.TrimSuffix(repo, ".git")
-
-	if !ownerCharRe.MatchString(owner) || isDotSegment(owner) {
-		return nil, fmt.Errorf("dependency %q: invalid owner %q", s, owner)
+	if len(repoParts) == 0 {
+		return nil, fmt.Errorf("dependency %q does not match any valid form (url, shorthand, or local-path)", s)
 	}
-	if !repoCharRe.MatchString(repo) || isDotSegment(repo) {
-		return nil, fmt.Errorf("dependency %q: invalid repo %q", s, repo)
+	repoParts = append([]string(nil), repoParts...)
+	repoParts[len(repoParts)-1] = strings.TrimSuffix(repoParts[len(repoParts)-1], ".git")
+	repoURL := strings.Join(repoParts, "/")
+	if err := validateRepositoryPath(repoURL, isAzureDevOpsHost(host)); err != nil {
+		return nil, fmt.Errorf("dependency %q: %w", s, err)
 	}
+	owner, repo := repositoryFields(repoURL)
 
 	d := &DependencyReference{
 		Host:    host,
 		Owner:   owner,
 		Repo:    repo,
-		RepoURL: owner + "/" + repo,
+		RepoURL: repoURL,
 		Source:  "git",
 	}
-	if host != "" {
-		d.Port = port
+	if prefix, ok := artifactoryPathPrefix(parts[1:]); ok {
+		d.ArtifactoryPrefix = prefix
 	}
+	d.Port = port
 	if ref != "" {
 		d.Reference = ref
 	}
 	if len(vpParts) > 0 {
 		vp := strings.Join(vpParts, "/")
 		if err := validateVirtualPath(vp); err != nil {
-			return nil, fmt.Errorf("dependency %q: %w", s, err)
+			return nil, err
 		}
 		d.VirtualPath = vp
 		d.VirtualType = classifyVirtualPath(vp)
@@ -1122,6 +1255,134 @@ func classifyVirtualPath(vp string) string {
 	return "subdirectory"
 }
 
+func anyEmpty(parts []string) bool {
+	for _, part := range parts {
+		if part == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isGitHubHost(host string) bool {
+	lower := strings.ToLower(host)
+	return lower == "github.com" || strings.HasSuffix(lower, ".github.com") || strings.HasSuffix(lower, ".ghe.com")
+}
+
+func isGitLabHost(host string) bool {
+	lower := strings.ToLower(host)
+	return lower == "gitlab.com" || strings.HasSuffix(lower, ".gitlab.com")
+}
+
+func isVisualStudioLegacyHost(host string) bool {
+	return strings.HasSuffix(strings.ToLower(host), ".visualstudio.com")
+}
+
+func isAzureDevOpsHost(host string) bool {
+	lower := strings.ToLower(host)
+	return lower == "dev.azure.com" || isVisualStudioLegacyHost(lower)
+}
+
+func removeGitMarker(parts []string) []string {
+	for i, part := range parts {
+		if part == "_git" {
+			return append(append([]string(nil), parts[:i]...), parts[i+1:]...)
+		}
+	}
+	return parts
+}
+
+func artifactoryPathPrefix(parts []string) (string, bool) {
+	if len(parts) < 4 || !strings.EqualFold(parts[0], "artifactory") {
+		return "", false
+	}
+	return "artifactory/" + parts[1], true
+}
+
+func virtualFileTail(parts []string) bool {
+	if len(parts) == 0 {
+		return false
+	}
+	last := parts[len(parts)-1]
+	for _, ext := range virtualFileExtensions {
+		if strings.HasSuffix(last, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func gitLabRepoSegmentCount(parts []string) int {
+	n := len(parts)
+	if !virtualFileTail(parts) {
+		return n
+	}
+	for i := 2; i < n; i++ {
+		if parts[i] == "prompts" || parts[i] == "instructions" || parts[i] == "collections" {
+			return i
+		}
+	}
+	switch {
+	case n == 3:
+		return 2
+	case n == 4:
+		return 3
+	default:
+		return 3
+	}
+}
+
+func repositoryFields(repoURL string) (owner, repo string) {
+	parts := strings.Split(repoURL, "/")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
+}
+
+func setRepositoryFields(d *DependencyReference, repoURL string, ado bool) error {
+	if err := validateRepositoryPath(repoURL, ado); err != nil {
+		return err
+	}
+	d.Owner, d.Repo = repositoryFields(repoURL)
+	return nil
+}
+
+func validateRepositoryPath(repoURL string, ado bool) error {
+	parts := strings.Split(repoURL, "/")
+	if len(parts) < 2 {
+		if ado {
+			return fmt.Errorf("Invalid Azure DevOps repository format: %s. Expected 'org/project/repo'", repoURL)
+		}
+		return fmt.Errorf("invalid repository format: %s", repoURL)
+	}
+	for _, part := range parts {
+		if part == "" || isDotSegment(part) {
+			return fmt.Errorf("Invalid repository path component: %s", part)
+		}
+		if ado {
+			if !adoSegmentRe.MatchString(part) {
+				return fmt.Errorf("Invalid repository path component: %s", part)
+			}
+		} else if !repoCharRe.MatchString(part) {
+			return fmt.Errorf("Invalid repository path component: %s", part)
+		}
+	}
+	return nil
+}
+
 // splitRef splits a trailing "#ref" fragment off s, mirroring the Oracle's
 // fragment handling (reference.py:580-583): the ref is WHITESPACE-STRIPPED
 // and an empty result means "no ref" (`fragment.strip() or None`), so a
@@ -1221,7 +1482,8 @@ func parseHostPort(s string) (host string, port int, err error) {
 }
 
 func validateVirtualPath(vp string) error {
-	for _, seg := range strings.Split(vp, "/") {
+	parts := strings.Split(vp, "/")
+	for _, seg := range parts {
 		if seg == "" {
 			continue
 		}
@@ -1240,6 +1502,16 @@ func validateVirtualPath(vp string) error {
 		if isDotSegment(seg) {
 			return fmt.Errorf("invalid virtual path segment %q", seg)
 		}
+	}
+	if strings.HasSuffix(vp, ".collection.yml") || strings.HasSuffix(vp, ".collection.yaml") {
+		return fmt.Errorf(".collection.yml is no longer supported. Convert '%s' to an apm.yml with a 'dependencies' section. See: https://microsoft.github.io/apm/guides/dependencies/", vp)
+	}
+	if virtualFileTail(parts) {
+		return nil
+	}
+	last := parts[len(parts)-1]
+	if strings.Contains(last, ".") {
+		return fmt.Errorf("Invalid virtual package path '%s'. Individual files must end with one of: .prompt.md, .instructions.md, .agent.md. For subdirectory packages, the path should not have a file extension.", vp)
 	}
 	return nil
 }

@@ -3,6 +3,9 @@ package lockfile
 // LockedDep represents a single resolved dependency in the lockfile.
 type LockedDep struct {
 	RepoURL        string
+	Host           string
+	Port           int
+	RegistryPrefix string
 	VirtualPath    string
 	Source         string // "git", "registry", "local"
 	Constraint     string // verbatim semver range from manifest at lock time
