@@ -113,7 +113,7 @@ func TestParseDepString_Ticket16SSHRows(t *testing.T) {
 		{"git@host.io:owner/repo@alias", "git", "host.io", "alias"},
 		{"ssh://host!bang/owner/repo", "ssh", "host!bang", ""},
 		{"ssh://host_name/owner/repo", "ssh", "host_name", ""},
-		{"ssh://host%20name/owner/repo", "ssh", "host name", ""},
+		{"ssh://host%20name/owner/repo", "ssh", "host%20name", ""},
 	}
 	for _, tt := range accepted {
 		t.Run(tt.input, func(t *testing.T) {
@@ -334,44 +334,52 @@ func TestParseDepString_AbsolutePathSkipsEscapeGuard(t *testing.T) {
 	}
 }
 
-// TestParseDepString_PercentDecodeThenParse is ticket 11 eval attempt 4's
-// reproducer 1: reference.py:1748 percent-decodes the WHOLE dependency
-// string before any other parsing, so "owner/%72epo" ("%72" -> "r") must
-// parse identically to "owner/repo" -- verified directly against the
-// pinned Oracle (DependencyReference.parse("owner/%72epo") ->
-// repo_url="owner/repo"). Before this fix, apm-go's undecoded repoCharRe
-// check rejected "%72epo" outright ("invalid repo").
-func TestParseDepString_PercentDecodeThenParse(t *testing.T) {
-	d, err := ParseDepString("owner/%72epo")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if d.Owner != "owner" || d.Repo != "repo" {
-		t.Errorf("Owner=%q Repo=%q, want owner/repo", d.Owner, d.Repo)
-	}
-
-	// An invalid escape ("%zz" is not two hex digits) is left completely
-	// unconsumed -- the literal "%zz" passes through as ordinary text,
-	// matching CPython's unquote_to_bytes -- so it fails repoCharRe just
-	// like it would if it had never been percent-adjacent at all.
-	if _, err := ParseDepString("owner/%zzrepo"); err == nil {
-		t.Error("expected an error for an invalid repo character (literal %%zzrepo), got nil")
+// TestParseDepString_PercentEncodedShorthand is the regression for upstream
+// commit 645a5a53: reference.py:1774-1779 no longer decodes the whole
+// dependency string before shorthand parsing. Encoded shorthand segments
+// therefore remain presentation text and fail the ordinary shorthand
+// character grammar, while malformed percent escapes remain ordinary invalid
+// characters.
+func TestParseDepString_PercentEncodedShorthand(t *testing.T) {
+	for _, input := range []string{"owner/%72epo", "owner/%zzrepo"} {
+		t.Run(input, func(t *testing.T) {
+			_, err := ParseDepString(input)
+			if err == nil {
+				t.Fatal("expected encoded shorthand to be rejected")
+			}
+			if !strings.Contains(err.Error(), "Invalid repository path component") {
+				t.Errorf("error = %q, want invalid repository path component", err)
+			}
+		})
 	}
 }
 
-// TestParseDepString_PercentEncodedTraversal is ticket 11 eval attempt 4's
-// explicit regression requirement: decoding the whole string BEFORE running
-// containsEscape must not let a percent-encoded traversal marker bypass it
-// -- a dependency string that decodes to "../../etc/passwd" is still
-// rejected with "escapes project root", the same as the literal form
-// (TestParseDepString_Rejection's "../../../etc/passwd" case).
+// TestParseDepString_PercentEncodedTraversal is the regression for the
+// strict shorthand path validation introduced by upstream commit 645a5a53.
+// The encoded traversal marker must be rejected before character matching,
+// with the Oracle's path_security.py:123-173 diagnostic preserved.
 func TestParseDepString_PercentEncodedTraversal(t *testing.T) {
 	_, err := ParseDepString("%2e%2e/%2e%2e/etc/passwd")
 	if err == nil {
 		t.Fatal("expected an error for a percent-encoded traversal, got nil")
 	}
-	if !strings.Contains(err.Error(), "escapes project root") {
-		t.Errorf("error = %q, want it to contain %q", err.Error(), "escapes project root")
+	want := "Invalid repository path '%2e%2e/%2e%2e': segment '%2e%2e' is a traversal sequence"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestParseURLPathSegments_EmptyPath(t *testing.T) {
+	_, _, err := parseURLPathSegments("/", "repository URL path")
+	if got, want := errorString(err), "Invalid repository URL path: path segments must not be empty"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestValidateVirtualPath_Traversal(t *testing.T) {
+	err := validateVirtualPath("../secret")
+	if got, want := errorString(err), "Invalid virtual path '../secret': segment '..' is a traversal sequence"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
 	}
 }
 

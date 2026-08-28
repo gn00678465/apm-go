@@ -84,12 +84,15 @@ var virtualFileExtensions = []string{
 }
 
 var (
-	ownerCharRe  = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-	repoCharRe   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	hostCharRe   = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
-	segmentRe    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	adoSegmentRe = regexp.MustCompile(`^[A-Za-z0-9._\- ]+$`)
-	portRangeMax = 65535
+	ownerCharRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	repoCharRe  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	// identity.py:30 and reference.py:1599-1614/1703-1709 at b75a02b1:
+	// non-ADO URL identities preserve safe percent-encoded octets.
+	percentEncodedRepoCharRe = regexp.MustCompile(`^(?:[A-Za-z0-9._~-]|%[0-9A-Fa-f]{2})+$`)
+	hostCharRe               = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+	segmentRe                = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	adoSegmentRe             = regexp.MustCompile(`^[A-Za-z0-9._\- ]+$`)
+	portRangeMax             = 65535
 
 	// fqdnRe is the Oracle's is_valid_fqdn regex, ported verbatim
 	// (github_host.py:1099-1101): labels of alphanumerics/hyphens that
@@ -243,19 +246,15 @@ func ParseDepString(s string) (*DependencyReference, error) {
 		return nil, fmt.Errorf("empty dependency string")
 	}
 
-	// reference.py:1748: `dependency_str = urllib.parse.unquote(dependency_str)`
-	// runs ONCE on the whole string, before local-path detection, host
-	// parsing, everything -- so every check below (including error message
-	// interpolation) operates on the DECODED string, exactly like the
-	// Oracle reassigning its own local variable. Percent-decoding first
-	// (rather than, say, only within a virtual-path segment) is also what
-	// makes a percent-encoded traversal marker (e.g. "%2e%2e") visible to
-	// containsEscape below instead of slipping past it as an opaque
-	// "%2e%2e" segment -- see TestParseDepString_PercentEncodedTraversal.
-	s = lenientUnquote(s)
+	// The Oracle no longer performs a whole-string urllib.parse.unquote here
+	// (reference.py:1774-1779 at b75a02b1). Percent-bearing repository paths
+	// are decoded only by the strict URL-path helper below; shorthand keeps
+	// its encoded presentation and validates its segments before character
+	// matching. This distinction is the security fix from upstream commit
+	// 645a5a53.
 
-	// reference.py:1750-1751: `if any(ord(c) < 32 for c in dependency_str)`
-	// runs AFTER the decode, on the decoded string.
+	// reference.py:1777-1778: control characters are rejected before the
+	// shape-specific parser sees them.
 	for _, r := range s {
 		if r < 32 {
 			return nil, fmt.Errorf("dependency string contains invalid control characters")
@@ -330,7 +329,7 @@ func ParseDepString(s string) (*DependencyReference, error) {
 // despite the broader boundary wording in the verifier brief.
 func rejectBareShorthandAlias(s string) error {
 	stripped := strings.TrimSpace(s)
-	if !strings.Contains(stripped, "@") {
+	if !strings.Contains(stripped, "@") && !strings.Contains(strings.ToLower(stripped), "%40") {
 		return nil
 	}
 	lower := strings.ToLower(stripped)
@@ -344,7 +343,23 @@ func rejectBareShorthandAlias(s string) error {
 	if idx := strings.IndexByte(stripped, '#'); idx >= 0 {
 		shorthandPart, refPart = stripped[:idx], stripped[idx+1:]
 	}
-	if !strings.Contains(shorthandPart, "@") {
+	hasEncodedAlias := false
+	if strings.Contains(strings.ToLower(shorthandPart), "%40") {
+		_, decoded, err := parseURLPathSegments(shorthandPart, "repository path")
+		if err != nil {
+			return err
+		}
+		for _, segment := range decoded {
+			if strings.Contains(segment, "@") {
+				hasEncodedAlias = true
+				break
+			}
+		}
+	}
+	if !strings.Contains(stripped, "@") && !hasEncodedAlias {
+		return nil
+	}
+	if !strings.Contains(shorthandPart, "@") && !hasEncodedAlias {
 		if idx := strings.LastIndexByte(refPart, '@'); idx >= 0 && refVersionSuffixRe.MatchString(refPart[idx+1:]) {
 			return nil
 		}
@@ -366,15 +381,97 @@ func rejectBareShorthandAlias(s string) error {
 	)
 }
 
-// lenientUnquote ports Python's urllib.parse.unquote (used as
-// reference.py:1748's whole-string percent-decode) exactly: percent-decode
-// is lenient, not strict. An invalid escape (a "%" not followed by two hex
-// digits) is left completely unconsumed -- the literal "%" and whatever
-// follows it pass through unchanged, rather than erroring like
-// net/url.PathUnescape would. The resulting bytes are then UTF-8-decoded
-// with errors='replace' semantics: an invalid byte sequence becomes one
-// U+FFFD per Go's utf8.DecodeRune (which, like CPython's UTF-8 codec,
-// implements the Unicode "maximal subpart" replacement algorithm).
+// parseURLPathSegments ports path_security.py:32-120, introduced by Oracle
+// commit 645a5a53 and used by reference.py:1505-1510 at b75a02b1. It keeps
+// raw URL segments for non-ADO identity/presentation, while returning strict
+// decoded segments for ADO coordinates and virtual-path decisions. The
+// helper intentionally rejects empty segments, malformed escapes, invalid
+// UTF-8, residual multi-encoding, decoded separators, and traversal names.
+func parseURLPathSegments(rawPath, context string) ([]string, []string, error) {
+	path := strings.TrimPrefix(rawPath, "/")
+	if path == "" {
+		return nil, nil, fmt.Errorf("Invalid %s: path segments must not be empty", context)
+	}
+	rawSegments := strings.Split(path, "/")
+	decodedSegments := make([]string, 0, len(rawSegments))
+	for _, rawSegment := range rawSegments {
+		if rawSegment == "" {
+			return nil, nil, fmt.Errorf("Invalid %s: path segments must not be empty", context)
+		}
+		if strings.ContainsRune(rawSegment, '\\') {
+			return nil, nil, fmt.Errorf("Invalid %s: path segments must not contain path separators", context)
+		}
+		for i := 0; i < len(rawSegment); {
+			c := rawSegment[i]
+			if c < 0x21 || c > 0x7e {
+				return nil, nil, fmt.Errorf("Invalid %s: path segments must use percent-encoded UTF-8 bytes", context)
+			}
+			if c == '%' {
+				if i+2 >= len(rawSegment) {
+					return nil, nil, fmt.Errorf("Invalid %s: malformed percent-encoding", context)
+				}
+				if _, ok := hexNibble(rawSegment[i+1]); !ok {
+					return nil, nil, fmt.Errorf("Invalid %s: malformed percent-encoding", context)
+				}
+				if _, ok := hexNibble(rawSegment[i+2]); !ok {
+					return nil, nil, fmt.Errorf("Invalid %s: malformed percent-encoding", context)
+				}
+				i += 3
+				continue
+			}
+			i++
+		}
+		decodedBytes := lenientUnquoteBytes(rawSegment)
+		if !utf8.Valid(decodedBytes) {
+			return nil, nil, fmt.Errorf("Invalid %s: percent-encoding must be valid UTF-8", context)
+		}
+		decoded := string(decodedBytes)
+		for _, r := range decoded {
+			if r < 0x20 || r == 0x7f {
+				return nil, nil, fmt.Errorf("Invalid %s: percent-encoding must not decode to control characters", context)
+			}
+		}
+		if strings.ContainsRune(decoded, '%') {
+			return nil, nil, fmt.Errorf("Invalid %s: residual percent-encoding is not allowed", context)
+		}
+		if strings.ContainsAny(decoded, `/\\`) {
+			return nil, nil, fmt.Errorf("Invalid %s: percent-encoding must not decode to a path separator", context)
+		}
+		if isDotSegment(decoded) {
+			return nil, nil, fmt.Errorf("Invalid %s: segment '%s' is a traversal sequence", context, rawSegment)
+		}
+		decodedSegments = append(decodedSegments, decoded)
+	}
+	return rawSegments, decodedSegments, nil
+}
+
+// validateEncodedPathSegments ports path_security.py:123-173 for shorthand
+// repository and virtual paths. Unlike parseURLPathSegments it permits empty
+// segments (the Oracle's default reject_empty=False) and only rejects literal
+// or up-to-eight-round percent-decoded traversal markers.
+func validateEncodedPathSegments(path, context string) error {
+	for _, segment := range strings.Split(strings.ReplaceAll(path, `\`, "/"), "/") {
+		decoded := segment
+		for i := 0; i < 8; i++ {
+			next := lenientUnquote(decoded)
+			if next == decoded {
+				break
+			}
+			decoded = next
+		}
+		if isDotSegment(segment) || isDotSegment(decoded) {
+			return fmt.Errorf("Invalid %s '%s': segment '%s' is a traversal sequence", context, path, segment)
+		}
+	}
+	return nil
+}
+
+// lenientUnquote ports Python's urllib.parse.unquote for the bounded
+// traversal check in path_security.py:157-168. Percent-decode is lenient,
+// not strict: an invalid escape (a "%" not followed by two hex digits) is
+// left completely unconsumed -- the literal "%" and whatever follows it
+// pass through unchanged. The resulting bytes are UTF-8-decoded with
+// errors='replace' semantics for parity with the Oracle's path guard.
 func lenientUnquote(s string) string {
 	return utf8ReplaceInvalid(lenientUnquoteBytes(s))
 }
@@ -526,23 +623,24 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 		return nil, fmt.Errorf("dependency %q: invalid Git host %q: not a valid FQDN", s, host)
 	}
 
-	// _validate_url_repo_path (reference.py:1495-1502): the URL path is
-	// stripped of slashes on BOTH ends (so leading "//" and a trailing "/"
-	// both collapse -- conformance rows url-leading-double-slash and
-	// url-trailing-slash), a terminal ".git" comes off the raw path before
-	// splitting, and every part is percent-unquoted AGAIN on top of
-	// parse()'s whole-string unquote at reference.py:1748 -- a genuine
-	// double decode (conformance row url-double-encoded:
-	// "owner/%2572epo" -> "%72epo" -> "repo").
-	path := strings.Trim(rawPath, "/")
-	path = strings.TrimSuffix(path, ".git")
-	parts := strings.Split(path, "/")
-	if len(parts) < 2 || anyEmpty(parts) {
-		return nil, fmt.Errorf("dependency %q: url-form requires host/owner/repo", s)
+	// _validate_url_repo_path (reference.py:1504-1514) now routes the raw
+	// parsed URL path through path_security.parse_url_path_segments. It strips
+	// only the leading URL slash, rejects every empty segment (including a
+	// leading double slash and a trailing slash), decodes exactly once, and
+	// retains the raw presentation for non-ADO repository identities. The
+	// helper's error text is intentionally surfaced without a dependency
+	// prefix, matching the Oracle's ValueError(str(PathTraversalError)) wrap.
+	presentationParts, parts, err := parseURLPathSegments("/"+rawPath, "repository URL path")
+	if err != nil {
+		return nil, err
 	}
-	for i := range parts {
-		parts[i] = lenientUnquote(parts[i])
+	if strings.HasSuffix(parts[len(parts)-1], ".git") {
+		parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
+		if strings.HasSuffix(presentationParts[len(presentationParts)-1], ".git") {
+			presentationParts[len(presentationParts)-1] = strings.TrimSuffix(presentationParts[len(presentationParts)-1], ".git")
+		}
 	}
+	path := strings.Join(parts, "/")
 
 	d := &DependencyReference{
 		Host:   host,
@@ -559,6 +657,7 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 	// and treats any remaining segments as a virtual package path.
 	if isAzureDevOpsHost(host) {
 		parts = removeGitMarker(parts)
+		presentationParts = removeGitMarker(presentationParts)
 		baseLen := 3
 		if isVisualStudioLegacyHost(host) {
 			baseLen = 2
@@ -585,14 +684,15 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 		// remaining segment in repo_url (reference.py:1573-1590); the prefix
 		// is recovered separately at reference.py:1824-1842.
 		d.ArtifactoryPrefix = prefix
-		d.RepoURL = strings.Join(parts[2:], "/")
+		presentationParts = presentationParts[2:]
+		d.RepoURL = strings.Join(presentationParts, "/")
 	} else {
 		// reference.py:1560-1589 treats non-ADO URL paths as repository
 		// coordinates, including nested GitLab groups; URL virtual packages
 		// are handled only by the ADO branch above.
-		d.RepoURL = strings.Join(parts, "/")
+		d.RepoURL = strings.Join(presentationParts, "/")
 	}
-	if err := setRepositoryFields(d, d.RepoURL, isAzureDevOpsHost(host)); err != nil {
+	if err := setRepositoryFields(d, d.RepoURL, isAzureDevOpsHost(host), true); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -600,11 +700,10 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 
 func parseSSHURL(s string) (*DependencyReference, error) {
 	rest := strings.TrimPrefix(s, "ssh://")
-	// ParseDepString performs the Oracle's first whole-string unquote before
-	// dispatch (reference.py:1748). Check the resulting raw userinfo before
-	// interpreting it: an input such as p%25 becomes p%, and the Oracle still
-	// rejects that decoded percent as encoded SSH userinfo
-	// (reference.py:544-555).
+	// The Oracle checks the raw SSH userinfo for percent escapes before
+	// interpreting it (reference.py:544-555 at b75a02b1). Keep the same
+	// rejection; the commit removed the old whole-string decode, so a host
+	// escape such as %20 remains encoded in the parsed hostname.
 	if at := strings.IndexByte(rest, '@'); at >= 0 && strings.Contains(rest[:at], "%") {
 		return nil, fmt.Errorf("Percent-encoded characters are not allowed in SSH userinfo. Use the literal username (e.g. 'ssh://myuser@host/...').")
 	}
@@ -883,8 +982,11 @@ func parseShorthand(s string) (*DependencyReference, error) {
 	repoParts = append([]string(nil), repoParts...)
 	repoParts[len(repoParts)-1] = strings.TrimSuffix(repoParts[len(repoParts)-1], ".git")
 	repoURL := strings.Join(repoParts, "/")
-	if err := validateRepositoryPath(repoURL, isAzureDevOpsHost(host)); err != nil {
-		return nil, fmt.Errorf("dependency %q: %w", s, err)
+	if err := validateRepositoryPath(repoURL, isAzureDevOpsHost(host), false); err != nil {
+		// reference.py:1468-1472 lets the repository-path validation error
+		// escape directly; preserve the Oracle's exact diagnostic without a
+		// dependency-string wrapper.
+		return nil, err
 	}
 	owner, repo := repositoryFields(repoURL)
 
@@ -1352,15 +1454,15 @@ func repositoryFields(repoURL string) (owner, repo string) {
 	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
 }
 
-func setRepositoryFields(d *DependencyReference, repoURL string, ado bool) error {
-	if err := validateRepositoryPath(repoURL, ado); err != nil {
+func setRepositoryFields(d *DependencyReference, repoURL string, ado, allowPercentEncoded bool) error {
+	if err := validateRepositoryPath(repoURL, ado, allowPercentEncoded); err != nil {
 		return err
 	}
 	d.Owner, d.Repo = repositoryFields(repoURL)
 	return nil
 }
 
-func validateRepositoryPath(repoURL string, ado bool) error {
+func validateRepositoryPath(repoURL string, ado, allowPercentEncoded bool) error {
 	parts := strings.Split(repoURL, "/")
 	if len(parts) < 2 {
 		if ado {
@@ -1368,12 +1470,19 @@ func validateRepositoryPath(repoURL string, ado bool) error {
 		}
 		return fmt.Errorf("invalid repository format: %s", repoURL)
 	}
+	if err := validateEncodedPathSegments(repoURL, "repository path"); err != nil {
+		return err
+	}
 	for _, part := range parts {
 		if part == "" || isDotSegment(part) {
 			return fmt.Errorf("Invalid repository path component: %s", part)
 		}
 		if ado {
 			if !adoSegmentRe.MatchString(part) {
+				return fmt.Errorf("Invalid repository path component: %s", part)
+			}
+		} else if allowPercentEncoded {
+			if !percentEncodedRepoCharRe.MatchString(part) {
 				return fmt.Errorf("Invalid repository path component: %s", part)
 			}
 		} else if !repoCharRe.MatchString(part) {
@@ -1430,8 +1539,8 @@ func netlocHostPort(netloc string) (host string, port int, err error) {
 // netlocHostPortSSH matches urllib.parse.urlsplit's SSH behavior: the
 // Oracle's ssh:// parser accepts the host string returned by urlsplit without
 // applying the HTTP/shorthand host character or FQDN gates (reference.py:
-// 558-560). SSH hosts such as "host!bang", "host_name", and the decoded
-// "host name" therefore remain accepted verbatim.
+// 558-560). SSH hosts such as "host!bang", "host_name", and the encoded
+// "host%20name" therefore remain accepted verbatim.
 func netlocHostPortSSH(netloc string) (host string, port int, err error) {
 	return parseNetlocHostPort(netloc, false)
 }
@@ -1482,6 +1591,9 @@ func parseHostPort(s string) (host string, port int, err error) {
 }
 
 func validateVirtualPath(vp string) error {
+	if err := validateEncodedPathSegments(vp, "virtual path"); err != nil {
+		return err
+	}
 	parts := strings.Split(vp, "/")
 	for _, seg := range parts {
 		if seg == "" {

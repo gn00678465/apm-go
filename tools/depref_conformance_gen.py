@@ -9,7 +9,7 @@ Oracle does:
     uv run --project /home/madao/projects/apm-mesh/apm python3 \
         tools/depref_conformance_gen.py \
         --oracle-src /home/madao/projects/apm-mesh/apm/src \
-        --oracle-commit c8d6cdec596e773a84b0839c33c28b6b0a217637 \
+        --oracle-commit b75a02b1cfab3ffa5e1952916045b6d5374090ae \
         --out-accept spec/conformance/depref-accept.json \
         --out-repr spec/conformance/python-repr.json
 
@@ -80,7 +80,7 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "owner/repo?x", "category": "shorthand"},
     {"input": "pkg@mkt", "category": "shorthand"},
     {"input": "owner/", "category": "shorthand"},
-    {"input": "owner//repo", "category": "shorthand"},
+    {"input": "owner//repo", "category": "shorthand", "record_error": True},
     # -- shorthand: host-qualified, host:port ------------------------------
     {"input": "github.com/owner/repo", "category": "shorthand-host"},
     {"input": "gitlab.com/owner/repo#main", "category": "shorthand-host"},
@@ -179,6 +179,10 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "owner/repo#package@notaversion", "category": "bare-alias-version", "record_error": True},
     {"input": "owner/repo@bad\x7f", "category": "bare-alias-preview", "record_error": True},
     {"input": "owner/" + "r" * 200 + "@alias", "category": "bare-alias-preview", "record_error": True},
+    {"input": "owner/repo%40alias", "category": "bare-alias-percent", "record_error": True},
+    {"input": "owner/%40alias", "category": "bare-alias-percent", "record_error": True},
+    {"input": "owner/%40%zz", "category": "bare-alias-percent", "record_error": True},
+    {"input": "owner/repo#v%40", "category": "bare-alias-percent"},
     {"input": "https://x.io/owner/repo@alias", "category": "bare-alias-url", "record_error": True},
     {"input": "http://x.io/owner/repo@alias", "category": "bare-alias-url", "record_error": True},
     # -- ticket 16 backlog round 2: virtual package extension whitelist ----
@@ -200,10 +204,59 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "https://art.corp/artifactory/github/owner/repo/sub", "category": "artifactory"},
     {"input": "art.corp/notartifactory/github/owner/repo", "category": "artifactory"},
     # -- percent-encoding ---------------------------------------------------------
-    {"input": "owner/%72epo", "category": "percent"},
+    # Oracle commit 645a5a53 makes shorthand retain encoded presentation but
+    # reject encoded repository characters, while HTTPS accepts safe encoded
+    # segments and rejects encoded separators, traversal, and residual
+    # multi-encoding. Keep both forms and the sourceBase-shaped URL paths in
+    # this table so the shared grammar cannot regress at its transport seam.
+    {"input": "owner/%72epo", "category": "percent", "record_error": True},
+    {"input": "owner/%2572epo", "category": "percent-double", "record_error": True},
+    {"input": "owner/%2Frepo", "category": "percent-separator", "record_error": True},
+    {"input": "owner/%2frepo", "category": "percent-separator", "record_error": True},
+    {"input": "owner/%2e/repo", "category": "percent-traversal", "record_error": True},
+    {"input": "owner/%2E/repo", "category": "percent-traversal", "record_error": True},
+    {"input": "owner/%5Crepo", "category": "percent-separator", "record_error": True},
+    {"input": "owner/%5C%5Crepo", "category": "percent-separator", "record_error": True},
     {"input": "owner/%zzrepo", "category": "percent"},
     {"input": "owner/%2e%2e/repo", "category": "percent-traversal"},
     {"input": "owner/%00repo", "category": "percent-control"},
+    {"input": "host.io/owner/%72epo", "category": "percent-host", "record_error": True},
+    {"input": "host.io/owner/%2Frepo", "category": "percent-host", "record_error": True},
+    {"input": "host.io/owner/%2e/repo", "category": "percent-host", "record_error": True},
+    {"input": "host.io/%2e%2e/%2e%2e/etc/passwd", "category": "percent-host", "record_error": True},
+    # Empty shorthand segments: bare, host-prefixed, and leading/trailing
+    # forms. A leading slash is intentionally represented by the protocol-
+    # relative row elsewhere because a single leading slash is a local path.
+    {"input": "owner/repo/", "category": "shorthand-empty", "record_error": True},
+    {"input": "owner//", "category": "shorthand-empty", "record_error": True},
+    {"input": "host.io//owner/repo", "category": "shorthand-host-empty", "record_error": True},
+    {"input": "host.io/owner//repo", "category": "shorthand-host-empty", "record_error": True},
+    {"input": "host.io/owner/repo/", "category": "shorthand-host-empty", "record_error": True},
+    # HTTPS/sourceBase-shaped paths: safe single encoding is preserved;
+    # double encoding, separators, traversal, uppercase backslash, and all
+    # empty-segment positions are rejected by the strict URL decoder.
+    {"input": "https://x.io/owner/%72epo", "category": "https-percent"},
+    {"input": "https://x.io/owner/%2Frepo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%2frepo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%2e/repo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%2E/repo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%5Crepo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%5C%5Crepo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/%72wner/repo", "category": "https-percent"},
+    {"input": "https://x.io/owner/%C3%A9repo", "category": "https-percent"},
+    {"input": "https://x.io/owner/%2572epo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%zzrepo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%0zrepo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%a", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%e0%a0repo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/%00repo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/\\repo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/a b", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/owner/érepo", "category": "https-percent", "record_error": True},
+    {"input": "https://x.io/", "category": "https-empty", "record_error": True},
+    {"input": "https://x.io///owner/repo", "category": "https-empty", "record_error": True},
+    {"input": "https://x.io/owner//", "category": "https-empty", "record_error": True},
     # -- local paths ----------------------------------------------------------
     {"input": "./packages/local", "category": "local"},
     {"input": "./foo/bar", "category": "local"},
@@ -231,13 +284,8 @@ DEPREF_INPUTS: list[dict] = [
     },
     {
         "input": "%2e%2e/%2e%2e/etc/passwd",
-        "category": "local-traversal",
-        "known_gap": (
-            "Same intentional divergence as '../../../etc/passwd' above: after "
-            "percent-decoding it is the same is_local_path-accepted shape on "
-            "the Oracle side."
-        ),
-        "apmgo_accepted": False,
+        "category": "percent-traversal",
+        "record_error": True,
     },
     {"input": "~/my-skills", "category": "local"},
     {"input": "/etc/passwd", "category": "local-absolute"},
@@ -276,9 +324,9 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "https://user:pass@x.io/owner/repo", "category": "url-userinfo"},
     {"input": "https://user@x.io/owner/repo", "category": "url-userinfo"},
     {"input": "ssh://%2Duser@host.io/owner/repo", "category": "ssh-userinfo-percent"},
-    {"input": "https://x.io//owner/repo", "category": "url-leading-double-slash"},
-    {"input": "https://x.io/owner//repo", "category": "url-internal-double-slash"},
-    {"input": "https://x.io/owner/repo/", "category": "url-trailing-slash"},
+    {"input": "https://x.io//owner/repo", "category": "url-leading-double-slash", "record_error": True},
+    {"input": "https://x.io/owner//repo", "category": "url-internal-double-slash", "record_error": True},
+    {"input": "https://x.io/owner/repo/", "category": "url-trailing-slash", "record_error": True},
     {"input": "ssh://host.io//owner/repo", "category": "ssh-leading-double-slash"},
     {"input": "ssh://host.io/owner//repo", "category": "ssh-internal-double-slash"},
     {"input": "ssh://host.io/owner/repo/", "category": "ssh-trailing-slash"},
@@ -288,7 +336,7 @@ DEPREF_INPUTS: list[dict] = [
     {"input": "ssh://host.io:0/owner/repo", "category": "ssh-port-zero"},
     {"input": "x.io:0/owner/repo", "category": "shorthand-port-zero"},
     {"input": "https://X.IO/owner/repo", "category": "url-uppercase-host"},
-    {"input": "https://x.io/owner/%2572epo", "category": "url-double-encoded"},
+    {"input": "https://x.io/owner/%2572epo", "category": "url-double-encoded", "record_error": True},
     {"input": "owner/repo#%e0%a0", "category": "percent-truncated-utf8-ref"},
     {"input": "owner/%e0%a0repo", "category": "percent-truncated-utf8-repo"},
     {"input": "owner/%a0repo", "category": "percent-lone-continuation"},

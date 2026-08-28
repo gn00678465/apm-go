@@ -1,5 +1,5 @@
 {
-  "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+  "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
   "rows": [
     {
       "input": "owner/repo",
@@ -89,7 +89,8 @@
       "input": "owner//repo",
       "category": "shorthand",
       "accepted": false,
-      "error_type": "ValueError"
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
     },
     {
       "input": "github.com/owner/repo",
@@ -566,6 +567,33 @@
       "error": "Shorthand '@alias' is not supported in 'owner/rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr...'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
     },
     {
+      "input": "owner/repo%40alias",
+      "category": "bare-alias-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/repo%40alias'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/%40alias",
+      "category": "bare-alias-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/%40alias'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/%40%zz",
+      "category": "bare-alias-percent",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path: malformed percent-encoding"
+    },
+    {
+      "input": "owner/repo#v%40",
+      "category": "bare-alias-percent",
+      "accepted": true,
+      "is_local": false
+    },
+    {
       "input": "https://x.io/owner/repo@alias",
       "category": "bare-alias-url",
       "accepted": false,
@@ -684,8 +712,58 @@
     {
       "input": "owner/%72epo",
       "category": "percent",
-      "accepted": true,
-      "is_local": false
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %72epo"
+    },
+    {
+      "input": "owner/%2572epo",
+      "category": "percent-double",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %2572epo"
+    },
+    {
+      "input": "owner/%2Frepo",
+      "category": "percent-separator",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %2Frepo"
+    },
+    {
+      "input": "owner/%2frepo",
+      "category": "percent-separator",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %2frepo"
+    },
+    {
+      "input": "owner/%2e/repo",
+      "category": "percent-traversal",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path 'owner/%2e': segment '%2e' is a traversal sequence"
+    },
+    {
+      "input": "owner/%2E/repo",
+      "category": "percent-traversal",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path 'owner/%2E': segment '%2E' is a traversal sequence"
+    },
+    {
+      "input": "owner/%5Crepo",
+      "category": "percent-separator",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %5Crepo"
+    },
+    {
+      "input": "owner/%5C%5Crepo",
+      "category": "percent-separator",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %5C%5Crepo"
     },
     {
       "input": "owner/%zzrepo",
@@ -704,6 +782,219 @@
       "category": "percent-control",
       "accepted": false,
       "error_type": "ValueError"
+    },
+    {
+      "input": "host.io/owner/%72epo",
+      "category": "percent-host",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %72epo"
+    },
+    {
+      "input": "host.io/owner/%2Frepo",
+      "category": "percent-host",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %2Frepo"
+    },
+    {
+      "input": "host.io/owner/%2e/repo",
+      "category": "percent-host",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path 'owner/%2e/repo': segment '%2e' is a traversal sequence"
+    },
+    {
+      "input": "host.io/%2e%2e/%2e%2e/etc/passwd",
+      "category": "percent-host",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path '%2e%2e/%2e%2e/etc/passwd': segment '%2e%2e' is a traversal sequence"
+    },
+    {
+      "input": "owner/repo/",
+      "category": "shorthand-empty",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner//",
+      "category": "shorthand-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "host.io//owner/repo",
+      "category": "shorthand-host-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "host.io/owner//repo",
+      "category": "shorthand-host-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "host.io/owner/repo/",
+      "category": "shorthand-host-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "https://x.io/owner/%72epo",
+      "category": "https-percent",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/%2Frepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to a path separator"
+    },
+    {
+      "input": "https://x.io/owner/%2frepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to a path separator"
+    },
+    {
+      "input": "https://x.io/owner/%2e/repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: segment '%2e' is a traversal sequence"
+    },
+    {
+      "input": "https://x.io/owner/%2E/repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: segment '%2E' is a traversal sequence"
+    },
+    {
+      "input": "https://x.io/owner/%5Crepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to a path separator"
+    },
+    {
+      "input": "https://x.io/owner/%5C%5Crepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to a path separator"
+    },
+    {
+      "input": "https://x.io/%72wner/repo",
+      "category": "https-percent",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/%C3%A9repo",
+      "category": "https-percent",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/%2572epo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: residual percent-encoding is not allowed"
+    },
+    {
+      "input": "https://x.io/owner/%zzrepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: malformed percent-encoding"
+    },
+    {
+      "input": "https://x.io/owner/%0zrepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: malformed percent-encoding"
+    },
+    {
+      "input": "https://x.io/owner/%",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: malformed percent-encoding"
+    },
+    {
+      "input": "https://x.io/owner/%a",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: malformed percent-encoding"
+    },
+    {
+      "input": "https://x.io/owner/%e0%a0repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must be valid UTF-8"
+    },
+    {
+      "input": "https://x.io/owner/%00repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to control characters"
+    },
+    {
+      "input": "https://x.io/owner/\\repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not contain path separators"
+    },
+    {
+      "input": "https://x.io/owner/a b",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must use percent-encoded UTF-8 bytes"
+    },
+    {
+      "input": "https://x.io/owner/\u00e9repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must use percent-encoded UTF-8 bytes"
+    },
+    {
+      "input": "https://x.io/",
+      "category": "https-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
+    },
+    {
+      "input": "https://x.io///owner/repo",
+      "category": "https-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
+    },
+    {
+      "input": "https://x.io/owner//",
+      "category": "https-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
     },
     {
       "input": "./packages/local",
@@ -735,11 +1026,10 @@
     },
     {
       "input": "%2e%2e/%2e%2e/etc/passwd",
-      "category": "local-traversal",
-      "known_gap": "Same intentional divergence as '../../../etc/passwd' above: after percent-decoding it is the same is_local_path-accepted shape on the Oracle side.",
-      "apmgo_accepted": false,
-      "accepted": true,
-      "is_local": true
+      "category": "percent-traversal",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path '%2e%2e/%2e%2e': segment '%2e%2e' is a traversal sequence"
     },
     {
       "input": "~/my-skills",
@@ -924,20 +1214,23 @@
     {
       "input": "https://x.io//owner/repo",
       "category": "url-leading-double-slash",
-      "accepted": true,
-      "is_local": false
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
     },
     {
       "input": "https://x.io/owner//repo",
       "category": "url-internal-double-slash",
       "accepted": false,
-      "error_type": "PathTraversalError"
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
     },
     {
       "input": "https://x.io/owner/repo/",
       "category": "url-trailing-slash",
-      "accepted": true,
-      "is_local": false
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
     },
     {
       "input": "ssh://host.io//owner/repo",
@@ -996,8 +1289,9 @@
     {
       "input": "https://x.io/owner/%2572epo",
       "category": "url-double-encoded",
-      "accepted": true,
-      "is_local": false
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: residual percent-encoding is not allowed"
     },
     {
       "input": "owner/repo#%e0%a0",

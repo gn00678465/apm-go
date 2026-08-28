@@ -1,6 +1,6 @@
 # 16 — dep-parser full Oracle conformance (spun out of ticket 11)
 
-**What to build:** Complete semantic equivalence between `manifest.ParseDepString` (+ `pythonRepr*` diagnostics rendering) and the pinned Oracle's `DependencyReference.parse` / CPython `repr()`, driven entirely by the checked-in conformance tables (`spec/conformance/depref-accept.json`, 172 rows; `spec/conformance/python-repr.json`, 46 rows + 276-cp isspace sweep) and their generator (`tools/depref_conformance_gen.py`).
+**What to build:** Complete semantic equivalence between `manifest.ParseDepString` (+ `pythonRepr*` diagnostics rendering) and the pinned Oracle's `DependencyReference.parse` / CPython `repr()`, driven entirely by the checked-in conformance tables (`spec/conformance/depref-accept.json`, 214 rows; `spec/conformance/python-repr.json`, 46 rows + 276-cp isspace sweep) and their generator (`tools/depref_conformance_gen.py`).
 
 **Blocked by:** nothing. **Status:** open — table-driven, incremental.
 
@@ -8,7 +8,7 @@
 
 ## Already fixed under ticket 11 (kept, nothing to redo)
 
-Attempts 2-8 landed: per-element Structure diagnostics; coordinate grammar via the dep parser; repo/repository Python-truthiness; tag_pattern validate-time deferral; whole-string lenient percent-unquote + FQDN host gate; true recursive python repr (ordered dicts, surrogates incl. dict keys, number lexemes, inf/-0, dup-key first-position-last-value, Python isspace set); case-insensitive http(s) schemes; urlsplit netloc semantics (userinfo/lowercase host/port 0-65535/empty port); https strip+double-unquote vs ssh lstrip+reject_empty asymmetry; maximal-subpart U+FFFD; Oracle ref-fragment parity (no parse-time charset gate); ssh userinfo single-split model.
+Attempts 2-8 landed: per-element Structure diagnostics; coordinate grammar via the dep parser; repo/repository Python-truthiness; tag_pattern validate-time deferral; strict URL-path percent decoding with encoded shorthand preservation + FQDN host gate; true recursive python repr (ordered dicts, surrogates incl. dict keys, number lexemes, inf/-0, dup-key first-position-last-value, Python isspace set); case-insensitive http(s) schemes; urlsplit netloc semantics (userinfo/lowercase host/port 0-65535/empty port); https/ssh path asymmetry; maximal-subpart U+FFFD; Oracle ref-fragment parity (no parse-time charset gate); ssh userinfo single-split model.
 
 ## Working rule
 
@@ -31,3 +31,20 @@ The rows above were probed first against Oracle commit `c8d6cdec` and then added
 - [x] Artifactory VCS prefix: `artifactory/{repo-key}` is parsed into `ArtifactoryPrefix`, removed from `RepoURL`, and restored for clone URLs across shorthand and URL forms, including case-insensitive detection and the three-segment non-match.
 - [x] Azure DevOps segment handling: `dev.azure.com` and legacy `*.visualstudio.com` forms normalize `_git`, organization, project, repository, and virtual tails identically for shorthand and HTTPS inputs; the former known-gap rows are settled.
 - [x] GitLab nested groups: extensionless 3-, 4-, and 5-segment paths remain repository paths; recognized virtual-file tails split at the Oracle's observed boundary, including the generic-host comparison. The former known-gap row is settled.
+
+## Re-baseline b75a02b1
+
+The pinned Oracle moved to `b75a02b1cfab3ffa5e1952916045b6d5374090ae` (v0.29.0). Upstream commit `645a5a53da93204b0c97663821507b242753a58a` (`fix: allow percent-encoded sourceBase path segments`) introduced the strict encoded-path grammar in `reference.py`, `identity.py`, and the marketplace `yml_schema.py` path helpers.
+
+The new `DependencyReference.parse` observations and exact errors are:
+
+| Input | Oracle result |
+|---|---|
+| `owner/%72epo` | `ValueError: Invalid repository path component: %72epo` |
+| `https://x.io//owner/repo` | `ValueError: Invalid repository URL path: path segments must not be empty` |
+| `https://x.io/owner/repo/` | `ValueError: Invalid repository URL path: path segments must not be empty` |
+| `https://x.io/owner/%2572epo` | `ValueError: Invalid repository URL path: residual percent-encoding is not allowed` |
+| `https://x.io/owner//repo` | `ValueError: Invalid repository URL path: path segments must not be empty` (error type changed from `PathTraversalError`) |
+| `%2e%2e/%2e%2e/etc/passwd` | `PathTraversalError: Invalid repository path '%2e%2e/%2e%2e': segment '%2e%2e' is a traversal sequence` (settled) |
+
+The generator now also covers encoded shorthand and HTTPS segments (single/double encoding, `%2F`, `%2e`, uppercase `%5C`), empty bare/host-prefixed/HTTPS segments, and sourceBase-shaped HTTPS paths. `../../../etc/passwd` and `../secret` remain documented security known gaps because the new Oracle still accepts them as local paths while apm-go rejects relative-root escapes. The Go authoring package has no `sourceBase` parser or resolver; its documented design scope defers that larger feature, so the Oracle `parse_source_base`/`split_source_base` surface is recorded as out of scope rather than silently claimed as covered.

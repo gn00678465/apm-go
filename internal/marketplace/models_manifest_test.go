@@ -524,9 +524,9 @@ func TestMarketplaceManifest_StructuralErrors(t *testing.T) {
 			want: []string{"plugins[0].source: url requires a valid non-local url field"},
 		},
 		{
-			name: "eval attempt 4 reproducer 1 (accept side): percent-decode -- github repo with a percent-encoded character is accepted",
+			name: "re-baseline: shorthand percent-encoded repository segment is rejected",
 			doc:  `{"name":"m","plugins":[{"name":"p","source":{"type":"github","repo":"owner/%72epo"}}]}`,
-			want: nil,
+			want: []string{"plugins[0].source: github requires a valid non-local owner/repository field"},
 		},
 		{
 			name: "eval attempt 4 reproducer 2: dict-shaped tag_pattern reprs with insertion order preserved",

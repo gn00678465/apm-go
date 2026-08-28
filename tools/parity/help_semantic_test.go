@@ -23,7 +23,7 @@ func TestIsHelpCase(t *testing.T) {
 }
 
 // clickDoctorHelp and cobraDoctorHelp are the two sides' actual doctor
-// --help output (pinned oracle.pin commit c8d6cdec / apm-go's own doctor
+// --help output (pinned oracle.pin commit b75a02b1 / apm-go's own doctor
 // command), captured verbatim so the parser is exercised against real
 // framework output rather than a hand-simplified stand-in.
 const clickDoctorHelp = `Usage: apm doctor [OPTIONS]
