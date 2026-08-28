@@ -29,7 +29,6 @@ func TestRootError_UnverifiedFlagErrorsMatchPreTicket13Shape(t *testing.T) {
 	}{
 		{"pack unknown long flag", []string{"pack", "--bogus"}, "[x] unknown flag: --bogus\n"},
 		{"pack shorthand missing argument", []string{"pack", "-m"}, "[x] Option ''m' in -m' requires an argument.\n"},
-		{"plugin init unknown long flag", []string{"plugin", "init", "myproj", "--bogus"}, "[x] unknown flag: --bogus\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -61,6 +60,67 @@ func TestRootError_UnverifiedFlagErrorsMatchPreTicket13Shape(t *testing.T) {
 			}
 			if strings.Contains(stdout, "Usage:") || strings.Contains(stderr, "Usage:") {
 				t.Errorf("output must not contain a Usage preamble for an unverified flag error: stdout=%q stderr=%q", stdout, stderr)
+			}
+		})
+	}
+}
+
+// TestRootError_InitUnknownFlagMatchesOracle covers ticket 19 Finding 2's
+// one-off parse surface. Click renders this as a UsageError before init can
+// touch the filesystem: stdout is empty, stderr carries the Usage preamble
+// and "No such option", and the process exits 2. The preamble is cobra's own
+// UseLine/CommandPath (apm-go's name, cobra's [flags] layout): the binary
+// name is folded by the runner's rewrite_binary_name and the Click-vs-Cobra
+// usage layout is a waived rendering class (init-unknown-flag's waiver),
+// exactly as plugin-init-unknown is handled -- the Oracle's spelling is NOT
+// hardcoded per command. The error line itself is byte-identical.
+func TestRootError_InitUnknownFlagMatchesOracle(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantStderr string
+	}{
+		{
+			name: "consumer init",
+			args: []string{"init", "--name", "x"},
+			wantStderr: "Usage: apm-go init [project-name] [flags]\n" +
+				"Try 'apm-go init --help' for help.\n\n" +
+				"Error: No such option: --name\n",
+		},
+		{
+			name: "plugin init",
+			args: []string{"plugin", "init", "--name", "x"},
+			wantStderr: "Usage: apm-go plugin init [project-name] [flags]\n" +
+				"Try 'apm-go plugin init --help' for help.\n\n" +
+				"Error: No such option: --name\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirTemp(t)
+			root := buildRootCmd()
+			root.SetArgs(tt.args)
+
+			var stdout string
+			var exitCode int
+			stderr := captureStderr(t, func() {
+				stdout = captureStdout(t, func() {
+					cmd, err := root.ExecuteC()
+					if err == nil {
+						t.Fatal("expected an error")
+					}
+					exitCode = renderRootError(cmd, err)
+				})
+			})
+
+			if exitCode != 2 {
+				t.Errorf("exit code = %d, want 2", exitCode)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want empty", stdout)
+			}
+			if stderr != tt.wantStderr {
+				t.Errorf("stderr = %q, want %q", stderr, tt.wantStderr)
 			}
 		})
 	}

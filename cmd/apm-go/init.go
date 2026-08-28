@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -40,8 +41,8 @@ type initMode struct {
 	validateName func(string) error
 	introTitle   string
 	successTitle string
-	// nextSteps is printed verbatim, one line per element, by both the
-	// clack and plain-text output paths (R3.3.e/R3.4).
+	// nextSteps is rendered verbatim in the shared success block for both
+	// consumer and plugin initialization (Oracle commands/init.py:316-370).
 	nextSteps []string
 }
 
@@ -51,7 +52,12 @@ var consumerMode = initMode{
 	validateName:  consumerValidateName,
 	introTitle:    "Setting up your APM project",
 	successTitle:  "APM project initialized successfully!",
-	nextSteps:     []string{"Install a package:  apm-go install <owner>/<repo>"},
+	nextSteps: []string{
+		"Install a package:               apm-go install <owner>/<repo>",
+		"Run a script:                    apm-go run <script>",
+		"Build a plugin? Scaffold one:    apm-go plugin init",
+		"Publishing a marketplace?:       apm-go marketplace init",
+	},
 }
 
 var pluginMode = initMode{
@@ -60,8 +66,10 @@ var pluginMode = initMode{
 	defaultYesVer: "0.1.0",
 	validateName:  pluginValidateName,
 	introTitle:    "Setting up your APM plugin project",
-	successTitle:  "APM plugin initialized successfully!",
-	nextSteps:     pluginNextSteps,
+	// commands/init.py:291 uses the shared consumer success title even
+	// when _perform_init is called through `plugin init`.
+	successTitle: "APM project initialized successfully!",
+	nextSteps:    pluginNextSteps,
 }
 
 // agentPluginMode is pluginMode with plugin_mode="agent" (commands/
@@ -73,8 +81,10 @@ var agentPluginMode = initMode{
 	defaultYesVer: "0.1.0",
 	validateName:  pluginValidateName,
 	introTitle:    "Setting up your APM plugin project",
-	successTitle:  "APM plugin initialized successfully!",
-	nextSteps:     pluginNextSteps,
+	// commands/init.py:291 uses the shared consumer success title even
+	// when _perform_init is called through `plugin init`.
+	successTitle: "APM project initialized successfully!",
+	nextSteps:    pluginNextSteps,
 }
 
 // pluginNextSteps is shared by both plugin modes (commands/init.py:322-327),
@@ -123,6 +133,7 @@ func initCmd() *cobra.Command {
 			return runInitCore(args, consumerMode, yes, targetFlag, force, false)
 		},
 	}
+	setInitFormatFlagErrorFunc(cmd)
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive prompts and use auto-detected defaults")
 	cmd.Flags().StringVar(&targetFlag, "target", "", "Comma-separated target list (skip prompt)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing apm.yml (alias for --yes on overwrite)")
@@ -158,6 +169,11 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		if err := os.Chdir(pn); err != nil {
 			return fmt.Errorf("chdir: %w", err)
 		}
+		// commands/init.py:169-174 emits this progress record after the
+		// named project directory is entered. The pinned Oracle currently
+		// emits it even when mkdir(exist_ok=True) found an existing directory;
+		// preserve that observed behavior.
+		ux.Running(os.Stdout, "Created project directory: %s", pn)
 	} else if mode.plugin {
 		// R3.2/AC31: PROJECT-NAME is optional; when omitted, plugin mode
 		// still validates the implied name (the current directory's
@@ -190,19 +206,6 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		ck.Intro(mode.introTitle)
 		ck.Detail("Press ^C at any time to quit.")
 		ck.Bar()
-	}
-
-	// R4: plugin-native root directory warning, shared by both modes
-	// (R4.1). Purely informational -- it never blocks (R4.3, AC14 requires
-	// exit 0).
-	if sources := detectPluginNativeRoot(originalCwd); len(sources) > 0 {
-		msg := fmt.Sprintf("Found plugin-native content (%s) in this directory with no .apm/ -- `apm-go pack` will bundle it directly.", strings.Join(sources, ", "))
-		if ck != nil {
-			ck.Warn("%s", msg)
-			ck.Bar()
-		} else {
-			ux.Warn(os.Stderr, "%s", msg)
-		}
 	}
 
 	// Finding 4 (F09): gate on ANY generated file, not just apm.yml
@@ -345,6 +348,22 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		}
 	}
 
+	// Oracle commands/init.py:249 starts the actual initialization phase
+	// after confirmation and before its native-source warning/file writes.
+	ux.Running(os.Stdout, "Initializing APM project: %s", name)
+	// R4: plugin-native root directory warning, shared by both modes
+	// (R4.1). Purely informational -- it never blocks (R4.3, AC14 requires
+	// exit 0). It follows the Oracle's start/progress ordering.
+	if sources := detectPluginNativeRoot(originalCwd); len(sources) > 0 {
+		msg := fmt.Sprintf("Found plugin-native content (%s) in this directory with no .apm/ -- `apm-go pack` will bundle it directly.", strings.Join(sources, ", "))
+		if ck != nil {
+			ck.Warn("%s", msg)
+			ck.Bar()
+		} else {
+			ux.Warn(os.Stderr, "%s", msg)
+		}
+	}
+
 	// Phase 6: File generation. buildManifestNode assembles the
 	// document in semantic key order (R2); the validation
 	// pipeline below dumps it FIRST so the bytes it validates
@@ -381,18 +400,88 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 	// Phase 7: Success output
 	if ck != nil {
 		ck.Bar()
-		ck.Step(mode.successTitle, strings.Join(mode.nextSteps, "\n"))
+		renderInitSuccess(mode, cwd)
 		ck.Outro("Done!")
 		return nil
 	}
-	fmt.Fprintln(os.Stderr)
-	ux.Success(os.Stderr, "%s", mode.successTitle)
-	fmt.Fprintln(os.Stderr)
-	ux.Section(os.Stderr, "Next steps")
-	for _, line := range mode.nextSteps {
-		ux.Info(os.Stderr, "%s", line)
-	}
+	renderInitSuccess(mode, cwd)
 	return nil
+}
+
+// renderInitSuccess emits the shared success surface for `init` and
+// `plugin init`. The pinned Oracle's CommandLogger/console path sends every
+// success record, table, panel, tip, and footer to its default stdout console
+// (commands/init.py:291-400). In particular, do not route any of this block
+// through the old plain-init stderr design: ticket 10's stdout precedent now
+// governs this Oracle-alignment decision, and the former contract citation is
+// retired in init_clack_test.go.
+func renderInitSuccess(mode initMode, projectRoot string) {
+	ux.Sparkle(os.Stdout, "%s", mode.successTitle)
+
+	rows := [][]string{{"*", "apm.yml"}}
+	if mode.plugin {
+		rows = append(rows, []string{"*", "plugin.json"})
+		if mode.pluginFormat == pluginModeAgent {
+			rows = append(rows, []string{"*", "mcp.json"})
+		}
+	}
+	// _create_files_table receives (*, filename, description) tuples in the
+	// Oracle, but its two-column renderer uses only tuple positions 0 and 1
+	// (utils/console.py:194-212). Keep that observable "*" marker layout.
+	ux.Plain(os.Stdout, "    Created Files")
+	ux.Table(os.Stdout, []string{"File", "Description"}, rows)
+	ux.Plain(os.Stdout, "")
+
+	nextSteps := append([]string(nil), mode.nextSteps...)
+	var agentrcTip string
+	if !mode.plugin {
+		agentrcInstalled, hasInstructions := detectAgentrc(projectRoot)
+		if !hasInstructions {
+			if agentrcInstalled {
+				nextSteps = append(nextSteps[:1], append([]string{
+					"Generate agent instructions:     agentrc init",
+				}, nextSteps[1:]...)...)
+			} else {
+				agentrcTip = "Tip: Use agentrc to generate tailored agent instructions from your codebase. https://github.com/microsoft/agentrc"
+			}
+		}
+	}
+
+	body := make([]string, len(nextSteps))
+	for i, step := range nextSteps {
+		body[i] = "* " + step
+	}
+	ux.Box(os.Stdout, "Next Steps", body)
+	if agentrcTip != "" {
+		ux.Info(os.Stdout, "%s", agentrcTip)
+	}
+	if info, err := os.Stat(filepath.Join(projectRoot, ".codex")); err == nil && info.IsDir() {
+		ux.Info(os.Stdout, "Tip: Use '--target agent-skills' to also deploy skills to .agents/skills/ for other clients.")
+	}
+	ux.Plain(os.Stdout, "  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm")
+}
+
+// detectAgentrc mirrors init.py:40-55. shutil.which checks PATH without
+// executing agentrc; the instruction artifacts suppress the suggestion when
+// the project already has a root AGENTS.md, a Copilot instructions file, or
+// an instructions directory.
+func detectAgentrc(projectRoot string) (installed, hasInstructions bool) {
+	_, err := exec.LookPath("agentrc")
+	installed = err == nil
+	hasInstructions = fileExists(filepath.Join(projectRoot, ".github", "copilot-instructions.md")) ||
+		fileExists(filepath.Join(projectRoot, "AGENTS.md")) ||
+		directoryExists(filepath.Join(projectRoot, ".github", "instructions"))
+	return installed, hasInstructions
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // writePluginScaffold writes apm.yml plus R3.3.d's plugin.json template

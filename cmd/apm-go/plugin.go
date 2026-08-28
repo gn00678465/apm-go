@@ -59,7 +59,7 @@ func pluginInitCmd() *cobra.Command {
 	// Click turns a flag given without its value into a usage error
 	// (exit 2, "Option '--format' requires an argument."); cobra reports it
 	// as a plain parse error. Map it here so the CLI contract matches.
-	setBundleFormatFlagErrorFunc(cmd)
+	setInitFormatFlagErrorFunc(cmd)
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip interactive prompts and use auto-detected defaults")
 	cmd.Flags().StringVar(&targetFlag, "target", "", "Comma-separated target list (skip prompt, write directly)")
 	cmd.Flags().Var(bundleFormatChoiceValue{&format, pluginFormatChoices}, "format",

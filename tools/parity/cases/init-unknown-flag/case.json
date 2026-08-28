@@ -1,0 +1,6 @@
+{
+  "id": "init-unknown-flag",
+  "argv": ["init", "--name", "x"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01", "F08"]
+}

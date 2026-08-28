@@ -182,16 +182,14 @@ func TestInitCmd_ProjectNameArg(t *testing.T) {
 	}
 }
 
-// TestInitCmd_DoesNotSuggestRun locks P0 #1 (register §4.8/§5): init's
-// "Next steps" must never promise `apm-go run <script>` -- that command does
-// not exist, so every user who followed the old prompt hit "unknown
-// command" on their very first next step. The valid `apm-go install`
-// next-step must still be there.
+// TestInitCmd_SuggestsOracleNextSteps locks the pinned Oracle's consumer
+// guidance: the success panel includes both the valid install command and
+// the Oracle's run-script line, with apm-go's sanctioned binary-name rewrite.
 //
 // The next-step lines print via ux.Info, which (ticket 10 attempt 3) now
 // redirects os.Stderr to os.Stdout the same way Warn/Error already did --
 // so this asserts against captureStdout, not stderr.
-func TestInitCmd_DoesNotSuggestRun(t *testing.T) {
+func TestInitCmd_SuggestsOracleNextSteps(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(dir)
@@ -208,12 +206,8 @@ func TestInitCmd_DoesNotSuggestRun(t *testing.T) {
 	if !strings.Contains(stdout, "apm-go install") {
 		t.Errorf("init output = %q, want the valid 'apm-go install' next-step to remain", stdout)
 	}
-	const removedPromise = "apm-go run <script>"
-	if strings.Contains(stdout, removedPromise) {
-		t.Errorf("init output = %q, must not contain the removed promise %q (that command does not exist)", stdout, removedPromise)
-	}
-	if strings.Contains(stdout, "Run a script") {
-		t.Errorf("init output = %q, must not contain the removed 'Run a script' next-step label", stdout)
+	if !strings.Contains(stdout, "apm-go run <script>") {
+		t.Errorf("init output = %q, want the Oracle's 'apm-go run <script>' next-step", stdout)
 	}
 }
 

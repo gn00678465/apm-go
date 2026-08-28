@@ -37,13 +37,13 @@ Evaluator review that shaped the split: `.review/ticket-review.md`
 
 Frontier order: {01, 04} → {02, 03} → {06, 07, 08, 10} → {05} → 09.
 
-Status: verification gates are GREEN (2026-08-28). `go vet ./...` and `CI=true GITHUB_ACTIONS=true go test ./... -race` pass; the pinned-Oracle parity run reports **78 cases, 0 unwaived**. CI-detection env remains pinned in TestMain so ambient `CI`/`GITHUB_ACTIONS` cannot change local-vs-Actions results.
+Status: verification gates are GREEN (2026-08-28). `go vet ./...` and `CI=true GITHUB_ACTIONS=true go test ./... -race` pass; the pinned-Oracle parity run reports **80 cases, 0 unwaived**. CI-detection env remains pinned in TestMain so ambient `CI`/`GITHUB_ACTIONS` cannot change local-vs-Actions results.
 
 Tickets 01-29 are closed, with 23 CLOSED INVALID. The 18-case backlog was triaged into root causes rather than symptoms and cleared: 17 (all 8 missing `pack` flags across 5 phases), 18 (audit verbose hint), 22 (validate `[*]`/`[+]` glyphs + single quotes), 23 (the Oracle's `apm marketplace search` hint names a command that was never registered), 24 (`marketplaces.json` `file://` form + materialise-on-read, 11 cases' tree), 25 (rendering-class waivers), 26 (`marketplace list`'s missing "Registered Marketplaces" title and ALL-CAPS headers), 27 (bundle lockfile's `generated_at`/`deployments`), 28 (marketplace success catalog, absolute paths, and Claude key order), and 29 (Codex category-required wording).
 
 Two waivers were REJECTED during this run for hiding real gaps behind honest-sounding reasons (`pack-archive`'s missing size suffix and zip-migration notice; ticket 25's would-be `registry-explicit-config-dir` stdout). Both became fixes. The rule that held: a difference in WORDS is a bug; only line breaks, box-drawing, padding, timestamps, compressor output and apm-go-only flags get waived.
 
-Open, non-blocking: 16 (dep-parser conformance rows), 19 (init output-surface gaps). Ticket 21 closed 2026-08-28 on an independent evaluator PASS (`.review/eval-ticket-21.md`).
+Open, non-blocking: 16 (dep-parser conformance rows -- rounds 1 and 2 closed 2026-08-28, unscheduled areas remain: registry-routed entries, IPv6 hosts, SCP corner forms beyond the port gate). Ticket 19 closed 2026-08-28 (all three findings; init/plugin init now single-stdout with the Oracle's content). Ticket 21 closed 2026-08-28 on an independent evaluator PASS (`.review/eval-ticket-21.md`).
 
 Implementor protocol: one ticket per fresh context, via `/implement`. Evaluator verifies each ticket against `diff.jsonl`.
 

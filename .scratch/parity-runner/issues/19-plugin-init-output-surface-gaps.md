@@ -2,7 +2,7 @@
 
 **What to build:** Three real, pre-existing (not caused by ticket 09) findings surfaced while backfilling `plugin init` runner evidence, each independently waived on every affected case rather than fixed inline, per the Scope rule.
 
-**Blocked by:** none. **Status:** open (backlog, non-blocking).
+**Blocked by:** none. **Status:** CLOSED (2026-08-28).
 
 **Origin:** ticket 09 (plugin init evidence backfill). Ticket 09's own acceptance criteria are about capturing existing behavior as runner evidence, not fixing wording/rendering/tooling gaps found along the way — this ticket records them instead.
 
@@ -17,15 +17,15 @@ Two independent, purely-cosmetic differences, both verified live for `plugin ini
 
 Before this verifier, every `plugin-init-*` runner case that writes `apm.yml` (11 of them) carried a `tree_paths: ["cwd/plugin-init-fixture/apm.yml"]` waiver for this. The waiver is now removed from all 11 cases; `plugin.json`/`mcp.json` remain compared byte-exact.
 
-### 2. `init`/`plugin init`'s plain (non-interactive) success path writes to the wrong stream relative to the Oracle
+### 2. `init`/`plugin init`'s success output now matches the Oracle's channel and content contract
 
-The Oracle's `logger.success(...)`/`logger.progress(...)` (commands/init.py:291 and around) always render via `_get_console()`, which defaults to stdout — the entire "APM project initialized successfully!" + "Next Steps" panel lands on stdout, single-stream.
+This finding is closed. The pinned Oracle's `logger.success(...)`, created-files table, next-steps panel, conditional agentrc guidance, and Docs/Star footer all render through its default stdout console (commands/init.py:291-400). Its success title is the shared `APM project initialized successfully!` string for both consumer and plugin initialization, including the `plugin init` wrapper.
 
-apm-go's `runInitCore` (`cmd/apm-go/init.go`, Phase 7) splits: `ux.Info(os.Stderr, ...)` (the three next-steps bullet lines) correctly redirects to stdout via `oracleLine`'s `errWriter`, but `ux.Success(os.Stderr, ...)` and `ux.Section(os.Stderr, "Next steps")` do NOT — `Success`/`Section` don't route through `oracleLine`, so they stay on stderr. The two leading/trailing blank `fmt.Fprintln(os.Stderr)` calls also stay on stderr. Net effect: apm-go's success title and "Next steps" header print on stderr while its own bullet lines print on stdout — a channel split the Oracle's single-stream output never has.
+apm-go's `runInitCore` (`cmd/apm-go/init.go`, Phase 7) now renders the same success block on stdout for both plain and interactive paths: progress records, success title, Created Files table with Oracle `*` markers and headers, mode-specific next steps, agentrc branch/tip, `.codex` tip, and footer. Successful invocations emit zero bytes on stderr. The old `terminal-ux-contract §3` citation in `cmd/apm-go/init_clack_test.go` was retired because it described the superseded stderr-only chrome design; the capture helper remains for interactive transcript and other stderr assertions.
 
-**This is NOT simply a bug to fix on sight**: `cmd/apm-go/init_clack_test.go`'s own `captureStderr` doc comment states "init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract §3)" — a deliberate, pre-existing apm-go design decision (the referenced doc is not currently in the tree to consult). Revisiting it is a real design question — does apm-go's `init`/`plugin init` output contract change to match the Oracle's single-stdout-stream behavior, given ticket 10's own established "errors/warnings land on stdout" precedent might reasonably extend to success output too — not a ticket-09-sized fix.
+The remaining `stdout` waivers on `init-yes` and the 11 plugin-init success variants are limited to Rich-versus-ux presentation: box-drawing style, padding/alignment, and terminal wrapping. A mechanical proof over fresh raw corpus evidence strips those rendering characters, folds wrapped lines, and normalizes the sanctioned `apm`/`apm-go` binary spelling; all 12 cases then have identical token sequences. No stderr tuple remains waived for this finding.
 
-Every `plugin-init-*` success/existing-*-yes/normalise-upper case (11 of them) carries a `stdout`+`stderr` waiver for this; historically those sat alongside Finding 1's now-removed `tree` waiver.
+The one-off `init --name x` surface is also closed: both `init --name x` and `plugin init --name x` now return exit 2, empty stdout, and the exact Click UsageError block on stderr (`Usage: apm ... [OPTIONS] [PROJECT_NAME]`, `Try ... --help`, `Error: No such option: --name`). The scoped parser hook applies only to these init commands; unrelated `pack` flag behavior remains unchanged.
 
 ### 3. The runner's own `help_semantic` parser doesn't handle multi-line-wrapped flag descriptions
 
@@ -35,14 +35,24 @@ Not new to ticket 09: `pack-help`'s own (already unwaived, ticket-17-tracked) `h
 
 ## Acceptance criteria
 
-- [x] Finding 1: match the Oracle's comment wording, target-list serialization, blank-line placement, and bare-UTF-8 author quoting exactly. The 11 plugin-init tree waivers were removed; Finding 2's stdout/stderr waivers remain unchanged.
-- [ ] Finding 2: decide `init`/`plugin init`'s success-output stream contract — match the Oracle's single-stdout-stream behavior (revisit `terminal-ux-contract §3`, if recoverable, or make a fresh decision), or keep the current stderr-for-chrome design and record it as a permanent, cited deviation. If changed, `cmd/apm-go/init_clack_test.go` and every other test relying on `captureStderr` for init's plain-path output need updating in the same commit.
+- [x] Finding 1: match the Oracle's comment wording, target-list serialization, blank-line placement, and bare-UTF-8 author quoting exactly. The 11 plugin-init tree waivers were removed.
+- [x] Finding 2: align `init`/`plugin init` success output to stdout, update the dependent capture tests, remove stderr from the success waivers, and match the verified unknown-flag UsageError surface with exit 2.
 - [x] Finding 3: `parseHelpFlags` now joins indented continuation lines for Click and Cobra output, including Click's long-metavar `--format` shape. Real `apm pack --help` and `apm-go pack --help` excerpts cover wrapped `--archive`, `--check-clean`, and `--format` descriptions. Reverification leaves `pack-help` with only the sanctioned apm-go-only `--format` wording difference; `plugin-init-help` has no `help_semantic` difference.
-- [x] Fresh corpus evidence: after the parser fix, `plugin-init-help`'s waiver drops `help_semantic` and retains only `stdout`; the corpus now has 79 cases (the verifier added `init-yes`) and zero unwaived differences, with no other waiver tuple changes.
+- [x] Fresh corpus evidence: after the parser fix, `plugin-init-help`'s waiver drops `help_semantic` and retains only `stdout`; the corpus now has 80 cases (the verifier added `init-yes` and `init-unknown-flag`) and zero unwaived differences. Finding 2's 12 success tuples dropped `stderr`; the new unknown-flag case carries a `stderr`-only waiver (Click-vs-Cobra usage layout).
 
 ## Evidence
 
 The parser regression test is `go test ./tools/parity`; the manifest conformance and SSH row tests are `go test ./internal/manifest`. The corpus command was rerun with output under `/tmp/parity-verifier-2-afterparser`; its `pack-help` semantic diff contains only the expected `--format` wording, while `plugin-init-help` has no semantic diff.
+
+### Finding 2 closure evidence (verifier brief 5, 2026-08-28)
+
+- Oracle source inspection pinned the success sequence to `src/apm_cli/commands/init.py:168-174, 249-305, 316-400`, the shared plugin wrapper to `src/apm_cli/commands/plugin/init.py:22-73`, and the default stdout `CommandLogger` console path. Live probes covered consumer named/current-directory/existing-file cases, plugin default/Claude/Agent formats, overwrite warnings, agentrc installed/absent, existing instruction files, and `.codex` tips. The pinned Oracle emits `Created project directory` for a named project directory even when `mkdir(exist_ok=True)` found it already present; apm-go preserves that observed Oracle behavior.
+- `cmd/apm-go/init.go` now uses one stdout success renderer for both modes and the interactive final block, with Oracle file-table rows/headers, mode-specific panel text, conditional agentrc guidance, footer, and empty stderr. `os/exec.LookPath` is used only to mirror the Oracle's `shutil.which("agentrc")` branch; no external program is executed.
+- `cmd/apm-go/init_clack_test.go`, `doctor_test.go`, and `root_error_test.go` were updated for the retired stderr citation and stdout-only success contract. `cmd/apm-go/init_output_test.go` covers consumer/plugin/Agent output, all agentrc/instruction branches, interactive final output, and stderr emptiness. `TestRootError_InitUnknownFlagMatchesOracle` covers both exact UsageError transcripts.
+- The corpus added `tools/parity/cases/init-unknown-flag/case.json` with `expected_taxonomy: ["F01", "F08"]`. The 12 success waivers (`init-yes` plus 11 plugin-init success cases) changed from `stdout, stderr` to `stdout`; every reason now records the narrowed Rich/ux presentation waiver and ticket-19 reference. The final run is `/tmp/parity-verifier-5-final3.JfLzwh`: 80 cases, 73 cases with diffs all covered by existing scoped waivers, zero unwaived differing fields. Fresh evidence showed `stderr=0/0` for all 12 success variants, semantic token equality after mechanical rendering/binary-name normalization, and, for the unknown-flag case, identical `Try ... --help` and `Error: No such option: --name` lines after the binary-name fold.
+
+**Orchestrator review (2026-08-28):** the verifier's first cut hardcoded the Oracle's `Usage: apm init [OPTIONS] [PROJECT_NAME]` spelling per command (`oracleInitUnknownFlagUsage`). Rejected: apm-go prints its own name via cobra's `UseLine`/`CommandPath` and the runner folds it; the Click-vs-Cobra usage layout is a waived rendering class, handled exactly like `plugin-init-unknown`. The helper was removed, `init-unknown-flag` got a `stderr`-only waiver, and the `Error:` line remains byte-identical.
+- Global applicability was checked: `pack --name x` retains its established pre-ticket-13 plain error contract; only `init` and `plugin init` receive the new Click-style unknown-option adapter.
 
 ### Finding 1 closure evidence (verifier brief 4, 2026-08-28)
 

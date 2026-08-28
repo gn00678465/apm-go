@@ -477,146 +477,143 @@
   {
     "id": "init-yes",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Finding 2 (init/plugin init success-output content+channel) remains pending and is intentionally outside Finding 1. The Oracle's stdout-only Rich output includes the success title 'APM project initialized successfully!', the Created Files table, the 'Next Steps' panel header, and these consumer guidance lines: 'Install a package:               apm install <owner>/<repo>', 'Run a script:                    apm run <script>', 'Build a plugin? Scaffold one:    apm plugin init', and 'Publishing a marketplace?:       apm marketplace init'. apm-go's plain path keeps its deliberate stderr chrome/stdout split and currently exposes only its apm-go-normalized install guidance, so only stdout/stderr are waived here. Finding 1's apm.yml tree is intentionally unwaived and must match byte-for-byte.",
+    "reason": "Finding 2 is closed. `init --yes` now emits the pinned Oracle's success content on stdout, including the success title, Created Files table, consumer Next Steps lines, conditional agentrc guidance, and Docs/Star footer; apm/apm-go is normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping. stderr was removed because successful init now emits zero bytes there. Finding 1's generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
+    "id": "init-unknown-flag",
+    "fields": [
+      "stderr"
+    ],
+    "taxonomy": "F08",
+    "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
+    "reason": "Click-vs-Cobra usage-preamble layout only (ticket 19 finding 2's one-off, same class and same handling as plugin-init-unknown / pack-format-conflict): the Oracle's Click renders `Usage: apm init [OPTIONS] [PROJECT_NAME]` while cobra's own UseLine renders `Usage: apm-go init [project-name] [flags]` (binary name folded by rewrite_binary_name). The Oracle's spelling is deliberately NOT hardcoded per command in apm-go. Verified: the `Try '<path> --help' for help.` line and the `Error: No such option: --name` line are byte-identical after the fold, stdout is empty on both sides, exit code is 2 on both sides; stderr is the only waived field."
+  },
+  {
     "id": "plugin-init-no-flag",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-format-plugin",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-format-claude",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-format-claude-plugin",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-claude-plugin-flag",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-format-agent-plugin",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-existing-apmyml-yes",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-existing-pluginjson-only-yes",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-existing-mcpjson-agent-yes",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-unicode-author",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "`plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-normalise-upper",
     "fields": [
-      "stdout",
-      "stderr"
+      "stdout"
     ],
     "taxonomy": "F01",
     "oracle_commit": "c8d6cdec596e773a84b0839c33c28b6b0a217637",
-    "reason": "Contrary to the ticket's original assumption, this is NOT an F12 spec-over-Oracle case: verified live, the pinned Oracle's `--format` Click Choice is case_sensitive=False, so 'AGENT-PLUGIN' (uppercase, hyphen-separated) is accepted by BOTH sides identically -- only normalise-underscore/normalise-space (which change the SEPARATOR, not just the case) are genuinely Oracle-rejected/apm-go-accepted. This case therefore hits the exact same rendering/channel/apm.yml-comment mechanism as every other success case below, not a format-acceptance difference. `plugin init`'s success path is a genuine rendering/channel difference, not a wording gap -- verified: the three next-steps lines are byte-identical to the Oracle's own (once apm/apm-go is normalized), matching this ticket's own AC. Two independent, pre-existing (not caused by this ticket) mechanisms explain `stdout`/`stderr`: (1) the Oracle's Rich console renders a bordered 'Created Files' table and a 'Next Steps' panel box, all on stdout (its Console defaults to stdout for every render); apm-go instead prints plain '[i] '-prefixed lines -- box-drawing/table vs plain-line rendering, the same F01 category as doctor-healthy/pack-no-flag's own waivers. (2) apm-go's plain (non-clack) init success path writes its success title and 'Next steps' section header straight to os.Stderr by deliberate, pre-existing design (see cmd/apm-go/init_clack_test.go's own 'init writes its human-facing output straight to os.Stderr (the stream contract in terminal-ux-contract section 3)' comment) while its own next-steps bullet lines correctly route through ux.Info's stdout redirect -- so apm-go's content splits across both stdout and stderr in a way the Oracle's single-stream stdout output never does. Reversing that deliberate design choice is a real, out-of-scope finding (spun to a new backlog ticket, see the ticket file's Part A summary), not fixed here. `tree` is scoped to exactly one file, cwd/plugin-init-fixture/apm.yml (verified: plugin.json and, in agent-plugin mode, mcp.json are byte-for-byte identical on both sides for every case, including agent-plugin's $schema/extensions/mcpServers content and unicode-author's ensure_ascii author encoding): the Oracle's PyYAML-rendered apm.yml differs from apm-go's own YAML emitter's output in two purely-cosmetic, pre-existing ways -- the '# Which agent platforms to deploy to' comment block's wording, and (on unicode-author specifically) a non-ASCII author value gets double-quoted with \\U-escapes by apm-go's emitter vs left as bare literal UTF-8 by the Oracle's -- both valid, semantically-identical YAML. Also a new, out-of-scope backlog finding.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
     "owner": "gn00678465@gmail.com",
-    "eval_plan_ref": ".scratch/parity-runner/issues/09-plugin-init-backfill-and-ci.md"
+    "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
   {
     "id": "plugin-init-normalise-underscore",

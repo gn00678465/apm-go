@@ -10,9 +10,10 @@ import (
 )
 
 // captureStderr redirects os.Stderr for the duration of fn and returns what
-// was written. init writes its human-facing output straight to os.Stderr (the
-// stream contract in terminal-ux-contract §3), so the process-level stream is
-// what has to be inspected.
+// was written. The old terminal-ux-contract §3 citation that described init
+// success output as stderr-only is retired: ticket 19 Finding 2 aligns init
+// and plugin init with the Oracle's stdout-only success block. This helper
+// remains for the interactive Clack transcript and other stderr assertions.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -37,8 +38,10 @@ func captureStderr(t *testing.T, fn func()) string {
 }
 
 // clackGlyphs are the transcript/banner characters that must never reach a
-// non-interactive run's output.
-var clackGlyphs = []string{"█", "╗", "┌", "◇", "│", "└"}
+// non-interactive run's output. The shared Oracle-aligned success table/panel
+// legitimately uses box-drawing vertical bars, so "│" is not a Clack-only
+// marker anymore.
+var clackGlyphs = []string{"█", "╗", "┌", "◇", "└"}
 
 // TestInitCmd_NonInteractiveRunsPrintNoBannerOrTranscript pins the gating in
 // PRD R1/R4: the clack transcript and the block-art banner belong to
@@ -69,10 +72,13 @@ func TestInitCmd_NonInteractiveRunsPrintNoBannerOrTranscript(t *testing.T) {
 
 			// Act
 			var runErr error
-			out := captureStderr(t, func() {
-				cmd := initCmd()
-				cmd.SetArgs(tt.args)
-				runErr = cmd.Execute()
+			var stdout string
+			stderr := captureStderr(t, func() {
+				stdout = captureStdout(t, func() {
+					cmd := initCmd()
+					cmd.SetArgs(tt.args)
+					runErr = cmd.Execute()
+				})
 			})
 
 			// Assert
@@ -80,12 +86,15 @@ func TestInitCmd_NonInteractiveRunsPrintNoBannerOrTranscript(t *testing.T) {
 				t.Fatalf("init failed: %v", runErr)
 			}
 			for _, glyph := range clackGlyphs {
-				if strings.Contains(out, glyph) {
-					t.Fatalf("non-interactive init emitted clack glyph %q:\n%s", glyph, out)
+				if strings.Contains(stdout, glyph) || strings.Contains(stderr, glyph) {
+					t.Fatalf("non-interactive init emitted clack glyph %q:\nstdout=%s\nstderr=%s", glyph, stdout, stderr)
 				}
 			}
-			if !strings.Contains(out, "APM project initialized successfully!") {
-				t.Fatalf("non-interactive init lost its plain success output:\n%s", out)
+			if !strings.Contains(stdout, "APM project initialized successfully!") {
+				t.Fatalf("non-interactive init lost its plain success output:\n%s", stdout)
+			}
+			if stderr != "" {
+				t.Fatalf("non-interactive init success wrote to stderr:\n%s", stderr)
 			}
 		})
 	}

@@ -198,7 +198,27 @@ func (f bundleFormatChoiceValue) Type() string {
 // its own Click-parity surface, tracked in ticket 17's backlog, not fixed
 // here.
 func setBundleFormatFlagErrorFunc(cmd *cobra.Command) {
+	setBundleFormatFlagErrorFuncWithUnknownUsage(cmd, false)
+}
+
+// setInitFormatFlagErrorFunc is the same format-parser adapter with one
+// init-specific addition: Click handles an unknown option as a UsageError,
+// so `init` and `plugin init` need the Oracle's "No such option" text and
+// stderr Usage block for that parse path (commands/init.py:70-93 and
+// commands/plugin/init.py:22-51). Pack deliberately keeps its existing
+// pre-ticket-13 unknown-flag contract; its live Oracle surface is separately
+// tracked and must not be changed by this init-only fix.
+func setInitFormatFlagErrorFunc(cmd *cobra.Command) {
+	setBundleFormatFlagErrorFuncWithUnknownUsage(cmd, true)
+}
+
+func setBundleFormatFlagErrorFuncWithUnknownUsage(cmd *cobra.Command, unknownFlagUsage bool) {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		if unknownFlagUsage {
+			if name, ok := strings.CutPrefix(err.Error(), "unknown flag: "); ok {
+				return withUsageError(fmt.Errorf("No such option: %s", name))
+			}
+		}
 		if name, ok := strings.CutPrefix(err.Error(), "flag needs an argument: "); ok {
 			// The "Option 'X' requires an argument." reformat itself
 			// pre-dates ticket 13 and applies to any flag name -- keep it

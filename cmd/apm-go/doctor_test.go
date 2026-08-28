@@ -66,8 +66,9 @@ func runDoctorWith(t *testing.T, git *fakeGit, env map[string]string, args ...st
 
 // captureStdout redirects os.Stdout for the duration of fn and returns what
 // was written -- doctor's table (post ticket 10 attempt 2) writes straight to
-// os.Stdout, so the process-level stream is what has to be inspected, same
-// rationale as captureStderr (init_clack_test.go) for init's stderr output.
+// os.Stdout, so the process-level stream is what has to be inspected. Init's
+// success surface also uses stdout now; its capture helper is separate because
+// doctor tests need this package-local seam for table output.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
