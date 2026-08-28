@@ -98,3 +98,16 @@ o  APM project initialized successfully!
 ```
 
 Named-project progress (`Created project directory` and `Initializing APM project`) is also routed through the interactive frame. `init` and `plugin init` share the same frame contract; successful interactive runs emit an empty stdout stream, retain the noninteractive stdout contract, and contain no table/panel markers in the transcript.
+
+### Follow-up 2 (2026-08-28): embed the Oracle block verbatim, do not paraphrase it
+
+The first interactive fix (8b66bfc) replaced the Oracle block with a
+paraphrased `ck.Step` body ("Created files: apm.yml", "Next steps:") --
+the user rejected it: the `[>]`/`[*]`/`[i]` glyphs and the Created Files /
+Next Steps boxes disappeared. Final shape: the Oracle block is rendered
+into a buffer by the same `renderOracleBlock` the --yes path streams to
+stdout, and hung off the gutter line by line via the new `ux.Clack.Embed`;
+the two `[>]` progress records go through `embedProgress` the same way.
+Interactive and non-interactive runs therefore show identical bytes for
+the block, the only difference being the `│  ` gutter. Tests assert the
+glyphs and box lines are present AND never start at column 0.

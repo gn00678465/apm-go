@@ -174,16 +174,23 @@ func TestInteractiveInitSuccessStaysInsideClackFrame(t *testing.T) {
 			}
 
 			want := append([]string{
-				tt.mode.successTitle,
-				"Created files:",
-				"Next steps:",
-				"Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
-				"Created project directory: " + tt.args[0],
-				"Initializing APM project: " + tt.args[0],
+				"[*] " + tt.mode.successTitle,
+				"    Created Files",
+				"File",
+				"Description",
+				"Next Steps",
+				"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
+				"[>] Created project directory: " + tt.args[0],
+				"[>] Initializing APM project: " + tt.args[0],
 			}, tt.mode.nextSteps...)
 			assertClackTranscript(t, transcript, want)
-			if strings.Contains(transcript, "╭") || strings.Contains(transcript, "│ File") {
-				t.Fatalf("interactive success rendered the Oracle table/panel inside the transcript:\n%s", transcript)
+			// The Oracle block keeps its own glyphs and box-drawing, but every
+			// one of its lines must hang off the gutter -- a "[>]", "[*]" or
+			// box line at column 0 is the exact defect this test guards.
+			for i, line := range strings.Split(transcript, "\n") {
+				if strings.HasPrefix(line, "[") || strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "╰") || strings.HasPrefix(line, "    Created Files") {
+					t.Errorf("transcript line %d is outside the clack gutter: %q", i+1, line)
+				}
 			}
 		})
 	}

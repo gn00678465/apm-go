@@ -166,6 +166,24 @@ func (c *Clack) Detail(text string) {
 	lipgloss.Fprintln(c.w, mutedStyle.Render(c.sym.Bar)+"  "+mutedStyle.Render(text))
 }
 
+// Embed hangs a pre-rendered block (an Oracle-style status record, a table,
+// a panel) off the connecting line: every line of block is printed verbatim
+// behind the gutter, so the block keeps its own glyphs and box-drawing while
+// the transcript's left border stays continuous. An empty line becomes a
+// bare bar. Unlike Detail the text is not muted -- it is the block's own
+// styling that should show.
+func (c *Clack) Embed(block string) {
+	fireClackEvent("Embed")
+	bar := mutedStyle.Render(c.sym.Bar)
+	for _, line := range strings.Split(strings.TrimSuffix(block, "\n"), "\n") {
+		if line == "" {
+			lipgloss.Fprintln(c.w, bar)
+			continue
+		}
+		lipgloss.Fprintln(c.w, bar+"  "+line)
+	}
+}
+
 // Warn prints a non-fatal warning on the connecting line. It exists so a
 // warning raised mid-run keeps both its severity (the Warn symbol and color
 // that §4 of the terminal-UX contract maps it to) and its place in the

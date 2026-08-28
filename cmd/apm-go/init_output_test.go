@@ -274,13 +274,21 @@ func TestInitInteractiveFinalSuccessBlockUsesClackTranscript(t *testing.T) {
 		t.Errorf("interactive native-source warning missing:\nstdout=%s\nstderr=%s", stdout, stderr)
 	}
 	assertClackTranscript(t, stderr, []string{
-		"APM project initialized successfully!",
-		"Created files: apm.yml",
-		"Next steps:",
-		"Install a package:               apm-go install <owner>/<repo>",
-		"Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
+		"[>] Initializing APM project: interactive",
+		"[*] APM project initialized successfully!",
+		"    Created Files",
+		"│ File",
+		"apm.yml",
+		"Next Steps",
+		"* Install a package:               apm-go install <owner>/<repo>",
+		"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
 	})
-	if strings.Contains(stderr, "╭") || strings.Contains(stderr, "│ File") {
-		t.Errorf("interactive final success rendered the Oracle table/panel inside the clack transcript:\n%s", stderr)
+	// The Oracle block is embedded verbatim -- glyphs and box-drawing kept --
+	// but every one of its lines hangs off the gutter. A "[>]", "[*]" or box
+	// corner at column 0 is the frame break this test guards against.
+	for i, line := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(line, "[") || strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "╰") || strings.HasPrefix(line, "    Created Files") {
+			t.Errorf("transcript line %d is outside the clack gutter: %q", i+1, line)
+		}
 	}
 }

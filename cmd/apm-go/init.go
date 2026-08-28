@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -189,7 +191,7 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		// emits it even when mkdir(exist_ok=True) found an existing directory;
 		// preserve that observed behavior.
 		if ck != nil {
-			ck.Detail(fmt.Sprintf("Created project directory: %s", pn))
+			embedProgress(ck, "Created project directory: %s", pn)
 		} else {
 			ux.Running(os.Stdout, "Created project directory: %s", pn)
 		}
@@ -357,7 +359,7 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 	// Oracle commands/init.py:249 starts the actual initialization phase
 	// after confirmation and before its native-source warning/file writes.
 	if ck != nil {
-		ck.Detail(fmt.Sprintf("Initializing APM project: %s", name))
+		embedProgress(ck, "Initializing APM project: %s", name)
 	} else {
 		ux.Running(os.Stdout, "Initializing APM project: %s", name)
 	}
@@ -472,7 +474,16 @@ func buildInitSuccessContent(mode initMode, projectRoot string) initSuccessConte
 // bytes: its table, box, tips, and footer remain on stdout for --yes and
 // non-TTY runs.
 func oracleStdoutRenderer(title string, content initSuccessContent) {
-	ux.Sparkle(os.Stdout, "%s", title)
+	renderOracleBlock(os.Stdout, title, content)
+}
+
+// renderOracleBlock writes the Oracle's success surface (commands/init.py:
+// 291-400) to w: the "[*]" title, the Created Files table, the Next Steps
+// panel, the conditional tips and the Docs/Star footer. The --yes path
+// streams it to stdout; the interactive path renders it into a buffer and
+// embeds it in the clack transcript, so both paths show the same bytes.
+func renderOracleBlock(w io.Writer, title string, content initSuccessContent) {
+	ux.Sparkle(w, "%s", title)
 
 	rows := make([][]string, 0, len(content.files))
 	for _, file := range content.files {
@@ -481,22 +492,22 @@ func oracleStdoutRenderer(title string, content initSuccessContent) {
 	// _create_files_table receives (*, filename, description) tuples in the
 	// Oracle, but its two-column renderer uses only tuple positions 0 and 1
 	// (utils/console.py:194-212). Keep that observable "*" marker layout.
-	ux.Plain(os.Stdout, "    Created Files")
-	ux.Table(os.Stdout, []string{"File", "Description"}, rows)
-	ux.Plain(os.Stdout, "")
+	ux.Plain(w, "    Created Files")
+	ux.Table(w, []string{"File", "Description"}, rows)
+	ux.Plain(w, "")
 
 	body := make([]string, len(content.nextSteps))
 	for i, step := range content.nextSteps {
 		body[i] = "* " + step
 	}
-	ux.Box(os.Stdout, "Next Steps", body)
+	ux.Box(w, "Next Steps", body)
 	if content.agentrcTip != "" {
-		ux.Info(os.Stdout, "%s", content.agentrcTip)
+		ux.Info(w, "%s", content.agentrcTip)
 	}
 	if content.codexTip != "" {
-		ux.Info(os.Stdout, "%s", content.codexTip)
+		ux.Info(w, "%s", content.codexTip)
 	}
-	ux.Plain(os.Stdout, "  %s", content.docsLine)
+	ux.Plain(w, "  %s", content.docsLine)
 }
 
 // clackRenderer renders the same success words as one completed transcript
@@ -504,19 +515,18 @@ func oracleStdoutRenderer(title string, content initSuccessContent) {
 // gutter, so no Oracle table/panel drawing can leak outside the interactive
 // transcript.
 func clackRenderer(ck *ux.Clack, title string, content initSuccessContent) {
-	body := []string{
-		"Created files: " + strings.Join(content.files, ", "),
-		"Next steps:",
-	}
-	body = append(body, content.nextSteps...)
-	if content.agentrcTip != "" {
-		body = append(body, content.agentrcTip)
-	}
-	if content.codexTip != "" {
-		body = append(body, content.codexTip)
-	}
-	body = append(body, content.docsLine)
-	ck.Step(title, strings.Join(body, "\n"))
+	var buf bytes.Buffer
+	renderOracleBlock(&buf, title, content)
+	ck.Embed(buf.String())
+}
+
+// embedProgress hangs one Oracle "[>] ..." progress record off the clack
+// connecting line, so an interactive run shows the same status glyph the
+// --yes path prints (ux.Running) without breaking the transcript border.
+func embedProgress(ck *ux.Clack, format string, a ...any) {
+	var buf bytes.Buffer
+	ux.Running(&buf, format, a...)
+	ck.Embed(buf.String())
 }
 
 // detectAgentrc mirrors init.py:40-55. shutil.which checks PATH without
