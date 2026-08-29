@@ -18,7 +18,7 @@ import (
 // pass just as well with a blanket "always print the hint" implementation,
 // which would be wrong -- so both halves are asserted here.
 
-const auditVerboseHint = "[i] Run with --verbose for details."
+const auditVerboseHint = " i Run with --verbose for details."
 
 func TestMarketplaceAudit_UnregisteredName_PrintsVerboseHintAfterError(t *testing.T) {
 	// Arrange
@@ -35,7 +35,7 @@ func TestMarketplaceAudit_UnregisteredName_PrintsVerboseHintAfterError(t *testin
 		t.Errorf("output missing the Oracle's trailing hint %q\ngot:\n%s", auditVerboseHint, out)
 	}
 	// The hint follows the error; it never precedes or replaces it.
-	errIdx := strings.Index(out, "[x] Failed to audit marketplace:")
+	errIdx := strings.Index(out, " x Failed to audit marketplace:")
 	hintIdx := strings.Index(out, auditVerboseHint)
 	if errIdx < 0 {
 		t.Fatalf("output missing the error line itself\ngot:\n%s", out)
@@ -62,7 +62,7 @@ func TestMarketplaceAudit_ErrorIsPrintedOnceNotTwice(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if n := strings.Count(out, "[x] Failed to audit marketplace:"); n != 1 {
+	if n := strings.Count(out, " x Failed to audit marketplace:"); n != 1 {
 		t.Errorf("error line printed %d times, want exactly 1\ngot:\n%s", n, out)
 	}
 	if !isSilentExit(err) {

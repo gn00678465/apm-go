@@ -719,7 +719,7 @@ func renderBundleResult(w io.Writer, result *bundle.ProduceResult, opts packOpti
 		for i, f := range result.Files {
 			items[i] = ux.Item{Text: f}
 		}
-		ux.BulletList(w, items)
+		ux.List(w, items)
 		return
 	}
 	displayDir := displayPath(result.BundleDir)
@@ -738,7 +738,7 @@ func renderBundleResult(w io.Writer, result *bundle.ProduceResult, opts packOpti
 		for i, f := range result.Files {
 			items[i] = ux.Item{Text: f}
 		}
-		ux.BulletList(w, items)
+		ux.List(w, items)
 	}
 	// pack.py:566-570/681-687: the zip-migration notice, shown only when
 	// --archive was given, the EFFECTIVE format resolved to "zip" (the
@@ -957,7 +957,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 		for i, pkg := range resolved {
 			items[i] = ux.Item{Text: pkg.Entry.Name}
 		}
-		ux.BulletList(w, items)
+		ux.List(w, items)
 	}
 
 	configPaths, err := build.LoadOutputPathOverrides(".", src)

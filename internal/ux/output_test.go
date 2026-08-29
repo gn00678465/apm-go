@@ -163,6 +163,17 @@ func TestBulletList_MutedItemUsesColorMutedNotPlainText(t *testing.T) {
 	}
 }
 
+func TestList_StreamFacingUsesDashContinuations(t *testing.T) {
+	var buf bytes.Buffer
+	List(&buf, []Item{{Text: "top"}, {Level: 1, Text: "child"}})
+	if got, want := buf.String(), "  - top\n    - child\n"; got != want {
+		t.Fatalf("List output = %q, want %q", got, want)
+	}
+	if strings.Contains(buf.String(), SymbolList) {
+		t.Fatalf("List output contains TUI list symbol %q: %q", SymbolList, buf.String())
+	}
+}
+
 func TestTree_Golden_NestedChildren(t *testing.T) {
 	// Arrange
 	var buf bytes.Buffer

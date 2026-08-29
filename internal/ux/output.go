@@ -135,6 +135,23 @@ func BulletList(w io.Writer, items []Item) {
 	lipgloss.Fprintln(w, buildBulletList(items).String())
 }
 
+// List renders the stream-facing list form used by Oracle continuation
+// records: two spaces, a dash, and the item text. It deliberately does not
+// use the centered project-TUI SymbolList enumerator; that form is reserved
+// for interactive clack content. Item.Level adds two spaces per nesting
+// level, preserving the shape of Oracle logger.progress/tree_item output
+// (utils/console.py STATUS_SYMBOLS and core/command_logger.py:158-160).
+func List(w io.Writer, items []Item) {
+	for _, item := range items {
+		indent := "  " + strings.Repeat("  ", max(item.Level, 0))
+		text := item.Text
+		if item.Muted {
+			text = mutedStyle.Render(text)
+		}
+		lipgloss.Fprintln(w, indent+"- "+text)
+	}
+}
+
 func newBulletList() *list.List {
 	// R8a: the SymbolList enumerator is centered in a fixed width-3 column,
 	// same as message symbols (printer.go's printLine), so bullet items and

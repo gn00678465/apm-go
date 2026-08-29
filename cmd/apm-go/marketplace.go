@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -211,7 +212,22 @@ func marketplaceAddCmd() *cobra.Command {
 			if provisionalLabel == "" {
 				provisionalLabel = fallbackMarketplaceAlias(src)
 			}
-			ux.Info(w, "Registering marketplace %q...", provisionalLabel)
+			// Oracle commands/marketplace/__init__.py:632 starts registration
+			// with symbol="gear"; STATUS_SYMBOLS maps gear to "[*]" and the
+			// Oracle uses single quotes in this message.
+			ux.Gear(w, "Registering marketplace '%s'...", provisionalLabel)
+
+			// The Oracle distinguishes a missing local source directory from an
+			// existing directory whose marketplace.json candidates are absent
+			// (commands/marketplace/__init__.py:657-660; marketplace/client.py:
+			// 835-841). Preserve that actionable error before Fetch's generic
+			// probe-miss conversion below.
+			if src.Kind() == marketplace.KindLocal {
+				localPath := marketplace.LocalFilesystemPath(src.URL)
+				if _, statErr := os.Stat(localPath); os.IsNotExist(statErr) {
+					return fmt.Errorf("Failed to register marketplace: Failed to fetch marketplace '%s': local marketplace path does not exist: %s. Run 'apm-go marketplace update %s' to retry.", provisionalLabel, localPath, provisionalLabel)
+				}
+			}
 
 			wasFullHTTPSSource := strings.HasPrefix(strings.ToLower(rawSource), "https://")
 			if needsUnpinnedGitRefWarning(wasFullHTTPSSource, src.Kind(), effectiveRef) {
@@ -220,6 +236,14 @@ func marketplaceAddCmd() *cobra.Command {
 
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
+				// Oracle commands/marketplace/__init__.py:657-660 reports the
+				// local probe miss as a checked-path diagnostic before falling
+				// through to its generic exception handler. Keep the exact
+				// sentence for local sources; remote failures retain apm-go's
+				// transport diagnostic.
+				if src.Kind() == marketplace.KindLocal && isMissingLocalMarketplaceManifest(err) {
+					return fmt.Errorf("No marketplace.json found in '%s'. Checked: marketplace.json, .github/plugin/marketplace.json, .claude-plugin/marketplace.json", displaySource(src))
+				}
 				return fmt.Errorf("could not reach marketplace source: %w", err)
 			}
 
@@ -235,7 +259,9 @@ func marketplaceAddCmd() *cobra.Command {
 
 			// Upstream __init__.py:721-724's success line carries the plugin
 			// count on the default path, not only under --verbose.
-			ux.Success(w, "Marketplace %q registered (%d plugins)", effectiveName, len(m.Plugins))
+			// Oracle commands/marketplace/__init__.py:718-721 overrides the
+			// success symbol to "check", which renders "[+]".
+			ux.Check(w, "Marketplace '%s' registered (%d plugins)", effectiveName, len(m.Plugins))
 			if verbose {
 				items := []ux.Item{
 					{Text: fmt.Sprintf("source: %s", displaySource(src))},
@@ -247,7 +273,7 @@ func marketplaceAddCmd() *cobra.Command {
 				if m.Description != "" {
 					items = append(items, ux.Item{Text: fmt.Sprintf("description: %s", m.Description)})
 				}
-				ux.BulletList(w, items)
+				ux.List(w, items)
 			}
 			// Upstream __init__.py:728-732: when the registered alias came
 			// from the manifest (not --name, not the repo-derived fallback),
@@ -357,6 +383,14 @@ func displaySource(src *marketplace.MarketplaceSource) string {
 	return src.URL
 }
 
+// isMissingLocalMarketplaceManifest identifies the local client's probe miss
+// so marketplace add can use the Oracle's actionable checked-path wording
+// (commands/marketplace/__init__.py:657-660) without rewriting unrelated
+// parse or filesystem errors.
+func isMissingLocalMarketplaceManifest(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no marketplace manifest found under")
+}
+
 // fallbackMarketplaceAlias derives a repo-name-shaped alias from src when
 // neither --name nor a usable manifest name is available: Owner/Repo for
 // every remote Kind that has them (SCP, full URL, shorthand), the local
@@ -435,6 +469,7 @@ func marketplaceListCmd() *cobra.Command {
 			// renderSearchTable), which already print an equivalent title
 			// line before calling ux.Table. This is the same convention
 			// those two already use, not a new one.
+			fmt.Fprintln(w)
 			fmt.Fprintln(w, "Registered Marketplaces")
 			ux.Table(w, headers, rows)
 			// Upstream __init__.py:883-886's post-table usage hint.
@@ -468,13 +503,13 @@ func marketplaceBrowseCmd() *cobra.Command {
 				return marketplaceNotRegisteredErr("browse", name)
 			}
 			w := cmd.OutOrStdout()
-			sp := ux.Spinner(w, fmt.Sprintf("Fetching plugins from '%s'...", name))
+			// Oracle marketplace browse starts with symbol="search" and keeps
+			// the stream-facing record visible even in non-TTY mode.
+			ux.Running(w, "Fetching plugins from '%s'...", name)
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
-				sp.Fail(fmt.Sprintf("could not reach marketplace %q", name))
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
-			sp.Success(fmt.Sprintf("Fetched %d plugin(s) from '%s'", len(m.Plugins), name))
 			if len(m.Plugins) == 0 {
 				ux.Warn(w, "Marketplace '%s' has no plugins", name)
 				return nil
@@ -494,7 +529,7 @@ func marketplaceBrowseCmd() *cobra.Command {
 			fmt.Fprintln(w)
 			renderBrowseTable(w, fmt.Sprintf("Plugins in '%s'", name), rows)
 			if verbose {
-				ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("%d plugin(s) in %q", len(m.Plugins), name)}})
+				ux.List(w, []ux.Item{{Text: fmt.Sprintf("%d plugin(s) in %q", len(m.Plugins), name)}})
 			}
 			ux.Info(w, "Install a plugin: apm-go install <plugin-name>@%s", name)
 			return nil
@@ -529,14 +564,17 @@ func marketplaceUpdateCmd() *cobra.Command {
 				if src == nil {
 					return marketplaceNotRegisteredErr("update", name)
 				}
-				ux.Info(w, "Refreshing marketplace %q...", name)
+				// Oracle __init__.py:977 starts this branch with symbol="gear".
+				ux.Gear(w, "Refreshing marketplace '%s'...", name)
 				m, err := marketplace.Fetch(context.Background(), src)
 				if err != nil {
 					return fmt.Errorf("refresh marketplace %q: %w", name, err)
 				}
-				ux.Success(w, "Refreshed marketplace %q (%d plugins)", name, len(m.Plugins))
+				// Oracle commands/marketplace/__init__.py:980-982 uses
+				// symbol="check" for the single-marketplace completion.
+				ux.Check(w, "Marketplace '%s' updated (%d plugins)", name, len(m.Plugins))
 				if verbose {
-					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(src))}})
+					ux.List(w, []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(src))}})
 				}
 				return nil
 			}
@@ -551,7 +589,9 @@ func marketplaceUpdateCmd() *cobra.Command {
 				ux.Info(w, "No marketplaces registered.")
 				return nil
 			}
-			ux.Info(w, "Refreshing %d marketplace(s)...", len(sources))
+			// Oracle __init__.py:989 starts the all-marketplace branch with
+			// symbol="gear".
+			ux.Gear(w, "Refreshing %d marketplace(s)...", len(sources))
 			for i := range sources {
 				s := &sources[i]
 				m, ferr := marketplace.Fetch(context.Background(), s)
@@ -559,13 +599,19 @@ func marketplaceUpdateCmd() *cobra.Command {
 					ux.Error(cmd.ErrOrStderr(), "failed to refresh marketplace %q: %v", s.Name, ferr)
 					continue
 				}
-				ux.Success(w, "Refreshed marketplace %q (%d plugins)", s.Name, len(m.Plugins))
+				// The Oracle renders each successful item as a tree continuation
+				// (commands/marketplace/__init__.py:994), so keep this detail as
+				// an unmarked continuation rather than a second success record or
+				// a dash-list item.
+				ux.Plain(w, "  %s", fmt.Sprintf("%s (%d plugins)", s.Name, len(m.Plugins)))
 				if verbose {
-					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(s))}})
+					ux.List(w, []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(s))}})
 				}
 			}
 			// Upstream __init__.py:993's closing line.
-			ux.Success(w, "Marketplace cache refreshed")
+			// Oracle commands/marketplace/__init__.py:999 uses
+			// logger.success(..., symbol="check").
+			ux.Check(w, "Marketplace cache refreshed")
 			return nil
 		},
 	}
@@ -622,9 +668,11 @@ func marketplaceRemoveCmd() *cobra.Command {
 			if err := marketplace.RemoveSource(name); err != nil {
 				return err
 			}
-			ux.Success(cmd.OutOrStdout(), "Removed marketplace %q", name)
+			// Oracle commands/marketplace/__init__.py:1039 uses
+			// logger.success(..., symbol="check").
+			ux.Check(cmd.OutOrStdout(), "Marketplace '%s' removed", name)
 			if verbose {
-				ux.BulletList(cmd.OutOrStdout(), []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(src))}})
+				ux.List(cmd.OutOrStdout(), []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(src))}})
 			}
 			return nil
 		},
@@ -714,7 +762,7 @@ func marketplaceValidateCmd() *cobra.Command {
 					}
 					items[i] = ux.Item{Text: fmt.Sprintf("%s: source type: %s", p.Name, sourceType)}
 				}
-				ux.BulletList(w, items)
+				ux.List(w, items)
 			}
 
 			// check-refs placeholder: mirrors upstream validate.py:49-54

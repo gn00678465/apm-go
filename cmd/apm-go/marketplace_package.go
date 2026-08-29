@@ -203,7 +203,10 @@ func marketplacePackageAddCmd() *cobra.Command {
 			if warnMissingCategory {
 				ux.Warn(cmd.ErrOrStderr(), "package %q has no --category; marketplace.outputs includes 'codex', which requires one at `pack` time", resolved)
 			}
-			ux.Success(cmd.OutOrStdout(), "Added package %q from %s", resolved, args[0])
+			// Oracle commands/marketplace/plugin/add.py:93-96 uses
+			// logger.success(..., symbol="check"), and its wording uses
+			// single quotes around the resolved package name.
+			ux.Check(cmd.OutOrStdout(), "Added package '%s' from %s", resolved, args[0])
 			return nil
 		},
 	}
@@ -308,7 +311,9 @@ func marketplacePackageSetCmd() *cobra.Command {
 			if fallbackUsed {
 				ux.Warn(cmd.ErrOrStderr(), "packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
 			}
-			ux.Success(cmd.OutOrStdout(), "Updated package %q", args[0])
+			// Oracle commands/marketplace/plugin/set.py:111 uses
+			// logger.success(..., symbol="check").
+			ux.Check(cmd.OutOrStdout(), "Updated package '%s'", args[0])
 			return nil
 		},
 	}
@@ -365,7 +370,9 @@ func marketplacePackageRemoveCmd() *cobra.Command {
 			if _, err := authoring.RemovePackage(".", name); err != nil {
 				return withExitCode(2, err)
 			}
-			ux.Success(cmd.OutOrStdout(), "Removed package %q", name)
+			// Oracle commands/marketplace/plugin/remove.py:52 uses
+			// logger.success(..., symbol="check").
+			ux.Check(cmd.OutOrStdout(), "Removed package '%s'", name)
 			return nil
 		},
 	}

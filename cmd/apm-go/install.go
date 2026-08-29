@@ -908,7 +908,7 @@ func printFrozenVerifiedDeps(w io.Writer, lock *lockfile.Lockfile) {
 	for i := range lock.Dependencies {
 		items[i] = ux.Item{Text: lock.Dependencies[i].UniqueKey()}
 	}
-	ux.BulletList(w, items)
+	ux.List(w, items)
 }
 
 // noDeployTargetError marks errNoDeployTarget's failure so installCmd's RunE
@@ -1024,7 +1024,7 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 		for i, e := range errs {
 			items[i] = ux.Item{Text: e}
 		}
-		ux.BulletList(os.Stderr, items)
+		ux.List(os.Stderr, items)
 		return fmt.Errorf("bundle integrity check failed for %s", bundleArg)
 	}
 
@@ -1852,7 +1852,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 				})
 			}
 			ux.Info(os.Stdout, "MCP servers configured:")
-			ux.BulletList(os.Stdout, mcpItems)
+			ux.List(os.Stdout, mcpItems)
 		}
 
 		// Pollution convergence (design.md §1.2g, codex C1, prd.md B2-3/
@@ -1908,6 +1908,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 			return fmt.Errorf("write apm.yml: %w", err)
 		}
 	}
+	updateGitignoreForApmModules()
 
 	fmt.Println()
 	// Closing summary. Built as parts joined with " and " so R15's MCP-count
@@ -1966,10 +1967,56 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 		items = append(items, ux.Item{Text: text, Muted: !isNew})
 	}
 	if len(items) > 0 {
-		ux.BulletList(os.Stdout, items)
+		ux.List(os.Stdout, items)
 	}
 
 	return nil
+}
+
+// updateGitignoreForApmModules mirrors the Oracle's project-scope install
+// helper (src/apm_cli/commands/_helpers.py:489-527 and
+// src/apm_cli/install/pipeline.py:807-813): keep the generated dependency
+// cache out of version control, while preserving an existing .gitignore.
+// Gitignore maintenance is best-effort in the Oracle, so read/write failures
+// are warnings rather than install failures.
+func updateGitignoreForApmModules() {
+	updateGitignoreForApmModulesWithWrite(io.WriteString)
+}
+
+func updateGitignoreForApmModulesWithWrite(write func(io.Writer, string) (int, error)) {
+	const pattern = "apm_modules/"
+
+	data, err := os.ReadFile(".gitignore")
+	if err != nil && !os.IsNotExist(err) {
+		ux.Warn(os.Stdout, "Could not read .gitignore: %v", err)
+		return
+	}
+	current := string(data)
+	lines := strings.Split(current, "\n")
+	if strings.HasSuffix(current, "\n") {
+		lines = lines[:len(lines)-1]
+	}
+	for _, line := range lines {
+		if strings.TrimSpace(strings.TrimSuffix(line, "\r")) == pattern {
+			return
+		}
+	}
+
+	f, err := os.OpenFile(".gitignore", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		ux.Warn(os.Stdout, "Could not update .gitignore: %v", err)
+		return
+	}
+	defer f.Close()
+	appendContent := "\n# APM dependencies\n" + pattern + "\n"
+	if len(lines) > 0 && strings.TrimSpace(strings.TrimSuffix(lines[len(lines)-1], "\r")) != "" {
+		appendContent = "\n" + appendContent
+	}
+	if _, err := write(f, appendContent); err != nil {
+		ux.Warn(os.Stdout, "Could not update .gitignore: %v", err)
+		return
+	}
+	ux.Info(os.Stdout, "Added %s to .gitignore", pattern)
 }
 
 // deployedFilesTree groups a single dependency's deployed files by

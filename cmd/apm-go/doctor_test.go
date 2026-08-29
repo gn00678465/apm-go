@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // fakeGit scripts `git <args...>` by the first argument ("--version",
@@ -122,10 +124,10 @@ func TestDoctor_AllCriticalPass_Exit0_ReportsGitAndNetwork(t *testing.T) {
 	assertBoxDrawing(t, "doctor", out)
 	assertNoANSI(t, "doctor", out)
 	for _, want := range []string{
-		"git", "[+]", "git version 2.45.0",
-		"network", "[+]", "github.com reachable",
-		"auth", "[i]", "No token; unauthenticated rate limits apply",
-		"marketplace config", "[i]", "No marketplace authoring config in current directory",
+		"git", ux.SymbolSuccess, "git version 2.45.0",
+		"network", ux.SymbolSuccess, "github.com reachable",
+		"auth", ux.SymbolInfo, "No token; unauthenticated rate limits apply",
+		"marketplace config", ux.SymbolInfo, "No marketplace authoring config in current directory",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -145,7 +147,7 @@ func TestDoctor_GitMissing_Exit1(t *testing.T) {
 	assertBoxDrawing(t, "doctor", out)
 	assertNoANSI(t, "doctor", out)
 	for _, want := range []string{
-		"git", "[x]", "git not found on PATH",
+		"git", ux.SymbolError, "git not found on PATH",
 		"network", "git not found; cannot test network",
 	} {
 		if !strings.Contains(out, want) {

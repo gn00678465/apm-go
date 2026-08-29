@@ -148,11 +148,9 @@ func TestDiffCase_ErrorBody_SkippedWhenBothSidesExitZero(t *testing.T) {
 }
 
 // TestStripErrorBodyPrefix is a table-driven test of every prefix
-// errorBodyPrefixes strips (ticket 10 attempt-2 item 2): the Oracle's "[x] "
-// error and "[!] " warning markers, apm-go's pre-ticket-10 "Error: " (cobra's
-// default ErrPrefix()), and the bare "!" glyph ux.Warn used before this
-// ticket's oracleLine switch. A line carrying none of these passes through
-// unchanged.
+// stripErrorBodyPrefix accepts the Oracle bracket markers, apm-go's centered
+// TUI markers, Cobra's legacy "Error: " prefix, and the legacy bare "!"
+// warning glyph. A line carrying none of these passes through unchanged.
 func TestStripErrorBodyPrefix(t *testing.T) {
 	tests := []struct {
 		name string
@@ -161,6 +159,8 @@ func TestStripErrorBodyPrefix(t *testing.T) {
 	}{
 		{"oracle_error_prefix", "[x] Marketplace 'nope' is not registered.", "Marketplace 'nope' is not registered."},
 		{"oracle_warning_prefix", "[!] No plugins found matching 'x'.", "No plugins found matching 'x'."},
+		{"tui_error_prefix", " x Marketplace 'nope' is not registered.", "Marketplace 'nope' is not registered."},
+		{"tui_info_prefix", " i informational body", "informational body"},
 		{"apm_go_error_prefix", "Error: something went wrong", "something went wrong"},
 		{"bare_bang_glyph", "! something went wrong", "something went wrong"},
 		{"no_matching_prefix_passthrough", "plain line with no severity marker", "plain line with no severity marker"},

@@ -1,0 +1,5 @@
+{
+  "id": "marketplace-package-add-local",
+  "argv": ["marketplace", "package", "add", "./pkg", "--name", "local-pkg", "--version", "1.0.0", "--no-verify"],
+  "rewrite_binary_name": true
+}

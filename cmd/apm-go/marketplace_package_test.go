@@ -14,8 +14,7 @@ import (
 )
 
 // assertLineSeverity finds the line in out containing marker and asserts it
-// starts with wantSymbol's Oracle-mirrored bracket prefix (ux/printer.go's
-// oracleLine convention as of ticket 10: "[<symbol>] ", e.g. "[!] " for
+// starts with the centered width-3 TUI symbol for wantSymbol (e.g. " ! " for
 // ux.SymbolWarn) -- MAJOR 3 (external audit round 2, 2026-07-30, REGR-B1/
 // REGR-M1): checking for the message text or for ux.SymbolWarn's bare
 // presence anywhere in out does not catch a mutation that swaps ux.Warn for
@@ -26,7 +25,7 @@ func assertLineSeverity(t *testing.T, out, marker, wantSymbol string) {
 	t.Helper()
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, marker) {
-			want := "[" + wantSymbol + "] "
+			want := " " + wantSymbol + " "
 			if !strings.HasPrefix(line, want) {
 				t.Errorf("line %q, want it to start with %q (severity)", line, want)
 			}

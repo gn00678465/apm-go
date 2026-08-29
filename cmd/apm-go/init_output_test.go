@@ -64,7 +64,7 @@ func TestInitSuccessOutput_ConsumerAndPlugin(t *testing.T) {
 		{
 			name:    "consumer",
 			args:    []string{"init", "consumer", "--yes"},
-			success: "[*] APM project initialized successfully!",
+			success: " + APM project initialized successfully!",
 			files:   []string{"│ *    │ apm.yml"},
 			nextSteps: []string{
 				"* Install a package:               apm-go install <owner>/<repo>",
@@ -77,7 +77,7 @@ func TestInitSuccessOutput_ConsumerAndPlugin(t *testing.T) {
 		{
 			name:    "claude plugin",
 			args:    []string{"plugin", "init", "plugin", "--yes"},
-			success: "[*] APM project initialized successfully!",
+			success: " + APM project initialized successfully!",
 			files:   []string{"│ *    │ apm.yml", "│ *    │ plugin.json"},
 			nextSteps: []string{
 				"* Add dev dependencies:    apm-go install --dev <owner>/<repo>",
@@ -88,7 +88,7 @@ func TestInitSuccessOutput_ConsumerAndPlugin(t *testing.T) {
 		{
 			name:    "agent plugin",
 			args:    []string{"plugin", "init", "agent-plugin", "--format", "agent-plugin", "--yes"},
-			success: "[*] APM project initialized successfully!",
+			success: " + APM project initialized successfully!",
 			files:   []string{"│ *    │ apm.yml", "│ *    │ plugin.json", "│ *    │ mcp.json"},
 			nextSteps: []string{
 				"* Add dev dependencies:    apm-go install --dev <owner>/<repo>",
@@ -121,7 +121,7 @@ func TestInitSuccessOutput_ConsumerAndPlugin(t *testing.T) {
 			})
 
 			assertContainsAll(t, stdout, append([]string{
-				"[>] ",
+				" > ",
 				tt.success,
 				" Created Files",
 				"File",
@@ -290,9 +290,9 @@ func TestInitInteractiveFinalSuccessBlockUsesClackTranscript(t *testing.T) {
 			t.Errorf("transcript line %d is outside the clack gutter: %q", i+1, line)
 		}
 	}
-	for _, oracle := range []string{"[>] ", "[*] ", "[i] "} {
-		if strings.Contains(stderr, oracle) {
-			t.Errorf("interactive transcript uses the Oracle prefix %q instead of the project TUI symbol:\n%s", oracle, stderr)
+	for _, bracketed := range []string{"[>] ", "[*] ", "[i] "} {
+		if strings.Contains(stderr, bracketed) {
+			t.Errorf("interactive transcript uses a bracketed status form %q:\n%s", bracketed, stderr)
 		}
 	}
 }

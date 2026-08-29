@@ -79,7 +79,7 @@ internal/
 
 **Security scanning.** `internal/security/` runs before deploy. `ScanPolicy` controls whether findings block, warn, or are ignored. The gate is fail-closed: unknown policy = block.
 
-**UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI. User-facing text uses the `ux` printers, not `fmt.Print`; `ux.Plain` is for lines whose status glyph is part of the message; `ux.Error`/`ux.Warn` always land on stdout with the oracle's `"[x] "`/`"[!] "` prefixes, regardless of which stream the call site passes.
+**UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI. User-facing text uses the `ux` printers, not `fmt.Print`; stream status records use centered, colored width-3 project TUI symbols (`+`, `i`, `!`, `x`, `>`, `*`) for success, info, warning, error, progress, and list; brackets are never printed by apm-go. `ux.Error`/`ux.Warn` still always land on stdout, regardless of which stream the call site passes. `tools/parity` always normalizes the Oracle's bracket forms and apm-go's TUI forms as the sanctioned F0x glyph-shape difference before comparing output; `ux.Plain` is for complete rows or text without a status symbol.
 
 **Safe YAML subset.** `yamlcore.SafeLoad` rejects YAML features outside the OpenAPM safe subset (no anchors, no merge keys, no custom tags). All YAML ingestion goes through it.
 

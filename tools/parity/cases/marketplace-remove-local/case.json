@@ -1,0 +1,6 @@
+{
+  "id": "marketplace-remove-local",
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "sample"]],
+  "argv": ["marketplace", "remove", "sample", "--yes"],
+  "rewrite_binary_name": true
+}

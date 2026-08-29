@@ -25,10 +25,10 @@ func TestRenderMarketplaceCatalog_MatchesOracleLines(t *testing.T) {
 	renderMarketplaceCatalog(&buf, renders)
 
 	// Assert
-	want := "[i] Marketplace artifacts ready:\n" +
-		"[i]   [claude] /proj/.claude-plugin/marketplace.json\n" +
-		"[i] How consumers install from this marketplace varies by AI assistant.\n" +
-		"[i] See: https://microsoft.github.io/apm/producer/publish-to-a-marketplace/#consume-from-any-assistant\n"
+	want := " i Marketplace artifacts ready:\n" +
+		" i   [claude] /proj/.claude-plugin/marketplace.json\n" +
+		" i How consumers install from this marketplace varies by AI assistant.\n" +
+		" i See: https://microsoft.github.io/apm/producer/publish-to-a-marketplace/#consume-from-any-assistant\n"
 	if got := buf.String(); got != want {
 		t.Errorf("catalog block mismatch\n got: %q\nwant: %q", got, want)
 	}
@@ -52,8 +52,8 @@ func TestRenderMarketplaceCatalog_TagIsLeftJustifiedToWidestProfile(t *testing.T
 	// Assert
 	got := buf.String()
 	for _, want := range []string{
-		"[i]   [claude] /proj/.claude-plugin/marketplace.json\n",
-		"[i]   [codex ] /proj/.agents/plugins/marketplace.json\n",
+		" i   [claude] /proj/.claude-plugin/marketplace.json\n",
+		" i   [codex ] /proj/.agents/plugins/marketplace.json\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing padded row %q in:\n%s", want, got)
@@ -107,12 +107,12 @@ func TestRenderMarketplaceOutput_PrintsAbsolutePath(t *testing.T) {
 		{
 			name:   "real run",
 			render: marketplaceRender{format: "claude", count: 1, outputPath: ".claude-plugin/marketplace.json", absPath: "/proj/.claude-plugin/marketplace.json"},
-			want:   "[*] Built marketplace.json [claude] (1 package(s)) -> /proj/.claude-plugin/marketplace.json\n",
+			want:   " + Built marketplace.json [claude] (1 package(s)) -> /proj/.claude-plugin/marketplace.json\n",
 		},
 		{
 			name:   "dry run",
 			render: marketplaceRender{format: "codex", count: 2, outputPath: ".agents/plugins/marketplace.json", absPath: "/proj/.agents/plugins/marketplace.json", dryRun: true},
-			want:   "[i] dry-run: Would write marketplace.json [codex] (2 package(s)) -> /proj/.agents/plugins/marketplace.json\n",
+			want:   " i dry-run: Would write marketplace.json [codex] (2 package(s)) -> /proj/.agents/plugins/marketplace.json\n",
 		},
 	}
 	for _, tt := range tests {

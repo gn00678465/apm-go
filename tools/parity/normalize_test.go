@@ -101,6 +101,29 @@ func TestNormalizeString_BinaryNameRewriteOnlyWhenFlagSet(t *testing.T) {
 	}
 }
 
+func TestNormalizeString_StatusGlyphsCanonicalizeOnlyAtLineStart(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"oracle bracket form", "[i] fetching", "<i> fetching"},
+		{"oracle success sparkle form", "[*] completed", "<+> completed"},
+		{"tui centered form", " i fetching", "<i> fetching"},
+		{"all supported classes", "[+] ok\n i info\n ! warn\n x err\n > run\n * list\n[#] list\n[~] update\n - remove\n[=] equal", "<+> ok\n<i> info\n<!> warn\n<x> err\n<>> run\n<*> list\n<*> list\n<~> update\n<-> remove\n<=> equal"},
+		{"midline bracket untouched", "prefix [i] inside", "prefix [i] inside"},
+		{"bracket in message untouched", "[x] body contains [i] literally", "<x> body contains [i] literally"},
+		{"non-width-three indent untouched", "  i indented", "  i indented"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeString(tt.in, "", "", "", false); got != tt.want {
+				t.Errorf("normalizeString(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSandboxCwdFromHome(t *testing.T) {
 	if got := sandboxCwdFromHome("/tmp/apm-parity-xyz/home"); got != "/tmp/apm-parity-xyz/cwd" {
 		t.Errorf("sandboxCwdFromHome = %q, want %q", got, "/tmp/apm-parity-xyz/cwd")

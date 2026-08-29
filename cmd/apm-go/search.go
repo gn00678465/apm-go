@@ -109,7 +109,7 @@ func searchCmd() *cobra.Command {
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
 				if verbose {
-					ux.BulletList(cmd.ErrOrStderr(), []ux.Item{{Text: err.Error()}})
+					ux.List(cmd.ErrOrStderr(), []ux.Item{{Text: err.Error()}})
 				}
 				return fmt.Errorf("Search failed: %w", err)
 			}

@@ -270,7 +270,7 @@ func TestMarketplaceAdd_LocalPath_FallsBackToManifestNameAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace add returned error: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, `"acme-tools"`) {
+	if !strings.Contains(out, `'acme-tools'`) {
 		t.Errorf("output = %q, want it to mention the registered alias acme-tools", out)
 	}
 	src, ferr := marketplace.FindByName("acme-tools")
@@ -311,7 +311,7 @@ func TestMarketplaceAdd_LocalPathPointingDirectlyToManifestFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace add returned error: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, `"acme-tools"`) {
+	if !strings.Contains(out, `'acme-tools'`) {
 		t.Errorf("output = %q, want it to mention the registered alias acme-tools (not the decoy manifest's name)", out)
 	}
 	src, ferr := marketplace.FindByName("acme-tools")
@@ -323,6 +323,26 @@ func TestMarketplaceAdd_LocalPathPointingDirectlyToManifestFile(t *testing.T) {
 	}
 	if src.Path != "" {
 		t.Errorf("registered Path = %q, want empty (direct-file read mode)", src.Path)
+	}
+}
+
+// TestMarketplaceAdd_NonexistentLocalPathUsesFetchDiagnostic mirrors the
+// Oracle's distinction between a missing source directory and an existing
+// directory with no marketplace manifest (marketplace/client.py:835-841).
+func TestMarketplaceAdd_NonexistentLocalPathUsesFetchDiagnostic(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+
+	// Act
+	_, err := runMarketplaceCmd(t, "add", "./does-not-exist", "--name", "x")
+
+	// Assert
+	if err == nil {
+		t.Fatal("marketplace add returned no error for a nonexistent local path")
+	}
+	want := "Failed to register marketplace: Failed to fetch marketplace 'x': local marketplace path does not exist:"
+	if !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "Run 'apm-go marketplace update x' to retry.") {
+		t.Errorf("error = %q, want the Oracle's actionable missing-path diagnostic", err)
 	}
 }
 
@@ -1086,14 +1106,14 @@ func TestMarketplaceBrowse_RendersPluginTable(t *testing.T) {
 		t.Fatalf("marketplace browse returned error: %v", err)
 	}
 	for _, want := range []string{
-		"[i] Fetching plugins from 'acme'...",
+		" > Fetching plugins from 'acme'...",
 		"Plugins in 'acme'",
 		"│ Plugin",
 		"│ cool-plugin",
 		"cool-plugin@acme",
 		"bare-plugin@acme",
 		"--",
-		"[i] Install a plugin: apm-go install <plugin-name>@acme",
+		" i Install a plugin: apm-go install <plugin-name>@acme",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output = %q, want it to contain %q", out, want)
@@ -1264,7 +1284,7 @@ func TestMarketplaceUpdate_RegisteredAliasStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace update ponytail returned error: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, `Refreshed marketplace "ponytail"`) {
+	if !strings.Contains(out, `Marketplace 'ponytail' updated`) {
 		t.Errorf("output = %q, want confirmation that ponytail was refreshed", out)
 	}
 }
@@ -1291,7 +1311,7 @@ func TestMarketplaceUpdate_AllContinuesPastOneFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace update (all) returned error: %v, want it to continue past the broken entry", err)
 	}
-	if !strings.Contains(out, `Refreshed marketplace "good"`) {
+	if !strings.Contains(out, `  good (1 plugins)`) {
 		t.Errorf("output = %q, want the good marketplace refreshed despite the broken one", out)
 	}
 	if !strings.Contains(out, `failed to refresh marketplace "broken"`) {
@@ -1468,10 +1488,10 @@ func TestMarketplaceValidate_HeaderAndPassRows_ExactOracleBytes(t *testing.T) {
 		t.Fatalf("marketplace validate returned error for a valid manifest: %v (output: %s)", err, out)
 	}
 	for _, line := range []string{
-		`[*] Validating marketplace 'acme'...`,
-		"[+]   Structure: passed",
-		"[+]   Schema: passed",
-		"[+]   Names: passed",
+		` + Validating marketplace 'acme'...`,
+		" +   Structure: passed",
+		" +   Schema: passed",
+		" +   Names: passed",
 	} {
 		if !strings.Contains(out, line) {
 			t.Errorf("output = %q, want it to contain the exact line %q", out, line)
@@ -1479,7 +1499,7 @@ func TestMarketplaceValidate_HeaderAndPassRows_ExactOracleBytes(t *testing.T) {
 	}
 	for _, notWant := range []string{
 		`Validating marketplace "acme"`, // the old %q double-quote rendering
-		"[i] Validating marketplace",    // the old ux.Info glyph
+		"[i] Validating marketplace",    // bracketed form is never emitted
 	} {
 		if strings.Contains(out, notWant) {
 			t.Errorf("output = %q, want it NOT to contain the pre-ticket-22 rendering %q", out, notWant)
@@ -1849,9 +1869,9 @@ func TestMarketplaceValidate_CheckRefsPrintsPlaceholderWarning(t *testing.T) {
 	assertLineSeverity(t, withFlag, warning, ux.SymbolWarn)
 
 	// Every other line must be identical: strip the warning line (and its
-	// Oracle-mirrored bracket prefix, "[!] " -- see assertLineSeverity) and
+	// centered TUI prefix, " ! " -- see assertLineSeverity) and
 	// diff what remains against the same invocation without the flag.
-	warningLine := "[" + ux.SymbolWarn + "] " + warning + "\n"
+	warningLine := " " + ux.SymbolWarn + " " + warning + "\n"
 	strippedWith := strings.Replace(withFlag, warningLine, "", 1)
 	if strippedWith != withoutFlag {
 		t.Errorf("output with --check-refs (warning line removed) = %q, want identical to without the flag %q", strippedWith, withoutFlag)
@@ -2017,7 +2037,7 @@ func TestMarketplaceAdd_SuccessLineCarriesPluginCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace add returned error: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, `Marketplace "acme" registered (2 plugins)`) {
+	if !strings.Contains(out, `Marketplace 'acme' registered (2 plugins)`) {
 		t.Errorf("output = %q, want the registered line with the plugin count", out)
 	}
 }

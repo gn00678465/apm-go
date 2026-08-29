@@ -131,7 +131,9 @@ func runMarketplaceAudit(cmd *cobra.Command, name string, strict, verbose bool) 
 	summary := fmt.Sprintf("Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
 		ok, bypassTotal, skipped, unverifiable)
 	if ok > 0 && bypassTotal == 0 && skipped == 0 && unverifiable == 0 {
-		ux.Success(w, "%s", summary)
+		// Oracle commands/marketplace/audit.py:105 uses symbol="check"
+		// for the clean summary.
+		ux.Check(w, "%s", summary)
 	} else {
 		ux.Info(w, "%s", summary)
 	}
@@ -175,7 +177,9 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 			if len(r.Issues) == 0 {
 				ok++
 				if verbose {
-					ux.Success(w, "%s: deps are marketplace-resolved", r.PluginName)
+					// Oracle commands/marketplace/audit.py:62-65 uses
+					// logger.success(..., symbol="check") for clean rows.
+					ux.Check(w, "%s: deps are marketplace-resolved", r.PluginName)
 				}
 				continue
 			}

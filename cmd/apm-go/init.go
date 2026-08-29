@@ -428,10 +428,10 @@ type initSuccessContent struct {
 
 // renderInitSuccess emits the shared success surface for non-interactive
 // `init` and `plugin init`. The content is computed once, then handed to the
-// Oracle stdout renderer; the interactive path hands the same content to
-// clackRenderer so the two modes cannot drift (commands/init.py:291-400).
+// same stream renderer used by the other status records; the interactive path
+// hands the same content to clackRenderer so the two modes cannot drift.
 func renderInitSuccess(mode initMode, projectRoot string) {
-	oracleStdoutRenderer(mode.successTitle, buildInitSuccessContent(mode, projectRoot))
+	renderSuccessBlock(os.Stdout, mode.successTitle, buildInitSuccessContent(mode, projectRoot))
 }
 
 // buildInitSuccessContent computes the words shared by the Oracle-style
@@ -467,27 +467,17 @@ func buildInitSuccessContent(mode initMode, projectRoot string) initSuccessConte
 	return content
 }
 
-// oracleStdoutRenderer preserves the pinned Oracle's non-interactive output
-// bytes: its table, box, tips, and footer remain on stdout for --yes and
-// non-TTY runs.
-func oracleStdoutRenderer(title string, content initSuccessContent) {
-	renderSuccessBlock(os.Stdout, title, content, oracleGlyphs)
-}
-
-// renderSuccessBlock writes the Oracle's success surface (commands/init.py:
-// 291-400) to w: the title record, the Created Files table, the Next Steps
-// panel, the conditional tips and the Docs/Star footer. The --yes path
-// streams it to stdout with oracleGlyphs; the interactive path renders it
-// into a buffer with tuiGlyphs and embeds it in the clack transcript. The
-// words, table and panel are identical on both paths; only the status
-// glyphs differ.
+// renderSuccessBlock writes the shared success surface to w: the title
+// record, the Created Files table, the Next Steps panel, and conditional tips.
+// Both stream and interactive surfaces use the project TUI status vocabulary;
+// clackRenderer embeds the same content in its own frame.
 // DELIBERATE apm-go deviation (user ruling 2026-08-29): the Oracle closes
 // this block with "  Docs: https://microsoft.github.io/apm  |  Star:
 // https://github.com/microsoft/apm" (commands/init.py, _print_footer).
 // apm-go is not microsoft/apm, so that promotional footer is not emitted on
 // either path; the init-yes / plugin-init-* stdout waivers record it.
-func renderSuccessBlock(w io.Writer, title string, content initSuccessContent, g blockGlyphs) {
-	g.title(w, "%s", title)
+func renderSuccessBlock(w io.Writer, title string, content initSuccessContent) {
+	ux.Success(w, "%s", title)
 
 	rows := make([][]string, 0, len(content.files))
 	for _, file := range content.files {
@@ -506,10 +496,10 @@ func renderSuccessBlock(w io.Writer, title string, content initSuccessContent, g
 	}
 	ux.Box(w, "Next Steps", body)
 	if content.agentrcTip != "" {
-		g.info(w, "%s", content.agentrcTip)
+		ux.Info(w, "%s", content.agentrcTip)
 	}
 	if content.codexTip != "" {
-		g.info(w, "%s", content.codexTip)
+		ux.Info(w, "%s", content.codexTip)
 	}
 }
 
@@ -551,19 +541,6 @@ func clackRenderer(ck *ux.Clack, title, name string, content initSuccessContent)
 	body = append(body, "")
 	ck.Note("Initializing", body)
 }
-
-// blockGlyphs selects the status-line printers a success block uses. The
-// --yes path is Oracle-compared and must print the Oracle's literal "[*] "
-// / "[i] " / "[>] " prefixes; the interactive clack transcript is apm-go's
-// own TUI and uses the project symbol set (ux.Success/Hint/Progress:
-// " + ", " i ", " > ") so the frame reads as one design, not two.
-type blockGlyphs struct {
-	title    func(io.Writer, string, ...any)
-	info     func(io.Writer, string, ...any)
-	progress func(io.Writer, string, ...any)
-}
-
-var oracleGlyphs = blockGlyphs{title: ux.Sparkle, info: ux.Info, progress: ux.Running}
 
 // detectAgentrc mirrors init.py:40-55. shutil.which checks PATH without
 // executing agentrc; the instruction artifacts suppress the suggestion when

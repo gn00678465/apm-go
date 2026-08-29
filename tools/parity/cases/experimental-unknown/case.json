@@ -1,0 +1,5 @@
+{
+  "id": "experimental-unknown",
+  "argv": ["experimental", "enable", "unknown"],
+  "rewrite_binary_name": true
+}

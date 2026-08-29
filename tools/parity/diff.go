@@ -149,8 +149,8 @@ func diffCase(outDir string, c Case, oracleRec, targetRec Record, baseline map[s
 	// compare, and computing it anyway would just compare two empty/
 	// incidental first-lines. This is deliberately independent of the
 	// stdout/stderr diff fields above: a channel/prefix-only difference (the
-	// Oracle's error on stdout with "[x] " vs. apm-go's on stderr with
-	// "Error: ") leaves error_body equal while stdout/stderr themselves
+	// Oracle's error on stdout with "[x] " vs. apm-go's TUI " x ") leaves
+	// error_body equal while stdout/stderr themselves
 	// still differ, so a waiver naming only stdout/stderr can never mask an
 	// actual wording or exit-code drift -- that would still show up here,
 	// unwaived.
@@ -240,15 +240,6 @@ func normalizedField(oracleCaseDir, targetCaseDir, field, oCwd, oCfg, oHome, tCw
 	}, true, nil
 }
 
-// errorBodyPrefixes are the leading severity markers stripped from a case's
-// error_body before comparison (ticket 10): the Oracle's bracketed
-// STATUS_SYMBOLS ("[x] " error, "[!] " warning, utils/console.py:37-61) and
-// apm-go's pre-ticket-10 stderr contract ("Error: ", cobra's default
-// ErrPrefix(), and the bare "!" ux.Warn used before this ticket's oracleLine
-// switch). Longest-prefix-first so "[x] " isn't partially matched by a
-// shorter entry.
-var errorBodyPrefixes = []string{"[x] ", "[!] ", "Error: ", "!"}
-
 // errorBody extracts the first non-empty, non-preamble line of stdout-
 // then-stderr (already normalized by the caller) and strips one leading
 // severity prefix plus surrounding whitespace, so a channel/prefix-only
@@ -274,8 +265,12 @@ func errorBody(normalizedStdout, normalizedStderr string) string {
 	normalizedStdout = foldStatusWrappedLines(normalizedStdout)
 	normalizedStderr = foldStatusWrappedLines(normalizedStderr)
 	for _, line := range strings.Split(normalizedStdout+"\n"+normalizedStderr, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		line = canonicalStatusGlyphLine(line)
 		line = strings.TrimSpace(line)
-		if line == "" || isUsagePreambleLine(line) {
+		if isUsagePreambleLine(line) {
 			continue
 		}
 		return stripErrorBodyPrefix(line)
@@ -284,21 +279,25 @@ func errorBody(normalizedStdout, normalizedStderr string) string {
 }
 
 // foldStatusWrappedLines removes only physical line breaks in a status-marked
-// message: every following line that does not begin with '[' is concatenated
-// to the preceding status line. Lines beginning with '[' remain independent
-// output records. This is intentionally byte-mechanical rather than a
-// whitespace normalizer, matching the Rich-wrap waiver proof.
+// message: every following line that does not begin with a recognized Oracle
+// or TUI status glyph is concatenated onto the preceding status line. This is
+// intentionally byte-mechanical rather than a whitespace normalizer,
+// matching the Rich-wrap waiver proof.
 func foldStatusWrappedLines(output string) string {
 	lines := strings.Split(output, "\n")
 	folded := make([]string, 0, len(lines))
 	for _, line := range lines {
-		if len(folded) > 0 && strings.HasPrefix(folded[len(folded)-1], "[") && !strings.HasPrefix(line, "[") {
+		if len(folded) > 0 && isStatusRecordLine(folded[len(folded)-1]) && !isStatusRecordLine(line) {
 			folded[len(folded)-1] += line
 			continue
 		}
 		folded = append(folded, line)
 	}
 	return strings.Join(folded, "\n")
+}
+
+func isStatusRecordLine(line string) bool {
+	return isCanonicalStatusGlyphLine(line) || canonicalStatusGlyphLine(line) != line
 }
 
 // isUsagePreambleLine reports whether line is part of a Click/Cobra usage-
@@ -312,7 +311,13 @@ func isUsagePreambleLine(line string) bool {
 }
 
 func stripErrorBodyPrefix(line string) string {
-	for _, p := range errorBodyPrefixes {
+	line = canonicalStatusGlyphLine(line)
+	for _, glyph := range parityStatusGlyphs {
+		if rest, ok := strings.CutPrefix(line, "<"+glyph+"> "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	for _, p := range []string{"Error: ", "!"} {
 		if rest, ok := strings.CutPrefix(line, p); ok {
 			return strings.TrimSpace(rest)
 		}

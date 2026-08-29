@@ -129,7 +129,7 @@ func validateCmd() *cobra.Command {
 				for i, d := range diags {
 					items[i] = ux.Item{Text: d.Message}
 				}
-				ux.BulletList(os.Stderr, items)
+				ux.List(os.Stderr, items)
 			}
 			return nil
 		},

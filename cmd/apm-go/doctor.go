@@ -93,11 +93,11 @@ type doctorCheck struct {
 func (c doctorCheck) icon() string {
 	switch {
 	case c.informational:
-		return "[i]"
+		return ux.SymbolInfo
 	case c.passed:
-		return "[+]"
+		return ux.SymbolSuccess
 	}
-	return "[x]"
+	return ux.SymbolError
 }
 
 // doctorCmd is the top-level `apm-go doctor` (commands/doctor.py:18-30).

@@ -536,7 +536,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		gotIDs = append(gotIDs, w.ID)
 	}
 	wantIDs := []string{
-		"version", "doctor-healthy", "doctor-help", "pack-refuse-agent-plugin", "pack-refuse-apm",
+		"version", "marketplace-add-nonexistent", "doctor-healthy", "doctor-help", "pack-refuse-agent-plugin", "pack-refuse-apm",
 		"registry-explicit-config-dir", "search-basic-hit",
 		"doctor-git-missing", "doctor-git-nonzero",
 		"doctor-network-dns-fail", "doctor-network-auth-fail", "doctor-network-not-found", "doctor-network-tls-fail", "doctor-network-timeout",
@@ -561,6 +561,8 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		"pack-check-versions-fail", "pack-check-clean-fail", "pack-help",
 		"pack-marketplace-success", "pack-marketplace-multi-output",
 		"marketplace-audit-unregistered",
+		"audit-error", "experimental-enable", "marketplace-browse-local", "marketplace-list-local",
+		"marketplace-refresh-local", "marketplace-update-local", "marketplace-remove-local",
 	}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)

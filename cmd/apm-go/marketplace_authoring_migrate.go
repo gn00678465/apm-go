@@ -39,7 +39,9 @@ func marketplaceMigrateCmd() *cobra.Command {
 				return nil
 			}
 
-			ux.Success(w, "Migrated marketplace.yml into apm.yml's 'marketplace:' block")
+			// Oracle commands/marketplace/migrate.py:55-57 uses
+			// logger.success(..., symbol="check"), hence "[+]".
+			ux.Check(w, "Migrated marketplace.yml into apm.yml's 'marketplace:' block")
 			ux.Info(w, "marketplace.yml has been removed. Commit apm.yml to record the migration.")
 			if verbose {
 				ux.Diff(w, diff)

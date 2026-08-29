@@ -19,11 +19,11 @@ func TestPrinters_Golden_NonTTYWriterHasNoANSI(t *testing.T) {
 		fn     func(buf *bytes.Buffer)
 		symbol string
 	}{
-		{name: "Success", fn: func(buf *bytes.Buffer) { Success(buf, "done: %s", "ok") }, symbol: SymbolSuccess},
-		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "info: %s", "ok") }, symbol: "i"},
-		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "running: %s", "ok") }, symbol: ">"},
-		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "warn: %s", "ok") }, symbol: SymbolWarn},
-		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "error: %s", "ok") }, symbol: SymbolError},
+		{name: "Success", fn: func(buf *bytes.Buffer) { Success(buf, "done: %s", "ok") }, symbol: " + "},
+		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "info: %s", "ok") }, symbol: " i "},
+		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "running: %s", "ok") }, symbol: " > "},
+		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "warn: %s", "ok") }, symbol: " ! "},
+		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "error: %s", "ok") }, symbol: " x "},
 	}
 
 	for _, tt := range tests {
@@ -49,63 +49,30 @@ func TestPrinters_Golden_NonTTYWriterHasNoANSI(t *testing.T) {
 	}
 }
 
-// TestPrintLine_SymbolFixedWidthThreeCentered is the R8/P4-5/P4-6 regression:
-// Success's message symbol renders centered in a fixed 3-rune column
-// (padding survives ANSI stripping since it's plain whitespace, not color),
-// and the message text starts immediately after that column with no
-// additional space -- so multi-line output stays aligned and there's no
-// double gap. Info/Warn/Error deliberately left this shared convention under
-// ticket 10's decision (A): they render the Oracle's literal "[i] "/"[!]
-// "/"[x] " bracket prefix instead (see TestOracleLine_BracketPrefixNoExtraSpace).
-func TestPrintLine_SymbolFixedWidthThreeCentered(t *testing.T) {
-	tests := []struct {
-		name   string
-		fn     func(buf *bytes.Buffer)
-		symbol string
-	}{
-		{name: "Success", fn: func(buf *bytes.Buffer) { Success(buf, "msg") }, symbol: SymbolSuccess},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			tt.fn(&buf)
-			out := strings.TrimSuffix(buf.String(), "\n")
-
-			runes := []rune(out)
-			if len(runes) < 4 {
-				t.Fatalf("%s output too short to contain a 3-rune symbol column: %q", tt.name, out)
-			}
-			symbolColumn := string(runes[:3])
-			wantColumn := " " + tt.symbol + " "
-			if symbolColumn != wantColumn {
-				t.Errorf("%s symbol column = %q, want %q (3-rune centered)", tt.name, symbolColumn, wantColumn)
-			}
-			rest := string(runes[3:])
-			if rest != "msg" {
-				t.Errorf("%s message = %q, want %q (no extra space after the symbol column)", tt.name, rest, "msg")
-			}
-		})
+// TestSuccess_UsesCenteredTUIPrefix pins the stream-facing success contract.
+func TestSuccess_UsesCenteredTUIPrefix(t *testing.T) {
+	var buf bytes.Buffer
+	Success(&buf, "msg")
+	if got, want := strings.TrimSuffix(buf.String(), "\n"), " + msg"; got != want {
+		t.Errorf("Success output = %q, want %q", got, want)
 	}
 }
 
-// TestOracleLine_BracketPrefixNoExtraSpace pins Info/Running/Warn/Error's
-// Oracle-mirrored format (ticket 10 decisions A and attempt-3's Info/Running
-// extension): a literal "[i] "/"[>] "/"[!] "/"[x] " prefix immediately
-// followed by the message, no centering/padding.
-func TestOracleLine_BracketPrefixNoExtraSpace(t *testing.T) {
+// TestPrintLine_CenteredTUISymbols pins the shared width-3 format used by all
+// stream status records.
+func TestPrintLine_CenteredTUISymbols(t *testing.T) {
 	tests := []struct {
-		name   string
-		fn     func(buf *bytes.Buffer)
-		prefix string
+		name string
+		fn   func(buf *bytes.Buffer)
+		want string
 	}{
-		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "msg") }, prefix: oracleInfoPrefix},
-		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "msg") }, prefix: oracleRunningPrefix},
-		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "msg") }, prefix: oracleWarnPrefix},
-		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "msg") }, prefix: oracleErrorPrefix},
-		{name: "Sparkle", fn: func(buf *bytes.Buffer) { Sparkle(buf, "msg") }, prefix: oracleSparklePrefix},
-		{name: "Gear", fn: func(buf *bytes.Buffer) { Gear(buf, "msg") }, prefix: oracleSparklePrefix},
-		{name: "Check", fn: func(buf *bytes.Buffer) { Check(buf, "msg") }, prefix: oracleCheckPrefix},
+		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "msg") }, want: " i msg"},
+		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "msg") }, want: " > msg"},
+		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "msg") }, want: " ! msg"},
+		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "msg") }, want: " x msg"},
+		{name: "Sparkle", fn: func(buf *bytes.Buffer) { Sparkle(buf, "msg") }, want: " + msg"},
+		{name: "Gear", fn: func(buf *bytes.Buffer) { Gear(buf, "msg") }, want: " + msg"},
+		{name: "Check", fn: func(buf *bytes.Buffer) { Check(buf, "msg") }, want: " + msg"},
 	}
 
 	for _, tt := range tests {
@@ -113,8 +80,8 @@ func TestOracleLine_BracketPrefixNoExtraSpace(t *testing.T) {
 			var buf bytes.Buffer
 			tt.fn(&buf)
 			out := strings.TrimSuffix(buf.String(), "\n")
-			if want := tt.prefix + "msg"; out != want {
-				t.Errorf("%s output = %q, want %q", tt.name, out, want)
+			if out != tt.want {
+				t.Errorf("%s output = %q, want %q", tt.name, out, tt.want)
 			}
 		})
 	}
@@ -135,14 +102,13 @@ func TestErrWriter_RedirectsProcessStderrToStdout(t *testing.T) {
 	}
 }
 
-// Plain is the symbol-free line printer for callers whose status glyph is
-// part of the message itself (doctor's upstream "[+] name: detail" rows,
-// Finding 9). It still goes through the per-writer colour policy.
+// Plain is the symbol-free line printer for callers whose content is already
+// a complete row. It still goes through the per-writer colour policy.
 func TestPlain_NoSymbol_NoANSI_Newline(t *testing.T) {
 	var buf bytes.Buffer
-	Plain(&buf, "  [%s] %s: %s", "+", "git", "ok")
+	Plain(&buf, "  %s %s: %s", SymbolSuccess, "git", "ok")
 	got := buf.String()
-	if got != "  [+] git: ok\n" {
+	if got != "  + git: ok\n" {
 		t.Errorf("got %q", got)
 	}
 	if strings.Contains(got, "\x1b[") {

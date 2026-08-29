@@ -24,6 +24,16 @@ var hexRunRe = regexp.MustCompile(`[0-9a-fA-F]+`)
 // second and an optional "Z" or numeric offset.
 var isoTimestampRe = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?`)
 
+// parityStatusGlyphs is the sanctioned F0x normalization class (ticket 33).
+// The pinned Oracle prefixes a status record with "[c] "; apm-go uses the
+// centered width-3 form " c ". Both are reduced to a canonical token only at
+// the start of a line, so bracketed or spaced text inside a message remains
+// literal. Oracle [*] is its success/sparkles class; apm-go's centered * is
+// the list class, while Oracle [#] is the corresponding list class.
+var parityStatusGlyphs = []string{"+", "i", "!", "x", ">", "*", "#", "~", "-", "="}
+
+var parityCanonicalStatusGlyphs = []string{"+", "i", "!", "x", ">", "*", "~", "-", "="}
+
 // normalizeString applies ONLY the substitutions the ticket 02 spec allows,
 // in an order chosen so each pass can't corrupt the next: the sandbox's own
 // absolute paths first (a temp dir name can itself look like a hex or
@@ -52,7 +62,66 @@ func normalizeString(s, cwd, cfg, home string, rewriteBinaryName bool) string {
 		s = strings.ReplaceAll(s, "apm-go", "apm")
 	}
 
+	s = normalizeStatusGlyphs(s)
+
 	return s
+}
+
+// normalizeStatusGlyphs maps the two stream-renderer shapes to one canonical
+// token. The canonical form keeps the message gap after <c>, independent of
+// the source form's bracket or centered padding.
+func normalizeStatusGlyphs(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = canonicalStatusGlyphLine(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// canonicalStatusGlyphLine recognizes only the exact line-leading forms.
+// In particular, a mid-line "[i]" and a line beginning with two spaces are
+// not status records and must pass through unchanged.
+func canonicalStatusGlyphLine(line string) string {
+	for _, glyph := range parityStatusGlyphs {
+		oracle := "[" + glyph + "] "
+		oracleGlyph := glyph
+		switch glyph {
+		case "*":
+			// Rich's sparkles/gear status is the project's success class.
+			oracleGlyph = "+"
+		case "#":
+			// Rich's list status is the project's list class.
+			oracleGlyph = "*"
+		}
+		oracleCanonical := "<" + oracleGlyph + "> "
+		if strings.HasPrefix(line, oracle) {
+			return oracleCanonical + line[len(oracle):]
+		}
+		tui := " " + glyph + " "
+		tuiGlyph := glyph
+		if glyph == "#" {
+			tuiGlyph = "*"
+		}
+		tuiCanonical := "<" + tuiGlyph + "> "
+		if strings.HasPrefix(line, tui) {
+			return tuiCanonical + line[len(tui):]
+		}
+		for _, canonicalGlyph := range parityCanonicalStatusGlyphs {
+			if strings.HasPrefix(line, "<"+canonicalGlyph+"> ") {
+				return line
+			}
+		}
+	}
+	return line
+}
+
+func isCanonicalStatusGlyphLine(line string) bool {
+	for _, glyph := range parityCanonicalStatusGlyphs {
+		if strings.HasPrefix(line, "<"+glyph+"> ") {
+			return true
+		}
+	}
+	return false
 }
 
 // replaceHexTokens replaces every maximal run of hex characters whose

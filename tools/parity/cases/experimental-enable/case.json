@@ -1,0 +1,5 @@
+{
+  "id": "experimental-enable",
+  "argv": ["experimental", "enable", "registries"],
+  "rewrite_binary_name": true
+}

@@ -748,7 +748,7 @@ func TestRunMCPInstall_PrintsTargetSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runMCPInstall: %v", err)
 	}
-	if !strings.Contains(stdout, "[i] Targets: claude  (source: auto-detect)") {
+	if !strings.Contains(stdout, " i Targets: claude  (source: auto-detect)") {
 		t.Errorf("expected a target-source line, got:\n%s", stdout)
 	}
 }

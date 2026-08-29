@@ -81,6 +81,8 @@ func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest,
 		return false, fmt.Errorf("write plugin manifest %s: %w", absPath, err)
 	}
 
-	ux.Success(w, "Generated plugin manifest: %s", absPath)
+	// Oracle core/plugin_manifest.py:483-484 emits this through
+	// _emit(..., "check"), so the stream glyph is "[+]".
+	ux.Check(w, "Generated plugin manifest: %s", absPath)
 	return true, nil
 }

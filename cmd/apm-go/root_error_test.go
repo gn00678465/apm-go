@@ -27,8 +27,8 @@ func TestRootError_UnverifiedFlagErrorsMatchPreTicket13Shape(t *testing.T) {
 		args       []string
 		wantStdout string
 	}{
-		{"pack unknown long flag", []string{"pack", "--bogus"}, "[x] unknown flag: --bogus\n"},
-		{"pack shorthand missing argument", []string{"pack", "-m"}, "[x] Option ''m' in -m' requires an argument.\n"},
+		{"pack unknown long flag", []string{"pack", "--bogus"}, " x unknown flag: --bogus\n"},
+		{"pack shorthand missing argument", []string{"pack", "-m"}, " x Option ''m' in -m' requires an argument.\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

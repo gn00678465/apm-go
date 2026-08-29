@@ -358,5 +358,5 @@ func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
 		return
 	}
 	ux.Section(os.Stdout, "Update plan for apm.yml")
-	ux.BulletList(os.Stdout, items)
+	ux.List(os.Stdout, items)
 }

@@ -92,14 +92,18 @@ func marketplaceInitCmd() *cobra.Command {
 			}
 
 			if scaffoldedApmYML {
-				ux.Success(w, "Created apm.yml with 'marketplace:' block")
+				// Oracle commands/marketplace/init.py:97 uses
+				// logger.success(..., symbol="check"), hence "[+]".
+				ux.Check(w, "Created apm.yml with 'marketplace:' block")
 			} else {
-				ux.Success(w, "Added 'marketplace:' block to apm.yml")
+				// Oracle commands/marketplace/init.py:99 uses
+				// logger.success(..., symbol="check"), hence "[+]".
+				ux.Check(w, "Added 'marketplace:' block to apm.yml")
 			}
 			if verbose {
 				cwd, cerr := os.Getwd()
 				if cerr == nil {
-					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("Path: %s", filepath.Join(cwd, "apm.yml"))}})
+					ux.List(w, []ux.Item{{Text: fmt.Sprintf("Path: %s", filepath.Join(cwd, "apm.yml"))}})
 				}
 			}
 
@@ -313,7 +317,9 @@ func marketplaceCheckCmd() *cobra.Command {
 			if failed > 0 {
 				return fmt.Errorf("check failed: %d/%d package(s) have an unverifiable pin", failed, len(results))
 			}
-			ux.Success(w, "all %d package(s) verified", len(results))
+			// Oracle commands/marketplace/audit.py:105 uses symbol="check"
+			// for an all-clean summary.
+			ux.Check(w, "all %d package(s) verified", len(results))
 			return nil
 		},
 	}
@@ -386,7 +392,7 @@ func marketplaceOutdatedCmd() *cobra.Command {
 				ux.Info(w, "All packages are up to date")
 			}
 			if verbose {
-				ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("%d upgradable entries", upgradable)}})
+				ux.List(w, []ux.Item{{Text: fmt.Sprintf("%d upgradable entries", upgradable)}})
 			}
 
 			if upgradable > 0 {

@@ -273,11 +273,10 @@ func TestSearchCmd_DescriptionOver60CharsIsTruncatedInTable(t *testing.T) {
 }
 
 // TestSearchCmd_PrintsProgressLineAndInfoPrefixedInstallHint is ticket 10
-// attempt 3's search-specific regression: the Oracle's progress line
+// attempt 3's search-specific regression: the progress line
 // (__init__.py:1392, logger.start(..., symbol="search")) and its Install
-// hint (a ux.Info call) must both carry the Oracle's literal bracket
-// prefixes -- "[>] " and "[i] " respectively -- not the old centered-symbol
-// convention.
+// hint (a ux.Info call) must both carry the centered project TUI symbols
+// " > " and " i " respectively.
 func TestSearchCmd_PrintsProgressLineAndInfoPrefixedInstallHint(t *testing.T) {
 	isolatedMarketplaceRegistry(t)
 	registerSearchFixture(t)
@@ -286,11 +285,11 @@ func TestSearchCmd_PrintsProgressLineAndInfoPrefixedInstallHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runSearchCmd: %v", err)
 	}
-	if !strings.Contains(out, "[>] Searching 'skills' for 'security'...") {
-		t.Errorf("output = %q, want the Oracle's [>]-prefixed progress line before the table", out)
+	if !strings.Contains(out, " > Searching 'skills' for 'security'...") {
+		t.Errorf("output = %q, want the centered progress line before the table", out)
 	}
-	if !strings.Contains(out, "[i] Install: apm-go install <plugin-name>@skills") {
-		t.Errorf("output = %q, want the [i]-prefixed Install hint", out)
+	if !strings.Contains(out, " i Install: apm-go install <plugin-name>@skills") {
+		t.Errorf("output = %q, want the centered Install hint", out)
 	}
 }
 

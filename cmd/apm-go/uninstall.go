@@ -253,7 +253,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		for i, f := range removedFiles {
 			items[i] = ux.Item{Text: f}
 		}
-		ux.BulletList(os.Stdout, items)
+		ux.List(os.Stdout, items)
 	}
 
 	removeUninstallStandaloneMCP(plan.mcpNames, lock)
@@ -501,7 +501,7 @@ func removeUninstallModuleDirs(removalKeys map[string]bool, verbose bool) (remov
 		}
 	}
 	if len(removed) > 0 {
-		ux.BulletList(os.Stdout, removed)
+		ux.List(os.Stdout, removed)
 	}
 	return removedCount, nil
 }
@@ -591,7 +591,7 @@ func printUninstallDryRunPlan(resolution *uninstallResolution, allRemovalKeys, o
 	for _, t := range resolution.MCPTargets {
 		targetItems = append(targetItems, ux.Item{Text: fmt.Sprintf("%s (dependencies.mcp)", t.Name)})
 	}
-	ux.BulletList(os.Stdout, targetItems)
+	ux.List(os.Stdout, targetItems)
 
 	if len(orphans) > 0 {
 		ux.Section(os.Stdout, "dry-run: transitive orphans that would also be removed")
@@ -599,7 +599,7 @@ func printUninstallDryRunPlan(resolution *uninstallResolution, allRemovalKeys, o
 		for _, k := range sortedStringSet(orphans) {
 			orphanItems = append(orphanItems, ux.Item{Text: k})
 		}
-		ux.BulletList(os.Stdout, orphanItems)
+		ux.List(os.Stdout, orphanItems)
 	}
 
 	ux.Section(os.Stdout, "dry-run: apm_modules")
@@ -611,7 +611,7 @@ func printUninstallDryRunPlan(resolution *uninstallResolution, allRemovalKeys, o
 		}
 		moduleItems = append(moduleItems, ux.Item{Text: fmt.Sprintf("apm_modules/%s: %s", k, state)})
 	}
-	ux.BulletList(os.Stdout, moduleItems)
+	ux.List(os.Stdout, moduleItems)
 
 	ux.Info(os.Stdout, "dry-run: no changes made")
 }
@@ -642,7 +642,7 @@ func printUninstallSummary(resolution *uninstallResolution, orphans map[string]b
 		items = append(items, ux.Item{Text: t.Name})
 	}
 	if len(items) > 0 {
-		ux.BulletList(os.Stdout, items)
+		ux.List(os.Stdout, items)
 	}
 
 	if apmYMLPath, err := filepath.Abs("apm.yml"); err == nil {

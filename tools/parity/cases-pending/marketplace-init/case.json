@@ -1,0 +1,5 @@
+{
+  "id": "marketplace-init",
+  "argv": ["marketplace", "init", "--name", "demo", "--no-gitignore-check"],
+  "rewrite_binary_name": true
+}

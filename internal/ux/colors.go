@@ -16,8 +16,9 @@ const (
 	ColorMuted   = "#8b949e"
 )
 
-// Symbol prefixes used across stdout/stderr output. These replace the old
-// mixed-prefix conventions ([+] [i] [!] [warn] [>] [*] [x] [dry-run] [-]).
+// Stream status symbols used across stdout/stderr output. Every status record
+// is rendered by printer.go as a centered, width-3 TUI symbol; brackets are
+// never emitted by apm-go.
 //
 // R8/P4-7 (design.md): all five of the original glyphs (✓ ℹ ✗ ▸ •) other
 // than "!" are East-Asian Ambiguous width -- some terminal fonts render them
@@ -34,4 +35,9 @@ const (
 	SymbolError    = "x"
 	SymbolProgress = ">"
 	SymbolList     = "*"
+	// Plan symbols are narrow ASCII equivalents for update, remove, and equal
+	// status classes. Callers may embed them in a larger plan row.
+	SymbolUpdate = "~"
+	SymbolRemove = "-"
+	SymbolEqual  = "="
 )

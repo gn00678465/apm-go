@@ -1,0 +1,5 @@
+{
+  "id": "audit-clean",
+  "argv": ["audit"],
+  "rewrite_binary_name": true
+}

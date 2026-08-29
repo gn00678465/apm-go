@@ -215,9 +215,9 @@ func TestInteractiveInitSuccessStaysInsideClackFrame(t *testing.T) {
 			}
 			// Inside apm-go's own frame the status records use the project
 			// TUI symbols, never the Oracle's literal bracket prefixes.
-			for _, oracle := range []string{"[>] ", "[*] ", "[i] "} {
-				if strings.Contains(transcript, oracle) {
-					t.Errorf("transcript uses the Oracle prefix %q inside the clack frame:\n%s", oracle, transcript)
+			for _, bracketed := range []string{"[>] ", "[*] ", "[i] "} {
+				if strings.Contains(transcript, bracketed) {
+					t.Errorf("transcript uses a bracketed status form %q inside the clack frame:\n%s", bracketed, transcript)
 				}
 			}
 		})
