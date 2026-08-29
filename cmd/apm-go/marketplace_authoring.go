@@ -227,10 +227,15 @@ func parseBlockValueNode(blockText string) (*yamllib.Node, error) {
 
 // appendMarketplaceBlock appends blockText to the end of src as raw text
 // (mkt-040): a newline is inserted first if src doesn't already end in one,
-// followed by a blank-line separator, and blockText's line endings are
-// normalized to CRLF when src itself is CRLF -- so the appended block
-// doesn't leave a mixed-EOL document. Every existing byte of src survives
-// untouched (舊坑 1: this must hold even against a hand-formatted apm.yml).
+// and blockText's line endings are normalized to CRLF when src itself is
+// CRLF -- so the appended block doesn't leave a mixed-EOL document. Every
+// existing byte of src survives untouched (舊坑 1: this must hold even
+// against a hand-formatted apm.yml). No blank-line separator is written:
+// the Oracle round-trips the document through ruamel and dumps the new
+// `marketplace:` key directly after the last top-level key
+// (commands/marketplace/init.py:85-91), so the scaffold and the Oracle's
+// apm.yml are byte-identical apart from the ruled `# ref:` example line
+// (2026-08-29, ticket 32).
 func appendMarketplaceBlock(src []byte, blockText string) []byte {
 	crlf := bytes.Contains(src, []byte("\r\n"))
 	nl := "\n"
@@ -241,9 +246,6 @@ func appendMarketplaceBlock(src []byte, blockText string) []byte {
 	var buf bytes.Buffer
 	buf.Write(src)
 	if len(src) > 0 && src[len(src)-1] != '\n' {
-		buf.WriteString(nl)
-	}
-	if len(src) > 0 {
 		buf.WriteString(nl)
 	}
 

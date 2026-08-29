@@ -35,19 +35,14 @@ func RenderMinimalApmYMLShell(name string) string {
 // `apm pack` rejects branch/HEAD refs with HeadNotAllowedError and exposes
 // no allow-head escape hatch (checklist mkt-055), so a scaffold suggesting
 // "ref: main" would walk every new user straight into a pack failure the
-// moment they uncomment that example.
-const initBlockTemplate = `# Marketplace authoring config (APM-only).
-# Run 'apm-go pack' to compile this block to .claude-plugin/marketplace.json.
-# Optionally enable Codex output below to also write .agents/plugins/marketplace.json.
-#
-# Top-level 'name', 'description', and 'version' are inherited from
-# the project (above) by default.  Override them inside this block when
-# the marketplace is published independently of the project's release
-# cadence.
-#
-# For the full schema, see:
-#   https://microsoft.github.io/apm/guides/marketplace-authoring/
-marketplace:
+// moment they uncomment that example. Ruled kept by the user 2026-08-29
+// (ticket 32); it is the ONLY byte the scaffold differs from the Oracle by.
+//
+// The explanatory comment block apm-go used to write above `marketplace:`
+// ("# Marketplace authoring config (APM-only) ...") was removed the same
+// day: the Oracle's render_marketplace_block writes no such block, and it
+// carried a microsoft.github.io link this project does not advertise.
+const initBlockTemplate = `marketplace:
   owner:
     name: {{OWNER}}
     url: https://github.com/{{OWNER}}

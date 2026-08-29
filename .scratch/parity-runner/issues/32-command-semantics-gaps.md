@@ -63,3 +63,23 @@ claim ticket 32 complete.
   stdout rendering waiver; its tree remains unwaived.
 - [ ] Where a footprint difference is a deliberate apm-go design (e.g. `_local/<hash>` materialisation), it is recorded as a dated deviation comment with the reason AND the user has ruled on it -- not decided by the implementor.
 - [ ] `tools/parity/cases-pending/` is empty at close.
+
+## Scope ruling (2026-08-29): this branch stops at the marketplace surface
+
+The branch is `feat/marketplace-plugin-parity`; the user ruled the audit had
+sprawled. `marketplace-init` is the only pending case in scope: its two pure
+bugs are fixed here (the apm-go-only 12-line comment block above
+`marketplace:` is gone; the blank-line separator apm-go wrote before the
+block is gone -- the Oracle round-trips through ruamel and writes neither,
+commands/marketplace/init.py:85-91). Its scaffold now differs from the
+Oracle's by exactly one byte sequence: the ruled `# ref: v1.0.0` example
+(kept because apm-go's pack rejects branch refs; template.go's comment). It
+stays in `cases-pending/` because `tree` is never waived.
+
+`compile-instruction`, `install-local-path-dep`, `uninstall-local` and
+`mcp-install-offline` -- and the lockfile-interop / MCP-in-lockfile A/B
+rulings -- are OUT OF SCOPE for this branch and are handed to a follow-up
+branch with this ticket. Their pure bugs (lockfile YAML style, uninstall
+creating a module dir, AGENTS.md template drift incl. the `apm compile`
+binary name, mcp apm.yml indentation and `.mcp.json` trailing newline) are
+listed in "Part 2" above and remain open.
