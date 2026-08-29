@@ -72,6 +72,14 @@ var terminalWidthFor = func(w io.Writer) int {
 // ergonomic addition over upstream rich's show_lines=False default).
 // Single-line tables keep the separator-free rendering.
 func Table(w io.Writer, headers []string, rows [][]string) {
+	lipgloss.Fprintln(w, TableString(w, headers, rows))
+}
+
+// TableString renders the same table Table prints, as a string, for callers
+// that place it inside another surface (the clack transcript's Note box).
+// w is consulted only for the terminal-width cap. The returned string
+// carries lipgloss styling; the caller's own writer downsamples it.
+func TableString(w io.Writer, headers []string, rows [][]string) string {
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(mutedStyle).
@@ -105,7 +113,7 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 	if multiline || capped {
 		rendered = t.BorderRow(true).String()
 	}
-	lipgloss.Fprintln(w, rendered)
+	return rendered
 }
 
 // anyCellMultiline reports whether any data cell already contains a line

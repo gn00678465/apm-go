@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -191,7 +190,7 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 		// emits it even when mkdir(exist_ok=True) found an existing directory;
 		// preserve that observed behavior.
 		if ck != nil {
-			embedProgress(ck, "Created project directory: %s", pn)
+			ck.Line(ux.ProgressText("Created project directory: %s", pn))
 		} else {
 			ux.Running(os.Stdout, "Created project directory: %s", pn)
 		}
@@ -358,9 +357,9 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 
 	// Oracle commands/init.py:249 starts the actual initialization phase
 	// after confirmation and before its native-source warning/file writes.
-	if ck != nil {
-		embedProgress(ck, "Initializing APM project: %s", name)
-	} else {
+	// Interactively this record opens the final "Initializing" Note
+	// instead (clackRenderer), so it is not repeated here.
+	if ck == nil {
 		ux.Running(os.Stdout, "Initializing APM project: %s", name)
 	}
 	// R4: plugin-native root directory warning, shared by both modes
@@ -412,7 +411,7 @@ func runInitCore(args []string, mode initMode, yes bool, targetFlag string, forc
 	// Phase 7: Success output
 	if ck != nil {
 		ck.Bar()
-		clackRenderer(ck, mode.successTitle, buildInitSuccessContent(mode, cwd))
+		clackRenderer(ck, mode.successTitle, name, buildInitSuccessContent(mode, cwd))
 		ck.Outro("Done!")
 		return nil
 	}
@@ -425,7 +424,6 @@ type initSuccessContent struct {
 	nextSteps  []string
 	agentrcTip string
 	codexTip   string
-	docsLine   string
 }
 
 // renderInitSuccess emits the shared success surface for non-interactive
@@ -443,7 +441,6 @@ func buildInitSuccessContent(mode initMode, projectRoot string) initSuccessConte
 	content := initSuccessContent{
 		files:     []string{"apm.yml"},
 		nextSteps: append([]string(nil), mode.nextSteps...),
-		docsLine:  "Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
 	}
 	if mode.plugin {
 		content.files = append(content.files, "plugin.json")
@@ -484,6 +481,11 @@ func oracleStdoutRenderer(title string, content initSuccessContent) {
 // into a buffer with tuiGlyphs and embeds it in the clack transcript. The
 // words, table and panel are identical on both paths; only the status
 // glyphs differ.
+// DELIBERATE apm-go deviation (user ruling 2026-08-29): the Oracle closes
+// this block with "  Docs: https://microsoft.github.io/apm  |  Star:
+// https://github.com/microsoft/apm" (commands/init.py, _print_footer).
+// apm-go is not microsoft/apm, so that promotional footer is not emitted on
+// either path; the init-yes / plugin-init-* stdout waivers record it.
 func renderSuccessBlock(w io.Writer, title string, content initSuccessContent, g blockGlyphs) {
 	g.title(w, "%s", title)
 
@@ -509,17 +511,45 @@ func renderSuccessBlock(w io.Writer, title string, content initSuccessContent, g
 	if content.codexTip != "" {
 		g.info(w, "%s", content.codexTip)
 	}
-	ux.Plain(w, "  %s", content.docsLine)
 }
 
 // clackRenderer renders the same success words as one completed transcript
 // step. Clack supplies the frame and prefixes every body line with its
 // gutter, so no Oracle table/panel drawing can leak outside the interactive
 // transcript.
-func clackRenderer(ck *ux.Clack, title string, content initSuccessContent) {
-	var buf bytes.Buffer
-	renderSuccessBlock(&buf, title, content, tuiGlyphs)
-	ck.Embed(buf.String())
+func clackRenderer(ck *ux.Clack, title, name string, content initSuccessContent) {
+	// One Note box titled "Initializing" carries the whole surface, opening
+	// with the Oracle's "Initializing APM project" record so the step reads
+	// as its own item rather than a continuation of the confirm prompt
+	// above it (user ruling 2026-08-29). Status lines inside the box are
+	// plain text; the table keeps its own borders; Next Steps is a heading
+	// plus bullets (a second box inside the box would be noise); the tips
+	// keep the project TUI symbol.
+	rows := make([][]string, 0, len(content.files))
+	for _, file := range content.files {
+		rows = append(rows, []string{"*", file})
+	}
+	body := []string{
+		"",
+		" Initializing APM project: " + name,
+		"",
+		" " + title,
+		" Created Files",
+	}
+	body = append(body, strings.Split(ux.TableString(os.Stderr, []string{"File", "Description"}, rows), "\n")...)
+	body = append(body, "", " Next Steps")
+	for _, step := range content.nextSteps {
+		body = append(body, " * "+step)
+	}
+	body = append(body, "")
+	if content.agentrcTip != "" {
+		body = append(body, ux.HintText("%s", content.agentrcTip))
+	}
+	if content.codexTip != "" {
+		body = append(body, ux.HintText("%s", content.codexTip))
+	}
+	body = append(body, "")
+	ck.Note("Initializing", body)
 }
 
 // blockGlyphs selects the status-line printers a success block uses. The
@@ -533,19 +563,7 @@ type blockGlyphs struct {
 	progress func(io.Writer, string, ...any)
 }
 
-var (
-	oracleGlyphs = blockGlyphs{title: ux.Sparkle, info: ux.Info, progress: ux.Running}
-	tuiGlyphs    = blockGlyphs{title: ux.Success, info: ux.Hint, progress: ux.Progress}
-)
-
-// embedProgress hangs one Oracle "[>] ..." progress record off the clack
-// connecting line, so an interactive run shows the same status glyph the
-// --yes path prints (ux.Running) without breaking the transcript border.
-func embedProgress(ck *ux.Clack, format string, a ...any) {
-	var buf bytes.Buffer
-	tuiGlyphs.progress(&buf, format, a...)
-	ck.Embed(buf.String())
-}
+var oracleGlyphs = blockGlyphs{title: ux.Sparkle, info: ux.Info, progress: ux.Running}
 
 // detectAgentrc mirrors init.py:40-55. shutil.which checks PATH without
 // executing agentrc; the instruction artifacts suppress the suggestion when

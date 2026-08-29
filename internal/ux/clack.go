@@ -2,6 +2,7 @@ package ux
 
 import (
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"io"
 	"os"
 	"runtime"
@@ -166,6 +167,14 @@ func (c *Clack) Detail(text string) {
 	lipgloss.Fprintln(c.w, mutedStyle.Render(c.sym.Bar)+"  "+mutedStyle.Render(text))
 }
 
+// Line hangs one pre-styled line off the connecting line (a status record
+// rendered by ProgressText/HintText). The styling survives because the
+// clack writer, not a buffer, is what lipgloss downsamples against.
+func (c *Clack) Line(text string) {
+	fireClackEvent("Line")
+	lipgloss.Fprintln(c.w, mutedStyle.Render(c.sym.Bar)+"  "+text)
+}
+
 // Embed hangs a pre-rendered block (an Oracle-style status record, a table,
 // a panel) off the connecting line: every line of block is printed verbatim
 // behind the gutter, so the block keeps its own glyphs and box-drawing while
@@ -213,9 +222,44 @@ func (c *Clack) Step(title, answer string) {
 // the right edge stays straight.
 func (c *Clack) Note(title string, body []string) {
 	fireClackEvent("Note")
+	// noteOverhead is what the frame adds around the inner text on every
+	// body line: "│  " + text + "  │" = 6 columns, plus one spare column so
+	// the right border never sits in the terminal's last cell (the same
+	// margin Table keeps). A box wider than the terminal makes every row
+	// soft-wrap and the whole transcript fall apart (user report
+	// 2026-08-29), so the inner width is capped and overlong lines are
+	// word-wrapped ANSI-aware instead.
+	const noteOverhead = 7
+	limit := 0
+	if cols := terminalWidthFor(c.w); cols > noteOverhead+1 {
+		limit = cols - noteOverhead
+	}
+	if limit > 0 {
+		wrapped := make([]string, 0, len(body))
+		for _, line := range body {
+			if runeWidth(line) <= limit {
+				wrapped = append(wrapped, line)
+				continue
+			}
+			// Continuation rows hang under the first row's text: a status
+			// record (" i Tip: ...") indents past its symbol column, an
+			// indented line keeps its own indent.
+			indent := continuationIndent(line)
+			parts := strings.Split(lipgloss.Wrap(line, limit-indent, ""), "\n")
+			wrapped = append(wrapped, parts[0])
+			for _, part := range parts[1:] {
+				wrapped = append(wrapped, strings.Repeat(" ", indent)+strings.TrimLeft(part, " "))
+			}
+		}
+		body = wrapped
+	}
+
 	inner := runeWidth(title) + 1
 	for _, line := range body {
 		inner = max(inner, runeWidth(line))
+	}
+	if limit > 0 && inner > limit {
+		inner = limit
 	}
 
 	bar := mutedStyle.Render(c.sym.Bar)
@@ -224,11 +268,11 @@ func (c *Clack) Note(title string, body []string) {
 	// The title line opens the box: "◇  <title> ───╮", sized so it ends in the
 	// same column as every body line's closing bar.
 	head := brandStyle.Render(c.sym.Step) + "  " + headingStyle.Render(title) + " " +
-		mutedStyle.Render(rule(inner-runeWidth(title)+1)+c.sym.CornerRight)
+		mutedStyle.Render(rule(max(inner-runeWidth(title)+1, 1))+c.sym.CornerRight)
 	lipgloss.Fprintln(c.w, head)
 
 	for _, line := range body {
-		padded := line + strings.Repeat(" ", inner-runeWidth(line))
+		padded := line + strings.Repeat(" ", max(inner-runeWidth(line), 0))
 		lipgloss.Fprintln(c.w, bar+"  "+padded+"  "+bar)
 	}
 
@@ -323,6 +367,18 @@ func yesNo(v bool) string {
 
 // runeWidth reports how many terminal columns s occupies, so box padding
 // accounts for wide runes rather than counting bytes.
+// continuationIndent returns the column a wrapped continuation of line
+// should start at: the width of a leading " <symbol> " status column
+// (printLine's fixed width-3 symbol cell), else the line's own leading
+// spaces.
+func continuationIndent(line string) int {
+	plain := ansi.Strip(line)
+	if len(plain) >= 3 && plain[0] == ' ' && plain[1] != ' ' && plain[2] == ' ' {
+		return 3
+	}
+	return len(plain) - len(strings.TrimLeft(plain, " "))
+}
+
 func runeWidth(s string) int {
 	return lipgloss.Width(s)
 }

@@ -123,11 +123,10 @@ func TestInitSuccessOutput_ConsumerAndPlugin(t *testing.T) {
 			assertContainsAll(t, stdout, append([]string{
 				"[>] ",
 				tt.success,
-				"    Created Files",
+				" Created Files",
 				"File",
 				"Description",
 				"Next Steps",
-				"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
 			}, append(tt.files, tt.nextSteps...)...))
 			if tt.agentrcTip && !strings.Contains(stdout, "Tip: Use agentrc to generate tailored agent instructions from your codebase.") {
 				t.Errorf("consumer output missing Oracle agentrc tip:\n%s", stdout)
@@ -274,20 +273,20 @@ func TestInitInteractiveFinalSuccessBlockUsesClackTranscript(t *testing.T) {
 		t.Errorf("interactive native-source warning missing:\nstdout=%s\nstderr=%s", stdout, stderr)
 	}
 	assertClackTranscript(t, stderr, []string{
-		" > Initializing APM project: interactive",
-		" + APM project initialized successfully!",
-		"    Created Files",
+		"  Initializing ",
+		" Initializing APM project: interactive",
+		" APM project initialized successfully!",
+		" Created Files",
 		"│ File",
 		"apm.yml",
-		"Next Steps",
+		" Next Steps",
 		"* Install a package:               apm-go install <owner>/<repo>",
-		"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
 	})
 	// The Oracle block is embedded verbatim -- glyphs and box-drawing kept --
 	// but every one of its lines hangs off the gutter. A "[>]", "[*]" or box
 	// corner at column 0 is the frame break this test guards against.
-	for i, line := range strings.Split(stderr, "\n") {
-		if strings.HasPrefix(line, " + ") || strings.HasPrefix(line, " > ") || strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "╰") || strings.HasPrefix(line, "    Created Files") {
+	for i, line := range framedLines(stderr) {
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "╰") {
 			t.Errorf("transcript line %d is outside the clack gutter: %q", i+1, line)
 		}
 	}

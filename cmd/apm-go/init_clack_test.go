@@ -114,6 +114,27 @@ func captureInteractiveInit(t *testing.T, cmd *cobra.Command, args []string) (st
 	return stdout, transcript, cap
 }
 
+// framedLines returns the transcript lines strictly between the Intro line
+// and the Outro line -- the region every gutter check applies to (the
+// banner art above the Intro legitimately starts at column 0).
+func framedLines(transcript string) []string {
+	lines := strings.Split(strings.TrimSuffix(transcript, "\n"), "\n")
+	start, end := -1, len(lines)
+	for i, line := range lines {
+		if start < 0 && strings.Contains(line, "Setting up your APM") {
+			start = i + 1
+		}
+		if strings.HasSuffix(line, "  Done!") {
+			end = i
+			break
+		}
+	}
+	if start < 0 || start > end {
+		return nil
+	}
+	return lines[start:end]
+}
+
 // assertClackTranscript checks the frame rather than a particular Unicode
 // capability. NewClack deliberately has an ASCII fallback, so both its ASCII
 // and Unicode clack glyphs are accepted while every line between Intro and
@@ -174,21 +195,21 @@ func TestInteractiveInitSuccessStaysInsideClackFrame(t *testing.T) {
 			}
 
 			want := append([]string{
-				" + " + tt.mode.successTitle,
-				"    Created Files",
+				"  Initializing ",
+				" Initializing APM project: " + tt.args[0],
+				" " + tt.mode.successTitle,
+				" Created Files",
 				"File",
 				"Description",
-				"Next Steps",
-				"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
+				" Next Steps",
 				" > Created project directory: " + tt.args[0],
-				" > Initializing APM project: " + tt.args[0],
 			}, tt.mode.nextSteps...)
 			assertClackTranscript(t, transcript, want)
 			// The Oracle block keeps its own glyphs and box-drawing, but every
 			// one of its lines must hang off the gutter -- a "[>]", "[*]" or
 			// box line at column 0 is the exact defect this test guards.
-			for i, line := range strings.Split(transcript, "\n") {
-				if strings.HasPrefix(line, " + ") || strings.HasPrefix(line, " > ") || strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "╰") || strings.HasPrefix(line, "    Created Files") {
+			for i, line := range framedLines(transcript) {
+				if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "╰") {
 					t.Errorf("transcript line %d is outside the clack gutter: %q", i+1, line)
 				}
 			}
@@ -207,11 +228,10 @@ func TestClackRendererIncludesCodexTip(t *testing.T) {
 	_, transcript := captureInitOutput(t, func() {
 		ck := ux.NewClack(os.Stderr)
 		ck.Intro("Setting up your APM project")
-		clackRenderer(ck, "APM project initialized successfully!", initSuccessContent{
+		clackRenderer(ck, "APM project initialized successfully!", "demo", initSuccessContent{
 			files:     []string{"apm.yml"},
 			nextSteps: []string{"Install a package: apm-go install <owner>/<repo>"},
 			codexTip:  "Tip: Use '--target agent-skills' to also deploy skills to .agents/skills/ for other clients.",
-			docsLine:  "Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm",
 		})
 		ck.Outro("Done!")
 	})

@@ -481,7 +481,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. `init --yes` now emits the pinned Oracle's success content on stdout, including the success title, Created Files table, consumer Next Steps lines, conditional agentrc guidance, and Docs/Star footer; apm/apm-go is normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping. stderr was removed because successful init now emits zero bytes there. Finding 1's generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. `init --yes` now emits the pinned Oracle's success content on stdout, including the success title, Created Files table, consumer Next Steps lines, conditional agentrc guidance, and Docs/Star footer; apm/apm-go is normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping. stderr was removed because successful init now emits zero bytes there. Finding 1's generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -501,7 +501,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -512,7 +512,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -523,7 +523,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -534,7 +534,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -545,7 +545,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -556,7 +556,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -567,7 +567,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -578,7 +578,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -589,7 +589,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -600,7 +600,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },
@@ -611,7 +611,7 @@
     ],
     "taxonomy": "F01",
     "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
-    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived.",
+    "reason": "Finding 2 is closed. Success output now follows the pinned Oracle on content and channel: the success title, Created Files table headers/rows, Next Steps panel text, conditional agentrc guidance, and Docs/Star footer are present on stdout, with apm/apm-go normalized in guidance. The remaining stdout waiver is only Rich-versus-ux box-drawing, padding, and wrapping; stderr was removed because both successful invocations are now empty on stderr. The generated-file tree remains unwaived. DEVIATION (2026-08-29, user ruling): apm-go deliberately omits the Oracle's closing promotional footer line \"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm\" -- this binary is not microsoft/apm (cmd/apm-go/init.go renderSuccessBlock's deviation comment). That one missing line is the only wording difference in this case's stdout; every other line still matches after the box-drawing/wrap fold.",
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/19-plugin-init-output-surface-gaps.md Finding 2"
   },

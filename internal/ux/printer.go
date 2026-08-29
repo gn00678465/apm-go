@@ -215,8 +215,27 @@ func Plain(w io.Writer, format string, a ...any) {
 // writer.go's use of colorprofile.NewWriter) -- no renderForWriter or global
 // styling flag needed.
 func printLine(w io.Writer, style lipgloss.Style, symbol, format string, a ...any) {
+	lipgloss.Fprintln(w, symbolLine(style, symbol, format, a...))
+}
+
+// symbolLine is printLine's rendering step: "<symbol><message>" with the
+// symbol styled and centered in a width-3 column. Exposed through
+// ProgressText/HintText for callers that embed a status record in another
+// surface (the clack transcript) instead of printing it to a stream --
+// rendering to a string keeps the styling, which a non-TTY buffer written
+// through lipgloss.Fprintln would strip.
+func symbolLine(style lipgloss.Style, symbol, format string, a ...any) string {
 	msg := fmt.Sprintf(format, a...)
 	symStyle := style.Bold(true).AlignHorizontal(lipgloss.Center).Width(3)
-	line := symStyle.Render(symbol) + msg
-	lipgloss.Fprintln(w, line)
+	return symStyle.Render(symbol) + msg
+}
+
+// ProgressText returns Progress's line as a styled string.
+func ProgressText(format string, a ...any) string {
+	return symbolLine(infoStyle, SymbolProgress, format, a...)
+}
+
+// HintText returns Hint's line as a styled string.
+func HintText(format string, a ...any) string {
+	return symbolLine(infoStyle, SymbolInfo, format, a...)
 }

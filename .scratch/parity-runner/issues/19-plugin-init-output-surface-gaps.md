@@ -123,3 +123,42 @@ prefixes. `renderSuccessBlock` now takes a glyph set: `oracleGlyphs`
 stay identical across both paths. ux gains `Progress` and `Hint` as the
 TUI counterparts of `Running` and `Info`. Tests reject any `[>] `/`[*] `/
 `[i] ` inside the transcript and require the ` + `/` > ` records.
+
+### Follow-up 4 (2026-08-29): one "Initializing" Note, styled strings
+
+User rulings: (1) the ` > `/` + `/` i ` symbols rendered white -- rendering
+into a bytes.Buffer went through lipgloss.Fprintln's per-writer color
+profile, which strips styling for a non-TTY; (2) the ` > Initializing APM
+project` record sat directly under the confirm prompt and read as part of
+it. Final shape: the whole interactive surface is ONE clack Note titled
+"Initializing" -- blank line, "Initializing APM project: X", blank line,
+the success title, the Created Files table (ux.TableString), a "Next
+Steps" heading with plain bullets (no inner box), the tips with the
+project ` i ` symbol (ux.HintText), the Docs line, blank line -- closed by
+the Note's `├───╯`. Status text is built as styled strings and written by
+the Clack to the real terminal, so colors survive. The `--yes` path is
+untouched (corpus 80/0, tuples identical).
+
+### Follow-up 5 (2026-08-29): Note width capped to the terminal
+
+The "Initializing" Note sized itself to its widest line (the ~118-column
+agentrc tip); on a narrower terminal every row soft-wrapped and the whole
+transcript broke. `ux.Clack.Note` now caps its inner width to the terminal
+(same `terminalWidthFor` seam as Table, 7 columns of frame overhead) and
+word-wraps overlong body lines ANSI-aware, hanging continuation rows under
+the first row's text. Unit tests force an 80-column terminal and assert
+every row stays below it with the right border aligned; no terminal
+(pipe/buffer) keeps the natural width.
+
+### Follow-up 6 (2026-08-29): drop the microsoft/apm footer; align "Created Files" in the frame
+
+User ruling: apm-go is not microsoft/apm, so the Oracle's closing
+"  Docs: https://microsoft.github.io/apm  |  Star: https://github.com/microsoft/apm"
+footer is not emitted on either path -- a DELIBERATE deviation recorded at
+renderSuccessBlock and in the 12 init success waivers (the only wording
+difference those cases now carry). Inside the clack Note the table title
+is " Created Files" like every other row; the `--yes` path keeps the
+Oracle's Rich-centered "    Created Files" for byte parity. The agentrc
+tip (a third-party tool, not self-promotion) and the deep links into the
+upstream reference docs used by error hints are kept: apm-go has no docs
+site of its own and those pages are the spec for the shared formats.
