@@ -94,18 +94,40 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | 指令 | 說明 |
 |---|---|
 | `init` | 初始化新的 APM 專案 |
+| `plugin init` | 初始化 plugin 作者專案（`--format`、`--claude-plugin`） |
 | `install` | 依 `apm.yml` 或 URL/shorthand 安裝相依；`--mcp` 可新增 MCP 伺服器 |
 | `uninstall` | 移除 APM 套件、其整合檔案與 `apm.yml` 條目 |
 | `update` | 重新解析相依至最新符合版本 |
 | `compile` | 將已安裝的 instructions 編譯為專案 `AGENTS.md` |
 | `audit` | 依 `apm.lock.yaml` 重新驗證已部署檔案完整性 |
-| `marketplace` | 管理 marketplace 來源（add/list/browse/update/remove/validate） |
+| `search` | 在 marketplace 搜尋 plugin（`QUERY@MARKETPLACE`） |
+| `marketplace` | 使用 marketplace：`add`、`list`、`browse`、`update`、`remove`、`validate`、`check`、`outdated` |
+| `marketplace`（作者側） | 製作 marketplace：`init`、`package add/set/remove`、`audit`、`migrate` |
 | `pack` | 從 `apm.yml` 產出 `marketplace.json`、plugin bundle 或獨立 `plugin.json` |
+| `doctor` | 環境診斷（git、網路、認證、marketplace 設定）；有嚴重失敗時以非零碼結束 |
 | `validate` | 以 OpenAPM 安全子集與 manifest schema 驗證 YAML 檔 |
 | `normalize` | 解析並重新輸出 YAML 檔（round-trip） |
-| `experimental` | 管理實驗性功能旗標 |
+| `experimental` | 管理實驗性功能旗標（`enable`、`disable`、`list`） |
 
 各指令詳細旗標見 `apm-go <command> --help`。
+
+### apm-go 獨有的指令與旗標
+
+以下只存在於 apm-go。預設值維持標準行為，不使用時不會改變任何結果。
+
+| 位置 | 新增項目 | 作用 |
+|---|---|---|
+| `validate` | 整個指令 | 以 OpenAPM 安全子集（不允許 anchor、merge key、自訂 tag）與 manifest schema 檢查任意 YAML 檔 |
+| `normalize` | 整個指令 | 將 YAML 檔經安全子集載入後 round-trip 重新輸出（`--stdout` 印到標準輸出） |
+| `pack` | `--claude-source-style github\|url` | 在 `marketplace.json` 輸出 `url` 來源，讓 Claude Code 在沒有 SSH 金鑰時改以 HTTPS 安裝 GitHub 套件（預設 `github`） |
+| `install` | `--max-archive-bytes`、`--max-entries` | 解壓縮大小（預設 100 MiB）與檔案數（預設 10000）上限，超過即失敗 |
+| `install` | `--no-provenance` | `apm.lock.yaml` 省略 `generated_at` 與 `apm_version`，產生可重現的 lockfile |
+| `install --mcp` | `--force` | 不詢問直接覆寫衝突的既有 MCP 條目 |
+| `init` | `--force` | 不詢問直接覆寫既有 `apm.yml` |
+| `audit` | `--content` | 掃描每個已部署檔案的隱藏 Unicode 字元 |
+| `update` | `--frozen` / `--no-frozen` | 對 frozen 安裝拒絕範圍更新（CI 自動開啟）／覆寫 CI 自動偵測 |
+| `marketplace package add` | `--category` | 套件分類，Codex 輸出在 `pack` 時必填 |
+| `marketplace package` | 指令名稱 | 作者側子指令位於 `package` 之下（`add`、`set`、`remove`） |
 
 <img src="./assets/readme/section-develop.zh-TW.svg" width="100%" alt="開發 — build、test、release">
 
