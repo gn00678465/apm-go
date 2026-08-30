@@ -1,0 +1,150 @@
+schema_version: "1.0.0"
+mission: software-dev
+profile: comprehensive
+answers:
+  project_intent: >
+    apm-go is an Agent Package Manager shipped as a single static Go binary.
+    It compiles .apm/ primitives into the context files AI agents read on
+    startup (AGENTS.md, CLAUDE.md, GEMINI.md), installs/uninstalls packages and
+    MCP server configurations from marketplaces, and packages Claude Code
+    plugins (marketplace.json, plugin.json, .mcp.json). Primary users are
+    developers running it inside their own repositories and marketplace/plugin
+    authors. Product facts and the terminal UI design live in PRODUCT.md;
+    package layout, layer responsibilities and data flows live in
+    ARCHITECTURE.md; engineering rules for agents live in AGENTS.md. Those
+    three files are the canonical sources; this charter summarises and binds
+    them, it does not restate them.
+  languages_frameworks: >
+    Go (single module, cobra CLI under cmd/apm-go, libraries under internal/).
+    No Makefile or task runner: `go build -o bin/apm-go ./cmd/apm-go` and
+    `go test ./...` are the only entry points; no scripts under tools/ other
+    than the Go parity runner. Terminal output goes through internal/ux
+    (lipgloss/clack style). YAML via yamlcore (safe subset, round-trip patch).
+  testing_requirements: >
+    TDD required: test-first for every behaviour change — write the failing test
+    first, prove it red through the pre-existing entry point, then implement.
+    Tests use t.TempDir() with inline fixtures; external seams are injected
+    (installDeps, doctorDeps, *ForTest hooks), never globally mocked. Expected
+    values come from the specification or recorded output, never recomputed
+    the way the code computes them. cmd/apm-go and internal/ux pin CI
+    detection in TestMain (unset CI, GITHUB_ACTIONS, GITLAB_CI, BUILDKITE,
+    TF_BUILD, JENKINS_URL); any new package that reads those variables needs
+    the same pin. Target 80%+ coverage on changed lines. `go test ./...` must
+    be green before any work package is submitted for review.
+  quality_gates: >
+    Three gates, all blocking. (1) `go build ./...` and `go test ./...` green.
+    (2) The output contract: tools/parity runs the case corpus in CI
+    (.github/workflows/parity.yml) and compares stdout, stderr, exit code and
+    the produced file tree byte-for-byte; zero unwaived differences is the
+    bar. Only line-wrap, box-drawing, help layout, status-symbol shape
+    (normalised by the runner), timestamps and paths may be waived; every
+    waiver names its case and reason in tools/parity/waivers.json; a design
+    deviation that cannot be waived is parked in tools/parity/cases-pending/
+    with a ticket, never silently dropped. Any change to user-visible output,
+    exit codes or generated files must add or update a corpus case. (3) The
+    verification-gate skill runs on every finished work package and its
+    evidence report is attached to the review; a work package without a
+    verification-gate report is not reviewable. Additionally: every terminal
+    output change follows PRODUCT.md "Terminal UI design" (single status
+    vocabulary, no brackets, clack frame rules); GitNexus impact analysis is
+    run before editing any symbol and detect_changes before committing.
+  review_policy: >
+    Every mission runs in its own worktree lane (.worktrees/) and reaches main
+    only through a pull request; direct pushes to main are not allowed. One
+    approval is required and the reviewer must not be the implementer. The
+    reviewer verifies, does not trust: re-runs go test and the parity corpus,
+    reads the verification-gate evidence, and rejects on any of the three
+    error-class risks below. Review checks in this order: intent and risk,
+    output-contract impact (which corpus cases changed and why), user-file
+    safety (round-trip preserved), security seams (gitops secure env at every
+    git call site, yamlcore.SafeLoad for every YAML ingestion, security gate
+    fail-closed), then code quality. Commit messages follow Conventional
+    Commits and are produced with the commit-message skill; spec-kitty
+    auto_commit stays enabled for mission status/planning files, while code
+    commits are authored explicitly by the implementing agent.
+  performance_targets: >
+    apm-go is a local CLI; interactive commands should respond in well under
+    2 seconds excluding network and git clone time. No performance regression
+    budget is tracked beyond that; correctness of output bytes outranks speed.
+    Release binary is built with `-trimpath -ldflags "-s -w"`.
+  deployment_constraints: >
+    Branch strategy: main is the release branch; missions branch from main in
+    worktree lanes and merge back via PR after the parity gate is green.
+    Version is the single const in internal/version/version.go; the release
+    workflow gates on the git tag matching it, so bump the const before
+    tagging. Pre-release tags (containing "-") are GitHub prereleases so
+    install.sh defaults to the latest stable. Distribution is install.sh plus
+    GitHub Releases; no other packaging channel. Git subprocesses always run
+    under gitops.ApplySecureGitEnv (no credential prompts, transport
+    allow-list), including diagnostics.
+  documentation_policy: >
+    Three canonical documents, one topic each, never duplicated: PRODUCT.md
+    (product facts, users, constraints, terminal UI design), ARCHITECTURE.md
+    (package layout, layer responsibilities, data flows, cross-cutting
+    concerns), AGENTS.md (engineering rules and testing patterns for agents;
+    CLAUDE.md only imports AGENTS.md and PRODUCT.md). A rule that already
+    lives in one of them is referenced, not restated, elsewhere. Deviations
+    from the output contract are documented at the deviation site in
+    cmd/apm-go/*.go with the reason; an undocumented deviation is a finding.
+    Working notes and tickets live in .scratch/parity-runner/issues/ (one
+    file per ticket); research notes in docs/research/. Documentation that
+    describes behaviour must be updated in the same work package as the
+    behaviour change. None of these documents records information about
+    external or upstream projects; they describe apm-go only.
+  risk_boundaries: >
+    Three failure classes are all error severity and each alone blocks merge.
+    (A) Output-contract break: any change to stdout/stderr words, exit codes
+    or generated file trees without a corresponding corpus case and, where
+    needed, a waiver with reason. (B) User-file damage: apm.yml,
+    apm.lock.yaml and the generated context files are user-edited; every
+    mutation goes through yamlcore splice/patch helpers preserving comments,
+    ordering and formatting — marshal-and-rewrite is forbidden; deploys must
+    never overwrite user content outside the managed markers. (C) Security:
+    every git call site under gitops.ApplySecureGitEnv; every YAML ingestion
+    through yamlcore.SafeLoad (no anchors, merge keys, custom tags); the
+    security scan policy is fail-closed (unknown policy blocks); archive
+    extraction keeps size/count caps; no credentials in source, logs or test
+    fixtures. Out of bounds for any agent without an explicit user ruling:
+    changing the lockfile format, adding MCP servers to the lockfile,
+    re-baselining the parity corpus, force-pushing, deleting waivers, or
+    editing files outside the mission's declared scope.
+  amendment_process: >
+    The charter is amended by rerunning /spec-kitty.charter with the new
+    guidance, editing .kittify/charter/interview/answers.yaml, regenerating,
+    and committing the bundle in its own chore commit. Changes to the three
+    canonical documents (PRODUCT.md, ARCHITECTURE.md, AGENTS.md) are ordinary
+    reviewed changes; when they alter a binding rule the charter is regenerated
+    in the same PR. Rulings the user makes in chat (for example the A/B
+    rulings tracked in tickets) are recorded in the relevant ticket file and
+    folded into the canonical document they affect.
+  exception_policy: >
+    Exceptions to the output contract are expressed only as waivers in
+    tools/parity/waivers.json (with case id and reason) or as pending cases
+    with a ticket; there is no other mechanism. Exceptions to test-first,
+    round-trip, or security rules require an explicit user ruling quoted in
+    the PR description and a ticket; the agent may not self-grant them. An
+    exception never widens beyond the case it names.
+selected_paradigms:
+  - execution-lanes
+  - specification-by-example
+selected_directives:
+  - DIRECTIVE_034
+  - DIRECTIVE_030
+  - DIRECTIVE_010
+  - DIRECTIVE_024
+  - DIRECTIVE_033
+  - DIRECTIVE_044
+  - DIRECTIVE_045
+  - DIRECTIVE_003
+  - DIRECTIVE_037
+selected_tactics:
+  - tdd-red-green-refactor
+  - acceptance-test-first
+  - review-intent-and-risk-first
+  - reviewer-implementer-role-separation
+  - quality-gate-verification
+  - change-apply-smallest-viable-diff
+  - input-validation-fail-fast
+available_tools:
+  - spec-kitty
+  - git
