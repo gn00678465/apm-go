@@ -1,1 +1,3 @@
 @AGENTS.md
+@PRODUCT.md
+@ARCHITECTURE.md

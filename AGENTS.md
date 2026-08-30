@@ -4,6 +4,16 @@ Go port of [microsoft/apm](https://github.com/microsoft/apm) — the Agent Packa
 
 The upstream Python implementation is the **oracle**: the term always means it, and code comments cite oracle file:line. Parity is deliberate but **partial** — the oracle's command surface is ported selectively, not API-for-API. Before treating a missing command or flag as a bug, check whether it is an intentional gap: `cmd/apm-go/*.go` comments mark each deviation with its reason, and a deviation that is not recorded there is a finding, not a feature.
 
+## Canonical documents — read before writing code
+
+Three files are the project's long-term memory. Read the relevant one before designing or changing anything, and treat a conflict between your plan and these files as a stop signal, not a judgment call:
+
+- **`PRODUCT.md`** — product facts: users, purpose, positioning, operating constraints, output contract, and the **Terminal UI design** (status-symbol vocabulary, `init` / `plugin init` frame rules). Any user-visible output must match it.
+- **`ARCHITECTURE.md`** — package layout, layer responsibilities, the internal import graph and its dependency rules, the data flows (install, compile, pack, marketplace, init, error/exit-code path), and cross-cutting concerns. New code goes in the layer that owns the concern; a new import edge that the graph forbids is a design change and needs a ruling.
+- **`AGENTS.md`** (this file) — engineering rules and testing patterns.
+
+Each topic lives in exactly one of them; reference, do not restate. When a change alters a fact recorded there, update that file in the same change.
+
 ## GitNexus — code intelligence
 
 This repo is indexed as **apm-go**. Use the MCP tools to navigate and to gate edits:
@@ -46,6 +56,7 @@ internal/
   compile/           .apm/ → AGENTS.md compilation (agents-family targets)
   credsec/           credential-in-YAML detection
   deploy/            per-target adapter pattern (claude, codex, copilot, …)
+  experimental/      opt-in feature flags persisted in the user config
   gitops/            hardened git clone, tag listing, env sanitization, stderr translation
   localbundle/       local package bundling
   lockfile/          apm.lock.yaml parse/write/audit/integrity
@@ -77,9 +88,9 @@ internal/
 
 **Exit codes.** Commands needing a specific exit code wrap errors with `withExitCode()` in `cmd/apm-go/exitcode.go`; the root error handler unwraps it. Usage errors (the oracle's `click.UsageError`) are 2.
 
-**Security scanning.** `internal/security/` runs before deploy. `ScanPolicy` controls whether findings block, warn, or are ignored. The gate is fail-closed: unknown policy = block.
+**Security scanning.** `internal/security/` is a credential/secret scanner with a policy gate (`ScanPolicy`: block, warn, or report; fail-closed — an unknown policy blocks). Today it runs in two places only: `pack` scans bundled sources under `WarnPolicy` (`internal/pack/bundle/producer.go`), and `audit` scans deployed files and reports critical/warning counts (`cmd/apm-go/audit_content.go`). It is **not** on the install/deploy path; do not describe or rely on it as a pre-deploy gate.
 
-**UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI. User-facing text uses the `ux` printers, not `fmt.Print`; stream status records use centered, colored width-3 project TUI symbols (`+`, `i`, `!`, `x`, `>`, `*`) for success, info, warning, error, progress, and list; brackets are never printed by apm-go. `ux.Error`/`ux.Warn` still always land on stdout, regardless of which stream the call site passes. `tools/parity` always normalizes the Oracle's bracket forms and apm-go's TUI forms as the sanctioned F0x glyph-shape difference before comparing output; `ux.Plain` is for complete rows or text without a status symbol.
+**UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI; user-facing text uses the `ux` printers, not `fmt.Print`. The status-symbol vocabulary, the interactive `init` / `plugin init` frame rules, and the rest of the terminal UI design live in `PRODUCT.md` ("Terminal UI design") — the single source; do not restate them here.
 
 **Safe YAML subset.** `yamlcore.SafeLoad` rejects YAML features outside the OpenAPM safe subset (no anchors, no merge keys, no custom tags). All YAML ingestion goes through it.
 
