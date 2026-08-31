@@ -43,9 +43,11 @@ No Makefile or task runner — `go build` and `go test` are the only entry point
 
 ## Release
 
-Version lives in `internal/version/version.go` as a single const. The CI release workflow (`release.yml`) gates on the git tag matching that const — bump the const first, then tag.
+The version is injected at release build time: `release.yml` passes the pushed tag (without the `v` prefix) via `-ldflags "-X …/internal/version.Version=<tag>"`, so releasing needs no version-bump commit — tag a commit on main and push the tag. Local builds report `dev`.
 
-Pre-release tags (containing `-`, e.g. `v0.3.0-beta.1`) are marked as GitHub prereleases so `install.sh` defaults to the latest stable.
+`release.yml` gates on ancestry (fail-closed): the tagged commit must be an ancestor of `origin/main`; a tag on a feature branch is rejected. Release flow: feature PRs merge to main and never touch `internal/version/`; tag `vX.Y.Z-beta.N` from main at any point during integration; tag `vX.Y.Z-rc.N` when the feature set is frozen (only fixes and docs land after); tag `vX.Y.Z` on the same commit as the last verified rc.
+
+Pre-release tags (containing `-`, e.g. `v0.3.0-beta.1`) are marked as GitHub prereleases so `install.sh` defaults to the latest stable; testers install one with `APM_GO_VERSION=X.Y.Z-rc.N`.
 
 ## Package layout
 

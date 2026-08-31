@@ -32,7 +32,7 @@ Success: a user gets deterministic files, output, and exit codes from one binary
 - Under CI, `install` defaults to frozen (lockfile-only) mode.
 - Users' `apm.yml` / `apm.lock.yaml` are hand-edited files; all mutations are round-trip patches that preserve comments, ordering, and formatting.
 - Git is a subprocess run under a hardened environment (no credential prompts, transport allow-list). On this project's development machine there is no SSH key, which is why `--claude-source-style url` exists for installable marketplaces.
-- Distribution: `install.sh` (defaults to latest stable; pre-release tags are GitHub prereleases), GitHub Releases, `go build`. Version lives in `internal/version/version.go` (currently `0.3.0-rc.1`).
+- Distribution: `install.sh` (defaults to latest stable; pre-release tags are GitHub prereleases), GitHub Releases, `go build`. The release version is injected from the git tag at release build time (`internal/version/version.go`); local builds report `dev`.
 
 ### Terminal UI design
 

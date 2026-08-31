@@ -68,7 +68,7 @@ Leaves (import nothing in-module): `archive`, `credsec`, `experimental`, `pack`,
 | `ux` | all terminal output and interaction | `Init` `internal/ux/ux.go:33`; `CanPrompt` `:52`; printers `printer.go:21-92`; `Table` / `List` / `Tree` `output.go:74,144,201`; `Spinner` `spinner.go:42`; `NewClack` `clack.go:130`; `Confirm` / `InputForm` / `MultiSelect` `interactive.go:77,194,146` |
 | `semver` | range matching, max-satisfying | `Satisfies` / `MaxSatisfying` / `CompareVersions` `internal/semver/semver.go:16,75,67` |
 | `experimental` | opt-in feature flags persisted in the user config | `Known` / `IsEnabled` / `RequireEnabled` `internal/experimental/experimental.go:37,100,128` |
-| `version` | the one release-version constant | `Version` `internal/version/version.go:8` |
+| `version` | the release version, injected from the git tag at release link time (`dev` locally) | `Version` `internal/version/version.go:14` |
 
 ## 3. Data flows
 
@@ -213,4 +213,4 @@ Runner:
 - **Pending cases** (`tools/parity/cases-pending/`, currently 5): cases recorded as design deviations and kept out of the gate. `README.md` there binds each to a **ticket** in `.scratch/parity-runner/issues/` and requires it to return to `cases/` when the ticket closes.
 - The runner has its own `go test` (`tools/parity/*_test.go`) and a `-selftest-only` fault-injection self-check (`main.go:45-54`, `selftest.go`).
 
-**Release.** `release.yml` gates on the git tag matching `Version` (`internal/version/version.go:8`); tags containing `-` are marked prerelease.
+**Release.** `release.yml` requires the tagged commit to be an ancestor of `origin/main` (fail-closed) and injects the tag into `Version` via `-ldflags -X` (`internal/version/version.go:14`); tags containing `-` are marked prerelease.

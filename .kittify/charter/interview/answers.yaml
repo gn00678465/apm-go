@@ -70,9 +70,13 @@ answers:
   deployment_constraints: >
     Branch strategy: main is the release branch; missions branch from main in
     worktree lanes and merge back via PR after the parity gate is green.
-    Version is the single const in internal/version/version.go; the release
-    workflow gates on the git tag matching it, so bump the const before
-    tagging. Pre-release tags (containing "-") are GitHub prereleases so
+    The release version is injected from the git tag at release build time
+    (ldflags -X into internal/version.Version); releasing is tagging a main
+    commit — no version-bump commit, and release.yml rejects (fail-closed) a
+    tag whose commit is not an ancestor of origin/main. Feature PRs never
+    touch internal/version/. beta.N tags may be cut from main during
+    integration; rc.N freezes the feature set (only fixes and docs after);
+    the final tag lands on the same commit as the last verified rc. Pre-release tags (containing "-") are GitHub prereleases so
     install.sh defaults to the latest stable. Distribution is install.sh plus
     GitHub Releases; no other packaging channel. Git subprocesses always run
     under gitops.ApplySecureGitEnv (no credential prompts, transport
