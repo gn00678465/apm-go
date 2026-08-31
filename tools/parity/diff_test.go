@@ -1,0 +1,681 @@
+//go:build unix
+
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// writeBinFiles writes <outDir>/<side>/<id>/stdout.bin and stderr.bin --
+// diffCase always reads these from disk (record.go's writeRawBodies writes
+// them unconditionally in production, regardless of size or UTF-8
+// validity), so tests must provide them too.
+func writeBinFiles(t *testing.T, outDir, side, id, stdout, stderr string) {
+	t.Helper()
+	dir := filepath.Join(outDir, side, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stdout.bin"), []byte(stdout), 0o644); err != nil {
+		t.Fatalf("write stdout.bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stderr.bin"), []byte(stderr), 0o644); err != nil {
+		t.Fatalf("write stderr.bin: %v", err)
+	}
+}
+
+func mustDiffCase(t *testing.T, outDir string, c Case, oracleRec, targetRec Record) (CaseDiff, diffDetail) {
+	t.Helper()
+	cd, detail, err := diffCase(outDir, c, oracleRec, targetRec, nil)
+	if err != nil {
+		t.Fatalf("diffCase: %v", err)
+	}
+	return cd, detail
+}
+
+func mustDiffCaseWithBaseline(t *testing.T, outDir string, c Case, oracleRec, targetRec Record, baseline map[string]bool) (CaseDiff, diffDetail) {
+	t.Helper()
+	cd, detail, err := diffCase(outDir, c, oracleRec, targetRec, baseline)
+	if err != nil {
+		t.Fatalf("diffCase: %v", err)
+	}
+	return cd, detail
+}
+
+func TestDiffCase_NoDifference(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1", ExpectedTaxonomy: []string{"F00"}}
+	writeBinFiles(t, outDir, "oracle", "c1", "hi", "")
+	writeBinFiles(t, outDir, "target", "c1", "hi", "")
+
+	cd, _ := mustDiffCase(t, outDir, c, Record{ExitCode: 0}, Record{ExitCode: 0})
+	if len(cd.Fields) != 0 {
+		t.Errorf("Fields = %v, want none", cd.Fields)
+	}
+	if cd.ID != "c1" {
+		t.Errorf("ID = %q, want c1", cd.ID)
+	}
+	if len(cd.Taxonomy.Expected) != 1 || cd.Taxonomy.Expected[0] != "F00" {
+		t.Errorf("Taxonomy.Expected = %v, want [F00] (pass-through from case)", cd.Taxonomy.Expected)
+	}
+}
+
+func TestDiffCase_ExitCodeDiffers(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "same", "")
+	writeBinFiles(t, outDir, "target", "c1", "same", "")
+
+	cd, detail := mustDiffCase(t, outDir, c, Record{ExitCode: 0}, Record{ExitCode: 1})
+	if !fieldsEqual(cd.Fields, []string{"exit_code"}) {
+		t.Fatalf("Fields = %v, want [exit_code]", cd.Fields)
+	}
+	if detail.ExitCode == nil || detail.ExitCode.Old != 0 || detail.ExitCode.New != 1 {
+		t.Errorf("detail.ExitCode = %+v, want {Old:0 New:1}", detail.ExitCode)
+	}
+	if !containsStr(cd.Taxonomy.Heuristic, "F08") {
+		t.Errorf("Heuristic = %v, want to contain F08", cd.Taxonomy.Heuristic)
+	}
+}
+
+// TestDiffCase_ErrorBody_ChannelAndPrefixOnlyDifferenceLeavesErrorBodyEqual
+// is ticket 10's core error_body acceptance case: the Oracle's error on
+// stdout with a "[x] " prefix vs. apm-go's pre-ticket-10 contract of the
+// same wording on stderr with an "Error: " prefix. stdout and stderr both
+// genuinely differ (different channel), but error_body -- which strips the
+// prefix and compares the first non-empty line across (stdout ∪ stderr) --
+// must come out equal, so a waiver naming only stdout/stderr is legitimate.
+func TestDiffCase_ErrorBody_ChannelAndPrefixOnlyDifferenceLeavesErrorBodyEqual(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "[x] marketplace \"nope\" is not registered\n", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "Error: marketplace \"nope\" is not registered\n")
+
+	cd, detail := mustDiffCase(t, outDir, c, Record{ExitCode: 1}, Record{ExitCode: 1})
+	if !fieldsEqual(cd.Fields, []string{"stdout", "stderr"}) {
+		t.Fatalf("Fields = %v, want [stdout stderr] (error_body must NOT be among them)", cd.Fields)
+	}
+	if detail.ErrorBody != nil {
+		t.Errorf("detail.ErrorBody = %+v, want nil (channel/prefix-only difference)", detail.ErrorBody)
+	}
+}
+
+// TestDiffCase_ErrorBody_GenuineWordingDifferenceIsDetected proves
+// error_body is not a rubber stamp: once the prefix is stripped, a REAL
+// wording difference still shows up as its own field, unwaivable by a
+// stdout/stderr-only waiver entry.
+func TestDiffCase_ErrorBody_GenuineWordingDifferenceIsDetected(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "[x] Marketplace 'nope' is not registered.\n", "")
+	writeBinFiles(t, outDir, "target", "c1", "[x] marketplace \"nope\" is not registered\n", "")
+
+	cd, detail := mustDiffCase(t, outDir, c, Record{ExitCode: 1}, Record{ExitCode: 1})
+	if !containsStr(cd.Fields, "error_body") {
+		t.Fatalf("Fields = %v, want error_body among them", cd.Fields)
+	}
+	if detail.ErrorBody == nil {
+		t.Fatal("detail.ErrorBody = nil, want a diff")
+	}
+	if detail.ErrorBody.Normalized.Old != "Marketplace 'nope' is not registered." {
+		t.Errorf("ErrorBody.Old = %q", detail.ErrorBody.Normalized.Old)
+	}
+	if detail.ErrorBody.Normalized.New != "marketplace \"nope\" is not registered" {
+		t.Errorf("ErrorBody.New = %q", detail.ErrorBody.Normalized.New)
+	}
+}
+
+// TestDiffCase_ErrorBody_SkippedWhenBothSidesExitZero proves error_body is
+// only computed "for cases with non-zero exit on either side" (ticket 10
+// acceptance): two successful runs whose first stdout line happens to
+// differ must not spuriously grow an error_body field -- there is no error
+// to compare.
+func TestDiffCase_ErrorBody_SkippedWhenBothSidesExitZero(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "Installed 1 dependency\n", "")
+	writeBinFiles(t, outDir, "target", "c1", "Installed 2 dependencies\n", "")
+
+	cd, detail := mustDiffCase(t, outDir, c, Record{ExitCode: 0}, Record{ExitCode: 0})
+	if containsStr(cd.Fields, "error_body") {
+		t.Errorf("Fields = %v, want no error_body (both sides exit 0)", cd.Fields)
+	}
+	if detail.ErrorBody != nil {
+		t.Errorf("detail.ErrorBody = %+v, want nil", detail.ErrorBody)
+	}
+}
+
+// TestStripErrorBodyPrefix is a table-driven test of every prefix
+// stripErrorBodyPrefix accepts the Oracle bracket markers, apm-go's centered
+// TUI markers, Cobra's legacy "Error: " prefix, and the legacy bare "!"
+// warning glyph. A line carrying none of these passes through unchanged.
+func TestStripErrorBodyPrefix(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"oracle_error_prefix", "[x] Marketplace 'nope' is not registered.", "Marketplace 'nope' is not registered."},
+		{"oracle_warning_prefix", "[!] No plugins found matching 'x'.", "No plugins found matching 'x'."},
+		{"tui_error_prefix", " x Marketplace 'nope' is not registered.", "Marketplace 'nope' is not registered."},
+		{"tui_info_prefix", " i informational body", "informational body"},
+		{"apm_go_error_prefix", "Error: something went wrong", "something went wrong"},
+		{"bare_bang_glyph", "! something went wrong", "something went wrong"},
+		{"no_matching_prefix_passthrough", "plain line with no severity marker", "plain line with no severity marker"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripErrorBodyPrefix(tt.line); got != tt.want {
+				t.Errorf("stripErrorBodyPrefix(%q) = %q, want %q", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestErrorBody_TableDriven covers errorBody's line-selection rules (ticket
+// 10 attempt-2 item 2): leading/trailing whitespace around the matched line,
+// blank lines preceding the real body, and a body present on only one of the
+// two streams (stdout ∪ stderr, stdout checked first).
+func TestErrorBody_TableDriven(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdout string
+		stderr string
+		want   string
+	}{
+		{"leading_trailing_whitespace_stripped", "   [x] padded message   \n", "", "padded message"},
+		{"blank_first_lines_then_body", "\n\n[x] real message\n", "", "real message"},
+		{"body_only_on_stderr", "", "[!] warning on stderr\n", "warning on stderr"},
+		{"body_only_on_stdout", "[x] error on stdout\n", "", "error on stdout"},
+		{"blank_stdout_falls_through_to_stderr", "\n", "[x] fallback from stderr\n", "fallback from stderr"},
+		{"both_empty", "", "", ""},
+		// Ticket 13: a Click/Cobra usage-error preamble ("Usage: ...",
+		// "Try '...' for help.") must be skipped so error_body still
+		// compares the real message, not the preamble's own
+		// Cobra-vs-Click wording (which is never going to match and was
+		// never the point -- see errorBody's doc comment).
+		{
+			"usage_preamble_skipped",
+			"", "Usage: apm pack [OPTIONS]\nTry 'apm pack --help' for help.\n\nError: bad value\n",
+			"bad value",
+		},
+		{
+			"usage_preamble_skipped_cobra_spelling",
+			"", "Usage: apm-go pack [flags]\nTry 'apm-go pack --help' for help.\n\nError: bad value\n",
+			"bad value",
+		},
+		{
+			"bare_usage_error_no_preamble_to_skip",
+			"", "Error: Option '--format' requires an argument.\n",
+			"Option '--format' requires an argument.",
+		},
+		{
+			"rich_status_continuation_lines_are_folded",
+			"[x] first line. \ncontinued without a status glyph\n[i] next record\n", "",
+			"first line. continued without a status glyph",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := errorBody(tt.stdout, tt.stderr); got != tt.want {
+				t.Errorf("errorBody(%q, %q) = %q, want %q", tt.stdout, tt.stderr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDiffCase_StdoutDiffersUsesNormalizedValue(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	oracleHome := "/tmp/apm-parity-oracle/home"
+	targetHome := "/tmp/apm-parity-target/home"
+	writeBinFiles(t, outDir, "oracle", "c1", "path: /tmp/apm-parity-oracle/cwd/f", "")
+	writeBinFiles(t, outDir, "target", "c1", "path: /tmp/apm-parity-target/cwd/f", "")
+
+	oracle := Record{ExitCode: 0, EnvDelta: map[string]string{"HOME": oracleHome}}
+	target := Record{ExitCode: 0, EnvDelta: map[string]string{"HOME": targetHome}}
+
+	cd, detail := mustDiffCase(t, outDir, c, oracle, target)
+	// Both sides' own sandbox cwd normalizes to <TMP>, so after
+	// normalization the strings are identical -- no diff.
+	if len(cd.Fields) != 0 {
+		t.Errorf("Fields = %v, want none (both sides normalize to the same <TMP> path)", cd.Fields)
+	}
+	if detail.Stdout != nil {
+		t.Errorf("detail.Stdout = %+v, want nil", detail.Stdout)
+	}
+}
+
+func TestDiffCase_StdoutGenuinelyDiffers(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1", Argv: []string{"--help"}}
+	writeBinFiles(t, outDir, "oracle", "c1", "usage: apm [OPTIONS]", "")
+	writeBinFiles(t, outDir, "target", "c1", "usage: apm-go [OPTIONS]", "")
+
+	cd, detail := mustDiffCase(t, outDir, c, Record{}, Record{})
+	if !fieldsEqual(cd.Fields, []string{"stdout"}) {
+		t.Fatalf("Fields = %v, want [stdout]", cd.Fields)
+	}
+	if detail.Stdout == nil || detail.Stdout.Raw.Old != "usage: apm [OPTIONS]" || detail.Stdout.Raw.New != "usage: apm-go [OPTIONS]" {
+		t.Errorf("detail.Stdout.Raw = %+v", detail.Stdout)
+	}
+	if detail.Stdout == nil || detail.Stdout.Normalized.Old != "usage: apm [OPTIONS]" || detail.Stdout.Normalized.New != "usage: apm-go [OPTIONS]" {
+		t.Errorf("detail.Stdout.Normalized = %+v, want unchanged (no sandbox paths present)", detail.Stdout)
+	}
+	if !containsStr(cd.Taxonomy.Heuristic, "F01") {
+		t.Errorf("Heuristic = %v, want to contain F01 for a --help case", cd.Taxonomy.Heuristic)
+	}
+}
+
+// TestDiffCase_DiffDetailKeepsRawAndNormalizedOldNew proves ticket 02
+// attempt 2's D2 fix: diff/<id>.json's stdout detail keeps the untouched
+// raw old/new (as actually printed, sandbox paths and all) ALONGSIDE the
+// normalized old/new used to decide the field differs -- not the
+// normalized value in place of the raw one (eval-ticket-02.md's D2
+// finding: the previous attempt stored only the normalized value, so a raw
+// hex commit like "c8d6cdec" had already been rewritten to "<SHA>" in the
+// evidence a reviewer would read).
+func TestDiffCase_DiffDetailKeepsRawAndNormalizedOldNew(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	oracleHome := "/tmp/apm-parity-oracle/home"
+	targetHome := "/tmp/apm-parity-target/home"
+	writeBinFiles(t, outDir, "oracle", "c1", "path: /tmp/apm-parity-oracle/cwd/f exit 0", "")
+	writeBinFiles(t, outDir, "target", "c1", "path: /tmp/apm-parity-target/cwd/f exit 1", "")
+
+	oracle := Record{EnvDelta: map[string]string{"HOME": oracleHome}}
+	target := Record{EnvDelta: map[string]string{"HOME": targetHome}}
+
+	cd, detail := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"stdout"}) {
+		t.Fatalf("Fields = %v, want [stdout]", cd.Fields)
+	}
+	if detail.Stdout == nil {
+		t.Fatal("detail.Stdout = nil")
+	}
+	if detail.Stdout.Raw.Old != "path: /tmp/apm-parity-oracle/cwd/f exit 0" {
+		t.Errorf("Raw.Old = %q, want the untouched raw bytes", detail.Stdout.Raw.Old)
+	}
+	if detail.Stdout.Raw.New != "path: /tmp/apm-parity-target/cwd/f exit 1" {
+		t.Errorf("Raw.New = %q, want the untouched raw bytes", detail.Stdout.Raw.New)
+	}
+	if detail.Stdout.Normalized.Old != "path: <TMP>/f exit 0" {
+		t.Errorf("Normalized.Old = %q, want the sandbox path normalized away", detail.Stdout.Normalized.Old)
+	}
+	if detail.Stdout.Normalized.New != "path: <TMP>/f exit 1" {
+		t.Errorf("Normalized.New = %q, want the sandbox path normalized away", detail.Stdout.Normalized.New)
+	}
+}
+
+func TestDiffCase_RewriteBinaryNameMakesBinaryOnlyStdoutMatch(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1", RewriteBinaryName: true}
+	writeBinFiles(t, outDir, "oracle", "c1", "usage: apm doctor", "")
+	writeBinFiles(t, outDir, "target", "c1", "usage: apm-go doctor", "")
+
+	cd, _ := mustDiffCase(t, outDir, c, Record{}, Record{})
+	if len(cd.Fields) != 0 {
+		t.Errorf("Fields = %v, want none once apm-go<->apm is normalized away", cd.Fields)
+	}
+}
+
+// TestDiffCase_NonUTF8StdoutIsStillNormalized proves the fix for reading
+// straight from stdout.bin: a body that record.go's inlineBody would have
+// omitted (non-UTF-8) still gets sandbox-path normalization, rather than
+// falling back to comparing un-normalized raw bytes that always differ
+// purely because each side's sandbox got its own unique temp path.
+func TestDiffCase_NonUTF8StdoutIsStillNormalized(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	oracleHome := "/tmp/apm-parity-oracle/home"
+	targetHome := "/tmp/apm-parity-target/home"
+	writeBinFiles(t, outDir, "oracle", "c1", "\xffpath: /tmp/apm-parity-oracle/cwd/f", "")
+	writeBinFiles(t, outDir, "target", "c1", "\xffpath: /tmp/apm-parity-target/cwd/f", "")
+
+	oracle := Record{EnvDelta: map[string]string{"HOME": oracleHome}, StdoutSHA256: "would-differ-if-compared-raw-1"}
+	target := Record{EnvDelta: map[string]string{"HOME": targetHome}, StdoutSHA256: "would-differ-if-compared-raw-2"}
+
+	cd, _ := mustDiffCase(t, outDir, c, oracle, target)
+	if len(cd.Fields) != 0 {
+		t.Errorf("Fields = %v, want none: non-UTF-8 bodies must still normalize by sandbox path, not fall back to raw sha256", cd.Fields)
+	}
+}
+
+func TestDiffCase_TreeAddedFile(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	oracle := Record{Tree: nil}
+	target := Record{Tree: []TreeEntry{{Path: "cwd/extra.txt", Kind: "file", Size: 3, SHA256: "abc"}}}
+
+	cd, detail := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Fatalf("Fields = %v, want [tree]", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.Added) != 1 || detail.Tree.Added[0].Path != "cwd/extra.txt" {
+		t.Errorf("detail.Tree = %+v", detail.Tree)
+	}
+	for _, f := range []string{"F09", "F03"} {
+		if !containsStr(cd.Taxonomy.Heuristic, f) {
+			t.Errorf("Heuristic = %v, want to contain %q", cd.Taxonomy.Heuristic, f)
+		}
+	}
+}
+
+func TestDiffCase_TreeRemovedFile(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	oracle := Record{Tree: []TreeEntry{{Path: "cwd/gone.txt", Kind: "file", Size: 1, SHA256: "x"}}}
+	target := Record{Tree: nil}
+
+	cd, detail := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Fatalf("Fields = %v, want [tree]", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.Removed) != 1 || detail.Tree.Removed[0].Path != "cwd/gone.txt" {
+		t.Errorf("detail.Tree = %+v", detail.Tree)
+	}
+}
+
+// TestDiffCase_TreeBaselineExcludedPathIsNotATreeDiff proves an
+// Oracle-only path listed in baseline.json (ticket 12) is excluded from
+// the tree field entirely -- unlike a waiver, this applies without any
+// per-case tree_paths entry.
+func TestDiffCase_TreeBaselineExcludedPathIsNotATreeDiff(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	oracle := Record{Tree: []TreeEntry{{Path: "home/.apm/config.json", Kind: "file", Size: 1, SHA256: "x"}}}
+	target := Record{Tree: nil}
+	baseline := map[string]bool{"home/.apm/config.json": true}
+
+	cd, detail := mustDiffCaseWithBaseline(t, outDir, c, oracle, target, baseline)
+	if len(cd.Fields) != 0 {
+		t.Fatalf("Fields = %v, want none (baseline-excluded path must not count as a tree diff)", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.BaselineExcluded) != 1 || detail.Tree.BaselineExcluded[0].Path != "home/.apm/config.json" {
+		t.Errorf("detail.Tree = %+v, want one baseline_excluded entry", detail.Tree)
+	}
+	if detail.Tree.BaselineExcluded[0].DiffKind != "removed" {
+		t.Errorf("BaselineExcluded[0].DiffKind = %q, want %q", detail.Tree.BaselineExcluded[0].DiffKind, "removed")
+	}
+}
+
+// TestDiffCase_TreeBaselineExcludedPathAlongsideRealTreeDiff proves a
+// baseline-excluded path is dropped from Removed/Added/Changed even when
+// the case ALSO has a genuine, unwaived-by-baseline tree diff elsewhere:
+// the real diff still surfaces as "tree", and the excluded path is
+// reported separately rather than either hiding the real diff or being
+// swept into it.
+func TestDiffCase_TreeBaselineExcludedPathAlongsideRealTreeDiff(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	oracle := Record{Tree: []TreeEntry{{Path: "home/.apm/config.json", Kind: "file", Size: 1, SHA256: "x"}}}
+	target := Record{Tree: []TreeEntry{{Path: "cwd/build", Kind: "dir"}}}
+	baseline := map[string]bool{"home/.apm/config.json": true}
+
+	cd, detail := mustDiffCaseWithBaseline(t, outDir, c, oracle, target, baseline)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Fatalf("Fields = %v, want [tree] (real diff must still surface)", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.Added) != 1 || detail.Tree.Added[0].Path != "cwd/build" {
+		t.Errorf("detail.Tree.Added = %+v, want [cwd/build]", detail.Tree.Added)
+	}
+	if len(detail.Tree.BaselineExcluded) != 1 || detail.Tree.BaselineExcluded[0].Path != "home/.apm/config.json" {
+		t.Errorf("detail.Tree.BaselineExcluded = %+v, want [home/.apm/config.json]", detail.Tree.BaselineExcluded)
+	}
+}
+
+// TestDiffCase_SameShaButDifferentRawBytesIsATreeDiff proves the tree
+// comparison doesn't just trust TreeEntry.SHA256 equality (acceptance:
+// "raw bytes of every file present on both sides") -- it reads the actual
+// copied fs/ evidence back and compares bytes directly.
+func TestDiffCase_SameShaButDifferentRawBytesIsATreeDiff(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	entry := TreeEntry{Path: "cwd/f.txt", Kind: "file", Size: 5, SHA256: "same-sha-recorded-by-both-sides"}
+	oracle := Record{Tree: []TreeEntry{entry}}
+	target := Record{Tree: []TreeEntry{entry}}
+
+	writeFSFile(t, outDir, "oracle", "c1", "cwd/f.txt", "aaaaa")
+	writeFSFile(t, outDir, "target", "c1", "cwd/f.txt", "bbbbb")
+
+	cd, detail := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Fatalf("Fields = %v, want [tree] even though recorded sha256 matched on both sides", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.Changed) != 1 {
+		t.Errorf("detail.Tree = %+v, want one changed entry", detail.Tree)
+	}
+}
+
+func TestDiffCase_SameShaAndSameRawBytesIsNotATreeDiff(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	entry := TreeEntry{Path: "cwd/f.txt", Kind: "file", Size: 5, SHA256: "sha"}
+	oracle := Record{Tree: []TreeEntry{entry}}
+	target := Record{Tree: []TreeEntry{entry}}
+
+	writeFSFile(t, outDir, "oracle", "c1", "cwd/f.txt", "aaaaa")
+	writeFSFile(t, outDir, "target", "c1", "cwd/f.txt", "aaaaa")
+
+	cd, _ := mustDiffCase(t, outDir, c, oracle, target)
+	if len(cd.Fields) != 0 {
+		t.Errorf("Fields = %v, want none", cd.Fields)
+	}
+}
+
+func TestDiffCase_MissingStdoutBinIsAnError(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	// Neither side's stdout.bin/stderr.bin was written.
+
+	_, _, err := diffCase(outDir, c, Record{}, Record{}, nil)
+	if err == nil {
+		t.Fatal("diffCase: expected an error when evidence files are missing, got nil")
+	}
+}
+
+func writeFSFile(t *testing.T, outDir, side, id, relPath, content string) {
+	t.Helper()
+	writeFSFileBytes(t, outDir, side, id, relPath, []byte(content))
+}
+
+func writeFSFileBytes(t *testing.T, outDir, side, id, relPath string, content []byte) {
+	t.Helper()
+	full := filepath.Join(outDir, side, id, "fs", filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(full, content, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}
+
+// TestDiffCase_TreeFileNormalizesSandboxPathBeforeByteCompare proves ticket
+// 02 attempt 2's bytes-normalisation fix: a text file that merely stores
+// its own sandbox's absolute cwd (e.g. a registry manifest recording the
+// fixture dir it was seeded from) must NOT show as a tree diff purely
+// because each side's sandbox got a different-length temp path -- even
+// though that gives the two sides genuinely different raw bytes, size, and
+// sha256 at capture time.
+func TestDiffCase_TreeFileNormalizesSandboxPathBeforeByteCompare(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+
+	oracleHome := "/tmp/apm-parity-oracle/home"
+	targetHome := "/tmp/apm-parity-target/home"
+	oracle := Record{
+		Tree:     []TreeEntry{{Path: "config/registry.json", Kind: "file", Size: 55, SHA256: "oracle-sha-differs-because-cwd-length-differs"}},
+		EnvDelta: map[string]string{"HOME": oracleHome},
+	}
+	target := Record{
+		Tree:     []TreeEntry{{Path: "config/registry.json", Kind: "file", Size: 55, SHA256: "target-sha-differs-because-cwd-length-differs"}},
+		EnvDelta: map[string]string{"HOME": targetHome},
+	}
+
+	writeFSFile(t, outDir, "oracle", "c1", "config/registry.json", `{"fixture":"/tmp/apm-parity-oracle/cwd/fixture"}`)
+	writeFSFile(t, outDir, "target", "c1", "config/registry.json", `{"fixture":"/tmp/apm-parity-target/cwd/fixture"}`)
+
+	cd, _ := mustDiffCase(t, outDir, c, oracle, target)
+	if len(cd.Fields) != 0 {
+		t.Errorf("Fields = %v, want none: registry file differs only by each side's own sandbox cwd", cd.Fields)
+	}
+}
+
+// TestDiffCase_TreeFileGenuineTextDriftStillDetected proves the
+// normalisation fix doesn't paper over a real difference: two text files
+// whose content differs for a reason OTHER than the sandbox path must still
+// surface as a tree diff.
+func TestDiffCase_TreeFileGenuineTextDriftStillDetected(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	entry := TreeEntry{Path: "config/registry.json", Kind: "file", Size: 10, SHA256: "sha"}
+	oracle := Record{Tree: []TreeEntry{entry}}
+	target := Record{Tree: []TreeEntry{entry}}
+
+	writeFSFile(t, outDir, "oracle", "c1", "config/registry.json", `{"n":1}`)
+	writeFSFile(t, outDir, "target", "c1", "config/registry.json", `{"n":2}`)
+
+	cd, detail := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Fatalf("Fields = %v, want [tree]: genuine content drift, not sandbox-path noise", cd.Fields)
+	}
+	if detail.Tree == nil || len(detail.Tree.Changed) != 1 {
+		t.Errorf("detail.Tree = %+v, want one changed entry", detail.Tree)
+	}
+}
+
+// TestDiffCase_TreeFileNonUTF8ComparedRaw proves binary tree files are
+// compared as raw bytes, never run through normalizeString/UTF-8 decoding
+// (acceptance: "binary files compare raw").
+func TestDiffCase_TreeFileNonUTF8ComparedRaw(t *testing.T) {
+	outDir := t.TempDir()
+	c := Case{ID: "c1"}
+	writeBinFiles(t, outDir, "oracle", "c1", "", "")
+	writeBinFiles(t, outDir, "target", "c1", "", "")
+	entry := TreeEntry{Path: "cwd/f.bin", Kind: "file", Size: 2, SHA256: "sha"}
+	oracle := Record{Tree: []TreeEntry{entry}}
+	target := Record{Tree: []TreeEntry{entry}}
+
+	writeFSFileBytes(t, outDir, "oracle", "c1", "cwd/f.bin", []byte{0xff, 0x00})
+	writeFSFileBytes(t, outDir, "target", "c1", "cwd/f.bin", []byte{0xff, 0x01})
+
+	cd, _ := mustDiffCase(t, outDir, c, oracle, target)
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		t.Errorf("Fields = %v, want [tree]: genuinely different non-UTF-8 bytes", cd.Fields)
+	}
+}
+
+func TestApplyWaiver_FullCoverageWaives(t *testing.T) {
+	cd := CaseDiff{ID: "c1", Fields: []string{"stdout", "exit_code"}}
+	waivers := []Waiver{{ID: "c1", Fields: []string{"stdout", "exit_code"}, Reason: "known gap"}}
+
+	got := applyWaiver(cd, nil, waivers)
+	if !got.Waived {
+		t.Error("Waived = false, want true (waiver covers every differing field)")
+	}
+	if got.WaiverReason != "known gap" {
+		t.Errorf("WaiverReason = %q, want %q", got.WaiverReason, "known gap")
+	}
+}
+
+func TestApplyWaiver_PartialCoverageDoesNotWaive(t *testing.T) {
+	cd := CaseDiff{ID: "c1", Fields: []string{"stdout", "exit_code"}}
+	waivers := []Waiver{{ID: "c1", Fields: []string{"stdout"}, Reason: "known gap"}}
+
+	got := applyWaiver(cd, nil, waivers)
+	if got.Waived {
+		t.Error("Waived = true, want false: waiver only lists stdout, diff also has exit_code")
+	}
+}
+
+func TestApplyWaiver_WrongIDDoesNotMatch(t *testing.T) {
+	cd := CaseDiff{ID: "c1", Fields: []string{"stdout"}}
+	waivers := []Waiver{{ID: "other", Fields: []string{"stdout"}, Reason: "x"}}
+
+	got := applyWaiver(cd, nil, waivers)
+	if got.Waived {
+		t.Error("Waived = true, want false: no waiver for this id")
+	}
+}
+
+func TestApplyWaiver_EmptyDiffNeverWaived(t *testing.T) {
+	cd := CaseDiff{ID: "c1"}
+	got := applyWaiver(cd, nil, []Waiver{{ID: "c1", Fields: []string{"stdout"}, Reason: "x"}})
+	if got.Waived {
+		t.Error("Waived = true, want false: nothing differed, nothing to waive")
+	}
+}
+
+func TestCountUnwaived(t *testing.T) {
+	diffs := []CaseDiff{
+		{ID: "a"}, // empty diff
+		{ID: "b", Fields: []string{"stdout"}, Waived: true},
+		{ID: "c", Fields: []string{"stdout"}, Waived: false},
+	}
+	if got := countUnwaived(diffs); got != 1 {
+		t.Errorf("countUnwaived = %d, want 1", got)
+	}
+}
+
+func containsStr(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// Ticket 02 attempt 5 (eval-ticket-02-r3.md): a `tree` waiver must name the
+// exact paths it covers. A tree diff is waived only when EVERY differing
+// path is listed in the waiver's tree_paths; a waiver whose scope lives only
+// in its reason text waives nothing.
+func TestApplyWaiver_TreeRequiresPathPreciseCoverage(t *testing.T) {
+	cd := CaseDiff{ID: "c1", Fields: []string{"tree"}}
+	paths := []string{"home/.apm/config.json"}
+
+	// Field-only waiver, no tree_paths -> NOT waived.
+	got := applyWaiver(cd, paths, []Waiver{{ID: "c1", Fields: []string{"tree"}, Reason: "x"}})
+	if got.Waived {
+		t.Fatal("tree waiver without tree_paths must not waive")
+	}
+
+	// Exact path listed -> waived.
+	got = applyWaiver(cd, paths, []Waiver{{ID: "c1", Fields: []string{"tree"}, TreePaths: []string{"home/.apm/config.json"}, Reason: "x"}})
+	if !got.Waived {
+		t.Fatal("tree waiver naming the exact path must waive")
+	}
+
+	// A second, unlisted path appears -> NOT waived (this is the
+	// last_version_check case the evaluator caught).
+	got = applyWaiver(cd, []string{"home/.apm/config.json", "home/.cache/apm/last_version_check"},
+		[]Waiver{{ID: "c1", Fields: []string{"tree"}, TreePaths: []string{"home/.apm/config.json"}, Reason: "x"}})
+	if got.Waived {
+		t.Fatal("an unlisted tree path must break the waiver")
+	}
+
+	// stdout-only diff with a waiver that has tree_paths but no stdout coverage -> NOT waived.
+	got = applyWaiver(CaseDiff{ID: "c1", Fields: []string{"stdout"}}, nil,
+		[]Waiver{{ID: "c1", Fields: []string{"tree"}, TreePaths: []string{"a"}, Reason: "x"}})
+	if got.Waived {
+		t.Fatal("tree_paths must not widen field coverage")
+	}
+}

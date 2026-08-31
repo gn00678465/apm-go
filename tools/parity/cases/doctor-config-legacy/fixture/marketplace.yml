@@ -1,0 +1,9 @@
+name: test-marketplace
+description: Test marketplace
+version: 1.0.0
+owner:
+  name: Test Owner
+packages:
+  - name: solo
+    source: acme-org/solo
+    version: "^1.0.0"

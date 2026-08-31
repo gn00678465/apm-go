@@ -1,0 +1,6 @@
+{
+  "id": "pack-refuse-apm",
+  "argv": ["pack", "--format", "apm"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

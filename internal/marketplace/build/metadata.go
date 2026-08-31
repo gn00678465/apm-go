@@ -17,6 +17,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -49,15 +50,28 @@ const localMetadataMaxBytes = 64 * 1024
 
 // readCapped reads path but refuses to return content over maxBytes,
 // erroring instead of silently truncating -- the shared size-cap primitive
-// behind both F1 (a local package's own apm.yml) and F4 (a remote
-// package's own apm.yml).
+// behind F4 (a remote package's own apm.yml, read from apm-go's own
+// freshly-cloned temp directory). F1 (a local package's own apm.yml) uses
+// readCappedFile instead, below -- see that function's own doc comment for
+// why a fresh os.Open(path) here would be the wrong choice for that case.
 func readCapped(path string, maxBytes int64) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	return readCappedFile(f, maxBytes)
+}
 
+// readCappedFile is readCapped's already-open-handle variant: reads from an
+// ALREADY-OPEN *os.File (as authoring.OpenLocalFileWithinRoot returns)
+// rather than opening path itself. Re-opening path here would silently
+// reintroduce the exact check-then-open TOCTOU window
+// OpenLocalFileWithinRoot exists to close (see that function's own doc
+// comment, authoring/openwithinroot.go) -- a second os.Open call has no
+// memory of which file the earlier open+verify actually reached, and could
+// follow a path that was swapped out from under it in between.
+func readCappedFile(f *os.File, maxBytes int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return nil, err
@@ -223,20 +237,61 @@ func enrichRemoteMetadata(entry authoring.PackageEntry, ref, subdir, source stri
 	return description, version, ""
 }
 
-// localApmYMLPath resolves a local package's own apm.yml path within
-// projectRoot, or ok=false when entry.Source (already req-mf-017-validated
-// to start with "./" and contain no ".." segment, so it can never traverse
-// outside projectRoot) resolves to projectRoot itself -- that file is the
-// marketplace's own apm.yml, not a package manifest, mirroring the Python
-// original's identical "package_root == project_root" skip in
+// localApmYMLRelPath resolves a local package's own apm.yml path, relative
+// to projectRoot (for OpenLocalFileWithinRoot, authoring package), or
+// ok=false when entry.Source resolves to projectRoot itself -- that file is
+// the marketplace's own apm.yml, not a package manifest, mirroring the
+// Python original's identical "package_root == project_root" skip in
 // _fetch_local_metadata (builder.py).
-func localApmYMLPath(projectRoot, source string) (path string, ok bool) {
-	root := filepath.Clean(projectRoot)
-	packageRoot := filepath.Clean(filepath.Join(projectRoot, source))
-	if packageRoot == root {
-		return "", false
+//
+// B-BLOCKING-1 (external audit round 6, 2026-07-31): this used to
+// filepath.Join(projectRoot, source) directly, trusting that
+// manifest.ValidateMarketplaceSource's parse-time "no '..' segment" check --
+// already applied once, whenever `package add`/`LoadAuthoringConfig` accepted
+// this source -- makes an escape impossible here too. That is a TOCTOU, not a
+// proof: mkt-046 explicitly lets `add` reference a source before its
+// directory exists on disk yet, so nothing stops that path from later
+// becoming a symlink or Windows junction pointing outside projectRoot --
+// entirely valid on disk, entirely invisible to a string-only ".." check --
+// before this function runs at a subsequent `pack` and reads whatever apm.yml
+// that escaping target actually resolves to into marketplace.json. This
+// re-runs authoring.ResolveLocalSourceAgainstRoot's live, symlink/junction-
+// aware containment check at THIS point (the package's own directory) --
+// see verifyPackageSource (authoring/editor.go) for the symmetric add-time
+// check this mirrors.
+//
+// B-BLOCKING (2026-07-31 follow-up, TOCTOU): this function used to ALSO
+// re-run the identical containment check one path component deeper, against
+// "<source>/apm.yml" (catching a symlinked apm.yml LEAF the directory-level
+// check alone can't see -- B-BLOCKING-2, external audit round 7, see
+// TestPack_LocalSourceApmYmlLeafSymlinkEscape_Rejected), and its caller
+// (enrichLocalMetadata) then separately os.Stat-ed and readCapped-opened
+// that same path string moments later. That is itself a check-then-open
+// TOCTOU, structurally identical to the one this whole file's earlier fixes
+// closed one layer up: a symlink/junction at the apm.yml leaf could be
+// swapped between the leaf-level containment check above and the actual
+// open. The leaf-level check has therefore been REMOVED from here --
+// enrichLocalMetadata now performs it, and the subsequent open, as a single
+// atomic operation via authoring.OpenLocalFileWithinRoot (open first, then
+// verify the ALREADY-OPEN handle's own real path), closing that window
+// entirely rather than narrowing it. This function's remaining job is only
+// the directory-level check (needed for the "source resolves to
+// projectRoot itself" skip decision above, a business rule, not a security
+// boundary) and computing the relative apm.yml path OpenLocalFileWithinRoot
+// needs.
+func localApmYMLRelPath(projectRoot, source string) (relPath string, ok bool, err error) {
+	absRoot, err := filepath.Abs(filepath.Clean(projectRoot))
+	if err != nil {
+		return "", false, fmt.Errorf("resolve project root %q: %w", projectRoot, err)
 	}
-	return filepath.Join(packageRoot, "apm.yml"), true
+	packageRoot, err := authoring.ResolveLocalSourceAgainstRoot(projectRoot, source)
+	if err != nil {
+		return "", false, err
+	}
+	if filepath.Clean(packageRoot) == absRoot {
+		return "", false, nil
+	}
+	return filepath.Join(source, "apm.yml"), true, nil
 }
 
 // enrichLocalMetadata implements F1: a local package (source: "./...") is
@@ -251,27 +306,55 @@ func localApmYMLPath(projectRoot, source string) (path string, ok bool) {
 // read/parse error (over the size cap, unreadable, not valid YAML)
 // downgrades to a warning -- either way enrichment is skipped rather than
 // failing the build.
-func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (description, version, warning string) {
+//
+// B-BLOCKING-1 (external audit round 6, 2026-07-31): a local source
+// resolving outside projectRoot (localApmYMLRelPath's directory-level
+// containment check, or OpenLocalFileWithinRoot's own handle-based
+// containment check below) is NOT treated as a soft "nothing to enrich
+// from" case -- unlike a merely missing or malformed apm.yml, it means the
+// project's own configuration is no longer trustworthy (its source now
+// points somewhere the curator never authored), so this returns a hard
+// error that fails the whole build, mirroring verifyPackageSource's
+// identical fail-closed behavior for `package add` on the very same
+// violation. Every OTHER open failure (not found, permission denied, or any
+// other os.OpenFile error) stays soft -- "nothing to enrich from" -- the
+// same blanket treatment this function's prior os.Stat-then-readCapped
+// version gave every stat error, not just ENOENT.
+func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (description, version, warning string, err error) {
 	description = entry.Description
 	version = entry.Version
 	if description != "" && version != "" {
-		return description, version, ""
+		return description, version, "", nil
 	}
 
-	apmYmlPath, ok := localApmYMLPath(projectRoot, entry.Source)
+	relPath, ok, resolveErr := localApmYMLRelPath(projectRoot, entry.Source)
+	if resolveErr != nil {
+		return description, version, "", fmt.Errorf("package %q: %w", entry.Name, resolveErr)
+	}
 	if !ok {
-		return description, version, ""
-	}
-	if _, statErr := os.Stat(apmYmlPath); statErr != nil {
-		return description, version, ""
+		return description, version, "", nil
 	}
 
-	data, err := readCapped(apmYmlPath, localMetadataMaxBytes)
+	// TOCTOU fix (2026-07-31): open first, then verify the ALREADY-OPEN
+	// handle's own real path -- not a path-based check followed by a
+	// separate os.Stat/os.Open moments later (this function's prior
+	// implementation) -- see OpenLocalFileWithinRoot's own doc comment
+	// (authoring/openwithinroot.go) for why that ordering matters.
+	f, openErr := authoring.OpenLocalFileWithinRoot(projectRoot, relPath)
+	if openErr != nil {
+		if errors.Is(openErr, authoring.ErrLocalFileEscapesRoot) {
+			return description, version, "", fmt.Errorf("package %q: %w", entry.Name, openErr)
+		}
+		return description, version, "", nil
+	}
+	defer f.Close()
+
+	data, err := readCappedFile(f, localMetadataMaxBytes)
 	if err != nil {
 		return description, version, fmt.Sprintf(
 			"package %q: could not read local apm.yml metadata, continuing without it: %s",
 			entry.Name, err,
-		)
+		), nil
 	}
 
 	doc, err := yamlcore.SafeLoad(data)
@@ -279,10 +362,10 @@ func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (desc
 		return description, version, fmt.Sprintf(
 			"package %q: could not parse local apm.yml metadata, continuing without it: %s",
 			entry.Name, err,
-		)
+		), nil
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return description, version, ""
+		return description, version, "", nil
 	}
 	root := doc.Content[0]
 	if description == "" {
@@ -291,7 +374,7 @@ func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (desc
 	if version == "" {
 		version = metadataScalarString(root, "version")
 	}
-	return description, version, ""
+	return description, version, "", nil
 }
 
 // isDisplayVersion mirrors Python's output_mappers._is_display_version

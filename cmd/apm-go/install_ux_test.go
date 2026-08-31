@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -253,5 +254,79 @@ func TestRunInstall_LocalDeployTreeLabel(t *testing.T) {
 	}
 	if strings.Contains(out, "  (local)\n") || strings.Contains(out, "● (local)") {
 		t.Errorf("bare \"(local)\" label should have been replaced, got: %s", out)
+	}
+}
+
+// TestUpdateGitignoreForApmModules_MatchesOracleAppend verifies the exact
+// project-scope append and its idempotence (Oracle:
+// src/apm_cli/commands/_helpers.py:489-527).
+func TestUpdateGitignoreForApmModules_MatchesOracleAppend(t *testing.T) {
+	chdirTemp(t)
+
+	out := captureInstallStdout(t, updateGitignoreForApmModules)
+	got, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\n# APM dependencies\napm_modules/\n"
+	if string(got) != want {
+		t.Fatalf(".gitignore = %q, want %q", got, want)
+	}
+	if !strings.Contains(out, " i Added apm_modules/ to .gitignore") {
+		t.Errorf("output = %q, want Oracle progress line", out)
+	}
+
+	secondOut := captureInstallStdout(t, updateGitignoreForApmModules)
+	second, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(second) != want || secondOut != "" {
+		t.Errorf("second update changed .gitignore or output: bytes=%q output=%q", second, secondOut)
+	}
+
+	if err := os.WriteFile(".gitignore", []byte("existing\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	captureInstallStdout(t, updateGitignoreForApmModules)
+	withExisting, err := os.ReadFile(".gitignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(withExisting) != "existing\n\n"+want {
+		t.Errorf(".gitignore with an existing entry = %q, want %q", withExisting, "existing\n\n"+want)
+	}
+	if err := os.WriteFile(".gitignore", []byte("existing\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeErrorOut := captureInstallStdout(t, func() {
+		updateGitignoreForApmModulesWithWrite(func(io.Writer, string) (int, error) {
+			return 0, errors.New("write failed")
+		})
+	})
+	if !strings.Contains(writeErrorOut, " ! Could not update .gitignore: write failed") {
+		t.Errorf("write-error output = %q, want Oracle warning", writeErrorOut)
+	}
+
+	if err := os.Remove(".gitignore"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(".gitignore", 0755); err != nil {
+		t.Fatal(err)
+	}
+	readErrorOut := captureInstallStdout(t, updateGitignoreForApmModules)
+	if !strings.Contains(readErrorOut, " ! Could not read .gitignore:") {
+		t.Errorf("read-error output = %q, want Oracle warning", readErrorOut)
+	}
+
+	if err := os.Remove(".gitignore"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/proc/version", ".gitignore"); err != nil {
+		t.Fatal(err)
+	}
+	openErrorOut := captureInstallStdout(t, updateGitignoreForApmModules)
+	if !strings.Contains(openErrorOut, " ! Could not update .gitignore:") {
+		t.Errorf("open-error output = %q, want Oracle warning", openErrorOut)
 	}
 }

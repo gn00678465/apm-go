@@ -1,0 +1,5 @@
+{
+  "id": "pack-json",
+  "argv": ["pack", "--json"],
+  "rewrite_binary_name": true
+}

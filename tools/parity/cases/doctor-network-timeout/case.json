@@ -1,0 +1,9 @@
+{
+  "id": "doctor-network-timeout",
+  "argv": ["doctor"],
+  "path_prepend": "path",
+  "env": {"FAKE_GIT_MODE": "hang", "GITHUB_TOKEN": "ghp-parity-fixture-DO-NOT-LEAK-0123456789"},
+  "timeout_s": 8,
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering"]
+}

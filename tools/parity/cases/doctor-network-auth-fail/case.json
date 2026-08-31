@@ -1,0 +1,8 @@
+{
+  "id": "doctor-network-auth-fail",
+  "argv": ["doctor"],
+  "path_prepend": "path",
+  "env": {"FAKE_GIT_MODE": "auth-fail", "GITHUB_TOKEN": "ghp-parity-fixture-DO-NOT-LEAK-0123456789"},
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering"]
+}

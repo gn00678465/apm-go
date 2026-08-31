@@ -1,0 +1,7 @@
+{
+  "id": "search-limit-1",
+  "argv": ["search", "--limit", "1", "your@skills"],
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "skills"]],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering"]
+}

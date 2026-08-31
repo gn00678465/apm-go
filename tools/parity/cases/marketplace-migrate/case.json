@@ -1,0 +1,5 @@
+{
+  "id": "marketplace-migrate",
+  "argv": ["marketplace", "migrate"],
+  "rewrite_binary_name": true
+}

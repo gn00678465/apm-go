@@ -1,0 +1,6 @@
+{
+  "id": "plugin-init-normalise-space",
+  "argv": ["plugin", "init", "plugin-init-fixture", "--format", "agent plugin", "--yes"],
+  "env": {"GIT_CONFIG_GLOBAL": "<TMP>/.gitconfig-fixture"},
+  "rewrite_binary_name": true
+}

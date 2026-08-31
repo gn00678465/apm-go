@@ -58,6 +58,16 @@ func anySetFieldFlagChanged(cmd *cobra.Command) bool {
 	return false
 }
 
+// shortSHA truncates a commit SHA to upstream's 12-character display form
+// (plugin/__init__.py:148's sha[:12]) for the "Resolved <ref> to <sha>"
+// progress line.
+func shortSHA(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
 // parseTagsFlag splits a comma-separated --tags value into a trimmed,
 // non-empty slice, or nil when raw is empty -- mirrors Python's
 // _parse_tags. Used by `add`, where an omitted --tags must leave
@@ -88,24 +98,53 @@ func parseTagsFlagGiven(raw string) []string {
 	return []string{}
 }
 
+// marketplaceOutputsIncludeCodex reports whether dir's active marketplace
+// authoring config declares a "codex" entry in its `outputs:` block. It is
+// a best-effort, read-only check (R10's add-time codex-category warning):
+// a config that fails to load here (e.g. `marketplace init` was never run)
+// simply reports false, exactly like marketplaceNotRegisteredErr's own
+// best-effort registry lookup.
+func marketplaceOutputsIncludeCodex(dir string) bool {
+	cfg, _, err := authoring.LoadAuthoringConfig(dir)
+	if err != nil {
+		return false
+	}
+	for _, o := range cfg.Outputs {
+		if strings.EqualFold(o, "codex") {
+			return true
+		}
+	}
+	return false
+}
+
 // marketplacePackageAddCmd implements `apm marketplace package add SOURCE`
-// (mkt-045/046). --name and -s/--subdir's shorthand and --no-verify are
-// add-only, per design.md's flag table.
+// (mkt-045/046). --name and -s/--subdir's shorthand, --no-verify and
+// --category are add-only, per design.md's flag table.
 func marketplacePackageAddCmd() *cobra.Command {
 	var (
-		name, version, ref, subdir, tagPattern, tags string
-		includePrerelease, noVerify, verbose         bool
+		name, version, ref, subdir, tagPattern, tags, category string
+		includePrerelease, noVerify, verbose                   bool
 	)
 
 	cmd := &cobra.Command{
-		Use:          "add SOURCE",
-		Short:        "Add a package to the marketplace authoring config",
+		Use:   "add SOURCE",
+		Short: "Add a package to the marketplace authoring config",
+		Long: "Add a package to the marketplace authoring config. SOURCE accepts " +
+			"owner/repo, host.tld/owner/repo, https://host.tld/owner/repo " +
+			"(nested paths allowed), or a ./local path.",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("version") && cmd.Flags().Changed("ref") {
 				return withExitCode(2, errVersionRefMutuallyExclusive)
 			}
+			// R10/AC48: outputs: codex without --category would otherwise
+			// leave the added package unable to ever `pack` a codex
+			// output (mkt-053's CategoryRequiredError) with no CLI-level
+			// way to fix it -- design.md §13's "刻意不做" keeps this a
+			// warning, not a block, so `pack -m claude` still succeeds
+			// regardless.
+			warnMissingCategory := category == "" && marketplaceOutputsIncludeCodex(".")
 			opts := authoring.AddOptions{
 				Name:              name,
 				Version:           version,
@@ -115,6 +154,44 @@ func marketplacePackageAddCmd() *cobra.Command {
 				Tags:              parseTagsFlag(tags),
 				IncludePrerelease: includePrerelease,
 				NoVerify:          noVerify,
+				Category:          category,
+				// R5/AC19: an explicit `--ref HEAD` (any case) additionally
+				// warns that HEAD is a mutable ref, printed right before
+				// resolution is actually attempted -- mirroring upstream's
+				// plugin/__init__.py _resolve_ref ordering. resolveRef only
+				// invokes this hook once every other AddPackage pre-flight
+				// step has already passed and classifyRefResolution has
+				// confirmed noVerify does not block resolution (see
+				// resolveRef's own doc comment).
+				//
+				// BLOCKING 2 (external audit round 3, 2026-07-30): this used
+				// to be decided by calling authoring.WillResolveMutableRefForAdd
+				// BEFORE ever invoking AddPackage at all, so it printed even
+				// when AddPackage was about to fail outright for an
+				// unrelated reason (a missing config, an unreachable
+				// source, a duplicate name), or when --no-verify made HEAD
+				// resolution impossible (reproduced live: `add owner/repo
+				// --ref HEAD --no-verify` against a directory with no
+				// marketplace config printed the warning, then exited 2 on
+				// "no marketplace authoring config found"). Wiring the
+				// warning through this hook instead avoids that -- for
+				// every pre-flight check AddPackage currently runs before
+				// its resolveRef call (see authoring/editor.go's AddPackage
+				// body) -- without hand-duplicating AddPackage's pre-flight
+				// order here. See
+				// TestMarketplacePackageAdd_ExplicitRefHead_NoVerify_NoMutableRefWarning_ExitsCode2/
+				// _MissingConfig_/_UnreachableSource_/_DuplicateName_NoMutableRefWarning
+				// (marketplace_package_test.go) for the four pre-flight
+				// failures this is regression-tested against.
+				OnExplicitHeadWillResolve: func() {
+					ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
+				},
+				// Upstream plugin/__init__.py:147-150/179-182: report what
+				// SHA the mutable/named ref actually resolved to, so the
+				// user learns what got written into apm.yml.
+				OnRefResolved: func(ref, sha string) {
+					ux.Info(cmd.OutOrStdout(), "Resolved %s to %s", ref, shortSHA(sha))
+				},
 			}
 			resolved, fallbackUsed, err := authoring.AddPackage(".", args[0], opts, authoring.DefaultRefLister)
 			if err != nil {
@@ -123,7 +200,13 @@ func marketplacePackageAddCmd() *cobra.Command {
 			if fallbackUsed {
 				ux.Warn(cmd.ErrOrStderr(), "packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
 			}
-			ux.Success(cmd.OutOrStdout(), "Added package %q from %s", resolved, args[0])
+			if warnMissingCategory {
+				ux.Warn(cmd.ErrOrStderr(), "package %q has no --category; marketplace.outputs includes 'codex', which requires one at `pack` time", resolved)
+			}
+			// Oracle commands/marketplace/plugin/add.py:93-96 uses
+			// logger.success(..., symbol="check"), and its wording uses
+			// single quotes around the resolved package name.
+			ux.Check(cmd.OutOrStdout(), "Added package '%s' from %s", resolved, args[0])
 			return nil
 		},
 	}
@@ -136,6 +219,16 @@ func marketplacePackageAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tags, "tags", "", "Comma-separated tags")
 	cmd.Flags().BoolVar(&includePrerelease, "include-prerelease", false, "Include prerelease versions")
 	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "Skip the remote reachability check")
+	// B-MINOR-2 (external audit round 8, 2026-07-31 follow-up): a backtick
+	// pair anywhere in a pflag usage string is not just decoration --
+	// pflag's UnquoteUsage treats the FIRST backtick-quoted substring as the
+	// flag's help metavar override, replacing the default "string" type name
+	// shown in `--help` output. The original "at `pack` time" wording made
+	// `--help` print "--category pack" (implying pack takes a literal
+	// argument named "pack") instead of "--category string". Single quotes
+	// (the convention already used by --version/--tag-pattern above) avoid
+	// triggering that behavior.
+	cmd.Flags().StringVar(&category, "category", "", "Package category (required for Codex output at 'pack' time)")
 	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
 	// subcommand; `package add` was missing it entirely (an unknown-flag
 	// hard error). Python's own add.py accepts it with no observable
@@ -191,6 +284,25 @@ func marketplacePackageSetCmd() *cobra.Command {
 			if cmd.Flags().Changed("include-prerelease") {
 				opts.IncludePrerelease = &includePrerelease
 			}
+			// BLOCKING 3 (external audit round 4, 2026-07-30): upstream
+			// warns on `set --ref HEAD` too (commands/marketplace/plugin/
+			// set.py:80 calls the same _resolve_ref plugin/__init__.py:
+			// 120-137 warns from), but SetPackage used to hardcode nil for
+			// this hook, so `set` never printed the warning at all. Wired
+			// identically to `add`'s own hook above: resolveRef only invokes
+			// it immediately before the real lister.ListRefs call for an
+			// explicitly-given "HEAD"/"head" ref, once noVerify (`set` has no
+			// --no-verify escape hatch, so this never applies) and the
+			// mutual-exclusion/no-op guards above have already passed.
+			opts.OnExplicitHeadWillResolve = func() {
+				ux.Warn(cmd.ErrOrStderr(), "'HEAD' is a mutable ref. Resolving to current SHA for safety.")
+			}
+			// Mirrors `add`'s OnRefResolved wiring above (upstream's set.py
+			// resolves through the same _resolve_ref and prints the same
+			// "Resolved <ref> to <sha12>" progress line).
+			opts.OnRefResolved = func(ref, sha string) {
+				ux.Info(cmd.OutOrStdout(), "Resolved %s to %s", ref, shortSHA(sha))
+			}
 
 			fallbackUsed, err := authoring.SetPackage(".", args[0], opts, authoring.DefaultRefLister)
 			if err != nil {
@@ -199,7 +311,9 @@ func marketplacePackageSetCmd() *cobra.Command {
 			if fallbackUsed {
 				ux.Warn(cmd.ErrOrStderr(), "packages: block structure required rewriting the whole list; hand formatting on other entries may have changed")
 			}
-			ux.Success(cmd.OutOrStdout(), "Updated package %q", args[0])
+			// Oracle commands/marketplace/plugin/set.py:111 uses
+			// logger.success(..., symbol="check").
+			ux.Check(cmd.OutOrStdout(), "Updated package '%s'", args[0])
 			return nil
 		},
 	}
@@ -249,14 +363,16 @@ func marketplacePackageRemoveCmd() *cobra.Command {
 					return err
 				}
 				if !proceed {
-					ux.Info(cmd.ErrOrStderr(), "Aborted.")
+					ux.Info(cmd.ErrOrStderr(), "Cancelled")
 					return nil
 				}
 			}
 			if _, err := authoring.RemovePackage(".", name); err != nil {
 				return withExitCode(2, err)
 			}
-			ux.Success(cmd.OutOrStdout(), "Removed package %q", name)
+			// Oracle commands/marketplace/plugin/remove.py:52 uses
+			// logger.success(..., symbol="check").
+			ux.Check(cmd.OutOrStdout(), "Removed package '%s'", name)
 			return nil
 		},
 	}

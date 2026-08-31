@@ -2,6 +2,7 @@ package ux
 
 import (
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"io"
 	"os"
 	"runtime"
@@ -82,6 +83,33 @@ func defaultSupportsUnicode() bool {
 		term != ""
 }
 
+// clackEventHook, when non-nil, is invoked with the name of each Clack
+// transcript method as it is CALLED (Banner, Intro, Note, Outro, Confirm,
+// Form, MultiSelect) -- a test-only seam (SetClackEventHookForTest,
+// testhooks.go) for observing the real call sequence directly.
+//
+// A-MAJOR-1 (external audit round 6, 2026-07-31): this exists because
+// inferring call order from literal substrings matched in captured output
+// (cmd/apm-go's previous clackEventSequence) is fragile in two independent
+// ways: (1) it silently breaks if a method's own message text is ever
+// reworded, since the marker string and the production string can drift
+// apart with nothing to catch it; (2) it conflates "was this method called"
+// with "did it print something," which are NOT the same thing for Banner in
+// particular -- Banner only prints on a Unicode-capable terminal (see its own
+// doc comment below), so a text-marker-based sequence recorder omits Banner
+// entirely whenever supportsUnicode() is false, even though runInitCore
+// genuinely called ck.Banner(). Firing this hook unconditionally at each
+// method's entry, before any Unicode-dependent short-circuit, records the
+// call itself -- decoupled from whatever that call happens to render.
+// Production code never sets this; nil is a no-op.
+var clackEventHook func(name string)
+
+func fireClackEvent(name string) {
+	if clackEventHook != nil {
+		clackEventHook(name)
+	}
+}
+
 // Clack renders the connected-gutter transcript used by `apm-go init`, in the
 // style of @clack/prompts: each answered step stays on screen as a "◇ title /
 // │ answer" pair, joined into one vertical line that opens with Intro and
@@ -114,6 +142,7 @@ func NewClack(w io.Writer) *Clack {
 // all -- a field of replacement characters is worse than no logo, and callers
 // get no stray blank line either.
 func (c *Clack) Banner(art string) {
+	fireClackEvent("Banner")
 	if c.sym != unicodeClackSymbols {
 		return
 	}
@@ -122,6 +151,7 @@ func (c *Clack) Banner(art string) {
 
 // Intro opens the transcript with the run's title.
 func (c *Clack) Intro(title string) {
+	fireClackEvent("Intro")
 	lipgloss.Fprintln(c.w, mutedStyle.Render(c.sym.BarStart)+"  "+headingStyle.Render(title))
 }
 
@@ -135,6 +165,32 @@ func (c *Clack) Bar() {
 // "Press ^C at any time to quit." hint).
 func (c *Clack) Detail(text string) {
 	lipgloss.Fprintln(c.w, mutedStyle.Render(c.sym.Bar)+"  "+mutedStyle.Render(text))
+}
+
+// Line hangs one pre-styled line off the connecting line (a status record
+// rendered by ProgressText/HintText). The styling survives because the
+// clack writer, not a buffer, is what lipgloss downsamples against.
+func (c *Clack) Line(text string) {
+	fireClackEvent("Line")
+	lipgloss.Fprintln(c.w, mutedStyle.Render(c.sym.Bar)+"  "+text)
+}
+
+// Embed hangs a pre-rendered block (an Oracle-style status record, a table,
+// a panel) off the connecting line: every line of block is printed verbatim
+// behind the gutter, so the block keeps its own glyphs and box-drawing while
+// the transcript's left border stays continuous. An empty line becomes a
+// bare bar. Unlike Detail the text is not muted -- it is the block's own
+// styling that should show.
+func (c *Clack) Embed(block string) {
+	fireClackEvent("Embed")
+	bar := mutedStyle.Render(c.sym.Bar)
+	for _, line := range strings.Split(strings.TrimSuffix(block, "\n"), "\n") {
+		if line == "" {
+			lipgloss.Fprintln(c.w, bar)
+			continue
+		}
+		lipgloss.Fprintln(c.w, bar+"  "+line)
+	}
 }
 
 // Warn prints a non-fatal warning on the connecting line. It exists so a
@@ -165,9 +221,45 @@ func (c *Clack) Step(title, answer string) {
 // init's "About to create" summary. Every line is padded to one inner width so
 // the right edge stays straight.
 func (c *Clack) Note(title string, body []string) {
+	fireClackEvent("Note")
+	// noteOverhead is what the frame adds around the inner text on every
+	// body line: "│  " + text + "  │" = 6 columns, plus one spare column so
+	// the right border never sits in the terminal's last cell (the same
+	// margin Table keeps). A box wider than the terminal makes every row
+	// soft-wrap and the whole transcript fall apart (user report
+	// 2026-08-29), so the inner width is capped and overlong lines are
+	// word-wrapped ANSI-aware instead.
+	const noteOverhead = 7
+	limit := 0
+	if cols := terminalWidthFor(c.w); cols > noteOverhead+1 {
+		limit = cols - noteOverhead
+	}
+	if limit > 0 {
+		wrapped := make([]string, 0, len(body))
+		for _, line := range body {
+			if runeWidth(line) <= limit {
+				wrapped = append(wrapped, line)
+				continue
+			}
+			// Continuation rows hang under the first row's text: a status
+			// record (" i Tip: ...") indents past its symbol column, an
+			// indented line keeps its own indent.
+			indent := continuationIndent(line)
+			parts := strings.Split(lipgloss.Wrap(line, limit-indent, ""), "\n")
+			wrapped = append(wrapped, parts[0])
+			for _, part := range parts[1:] {
+				wrapped = append(wrapped, strings.Repeat(" ", indent)+strings.TrimLeft(part, " "))
+			}
+		}
+		body = wrapped
+	}
+
 	inner := runeWidth(title) + 1
 	for _, line := range body {
 		inner = max(inner, runeWidth(line))
+	}
+	if limit > 0 && inner > limit {
+		inner = limit
 	}
 
 	bar := mutedStyle.Render(c.sym.Bar)
@@ -176,11 +268,11 @@ func (c *Clack) Note(title string, body []string) {
 	// The title line opens the box: "◇  <title> ───╮", sized so it ends in the
 	// same column as every body line's closing bar.
 	head := brandStyle.Render(c.sym.Step) + "  " + headingStyle.Render(title) + " " +
-		mutedStyle.Render(rule(inner-runeWidth(title)+1)+c.sym.CornerRight)
+		mutedStyle.Render(rule(max(inner-runeWidth(title)+1, 1))+c.sym.CornerRight)
 	lipgloss.Fprintln(c.w, head)
 
 	for _, line := range body {
-		padded := line + strings.Repeat(" ", inner-runeWidth(line))
+		padded := line + strings.Repeat(" ", max(inner-runeWidth(line), 0))
 		lipgloss.Fprintln(c.w, bar+"  "+padded+"  "+bar)
 	}
 
@@ -190,6 +282,7 @@ func (c *Clack) Note(title string, body []string) {
 // Outro closes the transcript, detaching the final message from the last step
 // with one length of connecting line first (as upstream clack's outro does).
 func (c *Clack) Outro(msg string) {
+	fireClackEvent("Outro")
 	c.Bar()
 	lipgloss.Fprintln(c.w, mutedStyle.Render(c.sym.BarEnd)+"  "+msg)
 }
@@ -199,6 +292,7 @@ func (c *Clack) Outro(msg string) {
 // leaving the caller to print it) keeps the two from drifting apart.
 // When prompting isn't possible it returns def without printing anything.
 func (c *Clack) Confirm(title string, def bool) (bool, error) {
+	fireClackEvent("Confirm")
 	if !CanPrompt() {
 		return def, nil
 	}
@@ -215,6 +309,7 @@ func (c *Clack) Confirm(title string, def bool) (bool, error) {
 // When prompting isn't possible it returns each field's default without
 // printing anything.
 func (c *Clack) Form(title string, fields []Field) (map[string]string, error) {
+	fireClackEvent("Form")
 	if !CanPrompt() {
 		return InputForm(title, fields)
 	}
@@ -246,6 +341,7 @@ const multiSelectKeyHint = "space to toggle, enter to confirm"
 // When prompting isn't possible it returns the pre-selected defaults without
 // printing anything.
 func (c *Clack) MultiSelect(title string, opts []Option) ([]string, error) {
+	fireClackEvent("MultiSelect")
 	if !CanPrompt() {
 		return MultiSelect(title, opts)
 	}
@@ -271,6 +367,18 @@ func yesNo(v bool) string {
 
 // runeWidth reports how many terminal columns s occupies, so box padding
 // accounts for wide runes rather than counting bytes.
+// continuationIndent returns the column a wrapped continuation of line
+// should start at: the width of a leading " <symbol> " status column
+// (printLine's fixed width-3 symbol cell), else the line's own leading
+// spaces.
+func continuationIndent(line string) int {
+	plain := ansi.Strip(line)
+	if len(plain) >= 3 && plain[0] == ' ' && plain[1] != ' ' && plain[2] == ' ' {
+		return 3
+	}
+	return len(plain) - len(strings.TrimLeft(plain, " "))
+}
+
 func runeWidth(s string) int {
 	return lipgloss.Width(s)
 }

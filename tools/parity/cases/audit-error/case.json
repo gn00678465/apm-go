@@ -1,0 +1,5 @@
+{
+  "id": "audit-error",
+  "argv": ["audit"],
+  "rewrite_binary_name": true
+}

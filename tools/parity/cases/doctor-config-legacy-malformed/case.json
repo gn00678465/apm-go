@@ -1,0 +1,8 @@
+{
+  "id": "doctor-config-legacy-malformed",
+  "argv": ["doctor"],
+  "path_prepend": "path",
+  "env": {"GITHUB_TOKEN": "ghp-parity-fixture-DO-NOT-LEAK-0123456789"},
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering", "F01"]
+}

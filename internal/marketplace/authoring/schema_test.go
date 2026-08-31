@@ -240,11 +240,21 @@ func TestLoadAuthoringConfig_SourceValidation_ReusesManifestValidator(t *testing
 	}{
 		{"dotdot segment", "../escape", ".."},
 		{"dotdot deep in local path", "./packages/../../../etc/passwd", ".."},
-		{"non-https scheme", "http://example.com/repo", "https://"},
-		{"userinfo in URL", "https://user@example.com/repo", "userinfo"},
-		{"port in URL", "https://example.com:8080/repo", "port"},
-		{"query string in URL", "https://example.com/repo?q=1", "query"},
-		{"local without leading ./", ".packages/foo", "start with './'"},
+		// BLOCKING 1 (external audit round 5, 2026-07-30): these four used to
+		// get their own specific rejection message from a URL-parse-based
+		// branch; that branch is gone (see mcp.go's ValidateMarketplaceSource
+		// doc comment) since none of these shapes can match the grammar's
+		// four accepted forms in the first place (userinfo/port/query/
+		// non-https-scheme characters are not valid host/segment
+		// characters), so they now share the same generic "must be one of"
+		// message every other grammar mismatch produces.
+		{"non-https scheme", "http://example.com/repo", "must be one of"},
+		{"userinfo in URL", "https://user@example.com/repo", "must be one of"},
+		{"port in URL", "https://example.com:8080/repo", "must be one of"},
+		{"query string in URL", "https://example.com/repo?q=1", "must be one of"},
+		// bare "." segment on a non-local (remote shorthand) source: see
+		// mcp_test.go's TestValidateMarketplaceSource for the full rationale.
+		{"bare dot segment in host-prefixed shorthand", "example.com/./repo", `contains "." path segment`},
 	}
 
 	for _, tt := range tests {
@@ -268,12 +278,46 @@ func TestLoadAuthoringConfig_SourceValidation_ReusesManifestValidator(t *testing
 	}
 }
 
+// TestLoadAuthoringConfig_EmptySource_Rejected closes a gap this file's
+// TestLoadAuthoringConfig_SourceValidation_ReusesManifestValidator table
+// never actually covered: parsePackages (schema.go) used to only call
+// manifest.ValidateMarketplaceSource when "source != \"\"", so a package
+// entry with an explicit empty source string skipped validation entirely --
+// confirmed end-to-end with a compiled binary (`apm-go pack` succeeded, only
+// warning, and emitted a malformed claude plugins[] entry missing "repo";
+// see agent-schema.md's matching source-table callout). Fixed by validating
+// source unconditionally, the same way every other value is -- manifest.
+// ValidateMarketplaceSource already rejects "" with its own dedicated
+// "marketplace source is empty" message (mcp.go:301-303).
+func TestLoadAuthoringConfig_EmptySource_Rejected(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
+		"  owner:\n    name: Acme\n  packages:\n    - name: ghost-pkg\n      source: \"\"\n      ref: "+strings.Repeat("a", 40)+"\n")
+
+	// Act
+	_, _, err := LoadAuthoringConfig(dir)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected an empty source to be rejected, got nil error")
+	}
+	if !strings.Contains(err.Error(), "marketplace source is empty") {
+		t.Errorf("error = %q, want it to contain manifest.ValidateMarketplaceSource's own %q message", err.Error(), "marketplace source is empty")
+	}
+}
+
 func TestLoadAuthoringConfig_SourceValidation_AcceptsValidShapes(t *testing.T) {
 	tests := []string{
 		"./packages/foo",
 		"https://example.com/owner/repo",
 		"owner/repo",
 		"github.com/owner/repo",
+		// BLOCKING 1 (external audit round 5, 2026-07-30): see
+		// mcp_test.go's TestValidateMarketplaceSource for why this is a
+		// genuine "owner/repo" shorthand under upstream's grammar, not a
+		// local-path-that-forgot-its-leading-"./".
+		".packages/foo",
 	}
 
 	for _, source := range tests {
@@ -749,6 +793,26 @@ marketplace:
 	}
 }
 
+func TestValidateOutputRequirements_CodexMissingCategoryMatchesOracle(t *testing.T) {
+	cfg := &AuthoringConfig{
+		Outputs: []string{"claude", "codex"},
+		Packages: []PackageEntry{
+			{Name: "pkg-a"},
+			{Name: "pkg-b", Category: "tools"},
+			{Name: "pkg-c"},
+		},
+	}
+
+	got := ValidateOutputRequirements(cfg)
+	if got == nil {
+		t.Fatal("ValidateOutputRequirements() = nil, want missing-category error")
+	}
+	want := "marketplace config error: packages must define 'category' when marketplace.outputs includes 'codex' (missing: pkg-a, pkg-c)"
+	if got.Error() != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+}
+
 func TestLoadAuthoringConfig_CodexOutput_AllPackagesHaveCategory_NoError(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
@@ -832,5 +896,109 @@ marketplace:
 	// Assert
 	if err != nil {
 		t.Fatalf("LoadAuthoringConfig must not enforce codex's category-required gate at load time (F3): %v", err)
+	}
+}
+
+// ── v0.27.0: tag pattern validation at load time ──
+
+// TestLoadAuthoringConfig_TagPatternValidatedAtLoad locks upstream v0.27.0's
+// yml_schema.py, which routes both `build.tagPattern` (:613) and
+// `packages[N].tag_pattern` (:863) through tag_pattern.validate_tag_pattern.
+// Before this, apm-go read both keys with a bare scalarString and never
+// checked them, so a pattern missing {version} silently matched no tags.
+func TestLoadAuthoringConfig_TagPatternValidatedAtLoad(t *testing.T) {
+	tests := []struct {
+		name    string
+		block   string
+		wantErr string
+		wantCtx string
+	}{
+		{
+			name: "build pattern without version placeholder",
+			block: `  build:
+    tagPattern: "{name}"
+  packages: []
+`,
+			wantErr: "exactly one",
+			wantCtx: "build.tagPattern",
+		},
+		{
+			name: "build pattern blank",
+			block: `  build:
+    tagPattern: "   "
+  packages: []
+`,
+			wantErr: "non-empty",
+			wantCtx: "build.tagPattern",
+		},
+		{
+			name: "package pattern with unsupported placeholder",
+			block: `  packages:
+    - name: a
+      source: acme/a
+      tag_pattern: "{foo}-v{version}"
+`,
+			wantErr: "unsupported placeholder",
+			wantCtx: "packages[0].tag_pattern",
+		},
+		{
+			name: "package pattern with two version placeholders",
+			block: `  packages:
+    - name: a
+      source: acme/a
+    - name: b
+      source: acme/b
+      tag_pattern: "v{version}-{version}"
+`,
+			wantErr: "exactly one",
+			wantCtx: "packages[1].tag_pattern",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+tt.block)
+			_, _, err := LoadAuthoringConfig(dir)
+			if err == nil {
+				t.Fatalf("expected error for %s", tt.name)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantCtx) {
+				t.Errorf("error = %q, must name the offending key %q", err.Error(), tt.wantCtx)
+			}
+		})
+	}
+}
+
+// TestLoadAuthoringConfig_ValidTagPatternsStillLoad is the control group: the
+// tightened validation must not reject the forms upstream still accepts.
+func TestLoadAuthoringConfig_ValidTagPatternsStillLoad(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "apm.yml", `name: demo
+version: 1.0.0
+marketplace:
+  build:
+    tagPattern: "{name}-v{version}"
+  packages:
+    - name: a
+      source: acme/a
+      tag_pattern: "v{version}"
+    - name: b
+      source: acme/b
+`)
+	cfg, _, err := LoadAuthoringConfig(dir)
+	if err != nil {
+		t.Fatalf("valid patterns must load, got %v", err)
+	}
+	if cfg.Build.TagPattern != "{name}-v{version}" {
+		t.Errorf("Build.TagPattern = %q", cfg.Build.TagPattern)
+	}
+	if cfg.Packages[0].TagPattern != "v{version}" {
+		t.Errorf("Packages[0].TagPattern = %q", cfg.Packages[0].TagPattern)
+	}
+	if cfg.Packages[1].TagPattern != "" {
+		t.Errorf("Packages[1].TagPattern = %q, want \"\" (absent key stays absent)", cfg.Packages[1].TagPattern)
 	}
 }

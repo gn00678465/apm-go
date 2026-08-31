@@ -32,6 +32,36 @@ import (
 // names ("claude", "codex") -- mirroring Python's known_output_names().
 var KnownOutputFormats = map[string]bool{"claude": true, "codex": true}
 
+// ComposeOptions carries output-mapper options. The variadic form keeps the
+// existing default call sites byte-identical while allowing pack's Claude
+// source-style selector to reach both the producer and drift gate.
+type ComposeOptions struct {
+	ClaudeSourceStyle ClaudeSourceStyle
+}
+
+// ComposeDocument dispatches to the mkt-050/052/053 mapper for format
+// ("claude" or "codex" -- callers already reject anything else before this
+// is ever reached). Exported so both `apm-go pack`'s own marketplace
+// producer (cmd/apm-go/pack.go's composeMarketplaceDocument, a thin
+// wrapper around this) and the release-time drift-check gate
+// (drift_check.go's CheckMarketplaceDrift, ticket 17 phase 4) share the
+// exact same compose path rather than two independently-drifting copies of
+// this dispatch.
+func ComposeDocument(format string, cfg *authoring.AuthoringConfig, resolved []ResolvedPackage, options ...ComposeOptions) (any, []string, error) {
+	var opts ComposeOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	switch format {
+	case "claude":
+		return ClaudeMapper{SourceStyle: opts.ClaudeSourceStyle}.Compose(cfg, resolved)
+	case "codex":
+		return CodexMapper{}.Compose(cfg, resolved)
+	default:
+		return nil, nil, fmt.Errorf("unknown marketplace output format %q", format)
+	}
+}
+
 // DefaultOutputPath returns format's default output path (mkt-054: never
 // the repo root) and whether format is a known profile name at all.
 func DefaultOutputPath(format string) (string, bool) {
@@ -231,4 +261,106 @@ func WriteOutput(path string, doc any) error {
 		return fmt.Errorf("rename temp file to %q: %w", path, err)
 	}
 	return nil
+}
+
+// OutputDiff is the per-output plugin classification `pack --json`'s
+// marketplace.outputs entries report -- Oracle MarketplaceOutputReport's
+// unchanged_count/added_count/updated_count/removed_count fields
+// (marketplace/builder.py:161-164).
+type OutputDiff struct {
+	Unchanged int
+	Added     int
+	Updated   int
+	Removed   int
+}
+
+// ComputeOutputDiff classifies each plugin in newDoc against the
+// marketplace.json currently on disk at path, mirroring the Oracle's
+// MarketplaceBuilder._compute_diff (marketplace/builder.py:1262-1300) and
+// its _load_existing_json feed: a missing/unreadable file means "everything
+// is new" (0 unchanged, len(plugins) added, 0 updated, 0 removed).
+//
+// A plugin's identity is its name; its comparison key is the source's sha
+// -- `source.sha`, falling back to the legacy `source.commit` for
+// marketplace.json files written before the Claude-spec rename, or the
+// source string itself when source is a bare string (a local-path package,
+// where the path IS the identity). Same name + same key is unchanged, same
+// name + different key is updated, name only in the new document is added,
+// name only in the old one is removed.
+func ComputeOutputDiff(path string, newDoc any) OutputDiff {
+	newPlugins := pluginKeys(reencode(newDoc))
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return OutputDiff{Added: len(newPlugins)}
+	}
+	var oldDoc map[string]any
+	if err := json.Unmarshal(raw, &oldDoc); err != nil {
+		// _load_existing_json swallows a malformed existing file the same
+		// way a missing one is swallowed: the run must not fail because the
+		// previous artifact was hand-edited into invalid JSON.
+		return OutputDiff{Added: len(newPlugins)}
+	}
+	oldPlugins := pluginKeys(oldDoc)
+
+	var d OutputDiff
+	for name, newKey := range newPlugins {
+		oldKey, existed := oldPlugins[name]
+		switch {
+		case !existed:
+			d.Added++
+		case oldKey == newKey:
+			d.Unchanged++
+		default:
+			d.Updated++
+		}
+	}
+	for name := range oldPlugins {
+		if _, still := newPlugins[name]; !still {
+			d.Removed++
+		}
+	}
+	return d
+}
+
+// reencode round-trips doc through JSON so ComputeOutputDiff can read it
+// with the same shape it reads the on-disk file with, rather than
+// reflecting over whatever concrete type ComposeDocument returned.
+func reencode(doc any) map[string]any {
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+// pluginKeys maps each plugin's name to its comparison key (see
+// ComputeOutputDiff).
+func pluginKeys(doc map[string]any) map[string]string {
+	out := map[string]string{}
+	plugins, _ := doc["plugins"].([]any)
+	for _, p := range plugins {
+		pm, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := pm["name"].(string)
+		key := ""
+		switch src := pm["source"].(type) {
+		case map[string]any:
+			if sha, ok := src["sha"].(string); ok && sha != "" {
+				key = sha
+			} else if commit, ok := src["commit"].(string); ok {
+				key = commit
+			}
+		case string:
+			key = src
+		}
+		out[name] = key
+	}
+	return out
 }

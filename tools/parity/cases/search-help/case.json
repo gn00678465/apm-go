@@ -1,0 +1,6 @@
+{
+  "id": "search-help",
+  "argv": ["search", "--help"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering"]
+}

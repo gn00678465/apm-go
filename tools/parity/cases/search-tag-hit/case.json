@@ -1,0 +1,7 @@
+{
+  "id": "search-tag-hit",
+  "argv": ["search", "experimental@skills"],
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "skills"]],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering"]
+}

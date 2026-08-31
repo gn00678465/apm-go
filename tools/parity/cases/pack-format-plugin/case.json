@@ -1,0 +1,5 @@
+{
+  "id": "pack-format-plugin",
+  "argv": ["pack", "--format", "plugin"],
+  "rewrite_binary_name": true
+}

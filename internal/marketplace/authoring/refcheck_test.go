@@ -3,6 +3,7 @@ package authoring
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +64,12 @@ func (panicLister) ListRefs(source string) ([]semver.TagInfo, error) {
 
 func TestCheckPackages_LocalSource_NeverCallsLister(t *testing.T) {
 	// Arrange
+	dir := t.TempDir()
+	for _, p := range []string{"a", "b", "c"} {
+		if err := os.MkdirAll(filepath.Join(dir, "pkgs", p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cfg := &AuthoringConfig{Packages: []PackageEntry{
 		{Name: "local-a", Source: "./pkgs/a", Version: "^1.0.0"},
 		{Name: "local-b", Source: "./pkgs/b", Ref: "v1.0.0"},
@@ -70,7 +77,7 @@ func TestCheckPackages_LocalSource_NeverCallsLister(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, panicLister{}, false)
+	results := CheckPackages(dir, cfg, panicLister{}, false)
 
 	// Assert
 	if len(results) != 3 {
@@ -92,7 +99,7 @@ func TestCheckPackages_UnpinnedRemotePackage_NothingToVerify(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, panicLister{}, false)
+	results := CheckPackages(t.TempDir(), cfg, panicLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
@@ -109,7 +116,7 @@ func TestCheckPackages_Offline_FailsPinnedRemotePackageWithoutNetwork(t *testing
 	}}
 
 	// Act: panicLister proves --offline never reaches the lister at all.
-	results := CheckPackages(cfg, panicLister{}, true)
+	results := CheckPackages(t.TempDir(), cfg, panicLister{}, true)
 
 	// Assert
 	if len(results) != 1 || results[0].Err == nil {
@@ -119,16 +126,90 @@ func TestCheckPackages_Offline_FailsPinnedRemotePackageWithoutNetwork(t *testing
 
 func TestCheckPackages_Offline_LocalPackageStillPasses(t *testing.T) {
 	// Arrange
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &AuthoringConfig{Packages: []PackageEntry{
 		{Name: "local-tool", Source: "./pkgs/a", Version: "^1.0.0"},
 	}}
 
 	// Act
-	results := CheckPackages(cfg, panicLister{}, true)
+	results := CheckPackages(dir, cfg, panicLister{}, true)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
 		t.Fatalf("results = %+v, want --offline to leave a local package unaffected", results)
+	}
+}
+
+// ── ticket 20 AC4: a local package whose directory no longer exists must
+// fail `check` -- the same class of pin failure a missing remote ref is,
+// not an unconditional pass (user-reported, 2026-08-25) ───────────────────
+
+func TestCheckPackages_LocalSource_MissingPath_FailsCheck(t *testing.T) {
+	// Arrange: dir is a real project root, but "pkgs/gone" is never created
+	// -- panicLister proves the failure is detected without ever touching
+	// the network.
+	dir := t.TempDir()
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "gone", Source: "./pkgs/gone"},
+	}}
+
+	// Act
+	results := CheckPackages(dir, cfg, panicLister{}, false)
+
+	// Assert
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatalf("results = %+v, want a missing local source to fail check", results)
+	}
+	if results[0].Reachable {
+		t.Error("Reachable = true, want false for a local source that does not exist")
+	}
+	if !strings.Contains(results[0].Err.Error(), "./pkgs/gone") {
+		t.Errorf("error = %v, want it to name the missing path", results[0].Err)
+	}
+}
+
+// TestCheckPackages_LocalSource_ExistsButIsAFile_FailsCheck covers the
+// "exists but is not a directory" half of ticket 20 AC4/AC1's shared
+// verifyLocalSourceExists helper.
+func TestCheckPackages_LocalSource_ExistsButIsAFile_FailsCheck(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "bad", Source: "./notadir"},
+	}}
+
+	// Act
+	results := CheckPackages(dir, cfg, panicLister{}, false)
+
+	// Assert
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatal("expected a local source pointing at a file (not a directory) to fail check")
+	}
+}
+
+// TestCheckPackages_LocalSource_EscapesRoot_FailsCheck proves `check`
+// re-runs the same containment guard `add` does (ticket 20's read-time
+// re-verification, per ResolveLocalSourceAgainstRoot's own doc comment) --
+// a local source is not just re-stat-ed, it is re-resolved against dir too.
+func TestCheckPackages_LocalSource_EscapesRoot_FailsCheck(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	cfg := &AuthoringConfig{Packages: []PackageEntry{
+		{Name: "escaping", Source: `./..\..\outside`},
+	}}
+
+	// Act
+	results := CheckPackages(dir, cfg, panicLister{}, false)
+
+	// Assert
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatal("expected a local source escaping the project root to fail check")
 	}
 }
 
@@ -143,7 +224,7 @@ func TestCheckPackages_RemoteRef_FoundOnRealGitRepo(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
@@ -207,7 +288,7 @@ func TestCheckPackages_RemoteRef_MissingFailsCheck(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err == nil {
@@ -230,7 +311,7 @@ func TestCheckPackages_RemoteVersionRange_MatchesRealTag(t *testing.T) {
 	}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
@@ -247,7 +328,7 @@ func TestCheckPackages_RemoteVersionRange_NoMatchFailsCheck(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err == nil {
@@ -268,7 +349,7 @@ func TestCheckPackages_RemoteVersionRange_UsesPackageTagPatternOverBuildDefault(
 	}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err != nil {
@@ -290,7 +371,7 @@ func TestCheckPackages_RemoteSource_LsRemoteFailureFailsCheck(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 1 || results[0].Err == nil {
@@ -302,6 +383,10 @@ func TestCheckPackages_RemoteSource_LsRemoteFailureFailsCheck(t *testing.T) {
 
 func TestCheckPackages_AggregatesEveryPackageIndependently(t *testing.T) {
 	// Arrange
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "local"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	goodDir := t.TempDir()
 	initGitRepoWithTags(t, goodDir, "v1.0.0")
 	badDir := t.TempDir()
@@ -314,7 +399,7 @@ func TestCheckPackages_AggregatesEveryPackageIndependently(t *testing.T) {
 	}}
 
 	// Act
-	results := CheckPackages(cfg, gitRefLister{}, false)
+	results := CheckPackages(dir, cfg, gitRefLister{}, false)
 
 	// Assert
 	if len(results) != 3 {
@@ -409,7 +494,11 @@ func TestResolveCloneURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveCloneURL(tt.source); got != tt.source {
+			got, err := resolveCloneURL(tt.source)
+			if err != nil {
+				t.Fatalf("resolveCloneURL(%q) returned error: %v", tt.source, err)
+			}
+			if got != tt.source {
 				t.Errorf("resolveCloneURL(%q) = %q, want unchanged", tt.source, got)
 			}
 		})
@@ -417,17 +506,500 @@ func TestResolveCloneURL(t *testing.T) {
 
 	t.Run("absolute filesystem path passes through", func(t *testing.T) {
 		abs := filepath.Join(t.TempDir(), "repo")
-		if got := resolveCloneURL(abs); got != abs {
+		got, err := resolveCloneURL(abs)
+		if err != nil {
+			t.Fatalf("resolveCloneURL(%q) returned error: %v", abs, err)
+		}
+		if got != abs {
 			t.Errorf("resolveCloneURL(%q) = %q, want unchanged", abs, got)
 		}
 	})
 
 	t.Run("owner/repo shorthand expands against github.com", func(t *testing.T) {
 		want := "https://github.com/owner/repo.git"
-		if got := resolveCloneURL("owner/repo"); got != want {
+		got, err := resolveCloneURL("owner/repo")
+		if err != nil {
+			t.Fatalf("resolveCloneURL(owner/repo) returned error: %v", err)
+		}
+		if got != want {
 			t.Errorf("resolveCloneURL(owner/repo) = %q, want %q", got, want)
 		}
 	})
+
+	// MAJOR 2 (external audit round 2, 2026-07-30): a relative "./..."
+	// local source must resolve against the process's cwd, not fall
+	// through to the OWNER/REPO shorthand branch (which used to produce
+	// the bogus "https://github.com/./repo.git").
+	t.Run("relative local source resolves against cwd, not as OWNER/REPO shorthand", func(t *testing.T) {
+		parent := t.TempDir()
+		chdirTo(t, parent)
+		want := filepath.Join(parent, "repo")
+		// MAJOR 1 (external audit round 5, 2026-07-30): pathWithinRoot's
+		// boundary check now calls filepath.EvalSymlinks on target and
+		// rejects on ANY error (including "does not exist"), so this fixture
+		// must be a real, existing directory -- exactly like every
+		// production caller: resolveCloneURL's local-source branch is only
+		// ever reached for a package a caller expects to be a real git repo.
+		if err := os.Mkdir(want, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, err := resolveCloneURL("./repo")
+		if err != nil {
+			t.Fatalf("resolveCloneURL(./repo) returned error: %v", err)
+		}
+		if got != want {
+			t.Errorf("resolveCloneURL(./repo) = %q, want %q (the local cwd-relative path, not a GitHub shorthand expansion)", got, want)
+		}
+	})
+
+	// BLOCKING 1 (external audit round 3, 2026-07-30): a relative local
+	// source whose "." segments resolve to a path outside the project
+	// root (cwd) must be rejected here too -- layer 2's defense-in-depth
+	// partner to manifest.ValidateMarketplaceSource's segment-level "..'
+	// reject (mcp.go). Regression-tests the exact Windows-style bypass
+	// the audit reproduced: "./..\\..\\outside" used to slip past a
+	// forward-slash-only ".." split and then resolve to a real,
+	// escaping path here.
+	t.Run("relative local source escaping cwd via backslash traversal is rejected", func(t *testing.T) {
+		parent := t.TempDir()
+		project := filepath.Join(parent, "project")
+		if err := os.Mkdir(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		chdirTo(t, project)
+		if _, err := resolveCloneURL(`./..\..\outside`); err == nil {
+			t.Fatal("resolveCloneURL(`./..\\..\\outside`) = nil error, want a rejection (path escapes the project root)")
+		}
+	})
+
+	t.Run("relative local source escaping cwd via forward-slash traversal is rejected", func(t *testing.T) {
+		parent := t.TempDir()
+		project := filepath.Join(parent, "project")
+		if err := os.Mkdir(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		chdirTo(t, project)
+		if _, err := resolveCloneURL("./../../outside"); err == nil {
+			t.Fatal("resolveCloneURL(./../../outside) = nil error, want a rejection (path escapes the project root)")
+		}
+	})
+
+	// BLOCKING 2 (external audit round 4, 2026-07-30): a directory symlink
+	// physically located inside the project root but pointing at a real
+	// directory outside it must be rejected too -- the string
+	// "<project>/linked" contains no ".." segment at all, so the purely
+	// lexical filepath.Rel check pathWithinRoot used to rely on exclusively
+	// reports it as "within root", while `git ls-remote` (or any real
+	// filesystem access) follows the symlink at the OS level and actually
+	// reaches the outside directory. Skipped (visibly, not silently) when
+	// this process cannot create a directory symlink -- e.g. Windows
+	// without Developer Mode or SeCreateSymbolicLinkPrivilege -- since that
+	// is an environment limitation, not a test failure.
+	t.Run("relative local source escaping cwd via a directory symlink is rejected", func(t *testing.T) {
+		parent := t.TempDir()
+		project := filepath.Join(parent, "project")
+		outside := filepath.Join(parent, "outside")
+		if err := os.Mkdir(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(project, "linked")
+		if ok, symErr := createDirSymlinkOrJunction(t, outside, link); !ok {
+			t.Skipf("SKIPPED: cannot create a directory symlink or junction in this environment (%v); BLOCKING 2's symlink-escape guard is untested by this run", symErr)
+		}
+		chdirTo(t, project)
+		if _, err := resolveCloneURL("./linked"); err == nil {
+			t.Fatal("resolveCloneURL(./linked) = nil error, want a rejection (symlink resolves outside the project root)")
+		}
+	})
+
+	t.Run("relative local source staying within cwd is accepted", func(t *testing.T) {
+		parent := t.TempDir()
+		chdirTo(t, parent)
+		want := filepath.Join(parent, "normal")
+		// MAJOR 1 (external audit round 5, 2026-07-30): see the "resolves
+		// against cwd" subtest above for why this must now be a real,
+		// existing directory.
+		if err := os.Mkdir(want, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		got, err := resolveCloneURL("./normal")
+		if err != nil {
+			t.Fatalf("resolveCloneURL(./normal) returned error: %v", err)
+		}
+		if got != want {
+			t.Errorf("resolveCloneURL(./normal) = %q, want %q", got, want)
+		}
+	})
+
+	// MAJOR 1 (external audit round 5, 2026-07-30): a dangling leaf under an
+	// EXISTING symlinked parent that already points outside the project
+	// root -- the leaf itself does not exist, so filepath.EvalSymlinks fails
+	// with an IsNotExist-classified error while the parent's escape has
+	// already happened. The pre-round-5 code fell back to the lexical result
+	// (which reports "within root", since the string "<project>/linked-
+	// parent/not-yet-created" contains no ".." segment) on ANY EvalSymlinks
+	// error, accepting this case -- a TOCTOU window: a second process could
+	// create the missing leaf between this check and the subsequent `git
+	// ls-remote` invocation, which would then genuinely follow the
+	// already-escaping parent symlink out of root. Skipped (visibly, not
+	// silently) when this process cannot create a directory symlink, same as
+	// the sibling symlink subtest above.
+	t.Run("relative local source with a dangling leaf under an escaping symlinked parent is rejected", func(t *testing.T) {
+		parent := t.TempDir()
+		project := filepath.Join(parent, "project")
+		outside := filepath.Join(parent, "outside")
+		if err := os.Mkdir(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		linkedParent := filepath.Join(project, "linked-parent")
+		if ok, symErr := createDirSymlinkOrJunction(t, outside, linkedParent); !ok {
+			t.Skipf("SKIPPED: cannot create a directory symlink or junction in this environment (%v); MAJOR 1's dangling-leaf guard is untested by this run", symErr)
+		}
+		chdirTo(t, project)
+		// Deliberately do NOT create "not-yet-created": that is the point of
+		// this test -- the leaf must not exist yet.
+		if _, err := resolveCloneURL("./linked-parent/not-yet-created"); err == nil {
+			t.Fatal("resolveCloneURL(./linked-parent/not-yet-created) = nil error, want a rejection (parent symlink already resolves outside the project root, even though the leaf itself doesn't exist yet)")
+		}
+	})
+}
+
+// TestResolveCloneURL_JunctionEscape_Rejected is a dedicated regression test
+// (2026-07-31 follow-up) that forces the junction branch directly -- via
+// `mklink /J`, bypassing os.Symlink entirely -- rather than relying on
+// os.Symlink failing first (as the fallback in TestResolveCloneURL's own
+// symlink subtests does). This matters because a real symlink and a
+// junction are NOT equivalent from pathWithinRoot's point of view: as of Go
+// 1.23, os.Lstat no longer reports ModeSymlink for a junction by default, so
+// filepath.EvalSymlinks (which decides whether to follow a path component
+// solely by that bit) silently returns a path through a junction UNCHANGED
+// instead of resolving or rejecting it -- verified directly against this Go
+// toolchain (a prior version of this test, run against the pre-fix
+// pathWithinRoot with only the lexical + EvalSymlinks layers, failed with
+// "resolveCloneURL(./linked) via a junction = nil error, want rejection").
+// A machine where os.Symlink itself happens to succeed (e.g. Developer Mode
+// enabled) would never exercise the junction branch at all through the
+// fallback alone, silently leaving this gap uncovered -- hence a test that
+// always uses a junction regardless of symlink privilege.
+func TestResolveCloneURL_JunctionEscape_Rejected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+	parent := t.TempDir()
+	project := filepath.Join(parent, "project")
+	outside := filepath.Join(parent, "outside")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(project, "linked")
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", link, outside)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the junction-escape guard is untested by this run", err, out)
+	}
+	chdirTo(t, project)
+	if _, err := resolveCloneURL("./linked"); err == nil {
+		t.Fatal("resolveCloneURL(./linked) via a junction = nil error, want a rejection (junction resolves outside the project root)")
+	}
+}
+
+// TestResolveCloneURL_JunctionWithinRoot_Accepted is B-MAJOR-1's first named
+// regression (external audit round 6, 2026-07-31 follow-up): a junction
+// physically inside the project root that points to somewhere ELSE also
+// inside the project root (an ordinary, non-escaping layout -- e.g. a
+// monorepo sharing one real package directory under two names) must be
+// ACCEPTED, not rejected. A prior version of pathWithinRoot's third layer
+// (hasUnresolvableReparsePoint) rejected ANY existing reparse point along
+// the path unconditionally, without ever checking where it actually
+// pointed -- a false positive this test would have caught turning red.
+func TestResolveCloneURL_JunctionWithinRoot_Accepted(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+	project := t.TempDir()
+	actual := filepath.Join(project, "actual-target")
+	if err := os.Mkdir(actual, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(project, "linked")
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", link, actual)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); this regression is untested by this run", err, out)
+	}
+	chdirTo(t, project)
+	// resolveCloneURL returns the literal (unresolved) joined path -- the OS
+	// itself transparently follows the junction when git actually opens it,
+	// the same way it would for any other reparse point; the junction
+	// resolution above is used only internally, to verify containment.
+	want := link
+	got, err := resolveCloneURL("./linked")
+	if err != nil {
+		t.Fatalf("resolveCloneURL(./linked) via a junction pointing WITHIN the project root returned error: %v, want acceptance", err)
+	}
+	if got != want {
+		t.Errorf("resolveCloneURL(./linked) = %q, want the literal joined path %q", got, want)
+	}
+}
+
+// TestResolveCloneURL_ProjectRootBehindJunction_LocalSourceWithinRoot_Accepted
+// is B-MAJOR-1's second named regression: the project root itself (cwd)
+// being reached through a junction (e.g. the checkout sits behind a Windows
+// Dev Drive mapping, `subst`, or a parent-directory junction) must not, by
+// itself, cause every local source under that project to be rejected. A
+// prior version of hasUnresolvableReparsePoint special-cased
+// isUnresolvableReparsePoint(root) as an automatic, unconditional rejection
+// -- root's own path shape has nothing to do with whether target escapes
+// it, and this test's local source (a perfectly ordinary subdirectory of the
+// SAME real project) would have been wrongly rejected by that bug.
+func TestResolveCloneURL_ProjectRootBehindJunction_LocalSourceWithinRoot_Accepted(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+	parent := t.TempDir()
+	realProject := filepath.Join(parent, "real-project")
+	pkgDir := filepath.Join(realProject, "pkgs", "tool")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	aliasProject := filepath.Join(parent, "alias-project")
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", aliasProject, realProject)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); this regression is untested by this run", err, out)
+	}
+	chdirTo(t, aliasProject)
+	// resolveCloneURL returns the literal (unresolved) joined path, exactly
+	// like TestResolveCloneURL_JunctionWithinRoot_Accepted above -- the
+	// junction resolution is used only internally, to verify containment.
+	want := filepath.Join(aliasProject, "pkgs", "tool")
+	got, err := resolveCloneURL("./pkgs/tool")
+	if err != nil {
+		t.Fatalf("resolveCloneURL(./pkgs/tool) with a project root reached through a junction returned error: %v, want acceptance (the local source itself never escapes the real project)", err)
+	}
+	if got != want {
+		t.Errorf("resolveCloneURL(./pkgs/tool) = %q, want the literal joined path %q", got, want)
+	}
+}
+
+// TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected is
+// B-BLOCKING-1's named regression (external audit round 7, 2026-07-31
+// follow-up, "SECRET-NESTED" repro): a junction physically inside the
+// project root ("outer") that points at a path ("<root>/inner/pkg") whose
+// OWN intermediate component ("inner") is a SEPARATE junction pointing
+// outside root must be rejected -- not accepted just because the literal
+// target string "<root>/inner/pkg" happens to look contained. Uses the
+// exported ResolveLocalSourceAgainstRoot directly (rather than
+// resolveCloneURL) since that is the entry point other marketplace packages
+// (internal/marketplace/build/metadata.go) call to re-run this same
+// containment check at their own read time.
+func TestResolveLocalSourceAgainstRoot_NestedJunctionEscape_Rejected(t *testing.T) {
+	t.Run("nested junction chain escapes through an intermediate component", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("directory junctions are a Windows-only concept")
+		}
+		parent := t.TempDir()
+		root := filepath.Join(parent, "proj")
+		outside := filepath.Join(parent, "outside")
+		if err := os.MkdirAll(filepath.Join(outside, "pkg"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		// "inner" is a junction pointing entirely outside root.
+		inner := filepath.Join(root, "inner")
+		mklinkInner := exec.Command("cmd", "/c", "mklink", "/J", inner, outside)
+		if out, err := mklinkInner.CombinedOutput(); err != nil {
+			t.Skipf("SKIPPED: cannot create a directory junction in this environment (%v: %s); the nested-junction-escape guard is untested by this run", err, out)
+		}
+
+		// "outer" is a SECOND junction, physically inside root, whose target
+		// is "<root>/inner/pkg" -- a path that is only reachable at all
+		// because the OS transparently follows "inner" (itself a junction)
+		// while validating this second mklink's target.
+		outer := filepath.Join(root, "outer")
+		mklinkOuter := exec.Command("cmd", "/c", "mklink", "/J", outer, filepath.Join(root, "inner", "pkg"))
+		if out, err := mklinkOuter.CombinedOutput(); err != nil {
+			t.Skipf("SKIPPED: cannot create the second (nested-target) directory junction in this environment (%v: %s); the nested-junction-escape guard is untested by this run", err, out)
+		}
+
+		if _, err := ResolveLocalSourceAgainstRoot(root, "./outer"); err == nil {
+			t.Fatal("ResolveLocalSourceAgainstRoot(root, ./outer) = nil error, want a rejection: \"outer\" resolves (via \"inner\", itself a junction) to a real location OUTSIDE root, even though the literal target string \"<root>/inner/pkg\" looks contained")
+		}
+	})
+
+	// B-BLOCKING-1's own fail-closed requirement: a reparse-point cycle
+	// (two directory entries each pointing at the other) must be rejected
+	// outright rather than looping forever or silently accepting one side.
+	// Uses real directory symlinks (not junctions): a Windows junction's
+	// target must already exist at mklink time, which makes a genuine
+	// two-node cycle impossible to construct via mklink at all (whichever
+	// side is created second would need the first side's target -- itself
+	// dangling until the second side exists -- to already resolve).
+	// Symlinks carry no such existence requirement, so they can form a real
+	// cycle, and pathWithinRoot's isReparsePoint treats a real symlink and a
+	// junction identically (fi.Mode()&os.ModeSymlink, true for either
+	// reparse kind once resolveReparsePointTarget reads it via
+	// os.Readlink).
+	t.Run("cycle A->B->A fails closed", func(t *testing.T) {
+		root := t.TempDir()
+		a := filepath.Join(root, "a")
+		b := filepath.Join(root, "b")
+		if err := os.Symlink(b, a); err != nil {
+			t.Skipf("SKIPPED: cannot create a directory symlink in this environment (%v); the reparse-point-cycle fail-closed guard is untested by this run", err)
+		}
+		if err := os.Symlink(a, b); err != nil {
+			t.Skipf("SKIPPED: cannot create the second directory symlink completing the cycle in this environment (%v); the reparse-point-cycle fail-closed guard is untested by this run", err)
+		}
+
+		done := make(chan struct{})
+		var err error
+		go func() {
+			defer close(done)
+			_, err = ResolveLocalSourceAgainstRoot(root, "./a")
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("ResolveLocalSourceAgainstRoot(root, ./a) did not return within 5s against a genuine A->B->A reparse-point cycle -- maxReparseResolutionHops did not bound the walk")
+		}
+		if err == nil {
+			t.Fatal("ResolveLocalSourceAgainstRoot(root, ./a) = nil error, want a fail-closed rejection of the A->B->A cycle (possible-cycle hop limit)")
+		}
+	})
+}
+
+// TestIsNameSurrogateReparseTag is B-MINOR-1's pure-logic regression
+// (external audit round 7, 2026-07-31 follow-up): isJunctionOrUnknownReparse
+// Point (reparse_windows.go) must resolve/reject only "name surrogate"
+// reparse points (a real symlink or directory junction/mount point -- the
+// only kinds that can make a path actually resolve somewhere other than its
+// literal string), and must NOT treat a non-name-surrogate reparse point
+// (e.g. a OneDrive/Cloud Files placeholder, NTFS deduplication, or an
+// AppExecLink) the same way -- those attach alternate data at the SAME
+// name, and rejecting them outright (the pre-round-7 behavior: any reparse
+// point that os.Readlink could not resolve was treated as fail-closed)
+// falsely broke every ordinary file inside a OneDrive-synced project
+// directory. Runs on every platform (isNameSurrogateReparseTag has no OS
+// dependency) so this exact bit-test is verified against Microsoft's own
+// documented tag catalog even where a live Windows reparse point cannot be
+// constructed.
+func TestIsNameSurrogateReparseTag(t *testing.T) {
+	tests := []struct {
+		name string
+		tag  uint32
+		want bool
+	}{
+		{"IO_REPARSE_TAG_SYMLINK", 0xA000000C, true},
+		{"IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003, true},
+		{"IO_REPARSE_TAG_CLOUD (OneDrive/Cloud Files placeholder)", 0x9000001A, false},
+		{"IO_REPARSE_TAG_APPEXECLINK", 0x8000001B, false},
+		{"IO_REPARSE_TAG_DEDUP", 0x80000013, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isNameSurrogateReparseTag(tt.tag); got != tt.want {
+				t.Errorf("isNameSurrogateReparseTag(0x%08X) = %v, want %v", tt.tag, got, tt.want)
+			}
+		})
+	}
+}
+
+// chdirTo temporarily changes the process's working directory to dir for
+// the duration of the test, restoring the original directory in cleanup.
+// Needed for MAJOR 2's relative-local-source tests: resolveCloneURL's (and
+// gitRefLister's) filepath.Abs resolution of a "./..." source depends on
+// cwd, same as a real `apm marketplace package set` invocation running from
+// the project root.
+func chdirTo(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+}
+
+// createDirSymlinkOrJunction creates a directory symlink at link pointing to
+// target, falling back to a Windows directory junction (`mklink /J`) when a
+// real symlink cannot be created (2026-07-31, external audit follow-up: a
+// plain Windows account without Developer Mode or
+// SeCreateSymbolicLinkPrivilege can never create a directory symlink, so
+// BLOCKING 2's and MAJOR 1's symlink-escape guards were silently t.Skip-ped
+// on every such machine -- an untested-in-practice regression gate, not a
+// passing one). A junction needs no special privilege on Windows, and Go's
+// filepath.EvalSymlinks (which pathWithinRoot relies on) follows a junction
+// the same way it follows a symlink, so the fallback exercises the exact
+// same production code path. Returns ok=false only when both mechanisms
+// fail, so the caller can still visibly t.Skip as a last resort.
+func createDirSymlinkOrJunction(t *testing.T, target, link string) (ok bool, lastErr error) {
+	t.Helper()
+	if err := os.Symlink(target, link); err == nil {
+		return true, nil
+	} else {
+		lastErr = err
+	}
+	if runtime.GOOS != "windows" {
+		return false, lastErr
+	}
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", link, target)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("mklink /J fallback also failed: %w: %s", err, bytes.TrimSpace(out))
+	}
+	return true, nil
+}
+
+// TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister is MAJOR
+// 2's real-repo, production-lister proof (external audit round 2,
+// 2026-07-30): the audit correctly pointed out that REGR-B2's tests only
+// ever injected mapRefLister, so they proved "SetPackage no longer silently
+// clears a local source's ref" but never proved "a *relative* local repo's
+// ref actually resolves" through the real `git ls-remote` codepath (a
+// relative source is the only shape a real local package's source ever
+// takes -- see manifest.ValidateMarketplaceSource). This runs gitRefLister{}
+// (the production RefLister, no fake) against a real git repo reached via a
+// relative "./..." path.
+func TestGitRefLister_ListRefs_RelativeLocalSource_ProductionLister(t *testing.T) {
+	// Arrange
+	parent := t.TempDir()
+	repoDir := filepath.Join(parent, "repo")
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithTags(t, repoDir, "v1.0.0")
+	wantSHA := gitCmd(t, repoDir, "rev-parse", "v1.0.0")
+	chdirTo(t, parent)
+
+	// Act
+	refs, err := gitRefLister{}.ListRefs("./repo")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("ListRefs(./repo) returned error: %v", err)
+	}
+	found := false
+	for _, r := range refs {
+		if r.Name == "v1.0.0" {
+			found = true
+			if r.Commit != wantSHA {
+				t.Errorf("tag v1.0.0 commit = %q, want %q", r.Commit, wantSHA)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("refs = %+v, want tag v1.0.0 present (a relative local source must resolve against cwd, not be misread as an OWNER/REPO shorthand)", refs)
+	}
 }
 
 func TestParseRefsOutput(t *testing.T) {
@@ -849,5 +1421,42 @@ func TestGitRefLister_ListRefs_SanitizesCredentialsInErrorMessage(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), "example.com") {
 		t.Errorf("ListRefs error lost the host entirely: %v", err)
+	}
+}
+
+// TestSplitHostFromSource mirrors upstream split_host_from_source
+// (yml_schema.py:125-140, nested-https widened by v0.28.0 PR #2439).
+func TestSplitHostFromSource(t *testing.T) {
+	tests := []struct {
+		source   string
+		wantHost string
+		wantRepo string
+	}{
+		{"owner/repo", "", "owner/repo"},
+		{"./pkgs/tool", "", "./pkgs/tool"},
+		{"gitlab.com/owner/repo", "gitlab.com", "owner/repo"},
+		{"https://gitlab.com/owner/repo", "gitlab.com", "owner/repo"},
+		{"https://gitlab.com/owner/repo.git", "gitlab.com", "owner/repo"},
+		{"https://gitlab.com/group/subgroup/repo", "gitlab.com", "group/subgroup/repo"},
+		{"https://gitlab.com/group/subgroup/repo.git", "gitlab.com", "group/subgroup/repo"},
+	}
+	for _, tt := range tests {
+		host, repo := SplitHostFromSource(tt.source)
+		if host != tt.wantHost || repo != tt.wantRepo {
+			t.Errorf("SplitHostFromSource(%q) = (%q, %q), want (%q, %q)", tt.source, host, repo, tt.wantHost, tt.wantRepo)
+		}
+	}
+}
+
+// TestResolveCloneURL_HostPrefixedShorthand_RoutesToItsHost covers v0.28.0
+// PR #2439: a host-qualified shorthand must clone from ITS host, not be
+// concatenated onto github.com.
+func TestResolveCloneURL_HostPrefixedShorthand_RoutesToItsHost(t *testing.T) {
+	got, err := resolveCloneURL("gitlab.com/owner/repo")
+	if err != nil {
+		t.Fatalf("resolveCloneURL returned error: %v", err)
+	}
+	if got != "https://gitlab.com/owner/repo.git" {
+		t.Errorf("resolveCloneURL(gitlab.com/owner/repo) = %q, want https://gitlab.com/owner/repo.git", got)
 	}
 }

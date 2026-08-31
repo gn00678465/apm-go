@@ -1,0 +1,6 @@
+{
+  "id": "pack-check-versions-fail",
+  "argv": ["pack", "--check-versions", "--dry-run", "-m", "none"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F08"]
+}

@@ -1,0 +1,7 @@
+name: demo
+description: d
+version: 0.1.0
+marketplace:
+  owner:
+    name: Test
+  packages: oops

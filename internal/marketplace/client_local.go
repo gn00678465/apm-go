@@ -19,27 +19,29 @@ var localManifestProbeOrder = []string{
 }
 
 // fetchLocal reads a KindLocal source's manifest directly from the local
-// working tree named by s.URL (an absolute directory path, per
-// ParseMarketplaceSource). SourceURL/SourceDigest are left empty: they are
-// provenance for network fetches only (design.md).
+// working tree named by s.URL (an absolute directory path OR a "file://"
+// URI naming one -- LocalFilesystemPath, ticket 24 AC3, accepts both
+// indefinitely). SourceURL/SourceDigest are left empty: they are provenance
+// for network fetches only (design.md).
 //
-// mkt B5: when s.URL itself names a file rather than a directory (e.g. a
-// SOURCE that pointed straight at a marketplace.json), that file is read
-// directly with no mkt-003 candidate probing underneath it -- mirroring the
-// Python original's _fetch_local, which branches on repo_path.is_file()
-// before ever consulting the probe order.
+// mkt B5: when the resolved path itself names a file rather than a
+// directory (e.g. a SOURCE that pointed straight at a marketplace.json),
+// that file is read directly with no mkt-003 candidate probing underneath
+// it -- mirroring the Python original's _fetch_local, which branches on
+// repo_path.is_file() before ever consulting the probe order.
 func fetchLocal(ctx context.Context, s *MarketplaceSource) (*MarketplaceManifest, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	if info, statErr := os.Stat(s.URL); statErr == nil && !info.IsDir() {
-		return readLocalManifestFile(s.URL)
+	root := LocalFilesystemPath(s.URL)
+	if info, statErr := os.Stat(root); statErr == nil && !info.IsDir() {
+		return readLocalManifestFile(root)
 	}
 
 	candidates := localManifestCandidates(s.Path)
 	for _, rel := range candidates {
-		p := filepath.Join(s.URL, filepath.FromSlash(rel))
+		p := filepath.Join(root, filepath.FromSlash(rel))
 		data, err := os.ReadFile(p)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -53,7 +55,7 @@ func fetchLocal(ctx context.Context, s *MarketplaceSource) (*MarketplaceManifest
 		}
 		return &manifest, nil
 	}
-	return nil, fmt.Errorf("no marketplace manifest found under %q (tried %s)", s.URL, strings.Join(candidates, ", "))
+	return nil, fmt.Errorf("no marketplace manifest found under %q (tried %s)", root, strings.Join(candidates, ", "))
 }
 
 // readLocalManifestFile reads and parses a single manifest file named

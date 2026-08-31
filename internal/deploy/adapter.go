@@ -90,10 +90,11 @@ func SplitTargetFlag(flagTarget string) ([]string, error) {
 }
 
 // ResolveTargets determines active targets by priority:
-// 1. --target flag (explicit CLI, comma-separated, validated against the
-//    canonical target vocabulary -- see SplitTargetFlag)
-// 2. manifest target: field
-// 3. auto-detection from filesystem signals
+//  1. --target flag (explicit CLI, comma-separated, validated against the
+//     canonical target vocabulary -- see SplitTargetFlag)
+//  2. manifest target: field
+//  3. auto-detection from filesystem signals
+//
 // Returns empty if nothing detected (no-deploy).
 func ResolveTargets(flagTarget string, manifestTargets []string, projectDir string) ([]string, []string) {
 	var diags []string

@@ -1,0 +1,5 @@
+{
+  "id": "pack-format-claude",
+  "argv": ["pack", "--format", "claude"],
+  "rewrite_binary_name": true
+}

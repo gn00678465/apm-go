@@ -2,12 +2,14 @@ package ux
 
 import (
 	"io"
+	"os"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/list"
 	"charm.land/lipgloss/v2/table"
 	"charm.land/lipgloss/v2/tree"
+	"golang.org/x/term"
 )
 
 // Item is a single entry in a BulletList, with an indent Level (0 = top).
@@ -35,11 +37,49 @@ var (
 	boxStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(ColorBrand)).Padding(0, 1)
 )
 
+// terminalWidthFor returns w's terminal column width when w is a real
+// terminal, or 0 (no constraint) for a pipe, redirected file, or in-memory
+// buffer -- so tests, logs, and shell pipelines keep the natural
+// content-sized rendering. A package-level var so tests can force a width
+// without a real TTY.
+var terminalWidthFor = func(w io.Writer) int {
+	f, ok := w.(*os.File)
+	if !ok || !isTerminalFile(f) {
+		return 0
+	}
+	cols, _, err := term.GetSize(int(f.Fd()))
+	if err != nil || cols <= 0 {
+		return 0
+	}
+	return cols
+}
+
 // Table renders headers and rows as a boxed table to w. Headers may be
 // nil/empty to render a headerless table. lipgloss/table computes column
 // widths (and CJK full-width runes) correctly, so the box stays aligned --
 // unlike pterm's width engine.
+//
+// When w is a real terminal and the table's natural width would overflow it,
+// the table is capped to the terminal width: lipgloss/table shrinks columns
+// and word-wraps data cells (its default Wrap(true)) instead of letting the
+// terminal hard-break the box borders mid-row. The cap is applied only on
+// overflow -- a narrow table is never stretched to fill the terminal, since
+// Table.Width() would otherwise expand columns too.
+//
+// Whenever any data cell spans multiple lines -- a "\n" in the input, or
+// wrapping introduced by the width cap -- row separator lines are drawn so
+// adjacent rows stay distinguishable (2026-08-07 user ruling; a deliberate
+// ergonomic addition over upstream rich's show_lines=False default).
+// Single-line tables keep the separator-free rendering.
 func Table(w io.Writer, headers []string, rows [][]string) {
+	lipgloss.Fprintln(w, TableString(w, headers, rows))
+}
+
+// TableString renders the same table Table prints, as a string, for callers
+// that place it inside another surface (the clack transcript's Note box).
+// w is consulted only for the terminal-width cap. The returned string
+// carries lipgloss styling; the caller's own writer downsamples it.
+func TableString(w io.Writer, headers []string, rows [][]string) string {
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(mutedStyle).
@@ -57,13 +97,59 @@ func Table(w io.Writer, headers []string, rows [][]string) {
 	}
 	t = t.Rows(rows...)
 
-	lipgloss.Fprintln(w, t.String())
+	multiline := anyCellMultiline(rows)
+	capped := false
+	rendered := t.String()
+	// Cap to ONE LESS than the terminal width, and trigger already at
+	// exact-width: a line that occupies every terminal column puts the
+	// right border glyph in the last cell, where Windows terminals'
+	// auto-wrap/last-column handling clips or wraps it -- the reported
+	// "right border missing" symptom. rich reserves the same 1-column
+	// margin on legacy Windows consoles.
+	if maxWidth := terminalWidthFor(w); maxWidth > 1 && lipgloss.Width(rendered) >= maxWidth {
+		t = t.Width(maxWidth - 1)
+		capped = true
+	}
+	if multiline || capped {
+		rendered = t.BorderRow(true).String()
+	}
+	return rendered
+}
+
+// anyCellMultiline reports whether any data cell already contains a line
+// break of its own.
+func anyCellMultiline(rows [][]string) bool {
+	for _, row := range rows {
+		for _, cell := range row {
+			if strings.Contains(cell, "\n") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // BulletList renders a leveled bullet list to w. Indentation is expressed as
 // nested sub-lists (lipgloss/list's native mechanism for hierarchy).
 func BulletList(w io.Writer, items []Item) {
 	lipgloss.Fprintln(w, buildBulletList(items).String())
+}
+
+// List renders the stream-facing list form used by Oracle continuation
+// records: two spaces, a dash, and the item text. It deliberately does not
+// use the centered project-TUI SymbolList enumerator; that form is reserved
+// for interactive clack content. Item.Level adds two spaces per nesting
+// level, preserving the shape of Oracle logger.progress/tree_item output
+// (utils/console.py STATUS_SYMBOLS and core/command_logger.py:158-160).
+func List(w io.Writer, items []Item) {
+	for _, item := range items {
+		indent := "  " + strings.Repeat("  ", max(item.Level, 0))
+		text := item.Text
+		if item.Muted {
+			text = mutedStyle.Render(text)
+		}
+		lipgloss.Fprintln(w, indent+"- "+text)
+	}
 }
 
 func newBulletList() *list.List {

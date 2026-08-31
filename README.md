@@ -94,18 +94,40 @@ apm-go compile               # compile installed instructions into AGENTS.md
 | Command | Description |
 |---|---|
 | `init` | Initialize a new APM project |
+| `plugin init` | Initialize a plugin-author project (`--format`, `--claude-plugin`) |
 | `install` | Install dependencies from `apm.yml` or by URL/shorthand; also adds MCP servers via `--mcp` |
 | `uninstall` | Remove APM packages, their integrated files, and `apm.yml` entries |
 | `update` | Re-resolve dependencies to their newest matching version |
 | `compile` | Compile installed instructions into a project `AGENTS.md` |
 | `audit` | Re-verify deployed-file integrity against `apm.lock.yaml` |
-| `marketplace` | Manage marketplace sources (add/list/browse/update/remove/validate) |
+| `search` | Search plugins in a marketplace (`QUERY@MARKETPLACE`) |
+| `marketplace` | Consume marketplaces: `add`, `list`, `browse`, `update`, `remove`, `validate`, `check`, `outdated` |
+| `marketplace` (authoring) | Author a marketplace: `init`, `package add/set/remove`, `audit`, `migrate` |
 | `pack` | Build `marketplace.json`, a plugin bundle, and/or a standalone `plugin.json` from `apm.yml` |
+| `doctor` | Environment diagnostics (git, network, auth, marketplace config); non-zero exit on a critical failure |
 | `validate` | Validate a YAML file against the OpenAPM safe subset and manifest schema |
 | `normalize` | Parse and re-emit a YAML file (round-trip) |
-| `experimental` | Manage experimental feature flags |
+| `experimental` | Manage experimental feature flags (`enable`, `disable`, `list`) |
 
 Run `apm-go <command> --help` for detailed flags.
+
+### apm-go-only additions
+
+These commands and flags exist only in apm-go. Their defaults keep the standard behaviour, so leaving them out changes nothing.
+
+| Where | Addition | What it does |
+|---|---|---|
+| `validate` | whole command | Check any YAML file against the OpenAPM safe subset (no anchors, merge keys, or custom tags) and the manifest schema |
+| `normalize` | whole command | Round-trip a YAML file through the safe-subset loader and print or rewrite it (`--stdout`) |
+| `pack` | `--claude-source-style github\|url` | Emit `url` sources in `marketplace.json` so Claude Code installs GitHub packages over HTTPS when no SSH key is available (default `github`) |
+| `install` | `--max-archive-bytes`, `--max-entries` | Fail-closed limits on uncompressed archive size (default 100 MiB) and entry count (default 10000) |
+| `install` | `--no-provenance` | Omit `generated_at` and `apm_version` from `apm.lock.yaml` for reproducible lockfiles |
+| `install --mcp` | `--force` | Overwrite a conflicting existing MCP entry non-interactively |
+| `init` | `--force` | Overwrite an existing `apm.yml` without prompting |
+| `audit` | `--content` | Scan every deployed file for hidden Unicode characters |
+| `update` | `--frozen` / `--no-frozen` | Refuse a scoped update against a frozen install (auto-enabled in CI) / override the CI detection |
+| `marketplace package add` | `--category` | Package category, required for Codex output at `pack` time |
+| `marketplace package` | command name | The authoring subcommands live under `package` (`add`, `set`, `remove`) |
 
 <img src="./assets/readme/section-develop.svg" width="100%" alt="Development — build, test, release">
 

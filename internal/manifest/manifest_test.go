@@ -377,6 +377,61 @@ func TestParseManifest_TargetsNullRejected(t *testing.T) {
 	}
 }
 
+// wantEmptyTargetsError duplicates the empty-targets error text as an
+// independent literal (not a reference to the string in manifest.go) so
+// wording drift breaks this test loudly, matching the
+// wantConflictingTargetsError verbatim-lock pattern below.
+const wantEmptyTargetsError = "'targets:' in apm.yml is empty; the targets list must contain at least one target"
+
+// TestParseManifest_TargetsAllBlankRejected locks upstream v0.27.0's
+// core/apm_yml.py behaviour: after trimming, a targets list whose every
+// element is blank raises EmptyTargetsListError rather than quietly
+// resolving to zero targets (which was correct only against v0.26.0).
+func TestParseManifest_TargetsAllBlankRejected(t *testing.T) {
+	for _, data := range []string{
+		"name: p\nversion: \"1.0.0\"\ntargets:\n  - \"\"\n",
+		"name: p\nversion: \"1.0.0\"\ntargets:\n  - \"\"\n  - \"   \"\n",
+	} {
+		node, _ := yamlcore.SafeLoad([]byte(data))
+		_, _, err := ParseManifest(node)
+		if err == nil {
+			t.Fatalf("expected error for all-blank targets list, form %q", data)
+		}
+		if err.Error() != wantEmptyTargetsError {
+			t.Errorf("error = %q, want %q (must reuse the empty-targets message, not a new one)", err.Error(), wantEmptyTargetsError)
+		}
+	}
+}
+
+// TestParseManifest_TargetSingularBlankStillAutoDetects is the control group
+// for the test above. Upstream v0.27.0 tightened parse_targets_field only; the
+// singular `target:` path still returns [] (auto-detect) when every token is
+// blank -- apm_yml.py has two explicit `if not tokens: return []` guards, one
+// for the list form and one for the CSV form.
+//
+// The list form is the load-bearing case: a scalar `target: ""` short-circuits
+// at parseTargetField's own `raw == ""` guard and never reaches
+// validateTargetTokens, so on its own it does NOT detect a fix wrongly placed
+// in that shared helper (verified by mutation: adding the emptiness check to
+// validateTargetTokens left a scalar-only version of this test green). The
+// SequenceNode form routes straight into validateTargetTokens and does.
+func TestParseManifest_TargetSingularBlankStillAutoDetects(t *testing.T) {
+	for _, data := range []string{
+		"name: p\nversion: \"1.0.0\"\ntarget: \"\"\n",                   // scalar: short-circuits early
+		"name: p\nversion: \"1.0.0\"\ntarget:\n  - \"\"\n  - \"   \"\n", // list: reaches validateTargetTokens
+		"name: p\nversion: \"1.0.0\"\ntarget: \",\"\n",                  // CSV sugar yielding zero tokens
+	} {
+		node, _ := yamlcore.SafeLoad([]byte(data))
+		m, _, err := ParseManifest(node)
+		if err != nil {
+			t.Fatalf("singular blank target must not error, form %q, got %v", data, err)
+		}
+		if m.Target != nil {
+			t.Errorf("m.Target = %v, want nil (auto-detect), form %q", m.Target, data)
+		}
+	}
+}
+
 func TestParseManifest_TargetCSVSugar(t *testing.T) {
 	data := []byte("name: p\nversion: \"1.0.0\"\ntarget: \"claude,copilot\"\n")
 	node, _ := yamlcore.SafeLoad(data)

@@ -48,6 +48,12 @@ type ResolvedPackage struct {
 	// local packages).
 	SHA string
 
+	// EffectiveTagPattern is the tag convention that actually governed this
+	// package (entry override > build default > "v{version}"). It is emitted
+	// into the remote source object so consumers resolve ranges the same way
+	// (upstream v0.27.0 ResolvedPackage.effective_tag_pattern, builder.py:121).
+	EffectiveTagPattern string
+
 	// Host is the non-default git host parsed from Entry.Source ("" when
 	// Entry.Source names the default host, github.com, or is local) --
 	// determines whether a later output-mapping step must emit a
@@ -161,7 +167,10 @@ func resolvePackage(cfg *authoring.AuthoringConfig, entry authoring.PackageEntry
 		// package -- previously local packages were never enriched at all,
 		// leaving description/version permanently blank whenever the
 		// curator's own entry omitted them.
-		description, version, warning := enrichLocalMetadata(entry, opts.projectRoot())
+		description, version, warning, err := enrichLocalMetadata(entry, opts.projectRoot())
+		if err != nil {
+			return ResolvedPackage{}, "", err
+		}
 		return ResolvedPackage{
 			Entry:             entry,
 			IsLocal:           true,
@@ -199,6 +208,21 @@ func resolvePackage(cfg *authoring.AuthoringConfig, entry authoring.PackageEntry
 		Tags:       entry.Tags,
 	}
 
+	// Upstream computes `entry.tag_pattern or yml.build.tag_pattern` on BOTH
+	// the explicit-ref and version-range paths (builder.py:635 and :777) and
+	// propagates it to the output mappers. Its build.tag_pattern is defaulted
+	// to "v{version}" at parse time (yml_schema.py:609); apm-go keeps "" for an
+	// absent key, so the same default is applied here -- which is why this is
+	// never empty, matching upstream's "always emitted" output shape.
+	pattern := entry.TagPattern
+	if pattern == "" {
+		pattern = cfg.Build.TagPattern
+	}
+	if pattern == "" {
+		pattern = tagpattern.DefaultPattern
+	}
+	base.EffectiveTagPattern = pattern
+
 	if entry.Ref != "" {
 		ref, sha, err := resolveExplicitRef(entry, lister)
 		if err != nil {
@@ -206,10 +230,6 @@ func resolvePackage(cfg *authoring.AuthoringConfig, entry authoring.PackageEntry
 		}
 		base.Ref, base.SHA = ref, sha
 	} else {
-		pattern := entry.TagPattern
-		if pattern == "" {
-			pattern = cfg.Build.TagPattern
-		}
 		includePre := entry.IncludePrerelease || opts.IncludePrerelease
 		ref, sha, err := resolveVersionRange(entry, pattern, includePre, lister)
 		if err != nil {

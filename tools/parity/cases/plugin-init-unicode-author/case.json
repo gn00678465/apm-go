@@ -1,0 +1,6 @@
+{
+  "id": "plugin-init-unicode-author",
+  "argv": ["plugin", "init", "plugin-init-fixture", "--yes"],
+  "env": {"GIT_CONFIG_GLOBAL": "<TMP>/.gitconfig-fixture"},
+  "rewrite_binary_name": true
+}

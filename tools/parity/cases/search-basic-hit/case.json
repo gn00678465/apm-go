@@ -1,0 +1,7 @@
+{
+  "id": "search-basic-hit",
+  "argv": ["search", "security@skills"],
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "skills"]],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering"]
+}

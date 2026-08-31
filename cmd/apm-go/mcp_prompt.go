@@ -123,6 +123,6 @@ func promptReplaceMCP(name string, diff []string) (bool, error) {
 	for i, line := range diff {
 		items[i] = ux.Item{Text: line}
 	}
-	ux.BulletList(os.Stderr, items)
+	ux.List(os.Stderr, items)
 	return ux.Confirm(fmt.Sprintf("Replace MCP server %q?", name), false)
 }

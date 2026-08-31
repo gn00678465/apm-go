@@ -289,18 +289,27 @@ func targetTokenFromNode(item *yaml.Node) string {
 	return fmt.Sprintf("<%s>", item.Tag)
 }
 
+// emptyTargetsMessage is shared by every `targets:` emptiness rejection so the
+// three call sites below can never drift apart in wording.
+const emptyTargetsMessage = "'targets:' in apm.yml is empty; the targets list must contain at least one target"
+
 // parseTargetsField parses the plural `targets:` key (apm_yml.py:60-84):
 //   - null, or an empty list -> error (a targets: block must not be empty)
 //   - non-list scalar -> treated as a single-element list
-//   - list -> each element validated; blank elements are filtered without
-//     re-checking emptiness (matches Python: only `targets: []`/null errors,
-//     an all-blank list quietly resolves to zero targets)
+//   - list -> each element validated; if every element is blank after
+//     trimming, the filtered result is empty -> same error as the two cases
+//     above (apm_yml.py v0.27.0 added `tokens = [... if str(t).strip()]` /
+//     `if not tokens: raise EmptyTargetsListError`). Before v0.27.0 an
+//     all-blank list quietly resolved to zero targets; that is no longer the
+//     upstream behaviour. The singular `target:` path is deliberately NOT
+//     changed -- upstream left parse_target_field alone, so `target: ""`
+//     still falls through to auto-detection.
 func parseTargetsField(val *yaml.Node) ([]string, error) {
 	if val.Kind == yaml.ScalarNode && val.Tag == "!!null" {
-		return nil, fmt.Errorf("'targets:' in apm.yml is empty; the targets list must contain at least one target")
+		return nil, fmt.Errorf("%s", emptyTargetsMessage)
 	}
 	if val.Kind == yaml.SequenceNode && len(val.Content) == 0 {
-		return nil, fmt.Errorf("'targets:' in apm.yml is empty; the targets list must contain at least one target")
+		return nil, fmt.Errorf("%s", emptyTargetsMessage)
 	}
 
 	var rawTokens []string
@@ -314,7 +323,14 @@ func parseTargetsField(val *yaml.Node) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("targets must be a string or list of strings")
 	}
-	return validateTargetTokens(rawTokens)
+	targets, err := validateTargetTokens(rawTokens)
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("%s", emptyTargetsMessage)
+	}
+	return targets, nil
 }
 
 // validateTargetTokens trims each raw token, drops blanks, and validates

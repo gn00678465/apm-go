@@ -1,0 +1,6 @@
+{
+  "id": "pack-archive",
+  "argv": ["pack", "--archive"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F09"]
+}

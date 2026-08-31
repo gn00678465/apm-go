@@ -1307,7 +1307,7 @@ func TestPersistPackagesToManifest_SkillWildcard_NewPackageWritesStringForm(t *t
 	// as "no entry for this identity" -- nil here simulates that outcome
 	// directly, since this test targets persistPackagesToManifest's own
 	// entry-writing logic.
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 
@@ -1339,7 +1339,7 @@ func TestPersistPackagesToManifest_SkillWildcard_ClearsExistingSubset(t *testing
 	}
 
 	// Same RESET-as-absent-entry simulation as the test above.
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 
@@ -1957,13 +1957,13 @@ func TestInstall_UnknownSkill_PersistedNameDisappearsWarnsAndKeeps(t *testing.T)
 		t.Fatal(err)
 	}
 
-	stderr := captureUninstallStderr(t, func() {
+	stdout := captureUninstallStdout(t, func() {
 		if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
 			t.Fatalf("bare re-install after upstream skill removal: %v", err)
 		}
 	})
-	if !strings.Contains(stderr, "onlySkill") {
-		t.Errorf("expected a warning naming the vanished persisted skill \"onlySkill\", got stderr: %q", stderr)
+	if !strings.Contains(stdout, "onlySkill") {
+		t.Errorf("expected a warning naming the vanished persisted skill \"onlySkill\", got stdout: %q", stdout)
 	}
 
 	m := readManifestParsed(t)
@@ -2029,7 +2029,7 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 
 	// Step 2: narrow to --skill skillA1 (same repo) -- must deploy ONLY
 	// skillA1 files, and clean up skillA2's now-stale, untouched files.
-	stderr := captureUninstallStderr(t, func() {
+	stdout := captureUninstallStdout(t, func() {
 		if err := runInstall(deps, false, true, "claude", []string{"skillA1"}, []string{repo}); err != nil {
 			t.Fatalf("step 2 (narrow to skillA1): %v", err)
 		}
@@ -2060,8 +2060,8 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 	} else if string(data) != modifiedContent {
 		t.Errorf("step2: hand-edited file content changed unexpectedly: %q", data)
 	}
-	if !strings.Contains(stderr, "notes.md") {
-		t.Errorf("expected a warning naming the kept modified file, got stderr: %q", stderr)
+	if !strings.Contains(stdout, "notes.md") {
+		t.Errorf("expected a warning naming the kept modified file, got stdout: %q", stdout)
 	}
 
 	// apm.yml / lockfile reflect the narrowed subset.
@@ -2368,7 +2368,7 @@ func TestRunInstall_MultiplePositionalPackages_SharedSkillFlag(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 
-	stderr := captureUninstallStderr(t, func() {
+	stdout := captureUninstallStdout(t, func() {
 		err := runInstall(deps, false, true, "claude", []string{"nameA", "nameB"}, []string{repoA, repoB})
 		if err != nil {
 			t.Fatalf("runInstall: %v", err)
@@ -2392,8 +2392,8 @@ func TestRunInstall_MultiplePositionalPackages_SharedSkillFlag(t *testing.T) {
 
 	// Documented behavior: both repos are warned about the cross-applied
 	// name they don't have (repoA lacks nameB, repoB lacks nameA).
-	if !strings.Contains(stderr, "nameB") || !strings.Contains(stderr, "nameA") {
-		t.Errorf("expected warnings naming the cross-applied skill each repo lacks, got stderr: %q", stderr)
+	if !strings.Contains(stdout, "nameB") || !strings.Contains(stdout, "nameA") {
+		t.Errorf("expected warnings naming the cross-applied skill each repo lacks, got stdout: %q", stdout)
 	}
 
 	m := readManifestParsed(t)

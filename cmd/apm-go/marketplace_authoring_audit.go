@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -33,36 +34,136 @@ func marketplaceAuditCmd() *cobra.Command {
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			src, err := marketplace.FindByName(name)
-			if err != nil {
+			err := runMarketplaceAudit(cmd, args[0], strict, verbose)
+			// Ticket 18. The Oracle wraps audit's WHOLE body in `except
+			// Exception` (commands/marketplace/audit.py:140-143), which
+			// prints the error and then, always, "Run with --verbose for
+			// details." before exiting 1. Verified live against the pinned
+			// Oracle on the unregistered-marketplace path: identical error
+			// line word for word (once rewrite_binary_name folds the
+			// sanctioned apm-go binary-name substitution), then this hint,
+			// which apm-go printed nowhere. The hint is audit-SPECIFIC --
+			// it lives in that command's own handler, not a shared helper,
+			// so it is added here only.
+			//
+			// strictAuditError is excluded deliberately: those three paths
+			// are the Oracle's own sys.exit(1) calls, raised INSIDE the
+			// same try: block but as SystemExit, which does not inherit
+			// from Exception and therefore never reaches audit.py:141. They
+			// print their error and exit 1 with no hint.
+			var strictErr strictAuditError
+			if err == nil || isSilentExit(err) || errors.As(err, &strictErr) {
 				return err
 			}
-			if src == nil {
-				return marketplaceNotRegisteredErr(name)
-			}
-			m, err := marketplace.Fetch(context.Background(), src)
-			if err != nil {
-				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
-			}
-
-			reports := authoring.RunAudit(m, name, src.Host, authoring.DefaultApmYMLFetcher)
-			ok, bypassTotal, skipped, unverifiable := printAuditReports(cmd, reports, verbose)
-
-			fmt.Fprintln(cmd.OutOrStdout())
-			ux.Info(cmd.OutOrStdout(), "Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
-				ok, bypassTotal, skipped, unverifiable)
-
-			if strict && (bypassTotal > 0 || unverifiable > 0) {
-				return fmt.Errorf("audit %q failed: %d bypass warning(s), %d unverifiable error(s)", name, bypassTotal, unverifiable)
-			}
-			return nil
+			w := cmd.OutOrStdout()
+			ux.Error(w, "%s", err)
+			ux.Info(w, "Run with --verbose for details.")
+			return withSilentExitCode(1, err)
 		},
 	}
 
 	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero when any plugin has bypass dependencies or unverifiable fetch errors")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print extra diagnostics, including clean/skipped plugins")
 	return cmd
+}
+
+// strictAuditError marks a --strict gate failure, which the Oracle signals
+// with sys.exit(1) rather than by letting an exception propagate -- see
+// marketplaceAuditCmd's RunE for why that distinction is load-bearing.
+type strictAuditError struct{ error }
+
+// runMarketplaceAudit is audit's body, split out so RunE can apply the
+// Oracle's catch-all hint (audit.py:140-143) to every error it returns.
+func runMarketplaceAudit(cmd *cobra.Command, name string, strict, verbose bool) error {
+	src, err := marketplace.FindByName(name)
+	if err != nil {
+		return err
+	}
+	if src == nil {
+		return marketplaceNotRegisteredErr("audit", name)
+	}
+	w := cmd.OutOrStdout()
+	// Mirrors upstream audit.py:36-40's progress lines around the
+	// fetch.
+	ux.Info(w, "Auditing marketplace %q...", name)
+	m, err := marketplace.Fetch(context.Background(), src)
+	if err != nil {
+		return fmt.Errorf("could not reach marketplace %q: %w", name, err)
+	}
+	plural := "s"
+	if len(m.Plugins) == 1 {
+		plural = ""
+	}
+	ux.Info(w, "Checking %d plugin%s...", len(m.Plugins), plural)
+
+	// v0.28.0 (PR #2460): a LOCAL marketplace's string-source
+	// plugins are audited against their on-disk apm.yml instead of
+	// being skipped; localRoot flags that mode.
+	localRoot := ""
+	if src.Kind() == marketplace.KindLocal {
+		// Ticket 24 AC3: src.URL may be a bare path or a "file://"
+		// URI (this ticket's new writes) -- LocalFilesystemPath
+		// accepts both, indefinitely.
+		localRoot = marketplace.LocalFilesystemPath(src.URL)
+	}
+	reports := authoring.RunAudit(m, name, src.Host, localRoot, authoring.DefaultApmYMLFetcher)
+
+	// Upstream audit.py:49-56: the section header is suppressed on
+	// an all-clean default run, where it would hang above an empty
+	// body.
+	hasFindings := false
+	for _, r := range reports {
+		if r.FetchStatus != authoring.FetchOK || len(r.Issues) > 0 {
+			hasFindings = true
+			break
+		}
+	}
+	fmt.Fprintln(w)
+	if hasFindings || verbose {
+		ux.Info(w, "Audit Results:")
+	}
+	ok, bypassTotal, skipped, unverifiable := printAuditReports(cmd, reports, verbose)
+
+	fmt.Fprintln(w)
+	// v0.28.0 (PR #2460): the Summary line only reads as a success
+	// when something was audited AND nothing was skipped or
+	// unverifiable; every other mix is neutral info.
+	summary := fmt.Sprintf("Summary: %d clean, %d bypass warning(s), %d skipped, %d unverifiable error(s)",
+		ok, bypassTotal, skipped, unverifiable)
+	if ok > 0 && bypassTotal == 0 && skipped == 0 && unverifiable == 0 {
+		// Oracle commands/marketplace/audit.py:105 uses symbol="check"
+		// for the clean summary.
+		ux.Check(w, "%s", summary)
+	} else {
+		ux.Info(w, "%s", summary)
+	}
+	if bypassTotal > 0 {
+		// Upstream audit.py:106-113's closing explainer.
+		fmt.Fprintln(w)
+		ux.Info(w, "Marketplace refs (name@marketplace) pin transitive deps through the catalogue "+
+			"so consumers get the same versions you tested. See: "+
+			"https://microsoft.github.io/apm/reference/cli/marketplace/#apm-marketplace-audit-name")
+	}
+
+	// v0.28.0 --strict tightening (audit.py:117-138): an audit that
+	// verified nothing, or skipped any plugin, cannot claim
+	// supply-chain integrity and fails before the bypass/error check.
+	if strict && ok == 0 && bypassTotal == 0 {
+		if skipped > 0 && !verbose {
+			ux.Info(w, "Run 'apm-go marketplace audit %s --strict --verbose' to see skipped plugin reasons.", name)
+		}
+		return strictAuditError{fmt.Errorf("--strict: no plugins were audited; cannot verify supply-chain integrity")}
+	}
+	if strict && skipped > 0 {
+		if !verbose {
+			ux.Info(w, "Run 'apm-go marketplace audit %s --strict --verbose' to see skipped plugin reasons.", name)
+		}
+		return strictAuditError{fmt.Errorf("--strict: %d plugin source(s) skipped; cannot verify a complete marketplace audit", skipped)}
+	}
+	if strict && (bypassTotal > 0 || unverifiable > 0) {
+		return strictAuditError{fmt.Errorf("audit %q failed: %d bypass warning(s), %d unverifiable error(s)", name, bypassTotal, unverifiable)}
+	}
+	return nil
 }
 
 // printAuditReports writes one line (or more, for a plugin with bypass
@@ -76,7 +177,9 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 			if len(r.Issues) == 0 {
 				ok++
 				if verbose {
-					ux.Success(w, "%s: deps are marketplace-resolved", r.PluginName)
+					// Oracle commands/marketplace/audit.py:62-65 uses
+					// logger.success(..., symbol="check") for clean rows.
+					ux.Check(w, "%s: deps are marketplace-resolved", r.PluginName)
 				}
 				continue
 			}
@@ -99,8 +202,13 @@ func printAuditReports(cmd *cobra.Command, reports []authoring.PluginAuditReport
 // two-level nested tree (plugin -> dependency -> hint), replacing the
 // former flat "- dep" / "  hint: ..." indentation.
 func printBypassTree(w io.Writer, r authoring.PluginAuditReport) {
+	// Upstream audit.py:68-71's singular/plural phrasing.
+	verbPhrase := fmt.Sprintf("%d dependencies bypass", len(r.Issues))
+	if len(r.Issues) == 1 {
+		verbPhrase = "1 dependency bypasses"
+	}
 	root := ux.TreeNode{
-		Text: fmt.Sprintf("%s: %d dependencies bypass the marketplace", r.PluginName, len(r.Issues)),
+		Text: fmt.Sprintf("%s: %s the marketplace", r.PluginName, verbPhrase),
 	}
 	for _, issue := range r.Issues {
 		root.Children = append(root.Children, ux.TreeNode{

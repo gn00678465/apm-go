@@ -17,6 +17,7 @@ import (
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/security"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // DepSource is one dependency's already-resolved install location, fed to
@@ -70,6 +71,26 @@ type ProduceOptions struct {
 	// lockfile is not None").
 	Lockfile     *lockfile.Lockfile
 	LockfileNode *yaml.Node
+
+	// Format is the resolved selector's canonical BundleFormat.lock_value
+	// (bundle/formats.py:15-17, e.g. "claude-plugin"), embedded verbatim as
+	// the bundle lockfile's pack.format. Empty defaults to "claude-plugin"
+	// (embedPackLockfile) -- every caller of Produce today only ever
+	// builds the Claude-compatible bundle.
+	Format string
+
+	// Archive mirrors --archive (ticket 17 phase 2): when true, the built
+	// bundle directory is compressed into a single archive file and the
+	// intermediate directory is removed, mirroring export_plugin_bundle's
+	// own real-run sequence (plugin_exporter.py: build directory -> embed
+	// lockfile -> archive -> shutil.rmtree(bundle_dir)).
+	Archive bool
+	// ArchiveFormat mirrors --archive-format ("zip" or "tar.gz"); only
+	// meaningful when Archive is true. Empty defaults to "zip" (Oracle's
+	// own Click default), mirrored here rather than by the caller so
+	// dry-run's projected path and the real write agree on the same
+	// fallback.
+	ArchiveFormat string
 }
 
 // ProduceResult mirrors Python's PackResult.
@@ -147,7 +168,7 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	}
 
 	for _, c := range fileMap.Collisions {
-		fmt.Fprintf(w, "[warn] %s\n", c)
+		ux.Warn(w, "%s", c)
 	}
 
 	outputFiles := fileMap.Keys()
@@ -169,7 +190,15 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	}
 
 	if opts.DryRun {
-		return &ProduceResult{BundleDir: absBundleDir, Files: outputFiles}, nil
+		// Mirrors export_plugin_bundle's dry-run branch (plugin_exporter.py:
+		// ~988): when --archive is set, report the archive's PROJECTED path
+		// without writing anything at all -- not the directory that would
+		// have been built.
+		bundlePath := absBundleDir
+		if opts.Archive {
+			bundlePath = projectedArchivePath(opts.OutputDir, bundleRel, effectiveArchiveFormat(opts.ArchiveFormat))
+		}
+		return &ProduceResult{BundleDir: bundlePath, Files: outputFiles}, nil
 	}
 
 	scanBundleSources(w, fileMap, opts.Force)
@@ -210,12 +239,42 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	}
 
 	if opts.Lockfile != nil {
-		if err := embedPackLockfile(absBundleDir, opts.Lockfile, opts.LockfileNode, opts.Target); err != nil {
+		if err := embedPackLockfile(absBundleDir, opts.Lockfile, opts.LockfileNode, opts.Target, opts.Format); err != nil {
 			return nil, err
 		}
 	}
 
-	return &ProduceResult{BundleDir: absBundleDir, Files: outputFiles}, nil
+	bundlePath := absBundleDir
+	if opts.Archive {
+		// Mirrors export_plugin_bundle's real-run sequence
+		// (plugin_exporter.py: ~1050-1061): the directory bundle is always
+		// built and lockfile-embedded FIRST (above), THEN archived, THEN
+		// the intermediate directory is deleted, and the ARCHIVE path (not
+		// the directory) is reported as the bundle path.
+		archiveFormat := effectiveArchiveFormat(opts.ArchiveFormat)
+		archivePath := projectedArchivePath(opts.OutputDir, bundleRel, archiveFormat)
+		if err := writeArchive(absBundleDir, archivePath, archiveFormat); err != nil {
+			return nil, err
+		}
+		if err := os.RemoveAll(absBundleDir); err != nil {
+			return nil, fmt.Errorf("remove intermediate bundle directory: %w", err)
+		}
+		bundlePath = archivePath
+	}
+
+	return &ProduceResult{BundleDir: bundlePath, Files: outputFiles}, nil
+}
+
+// effectiveArchiveFormat applies Oracle's own Click default ("zip") when
+// ArchiveFormat is empty (ticket 17 phase 2: the Cobra/pflag flag default
+// is deliberately "" -- see cmd/apm-go/pack.go -- so this fallback lives in
+// exactly one place shared by both the dry-run projection and the real
+// write).
+func effectiveArchiveFormat(v string) string {
+	if v == "" {
+		return "zip"
+	}
+	return v
 }
 
 // PrintSecretWarning mirrors _sanitize_mcp_servers's warning
@@ -229,9 +288,9 @@ func PrintSecretWarning(w io.Writer, dropped []string) {
 	if len(dropped) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "[warn] Secrets withheld from plugin.json so they are never committed as "+
+	ux.Warn(w, "Secrets withheld from plugin.json so they are never committed as "+
 		"plaintext -- stripped from .mcp.json before writing: %s. Use $ENV_VAR references in "+
-		".mcp.json to keep secrets out of the manifest.\n", strings.Join(dropped, ", "))
+		".mcp.json to keep secrets out of the manifest.", strings.Join(dropped, ", "))
 }
 
 // collectHooksFromAPM returns merged hooks from apmDir/hooks/*.json,
@@ -331,8 +390,8 @@ func scanBundleSources(w io.Writer, fileMap *FileMap, force bool) {
 		total += len(verdict.AllFindings())
 	}
 	if total > 0 {
-		fmt.Fprintf(w, "[warn] Bundle contains %d hidden character(s) across source files "+
-			"-- run 'apm-go audit' to inspect before publishing\n", total)
+		ux.Warn(w, "Bundle contains %d hidden character(s) across source files "+
+			"-- run 'apm-go audit' to inspect before publishing", total)
 	}
 }
 
@@ -402,13 +461,13 @@ func findOrSynthesizePluginJSON(w io.Writer, projectRoot string, apmYMLNode *yam
 		}
 		v, perr := DecodeJSONValue(data)
 		if perr != nil {
-			fmt.Fprintf(w, "[warn] Found plugin.json at %s but could not parse it: %v. Falling back to synthesis from apm.yml.\n", p, perr)
+			ux.Warn(w, "Found plugin.json at %s but could not parse it: %v. Falling back to synthesis from apm.yml.", p, perr)
 			break
 		}
 		return v, nil
 	}
 	if !suppressMissingInfo {
-		fmt.Fprintln(w, "[i] No plugin.json found; synthesising from apm.yml.")
+		ux.Info(w, "No plugin.json found; synthesising from apm.yml.")
 	}
 	m, err := Synthesize(apmYMLNode)
 	if err != nil {
@@ -441,8 +500,8 @@ func stripSchemaInvalidKeys(w io.Writer, v JSONValue) JSONValue {
 		kept.O = append(kept.O, f)
 	}
 	if len(stripped) > 0 {
-		fmt.Fprintf(w, "[warn] Stripped schema-invalid keys from authored plugin.json: %s "+
-			"-- convention directories are auto-discovered by Claude Code\n", strings.Join(stripped, ", "))
+		ux.Warn(w, "Stripped schema-invalid keys from authored plugin.json: %s "+
+			"-- convention directories are auto-discovered by Claude Code", strings.Join(stripped, ", "))
 	}
 	return kept
 }
@@ -469,7 +528,7 @@ func sanitizeBundleName(name string) string {
 // apm.lock.yaml itself) and writes apm.lock.yaml with an embedded pack:
 // section, mirroring export_plugin_bundle step 14b (plugin_exporter.py:
 // 632-660).
-func embedPackLockfile(bundleDir string, lf *lockfile.Lockfile, original *yaml.Node, target string) error {
+func embedPackLockfile(bundleDir string, lf *lockfile.Lockfile, original *yaml.Node, target, format string) error {
 	bundleFiles := map[string]string{}
 	walkErr := filepath.WalkDir(bundleDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {
@@ -499,7 +558,11 @@ func embedPackLockfile(bundleDir string, lf *lockfile.Lockfile, original *yaml.N
 	if effectiveTarget == "" {
 		effectiveTarget = "all"
 	}
-	meta := NewPackMetadata("plugin", effectiveTarget, bundleFiles)
+	effectiveFormat := format
+	if effectiveFormat == "" {
+		effectiveFormat = "claude-plugin"
+	}
+	meta := NewPackMetadata(effectiveFormat, effectiveTarget, bundleFiles)
 	enriched, err := EnrichLockfileForPack(lf, meta, original)
 	if err != nil {
 		return err

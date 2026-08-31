@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/semver"
 )
 
@@ -15,6 +16,22 @@ type RealTagLister struct {
 
 func (r *RealTagLister) ListTags(repoURL string) ([]semver.TagInfo, error) {
 	cloneURL := r.resolveCloneURL(repoURL)
+	return r.listTags(cloneURL)
+}
+
+// ListTagsForRef preserves structured URL context that is not representable
+// by the historical string-only TagLister interface, notably an
+// ArtifactoryPrefix and nested host-specific RepoURL.
+func (r *RealTagLister) ListTagsForRef(ref *manifest.DependencyReference) ([]semver.TagInfo, error) {
+	cloneURL := r.resolveCloneURLForRef(ref)
+	return r.listTags(cloneURL)
+}
+
+func (r *RealTagLister) resolveCloneURLForRef(ref *manifest.DependencyReference) string {
+	return (&RealPackageLoader{DefaultHost: r.DefaultHost}).resolveCloneURL(ref)
+}
+
+func (r *RealTagLister) listTags(cloneURL string) ([]semver.TagInfo, error) {
 
 	cmd := cloneCommandFor(cloneURL, "ls-remote", "--tags", "--refs", "--", cloneURL)
 	out, err := cmd.Output()

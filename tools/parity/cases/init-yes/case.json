@@ -1,0 +1,6 @@
+{
+  "id": "init-yes",
+  "argv": ["init", "init-fixture", "--yes"],
+  "env": {"GIT_CONFIG_GLOBAL": "<TMP>/.gitconfig-fixture"},
+  "rewrite_binary_name": true
+}

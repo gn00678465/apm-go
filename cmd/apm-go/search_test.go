@@ -1,0 +1,379 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"strings"
+	"testing"
+)
+
+// searchFixtureManifest is shared by every test below: five plugins picked
+// so a single, deliberate substring hits exactly one of name/description/tag
+// (never more than one plugin), per ticket 05's fixture requirement (one
+// match by name, one by description, one by tag, one >60-char description,
+// one empty description).
+const searchFixtureManifest = `{
+  "name": "skills",
+  "plugins": [
+    {"name": "security-scanner", "source": "./security-scanner", "description": "Scans your dependency graph for known CVEs", "tags": ["security", "cli"]},
+    {"name": "toolkit-helper", "source": "./toolkit-helper", "description": "Runs static license compliance checks across your repository", "tags": ["utility"]},
+    {"name": "widget-pack", "source": "./widget-pack", "description": "Bundles widgets for rapid prototyping", "tags": ["experimental", "beta-channel"]},
+    {"name": "docgen", "source": "./docgen", "description": "Generates comprehensive API documentation from source code annotations automatically and keeps it in sync", "tags": ["docs"]},
+    {"name": "quiet-plugin", "source": "./quiet-plugin", "description": "", "tags": []}
+  ]
+}`
+
+// runSearchCmd executes searchCmd() standalone (it is a top-level command,
+// never nested under marketplaceCmd()) and returns its combined stdout+
+// stderr and the RunE error. NO_COLOR=1 CI=1 with no TTY (a bytes.Buffer is
+// never a terminal): the exact "rich renderers stay on, ANSI strips"
+// scenario ticket 10 decision (A) requires -- search's table must render
+// unconditionally, never the old IsRich()-gated plain fallback.
+func runSearchCmd(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("CI", "1")
+	c := searchCmd()
+	var buf bytes.Buffer
+	c.SetOut(&buf)
+	c.SetErr(&buf)
+	c.SetArgs(args)
+	err := c.Execute()
+	return buf.String(), err
+}
+
+// registerSearchFixture registers searchFixtureManifest under alias
+// "skills" via the real `marketplace add` command (a KindLocal source, no
+// network involved), so search's own Fetch path is exercised end to end.
+func registerSearchFixture(t *testing.T) {
+	t.Helper()
+	dir := writeLocalManifestDir(t, searchFixtureManifest)
+	if _, err := runMarketplaceCmd(t, "add", dir, "--name", "skills"); err != nil {
+		t.Fatalf("registering search fixture: %v", err)
+	}
+}
+
+func TestSearchCmd_TopLevelNotUnderMarketplace(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+
+	if _, _, err := marketplaceCmd().Find([]string{"search"}); err == nil {
+		t.Error(`marketplaceCmd().Find(["search"]) found a subcommand, want "search" absent from the marketplace group`)
+	}
+
+	// The top-level command itself must exist and be runnable.
+	out, err := runSearchCmd(t, "nomatch@skills")
+	if err == nil {
+		t.Fatalf("runSearchCmd: expected an error for an unregistered marketplace, got success: %s", out)
+	}
+}
+
+func TestSearchCmd_NoAtSign_InvalidFormatError(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+
+	_, err := runSearchCmd(t, "nope")
+	if err == nil {
+		t.Fatal("expected an error for a QUERY@MARKETPLACE expression missing '@'")
+	}
+	want := "Invalid format: 'nope'. Use QUERY@MARKETPLACE, e.g.: apm-go search security@skills"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestSearchCmd_EmptyQuery_BothRequiredError(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+
+	_, err := runSearchCmd(t, "@skills")
+	if err == nil {
+		t.Fatal("expected an error for an empty QUERY")
+	}
+	want := "Both QUERY and MARKETPLACE are required. Use QUERY@MARKETPLACE, e.g.: apm-go search security@skills"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestSearchCmd_EmptyMarketplace_BothRequiredError(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+
+	_, err := runSearchCmd(t, "security@")
+	if err == nil {
+		t.Fatal("expected an error for an empty MARKETPLACE")
+	}
+	want := "Both QUERY and MARKETPLACE are required. Use QUERY@MARKETPLACE, e.g.: apm-go search security@skills"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestSearchCmd_SplitsOnLastAt proves "foo@bar@skills" splits into
+// query="foo@bar", marketplace="skills" (the LAST '@'), not the first: with
+// nothing registered, the not-registered error must name "skills", never
+// "bar@skills" (what a first-'@' split would have produced).
+func TestSearchCmd_SplitsOnLastAt(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+
+	_, err := runSearchCmd(t, "foo@bar@skills")
+	if err == nil {
+		t.Fatal("expected a not-registered error")
+	}
+	want := "Marketplace 'skills' is not registered. Use 'apm-go marketplace list' to see registered marketplaces."
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q (proves split on the LAST '@', not the first)", err.Error(), want)
+	}
+}
+
+func TestSearchCmd_UnknownMarketplace_NotRegisteredError(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	_, err := runSearchCmd(t, "foo@doesnotexist")
+	if err == nil {
+		t.Fatal("expected a not-registered error")
+	}
+	want := "Marketplace 'doesnotexist' is not registered. Use 'apm-go marketplace list' to see registered marketplaces."
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestSearchCmd_MatchesByName(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	out, err := runSearchCmd(t, "security@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	assertBoxDrawing(t, "search", out)
+	assertNoANSI(t, "search", out)
+	if !strings.Contains(out, "Search Results: 'security' in skills") {
+		t.Errorf("output = %q, want the table title", out)
+	}
+	for _, want := range []string{"security-scanner", "Scans your dependency graph for known CVEs", "security-scanner@skills"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, missing %q", out, want)
+		}
+	}
+	if strings.Contains(out, "toolkit-helper") || strings.Contains(out, "widget-pack") {
+		t.Errorf("output = %q, want only the name match, no other plugin", out)
+	}
+}
+
+func TestSearchCmd_MatchesByDescription(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	out, err := runSearchCmd(t, "license@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	assertBoxDrawing(t, "search", out)
+	assertNoANSI(t, "search", out)
+	for _, want := range []string{"toolkit-helper", "Runs static license compliance checks across your repository", "toolkit-helper@skills"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, missing %q", out, want)
+		}
+	}
+	if strings.Contains(out, "security-scanner") || strings.Contains(out, "widget-pack") {
+		t.Errorf("output = %q, want only the description match", out)
+	}
+}
+
+func TestSearchCmd_MatchesByTag(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	out, err := runSearchCmd(t, "experimental@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	assertBoxDrawing(t, "search", out)
+	assertNoANSI(t, "search", out)
+	for _, want := range []string{"widget-pack", "Bundles widgets for rapid prototyping", "widget-pack@skills"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, missing %q", out, want)
+		}
+	}
+	if strings.Contains(out, "security-scanner") || strings.Contains(out, "toolkit-helper") {
+		t.Errorf("output = %q, want only the tag match", out)
+	}
+}
+
+// TestSearchCmd_EmptyDescriptionHasNoDashSuffix proves an empty description
+// renders as the table's "--" placeholder cell (truncateSearchDescription's
+// empty case), not a blank cell.
+func TestSearchCmd_EmptyDescriptionHasNoDashSuffix(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	out, err := runSearchCmd(t, "quiet-plugin@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	assertBoxDrawing(t, "search", out)
+	assertNoANSI(t, "search", out)
+	if !strings.Contains(out, "quiet-plugin") || !strings.Contains(out, "quiet-plugin@skills") {
+		t.Errorf("output = %q, want the quiet-plugin row", out)
+	}
+	if !strings.Contains(out, "--") {
+		t.Errorf("output = %q, want the empty-description placeholder \"--\"", out)
+	}
+}
+
+// TestSearchCmd_LimitAppliedAfterMatching proves --limit truncates the
+// already-matched result set, keeping manifest order: "your" matches
+// security-scanner (index 0) and toolkit-helper (index 1) by description;
+// --limit 1 must keep only security-scanner.
+func TestSearchCmd_LimitAppliedAfterMatching(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	full, err := runSearchCmd(t, "your@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	if !strings.Contains(full, "security-scanner") || !strings.Contains(full, "toolkit-helper") {
+		t.Fatalf("output = %q, want 2 matches before --limit", full)
+	}
+
+	limited, err := runSearchCmd(t, "--limit", "1", "your@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	if !strings.Contains(limited, "security-scanner@skills") {
+		t.Errorf("output = %q, want the manifest-order-first match (security-scanner) to survive --limit 1", limited)
+	}
+	if strings.Contains(limited, "toolkit-helper") {
+		t.Errorf("output = %q, want the second match (toolkit-helper) dropped by --limit 1", limited)
+	}
+}
+
+// TestSearchCmd_DescriptionOver60CharsIsTruncatedInTable proves the
+// >60-char-description plugin is found and its description is truncated by
+// the rich table's rule (__init__.py:1417-1424) -- ticket 10 decision (A)
+// means this table path is unconditional now, so there is no non-rich
+// fallback that would show the untruncated description.
+func TestSearchCmd_DescriptionOver60CharsIsTruncatedInTable(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	out, err := runSearchCmd(t, "docgen@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	fullDesc := "Generates comprehensive API documentation from source code annotations automatically and keeps it in sync"
+	wantTruncated := "Generates comprehensive API documentation from source cod..."
+	if !strings.Contains(out, wantTruncated) {
+		t.Errorf("output = %q, want the truncated description %q", out, wantTruncated)
+	}
+	if strings.Contains(out, fullDesc) {
+		t.Errorf("output = %q, want the description truncated, not the full string", out)
+	}
+}
+
+// TestSearchCmd_PrintsProgressLineAndInfoPrefixedInstallHint is ticket 10
+// attempt 3's search-specific regression: the progress line
+// (__init__.py:1392, logger.start(..., symbol="search")) and its Install
+// hint (a ux.Info call) must both carry the centered project TUI symbols
+// " > " and " i " respectively.
+func TestSearchCmd_PrintsProgressLineAndInfoPrefixedInstallHint(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	out, err := runSearchCmd(t, "security@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: %v", err)
+	}
+	if !strings.Contains(out, " > Searching 'skills' for 'security'...") {
+		t.Errorf("output = %q, want the centered progress line before the table", out)
+	}
+	if !strings.Contains(out, " i Install: apm-go install <plugin-name>@skills") {
+		t.Errorf("output = %q, want the centered Install hint", out)
+	}
+}
+
+func TestTruncateSearchDescription(t *testing.T) {
+	tests := []struct {
+		name string
+		desc string
+		want string
+	}{
+		{"empty", "", "--"},
+		{"short", "a short description", "a short description"},
+		{"exactly60", strings.Repeat("a", 60), strings.Repeat("a", 60)},
+		{
+			"over60",
+			"Generates comprehensive API documentation from source code annotations automatically and keeps it in sync",
+			"Generates comprehensive API documentation from source cod...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := truncateSearchDescription(tt.desc); got != tt.want {
+				t.Errorf("truncateSearchDescription(%q) = %q, want %q", tt.desc, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSearchCmd_ZeroResultsWarningAndExit0(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+	registerSearchFixture(t)
+
+	out, err := runSearchCmd(t, "doesnotexist12345@skills")
+	if err != nil {
+		t.Fatalf("runSearchCmd: expected exit 0 (nil error) for zero results, got %v", err)
+	}
+	want := "No plugins found matching 'doesnotexist12345' in 'skills'. Try 'apm-go marketplace browse skills' to see all plugins."
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q, want it to contain %q", out, want)
+	}
+}
+
+func TestSearchCmd_FetchFailure(t *testing.T) {
+	isolatedMarketplaceRegistry(t)
+
+	// Register a valid local source, then remove its marketplace.json so a
+	// subsequent search's own Fetch (not `marketplace add`'s upfront probe)
+	// is what fails -- exercising the "Search failed: <err>" wrapper.
+	dir := writeLocalManifestDir(t, searchFixtureManifest)
+	if _, err := runMarketplaceCmd(t, "add", dir, "--name", "vanishing"); err != nil {
+		t.Fatalf("registering vanishing fixture: %v", err)
+	}
+	if err := os.Remove(dir + "/marketplace.json"); err != nil {
+		t.Fatalf("removing marketplace.json: %v", err)
+	}
+
+	_, err := runSearchCmd(t, "foo@vanishing")
+	if err == nil {
+		t.Fatal("expected a Fetch failure error")
+	}
+	if !strings.HasPrefix(err.Error(), "Search failed: ") {
+		t.Errorf("error = %q, want it to start with %q", err.Error(), "Search failed: ")
+	}
+
+	verboseOut, verboseErr := runSearchCmd(t, "-v", "foo@vanishing")
+	if verboseErr == nil {
+		t.Fatal("expected a Fetch failure error with -v")
+	}
+	if verboseOut == "" {
+		t.Error("with -v, want extra diagnostic detail printed before the error, got none")
+	}
+}
+
+func TestSearchCmd_HelpText(t *testing.T) {
+	out, err := runSearchCmd(t, "--help")
+	if err != nil {
+		t.Fatalf("runSearchCmd --help: %v", err)
+	}
+	if !strings.Contains(out, "Search plugins in a marketplace (QUERY@MARKETPLACE)") {
+		t.Errorf("help output = %q, want the Oracle's short description", out)
+	}
+	if !strings.Contains(out, "--limit") || !strings.Contains(out, "20") {
+		t.Errorf("help output = %q, want --limit to show its default of 20", out)
+	}
+	if !strings.Contains(out, "-v, --verbose") {
+		t.Errorf("help output = %q, want -v/--verbose listed", out)
+	}
+}

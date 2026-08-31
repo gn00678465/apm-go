@@ -1,0 +1,5 @@
+{
+  "id": "plugin-init-format-apm",
+  "argv": ["plugin", "init", "plugin-init-fixture", "--format", "apm"],
+  "rewrite_binary_name": true
+}

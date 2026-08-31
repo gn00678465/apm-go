@@ -122,10 +122,18 @@ func RegistryPath() (string, error) {
 }
 
 // LoadRegistry reads every registered marketplace source. A registry file
-// that does not exist yet is an empty list, not an error (mkt-002: a fresh
-// install has no marketplaces registered). The on-disk shape is the wrapping
-// {"marketplaces": [...]} object the Python original uses, not a bare
-// top-level array (mkt-002: apm-go and the Python CLI can share ~/.apm).
+// that does not exist yet is created as an empty registry
+// ({"marketplaces": []}) before this returns -- ticket 24 AC1/AC4: the
+// Oracle's registry.py:_load() (:61-81) unconditionally calls _ensure_file()
+// (:30-39) at the very START of every load, BEFORE any name lookup runs,
+// regardless of whether that lookup then succeeds or fails. This is "any
+// read materialises the file", not "materialise the default only on a
+// lookup miss" -- confirmed by `apm marketplace list` on a fresh install
+// (get_registered_marketplaces -> _load(), no per-name lookup involved at
+// all) writing the file exactly the same as a name-lookup miss does. The
+// on-disk shape is the wrapping {"marketplaces": [...]} object the Python
+// original uses, not a bare top-level array (mkt-002: apm-go and the Python
+// CLI can share ~/.apm).
 func LoadRegistry() ([]MarketplaceSource, error) {
 	p, err := RegistryPath()
 	if err != nil {
@@ -134,6 +142,9 @@ func LoadRegistry() ([]MarketplaceSource, error) {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if err := SaveRegistry(nil); err != nil {
+				return nil, err
+			}
 			return []MarketplaceSource{}, nil
 		}
 		return nil, fmt.Errorf("read marketplace registry: %w", err)
@@ -245,7 +256,17 @@ func RemoveSource(name string) error {
 		}
 	}
 	if idx < 0 {
-		return fmt.Errorf("marketplace %q is not registered", name)
+		// B-MAJOR-2 (external audit): PRD R6 requires the "is not
+		// registered" message itself (not only the CLI helper layered on
+		// top in cmd/apm-go/marketplace.go's marketplaceNotRegisteredErr)
+		// to point at the remedy commands. cmd/apm-go's `marketplace
+		// remove` checks FindByName first and uses the richer helper, but
+		// any caller that invokes RemoveSource directly -- skipping that
+		// CLI-layer check -- previously got this bare, unhelpful message
+		// with no hint of what to run next. The "is not registered"
+		// substring is preserved verbatim; existing callers assert on it
+		// with strings.Contains.
+		return fmt.Errorf("marketplace %q is not registered\nRun `apm-go marketplace list` to see registered marketplaces, or `apm-go marketplace add SOURCE` to register a new one.", name)
 	}
 	sources = append(sources[:idx], sources[idx+1:]...)
 	return SaveRegistry(sources)

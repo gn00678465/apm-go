@@ -1,0 +1,8 @@
+name: demo
+description: A demo marketplace
+version: 1.0.0
+owner:
+  name: owner
+packages:
+  - name: local-pkg
+    source: ./pkg

@@ -1,0 +1,5 @@
+{
+  "id": "plugin-init-empty",
+  "argv": ["plugin", "init", "plugin-init-fixture", "--format="],
+  "rewrite_binary_name": true
+}

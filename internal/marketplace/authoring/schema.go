@@ -10,15 +10,11 @@
 // yml_schema.py.
 //
 // mkt-053's codex-output `category` required-field gate deliberately does
-// NOT live here (F3 fix): LoadAuthoringConfig is shared by `apm pack`'s
-// config loading, `apm marketplace package add/remove/set`'s pre-edit load
-// (editor.go), and `apm marketplace migrate` -- none of which should be
-// blocked by a rule that only matters once a codex build is actually
-// composed (e.g. `apm pack -m claude` with a codex-missing-category package
-// must succeed). That gate is enforced compose-time-only, in
-// internal/marketplace/build/codexmapper.go's CodexMapper.Compose, mirroring
-// the Python original's own compose-time-only BuildError
-// (output_mappers.py, not yml_schema.py).
+// NOT run inside LoadAuthoringConfig (F3): that loader is shared by
+// `apm marketplace package add/remove/set`'s pre-edit load (editor.go) and
+// `apm marketplace migrate`. Pack invokes ValidateOutputRequirements after
+// loading, matching the Oracle's producer/configuration validation, while
+// CodexMapper.Compose retains its own defensive check for direct callers.
 package authoring
 
 import (
@@ -26,10 +22,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/marketplace/tagpattern"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
@@ -56,6 +54,20 @@ var (
 	)
 )
 
+// IsNoConfigError reports whether err is LoadAuthoringConfig's "neither
+// apm.yml marketplace: block nor marketplace.yml exists" outcome (upstream
+// detect_config_source -> ConfigSource.NONE, marketplace/migration.py:109).
+func IsNoConfigError(err error) bool {
+	return errors.Is(err, errNoMarketplaceConfig)
+}
+
+// IsConfigsMutuallyExclusiveError reports whether err is LoadAuthoringConfig's
+// "both files exist" outcome (upstream detect_config_source raising
+// MarketplaceYmlError, marketplace/migration.py:98-103).
+func IsConfigsMutuallyExclusiveError(err error) bool {
+	return errors.Is(err, errMarketplaceConfigsMutuallyExclusive)
+}
+
 // ConfigSource identifies which file an AuthoringConfig was loaded from.
 type ConfigSource int
 
@@ -79,6 +91,21 @@ type Owner struct {
 // Build is the marketplace.build block: APM-only build-time configuration.
 type Build struct {
 	TagPattern string
+}
+
+// Versioning is the marketplace.versioning block: the release-time
+// version-alignment gate's strategy (`apm pack --check-versions`), mirroring
+// yml_schema.py's MarketplaceVersioning (a single field, "strategy").
+type Versioning struct {
+	Strategy string
+}
+
+// VersioningStrategies mirrors yml_schema.py's _VERSIONING_STRATEGIES
+// frozenset -- the only three legal marketplace.versioning.strategy values.
+var VersioningStrategies = map[string]bool{
+	"lockstep":    true,
+	"tag_pattern": true,
+	"per_package": true,
 }
 
 // PackageEntry is one entry of marketplace.packages[]. Version and Ref are
@@ -136,8 +163,35 @@ type AuthoringConfig struct {
 	// (arbitrary caller-defined keys, including "pluginRoot") for
 	// ClaudeMapper to pass through to marketplace.json's top-level
 	// "metadata" key.
-	Metadata map[string]any
-	Packages []PackageEntry
+	Metadata   map[string]any
+	Packages   []PackageEntry
+	Versioning Versioning
+}
+
+// ValidateOutputRequirements applies the producer-time required-field check
+// from the Oracle's yml_schema.py:1294-1304. It is deliberately separate
+// from LoadAuthoringConfig: that loader is shared by commands which may read
+// a config without composing every configured output, while `pack` must
+// reject a configured Codex output before resolution or writing begins.
+func ValidateOutputRequirements(cfg *AuthoringConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	for _, output := range cfg.Outputs {
+		if output != "codex" {
+			continue
+		}
+		missing := make([]string, 0)
+		for _, entry := range cfg.Packages {
+			if entry.Category == "" {
+				missing = append(missing, entry.Name)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("marketplace config error: packages must define 'category' when marketplace.outputs includes 'codex' (missing: %s)", strings.Join(missing, ", "))
+		}
+	}
+	return nil
 }
 
 // LoadAuthoringConfig loads the marketplace authoring config for the
@@ -162,9 +216,13 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 
 	apmRoot, apmBlock, err := loadApmMarketplaceBlock(apmPath)
 	if err != nil {
-		return nil, 0, err
+		return nil, ConfigSourceApmYML, err
 	}
 
+	// On a parse/validation error the returned ConfigSource still names the
+	// file that was being read (upstream detect_config_source resolves the
+	// source before loading, so a caller such as `apm doctor` can attribute
+	// the failure to the right file).
 	switch {
 	case apmBlock != nil && legacyExists:
 		return nil, 0, errMarketplaceConfigsMutuallyExclusive
@@ -176,17 +234,17 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 		}
 		cfg, err := parseAuthoringNode(apmBlock, inherited, false)
 		if err != nil {
-			return nil, 0, err
+			return nil, ConfigSourceApmYML, err
 		}
 		return cfg, ConfigSourceApmYML, nil
 	case legacyExists:
 		root, err := loadYAMLRoot(legacyPath)
 		if err != nil {
-			return nil, 0, err
+			return nil, ConfigSourceLegacy, err
 		}
 		cfg, err := parseAuthoringNode(root, topLevelFields{}, true)
 		if err != nil {
-			return nil, 0, err
+			return nil, ConfigSourceLegacy, err
 		}
 		return cfg, ConfigSourceLegacy, nil
 	default:
@@ -308,6 +366,14 @@ func parseAuthoringNode(node *yaml.Node, inherited topLevelFields, isLegacy bool
 	if err != nil {
 		return nil, err
 	}
+	build, err := parseBuild(node)
+	if err != nil {
+		return nil, err
+	}
+	versioning, err := parseVersioning(node)
+	if err != nil {
+		return nil, err
+	}
 
 	name, nameOverridden := overridableString(node, "name")
 	if !nameOverridden {
@@ -335,11 +401,35 @@ func parseAuthoringNode(node *yaml.Node, inherited topLevelFields, isLegacy bool
 		DescriptionOverridden: descriptionOverridden,
 		VersionOverridden:     versionOverridden,
 		Owner:                 parseOwner(node),
-		Build:                 parseBuild(node),
+		Build:                 build,
 		Outputs:               outputs,
 		Metadata:              metadata,
 		Packages:              packages,
+		Versioning:            versioning,
 	}, nil
+}
+
+// parseVersioning reads the marketplace.versioning block (yml_schema.py:
+// 618-634, _parse_versioning): a single "strategy" key, defaulting to
+// "lockstep" when the block or key is absent, validated against
+// VersioningStrategies.
+func parseVersioning(node *yaml.Node) (Versioning, error) {
+	v := mappingValue(node, "versioning")
+	if v == nil {
+		return Versioning{Strategy: "lockstep"}, nil
+	}
+	strategy := scalarString(v, "strategy")
+	if strategy == "" {
+		strategy = "lockstep"
+	}
+	if !VersioningStrategies[strategy] {
+		// Oracle's error text (yml_schema.py:629-632): sorted(_VERSIONING_
+		// STRATEGIES) alphabetically, and Python's {strategy!r} repr (single
+		// quotes for a plain ASCII string) -- not Go's %q (double quotes).
+		return Versioning{}, fmt.Errorf(
+			"'versioning.strategy' must be one of: lockstep, per_package, tag_pattern; got '%s'", strategy)
+	}
+	return Versioning{Strategy: strategy}, nil
 }
 
 // overridableString returns key's scalar value on node and whether key was
@@ -421,11 +511,21 @@ func parseAuthor(item *yaml.Node) map[string]string {
 	return out
 }
 
-func parseBuild(node *yaml.Node) Build {
+// parseBuild reads the marketplace.build block. When `tagPattern` is present
+// it is validated (upstream v0.27.0 yml_schema.py:613 routes it through
+// tag_pattern.validate_tag_pattern). When the key is absent, "" is kept and
+// tagpattern.Compile's own "v{version}" fallback applies -- the same effective
+// default as upstream's `raw.get("tagPattern", "v{version}")`.
+func parseBuild(node *yaml.Node) (Build, error) {
 	v := mappingValue(node, "build")
-	return Build{
-		TagPattern: scalarString(v, "tagPattern"),
+	if mappingValue(v, "tagPattern") == nil {
+		return Build{}, nil
 	}
+	pattern, err := tagpattern.Validate(scalarString(v, "tagPattern"), "build.tagPattern")
+	if err != nil {
+		return Build{}, err
+	}
+	return Build{TagPattern: pattern}, nil
 }
 
 // parseOutputs accepts the map form (`outputs: {claude: {}, codex: {}}`,
@@ -489,10 +589,34 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 			return nil, fmt.Errorf("marketplace.packages[%d] must be a mapping", i)
 		}
 		source := scalarString(item, "source")
-		if source != "" {
-			if err := manifest.ValidateMarketplaceSource(source); err != nil {
-				return nil, fmt.Errorf("marketplace.packages[%d]: %w", i, err)
+		// B-BLOCKING (2026-07-31): this used to only validate a non-empty
+		// source ("if source != \"\""), so an empty source skipped
+		// manifest.ValidateMarketplaceSource entirely and flowed straight
+		// through LoadAuthoringConfig/pack/Compose -- confirmed end-to-end
+		// with a compiled binary (a marketplace apm.yml with
+		// packages: [{name: ghost-pkg, source: "", ref: <40-hex>}] made
+		// `apm-go pack` succeed, only warning, and emit a malformed claude
+		// plugins[] entry missing "repo" -- see
+		// agent-schema.md's now-removed matching callout after the claude
+		// source table). ValidateMarketplaceSource already rejects "" with
+		// "marketplace source is empty" (mcp.go:301-303); running it
+		// unconditionally, like every other source, closes the gap.
+		if err := manifest.ValidateMarketplaceSource(source); err != nil {
+			return nil, fmt.Errorf("marketplace.packages[%d]: %w", i, err)
+		}
+		// Upstream v0.27.0 yml_schema.py:863 validates a present
+		// packages[N].tag_pattern; an absent key stays "" and inherits
+		// build.tagPattern (or tagpattern.Compile's default) downstream.
+		tagPattern := ""
+		if mappingValue(item, "tag_pattern") != nil {
+			validated, err := tagpattern.Validate(
+				scalarString(item, "tag_pattern"),
+				fmt.Sprintf("packages[%d].tag_pattern", i),
+			)
+			if err != nil {
+				return nil, err
 			}
+			tagPattern = validated
 		}
 		entries = append(entries, PackageEntry{
 			Name:              scalarString(item, "name"),
@@ -501,7 +625,7 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 			Version:           scalarString(item, "version"),
 			Ref:               scalarString(item, "ref"),
 			Subdir:            scalarString(item, "subdir"),
-			TagPattern:        scalarString(item, "tag_pattern"),
+			TagPattern:        tagPattern,
 			Tags:              mergeTagsKeywords(item),
 			IncludePrerelease: boolValue(item, "include_prerelease"),
 			Category:          scalarString(item, "category"),

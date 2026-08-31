@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/semver"
 	"github.com/apm-go/apm/internal/ux"
 )
 
@@ -71,6 +73,45 @@ func TestMarketplaceInit_ApmYMLMissing_ScaffoldsMinimalShellAndAppendsBlock(t *t
 	}
 	if !strings.Contains(content, "name: acme-org") {
 		t.Errorf("apm.yml = %q, want owner.name defaulted to acme-org", content)
+	}
+}
+
+// TestMarketplaceInitCmd_NextStepsRenderedInBorderedBox is the marketplace-init
+// half of the 2026-08-02 upstream-parity fix: upstream renders its "Next
+// Steps" list inside a bordered Rich Panel (border_style="cyan",
+// commands/marketplace/init.py:117-123), but marketplaceInitCmd previously
+// used the plain ux.Section+BulletList renderer (no border at all, the same
+// shape as every other unadorned heading in this command's output). This
+// locks the fix: the "Next steps" block must be wrapped in ux.Box's rounded
+// border (top/bottom rule + side rails), not just a bare heading line.
+func TestMarketplaceInitCmd_NextStepsRenderedInBorderedBox(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+
+	// Act
+	out, err := runMarketplaceCmd(t, "init")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace init returned error: %v (output: %s)", err, out)
+	}
+	if !strings.Contains(out, "Next steps") {
+		t.Fatalf("output = %q, want a \"Next steps\" section", out)
+	}
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
+		if !strings.Contains(out, glyph) {
+			t.Errorf("output = %q, want it to contain rounded-border glyph %q (Next steps must be inside ux.Box, not a bare ux.Section heading)", out, glyph)
+		}
+	}
+	for _, step := range []string{
+		"1. Edit the 'marketplace:' block in apm.yml to add your packages",
+		"2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json",
+		"3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json",
+		"4. Commit apm.yml and the generated marketplace file(s)",
+	} {
+		if !strings.Contains(out, step) {
+			t.Errorf("output = %q, want it to still contain step %q (box restyle must not drop content)", out, step)
+		}
 	}
 }
 
@@ -487,6 +528,59 @@ func initGitRepoWithTags(t *testing.T, dir string, tags ...string) {
 	}
 }
 
+// fixtureRemoteLister is an authoring.RefLister test double that ignores
+// the marketplace source string it is given and instead runs a real `git
+// ls-remote` against a fixed local directory. It exists so a CLI-level test
+// can drive the genuine "remote" (non-local) verification/resolution code
+// path -- authoring.verifyPackageSource and resolveRef's refKindHead/
+// refKindNamed branches only ever call the lister for a source that is NOT
+// "./"-prefixed -- against a real repository fixture, with no network
+// access, now that manifest.ValidateMarketplaceSource rejects an absolute
+// filesystem path as a marketplace source outright (BLOCKING 1, external
+// audit round 4, 2026-07-30). Before that fix, these tests used the
+// fixture repo's own absolute path AS the marketplace source string, relying
+// on authoring.resolveCloneURL's now-closed absolute-path passthrough to
+// reach it; the source string reaching AddPackage/SetPackage/
+// LoadAuthoringConfig must now itself be a req-mf-017-compliant shape (e.g.
+// "owner/repo"), so this lister is wired in via authoring.DefaultRefLister
+// instead, decoupling "which source string satisfies validation" from
+// "which real repository the lister actually queries".
+type fixtureRemoteLister struct{ dir string }
+
+func (f fixtureRemoteLister) ListRefs(string) ([]semver.TagInfo, error) {
+	cmd := exec.Command("git", "ls-remote", "--", f.dir, "HEAD", "refs/tags/*", "refs/heads/*")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-remote %s: %s", f.dir, strings.TrimSpace(string(out)))
+	}
+	var refs []semver.TagInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.TrimPrefix(parts[1], "refs/tags/")
+		name = strings.TrimPrefix(name, "refs/heads/")
+		refs = append(refs, semver.TagInfo{Name: name, Commit: parts[0]})
+	}
+	return refs, nil
+}
+
+// withFixtureRemoteLister swaps authoring.DefaultRefLister -- the CLI's real
+// lister wiring (cmd/apm-go/marketplace_package.go,
+// cmd/apm-go/marketplace_authoring.go) -- for a fixtureRemoteLister pointed
+// at dir, for the duration of the calling test, restoring the original
+// afterward.
+func withFixtureRemoteLister(t *testing.T, dir string) {
+	t.Helper()
+	orig := authoring.DefaultRefLister
+	authoring.DefaultRefLister = fixtureRemoteLister{dir: dir}
+	t.Cleanup(func() { authoring.DefaultRefLister = orig })
+}
+
 func TestMarketplaceCheckCmd_FlagsWired(t *testing.T) {
 	cmd := marketplaceCheckCmd()
 	for _, name := range []string{"offline", "verbose"} {
@@ -531,6 +625,12 @@ func TestMarketplaceCheck_AllLocalPackages_SucceedsWithoutNetwork(t *testing.T) 
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	out, err := runMarketplaceCmd(t, "check")
@@ -551,14 +651,16 @@ func TestMarketplaceCheck_RemotePackagePinnedRefFound_RealGitFixture(t *testing.
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	// YAML backslashes in Windows paths must be escaped for a double-quoted
-	// scalar; forward-slash the fixture path so this apm.yml stays a plain
-	// unquoted scalar regardless of platform.
-	source := filepath.ToSlash(repoDir)
+	// The marketplace source string must itself be req-mf-017-compliant
+	// (manifest.ValidateMarketplaceSource rejects an absolute filesystem
+	// path outright, BLOCKING 1, external audit round 4, 2026-07-30); the
+	// real repository fixture is wired in via withFixtureRemoteLister
+	// instead of being named directly as the source.
+	withFixtureRemoteLister(t, repoDir)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      ref: v1.0.0\n"
+		"    - name: tool\n      source: owner/repo\n      ref: v1.0.0\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -579,11 +681,11 @@ func TestMarketplaceCheck_RemotePackagePinnedRefMissing_ExitsNonZero(t *testing.
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      ref: v9.9.9\n"
+		"    - name: tool\n      source: owner/repo\n      ref: v9.9.9\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -595,8 +697,10 @@ func TestMarketplaceCheck_RemotePackagePinnedRefMissing_ExitsNonZero(t *testing.
 	if err == nil {
 		t.Fatal("marketplace check with a missing pinned ref returned no error, want exit 1 (mkt-041)")
 	}
-	if !strings.Contains(out, "x: tool") {
-		t.Errorf("output = %q, want an x failure line naming the package", out)
+	// The Entry Health Check table row must name the package with a failed
+	// STATUS cell and carry the pin failure in DETAIL.
+	if !strings.Contains(out, "tool") || !strings.Contains(out, `pinned ref "v9.9.9" not found`) {
+		t.Errorf("output = %q, want a table row naming the package and its missing-pin detail", out)
 	}
 }
 
@@ -634,6 +738,9 @@ func TestMarketplaceCheck_Offline_LocalPackagesStillSucceed(t *testing.T) {
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
 	_, err := runMarketplaceCmd(t, "check", "--offline")
@@ -641,6 +748,34 @@ func TestMarketplaceCheck_Offline_LocalPackagesStillSucceed(t *testing.T) {
 	// Assert
 	if err != nil {
 		t.Fatalf("marketplace check --offline returned error for a local-only marketplace: %v", err)
+	}
+}
+
+// TestMarketplaceCheck_LocalPackageMissingPath_FailsWithDetail is ticket 20
+// AC4's end-to-end CLI regression: `check` used to report REACHABLE for a
+// local package whose directory does not exist (user-reported, 2026-08-25).
+// It must now fail the same way a missing remote ref does -- a non-zero
+// exit and a table row naming the package with a detail naming the path.
+func TestMarketplaceCheck_LocalPackageMissingPath_FailsWithDetail(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n" +
+		"  packages:\n" +
+		"    - name: gone\n      source: ./llm-wiki\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "check")
+
+	// Assert
+	if err == nil {
+		t.Fatalf("marketplace check with a missing local package source returned no error, want a failure (output: %s)", out)
+	}
+	if !strings.Contains(out, "gone") || !strings.Contains(out, "./llm-wiki") {
+		t.Errorf("output = %q, want a table row naming the package and the missing path", out)
 	}
 }
 
@@ -666,9 +801,10 @@ func TestMarketplaceCheck_LegacyConfig_PrintsDeprecationWarning(t *testing.T) {
 	}
 }
 
-// TestMarketplaceCheck_VerbosePrintsEveryPackage covers --verbose printing
-// a line for passing packages too, not just failures.
-func TestMarketplaceCheck_VerbosePrintsEveryPackage(t *testing.T) {
+// TestMarketplaceCheck_TableListsPassingPackagesByDefault covers the Entry
+// Health Check table (upstream __init__.py:1246-1287): every entry gets a
+// row -- passing entries included -- without needing --verbose.
+func TestMarketplaceCheck_TableListsPassingPackagesByDefault(t *testing.T) {
 	// Arrange
 	chdirTemp(t)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
@@ -678,16 +814,49 @@ func TestMarketplaceCheck_VerbosePrintsEveryPackage(t *testing.T) {
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Act
-	out, err := runMarketplaceCmd(t, "check", "-v")
+	out, err := runMarketplaceCmd(t, "check")
 
 	// Assert
 	if err != nil {
-		t.Fatalf("marketplace check -v returned error: %v", err)
+		t.Fatalf("marketplace check returned error: %v", err)
 	}
-	if !strings.Contains(out, "+: local-a: ok") {
-		t.Errorf("output = %q, want a per-package + line with -v", out)
+	for _, want := range []string{"REACHABLE", "VERSION FOUND", "REF OK", "local-a", "OK"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q (Entry Health Check table)", out, want)
+		}
+	}
+}
+
+// TestMarketplaceCheck_OfflinePrintsModeNotice covers upstream
+// check.py:69-73's offline-mode notice line.
+func TestMarketplaceCheck_OfflinePrintsModeNotice(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n" +
+		"  packages:\n" +
+		"    - name: local-a\n      source: ./pkgs/a\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	out, err := runMarketplaceCmd(t, "check", "--offline")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("marketplace check --offline returned error: %v", err)
+	}
+	if !strings.Contains(out, "Offline mode") {
+		t.Errorf("output = %q, want the offline-mode notice", out)
 	}
 }
 
@@ -708,6 +877,12 @@ func TestMarketplaceCheck_DuplicatePackageNames_WarnsButExitsZero(t *testing.T) 
 		"    - name: Foo-Tool\n      source: ./pkgs/a\n" +
 		"    - name: foo-tool\n      source: ./pkgs/b\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "b"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -735,6 +910,12 @@ func TestMarketplaceCheck_UniqueNames_NoDuplicateWarning(t *testing.T) {
 		"    - name: tool-a\n      source: ./pkgs/a\n" +
 		"    - name: tool-b\n      source: ./pkgs/b\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join("pkgs", "b"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -788,11 +969,11 @@ func TestMarketplaceOutdated_UpgradablePackage_ExitsNonZero(t *testing.T) {
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "v1.0.0", "v1.1.0")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      version: \"^1.0.0\"\n"
+		"    - name: tool\n      source: owner/repo\n      version: \"^1.0.0\"\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -817,11 +998,11 @@ func TestMarketplaceOutdated_NoMatchingTags_DoesNotExitNonZero(t *testing.T) {
 	chdirTemp(t)
 	repoDir := t.TempDir()
 	initGitRepoWithTags(t, repoDir, "release-1")
-	source := filepath.ToSlash(repoDir)
+	withFixtureRemoteLister(t, repoDir)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      version: \"^1.0.0\"\n"
+		"    - name: tool\n      source: owner/repo\n      version: \"^1.0.0\"\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -848,11 +1029,11 @@ func TestMarketplaceOutdated_FetchFailure_DoesNotExitNonZero(t *testing.T) {
 	if err := os.MkdirAll(notARepo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	source := filepath.ToSlash(notARepo)
+	withFixtureRemoteLister(t, notARepo)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
 		"  owner:\n    name: acme\n" +
 		"  packages:\n" +
-		"    - name: tool\n      source: " + source + "\n      version: \"^1.0.0\"\n"
+		"    - name: tool\n      source: owner/repo\n      version: \"^1.0.0\"\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -912,5 +1093,39 @@ func TestMarketplaceOutdated_LegacyConfig_PrintsDeprecationWarning(t *testing.T)
 	}
 	if !strings.Contains(out, "apm-go marketplace migrate") {
 		t.Errorf("output = %q, want a deprecation warning pointing at 'apm-go marketplace migrate'", out)
+	}
+}
+
+// TestMarketplaceOutdated_CurrentColumnReadsMarketplaceJSON covers upstream
+// _load_current_versions (__init__.py:1133-1148): a ./marketplace.json in
+// the working directory feeds the Current column; without it every cell is
+// "--". Also locks the RANGE column added for table parity.
+func TestMarketplaceOutdated_CurrentColumnReadsMarketplaceJSON(t *testing.T) {
+	// Arrange
+	chdirTemp(t)
+	repoDir := t.TempDir()
+	initGitRepoWithTags(t, repoDir, "v1.0.0", "v1.1.0")
+	withFixtureRemoteLister(t, repoDir)
+	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
+		"  owner:\n    name: acme\n" +
+		"  packages:\n" +
+		"    - name: tool\n      source: owner/repo\n      version: \"^1.0.0\"\n"
+	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mktJSON := `{"name": "demo", "plugins": [{"name": "tool", "source": {"ref": "v1.0.0"}}]}`
+	if err := os.WriteFile("marketplace.json", []byte(mktJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act (v1.1.0 exists, so the package is upgradable and exits non-zero;
+	// the columns are what this test is about)
+	out, _ := runMarketplaceCmd(t, "outdated")
+
+	// Assert
+	for _, want := range []string{"RANGE", "^1.0.0", "v1.0.0", "v1.1.0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q (Current from marketplace.json + Range column)", out, want)
+		}
 	}
 }

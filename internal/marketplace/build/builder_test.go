@@ -759,3 +759,45 @@ func TestResolvePackages_AggregatesMultiplePackages(t *testing.T) {
 		t.Errorf("resolved[1].SHA = %q, want %q", resolved[1].SHA, wantSHA)
 	}
 }
+
+// TestResolveRemote_EffectiveTagPatternFallbackChain locks the producer-side
+// half of upstream v0.27.0's tag_pattern propagation: builder.py:635 (explicit
+// ref) and :777 (version range) both compute `entry.tag_pattern or
+// yml.build.tag_pattern`, and yml_schema.py:609 defaults build.tag_pattern to
+// "v{version}" -- so the result is never empty on either path. apm-go keeps ""
+// for an absent key, so the final fallback lives in resolveRemote instead.
+func TestResolveRemote_EffectiveTagPatternFallbackChain(t *testing.T) {
+	tests := []struct {
+		name         string
+		buildPattern string
+		entryPattern string
+		want         string
+	}{
+		{"nothing set falls back to the default", "", "", "v{version}"},
+		{"build-level pattern applies", "{name}-v{version}", "", "{name}-v{version}"},
+		{"entry-level pattern wins over build", "{name}-v{version}", "v{version}", "v{version}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// An explicit `ref:` keeps this off the version-range path, so the
+			// pattern is exercised purely as propagated metadata -- upstream
+			// sets it on that path too (builder.py:635).
+			dir := t.TempDir()
+			initGitRepoWithTags(t, dir, "v1.0.0")
+			cfg := &authoring.AuthoringConfig{
+				Build: authoring.Build{TagPattern: tt.buildPattern},
+				Packages: []authoring.PackageEntry{
+					{Name: "tool-a", Source: dir, Ref: "v1.0.0", TagPattern: tt.entryPattern},
+				},
+			}
+
+			resolved, _, err := ResolvePackages(cfg, Options{MetadataFetcher: noopMetadataFetcher{}})
+			if err != nil {
+				t.Fatalf("ResolvePackages() error = %v", err)
+			}
+			if got := resolved[0].EffectiveTagPattern; got != tt.want {
+				t.Errorf("EffectiveTagPattern = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

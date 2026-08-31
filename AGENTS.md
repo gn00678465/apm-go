@@ -1,133 +1,107 @@
-## Overviews
-這個專案是使用 golang 重新開發 microsoft/apm 的專案.
+# apm-go
 
-<!-- Available_COMMANDS:START -->
-## Available commands
-Golang 相關指令（於專案根目錄執行）：
+Go port of [microsoft/apm](https://github.com/microsoft/apm) — the Agent Package Manager — as a single static binary with no Python runtime. Compiles `.apm/` primitives (instructions, agents, chat modes, memory) into the root context files AI agents read on startup (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`), and installs/uninstalls packages and MCP server configurations from a marketplace.
 
-| 指令 | 用途 |
-|---|---|
-| `go mod tidy` | 整理 `go.mod` / `go.sum` 相依 |
-| `go build ./...` | 編譯整個專案（當前平台） |
-| `go build -o bin/apm-go.exe ./cmd/apm-go`（Windows）/ `go build -o bin/apm-go ./cmd/apm-go`（其他平台） | 編譯二進位，輸出檔名永遠固定為 `apm-go`（不可用 `apm`/`apm.exe`） |
-| `go build -trimpath -ldflags "-s -w" -o bin/apm-go.exe ./cmd/apm-go` | Release 尺寸編譯（去除除錯資訊與路徑，實測約小 29%；與 release workflow 同旗標） |
-| `GOOS=windows GOARCH=amd64 go build -o bin/apm-go.exe ./cmd/apm-go` | 交叉編譯 Windows 二進位（PowerShell：`$env:GOOS='windows'; $env:GOARCH='amd64'; go build -o bin/apm-go.exe ./cmd/apm-go`） |
-| `GOOS=linux GOARCH=amd64 go build -o bin/apm-go ./cmd/apm-go` | 交叉編譯 Linux 二進位（PowerShell：`$env:GOOS='linux'; $env:GOARCH='amd64'; go build -o bin/apm-go ./cmd/apm-go`） |
-| `go run ./cmd/apm-go <args>` | 執行 apm-go CLI |
-| `go test ./...` | 執行所有測試 |
-| `go test ./... -cover` | 執行測試並顯示覆蓋率（目標 ≥ 80%） |
-| `go test ./... -run <Name>` | 只執行符合名稱的測試 |
-| `go fmt ./...` | 格式化程式碼 |
-| `go vet ./...` | 靜態檢查 |
+The upstream Python implementation is the **oracle**: the term always means it, and code comments cite oracle file:line. Parity is deliberate but **partial** — the oracle's command surface is ported selectively, not API-for-API. Before treating a missing command or flag as a bug, check whether it is an intentional gap: `cmd/apm-go/*.go` comments mark each deviation with its reason, and a deviation that is not recorded there is a finding, not a feature.
 
-## Available skills
+## Canonical documents — read before writing code
 
-- context7: 當需要針對特定套件或功能查詢對新的文件時使用
-- commit-message: 當需要撰寫原子化 commit message 時使用
-<!-- Available_COMMANDS:START -->
+Three files are the project's long-term memory. Read the relevant one before designing or changing anything, and treat a conflict between your plan and these files as a stop signal, not a judgment call:
 
-<!-- TRELLIS:START -->
-# Trellis Instructions
+- **`PRODUCT.md`** — product facts: users, purpose, positioning, operating constraints, output contract, and the **Terminal UI design** (status-symbol vocabulary, `init` / `plugin init` frame rules). Any user-visible output must match it.
+- **`ARCHITECTURE.md`** — package layout, layer responsibilities, the internal import graph and its dependency rules, the data flows (install, compile, pack, marketplace, init, error/exit-code path), and cross-cutting concerns. New code goes in the layer that owns the concern; a new import edge that the graph forbids is a design change and needs a ruling.
+- **`AGENTS.md`** (this file) — engineering rules and testing patterns.
 
-These instructions are for AI assistants working in this project.
+Each topic lives in exactly one of them; reference, do not restate. When a change alters a fact recorded there, update that file in the same change.
 
-This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+## GitNexus — code intelligence
 
-- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
-- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
-- `.trellis/workspace/` — per-developer journals and session traces
-- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+This repo is indexed as **apm-go**. Use the MCP tools to navigate and to gate edits:
 
-If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+- **Before editing any function, class, or method**: `impact({target, direction: "upstream"})`; report the blast radius (callers, affected processes, risk) to the user, and stop for confirmation on HIGH or CRITICAL.
+- **Before committing**: `detect_changes()` to confirm only the intended symbols and flows moved; `detect_changes({scope: "compare", base_ref: "main"})` for branch-level review.
+- **Renames** go through `rename` — it follows the call graph.
+- **Exploring unfamiliar code**: `query({search_query})` returns execution flows ranked by relevance; `context({name})` gives one symbol's callers, callees, and flows.
+- **Security review**: `explain({target})` lists source→sink taint findings (needs `analyze --pdg`).
 
-If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
-- `.agents/skills/` — reusable Trellis skills
-- `.codex/agents/` — optional custom subagents
+Index stale (reported by `gitnexus://repo/apm-go/context`)? `node .gitnexus/run.cjs analyze` from the project root. Task-specific workflows (exploring, impact analysis, debugging, refactoring, CLI) live in `.claude/skills/gitnexus/`.
 
-Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+## Build & test
 
-<!-- TRELLIS:END -->
-
-<!-- GUIDELINES:START -->
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
+```sh
+go build -o bin/apm-go ./cmd/apm-go
+go test ./...
 ```
 
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+Release-size build (same flags CI uses):
 
----
+```sh
+go build -trimpath -ldflags "-s -w" -o bin/apm-go ./cmd/apm-go
+```
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
-<!-- GUIDELINES:END -->
+No Makefile or task runner — `go build` and `go test` are the only entry points.
 
-<!-- 專案專屬規則。位於 Trellis 管理區塊之外，`trellis update` 不會覆寫。 -->
+## Release
 
-## 5. 收斂性斷言禁令（fail-closed）
+The version is injected at release build time: `release.yml` passes the pushed tag (without the `v` prefix) via `-ldflags "-X …/internal/version.Version=<tag>"`, so releasing needs no version-bump commit — tag a commit on main and push the tag. Local builds report `dev`.
 
-**背景**：反覆出現的「未完成 / 偷懶 / 遺漏 / 自作主張」是**同一個動作**——用一個沒有證據的終結性結論去停止工作。「延後」「架構性」「不可利用」「完成了」全是同一招：講一個結論，就不用再做了。這條規則把它 fail-closed。
+`release.yml` gates on ancestry (fail-closed): the tagged commit must be an ancestor of `origin/main`; a tag on a feature branch is rejected. Release flow: feature PRs merge to main and never touch `internal/version/`; tag `vX.Y.Z-beta.N` from main at any point during integration; tag `vX.Y.Z-rc.N` when the feature set is frozen (only fixes and docs land after); tag `vX.Y.Z` on the same commit as the last verified rc.
 
-**絆線詞**：寫下「延後 / 架構性 / 不可利用 / 不影響 / 已完成 / 完整 / 範圍外 / N/A / 其餘同理」任一個，**必須在同一處同時附上證據三件套**：
+Pre-release tags (containing `-`, e.g. `v0.3.0-beta.1`) are marked as GitHub prereleases so `install.sh` defaults to the latest stable; testers install one with `APM_GO_VERSION=X.Y.Z-rc.N`.
 
-1. `file:line` — 實際讀過的程式碼路徑（不是「應該」，是讀過的位置）。
-2. 威脅模型 / repro / 反例 — 誰可控、可得什麼；或重現步驟；或一個具體反例。
-3. 成本估計 — 若結論是「延後 / 需大改」，估計修復規模。
+## Package layout
 
-只有形容詞、沒有證據 = **缺陷，不是結論**。不確定時只能寫「未驗證」，**不能寫「延後」——延後是一個 claim，不是免死的範圍決定**。
+```
+cmd/apm-go/          CLI commands (one file per cobra subcommand)
+internal/
+  archive/           tar/zip extraction with size/count caps
+  compile/           .apm/ → AGENTS.md compilation (agents-family targets)
+  credsec/           credential-in-YAML detection
+  deploy/            per-target adapter pattern (claude, codex, copilot, …)
+  experimental/      opt-in feature flags persisted in the user config
+  gitops/            hardened git clone, tag listing, env sanitization, stderr translation
+  localbundle/       local package bundling
+  lockfile/          apm.lock.yaml parse/write/audit/integrity
+  manifest/          apm.yml parsing, validation, dependency refs
+  marketplace/       registry client, resolver, authoring commands
+  mcpregistry/       MCP server registry lookups
+  pack/              plugin packaging and bundling
+  pluginjson/        plugin.json / mcp.json scaffold, staged atomic commit
+  registry/          package registry operations
+  resolver/          dependency resolution, diamond detection, updates
+  security/          security scanning gate (block/warn/ignore policy)
+  semver/            SemVer parsing and comparison
+  ux/                terminal output — spinners, tables, clack prompts, theming
+  version/           single source of truth for release version
+  yamlcore/          YAML safe-subset loader, round-trip patching
+```
 
-**適用範圍**：research、PRD、code review、進度回報，以及任何「我可以停手了」的判斷點。這條規則優先於「趕快收尾」的衝動。
+## Key conventions
 
-**偵測器**：任何人看到上述絆線詞而旁邊沒有證據三件套，即為缺陷；且它本該被 checklist 推導步驟擋下，不該靠人工抓。驗證面的對應機制（checklist 推導、絆線觸發的獨立審查、成本排序）見 `.trellis/workflow.md` 的「Verification Checklist & Convergent-Claim Tripwire」。
+**Oracle parity.** When the oracle handles a case, match its behaviour — edge cases, error messages, exit codes, output bytes. Cite oracle file:line in a comment when the mapping is non-obvious. Where apm-go deviates on purpose (a flag not yet ported, `apm-go` in place of `apm` in hint text), say so in a comment at the deviation with the reason.
+
+**Git subprocesses** run under `gitops.ApplySecureGitEnv` (no credential prompts, transport allow-list) — every call site, including diagnostics.
+
+**YAML round-trip.** `apm.yml` and `apm.lock.yaml` are user-edited files. All mutations go through `yamlcore` splice/patch helpers that preserve comments, ordering, and formatting — never marshal-and-rewrite.
+
+**JSON bytes.** Pack and scaffold output goes through `bundle.MarshalIndent`, which reproduces Python `json.dumps(indent=2)` with `ensure_ascii=True` (non-ASCII as `\uXXXX`). The marketplace builder is the one upstream writer with `ensure_ascii=False`; it uses `encoding/json` separately.
+
+**Deploy adapters.** Each target platform (claude, codex, copilot, antigravity, opencode, agent-skills) is a `TargetAdapter` in `internal/deploy/`. Adding a target means adding an adapter file — the dispatch in `deploy.go` picks it up.
+
+**Exit codes.** Commands needing a specific exit code wrap errors with `withExitCode()` in `cmd/apm-go/exitcode.go`; the root error handler unwraps it. Usage errors (the oracle's `click.UsageError`) are 2.
+
+**Security scanning.** `internal/security/` is a credential/secret scanner with a policy gate (`ScanPolicy`: block, warn, or report; fail-closed — an unknown policy blocks). Today it runs in two places only: `pack` scans bundled sources under `WarnPolicy` (`internal/pack/bundle/producer.go`), and `audit` scans deployed files and reports critical/warning counts (`cmd/apm-go/audit_content.go`). It is **not** on the install/deploy path; do not describe or rely on it as a pre-deploy gate.
+
+**UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI; user-facing text uses the `ux` printers, not `fmt.Print`. The status-symbol vocabulary, the interactive `init` / `plugin init` frame rules, and the rest of the terminal UI design live in `PRODUCT.md` ("Terminal UI design") — the single source; do not restate them here.
+
+**Safe YAML subset.** `yamlcore.SafeLoad` rejects YAML features outside the OpenAPM safe subset (no anchors, no merge keys, no custom tags). All YAML ingestion goes through it.
+
+## Testing patterns
+
+Tests use `t.TempDir()` for filesystem isolation. No global test fixtures — each test builds its own `apm.yml` / directory tree inline. External seams are injected, not mocked globally: `installDeps`, `doctorDeps` (git/env), and the `*ForTest` hooks in `internal/ux/testhooks.go` and `internal/pluginjson/testhooks.go`. Expected values come from the oracle's source or output, never recomputed the way the code does.
+
+**CI detection is pinned, never inherited.** `cmd/apm-go` and `internal/ux` each have a `TestMain` that unsets `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `TF_BUILD`, and `JENKINS_URL` before running their tests. Both packages have production code that branches on those variables — `install` defaults to frozen under CI (`lockfile.IsCIEnvironment`, req-lk-018) and `ux.isCI` suppresses interactivity — so without the pin the same test suite is green on a workstation and red in Actions. A test that wants CI semantics opts in with `t.Setenv("CI", "1")`, which overrides the baseline for that test only. Any new package whose code reads those variables needs the same `TestMain`.
+
+Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depend on conformance spec files under `spec/conformance/` — runtime inputs tracked in git, not generated. `TestParseDepString_AbsolutePath` in `internal/manifest` skips its two windows-drive-letter subtests outside `GOOS=windows` (ticket 09); everything else in it runs everywhere.
+
+`go test ./...` passing is not the parity gate — `.github/workflows/parity.yml` runs `tools/parity` against the pinned Oracle on every push/PR and is the authority on Oracle byte-for-byte parity; `go test` only verifies apm-go's own Go-level correctness (ticket 09).

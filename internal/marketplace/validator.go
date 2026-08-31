@@ -19,37 +19,56 @@ type Finding struct {
 	Message string
 }
 
-// Validate runs structural checks on a marketplace manifest -- this is
-// mkt-016's dependency (`marketplace validate`, wired in a later step, owns
-// turning these findings into the "N passed, N warnings, N errors" summary
-// and exit code). It mirrors the Python original's
-// marketplace.validator.validate_marketplace: validate_plugin_schema
-// (every plugin has a non-empty name and a "source") and
-// validate_no_duplicate_names (no two plugin names collide
-// case-insensitively), flattened into a single ordered []Finding slice
-// instead of Python's list of per-check ValidationResult objects. The
+// ValidationResult is one named check's outcome, mirroring the Python
+// original's marketplace.validator.ValidationResult (check_name / passed /
+// warnings / errors). `marketplace validate` renders one line per check --
+// including passing checks -- and counts its Summary from these, exactly
+// like Python's validate.py:54-80.
+type ValidationResult struct {
+	CheckName string
+	Findings  []Finding
+}
+
+// Passed reports whether the check produced no findings at all.
+func (r ValidationResult) Passed() bool { return len(r.Findings) == 0 }
+
+// ValidateChecks runs the same checks as Validate but grouped per named
+// check, mirroring Python's validate_marketplace returning one
+// ValidationResult per check, IN ORDER: "Structure"
+// (validate_marketplace_structure, ticket 11), "Schema"
+// (validate_plugin_schema), and "Names" (validate_no_duplicate_names). The
 // manifest-level name check has no Python equivalent -- the original's JSON
 // parser always defaults a missing name to the source's repo name (or
 // "unknown"), so validate_marketplace never sees an empty manifest.Name;
 // apm-go's json.Unmarshal-based parsing does not backfill a default, so an
-// empty name is a real state this function must catch.
-func Validate(m *MarketplaceManifest) []Finding {
+// empty name is a real state, folded into the "Schema" check here.
+func ValidateChecks(m *MarketplaceManifest) []ValidationResult {
 	if m == nil {
-		return []Finding{{Level: LevelError, Message: "marketplace manifest is nil"}}
+		return []ValidationResult{{
+			CheckName: "Schema",
+			Findings:  []Finding{{Level: LevelError, Message: "marketplace manifest is nil"}},
+		}}
 	}
 
-	var findings []Finding
+	// validate_marketplace_structure (marketplace/validator.go:40-45 in the
+	// Oracle): reports the raw manifest-shape diagnostics the tolerant
+	// parser retained (models.go's MarketplaceManifest.StructuralErrors),
+	// verbatim, one error per entry.
+	var structure []Finding
+	for _, e := range m.StructuralErrors {
+		structure = append(structure, Finding{Level: LevelError, Message: e})
+	}
 
+	var schema []Finding
 	if strings.TrimSpace(m.Name) == "" {
-		findings = append(findings, Finding{Level: LevelError, Message: "marketplace manifest name is empty"})
+		schema = append(schema, Finding{Level: LevelError, Message: "marketplace manifest name is empty"})
 	}
-
 	for _, p := range m.Plugins {
 		if strings.TrimSpace(p.Name) == "" {
-			findings = append(findings, Finding{Level: LevelError, Message: "plugin entry has empty name"})
+			schema = append(schema, Finding{Level: LevelError, Message: "plugin entry has empty name"})
 		}
 		if p.Source == nil {
-			findings = append(findings, Finding{
+			schema = append(schema, Finding{
 				Level:   LevelError,
 				Message: fmt.Sprintf("plugin %q is missing required field 'source'", p.Name),
 			})
@@ -59,11 +78,12 @@ func Validate(m *MarketplaceManifest) []Finding {
 	// Mirrors validate_no_duplicate_names verbatim: it does not special-case
 	// empty names, so two plugins that both failed the empty-name check
 	// above will also collide with each other here.
+	var names []Finding
 	seen := make(map[string]string, len(m.Plugins))
 	for _, p := range m.Plugins {
 		lower := strings.ToLower(strings.TrimSpace(p.Name))
 		if original, ok := seen[lower]; ok {
-			findings = append(findings, Finding{
+			names = append(names, Finding{
 				Level:   LevelError,
 				Message: fmt.Sprintf("duplicate plugin name: %q (conflicts with %q)", p.Name, original),
 			})
@@ -72,5 +92,20 @@ func Validate(m *MarketplaceManifest) []Finding {
 		seen[lower] = p.Name
 	}
 
+	return []ValidationResult{
+		{CheckName: "Structure", Findings: structure},
+		{CheckName: "Schema", Findings: schema},
+		{CheckName: "Names", Findings: names},
+	}
+}
+
+// Validate runs structural checks on a marketplace manifest and returns the
+// findings flattened into a single ordered slice (ValidateChecks' per-check
+// grouping, in check order). Kept for callers that only need the flat list.
+func Validate(m *MarketplaceManifest) []Finding {
+	var findings []Finding
+	for _, check := range ValidateChecks(m) {
+		findings = append(findings, check.Findings...)
+	}
 	return findings
 }
