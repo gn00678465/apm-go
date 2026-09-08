@@ -127,9 +127,13 @@ layer_staticcheck() {
 layer_suite_health() {
   # Randomized test order; the seed is printed per package so a failure can
   # be replayed with -shuffle=<seed>.
-  go test -count=1 -shuffle=on ./... 2>&1 | tee "$GATE_ART/shuffle.log"
+  # go test prints the shuffle seed only under -v, so the gate picks the
+  # seed itself and records it; rerun with -shuffle=<seed> to replay.
+  seed=$(date +%s)
+  echo "shuffle seed: $seed"
+  go test -count=1 -shuffle="$seed" ./... 2>&1 | tee "$GATE_ART/shuffle.log"
   if grep -qE '^(FAIL|--- FAIL|panic:)' "$GATE_ART/shuffle.log"; then return 1; fi
-  echo "seeds: $(grep -c 'test.shuffle' "$GATE_ART/shuffle.log") packages shuffled"
+  echo "shuffled packages ok: $(grep -c '^ok' "$GATE_ART/shuffle.log") (seed $seed)"
 }
 
 layer_property() {
