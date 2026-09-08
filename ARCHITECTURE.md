@@ -133,7 +133,7 @@ flowchart LR
   F --> F1[bundle.MarshalIndent write.go:79]
 ```
 
-- `runPack` (`cmd/apm-go/pack.go:408`) under `--json` calls `ux.SetConsoleStderr(true)` (`:416`) so status lines move to stderr and stdout carries only `emitPackJSON` (`pack_json.go:110`).
+- `runPack` (`cmd/apm-go/pack.go:408`) under `--json` calls `ux.SetConsoleStderr(true)` (`:416`) so status lines move to stderr and stdout carries only `emitPackJSON` (`pack_json.go:96`).
 - Release gates: `runReleaseGates` (`:1162`) chains `build.CheckVersionAlignment` (`:1186`) and the drift check.
 - Every output directory passes `build.EnsureWithinRoot` (`:644`, `:994`), keeping writes inside the project.
 - The credential scan inside `Produce` runs under `security.WarnPolicy` (`internal/pack/bundle/producer.go:381,389`): it warns and continues; dry-run skips it.
@@ -186,7 +186,7 @@ flowchart TD
 
 **Exit codes.** §3.6. Usage errors are 2; `marketplace package` edit failures are 2 (`cmd/apm-go/marketplace_package.go:139,198`); `doctor` exits through `withSilentExitCode` with its table already printed.
 
-**JSON bytes.** pack and scaffold JSON go through `bundle.MarshalIndent` (`internal/pack/bundle/jsonvalue.go:195`: 2-space indent, empty containers as `{}` / `[]`, caller appends the trailing newline): `producer.go:221-237`, `pluginmanifest/write.go:79`, `pluginjson/pluginjson.go:86`. The one exception is marketplace.json via `build.WriteOutput` (`internal/marketplace/build/output.go:232`): `encoding/json` with `SetEscapeHTML(false)`, UTF-8 unescaped. The `pack --json` envelope uses `json.MarshalIndent` (`cmd/apm-go/pack_json.go:111`).
+**JSON bytes.** pack and scaffold JSON go through `bundle.MarshalIndent` (`internal/pack/bundle/jsonvalue.go:195`: 2-space indent, empty containers as `{}` / `[]`, caller appends the trailing newline): `producer.go:221-237`, `pluginmanifest/write.go:79`, `pluginjson/pluginjson.go:86`. The one exception is marketplace.json via `build.WriteOutput` (`internal/marketplace/build/output.go:232`): `encoding/json` with `SetEscapeHTML(false)`, UTF-8 unescaped. The `pack --json` envelope uses `json.MarshalIndent` (`cmd/apm-go/pack_json.go:97`).
 
 **Archive limits.** Extraction goes through `archive.SafeExtract` with `Limits` (`internal/archive/extract.go:25,51`); destinations are checked with `archive.Contained` (`cmd/apm-go/install.go:606`).
 

@@ -133,7 +133,7 @@ func Password(label string) (string, error) {
 	var val string
 	field := huh.NewInput().
 		Title(label).
-		Password(true).
+		EchoMode(huh.EchoModePassword).
 		Value(&val).
 		WithTheme(Theme())
 	err := runField(field)
@@ -216,7 +216,7 @@ var inputFormWith = func(theme huh.Theme, title string, showHelp bool, fields []
 
 		input := huh.NewInput().
 			Title(f.Label).
-			Password(f.Password).
+			EchoMode(echoMode(f.Password)).
 			Value(&val)
 		if f.Validate != nil {
 			input = input.Validate(f.Validate)
@@ -237,4 +237,13 @@ var inputFormWith = func(theme huh.Theme, title string, showHelp bool, fields []
 		values[f.Key] = *holders[i]
 	}
 	return values, nil
+}
+
+// echoMode maps the Field.Password flag onto huh's echo mode; Input.Password
+// is deprecated in huh v2 in favour of EchoMode.
+func echoMode(password bool) huh.EchoMode {
+	if password {
+		return huh.EchoModePassword
+	}
+	return huh.EchoModeNormal
 }

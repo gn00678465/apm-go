@@ -30,20 +30,6 @@ type packJSONEnvelope struct {
 	Drift            any                     `json:"drift"`
 }
 
-// packJSONFailure is the pre-build failure shape. It deliberately has FEWER
-// keys than packJSONEnvelope: failure_to_json_dict stops at "bundle" and
-// never carries plugin_manifests/version_alignment/drift, because a failure
-// that prevents the build from starting has no producer or gate results to
-// report.
-type packJSONFailure struct {
-	OK          bool                `json:"ok"`
-	DryRun      bool                `json:"dry_run"`
-	Warnings    []string            `json:"warnings"`
-	Errors      []packJSONError     `json:"errors"`
-	Marketplace packJSONMarketplace `json:"marketplace"`
-	Bundle      any                 `json:"bundle"`
-}
-
 type packJSONError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -114,26 +100,6 @@ func emitPackJSON(w io.Writer, env packJSONEnvelope) error {
 	}
 	_, err = fmt.Fprintf(w, "%s\n", b)
 	return err
-}
-
-// emitPackJSONFailure writes the pre-build failure envelope and returns the
-// error carrying its exit code. Unlike the success path this is COMPACT:
-// _emit_json_error_or_raise calls json.dumps with no indent argument
-// (commands/pack.py:74-77), then ctx.exit(1) -- so a consumer sees a single
-// line, and the exit code is 1 regardless of what the failure was.
-func emitPackJSONFailure(w io.Writer, code, message string) error {
-	b, err := json.Marshal(packJSONFailure{
-		Warnings:    []string{},
-		Errors:      []packJSONError{{Code: code, Message: message}},
-		Marketplace: packJSONMarketplace{Outputs: []packJSONMarketplaceOutput{}},
-	})
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "%s\n", b); err != nil {
-		return err
-	}
-	return withSilentExitCode(1, fmt.Errorf("%s", message))
 }
 
 // marketplaceOutputsJSON converts the deferred render records into the

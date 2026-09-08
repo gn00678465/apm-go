@@ -486,21 +486,6 @@ func writeBundleFiles(rw *rootfs.RootWriter, bundleDir string, fileMap *FileMap)
 	return nil
 }
 
-func copyFile(src, dest string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", src, err)
-	}
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(src); err == nil {
-		mode = info.Mode()
-	}
-	if err := os.WriteFile(dest, data, mode); err != nil {
-		return fmt.Errorf("write %s: %w", dest, err)
-	}
-	return nil
-}
-
 // pluginJSONCandidates mirrors find_plugin_json's search order
 // (utils/helpers.py:105-129): project-root plugin.json first, then each
 // known ecosystem's convention path.

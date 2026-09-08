@@ -43,10 +43,6 @@ func withApmYMLFetcher(t *testing.T, f authoring.ApmYMLFetcher) {
 	t.Cleanup(func() { authoring.DefaultApmYMLFetcher = orig })
 }
 
-func githubSourcePlugin(name, repo string) marketplace.MarketplacePlugin {
-	return marketplace.MarketplacePlugin{Name: name, Source: map[string]any{"type": "github", "repo": repo}}
-}
-
 // ── flags wired ───────────────────────────────────────────────────────────
 
 func TestMarketplaceAuditCmd_FlagsWired(t *testing.T) {

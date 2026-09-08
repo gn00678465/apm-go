@@ -143,7 +143,7 @@ func TestLoader_NormalizesBareDigest(t *testing.T) {
 func TestLoader_401_RemediationHintNoToken(t *testing.T) {
 	t.Setenv("APM_REGISTRY_TOKEN_LOCAL", "top-secret-tok")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "denied", 401)
+		http.Error(w, "denied", http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
 	l := newLoader(t, srv.URL)

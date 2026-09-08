@@ -636,9 +636,7 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 	}
 	if strings.HasSuffix(parts[len(parts)-1], ".git") {
 		parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
-		if strings.HasSuffix(presentationParts[len(presentationParts)-1], ".git") {
-			presentationParts[len(presentationParts)-1] = strings.TrimSuffix(presentationParts[len(presentationParts)-1], ".git")
-		}
+		presentationParts[len(presentationParts)-1] = strings.TrimSuffix(presentationParts[len(presentationParts)-1], ".git")
 	}
 	path := strings.Join(parts, "/")
 
@@ -657,7 +655,6 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 	// and treats any remaining segments as a virtual package path.
 	if isAzureDevOpsHost(host) {
 		parts = removeGitMarker(parts)
-		presentationParts = removeGitMarker(presentationParts)
 		baseLen := 3
 		if isVisualStudioLegacyHost(host) {
 			baseLen = 2
@@ -1357,15 +1354,6 @@ func classifyVirtualPath(vp string) string {
 	return "subdirectory"
 }
 
-func anyEmpty(parts []string) bool {
-	for _, part := range parts {
-		if part == "" {
-			return true
-		}
-	}
-	return false
-}
-
 func allDigits(s string) bool {
 	if s == "" {
 		return false
@@ -1568,23 +1556,6 @@ func parseNetlocHostPort(netloc string, validateHost bool) (host string, port in
 	}
 	host = strings.ToLower(host)
 	if host == "" || (validateHost && !hostCharRe.MatchString(host)) {
-		return "", 0, fmt.Errorf("invalid host %q", host)
-	}
-	return host, port, nil
-}
-
-func parseHostPort(s string) (host string, port int, err error) {
-	if idx := strings.LastIndex(s, ":"); idx >= 0 {
-		host = s[:idx]
-		p, e := strconv.Atoi(s[idx+1:])
-		if e != nil || p < 1 || p > portRangeMax {
-			return "", 0, fmt.Errorf("invalid port in %q", s)
-		}
-		port = p
-	} else {
-		host = s
-	}
-	if !hostCharRe.MatchString(host) {
 		return "", 0, fmt.Errorf("invalid host %q", host)
 	}
 	return host, port, nil

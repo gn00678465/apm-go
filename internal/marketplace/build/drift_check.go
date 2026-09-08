@@ -11,9 +11,6 @@ import (
 	"github.com/apm-go/apm/internal/rootfs"
 )
 
-// maxDiffsRendered mirrors _MAX_DIFFS_RENDERED (drift_check.py:35).
-const maxDiffsRendered = 20
-
 // DriftDifference mirrors DriftDifference (drift_check.py:38-47): one
 // leaf-key difference between the on-disk marketplace output and the
 // freshly-recomposed document.

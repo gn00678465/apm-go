@@ -23,7 +23,8 @@ type interactiveCapture struct {
 	selectOpts   []ux.Option
 	confirmCalls int
 	runErr       error
-	clackEvents  []string
+	//lint:ignore U1000 written and asserted only in the `-tags apm_test_hooks` build variant (plugin_init_clackhook_enabled_test.go)
+	clackEvents []string
 }
 
 // driveInteractiveInit runs cmd (initCmd() or pluginInitCmd()) end to end

@@ -160,20 +160,6 @@ func structFieldInfos(t *testing.T, typ reflect.Type) []fieldInfo {
 	return out
 }
 
-// structJSONFields is structFieldInfos, projected down to just (all names,
-// required names) -- the name-set/required-set comparisons that don't need
-// per-field type info.
-func structJSONFields(t *testing.T, typ reflect.Type) (all, required []string) {
-	t.Helper()
-	for _, f := range structFieldInfos(t, typ) {
-		all = append(all, f.name)
-		if f.required {
-			required = append(required, f.name)
-		}
-	}
-	return all, required
-}
-
 // expectedSchemaType maps a Go reflect.Kind to the JSON Schema "type" value
 // schema_sync_test.go expects a field of that kind to declare. Returns
 // ok=false for reflect.Interface (Go's `any`/interface{} -- e.g. a oneOf

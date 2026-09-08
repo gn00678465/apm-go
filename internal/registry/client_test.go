@@ -66,7 +66,7 @@ func TestClient_NoToken_AnonymousRequest(t *testing.T) {
 
 func TestClient_401_RedactsToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "denied", 401)
+		http.Error(w, "denied", http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
 	c, _ := NewClient(srv.URL, Credential{Scheme: "bearer", Value: "super-secret-token"}, nil, false)
