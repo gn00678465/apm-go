@@ -298,10 +298,19 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 		// the directory) is reported as the bundle path.
 		archiveFormat := effectiveArchiveFormat(opts.ArchiveFormat)
 		archivePath := projectedArchivePath(opts.OutputDir, bundleRel, archiveFormat)
-		if err := writeArchive(bundleDir, archivePath, archiveFormat); err != nil {
+		// Both sides go through handles: the bundle is read through bundleRW,
+		// the archive written through outRW. os.Create on the archive path
+		// truncates in place, so a hard link planted at that name loses its
+		// other name's contents without any race at all.
+		if err := writeArchive(bundleRW, outRW, bundleRel, archiveRelName(bundleRel, archiveFormat), archiveFormat); err != nil {
 			return nil, err
 		}
-		if err := os.RemoveAll(bundleDir); err != nil {
+		// Release the bundle handle before removing what it points at: Windows
+		// refuses to remove a directory that still has an open handle on it.
+		if err := bundleRW.Close(); err != nil {
+			return nil, fmt.Errorf("close bundle directory handle: %w", err)
+		}
+		if err := outRW.RemoveAll(bundleRel); err != nil {
 			return nil, fmt.Errorf("remove intermediate bundle directory: %w", err)
 		}
 		bundlePath = archivePath

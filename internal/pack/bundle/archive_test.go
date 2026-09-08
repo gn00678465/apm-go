@@ -9,7 +9,28 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/apm-go/apm/internal/marketplace/build"
 )
+
+// archiveHandles opens the two boundaries the archive writers now take: the
+// output directory the archive is written into, and the bundle directory it is
+// read from. Both are handles, so the tests exercise the same confinement the
+// producer does rather than a path-string shortcut.
+func archiveHandles(t *testing.T, outDir, bundleName string) (bundleRW, outRW *build.RootWriter) {
+	t.Helper()
+	outRW, err := build.OpenRootWriter(outDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = outRW.Close() })
+	bundleRW, err = outRW.Sub(bundleName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bundleRW.Close() })
+	return bundleRW, outRW
+}
 
 func writeBundleFile(t *testing.T, path, content string, mode os.FileMode) {
 	t.Helper()
@@ -31,7 +52,8 @@ func TestWriteZipArchive_EntriesPrefixedWithBundleName(t *testing.T) {
 	writeBundleFile(t, filepath.Join(bundleDir, "skills", "hello", "SKILL.md"), "hello", 0o644)
 
 	archivePath := filepath.Join(dir, "demo-1.0.0.zip")
-	if err := writeZipArchive(bundleDir, archivePath); err != nil {
+	bundleRW, outRW := archiveHandles(t, dir, filepath.Base(bundleDir))
+	if err := writeZipArchive(bundleRW, outRW, filepath.Base(bundleDir), filepath.Base(archivePath)); err != nil {
 		t.Fatalf("writeZipArchive: %v", err)
 	}
 
@@ -72,7 +94,8 @@ func TestWriteZipArchive_SkipsSymlinks(t *testing.T) {
 	}
 
 	archivePath := filepath.Join(dir, "demo-1.0.0.zip")
-	if err := writeZipArchive(bundleDir, archivePath); err != nil {
+	bundleRW, outRW := archiveHandles(t, dir, filepath.Base(bundleDir))
+	if err := writeZipArchive(bundleRW, outRW, filepath.Base(bundleDir), filepath.Base(archivePath)); err != nil {
 		t.Fatalf("writeZipArchive: %v", err)
 	}
 
@@ -99,7 +122,8 @@ func TestWriteZipArchive_PreservesPermissionBits(t *testing.T) {
 	writeBundleFile(t, filepath.Join(bundleDir, "run.sh"), "#!/bin/sh\n", 0o755)
 
 	archivePath := filepath.Join(dir, "demo-1.0.0.zip")
-	if err := writeZipArchive(bundleDir, archivePath); err != nil {
+	bundleRW, outRW := archiveHandles(t, dir, filepath.Base(bundleDir))
+	if err := writeZipArchive(bundleRW, outRW, filepath.Base(bundleDir), filepath.Base(archivePath)); err != nil {
 		t.Fatalf("writeZipArchive: %v", err)
 	}
 
@@ -140,7 +164,8 @@ func TestWriteTarGzArchive_EntriesAndSymlinkExclusion(t *testing.T) {
 	}
 
 	archivePath := filepath.Join(dir, "demo-1.0.0.tar.gz")
-	if err := writeTarGzArchive(bundleDir, archivePath); err != nil {
+	bundleRW, outRW := archiveHandles(t, dir, filepath.Base(bundleDir))
+	if err := writeTarGzArchive(bundleRW, outRW, filepath.Base(bundleDir), filepath.Base(archivePath)); err != nil {
 		t.Fatalf("writeTarGzArchive: %v", err)
 	}
 
@@ -191,5 +216,53 @@ func TestProjectedArchivePath(t *testing.T) {
 		if got := projectedArchivePath("out", "demo-1.0.0", tt.format); got != tt.want {
 			t.Errorf("projectedArchivePath(%q) = %q, want %q", tt.format, got, tt.want)
 		}
+	}
+}
+
+// TestWriteArchive_DoesNotWriteThroughAHardLink pins the archive write shape.
+// os.Create truncates in place, so a hard link planted at the archive's name
+// loses the other name's contents before a single archive byte is written --
+// no race, no timing window, just a name the project can contain. Only the
+// rename-based write leaves the outside file intact.
+func TestWriteArchive_DoesNotWriteThroughAHardLink(t *testing.T) {
+	base := t.TempDir()
+	outDir := filepath.Join(base, "build")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{outDir, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundleDir := filepath.Join(outDir, "demo-1.0.0")
+	writeBundleFile(t, filepath.Join(bundleDir, "plugin.json"), "{}", 0o644)
+
+	victim := filepath.Join(outside, "victim.zip")
+	const victimContent = "MUST-NOT-BE-DESTROYED"
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(outDir, "demo-1.0.0.zip")
+	if err := os.Link(victim, archivePath); err != nil {
+		t.Skipf("SKIPPED: cannot create a hard link here: %v", err)
+	}
+
+	bundleRW, outRW := archiveHandles(t, outDir, "demo-1.0.0")
+	if err := writeZipArchive(bundleRW, outRW, "demo-1.0.0", "demo-1.0.0.zip"); err != nil {
+		t.Fatalf("writeZipArchive: %v", err)
+	}
+
+	// The archive is a real archive...
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		t.Fatalf("open produced zip: %v", err)
+	}
+	zr.Close()
+	// ...and the other name still holds its own bytes.
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(got) != victimContent {
+		t.Errorf("outside file = %q, want %q untouched", got, victimContent)
 	}
 }

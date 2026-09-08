@@ -235,6 +235,77 @@ func (rw *RootWriter) WriteFileAtomic(rel string, data []byte) error {
 	return nil
 }
 
+// CreateAtomic opens rel for STREAMING writes with the same rename-on-commit
+// shape WriteFileAtomic gives a whole buffer. It exists for outputs whose size
+// is not known in advance and should not be held in memory -- a plugin bundle
+// archive, for one -- where os.Create through a path string would both leave
+// the boundary and truncate whatever inode the name currently points at.
+//
+// The caller must Commit to publish the file. Close aborts an uncommitted
+// write and removes the temp file, so `defer f.Close()` after a Commit is the
+// correct pattern: Commit marks the file done and Close then does nothing.
+//
+// Unlike WriteFileAtomic this preserves only an existing file's PERMISSION
+// bits, not setuid/setgid/sticky. The callers are fresh build outputs, and
+// carrying those bits onto a streamed archive has no established meaning.
+func (rw *RootWriter) CreateAtomic(rel string) (*AtomicFile, error) {
+	if err := rw.MkdirAll(parentOf(rel)); err != nil {
+		return nil, err
+	}
+	clean := filepath.FromSlash(rel)
+
+	mode := os.FileMode(0o644)
+	if info, err := rw.root.Stat(clean); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmpRel, f, err := rw.createTemp(parentOf(rel), mode)
+	if err != nil {
+		return nil, fmt.Errorf("create temp file for %s: %w", rw.Path(rel), err)
+	}
+	return &AtomicFile{rw: rw, f: f, tmpRel: tmpRel, dest: clean, rel: rel}, nil
+}
+
+// AtomicFile is an in-progress CreateAtomic write. Nothing is visible at the
+// destination until Commit.
+type AtomicFile struct {
+	rw     *RootWriter
+	f      *os.File
+	tmpRel string
+	dest   string
+	rel    string
+	done   bool
+}
+
+// Write streams to the temp file.
+func (a *AtomicFile) Write(p []byte) (int, error) { return a.f.Write(p) }
+
+// Commit closes the temp file and renames it over the destination.
+func (a *AtomicFile) Commit() error {
+	if a.done {
+		return nil
+	}
+	a.done = true
+	if err := a.f.Close(); err != nil {
+		_ = a.rw.root.Remove(a.tmpRel)
+		return fmt.Errorf("close temp file for %s: %w", a.rw.Path(a.rel), err)
+	}
+	if err := a.rw.root.Rename(a.tmpRel, a.dest); err != nil {
+		_ = a.rw.root.Remove(a.tmpRel)
+		return fmt.Errorf("write %s: %w", a.rw.Path(a.rel), err)
+	}
+	return nil
+}
+
+// Close aborts an uncommitted write; after Commit it is a no-op.
+func (a *AtomicFile) Close() error {
+	if a.done {
+		return nil
+	}
+	a.done = true
+	_ = a.f.Close()
+	return a.rw.root.Remove(a.tmpRel)
+}
+
 // createTemp opens a uniquely named file under dir (relative to the
 // boundary) with O_EXCL, so a name an attacker guessed and pre-created is an
 // error rather than a target. The name is random for the same reason
