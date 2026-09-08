@@ -19,6 +19,12 @@ var fixedEnv = map[string]string{
 	"NO_COLOR": "1",
 	"CI":       "1",
 	"TERM":     "dumb",
+	// The Oracle's post-command update check (commands/_helpers.py
+	// _check_and_notify_updates) reaches GitHub and, once upstream publishes
+	// a release newer than the pin, prints "A new version of APM is
+	// available" on stdout of every case. APM_E2E_TESTS=1 is the Oracle's
+	// own opt-out; apm-go has no update check and ignores the variable.
+	"APM_E2E_TESTS": "1",
 }
 
 // buildEnv constructs the full environment for a subprocess: allow-listed

@@ -24,8 +24,12 @@ func TestBuildEnv_AllowListAndFixedVars(t *testing.T) {
 		"NO_COLOR": "1",
 		"CI":       "1",
 		"TERM":     "dumb",
-		"CASE_VAR": "case-value",
-		"HOME":     "/tmp/sandbox-home",
+		// The Oracle's own update-check opt-out (env.go fixedEnv); without
+		// it every case's stdout grows a version banner once upstream
+		// releases past the pin.
+		"APM_E2E_TESTS": "1",
+		"CASE_VAR":      "case-value",
+		"HOME":          "/tmp/sandbox-home",
 		// The Oracle is launched through `uv run`, and uv writes its own
 		// cache under $HOME/.cache/uv by default. That is the launcher's
 		// artefact, not the product's, and it must never land inside an
