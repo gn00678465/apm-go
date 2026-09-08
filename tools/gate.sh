@@ -90,11 +90,17 @@ layer_build() { go build ./... && go build -o "$GATE_ART/apm-go$EXE" ./cmd/apm-g
 
 layer_tests() {
   go test -count=1 ./... 2>&1 | tee "$GATE_ART/tests.log"
-  ! grep -qE '^(FAIL|--- FAIL)' "$GATE_ART/tests.log"
+  if grep -qE '^(FAIL|--- FAIL|panic:)' "$GATE_ART/tests.log"; then
+    echo "test failures: $(grep -c '^--- FAIL' "$GATE_ART/tests.log") (see tests.log)"; return 1
+  fi
   echo "packages ok: $(grep -c '^ok' "$GATE_ART/tests.log")"
 }
 
-layer_vet() { go vet ./... 2>&1 | tee "$GATE_ART/vet.log"; ! grep -q . "$GATE_ART/vet.log"; }
+layer_vet() {
+  go vet ./... 2>&1 | tee "$GATE_ART/vet.log"
+  if grep -q . "$GATE_ART/vet.log"; then return 1; fi
+  echo "vet: 0 findings"
+}
 
 layer_lint_format() {
   # Check the committed blobs, not the checkout: with core.autocrlf=true the
@@ -114,20 +120,21 @@ layer_lint_format() {
 
 layer_staticcheck() {
   go run "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION" ./... 2>&1 | tee "$GATE_ART/staticcheck.log"
-  ! grep -q . "$GATE_ART/staticcheck.log" && echo "staticcheck: 0 findings"
+  if grep -q . "$GATE_ART/staticcheck.log"; then return 1; fi
+  echo "staticcheck: 0 findings"
 }
 
 layer_suite_health() {
   # Randomized test order; the seed is printed per package so a failure can
   # be replayed with -shuffle=<seed>.
   go test -count=1 -shuffle=on ./... 2>&1 | tee "$GATE_ART/shuffle.log"
-  ! grep -qE '^(FAIL|--- FAIL)' "$GATE_ART/shuffle.log"
+  if grep -qE '^(FAIL|--- FAIL|panic:)' "$GATE_ART/shuffle.log"; then return 1; fi
   echo "seeds: $(grep -c 'test.shuffle' "$GATE_ART/shuffle.log") packages shuffled"
 }
 
 layer_property() {
   go test -count=1 -run 'Property' -v ./internal/marketplace/... ./internal/rootfs/... 2>&1 | tee "$GATE_ART/property.log"
-  ! grep -qE '^(FAIL|--- FAIL)' "$GATE_ART/property.log"
+  if grep -qE '^(FAIL|--- FAIL|panic:)' "$GATE_ART/property.log"; then return 1; fi
   n=$(grep -cE '^--- PASS: Test\w*Property' "$GATE_ART/property.log" || true)
   [ "$n" -gt 0 ] || { echo "no property test ran (fail closed)"; return 2; }
   echo "properties passed: $n"
@@ -137,12 +144,14 @@ layer_supply_chain() { sh tools/gate/supplychain.sh; }
 
 layer_real_execution() {
   GATE_BIN="$GATE_ART/apm-go$EXE" sh tools/gate/realexec.sh 2>&1 | tee "$GATE_ART/realexec.log"
-  grep -q '^real-execution:' "$GATE_ART/realexec.log" && ! grep -q '^FAIL' "$GATE_ART/realexec.log"
+  grep -q '^real-execution:' "$GATE_ART/realexec.log" || return 2
+  if grep -q '^FAIL' "$GATE_ART/realexec.log"; then return 1; fi
 }
 
 layer_mutation() {
   sh tools/gate/mutate.sh 2>&1 | tee "$GATE_ART/mutation.log"
-  grep -q '^mutation: ' "$GATE_ART/mutation.log" && ! grep -qE '^(SURVIVED|BROKEN|FAIL)' "$GATE_ART/mutation.log"
+  grep -q '^mutation: ' "$GATE_ART/mutation.log" || return 2
+  if grep -qE '^(SURVIVED|BROKEN|FAIL)' "$GATE_ART/mutation.log"; then return 1; fi
 }
 
 produce_profile() {
@@ -159,7 +168,8 @@ layer_changed_units() {
 
 layer_changed_line_coverage() {
   produce_profile
-  "$GATETOOL" coverage -base "$BASE" -module "$MODULE" -profile "$GATE_ART/cover.out" $SCOPE_PATHS | tee "$GATE_ART/coverage.txt"
+  "$GATETOOL" coverage -base "$BASE" -module "$MODULE" -profile "$GATE_ART/cover.out" $SCOPE_PATHS > "$GATE_ART/coverage.txt" || { cat "$GATE_ART/coverage.txt"; return 1; }
+  cat "$GATE_ART/coverage.txt"
 }
 
 run_layer selftest layer_selftest
