@@ -143,11 +143,22 @@ func packagesSequenceNode(doc *yaml.Node, prefix []string) (*yaml.Node, error) {
 		}
 		cur = v
 	}
-	if v := mappingValue(cur, "packages"); v != nil && v.Kind == yaml.SequenceNode {
-		return v, nil
+	seqNode := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for i := 0; i+1 < len(cur.Content); i += 2 {
+		if cur.Content[i].Value != "packages" {
+			continue
+		}
+		if v := cur.Content[i+1]; v.Kind == yaml.SequenceNode {
+			return v, nil
+		}
+		// "packages:" with a null value (hand-edited, or left behind by an
+		// older remove): replace the value in place. Appending a second
+		// "packages" key here would leave the patch walk targeting a
+		// duplicate key that has no position in src.
+		cur.Content[i+1] = seqNode
+		return seqNode, nil
 	}
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "packages"}
-	seqNode := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	cur.Content = append(cur.Content, keyNode, seqNode)
 	return seqNode, nil
 }
@@ -182,9 +193,18 @@ func editPackagesFile(dir string, op yamlcore.SeqOp, idx int, newNode *yaml.Node
 
 	fullPath := append(append([]string{}, prefix...), "packages")
 
-	out, ok, spliceErr := yamlcore.SpliceSequenceElement(src, doc, fullPath, op, idx, newNode)
-	if spliceErr != nil {
-		return false, spliceErr
+	var out []byte
+	var ok bool
+	// Removing the last element by splice would leave "packages:" with a null
+	// value and the element's orphaned comments; the Oracle's round-trip
+	// dumper writes "packages: []" there (yml_editor.py remove_package), so
+	// take the whole-value path, which renders the empty sequence that way.
+	if !(op == yamlcore.SeqRemove && len(seq.Content) == 1) {
+		var spliceErr error
+		out, ok, spliceErr = yamlcore.SpliceSequenceElement(src, doc, fullPath, op, idx, newNode)
+		if spliceErr != nil {
+			return false, spliceErr
+		}
 	}
 	if !ok {
 		// Falling back to a whole-value replace: normalize away any

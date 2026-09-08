@@ -1499,3 +1499,42 @@ func TestMarketplacePackageAdd_ExplicitHead_PrintsResolvedSHALine(t *testing.T) 
 		t.Errorf("apm.yml = %q, want its stored ref to start with the reported SHA %q", string(data), sha12)
 	}
 }
+
+// TestMarketplacePackage_AddAfterRemovingLastPackage covers the sequence
+// tools/gate.sh's real-execution layer first tripped over: init (one
+// template package), remove it, add a new one. Removing the last element by
+// splice left "packages:" as a null value with dangling comments, and add
+// could then neither splice nor fall back.
+func TestMarketplacePackage_AddAfterRemovingLastPackage(t *testing.T) {
+	chdirTemp(t)
+	if out, err := runMarketplaceCmd(t, "init", "--name", "mk", "--owner", "me"); err != nil {
+		t.Fatalf("marketplace init: %v (%s)", err, out)
+	}
+	if out, err := runMarketplaceCmd(t, "package", "remove", "example-package", "--yes"); err != nil {
+		t.Fatalf("package remove: %v (%s)", err, out)
+	}
+	after, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(after), "packages: []") {
+		t.Errorf("after removing the last package, want the Oracle form \"packages: []\", got:\n%s", after)
+	}
+	if err := os.MkdirAll(filepath.Join("packages", "demo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("packages", "demo", "apm.yml"), []byte("name: demo\nversion: 0.1.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runMarketplaceCmd(t, "package", "add", "./packages/demo", "--name", "demo", "--no-verify")
+	if err != nil {
+		t.Fatalf("package add after removing the last package: %v (%s)", err, out)
+	}
+	data, err := os.ReadFile("apm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "- name: demo") {
+		t.Errorf("apm.yml lacks the added package:\n%s", data)
+	}
+}
