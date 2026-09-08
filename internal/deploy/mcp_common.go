@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/apm-go/apm/internal/manifest"
+
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // ResolvedMCPServer is a self-defined MCP server after mf-013 resolution for
@@ -259,17 +260,28 @@ func mergeMCPServers(existing map[string]any, entries map[string]map[string]any,
 // permission denied) or a file that exists but fails to parse is an error --
 // silently discarding either would destroy whatever the user had, possibly
 // including hand-authored foreign keys.
-func readExistingMCPRoot(path string, unmarshal func([]byte, any) error) (map[string]any, error) {
-	data, err := os.ReadFile(path)
+// It reads through a directory handle on projectDir rather than a joined path
+// string: an MCP config can embed a resolved secret, and both the read that
+// decides what to preserve and the write that follows must land on the file
+// the project actually contains, not on whatever an ancestor swapped for a
+// link between them (external audit 2026-09-08).
+func readExistingMCPRoot(projectDir, rel string, unmarshal func([]byte, any) error) (map[string]any, error) {
+	rw, err := rootfs.OpenRootWriter(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	defer rw.Close()
+
+	data, err := rw.ReadFile(rel)
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]any{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read existing %s: %w", path, err)
+		return nil, fmt.Errorf("read existing %s: %w", rw.Path(rel), err)
 	}
 	root := map[string]any{}
 	if err := unmarshal(data, &root); err != nil {
-		return nil, fmt.Errorf("existing %s is not valid, refusing to overwrite: %w", path, err)
+		return nil, fmt.Errorf("existing %s is not valid, refusing to overwrite: %w", rw.Path(rel), err)
 	}
 	return root, nil
 }
@@ -277,8 +289,8 @@ func readExistingMCPRoot(path string, unmarshal func([]byte, any) error) (map[st
 // writeMergedMCPJSON reads an existing JSON file at path (if any), merges
 // entries (keyed by server name) into the map at topKey per mergeMCPServers,
 // and writes the result with perm.
-func writeMergedMCPJSON(path, topKey string, entries map[string]map[string]any, considered map[string]bool, perm os.FileMode) error {
-	root, err := readExistingMCPRoot(path, json.Unmarshal)
+func writeMergedMCPJSON(projectDir, rel, topKey string, entries map[string]map[string]any, considered map[string]bool, perm os.FileMode) error {
+	root, err := readExistingMCPRoot(projectDir, rel, json.Unmarshal)
 	if err != nil {
 		return err
 	}
@@ -289,25 +301,28 @@ func writeMergedMCPJSON(path, topKey string, entries map[string]map[string]any, 
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return writeFileWithPerm(path, data, perm)
+	return writeMCPFile(projectDir, rel, data, perm)
 }
 
-// writeFileWithPerm writes data to path and enforces perm on the result.
-// os.WriteFile's perm argument is only honored when the file is newly
-// created (POSIX open() semantics) -- an existing file (e.g. left at 0644
-// by git checkout, or a prior config authored by another tool) keeps its
-// old mode after a plain rewrite. A bake-mode MCP config can embed resolved
-// secret values verbatim, so the 0600 permission must be enforced on every
-// write, not just the first.
-func writeFileWithPerm(path string, data []byte, perm os.FileMode) error {
-	if err := os.Chmod(path, perm); err != nil && !errors.Is(err, os.ErrNotExist) {
+// writeMCPFile writes data at rel under projectDir with perm enforced on
+// every write, not just on create.
+//
+// The perm enforcement is the point: os.WriteFile's mode argument is only
+// honored on create (POSIX open() semantics), so an existing file left at
+// 0644 by a git checkout, or by a prior config another tool authored, would
+// keep its old mode after a plain rewrite. A bake-mode MCP config can embed
+// resolved secret values verbatim, so 0600 has to be re-asserted each time.
+//
+// rootfs.WriteFileAtomicMode supplies both halves of what this needs: the
+// mode is forced (WriteFileAtomic's own mode-preserving behaviour would be
+// exactly wrong here), and the file arrives by rename rather than by
+// truncation, so a hard link planted at rel keeps its own contents. The
+// previous chmod/WriteFile/chmod sequence had neither property.
+func writeMCPFile(projectDir, rel string, data []byte, perm os.FileMode) error {
+	rw, err := rootfs.OpenRootWriter(projectDir)
+	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, perm); err != nil {
-		return err
-	}
-	return os.Chmod(path, perm)
+	defer rw.Close()
+	return rw.WriteFileAtomicMode(rel, data, perm)
 }

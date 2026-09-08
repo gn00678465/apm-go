@@ -26,6 +26,7 @@ import (
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
 	"github.com/apm-go/apm/internal/yamlcore"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // defaultOutputPaths maps every known marketplace output profile name
@@ -423,14 +424,14 @@ func marshalOutput(doc any) ([]byte, error) {
 // applies either) and
 // atomically writes it to rel, a path relative to rw's boundary.
 //
-// It takes a RootWriter rather than a path string because a resolved path
+// It takes a rootfs.RootWriter rather than a path string because a resolved path
 // string cannot survive the trip: between the containment check that produced
 // it and the MkdirAll/CreateTemp/Rename that consumed it, a process able to
 // write inside the project could swap an ancestor for a junction and redirect
 // all three (external audit 2026-08-13, reproduced locally). rw holds a
 // directory handle taken once, so that swap is unreachable rather than merely
 // unlikely.
-func WriteOutput(rw *RootWriter, rel string, doc any) error {
+func WriteOutput(rw *rootfs.RootWriter, rel string, doc any) error {
 	encoded, err := marshalOutput(doc)
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", rw.Path(rel), err)

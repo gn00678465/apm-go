@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // ── DefaultOutputPath ─────────────────────────────────────────────────────
@@ -614,7 +615,7 @@ func TestEnsureWithinRoot_SymlinkedRootItself_Passes(t *testing.T) {
 func TestWriteOutput_WritesTwoSpaceIndentedJSONWithTrailingNewline(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
-	rw, err := OpenRootWriter(dir)
+	rw, err := rootfs.OpenRootWriter(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +648,7 @@ func TestWriteOutput_WritesTwoSpaceIndentedJSONWithTrailingNewline(t *testing.T)
 
 func TestWriteOutput_CreatesMissingParentDirectories(t *testing.T) {
 	dir := t.TempDir()
-	rw, err := OpenRootWriter(dir)
+	rw, err := rootfs.OpenRootWriter(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,7 +664,7 @@ func TestWriteOutput_CreatesMissingParentDirectories(t *testing.T) {
 
 func TestWriteOutput_OverwritesExistingFileAtomically(t *testing.T) {
 	dir := t.TempDir()
-	rw, err := OpenRootWriter(dir)
+	rw, err := rootfs.OpenRootWriter(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,5 +711,30 @@ func TestKnownOutputFormats_IsDerivedFromTheDefaultPathTable(t *testing.T) {
 	want := map[string]bool{"claude": true, "codex": true}
 	if !reflect.DeepEqual(KnownOutputFormats, want) {
 		t.Errorf("KnownOutputFormats = %v, want %v; adding or removing an output profile changes what --marketplace accepts and what pack writes", KnownOutputFormats, want)
+	}
+}
+
+// TestWriteOutput_WritesToAnAbsolutePathInsideTheRoot is the end-to-end form
+// of the same contract: `pack --marketplace-path claude=<abs>` must land bytes
+// on disk. Before Rel existed, WriteOutput passed the absolute string to
+// os.Root and every such run failed after containment had already passed.
+func TestWriteOutput_WritesToAnAbsolutePathInsideTheRoot(t *testing.T) {
+	root := t.TempDir()
+	rw, err := rootfs.OpenRootWriter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
+
+	abs := filepath.Join(root, "dist", "marketplace.json")
+	if err := WriteOutput(rw, abs, map[string]any{"name": "demo"}); err != nil {
+		t.Fatalf("WriteOutput(absolute path inside root) error = %v", err)
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatalf("read %s: %v", abs, err)
+	}
+	if !strings.Contains(string(data), `"demo"`) {
+		t.Errorf("file = %s, want the composed document", data)
 	}
 }

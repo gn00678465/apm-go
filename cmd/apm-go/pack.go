@@ -19,6 +19,7 @@ import (
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // marketplaceDocsURL is the docs anchor renderMarketplaceCatalog points at,
@@ -974,7 +975,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 	// One directory handle for the whole run: every output is written
 	// through it, so an ancestor swapped for a junction mid-run cannot
 	// redirect a write the way a re-walked path string could.
-	rw, err := build.OpenRootWriter(".")
+	rw, err := rootfs.OpenRootWriter(".")
 	if err != nil {
 		return nil, err
 	}
@@ -996,7 +997,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 // to print its deferred tail line.
 func packOneOutput(
 	cmd *cobra.Command,
-	rw *build.RootWriter,
+	rw *rootfs.RootWriter,
 	format string,
 	cfg *authoring.AuthoringConfig,
 	resolved []build.ResolvedPackage,

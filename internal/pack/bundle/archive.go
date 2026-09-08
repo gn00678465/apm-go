@@ -13,7 +13,7 @@ import (
 	"sort"
 
 	"github.com/apm-go/apm/internal/archive"
-	"github.com/apm-go/apm/internal/marketplace/build"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // SupportedArchiveFormats mirrors utils/archive.py's
@@ -55,7 +55,7 @@ type archiveEntry struct {
 // path string. The result becomes the archive's contents, so a link planted
 // mid-walk must not be able to get an outside file packed in -- the same
 // reason the lockfile's integrity walk uses the handle.
-func collectArchiveEntries(bundleRW *build.RootWriter, base string) ([]archiveEntry, error) {
+func collectArchiveEntries(bundleRW *rootfs.RootWriter, base string) ([]archiveEntry, error) {
 	var entries []archiveEntry
 	err := fs.WalkDir(bundleRW.FS(), ".", func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -94,7 +94,7 @@ func collectArchiveEntries(bundleRW *build.RootWriter, base string) ([]archiveEn
 // write_tar_archive, anything else -> write_zip_archive (only reachable
 // with "zip" here, since the CLI's own Choice flag already restricts the
 // value).
-func writeArchive(bundleRW, outRW *build.RootWriter, base, archiveRel, format string) error {
+func writeArchive(bundleRW, outRW *rootfs.RootWriter, base, archiveRel, format string) error {
 	switch format {
 	case "tar.gz":
 		return writeTarGzArchive(bundleRW, outRW, base, archiveRel)
@@ -113,7 +113,7 @@ func writeArchive(bundleRW, outRW *build.RootWriter, base, archiveRel, format st
 // zip.FileInfoHeader (mirrors Python zipfile.ZipFile.write's default
 // behavior of copying the source file's os.stat() mode when no explicit
 // ZipInfo is given).
-func writeZipArchive(bundleRW, outRW *build.RootWriter, base, archiveRel string) error {
+func writeZipArchive(bundleRW, outRW *rootfs.RootWriter, base, archiveRel string) error {
 	entries, err := collectArchiveEntries(bundleRW, base)
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ func writeZipArchive(bundleRW, outRW *build.RootWriter, base, archiveRel string)
 // "w:gz" tarball, same entry set/naming/skip rules as writeZipArchive, each
 // entry's permission bits preserved via tar.FileInfoHeader (mirrors
 // tarfile.add's default mode-preservation behavior).
-func writeTarGzArchive(bundleRW, outRW *build.RootWriter, base, archiveRel string) error {
+func writeTarGzArchive(bundleRW, outRW *rootfs.RootWriter, base, archiveRel string) error {
 	entries, err := collectArchiveEntries(bundleRW, base)
 	if err != nil {
 		return err
@@ -204,7 +204,7 @@ func writeTarGzArchive(bundleRW, outRW *build.RootWriter, base, archiveRel strin
 // entry writer, opening it through the bundle's own directory handle. Re-opens
 // by name rather than reusing a descriptor captured during the walk, since
 // collectArchiveEntries only records fs.FileInfo.
-func copyEntryContent(w io.Writer, bundleRW *build.RootWriter, rel string) error {
+func copyEntryContent(w io.Writer, bundleRW *rootfs.RootWriter, rel string) error {
 	src, err := bundleRW.FS().Open(rel)
 	if err != nil {
 		return fmt.Errorf("archive: open %q: %w", bundleRW.Path(rel), err)

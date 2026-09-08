@@ -2228,7 +2228,7 @@ func TestDisplayPath(t *testing.T) {
 // Two layers have to hold for this to pass, and this test does not
 // distinguish them -- that is the point of having it at the command boundary:
 // build.EnsureWithinRoot rejects a junction that is already in place, and
-// build.RootWriter's pinned handle rejects one swapped in after that check.
+// rootfs.RootWriter's pinned handle rejects one swapped in after that check.
 // The post-check swap specifically is covered by
 // TestRootWriter_RefusesAfterAnAncestorIsSwappedForALink in
 // internal/marketplace/build, because reproducing that race deterministically

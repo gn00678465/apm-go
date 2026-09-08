@@ -204,7 +204,7 @@ func TestWrite_HardLinkedTargetIsNotWrittenThrough(t *testing.T) {
 	}
 }
 
-// Mode handling moved to build.RootWriter when the writer stopped using path
+// Mode handling moved to rootfs.RootWriter when the writer stopped using path
 // strings (2026-08-13): the permission-preservation and hard-link tests that
 // used to live here are now TestRootWriter_WriteFileAtomicKeepsAnExistingFilesMode,
 // TestRootWriter_WriteFileAtomicCreatesAWritableFile and

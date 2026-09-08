@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/apm-go/apm/internal/manifest"
@@ -23,7 +22,7 @@ func (a *codexAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string,
 		return nil, nil, diags, nil
 	}
 	relPath := ".codex/config.toml"
-	if err := writeMergedMCPTOML(filepath.Join(projectDir, filepath.FromSlash(relPath)), "mcp_servers", entries, consideredNames(prims), 0600); err != nil {
+	if err := writeMergedMCPTOML(projectDir, relPath, "mcp_servers", entries, consideredNames(prims), 0600); err != nil {
 		return nil, nil, diags, err
 	}
 	return []string{relPath}, entryNames(entries), diags, nil
@@ -106,8 +105,8 @@ func bearerEnvVar(v string) (string, bool) {
 
 // writeMergedMCPTOML mirrors writeMergedMCPJSON for codex's TOML config: read
 // the existing table at topKey (if any), merge entries per mergeMCPServers.
-func writeMergedMCPTOML(path, topKey string, entries map[string]map[string]any, considered map[string]bool, perm os.FileMode) error {
-	root, err := readExistingMCPRoot(path, toml.Unmarshal)
+func writeMergedMCPTOML(projectDir, rel, topKey string, entries map[string]map[string]any, considered map[string]bool, perm os.FileMode) error {
+	root, err := readExistingMCPRoot(projectDir, rel, toml.Unmarshal)
 	if err != nil {
 		return err
 	}
@@ -118,8 +117,5 @@ func writeMergedMCPTOML(path, topKey string, entries map[string]map[string]any, 
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return writeFileWithPerm(path, data, perm)
+	return writeMCPFile(projectDir, rel, data, perm)
 }

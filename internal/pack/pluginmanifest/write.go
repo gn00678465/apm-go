@@ -8,6 +8,7 @@ import (
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/ux"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // PluginEcosystemPaths mirrors core/plugin_manifest.py's
@@ -60,7 +61,7 @@ func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest,
 	// (external audit 2026-08-13, reproduced locally), and the second
 	// EnsureWithinRoot this code used to make after MkdirAll only narrowed
 	// that window rather than closing it.
-	rw, err := build.OpenRootWriter(projectRoot)
+	rw, err := rootfs.OpenRootWriter(projectRoot)
 	if err != nil {
 		return false, err
 	}

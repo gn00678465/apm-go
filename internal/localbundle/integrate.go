@@ -15,6 +15,7 @@ import (
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/pack/bundle"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // IntegrateResult mirrors integrate_local_bundle's return shape (Python:
@@ -94,21 +95,18 @@ var targetRoutingTable = map[string]targetRouting{
 // (cmd/apm-go/install.go) is responsible for deciding whether/how to warn
 // before ever calling this function with an empty targets slice.
 func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets []string, projectDir string) (*IntegrateResult, error) {
-	// One directory handle for every BUNDLE file this deploys.
-	// EnsureWithinRoot still decides which entries are safe to deploy at all
-	// (and still logs the ones it drops), but the handle is what the bytes
-	// actually go through: a resolved path string cannot survive an ancestor
-	// being swapped for a junction between the check and the write (external
-	// audit 2026-08-13, reproduced locally).
+	// One directory handle for every file this deploys. EnsureWithinRoot still
+	// decides which entries are safe to deploy at all (and still logs the ones
+	// it drops), but the handle is what the bytes actually go through: a
+	// resolved path string cannot survive an ancestor being swapped for a
+	// junction between the check and the write (external audit 2026-08-13,
+	// reproduced locally).
 	//
-	// Two paths below are NOT covered by it, recorded here rather than left
-	// for the next reader to discover: the MCP config write goes through
-	// deploy.MCPTarget.WriteMCP(prims, projectDir), which takes a path string
-	// and does its own os.MkdirAll/os.WriteFile, and the integrity hashes are
-	// read back with lockfile.HashFileBytes on a joined path string. Closing
-	// either means changing an interface outside this package (external audit
-	// 2026-09-08).
-	projectRW, err := build.OpenRootWriter(projectDir)
+	// The MCP config is the one file not written through THIS handle -- it goes
+	// through deploy.MCPTarget.WriteMCP, which opens its own handle on the same
+	// projectDir (mcp_common.go's writeMCPFile). The integrity hashes below are
+	// read back through this one.
+	projectRW, err := rootfs.OpenRootWriter(projectDir)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +221,7 @@ func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets [
 //     only exercises claude+copilot, both of which DO have a native
 //     instructions primitive, so this deviation does not affect that
 //     fixture's byte-identical comparison.
-func deployBundleFile(bundleDir, rel string, routing targetRouting, target, projectDir string, projectRW *build.RootWriter, result *IntegrateResult) (record string, ok bool, err error) {
+func deployBundleFile(bundleDir, rel string, routing targetRouting, target, projectDir string, projectRW *rootfs.RootWriter, result *IntegrateResult) (record string, ok bool, err error) {
 	firstSeg := ""
 	if idx := strings.IndexByte(rel, '/'); idx >= 0 {
 		firstSeg = rel[:idx]

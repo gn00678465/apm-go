@@ -10,27 +10,27 @@ The in-module import graph, from `go list -f '{{.ImportPath}} {{.Imports}}' ./..
 
 ```mermaid
 graph TD
-  cmd[cmd/apm-go] --> compile & deploy & resolver & registry & gitops & localbundle & pack & bundle & pluginmanifest & pluginjson & marketplace & authoring & build & mcpregistry & security & ux & yamlcore & experimental
+  cmd[cmd/apm-go] --> compile & deploy & resolver & registry & gitops & localbundle & pack & bundle & pluginmanifest & pluginjson & marketplace & authoring & build & mcpregistry & rootfs & security & ux & yamlcore & experimental
   compile --> deploy & lockfile & manifest & version & yamlcore
-  deploy --> archive & lockfile & manifest & mcpregistry & resolver & yamlcore
+  deploy --> archive & lockfile & manifest & mcpregistry & resolver & rootfs & yamlcore
   gitops --> archive & lockfile & manifest & semver & yamlcore
-  localbundle --> archive & deploy & lockfile & manifest & build & bundle & yamlcore
+  localbundle --> archive & deploy & lockfile & manifest & build & bundle & rootfs & yamlcore
   lockfile --> manifest & yamlcore
   manifest --> yamlcore
   marketplace --> gitops & manifest & semver
   authoring[marketplace/authoring] --> gitops & manifest & marketplace & tagpattern & semver & yamlcore
-  build[marketplace/build] --> gitops & authoring & tagpattern & semver & yamlcore
+  build[marketplace/build] --> gitops & authoring & rootfs & tagpattern & semver & yamlcore
   tagpattern[marketplace/tagpattern] --> semver
   mcpregistry --> manifest
-  bundle[pack/bundle] --> archive & lockfile & build & security & ux & yamlcore
-  pluginmanifest[pack/pluginmanifest] --> build & bundle & ux
+  bundle[pack/bundle] --> archive & lockfile & build & rootfs & security & ux & yamlcore
+  pluginmanifest[pack/pluginmanifest] --> build & bundle & rootfs & ux
   pluginjson --> bundle
   registry --> archive & credsec & lockfile & manifest & resolver & yamlcore
   resolver --> lockfile & manifest & semver
   parity[tools/parity] --> gitops & ux
 ```
 
-Leaves (import nothing in-module): `archive`, `credsec`, `experimental`, `pack`, `security`, `semver`, `ux`, `version`, `yamlcore`.
+Leaves (import nothing in-module): `archive`, `credsec`, `experimental`, `pack`, `rootfs`, `security`, `semver`, `ux`, `version`, `yamlcore`.
 
 **Dependency rules.** A new edge that the graph lacks is a design change; get a ruling before adding it.
 
@@ -52,6 +52,7 @@ Leaves (import nothing in-module): `archive`, `credsec`, `experimental`, `pack`,
 | `registry` | package-registry HTTP client, composite loader | `Loader` `internal/registry/loader.go:31` (`LoadPackage` `:48`); `ClientForURL` `:176`; `NewClient` `client.go:61`; `ResolveCredential` `auth.go:47` |
 | `archive` | tar/zip extraction under size, count, and path limits | `SafeExtract` `internal/archive/extract.go:51`; `SafeExtractZip` `zip.go:30`; `Limits` `extract.go:25`; `Contained` `extract.go:221` |
 | `credsec` | whether to attach a credential, drop it on redirect, redact it in output | `ShouldAttachCredential` `internal/credsec/attach.go:14`; `NewAuthDropRedirect` `redirect.go:30`; `NewRedactor` `redact.go:21` (used by `registry/client.go` only) |
+| `rootfs` | write confinement: a directory handle every write and read is resolved against, so no path string decides where bytes land | `OpenRootWriter` `internal/rootfs/rootwriter.go:48`; `Rel` `:79`; `Sub` `:107`; `ReadFile` `:144`; `WriteFile` `:162`; `WriteFileAtomic` `:189`; `WriteFileAtomicMode` `:248`; `CreateAtomic` `:292` |
 | `security` | credential/secret scanning with a policy gate | `SecurityGate.ScanFiles` `internal/security/gate.go:66`; `ScanPolicy` `:10`; `BlockPolicy` / `WarnPolicy` / `ReportPolicy` `:33-35`; `ScanFile` / `Classify` `scanner.go:226,257` |
 | `deploy` | primitive collection, conflict resolution, per-target writes, MCP writes, removal | `TargetAdapter` `internal/deploy/adapter.go:13`; `MCPTarget` `:27`; `BundleTarget` `:49`; `Adapters` `:54`; `ResolveTargets` `:99`; `Run` `deploy.go:83`; `RemoveDeployedFiles` `uninstall.go:34` |
 | `compile` | `.apm/` instruction collection, AGENTS.md rendering, idempotent write | `Run` `internal/compile/compile.go:206`; `CollectInstructions` `:72`; `RenderAgentsMD` `template.go:28`; `StabilizeBuildID` `buildid.go:16`; `WriteAGENTSMD` `writer.go:55` |

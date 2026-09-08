@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -60,12 +59,11 @@ func RemoveMCPServersFromTargets(projectDir string, serverNames []string) (diags
 	entries := map[string]map[string]any{}
 
 	for _, t := range mcpRemoveTargets {
-		path := filepath.Join(projectDir, filepath.FromSlash(t.relPath))
 		unmarshal := json.Unmarshal
 		if t.isTOML {
 			unmarshal = toml.Unmarshal
 		}
-		root, err := readExistingMCPRoot(path, unmarshal)
+		root, err := readExistingMCPRoot(projectDir, t.relPath, unmarshal)
 		if err != nil {
 			diags = append(diags, fmt.Sprintf("mcp uninstall %s: %v", t.relPath, err))
 			continue
@@ -77,9 +75,9 @@ func RemoveMCPServersFromTargets(projectDir string, serverNames []string) (diags
 
 		var writeErr error
 		if t.isTOML {
-			writeErr = writeMergedMCPTOML(path, t.topKey, entries, considered, t.perm)
+			writeErr = writeMergedMCPTOML(projectDir, t.relPath, t.topKey, entries, considered, t.perm)
 		} else {
-			writeErr = writeMergedMCPJSON(path, t.topKey, entries, considered, t.perm)
+			writeErr = writeMergedMCPJSON(projectDir, t.relPath, t.topKey, entries, considered, t.perm)
 		}
 		if writeErr != nil {
 			diags = append(diags, fmt.Sprintf("mcp uninstall %s: %v", t.relPath, writeErr))

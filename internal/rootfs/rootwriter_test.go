@@ -1,4 +1,4 @@
-package build
+package rootfs
 
 import (
 	"os"
@@ -384,30 +384,5 @@ func TestRootWriter_RelAcceptsAnAbsolutePathInsideTheBoundary(t *testing.T) {
 	outside := filepath.Join(filepath.Dir(root), "elsewhere", "marketplace.json")
 	if _, err := rw.Rel(outside); err == nil {
 		t.Errorf("Rel(%q) returned no error; a path outside the boundary must fail closed", outside)
-	}
-}
-
-// TestWriteOutput_WritesToAnAbsolutePathInsideTheRoot is the end-to-end form
-// of the same contract: `pack --marketplace-path claude=<abs>` must land bytes
-// on disk. Before Rel existed, WriteOutput passed the absolute string to
-// os.Root and every such run failed after containment had already passed.
-func TestWriteOutput_WritesToAnAbsolutePathInsideTheRoot(t *testing.T) {
-	root := t.TempDir()
-	rw, err := OpenRootWriter(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rw.Close()
-
-	abs := filepath.Join(root, "dist", "marketplace.json")
-	if err := WriteOutput(rw, abs, map[string]any{"name": "demo"}); err != nil {
-		t.Fatalf("WriteOutput(absolute path inside root) error = %v", err)
-	}
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		t.Fatalf("read %s: %v", abs, err)
-	}
-	if !strings.Contains(string(data), `"demo"`) {
-		t.Errorf("file = %s, want the composed document", data)
 	}
 }

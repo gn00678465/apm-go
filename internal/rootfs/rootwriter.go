@@ -1,4 +1,4 @@
-package build
+package rootfs
 
 import (
 	"encoding/hex"
@@ -29,7 +29,7 @@ import (
 // and Windows junction alike. The window is closed by construction rather
 // than narrowed.
 //
-// EnsureWithinRoot is still used for VALIDATION and for the paths shown to
+// marketplace/build.EnsureWithinRoot is still used for VALIDATION and for the paths shown to
 // users (it fails closed on drive-relative sources, reports link cycles, and
 // produces a resolved path worth printing). What it no longer does is decide
 // where the bytes land.
@@ -222,6 +222,47 @@ func (rw *RootWriter) WriteFileAtomic(rel string, data []byte) error {
 		}
 	}
 
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return fmt.Errorf("write temp file for %s: %w", rw.Path(rel), err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temp file for %s: %w", rw.Path(rel), err)
+	}
+	if err := rw.root.Rename(tmpRel, clean); err != nil {
+		return fmt.Errorf("write %s: %w", rw.Path(rel), err)
+	}
+	return nil
+}
+
+// WriteFileAtomicMode is WriteFileAtomic with mode FORCED on every write,
+// including when replacing an existing file.
+//
+// WriteFileAtomic deliberately preserves what is already there, matching what
+// os.WriteFile did. A caller whose file may embed a resolved secret needs the
+// opposite: a config left at 0644 by a prior tool, or by a git checkout, must
+// be tightened to 0600 on rewrite rather than kept. Enforcing that on the open
+// descriptor rather than the path keeps it un-raceable, and doing it before
+// the rename means the mode is already correct at the moment the file becomes
+// visible under its final name.
+func (rw *RootWriter) WriteFileAtomicMode(rel string, data []byte, mode os.FileMode) error {
+	if err := rw.MkdirAll(parentOf(rel)); err != nil {
+		return err
+	}
+	clean := filepath.FromSlash(rel)
+
+	tmpRel, f, err := rw.createTemp(parentOf(rel), mode)
+	if err != nil {
+		return fmt.Errorf("create temp file for %s: %w", rw.Path(rel), err)
+	}
+	defer func() { _ = rw.root.Remove(tmpRel) }()
+
+	// Forced, not umask-narrowed: the caller is asserting a ceiling, and a
+	// permissive umask must not be able to widen a secret-bearing file.
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		return fmt.Errorf("set mode of %s: %w", rw.Path(rel), err)
+	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return fmt.Errorf("write temp file for %s: %w", rw.Path(rel), err)

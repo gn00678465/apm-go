@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"path/filepath"
 
 	"github.com/apm-go/apm/internal/manifest"
 )
@@ -19,7 +18,7 @@ func (a *claudeAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string
 		return nil, nil, diags, nil
 	}
 	relPath := ".mcp.json"
-	if err := writeMergedMCPJSON(filepath.Join(projectDir, relPath), "mcpServers", entries, consideredNames(prims), 0600); err != nil {
+	if err := writeMergedMCPJSON(projectDir, relPath, "mcpServers", entries, consideredNames(prims), 0600); err != nil {
 		return nil, nil, diags, err
 	}
 	return []string{relPath}, entryNames(entries), diags, nil

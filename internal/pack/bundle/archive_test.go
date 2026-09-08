@@ -10,16 +10,16 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/apm-go/apm/internal/marketplace/build"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // archiveHandles opens the two boundaries the archive writers now take: the
 // output directory the archive is written into, and the bundle directory it is
 // read from. Both are handles, so the tests exercise the same confinement the
 // producer does rather than a path-string shortcut.
-func archiveHandles(t *testing.T, outDir, bundleName string) (bundleRW, outRW *build.RootWriter) {
+func archiveHandles(t *testing.T, outDir, bundleName string) (bundleRW, outRW *rootfs.RootWriter) {
 	t.Helper()
-	outRW, err := build.OpenRootWriter(outDir)
+	outRW, err := rootfs.OpenRootWriter(outDir)
 	if err != nil {
 		t.Fatal(err)
 	}

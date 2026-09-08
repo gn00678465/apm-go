@@ -8,6 +8,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // maxDiffsRendered mirrors _MAX_DIFFS_RENDERED (drift_check.py:35).
@@ -135,7 +136,7 @@ func jsonKeyDiff(oldVal, newVal any, prefix string) []DriftDifference {
 // against a file outside the project and reports the working tree clean while
 // the committed artifact is stale. A release gate that can be made to pass by
 // planting a link is not a gate.
-func loadOnDisk(rw *RootWriter, rel string) (any, bool) {
+func loadOnDisk(rw *rootfs.RootWriter, rel string) (any, bool) {
 	rel, relErr := rw.Rel(rel)
 	if relErr != nil {
 		return nil, false
@@ -174,7 +175,7 @@ func CheckMarketplaceDrift(
 
 	// One directory handle for the whole gate, matching how the producers
 	// write: every read below goes through it.
-	rw, err := OpenRootWriter(projectRoot)
+	rw, err := rootfs.OpenRootWriter(projectRoot)
 	if err != nil {
 		return DriftReport{}, err
 	}

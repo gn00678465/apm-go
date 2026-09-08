@@ -18,6 +18,7 @@ import (
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/security"
 	"github.com/apm-go/apm/internal/ux"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // DepSource is one dependency's already-resolved install location, fed to
@@ -222,7 +223,7 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	// after it would then be confined to somewhere it should never have
 	// reached (external audit 2026-09-08). Sub goes through the project root's
 	// own handle, which refuses a component that leaves it.
-	projRW, err := build.OpenRootWriter(opts.ProjectRoot)
+	projRW, err := rootfs.OpenRootWriter(opts.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +461,7 @@ func scanBundleSources(w io.Writer, fileMap *FileMap, force bool) {
 // dropped silently, which is a different outcome from a write that fails. rw
 // then performs the write, so the containment that decides where bytes land
 // is the handle's, not the string's.
-func writeBundleFiles(rw *build.RootWriter, bundleDir string, fileMap *FileMap) error {
+func writeBundleFiles(rw *rootfs.RootWriter, bundleDir string, fileMap *FileMap) error {
 	for _, key := range fileMap.Keys() {
 		src, _ := fileMap.Source(key)
 		info, err := os.Lstat(src)
@@ -594,7 +595,7 @@ func sanitizeBundleName(name string) string {
 // The walk reads through rw's handle rather than the filesystem path: its
 // result becomes the integrity manifest install later verifies against, so a
 // link planted mid-walk must not be able to get an outside file hashed in.
-func embedPackLockfile(rw *build.RootWriter, lf *lockfile.Lockfile, original *yaml.Node, target, format string) error {
+func embedPackLockfile(rw *rootfs.RootWriter, lf *lockfile.Lockfile, original *yaml.Node, target, format string) error {
 	bundleFiles := map[string]string{}
 	walkErr := fs.WalkDir(rw.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {

@@ -987,3 +987,53 @@ func TestMCPEntry_HeaderPlaceholderPerTarget(t *testing.T) {
 		t.Errorf("codex must not bake Authorization into http_headers: %v", cx)
 	}
 }
+
+// TestWriteMCP_DoesNotWriteThroughAHardLink pins the write shape. An MCP
+// config can carry a resolved secret verbatim in bake mode, so the file it
+// lands on has to be the one the project contains. The previous
+// chmod/os.WriteFile/chmod sequence truncated in place, which writes through
+// every name the inode has -- and the leading chmod made it worse, applying
+// 0600 to the outside file too. A hard link is invisible to Lstat and to
+// every path check above it; only the rename-based write leaves it alone.
+func TestWriteMCP_DoesNotWriteThroughAHardLink(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "project")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{dir, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	victim := filepath.Join(outside, "victim.json")
+	const victimContent = `{"SECRET":"must-not-be-destroyed"}`
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(victim, filepath.Join(dir, ".mcp.json")); err != nil {
+		t.Skipf("SKIPPED: cannot create a hard link here: %v", err)
+	}
+
+	prims := []Primitive{mcpPrim("local", &manifest.MCPDependency{
+		Name: "s1", Registry: false, Transport: "stdio", Command: "cmd",
+	})}
+	if _, _, _, err := (&claudeAdapter{}).WriteMCP(prims, dir); err != nil {
+		t.Fatalf("WriteMCP: %v", err)
+	}
+
+	// The config landed...
+	written, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("read written config: %v", err)
+	}
+	if !strings.Contains(string(written), "s1") {
+		t.Errorf(".mcp.json = %s, want the deployed server", written)
+	}
+	// ...and the other name kept its own bytes.
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(got) != victimContent {
+		t.Errorf("outside file = %q, want %q untouched", got, victimContent)
+	}
+}
