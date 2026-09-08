@@ -1,0 +1,5 @@
+{
+  "id": "plugin-init-conflict",
+  "argv": ["plugin", "init", "plugin-init-fixture", "--format", "claude", "--claude-plugin"],
+  "rewrite_binary_name": true
+}

@@ -1,0 +1,8 @@
+{
+  "id": "registry-explicit-config-dir",
+  "argv": ["marketplace", "list"],
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "skills"]],
+  "env": {"APM_CONFIG_DIR": "<TMP>/altcfg"},
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F04"]
+}

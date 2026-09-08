@@ -1,0 +1,7 @@
+{
+  "id": "doctor-healthy",
+  "argv": ["doctor"],
+  "path_prepend": "path",
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering"]
+}

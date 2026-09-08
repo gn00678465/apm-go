@@ -1,8 +1,6 @@
 package deploy
 
 import (
-	"path/filepath"
-
 	"github.com/apm-go/apm/internal/manifest"
 )
 
@@ -18,7 +16,7 @@ func (a *copilotAdapter) WriteMCP(prims []Primitive, projectDir string) ([]strin
 		return nil, nil, diags, nil
 	}
 	relPath := ".github/mcp-config.json"
-	if err := writeMergedMCPJSON(filepath.Join(projectDir, filepath.FromSlash(relPath)), "mcpServers", entries, consideredNames(prims), 0644); err != nil {
+	if err := writeMergedMCPJSON(projectDir, relPath, "mcpServers", entries, consideredNames(prims), 0644); err != nil {
 		return nil, nil, diags, err
 	}
 	return []string{relPath}, entryNames(entries), diags, nil

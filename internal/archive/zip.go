@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -81,13 +80,10 @@ func extractZipInto(zr *zip.ReadCloser, stage string, lim Limits) ([]string, err
 		}
 
 		// Path guard (req-sc-002) -- identical logic to SafeExtract's tar.gz
-		// path.
-		clean := path.Clean(zf.Name)
-		if path.IsAbs(clean) || filepath.IsAbs(zf.Name) || hasVolume(zf.Name) {
-			return nil, fmt.Errorf("archive: entry %q has an absolute path; rejected", zf.Name)
-		}
-		if clean == ".." || strings.HasPrefix(clean, "../") || containsDotDot(clean) {
-			return nil, fmt.Errorf("archive: entry %q escapes extraction root (contains \"..\"); rejected", zf.Name)
+		// path, via the shared ValidatedRelPath helper (extract.go).
+		clean, err := ValidatedRelPath(zf.Name)
+		if err != nil {
+			return nil, err
 		}
 		target := filepath.Join(stage, filepath.FromSlash(clean))
 		if !withinRoot(stage, target) {

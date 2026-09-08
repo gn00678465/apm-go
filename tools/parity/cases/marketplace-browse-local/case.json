@@ -1,0 +1,6 @@
+{
+  "id": "marketplace-browse-local",
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "sample"]],
+  "argv": ["marketplace", "browse", "sample"],
+  "rewrite_binary_name": true
+}

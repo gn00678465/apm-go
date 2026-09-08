@@ -1,0 +1,12 @@
+project:
+  uuid: 48077b8a-8bbb-42f7-88bb-535e7e85186d
+  slug: apm-go
+  node_id: 2c97035bfac1
+  build_id: 43c34b87-cb3b-5c94-b923-87da41b13665
+vcs:
+  type: git
+agents:
+  available:
+  - claude
+  auto_commit: true
+  lint_on_edit: false

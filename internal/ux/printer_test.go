@@ -2,8 +2,13 @@ package ux
 
 import (
 	"bytes"
+	"io"
+	"os"
 	"strings"
 	"testing"
+
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // TestPrinters_Golden_NonTTYWriterHasNoANSI proves per-writer color
@@ -17,10 +22,11 @@ func TestPrinters_Golden_NonTTYWriterHasNoANSI(t *testing.T) {
 		fn     func(buf *bytes.Buffer)
 		symbol string
 	}{
-		{name: "Success", fn: func(buf *bytes.Buffer) { Success(buf, "done: %s", "ok") }, symbol: SymbolSuccess},
-		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "info: %s", "ok") }, symbol: SymbolInfo},
-		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "warn: %s", "ok") }, symbol: SymbolWarn},
-		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "error: %s", "ok") }, symbol: SymbolError},
+		{name: "Success", fn: func(buf *bytes.Buffer) { Success(buf, "done: %s", "ok") }, symbol: " + "},
+		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "info: %s", "ok") }, symbol: " i "},
+		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "running: %s", "ok") }, symbol: " > "},
+		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "warn: %s", "ok") }, symbol: " ! "},
+		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "error: %s", "ok") }, symbol: " x "},
 	}
 
 	for _, tt := range tests {
@@ -46,21 +52,30 @@ func TestPrinters_Golden_NonTTYWriterHasNoANSI(t *testing.T) {
 	}
 }
 
-// TestPrintLine_SymbolFixedWidthThreeCentered is the R8/P4-5/P4-6 regression:
-// every message symbol renders centered in a fixed 3-rune column (padding
-// survives ANSI stripping since it's plain whitespace, not color), and the
-// message text starts immediately after that column with no additional
-// space -- so multi-line output stays aligned and there's no double gap.
-func TestPrintLine_SymbolFixedWidthThreeCentered(t *testing.T) {
+// TestSuccess_UsesCenteredTUIPrefix pins the stream-facing success contract.
+func TestSuccess_UsesCenteredTUIPrefix(t *testing.T) {
+	var buf bytes.Buffer
+	Success(&buf, "msg")
+	if got, want := strings.TrimSuffix(buf.String(), "\n"), " + msg"; got != want {
+		t.Errorf("Success output = %q, want %q", got, want)
+	}
+}
+
+// TestPrintLine_CenteredTUISymbols pins the shared width-3 format used by all
+// stream status records.
+func TestPrintLine_CenteredTUISymbols(t *testing.T) {
 	tests := []struct {
-		name   string
-		fn     func(buf *bytes.Buffer)
-		symbol string
+		name string
+		fn   func(buf *bytes.Buffer)
+		want string
 	}{
-		{name: "Success", fn: func(buf *bytes.Buffer) { Success(buf, "msg") }, symbol: SymbolSuccess},
-		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "msg") }, symbol: SymbolInfo},
-		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "msg") }, symbol: SymbolWarn},
-		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "msg") }, symbol: SymbolError},
+		{name: "Info", fn: func(buf *bytes.Buffer) { Info(buf, "msg") }, want: " i msg"},
+		{name: "Running", fn: func(buf *bytes.Buffer) { Running(buf, "msg") }, want: " > msg"},
+		{name: "Warn", fn: func(buf *bytes.Buffer) { Warn(buf, "msg") }, want: " ! msg"},
+		{name: "Error", fn: func(buf *bytes.Buffer) { Error(buf, "msg") }, want: " x msg"},
+		{name: "Sparkle", fn: func(buf *bytes.Buffer) { Sparkle(buf, "msg") }, want: " + msg"},
+		{name: "Gear", fn: func(buf *bytes.Buffer) { Gear(buf, "msg") }, want: " + msg"},
+		{name: "Check", fn: func(buf *bytes.Buffer) { Check(buf, "msg") }, want: " + msg"},
 	}
 
 	for _, tt := range tests {
@@ -68,19 +83,68 @@ func TestPrintLine_SymbolFixedWidthThreeCentered(t *testing.T) {
 			var buf bytes.Buffer
 			tt.fn(&buf)
 			out := strings.TrimSuffix(buf.String(), "\n")
+			if out != tt.want {
+				t.Errorf("%s output = %q, want %q", tt.name, out, tt.want)
+			}
+		})
+	}
+}
 
-			runes := []rune(out)
-			if len(runes) < 4 {
-				t.Fatalf("%s output too short to contain a 3-rune symbol column: %q", tt.name, out)
+// TestErrWriter_RedirectsProcessStderrToStdout pins ticket 10's channel
+// switch: a writer that is literally os.Stderr is redirected to os.Stdout;
+// any other writer (a test's bytes.Buffer, cmd.OutOrStdout(), ...) passes
+// through unchanged.
+func TestErrWriter_RedirectsProcessStderrToStdout(t *testing.T) {
+	if got := errWriter(os.Stderr); got != io.Writer(os.Stdout) {
+		t.Errorf("errWriter(os.Stderr) = %v, want os.Stdout", got)
+	}
+
+	var buf bytes.Buffer
+	if got := errWriter(&buf); got != io.Writer(&buf) {
+		t.Errorf("errWriter(&buf) = %v, want &buf unchanged", got)
+	}
+}
+
+// Plain is the symbol-free line printer for callers whose content is already
+// a complete row. It still goes through the per-writer colour policy.
+func TestPlain_NoSymbol_NoANSI_Newline(t *testing.T) {
+	var buf bytes.Buffer
+	Plain(&buf, "  %s %s: %s", SymbolSuccess, "git", "ok")
+	got := buf.String()
+	if got != "  + git: ok\n" {
+		t.Errorf("got %q", got)
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Errorf("ANSI leaked into non-TTY writer: %q", got)
+	}
+}
+
+// TestSymbolLine_MessageCarriesSeverityColor is the 2026-08-11 ruling: the
+// message text is rendered through the same severity style as the symbol, not
+// left unstyled. A mutation that drops style.Render(msg) back to a bare msg
+// fails this whenever the active color profile emits ANSI, and the
+// ANSI-stripped assertion below keeps the test meaningful (rather than
+// vacuously true) on a profile that emits none.
+func TestSymbolLine_MessageCarriesSeverityColor(t *testing.T) {
+	styles := map[string]lipgloss.Style{
+		"success": successStyle,
+		"info":    infoStyle,
+		"warn":    warnStyle,
+		"error":   errorStyle,
+	}
+
+	for name, style := range styles {
+		t.Run(name, func(t *testing.T) {
+			// Act
+			got := symbolLine(style, "!", "hello")
+
+			// Assert: the message half is the styled render, not the raw text.
+			if !strings.Contains(got, style.Render("hello")) {
+				t.Errorf("symbolLine() = %q, want it to contain the styled message %q", got, style.Render("hello"))
 			}
-			symbolColumn := string(runes[:3])
-			wantColumn := " " + tt.symbol + " "
-			if symbolColumn != wantColumn {
-				t.Errorf("%s symbol column = %q, want %q (3-rune centered)", tt.name, symbolColumn, wantColumn)
-			}
-			rest := string(runes[3:])
-			if rest != "msg" {
-				t.Errorf("%s message = %q, want %q (no extra space after the symbol column)", tt.name, rest, "msg")
+			// ...and the visible text is unchanged by the styling.
+			if visible := ansi.Strip(got); visible != " ! hello" {
+				t.Errorf("visible text = %q, want %q", visible, " ! hello")
 			}
 		})
 	}

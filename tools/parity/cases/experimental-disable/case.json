@@ -1,0 +1,6 @@
+{
+  "id": "experimental-disable",
+  "setup_argv": [["experimental", "enable", "registries"]],
+  "argv": ["experimental", "disable", "registries"],
+  "rewrite_binary_name": true
+}

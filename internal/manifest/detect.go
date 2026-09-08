@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -45,6 +46,7 @@ func DetectTargets(projectDir string) []string {
 			result = append(result, sig.Target)
 		}
 	}
+	sort.Strings(result)
 	return result
 }
 

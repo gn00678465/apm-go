@@ -1,0 +1,5 @@
+{
+  "id": "marketplace-add-nonexistent",
+  "argv": ["marketplace", "add", "./does-not-exist", "--name", "x"],
+  "rewrite_binary_name": true
+}

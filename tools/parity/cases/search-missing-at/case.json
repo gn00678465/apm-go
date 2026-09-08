@@ -1,0 +1,6 @@
+{
+  "id": "search-missing-at",
+  "argv": ["search", "nope"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

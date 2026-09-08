@@ -1,0 +1,211 @@
+# plugin init / doctor 驗證報告
+
+> **Superseded** by runner evidence @ 645b3bf + ticket 08's commit (`tools/parity/cases/doctor-*`, `<out>/diff.jsonl` — all 18 `doctor-*` cases waived-clean against the pinned Oracle). See `.scratch/parity-runner/issues/08-doctor-backfill.md` for the full evidence summary and the two real apm-go bugs this backfill found and fixed. This manual report is kept for historical context only.
+
+日期：2026-08-23  
+Oracle：`/home/madao/projects/apm-mesh/apm`，GitNexus index commit `c8d6cdec596e773a84b0839c33c28b6b0a217637`（up to date）。  
+Target HEAD：`8f8a028ff5949aeab34c202c1bb72983228a7447`；工作樹原本已有大量 dirty changes。
+
+## 結論
+
+主要 format alias、normalization、互斥錯誤與 exit 2 已通過；doctor 的 in-scope checks、critical/info exit policy、token 不輸出與 plain icon 行格式也已覆蓋。但目前不是完整 parity，仍有以下缺口：空 selector、help literal、next-step/pack 整合、existing-file warning、atomic scaffold、Unicode JSON bytes、Git subprocess hardening，以及 doctor wording/UX facade。
+
+## Build / test
+
+為遵守「不修改非 `.review` 檔案」，build binary 的 smoke run 使用 `/tmp`；另執行無輸出的 package build：
+
+```text
+go build ./cmd/apm-go                                      PASS
+go test ./cmd/apm-go ./internal/gitops ./internal/pluginjson ./internal/marketplace/authoring   PASS
+```
+
+四個 package 均 `ok`。本次只新增本報告檔，沒有修復 Target source。
+
+## Findings
+
+### Finding 1 — 顯式 `--format=` 被錯誤當成未提供
+
+- Taxonomy：`F01 Surface mismatch` + `F08 Exit/error contract`
+- 層級：P1；`cmd/apm-go/plugin_format.go:48-52`
+- Oracle `resolve_bundle_format` 以 `fmt is not None` 判斷 selector；Click 對空值報 `Invalid value for '--format': '' ...`，exit 2，無檔案。Target 以 `format != ""` 判斷，`--format=` 走 Claude default，exit 0 並建立 `apm.yml`/`plugin.json`。
+
+最小 reproducer：
+
+```sh
+tmp=$(mktemp -d); cd "$tmp"
+apm-go plugin init p --yes --format=
+# Target: exit 0，p/ 存在；Oracle: exit 2，沒有 p/
+```
+
+修復：保留 flag-present bit 與值本身；顯式空值必須進 coercion 並以 exit 2 拒絕。補 no-files assertion。
+
+### Finding 2 — plugin init help 不符合 Oracle literal
+
+- Taxonomy：`F01 Surface mismatch`
+- 層級：P2；`cmd/apm-go/plugin.go:59-62`
+- Oracle 顯示 `--format [plugin|agent-plugin|claude|claude-plugin]`，description 只到 `current Claude-compatible default.`；Target 顯示 `--format string`，並額外加 `One of: ...`。合法輸入雖相同，spec 的 help parity 未達成。
+
+最小 reproducer：
+
+```sh
+apm-go plugin init --help
+uv run --project /home/madao/projects/apm-mesh/apm apm plugin init --help
+```
+
+修復：用 Cobra metavar/help template 呈現 Choice syntax，固定 Oracle flag wording。
+
+### Finding 3 — next steps 宣告 dead command，Claude mode 也遺漏 Oracle steps
+
+- Taxonomy：`F10 Cross-command integration` + `F01 Surface mismatch`
+- 層級：P1；`cmd/apm-go/init.go:54-72`
+- Oracle 的 Claude/Agent plugin init 都列 `pack --format agent-plugin` 與 `pack --format claude-plugin`。Target Claude mode 只列 `apm-go pack`；Agent mode 雖列兩個 format，但 Target `packCmd` 目前完全沒有 `--format`/`--claude-plugin`。
+
+最小 reproducer：
+
+```sh
+tmp=$(mktemp -d); cd "$tmp"
+apm-go plugin init p --yes --format agent-plugin
+cd p; apm-go pack --format agent-plugin
+# Target: Error: unknown flag: --format, exit 1
+```
+
+修復：補 pack selector parity；若 pack 不在本 release，next steps 不得列不可執行命令。
+
+### Finding 4 — plugin/mcp-only 既有檔案不會 warning
+
+- Taxonomy：`F09 Artifact/provenance` + `F08 Exit/error contract`
+- 層級：P1；`cmd/apm-go/init.go:208-224`
+- Target 已計算 `existingGenerated`，但實際分支只看 `apmYmlExists`。只有 `plugin.json` 或只有 `mcp.json` 時，`--yes` 會靜默覆寫，interactive 也不會 confirm。Oracle 只要任一 generated file 存在便先列 `Generated files already exist: ...`。
+
+最小 reproducer：
+
+```sh
+tmp=$(mktemp -d); cd "$tmp"
+mkdir p; printf 'OLD' > p/plugin.json
+apm-go plugin init p --yes --format claude-plugin
+# Target: 無 existing-file warning，plugin.json 被覆寫
+```
+
+修復：以 `len(existingGenerated) > 0` 作為 warning/confirm 條件；補 plugin-only、mcp-only tests。
+
+### Finding 5 — Agent scaffold 非 atomic
+
+- Taxonomy：`F03 Config round-trip` + `F09 Artifact/provenance`
+- 層級：P1；`cmd/apm-go/init.go:338-377`、`internal/pluginjson/pluginjson.go:46-61`
+- Oracle `commands/init.py:407-444` 先 staging、驗證三個檔案、最後 commit。Target 先 direct-write `apm.yml`，再 direct-write `plugin.json`/`mcp.json`，後續失敗會留下半成品。
+
+最小 reproducer：
+
+```sh
+tmp=$(mktemp -d); cd "$tmp"
+mkdir -p p/plugin.json
+apm-go plugin init p --yes --format agent-plugin
+# Target: exit 1（write plugin.json ... is a directory），但 p/apm.yml 已存在
+```
+
+修復：stage → validate → commit，失敗時 restore prior files；補兩個 JSON write failure 與 preservation tests。
+
+### Finding 6 — 非 ASCII metadata 破壞 plugin.json byte parity
+
+- Taxonomy：`F09 Artifact/provenance`
+- 層級：P1；`internal/pluginjson/pluginjson.go:76-82` 及 `bundle.writeJSONString`
+- Oracle Python `json.dumps(indent=2)` 預設 `ensure_ascii=True`；`名<` 會輸出 `\u540d<`。Target custom writer 直接輸出 UTF-8 `名<`。目前 ASCII golden 不能捕捉此差異。
+
+最小 reproducer：
+
+```sh
+cfg=$(mktemp); git config --file "$cfg" user.name '名<'
+tmp=$(mktemp -d); cd "$tmp"
+GIT_CONFIG_GLOBAL="$cfg" apm-go plugin init x --yes --format agent-plugin
+# Target plugin.json: "name": "名<"
+# Oracle _create_plugin_json: "name": "\u540d<"
+```
+
+修復：實作 Python `ensure_ascii=True`（含非 BMP surrogate pair）並補 Unicode/emoji byte golden。
+
+### Finding 7 — doctor Git probe 沒有既有安全 environment
+
+- Taxonomy：`F07 Security boundary`
+- 層級：P1；`cmd/apm-go/doctor.go:46-51`
+- `internal/gitops/secure_env.go:32-54` 要求 `GIT_TERMINAL_PROMPT=0`、`GIT_ASKPASS=`、`GCM_INTERACTIVE=never`、`GIT_ALLOW_PROTOCOL`、`GIT_PROTOCOL_FROM_USER=0`。`execGit` 直接 `exec.CommandContext`，可能 credential prompt/hang，也沒有 protocol policy。
+
+最小 reproducer：把 fake `git` 放到 PATH 前方，記錄上述五個 env，再執行：
+
+```sh
+PATH=/tmp/fake-git:$PATH FAKE_GIT_ENV=/tmp/git-env apm-go doctor
+cat /tmp/git-env
+# Target 五個值均未設定；ApplySecureGitEnv/ApplyCloneEnv 應設定它們
+```
+
+修復：`--version` 套 `ApplySecureGitEnv`；固定 GitHub `ls-remote` 套 `ApplyCloneEnv(cmd, url)`，並補 fake-git env assertion。
+
+### Finding 8 — doctor informational detail/hint wording 漂移
+
+- Taxonomy：`F08 Exit/error contract`
+- 層級：P2；`cmd/apm-go/doctor.go:194-210`、`internal/gitops/stderr.go:136-150`
+- exit policy 正確（parse/both-config/duplicate 都是 informational，仍 exit 0），但 literal 不同：Oracle malformed apm.yml 以 `Invalid YAML in apm.yml: ...` 開頭，Target 統一加 `marketplace config has errors: parse apm.yml: ...`；legacy/both hint 用 `apm-go marketplace migrate` 而非 Oracle 的 `apm marketplace migrate`；auth Git hint 用 `apm-go doctor` 而非 `apm doctor`。
+
+最小 reproducer：
+
+```sh
+tmp=$(mktemp -d); cd "$tmp"
+cat > apm.yml <<'YAML'
+name: x
+marketplace:
+  packages: [
+YAML
+NO_COLOR=1 apm-go doctor 2>&1
+# 比對 Oracle：detail prefix/截斷內容不同；兩者 exit 0
+```
+
+修復：建立 config state 與 Git hint/summary parity table 逐字對齊；若刻意改 executable 名稱，應明確列 intentional deviation。
+
+### Finding 9 — doctor plain renderer 繞過 ux facade
+
+- Taxonomy：`F08 Exit/error contract`（UX/output contract）
+- 層級：P2；`cmd/apm-go/doctor.go:239-253`
+- spec 要求 non-rich output 經 `ux`；Target 直接 `fmt.Fprintf`/`fmt.Fprintln(os.Stderr, ...)`。現有 `[+]`/`[x]`/`[i]` 看似正確，但不經統一 writer、test hooks、style/TTY policy，後續容易漂移。
+
+最小 reproducer：
+
+```sh
+CI=1 NO_COLOR=1 apm-go doctor 2>doctor.out
+```
+
+修復：在 ux 增加 doctor status-line adapter，或讓 plain branch 使用既有 ux API；補 capture-seam assertion。
+
+## Doctor coverage 判定
+
+| Check | Target coverage | 分類/exit |
+|---|---|---|
+| `git` | `git --version`、missing、timeout、non-zero | critical；失敗 exit 1 |
+| `network` | GitHub `ls-remote ... HEAD`、5s timeout、translated hint | critical；失敗 exit 1 |
+| `auth` | `GH_TOKEN`/`GITHUB_TOKEN` 只輸出 `Token detected` | informational；不失敗 |
+| `marketplace config` | apm.yml、legacy、none、both、parse | informational；不影響 exit |
+| `duplicate names` | case-insensitive + indices | informational；不影響 exit |
+| rendering | rich `Check/Status/Detail`、plain icons | surface 已有，見 Finding 9 |
+
+`format coverage`、`version alignment`、`executable trust` 是 spec 明列的 out of scope；Target 省略它們是正確決策，不列為 G-02 finding。Full `AuthResolver` parity 也不在本次 scope。Git stderr pattern table 主要分類已有實作與部分 tests；尚缺 401/403、其餘 timeout patterns、git-version timeout/non-zero 與 malformed config 的完整 cases，應補測但不是已證實的 classifier defect。
+
+## eval-plan 對照
+
+### P-01
+
+部分通過：alias、大小寫/space/underscore normalization、`apm` rejection、互斥錯誤、exit 2、conflict no-files、Agent `mcp.json` schema/key order、Claude/no-flag 的 ASCII artifact equality 通過。Findings 1–6 未通過，故不能把 P-01 標成 closed。
+
+### G-02
+
+五個 in-scope checks、critical/info exit semantics、5s probes、non-TTY icons、translated network hint、token non-leak 已有實作/測試；Findings 7–9 仍未通過 security/parity/standards review。三個 out-of-scope checks 不列缺口。
+
+### §8.3
+
+- P-01 format flags 已補入口，但 Findings 1–2（taxonomy `F01`）仍是 surface gap。
+- `apm doctor` top-level 與主要 exit semantics 已補；Findings 7–9 是剩餘缺口。
+- Rich/Clack vs ux/Cobra 的 library 差異可接受，但 Finding 9（taxonomy `F08`）的 direct `fmt` bypass 超出單純 library substitution。
+- Oracle Agent Plugins staged loader/validator 與 Go writer 可有 architecture 差異；Finding 5（taxonomy `F03/F09`）的 atomic boundary、Finding 6（taxonomy `F09`）的 byte contract 仍必須守住。
+
+## 修復優先順序
+
+1. P1：Finding 7（taxonomy `F07`）Git hardening、Finding 4（`F09`）existing-file detection、Finding 5（`F03/F09`）atomic scaffold、Finding 6（`F09`）JSON escaping、Finding 1（`F01/F08`）explicit empty selector。
+2. P1：Finding 3（`F10/F01`）pack selector integration；在 pack 未支援前移除 dead next steps。
+3. P2：Finding 2（`F01`）help、Finding 8（`F08`）diagnostic wording、Finding 9（`F08`）ux facade。

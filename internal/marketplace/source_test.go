@@ -28,8 +28,9 @@ func captureStderr(t *testing.T, fn func()) string {
 }
 
 // TestParseMarketplaceSource_LocalPaths covers mkt-010 rule 1: every local
-// path shape the checklist enumerates must resolve to KindLocal with an
-// absolute URL, regardless of which separator style the raw SOURCE used.
+// path shape the checklist enumerates must resolve to KindLocal with a
+// "file://"-prefixed absolute URL (ticket 24 AC2), regardless of which
+// separator style the raw SOURCE used.
 func TestParseMarketplaceSource_LocalPaths(t *testing.T) {
 	tests := []struct {
 		name string
@@ -62,8 +63,11 @@ func TestParseMarketplaceSource_LocalPaths(t *testing.T) {
 			if src.Kind() != KindLocal {
 				t.Errorf("Kind() = %q, want %q", src.Kind(), KindLocal)
 			}
-			if !filepath.IsAbs(src.URL) {
-				t.Errorf("URL = %q, want an absolute path", src.URL)
+			if !strings.HasPrefix(src.URL, "file://") {
+				t.Errorf("URL = %q, want a \"file://\"-prefixed URI (ticket 24 AC2)", src.URL)
+			}
+			if !filepath.IsAbs(LocalFilesystemPath(src.URL)) {
+				t.Errorf("URL = %q, want its filesystem path to be absolute", src.URL)
 			}
 			if src.Path != defaultManifestPath {
 				t.Errorf("Path = %q, want %q", src.Path, defaultManifestPath)
@@ -119,8 +123,42 @@ func TestParseMarketplaceSource_LocalPathPointingToFile(t *testing.T) {
 	if src.Path != "" {
 		t.Errorf("Path = %q, want empty (direct-file read mode)", src.Path)
 	}
-	if src.URL != manifestFile {
-		t.Errorf("URL = %q, want %q", src.URL, manifestFile)
+	if want := "file://" + manifestFile; src.URL != want {
+		t.Errorf("URL = %q, want %q (ticket 24 AC2)", src.URL, want)
+	}
+}
+
+// TestParseMarketplaceSource_NonLocalShapes_NoFileURIAdded is ticket 24
+// AC5: the "file://"-wrapping added for local sources (AC2) must never leak
+// onto a non-local source's URL -- OWNER/REPO, a full HTTPS URL, and an
+// SCP-style SSH remote are all synthesised/kept exactly as before this
+// ticket.
+func TestParseMarketplaceSource_NonLocalShapes_NoFileURIAdded(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantURL string
+	}{
+		{"OWNER/REPO shorthand", "owner/repo", "https://github.com/owner/repo"},
+		{"full HTTPS URL", "https://github.com/owner/repo", "https://github.com/owner/repo"},
+		{"SCP-style SSH", "git@github.com:owner/repo.git", "git@github.com:owner/repo.git"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act
+			src, err := ParseMarketplaceSource(tt.raw, "")
+
+			// Assert
+			if err != nil {
+				t.Fatalf("ParseMarketplaceSource(%q) returned error: %v", tt.raw, err)
+			}
+			if src.URL != tt.wantURL {
+				t.Errorf("URL = %q, want %q (unchanged)", src.URL, tt.wantURL)
+			}
+			if strings.HasPrefix(src.URL, "file://") {
+				t.Errorf("URL = %q, a non-local source must never get a \"file://\" prefix", src.URL)
+			}
+		})
 	}
 }
 

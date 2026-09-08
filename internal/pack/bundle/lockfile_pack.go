@@ -143,6 +143,7 @@ func EnrichLockfileForPack(lf *lockfile.Lockfile, meta PackMetadata, original *y
 	if err != nil {
 		return nil, err
 	}
+	ensureOraclePackLockfileFields(lockDoc)
 	lockBytes, err := yamlcore.SafeDump(lockDoc)
 	if err != nil {
 		return nil, err
@@ -154,4 +155,69 @@ func EnrichLockfileForPack(lf *lockfile.Lockfile, meta PackMetadata, original *y
 	}
 
 	return append(packBytes, lockBytes...), nil
+}
+
+// ensureOraclePackLockfileFields adds the two top-level keys the Oracle's
+// lockfile serializer emits unconditionally but apm-go's omits when empty --
+// ticket 27. The Oracle's LockFile.to_yaml (deps/lockfile.py:815-822) seeds
+// its output dict with lockfile_version and generated_at, then assigns
+// dependencies and deployments, all four outside any `if` guard; everything
+// after that is `if <truthy>`. So an embedded lockfile built from a source
+// file that declared neither key still comes out with `generated_at: ”` and
+// `deployments: []`, while apm-go's came out with neither.
+//
+// This lives here, not in SerializeLockfile, on purpose. SerializeLockfile is
+// also the top-level apm.lock.yaml write path, where apm-go deliberately
+// guarantees something the Oracle does not: a byte-identical round-trip of an
+// unchanged user file (AGENTS.md's YAML round-trip convention, locked down by
+// TestWriteLockfile_RoundTrip_* in internal/lockfile). Making those two keys
+// unconditional there would mean every `install` silently rewrites the user's
+// lockfile to add them -- those tests caught exactly that when this fix was
+// first attempted a layer too low. This file is already the designated
+// "independent wrapping layer" for pack-only divergence -- see
+// EnrichLockfileForPack's own doc comment ("SerializeLockfile 不動,
+// lockfile_pack.go 獨立包裝層").
+//
+// deployments is appended only when SerializeLockfile did not already carry
+// one through: "deployments" is absent from its knownTopKeys, so an existing
+// key survives verbatim via the unknown-key preservation loop. Appending
+// unconditionally would emit the key twice for an Oracle-written lockfile
+// with real ledger rows -- a duplicate mapping key, worse than the omission
+// being fixed. apm-go has not ported the deployment-ledger concept, so the
+// empty list is the only value it can honestly produce for the absent case.
+func ensureOraclePackLockfileFields(doc *yaml.Node) {
+	root := doc
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		root = root.Content[0]
+	}
+	if root.Kind != yaml.MappingNode {
+		return
+	}
+
+	present := make(map[string]bool, len(root.Content)/2)
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		present[root.Content[i].Value] = true
+	}
+
+	if !present["generated_at"] {
+		// Immediately after lockfile_version, matching the Oracle's own
+		// insertion order.
+		pair := []*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: "generated_at", Tag: "!!str"},
+			{Kind: yaml.ScalarNode, Value: "", Tag: "!!str", Style: yaml.DoubleQuotedStyle},
+		}
+		at := 0
+		if len(root.Content) >= 2 && root.Content[0].Value == "lockfile_version" {
+			at = 2
+		}
+		rest := append([]*yaml.Node{}, root.Content[at:]...)
+		root.Content = append(append(root.Content[:at:at], pair...), rest...)
+	}
+
+	if !present["deployments"] {
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "deployments", Tag: "!!str"},
+			&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle},
+		)
+	}
 }

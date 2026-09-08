@@ -129,3 +129,28 @@ func TestDeepMerge_ExceedsMaxDepth_Errors(t *testing.T) {
 		t.Fatal("expected an error for merge nesting beyond maxMergeDepth")
 	}
 }
+
+// Finding 6 (F09): every upstream writer behind this marshaller
+// (_helpers.py:662, plugin_exporter.py:1004-1017,
+// agent_plugin_exporter.py:473-478) is json.dumps with the default
+// ensure_ascii=True, so non-ASCII must become \uXXXX -- with a UTF-16
+// surrogate pair for non-BMP runes, exactly as CPython emits them.
+func TestMarshalIndent_EnsureASCII(t *testing.T) {
+	got := string(MarshalIndent(ObjectValue(
+		JSONField{Key: "name", Val: StringValue("名<")},
+		JSONField{Key: "emoji", Val: StringValue("a😀b")},
+		JSONField{Key: "ctl", Val: StringValue("x\x01y\x7f")},
+		// Round-2 F6: Python's ESCAPE_DCT uses the short forms for \b and \f
+		// (json/encoder.py), not \u0008/\u000c.
+		JSONField{Key: "short", Val: StringValue("\b\f\n\r\t")},
+	)))
+	want := "{\n" +
+		"  \"name\": \"\\u540d<\",\n" +
+		"  \"emoji\": \"a\\ud83d\\ude00b\",\n" +
+		"  \"ctl\": \"x\\u0001y\\u007f\",\n" +
+		"  \"short\": \"\\b\\f\\n\\r\\t\"\n" +
+		"}"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

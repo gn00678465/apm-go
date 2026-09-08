@@ -138,7 +138,13 @@ func Resolve(
 			}
 
 			// Fresh resolve: list tags and pick highest in intersection
-			allTags, err := tags.ListTags(entry.ref.RepoURL)
+			var allTags []semver.TagInfo
+			var err error
+			if referenceTags, ok := tags.(ReferenceTagLister); ok {
+				allTags, err = referenceTags.ListTagsForRef(entry.ref)
+			} else {
+				allTags, err = tags.ListTags(entry.ref.RepoURL)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("listing tags for %s: %w", entry.ref.RepoURL, err)
 			}
@@ -269,6 +275,9 @@ func Resolve(
 		}
 
 		if ref := depRefs[key]; ref != nil {
+			dep.Host = ref.Host
+			dep.Port = ref.Port
+			dep.ArtifactoryPrefix = ref.ArtifactoryPrefix
 			dep.VirtualPath = ref.VirtualPath
 			if dep.VirtualPath != "" {
 				dep.RepoURL = strings.TrimSuffix(displayKey, "/"+dep.VirtualPath)

@@ -1,14 +1,14 @@
 package pluginmanifest
 
 import (
-	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/pack/bundle"
+	"github.com/apm-go/apm/internal/rootfs"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // PluginEcosystemPaths mirrors core/plugin_manifest.py's
@@ -31,7 +31,7 @@ var PluginEcosystemPaths = map[string]string{
 //     wrote=true
 //   - a .github/-rooted path (copilot) gets an extra info line, since
 //     GitHub Actions grants elevated trust to generated content there
-//   - on success -> "[+] Generated plugin manifest: <path>", wrote=true
+//   - on success -> "Generated plugin manifest: <path>", wrote=true
 //
 // Containment is enforced via internal/marketplace/build.EnsureWithinRoot
 // (mirrors ensure_path_within), reused rather than reimplemented per
@@ -40,7 +40,7 @@ var PluginEcosystemPaths = map[string]string{
 func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest, force, dryRun bool) (wrote bool, err error) {
 	relPath, ok := PluginEcosystemPaths[ecosystem]
 	if !ok {
-		fmt.Fprintf(w, "[warn] unknown plugin ecosystem %q; skipping plugin.json generation.\n", ecosystem)
+		ux.Warn(w, "unknown plugin ecosystem %q; skipping plugin.json generation.", ecosystem)
 		return false, nil
 	}
 
@@ -50,36 +50,42 @@ func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest,
 	}
 
 	if dryRun {
-		fmt.Fprintf(w, "[i] Would write plugin manifest to %s\n", absPath)
+		ux.Info(w, "Would write plugin manifest to %s", absPath)
 		return false, nil
 	}
 
-	if _, statErr := os.Stat(absPath); statErr == nil {
+	// Every write below goes through the RootWriter, whose directory handle
+	// is taken once here. The path string absPath is used only for messages
+	// from this point on: a check that returns a string cannot stop an
+	// ancestor from being swapped for a junction before the write reaches it
+	// (external audit 2026-08-13, reproduced locally), and the second
+	// EnsureWithinRoot this code used to make after MkdirAll only narrowed
+	// that window rather than closing it.
+	rw, err := rootfs.OpenRootWriter(projectRoot)
+	if err != nil {
+		return false, err
+	}
+	defer rw.Close()
+
+	if _, statErr := rw.Stat(relPath); statErr == nil {
 		if !force {
-			fmt.Fprintf(w, "[warn] %s already exists; skipping plugin.json generation. Re-run with --force to overwrite it.\n", absPath)
+			ux.Warn(w, "%s already exists; skipping plugin.json generation. Re-run with --force to overwrite it.", absPath)
 			return false, nil
 		}
-		fmt.Fprintf(w, "[warn] Overwriting %s with generated manifest from apm.yml (--force).\n", absPath)
+		ux.Warn(w, "Overwriting %s with generated manifest from apm.yml (--force).", absPath)
 	}
 
 	if strings.HasPrefix(filepath.ToSlash(relPath), ".github/") {
-		fmt.Fprintf(w, "[i] Writing generated plugin manifest under .github/: %s\n", absPath)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-		return false, fmt.Errorf("create plugin manifest directory: %w", err)
-	}
-	// Re-check containment after mkdir to shrink the TOCTOU window, mirroring
-	// write_plugin_manifest's second ensure_path_within call.
-	if _, err := build.EnsureWithinRoot(projectRoot, relPath); err != nil {
-		return false, err
+		ux.Info(w, "Writing generated plugin manifest under .github/: %s", absPath)
 	}
 
 	data := append(bundle.MarshalIndent(m.ToJSONValue()), '\n')
-	if err := os.WriteFile(absPath, data, 0o644); err != nil {
-		return false, fmt.Errorf("write plugin manifest %s: %w", absPath, err)
+	if err := rw.WriteFileAtomic(relPath, data); err != nil {
+		return false, err
 	}
 
-	fmt.Fprintf(w, "[+] Generated plugin manifest: %s\n", absPath)
+	// Oracle core/plugin_manifest.py:483-484 emits this through
+	// _emit(..., "check"), so the stream glyph is "[+]".
+	ux.Check(w, "Generated plugin manifest: %s", absPath)
 	return true, nil
 }

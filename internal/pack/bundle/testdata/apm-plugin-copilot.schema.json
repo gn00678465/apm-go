@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apm-go.dev/schemas/apm-plugin-copilot.schema.json",
+  "title": "apm-go copilot plugin.json (.github/plugin/plugin.json)",
+  "description": "Self-authored schema for apm-go's PluginManifest.ToJSONValue output (internal/pack/bundle/pluginjson.go) for the copilot ecosystem, which never includes mcpServers (not part of the Copilot plugin manifest schema; internal/pack/bundle/pluginjson.go's MCPServers doc comment). additionalProperties:false means a document containing mcpServers fails validation against this file -- use apm-plugin-claude.schema.json for that ecosystem instead.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "description": { "type": "string" },
+    "author": { "$ref": "#/$defs/author" },
+    "license": { "type": "string" },
+    "homepage": { "type": "string" },
+    "repository": { "type": "string" },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["name"],
+  "$defs": {
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "required": ["name"]
+    }
+  }
+}

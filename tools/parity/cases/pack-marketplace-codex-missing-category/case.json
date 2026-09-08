@@ -1,0 +1,6 @@
+{
+  "id": "pack-marketplace-codex-missing-category",
+  "argv": ["pack", "-m", "codex"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

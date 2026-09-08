@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://apm-go.dev/schemas/apm-plugin-claude.schema.json",
+  "title": "apm-go claude plugin.json (.claude-plugin/plugin.json)",
+  "description": "Self-authored schema for apm-go's PluginManifest.ToJSONValue output (internal/pack/bundle/pluginjson.go) for the claude ecosystem, which is the only ecosystem that ever includes mcpServers (internal/pack/pluginmanifest/write.go:16-19's PluginEcosystemPaths).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "description": { "type": "string" },
+    "author": { "$ref": "#/$defs/author" },
+    "license": { "type": "string" },
+    "homepage": { "type": "string" },
+    "repository": { "type": "string" },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "mcpServers": { "type": "object" }
+  },
+  "required": ["name"],
+  "$defs": {
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "required": ["name"]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+name: marketplace-codex-category-fixture
+version: 1.0.0
+license: MIT
+marketplace:
+  owner:
+    name: Parity Fixture Owner
+  outputs:
+    - codex
+  packages:
+    - name: pkg-a
+      source: ./pkg-a

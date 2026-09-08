@@ -72,7 +72,7 @@ func TestPersistPackagesToManifest_FlowStyleNormalization(t *testing.T) {
 				t.Fatalf("SafeLoad: %v", err)
 			}
 
-			if err := persistPackagesToManifest(doc, tt.packages, tt.effectiveSubsets); err != nil {
+			if err := persistPackagesToManifest(doc, tt.packages, tt.effectiveSubsets, false); err != nil {
 				t.Fatalf("persistPackagesToManifest: %v", err)
 			}
 
@@ -107,7 +107,7 @@ func TestPersistPackagesToManifest_DoesNotTouchMCPBlockSequence(t *testing.T) {
 		t.Fatalf("SafeLoad: %v", err)
 	}
 
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, nil, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestPersistPackagesToManifest_PreservesSiblingEntryFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SafeLoad: %v", err)
 	}
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, map[string][]string{"acme/foo": {"a", "b"}}); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, map[string][]string{"acme/foo": {"a", "b"}}, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 	out, err := yamlcore.SafeDump(doc)
@@ -158,7 +158,7 @@ func TestPersistPackagesToManifest_PreservesSiblingEntryFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SafeLoad: %v", err)
 	}
-	if err := persistPackagesToManifest(doc2, []string{"acme/foo"}, nil); err != nil {
+	if err := persistPackagesToManifest(doc2, []string{"acme/foo"}, nil, false); err != nil {
 		t.Fatalf("persistPackagesToManifest (reset): %v", err)
 	}
 	out2, err := yamlcore.SafeDump(doc2)
@@ -188,7 +188,7 @@ func TestPersistPackagesToManifest_MonorepoPathEntryNotMisHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SafeLoad: %v", err)
 	}
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, map[string][]string{"acme/foo": {"y"}}); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, map[string][]string{"acme/foo": {"y"}}, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 	out, err := yamlcore.SafeDump(doc)

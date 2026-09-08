@@ -218,3 +218,26 @@ func TestMarketplacePlugin_SourceAsStructuredMap(t *testing.T) {
 		t.Errorf("Source map = %#v, want type=github repo=owner/repo", m)
 	}
 }
+
+// TestLocalFilesystemPath is ticket 24 AC3's direct unit coverage: a bare
+// path passes through unchanged, and a "file://" URI has the scheme
+// stripped -- both indefinitely, not as a one-time migration.
+func TestLocalFilesystemPath(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"bare absolute path unchanged", "/abs/path", "/abs/path"},
+		{"file:// URI stripped", "file:///abs/path", "/abs/path"},
+		{"empty string unchanged", "", ""},
+		{"no false-positive mid-string match", "/abs/file://not-a-scheme", "/abs/file://not-a-scheme"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LocalFilesystemPath(tt.raw); got != tt.want {
+				t.Errorf("LocalFilesystemPath(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}

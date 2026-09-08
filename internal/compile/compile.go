@@ -18,11 +18,6 @@ import (
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
-// apmGoVersion is the "APM Version" compile writes into AGENTS.md, sourced
-// from the single version const (internal/version) that also drives the root
-// command's --version flag and install.go's lockfile apm_version field.
-const apmGoVersion = version.Version
-
 // agentsFamilyTargets is apm-go compile's v1 target vocabulary -- the three
 // adapters that mirror Python's compile_family="agents" routing
 // (design.md §1/§2; research/findings.md section C).
@@ -208,7 +203,7 @@ func Run(projectDir string, m *manifest.Manifest) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	content := StabilizeBuildID(RenderAgentsMD(instructions, apmGoVersion))
+	content := StabilizeBuildID(RenderAgentsMD(instructions, version.Version))
 	wrote, err := WriteAGENTSMD(projectDir, content)
 	if err != nil {
 		return nil, err

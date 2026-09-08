@@ -1,0 +1,259 @@
+# plugin init / doctor 第三輪驗證報告
+
+> **Superseded** by runner evidence @ 645b3bf + ticket 08's commit (`tools/parity/cases/doctor-*`, `<out>/diff.jsonl` — all 18 `doctor-*` cases waived-clean against the pinned Oracle). See `.scratch/parity-runner/issues/08-doctor-backfill.md` for the full evidence summary and the two real apm-go bugs this backfill found and fixed. This manual report is kept for historical context only.
+
+日期：2026-08-23  
+Oracle：/home/madao/projects/apm-mesh/apm（GitNexus index c8d6cdec）  
+Target：/home/madao/projects/apm-mesh/apm-go  
+基線：.review/eval-report-plugin-init-doctor-round2.md
+
+本輪只讀驗證 Target，唯一寫入檔案是本報告；沒有修改任何非 .review 檔案。
+
+## 結論
+
+Round 2 的五項殘留均已修補並通過重驗：
+
+| Finding | 結果 | Taxonomy | 驗證摘要 |
+|---|---|---|---|
+| F1 format selector | PASS | F01 + F08 | 空值、apm/nope、缺參數、互斥 selector 均為 Oracle 對應文字與 exit 2。 |
+| F2 help | PASS | F01 | Choice metavar 與 help wording 維持通過。 |
+| F3 next steps | PASS（accepted deviation） | F10 + F01 + F12 | 兩 mode 使用真實存在的 apm-go pack；pack --format 仍是 spec out of scope。 |
+| F4 existing-file warning | PASS | F09 + F08 | non-TTY --yes 先 warning、後 overwrite info；plugin/mcp 檔案 gate 仍正確。 |
+| F5 atomic scaffold | PASS | F03 + F09 | 正常 rollback 與 rollback-incomplete backup preservation 均通過。 |
+| F6 ensure_ascii | PASS | F09 | \b、\f、\n、\r、\t、BMP、surrogate pair 的 pack bytes 均與 Oracle 相同。 |
+| F7 secure Git env | PASS | F07 | secure env 與 token non-leak 維持通過。 |
+| F8 doctor wording/source | PASS | F08 | legacy source 錯誤前綴已依實際 ConfigSource 選擇。 |
+| F9 UX facade | PASS | F08 | plain/rich rendering 仍經 ux facade。 |
+
+沒有新的 residual finding；沒有 FAIL，因此沒有需要列出的失敗 reproducer。
+
+## F1 — format selector 與 exit/error contract
+
+已驗證：
+
+- --format=：exit 2、無建立 project directory，文字為：
+
+~~~text
+Invalid value for '--format': '' is not one of 'plugin', 'agent-plugin', 'claude', 'claude-plugin'.
+~~~
+
+- --format apm 與 --format nope：均回 Click Choice 文字，exit 2：
+
+~~~text
+Invalid value for '--format': 'apm' is not one of 'plugin', 'agent-plugin', 'claude', 'claude-plugin'.
+Invalid value for '--format': 'nope' is not one of 'plugin', 'agent-plugin', 'claude', 'claude-plugin'.
+~~~
+
+- --format 缺參數：exit 2，文字為：
+
+~~~text
+Option '--format' requires an argument.
+~~~
+
+- --format agent-plugin --claude-plugin：exit 2，互斥文字仍為：
+
+~~~text
+Choose one bundle format selector; received: --format agent-plugin, --claude-plugin
+~~~
+
+coercePluginFormat 現在所有 miss 都走 Choice wording；pluginInitCmd 的 SetFlagErrorFunc 也將 pflag missing-argument 與其他 flag parse errors 映射到 exit 2。usage error 在檔案生成前返回，side effect-free 測試通過。
+
+## F2 — help
+
+plugin init help 仍顯示：
+
+~~~text
+--format [plugin|agent-plugin|claude|claude-plugin]
+~~~
+
+description 與 Oracle wording 一致，沒有 --format string 或 One of: 尾綴。Cobra/Click 的 flag 排序與 -h/--help 呈現差異仍是 framework-level deviation，不影響本 spec 的 surface gate。
+
+## F3 — next steps / integration
+
+Claude 與 Agent mode 共用：
+
+~~~text
+Add dev dependencies:    apm-go install --dev <owner>/<repo>
+Pack as plugin:          apm-go pack
+~~~
+
+測試確認每一行所引用的 command 與 flag 在 binary 中真實存在，且兩種 mode 的 next steps 相同。
+
+Oracle 仍列出：
+
+~~~text
+apm pack --format agent-plugin
+apm pack --format claude-plugin
+~~~
+
+但 Target pack 目前沒有 --format；spec 已將 pack selector 列為 out of scope，init.go 也明確註記 intentional deviation。這項差異維持 accepted waiver，不列為第三輪 residual。
+
+## F4 — existing-file warning order
+
+plugin-only、agent mcp-only，以及 agent 多檔案情境的 existing-file detection 與檔名順序測試均通過。
+
+non-TTY --yes 實際輸出順序為：
+
+~~~text
+ ! Generated files already exist: plugin.json
+ i --yes specified, overwriting: plugin.json
+~~~
+
+這符合 Oracle 的 warning-before-progress contract。apm.yml 單獨存在時仍使用 apm.yml already exists；interactive 路徑也維持 notice/confirm 行為。判定 PASS。
+
+## F5 — atomic scaffold 與 rollback failure
+
+一般 commit failure 測試通過：
+
+- 既有 apm.yml/plugin.json bytes 還原。
+- 未留下 mcp.json。
+- 正常 failure 清除 .apm-plugin-init-* staging directory。
+
+Round 2 的 race reproducer 也通過：
+
+~~~text
+Error: commit plugin.json: injected commit failure
+rollback: remove apm.yml: ... directory not empty
+rollback: restore apm.yml: ... file exists
+rollback incomplete; prior files preserved under .../.backup
+~~~
+
+TestPluginInit_AgentFormat_RollbackFailure_IsReported_BackupKept 確認：
+
+- 原 apm.yml bytes 仍可在保留的 backup 下找回。
+- error 同時包含原始 commit failure 與 rollback failure。
+- Cleanup 在 rollback incomplete 時保留 staging/backup directory。
+
+因此 stage → backup → commit → rollback 的正常與異常邊界均 PASS。
+
+## F6 — ensure_ascii 與 pack bytes
+
+writeJSONString 現在對 Python json.dumps 的 short escapes 對齊：
+
+~~~text
+\b \f \n \r \t
+~~~
+
+golden test 覆蓋上述五種控制字元；非 ASCII BMP 與非 BMP surrogate pair 也維持通過。
+
+實際 pack 對照：
+
+- description 為 名😀<：Go/Oracle bundle plugin.json bytes equal，且輸出為 ASCII-only escaped bytes。
+- description 為 \b\f\n\r\t：Go/Oracle bundle plugin.json bytes equal。
+- marketplace builder 的 ensure_ascii=False/encoding-json 路徑未受 bundle writer 修改影響。
+
+因此 F6 的 exact artifact parity 與無 regression 檢查均 PASS。
+
+## F7 — doctor Git environment 與 token safety
+
+execGit 仍套用 ApplySecureGitEnv。fake-git assertion 確認：
+
+~~~text
+GIT_TERMINAL_PROMPT=0
+GIT_ASKPASS=
+GCM_INTERACTIVE=never
+GIT_ALLOW_PROTOCOL=https:ssh:git
+GIT_PROTOCOL_FROM_USER=0
+~~~
+
+git/network critical failure exit 1、auth/config/duplicate informational 不改變 exit 0 的行為未變。實際 non-TTY doctor 在 GITHUB_TOKEN=ghp_round3_secret 下只輸出 Token detected，未洩漏 token value。判定 PASS。
+
+## F8 — doctor wording 與 ConfigSource
+
+正常 malformed apm.yml（有 marketplace block）仍輸出 apm.yml marketplace block has errors；legacy-only malformed config 輸出 marketplace.yml has errors。
+
+Round 2 的邊界 reproducer：
+
+~~~yaml
+# apm.yml
+name: demo
+version: 1.0.0
+~~~
+
+~~~yaml
+# marketplace.yml
+name: broken
+packages: [
+~~~
+
+在 fake git 使 critical checks pass 的情況下，Target 現在輸出：
+
+~~~text
+marketplace config: marketplace.yml has errors: parse marketplace.yml: ...
+~~~
+
+不再錯誤輸出 apm.yml marketplace block has errors。LoadAuthoringConfig 在 error path 回傳實際 ConfigSource，doctor 依 src 選 prefix；兩者 exit 0，informational severity 正確。Git stderr pattern、hint/summary、apm-go intentional executable-name wording 與 token safety 也維持通過。判定 PASS。
+
+## F9 — UX facade
+
+doctor non-TTY rows 仍為：
+
+~~~text
+  [+] git: ...
+  [+] network: ...
+  [i] auth: ...
+  [i] marketplace config: ...
+~~~
+
+plain rows、rich blank line、section/table 均經 ux facade，沒有重新引入 direct fmt user-facing output。判定 PASS。
+
+## F12 note — normalization waiver decision
+
+F12 waiver 應保留，不應改成嚴格跟隨目前 Oracle CLI 的 raw Click Choice 行為。
+
+理由：
+
+1. spec-plugin-init-format-and-doctor.md 明確要求 AGENT_PLUGIN、Agent Plugin、agent_plugin 做 case/space/underscore → hyphen normalization。
+2. Target 的 coercePluginFormat 目前符合這項產品要求。
+3. 現行 Oracle CLI 的 click.Choice 在進入 resolve_bundle_format 前會拒絕 underscore、空白與外圍 whitespace；這是 Oracle CLI surface 與 spec 明文 normalization 的矛盾。
+4. 若改為嚴格拒絕上述輸入，雖可縮小 Oracle CLI 差異，卻會直接違反 spec user story 與 table-driven acceptance。
+
+因此 F12 應記為 spec-over-current-Oracle waiver / Oracle drift note，並在後續 Oracle 更新或 spec 修訂時重新決策；本輪不列 Target defect。
+
+## Build / test
+
+依使用者指定命令執行，且 -skip 位於 package list 前：
+
+~~~sh
+go build -o /tmp/apm-go-round3 ./cmd/apm-go
+
+go test -count=1 -skip SchemaSync \
+  ./cmd/apm-go ./internal/gitops ./internal/pluginjson \
+  ./internal/pack/bundle ./internal/ux ./internal/marketplace/authoring
+~~~
+
+結果：
+
+~~~text
+go build: PASS
+github.com/apm-go/apm/cmd/apm-go: PASS
+github.com/apm-go/apm/internal/gitops: PASS
+github.com/apm-go/apm/internal/pluginjson: PASS
+github.com/apm-go/apm/internal/pack/bundle: PASS
+github.com/apm-go/apm/internal/ux: PASS
+github.com/apm-go/apm/internal/marketplace/authoring: PASS
+~~~
+
+另行執行的 targeted tests 也全部通過：F1 selector/flag errors、F4 warning order、F5 rollback preservation、F6 JSON golden、F8 ConfigSource prefix，以及 doctor secure env/token non-leak。
+
+## P-01 / G-02 / §8.3
+
+### P-01
+
+P-01 可標 closed。
+
+入口 flags、alias/normalization、互斥錯誤、所有 format error exit 2、help、既有檔案 warning、Agent/Claude plugin.json/mcp.json bytes/key order、atomic scaffold 與 cross-command next-step checks 均已通過。F3 的 pack selector 是已記錄的 out-of-scope waiver；F12 normalization 是已說明的 spec-over-current-Oracle waiver。
+
+### G-02（in-scope）
+
+G-02 in-scope 可標 closed。
+
+git/network critical checks、auth/config/duplicate informational checks、exit code、non-TTY/rich rendering、Git stderr translation、secure env、token non-leak、malformed config source prefix 均通過。format coverage、version alignment、executable trust 仍依 spec 維持 out of scope，不影響此結論。
+
+### §8.3
+
+- P-01 format surface、error contract、artifact bytes、atomic boundary 均已收斂。
+- doctor top-level、critical/informational semantics、wording/source attribution 與 UX facade 均已收斂。
+- F3 與 F12 兩個差異都有明確 scope/Oracle waiver，不是未記錄 drift。
+- 本輪未發現新的 regression 或 residual finding。
+

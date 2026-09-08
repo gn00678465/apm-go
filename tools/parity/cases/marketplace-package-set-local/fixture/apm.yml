@@ -1,0 +1,9 @@
+name: authoring-fixture
+version: 1.0.0
+marketplace:
+  owner:
+    name: owner
+  packages:
+  - name: existing
+    source: owner/existing
+    version: 1.0.0

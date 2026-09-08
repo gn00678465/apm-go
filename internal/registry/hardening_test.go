@@ -21,7 +21,7 @@ func TestClient_RefusesEmbeddedUserinfo(t *testing.T) {
 // just the base64 blob.
 func TestClient_RedactsBasicRawSecrets(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "denied for alice / hunter2seekrit", 401)
+		http.Error(w, "denied for alice / hunter2seekrit", http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
 	cred := Credential{Scheme: "basic", Value: "YWxpY2U6aHVudGVyMnNlZWtyaXQ=", redact: []string{"alice", "hunter2seekrit", "YWxpY2U6aHVudGVyMnNlZWtyaXQ="}}

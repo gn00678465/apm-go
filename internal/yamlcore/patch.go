@@ -83,14 +83,40 @@ func findMappingKeyIndex(m *yaml.Node, key string) int {
 // (recursing up through frames) the next sibling of an ancestor's key, or
 // len(src) if none exists at any level.
 func spanEndOffset(src []byte, frames []pathFrame, level int) int {
+	keyNode := frames[level].mapping.Content[frames[level].keyIdx]
 	for l := level; l >= 0; l-- {
 		f := frames[l]
 		if f.keyIdx+2 < len(f.mapping.Content) {
 			next := f.mapping.Content[f.keyIdx+2]
-			return lineStartOffset(src, next.Line)
+			return lineStartOffset(src, valueEndLine(src, keyNode, next.Line))
 		}
 	}
 	return len(src)
+}
+
+// valueEndLine backs off from the next key's line over the blank lines and
+// comment lines that sit at or left of the replaced key's column: those are
+// the next key's leading comments, not part of the value being replaced.
+// A comment indented deeper than the key belongs to the old value and is
+// replaced with it.
+func valueEndLine(src []byte, keyNode *yaml.Node, nextLine int) int {
+	lines := strings.Split(string(src), "\n")
+	keyIndent := keyNode.Column - 1
+	end := nextLine
+	for end-1 > keyNode.Line {
+		line := lines[end-2] // 0-based index of line end-1
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			end--
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") && len(line)-len(strings.TrimLeft(line, " \t")) <= keyIndent {
+			end--
+			continue
+		}
+		break
+	}
+	return end
 }
 
 func lineStartOffset(src []byte, line int) int {

@@ -107,6 +107,19 @@ func rejectControlCharacters(raw string) error {
 // _local_source_points_to_file, which makes the same file-vs-directory
 // check at add-time. A nonexistent or directory path keeps the default
 // probing behavior.
+//
+// Ticket 24 AC1/AC2: the STORED URL is a "file://" URI, not the bare
+// resolved path -- mirroring commands/marketplace/__init__.py:288's
+// `url = raw if raw.lower().startswith("file://") else
+// f"file://{_expand_local_path(raw)}"` (_expand_local_path,
+// __init__.py:433-443, is `os.path.abspath(os.path.expanduser(raw))`,
+// exactly what resolveLocalPath below computes). This is plain string
+// concatenation on both sides -- no percent-encoding of any character, and
+// no POSIX-vs-Windows separator conversion (models.py:141-165's own
+// _local_path_from_source comment documents the Oracle's Windows form as
+// deliberately "malformed", `file://C:\path`, for exactly this reason). The
+// os.Stat existence/file-vs-directory check above still runs against the
+// bare resolved path, never the URI.
 func parseLocalSource(raw, host string) (*MarketplaceSource, error) {
 	if host != "" {
 		warnHostIgnored(host, "the marketplace source is a local path; --host has no effect")
@@ -120,7 +133,7 @@ func parseLocalSource(raw, host string) (*MarketplaceSource, error) {
 		path = ""
 	}
 	return &MarketplaceSource{
-		URL:  resolved,
+		URL:  "file://" + resolved,
 		Path: path,
 	}, nil
 }

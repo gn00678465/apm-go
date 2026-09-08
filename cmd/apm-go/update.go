@@ -233,7 +233,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		return errNoDeployTarget()
 	}
 
-	return deployAndFinalize(m, "", effectiveSubsets, nil, nil, nil, nil, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, "", effectiveSubsets, nil, nil, nil, nil, false, false, result, newLock, existingLock, existingNode, node)
 }
 
 // runUpdateDryRun resolves --dry-run's plan against a throwaway scratch
@@ -358,5 +358,5 @@ func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
 		return
 	}
 	ux.Section(os.Stdout, "Update plan for apm.yml")
-	ux.BulletList(os.Stdout, items)
+	ux.List(os.Stdout, items)
 }

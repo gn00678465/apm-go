@@ -1,0 +1,6 @@
+{
+  "id": "marketplace-update-local",
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "sample"]],
+  "argv": ["marketplace", "update", "sample"],
+  "rewrite_binary_name": true
+}

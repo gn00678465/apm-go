@@ -1,0 +1,7 @@
+{
+  "id": "uninstall-local",
+  "setup_argv": [["install", "./dep", "--target", "claude"]],
+  "argv": ["uninstall", "./dep"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

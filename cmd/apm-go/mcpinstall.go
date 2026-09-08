@@ -168,7 +168,9 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		ux.Warn(os.Stdout, "MCP server %q declared in apm.yml but not deployed to any target; see diagnostics above", opts.Name)
 		return nil
 	}
-	ux.Success(os.Stdout, "%s MCP server %q", verb, opts.Name)
+	// Oracle install/mcp/command.py:227-231 uses symbol="check" for
+	// verified/added/replaced MCP server records.
+	ux.Check(os.Stdout, "%s MCP server '%s'", verb, opts.Name)
 	// R11 (prd.md/design.md §3): deployMCPEntry already returns `deployed`,
 	// the target list it actually configured -- previously only surfaced
 	// when a --force/conflict path ALSO populated `skipped` (the "Skipped
@@ -181,7 +183,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if abs, pathErr := filepath.Abs("apm.yml"); pathErr == nil {
 		apmYMLPath = abs
 	}
-	ux.BulletList(os.Stdout, []ux.Item{
+	ux.List(os.Stdout, []ux.Item{
 		{Text: fmt.Sprintf("transport: %s", deployDep.Transport)},
 		{Text: fmt.Sprintf("targets: %s", strings.Join(deployed, ", "))},
 		{Text: fmt.Sprintf("apm.yml: %s", apmYMLPath)},

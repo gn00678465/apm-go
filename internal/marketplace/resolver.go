@@ -13,12 +13,18 @@ import (
 // discriminator, mirroring the Python original's _coerce_dict_plugin_type
 // (resolver.py:185-206, design.md gaps A4). It reads "type" -> "source" ->
 // "kind" in that order (the first non-empty string wins, lower-cased and
-// trimmed) -- three keys, NOT the two ("type"/"source") the manifest parse
-// layer (models.go's rawPlugin.normalize) checks when deciding whether to
-// drop an npm-typed plugin at parse time. That deliberate two-vs-three-key
-// gap IS mkt-026's dual-layer behavior: a "kind: npm" source survives
-// manifest parsing (models.go never looks at "kind") and is only rejected
-// here, at resolution (resolvePluginSource).
+// trimmed) -- the same three keys, in the same order, as the manifest parse
+// layer's own source_type derivation (models.go's dictSourceDiagnostic,
+// mirroring _parse_plugin_entry's `for key in ("type", "source", "kind")`
+// verbatim). There is no parse-vs-resolve split for npm rejection: an
+// entry with any of the three keys set to "npm" is already dropped at
+// manifest-parse time (ticket 11 attempt 2 correction -- an earlier
+// version of this comment described a "two-vs-three-key" dual-layer gap
+// that a full reading of models.py did not actually support). This
+// function's own rejection here is resolvePluginSource's independent
+// safety net for a plugin constructed directly (bypassing JSON parsing
+// entirely, as TestResolvePluginSource_NPMRejected does), not a second
+// layer a JSON-sourced npm plugin would ever reach.
 //
 // When none of the three keys carry a value, the type is inferred from
 // "repo" plus "subdir": a "repo" containing "/" implies "github", or
@@ -144,10 +150,14 @@ func resolveLocalRelativeSource(source string, mkt *MarketplaceSource) (string, 
 	if mkt.URL == "" {
 		return "", fmt.Errorf("marketplace %q is kind=local but has no resolvable filesystem path; cannot resolve relative plugin source %q", mkt.Name, source)
 	}
+	// Ticket 24 AC3: mkt.URL may be a bare path (pre-existing registry
+	// entries, or a legacy apm-go write) or a "file://" URI (this ticket's
+	// new writes) -- LocalFilesystemPath accepts both indefinitely.
+	root := LocalFilesystemPath(mkt.URL)
 	if rel != "" && rel != "." {
-		return filepath.Join(mkt.URL, filepath.FromSlash(rel)), nil
+		return filepath.Join(root, filepath.FromSlash(rel)), nil
 	}
-	return mkt.URL, nil
+	return root, nil
 }
 
 // resolveGitHubSource resolves a dict source whose coerced type is "github"

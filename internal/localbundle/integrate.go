@@ -15,6 +15,7 @@ import (
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/pack/bundle"
+	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // IntegrateResult mirrors integrate_local_bundle's return shape (Python:
@@ -94,6 +95,23 @@ var targetRoutingTable = map[string]targetRouting{
 // (cmd/apm-go/install.go) is responsible for deciding whether/how to warn
 // before ever calling this function with an empty targets slice.
 func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets []string, projectDir string) (*IntegrateResult, error) {
+	// One directory handle for every file this deploys. EnsureWithinRoot still
+	// decides which entries are safe to deploy at all (and still logs the ones
+	// it drops), but the handle is what the bytes actually go through: a
+	// resolved path string cannot survive an ancestor being swapped for a
+	// junction between the check and the write (external audit 2026-08-13,
+	// reproduced locally).
+	//
+	// The MCP config is the one file not written through THIS handle -- it goes
+	// through deploy.MCPTarget.WriteMCP, which opens its own handle on the same
+	// projectDir (mcp_common.go's writeMCPFile). The integrity hashes below are
+	// read back through this one.
+	projectRW, err := rootfs.OpenRootWriter(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	defer projectRW.Close()
+
 	result := &IntegrateResult{Hashes: map[string]string{}}
 	if len(targets) == 0 {
 		return result, nil
@@ -110,17 +128,23 @@ func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets [
 			continue
 		}
 		for _, rel := range relKeys {
-			record, deployed, err := deployBundleFile(bundleDir, rel, routing, target, projectDir, result)
+			record, deployed, err := deployBundleFile(bundleDir, rel, routing, target, projectDir, projectRW, result)
 			if err != nil {
 				return nil, err
 			}
 			if !deployed {
 				continue
 			}
-			hash, herr := lockfile.HashFileBytes(filepath.Join(projectDir, filepath.FromSlash(record)))
-			if herr != nil {
-				return nil, fmt.Errorf("hash deployed file %s: %w", record, herr)
+			// Read back through the same handle the file was written through.
+			// A joined path string would walk the directory chain again, and this
+			// hash IS the integrity manifest install verifies against later: an
+			// ancestor swapped between write and read would record the digest of
+			// a file outside the project as if it were the deployed one.
+			deployedBytes, rerr := projectRW.ReadFile(record)
+			if rerr != nil {
+				return nil, fmt.Errorf("hash deployed file %s: %w", record, rerr)
 			}
+			hash := lockfile.HashBytes(deployedBytes)
 			result.Files = append(result.Files, record)
 			result.Hashes[record] = hash
 		}
@@ -145,10 +169,14 @@ func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets [
 			result.Diags = append(result.Diags, diags...)
 			for _, f := range files {
 				mcpFilesWritten++
-				hash, herr := lockfile.HashFileBytes(filepath.Join(projectDir, f))
-				if herr != nil {
-					return nil, fmt.Errorf("hash mcp file %s: %w", f, herr)
+				// The MCP file is still WRITTEN through WriteMCP's own path
+				// string (see this function's opening comment); reading it back
+				// through the handle at least confines what the manifest records.
+				mcpBytes, rerr := projectRW.ReadFile(f)
+				if rerr != nil {
+					return nil, fmt.Errorf("hash mcp file %s: %w", f, rerr)
 				}
+				hash := lockfile.HashBytes(mcpBytes)
 				result.Files = append(result.Files, f)
 				result.Hashes[f] = hash
 			}
@@ -193,7 +221,7 @@ func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets [
 //     only exercises claude+copilot, both of which DO have a native
 //     instructions primitive, so this deviation does not affect that
 //     fixture's byte-identical comparison.
-func deployBundleFile(bundleDir, rel string, routing targetRouting, target, projectDir string, result *IntegrateResult) (record string, ok bool, err error) {
+func deployBundleFile(bundleDir, rel string, routing targetRouting, target, projectDir string, projectRW *rootfs.RootWriter, result *IntegrateResult) (record string, ok bool, err error) {
 	firstSeg := ""
 	if idx := strings.IndexByte(rel, '/'); idx >= 0 {
 		firstSeg = rel[:idx]
@@ -238,8 +266,12 @@ func deployBundleFile(bundleDir, rel string, routing targetRouting, target, proj
 		return "", false, nil
 	}
 
-	absDest, derr := build.EnsureWithinRoot(filepath.Join(projectDir, filepath.FromSlash(root)), filepath.FromSlash(rel))
-	if derr != nil {
+	// Validation only: the returned path is deliberately dropped. What this
+	// call still buys is the SKIP decision -- an entry that escapes the
+	// target's own root is logged and left undeployed rather than failing
+	// the install -- and it makes that decision against the tighter
+	// projectDir/<root> boundary than the handle below enforces.
+	if _, derr := build.EnsureWithinRoot(filepath.Join(projectDir, filepath.FromSlash(root)), filepath.FromSlash(rel)); derr != nil {
 		result.Diags = append(result.Diags, fmt.Sprintf("skipped unsafe bundle entry %q: %v", rel, derr))
 		return "", false, nil
 	}
@@ -251,10 +283,23 @@ func deployBundleFile(bundleDir, rel string, routing targetRouting, target, proj
 	if normalized, isText := normalizedBundleText(rel, data); isText {
 		data = normalized
 	}
-	if err := os.MkdirAll(filepath.Dir(absDest), 0o755); err != nil {
-		return "", false, fmt.Errorf("create deploy dir for %s: %w", rel, err)
+	// Narrow the handle to this target's own root before writing. A handle on
+	// projectDir alone would be a WIDER boundary than the check above:
+	// os.Root follows links that stay inside it, so swapping .claude for a
+	// link to .github would land the file in .github while the record still
+	// says .claude (external audit 2026-08-13). Sub confines the write to the
+	// same directory EnsureWithinRoot just validated against.
+	rootRW, rerr := projectRW.Sub(root)
+	if rerr != nil {
+		return "", false, rerr
 	}
-	if err := os.WriteFile(absDest, data, 0o644); err != nil {
+	defer rootRW.Close()
+	// Atomic, not in-place: WriteFile truncates the inode, which writes
+	// through every name it has. A hard link planted at rel is invisible to
+	// Lstat and to every path check above it, so only the rename-based form
+	// keeps an outside file intact (rootwriter.go says so at WriteFile's own
+	// doc comment; this caller was using the wrong one).
+	if err := rootRW.WriteFileAtomic(rel, data); err != nil {
 		return "", false, fmt.Errorf("write bundle file %s: %w", rel, err)
 	}
 

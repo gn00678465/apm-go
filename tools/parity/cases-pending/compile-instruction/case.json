@@ -1,0 +1,5 @@
+{
+  "id": "compile-instruction",
+  "argv": ["compile"],
+  "rewrite_binary_name": true
+}

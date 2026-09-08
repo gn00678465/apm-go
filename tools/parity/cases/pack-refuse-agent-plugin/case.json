@@ -1,0 +1,6 @@
+{
+  "id": "pack-refuse-agent-plugin",
+  "argv": ["pack", "--format", "agent-plugin"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

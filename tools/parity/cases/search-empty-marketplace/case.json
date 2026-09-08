@@ -1,0 +1,6 @@
+{
+  "id": "search-empty-marketplace",
+  "argv": ["search", "security@"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

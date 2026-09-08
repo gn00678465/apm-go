@@ -153,3 +153,61 @@ func TestWrite_ClaudePath_NoGithubInfoLine(t *testing.T) {
 		t.Errorf("output = %q, claude output must not print the .github/ info line", buf.String())
 	}
 }
+
+// TestWrite_HardLinkedTargetIsNotWrittenThrough is the regression for the
+// escape an external audit found on 2026-08-12: a hard link planted inside
+// the project at the manifest's path, whose other name lives OUTSIDE the
+// project, is invisible to every path-based containment check -- Lstat
+// reports an ordinary file, because that is exactly what it is. os.WriteFile
+// truncates in place and so wrote through to the outside name; measured with
+// `pack --force`, the outside file's contents were replaced by the manifest.
+//
+// A temp-file-plus-rename replaces the directory entry instead, leaving the
+// other name pointing at the original inode.
+func TestWrite_HardLinkedTargetIsNotWrittenThrough(t *testing.T) {
+	// Arrange: <outside>/victim.json, hard-linked to <root>/.claude-plugin/plugin.json
+	base := t.TempDir()
+	root := filepath.Join(base, "R")
+	outside := filepath.Join(base, "O")
+	if err := os.MkdirAll(filepath.Join(root, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(outside, "victim.json")
+	const victimContent = `{"SECRET":"must-not-be-destroyed"}`
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(victim, filepath.Join(root, ".claude-plugin", "plugin.json")); err != nil {
+		t.Skipf("cannot create a hard link on this host: %v", err)
+	}
+
+	// Act: --force, so the existing-file guard does not short-circuit the write
+	var buf bytes.Buffer
+	wrote, err := Write(&buf, root, "claude", &bundle.PluginManifest{Name: "demo"}, true, false)
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if !wrote {
+		t.Fatalf("Write() wrote = false, want true (output: %s)", buf.String())
+	}
+
+	// Assert
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(got) != victimContent {
+		t.Errorf("the file outside the project was written through the hard link:\ngot  %s\nwant %s", got, victimContent)
+	}
+}
+
+// Mode handling moved to rootfs.RootWriter when the writer stopped using path
+// strings (2026-08-13): the permission-preservation and hard-link tests that
+// used to live here are now TestRootWriter_WriteFileAtomicKeepsAnExistingFilesMode,
+// TestRootWriter_WriteFileAtomicCreatesAWritableFile and
+// TestRootWriter_WriteFileAtomicDoesNotWriteThroughAHardLink in
+// internal/marketplace/build, alongside the containment tests they share a
+// code path with.

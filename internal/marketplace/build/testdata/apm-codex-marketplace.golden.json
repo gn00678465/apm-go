@@ -1,0 +1,49 @@
+{
+  "name": "my-marketplace",
+  "interface": {
+    "displayName": "my-marketplace"
+  },
+  "plugins": [
+    {
+      "name": "local-tool",
+      "source": {
+        "source": "local",
+        "path": "./pkgs/tool-a"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Utilities"
+    },
+    {
+      "name": "subdir-tool",
+      "source": {
+        "source": "git-subdir",
+        "url": "owner/mono",
+        "path": "packages/tool-c",
+        "ref": "v2.0.0",
+        "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Utilities"
+    },
+    {
+      "name": "impeccable",
+      "source": {
+        "source": "url",
+        "url": "pbakaus/impeccable",
+        "ref": "fc2e694afca1ac0cc384b4fe56bab3335fea7912",
+        "sha": "fc2e694afca1ac0cc384b4fe56bab3335fea7912"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

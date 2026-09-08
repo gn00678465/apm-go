@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/apm-go/apm/internal/marketplace"
@@ -85,53 +85,32 @@ func confirmOrRequireYes(label, errMsg string) (proceed bool, err error) {
 
 // marketplaceNotRegisteredErr builds the "not registered" error shared by
 // browse/update/validate/remove/audit's NAME lookup miss (mkt-013/014/015/
-// 016, plus mkt-043 修訂版's audit). It keeps the original callers' exact
-// "is not registered" substring (existing tests assert on it verbatim with
-// strings.Contains), then layers on two best-effort UX aids the bare message
-// never had: `marketplace add OWNER/REPO` registers under a *derived* alias
-// (resolveMarketplaceAlias/fallbackMarketplaceAlias), never the raw
-// OWNER/REPO string itself, so a user who later queries with that same raw
-// string gets an unhelpful "not registered" with no hint of what name it
-// actually registered under.
-//   - if name looks like a copy-pasted "OWNER/REPO" (it contains a "/"),
-//     the part after the last "/" is compared case-insensitively against
-//     every registered name; a match appends a "Did you mean" hint.
-//   - the full, sorted list of registered names is appended, or -- when
-//     nothing is registered at all -- a pointer at `marketplace add` instead.
+// 016, plus mkt-043 修訂版's audit): the Oracle's MarketplaceNotFoundError
+// (marketplace/errors.py:10-24) is a FIXED-FORMAT message parameterized only
+// by name (and host, always "github.com" here via registry.py:117,141's
+// default_host()) -- it never varies by registration state or by how many
+// other marketplaces are already registered. Each of the 5 commands
+// independently catches that same exception and wraps it with its own
+// command-specific "Failed to <verb> marketplace: " prefix, verified
+// directly against the pinned Oracle for every one of them:
+//   - browse:   commands/marketplace/__init__.py:959
+//   - update:   commands/marketplace/__init__.py:1005
+//   - remove:   commands/marketplace/__init__.py:1045
+//   - validate: commands/marketplace/validate.py:90
+//   - audit:    commands/marketplace/audit.py:141
 //
-// Both aids are best-effort: a LoadRegistry failure here must not replace an
-// already-correct "not registered" error with a different, confusing one, so
-// it silently falls back to the plain message instead of propagating.
-func marketplaceNotRegisteredErr(name string) error {
-	msg := fmt.Sprintf("marketplace %q is not registered", name)
-
-	sources, err := marketplace.LoadRegistry()
-	if err != nil {
-		return fmt.Errorf("%s", msg)
-	}
-
-	names := make([]string, 0, len(sources))
-	for _, s := range sources {
-		names = append(names, s.Name)
-	}
-	sort.Strings(names)
-
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		candidate := name[idx+1:]
-		for _, n := range names {
-			if strings.EqualFold(n, candidate) {
-				msg += fmt.Sprintf(". Did you mean %q?", n)
-				break
-			}
-		}
-	}
-
-	if len(names) == 0 {
-		msg += " (no marketplaces registered; add one with: apm-go marketplace add SOURCE)"
-	} else {
-		msg += "\nRegistered: " + strings.Join(names, ", ")
-	}
-	return fmt.Errorf("%s", msg)
+// Ticket 14 replaced this function's previous apm-go-invented "Did you
+// mean"/"Registered: <list>" hints (R6/AC22) with the Oracle's exact wording:
+// probed live, the message body never changes shape whether zero, one, or
+// many marketplaces are registered, so there is no registry data left to
+// consult here at all.
+func marketplaceNotRegisteredErr(verb, name string) error {
+	return fmt.Errorf(
+		"Failed to %s marketplace: Marketplace '%s' is not registered. "+
+			"Run 'apm-go marketplace add https://github.com/OWNER/REPO' or "+
+			"'apm-go marketplace add OWNER/REPO' to register it, or "+
+			"'apm-go marketplace list' to see registered marketplaces.",
+		verb, name)
 }
 
 // marketplaceCmd wires internal/marketplace's data model, registry and fetch
@@ -140,12 +119,18 @@ func marketplaceNotRegisteredErr(name string) error {
 // (from internal/marketplace/authoring) the producer-side `init`, `check`,
 // `outdated`, `package add/remove/set`, `audit`, and `migrate` subcommands
 // (mkt-040, mkt-041, mkt-042 修訂版, mkt-045/046, mkt-043 修訂版, mkt-044 --
-// Phase M3's full producer-side command set). Deliberately absent, per
-// Phase M5 of marketplace-checklist.md:
-// search (mkt-060, a top-level command, not a marketplace subcommand),
-// doctor (mkt-061), publish (mkt-062), a browse --json flag (mkt-063), a validate
-// --check-refs flag (mkt-017: an upstream placeholder that never did
-// anything), and an "update" alias named "refresh" (mkt-064).
+// Phase M3's full producer-side command set). Deliberately absent as a
+// MARKETPLACE subcommand, per Phase M5 of marketplace-checklist.md: doctor
+// (mkt-061, which apm-go does have -- top-level only, main.go's
+// root.AddCommand(doctorCmd()), matching the Oracle's own top-level `apm
+// doctor`, never nested under marketplace), publish (mkt-062), and a browse
+// --json flag (mkt-063). validate's --check-refs is ported as a hidden
+// no-op below (ticket 06), not absent. "update" has no "refresh" alias
+// (mkt-064). search (mkt-060) is likewise
+// never nested here -- it is registered top-level only, in search.go
+// (main.go's root.AddCommand(searchCmd())), matching the Oracle's own
+// top-level `apm search` alias (cli.py:224) without also exposing a
+// redundant `apm-go marketplace search`.
 func marketplaceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "marketplace",
@@ -218,6 +203,32 @@ func marketplaceAddCmd() *cobra.Command {
 				return fmt.Errorf("invalid marketplace name %q: names may only contain letters, digits, '.', '_', and '-' (required for apm-go install's plugin@marketplace syntax)", name)
 			}
 
+			w := cmd.OutOrStdout()
+
+			// Mirrors upstream __init__.py:630-635: surface progress before
+			// the slow probe + fetch (5-30s for generic-git) so the user
+			// sees activity instead of staring at a blank terminal.
+			provisionalLabel := name
+			if provisionalLabel == "" {
+				provisionalLabel = fallbackMarketplaceAlias(src)
+			}
+			// Oracle commands/marketplace/__init__.py:632 starts registration
+			// with symbol="gear"; STATUS_SYMBOLS maps gear to "[*]" and the
+			// Oracle uses single quotes in this message.
+			ux.Gear(w, "Registering marketplace '%s'...", provisionalLabel)
+
+			// The Oracle distinguishes a missing local source directory from an
+			// existing directory whose marketplace.json candidates are absent
+			// (commands/marketplace/__init__.py:657-660; marketplace/client.py:
+			// 835-841). Preserve that actionable error before Fetch's generic
+			// probe-miss conversion below.
+			if src.Kind() == marketplace.KindLocal {
+				localPath := marketplace.LocalFilesystemPath(src.URL)
+				if _, statErr := os.Stat(localPath); os.IsNotExist(statErr) {
+					return fmt.Errorf("Failed to register marketplace: Failed to fetch marketplace '%s': local marketplace path does not exist: %s. Run 'apm-go marketplace update %s' to retry.", provisionalLabel, localPath, provisionalLabel)
+				}
+			}
+
 			wasFullHTTPSSource := strings.HasPrefix(strings.ToLower(rawSource), "https://")
 			if needsUnpinnedGitRefWarning(wasFullHTTPSSource, src.Kind(), effectiveRef) {
 				ux.Warn(cmd.ErrOrStderr(), "Pin this git marketplace with a #ref (e.g. SOURCE#v1.2.3) to avoid silently tracking a moving branch")
@@ -225,6 +236,14 @@ func marketplaceAddCmd() *cobra.Command {
 
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
+				// Oracle commands/marketplace/__init__.py:657-660 reports the
+				// local probe miss as a checked-path diagnostic before falling
+				// through to its generic exception handler. Keep the exact
+				// sentence for local sources; remote failures retain apm-go's
+				// transport diagnostic.
+				if src.Kind() == marketplace.KindLocal && isMissingLocalMarketplaceManifest(err) {
+					return fmt.Errorf("No marketplace.json found in '%s'. Checked: marketplace.json, .github/plugin/marketplace.json, .claude-plugin/marketplace.json", displaySource(src))
+				}
 				return fmt.Errorf("could not reach marketplace source: %w", err)
 			}
 
@@ -238,14 +257,29 @@ func marketplaceAddCmd() *cobra.Command {
 				return fmt.Errorf("register marketplace: %w", err)
 			}
 
-			w := cmd.OutOrStdout()
-			ux.Success(w, "Added marketplace %q (kind: %s)", effectiveName, src.Kind())
+			// Upstream __init__.py:721-724's success line carries the plugin
+			// count on the default path, not only under --verbose.
+			// Oracle commands/marketplace/__init__.py:718-721 overrides the
+			// success symbol to "check", which renders "[+]".
+			ux.Check(w, "Marketplace '%s' registered (%d plugins)", effectiveName, len(m.Plugins))
 			if verbose {
-				ux.BulletList(w, []ux.Item{
-					{Text: fmt.Sprintf("source: %s", src.URL)},
+				items := []ux.Item{
+					{Text: fmt.Sprintf("source: %s", displaySource(src))},
+					{Text: fmt.Sprintf("source type: %s", src.Kind())},
 					{Text: fmt.Sprintf("ref: %s", src.Ref)},
+					{Text: fmt.Sprintf("alias source: %s", aliasSourceLabel(name, effectiveName, m.Name))},
 					{Text: fmt.Sprintf("plugins: %d", len(m.Plugins))},
-				})
+				}
+				if m.Description != "" {
+					items = append(items, ux.Item{Text: fmt.Sprintf("description: %s", m.Description)})
+				}
+				ux.List(w, items)
+			}
+			// Upstream __init__.py:728-732: when the registered alias came
+			// from the manifest (not --name, not the repo-derived fallback),
+			// tell the user what name to install against.
+			if name == "" && effectiveName != provisionalLabel {
+				ux.Info(w, "Install plugins with: apm-go install <plugin>@%s", effectiveName)
 			}
 			return nil
 		},
@@ -317,6 +351,46 @@ func resolveMarketplaceAlias(explicitName, manifestName string, src *marketplace
 	return fallback, ""
 }
 
+// aliasSourceLabel names where `marketplace add`'s registered alias came
+// from, for --verbose output (upstream __init__.py:678-695's alias_source).
+func aliasSourceLabel(explicitName, effectiveName, manifestName string) string {
+	switch {
+	case explicitName != "":
+		return "--name flag"
+	case effectiveName == manifestName:
+		return fmt.Sprintf("manifest.name (%q)", manifestName)
+	case manifestName != "":
+		return fmt.Sprintf("derived name (manifest.name %q invalid)", manifestName)
+	default:
+		return "derived name (manifest.name missing)"
+	}
+}
+
+// displaySource renders src's Source column/bullet value for a
+// user-facing message: a KindLocal source's on-disk "file://" URI (ticket
+// 24) is shown as the plain filesystem path it names, matching apm-go's own
+// pre-ticket-24 display (a bare path was, until now, also what was stored).
+// The Oracle does the equivalent stripping in its own display_source/
+// local_path properties (models.py:267-296) before ever printing a source
+// to the user, for the same reason: the "file://" scheme is a storage
+// detail, not something a user who typed a bare local path should see
+// echoed back. Every other Kind is unchanged from apm-go's existing
+// behaviour (the raw URL), which this ticket does not touch.
+func displaySource(src *marketplace.MarketplaceSource) string {
+	if src.Kind() == marketplace.KindLocal {
+		return marketplace.LocalFilesystemPath(src.URL)
+	}
+	return src.URL
+}
+
+// isMissingLocalMarketplaceManifest identifies the local client's probe miss
+// so marketplace add can use the Oracle's actionable checked-path wording
+// (commands/marketplace/__init__.py:657-660) without rewriting unrelated
+// parse or filesystem errors.
+func isMissingLocalMarketplaceManifest(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no marketplace manifest found under")
+}
+
 // fallbackMarketplaceAlias derives a repo-name-shaped alias from src when
 // neither --name nor a usable manifest name is available: Owner/Repo for
 // every remote Kind that has them (SCP, full URL, shorthand), the local
@@ -359,22 +433,47 @@ func marketplaceListCmd() *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			if len(sources) == 0 {
-				ux.Info(w, "No marketplaces registered. Add one with: apm-go marketplace add SOURCE")
+				// commands/marketplace/__init__.py:859-862, verified
+				// directly against the pinned Oracle (ticket 14): the full
+				// sentence including the parenthetical, not apm-go's own
+				// shorter "Add one with: ..." phrasing.
+				ux.Info(w, "No marketplaces registered. Use 'apm-go marketplace add SOURCE' to register one (OWNER/REPO, HTTPS URL, SSH URL, or local path).")
 				return nil
 			}
-			headers := []string{"NAME", "SOURCE", "REF", "PATH"}
+			// Ticket 26: header casing now matches the Oracle's own
+			// `table.add_column("Name"/"Source"/"Ref"/"Path", ...)`
+			// (__init__.py:878-881) verbatim -- Title Case, the same
+			// convention browse's/search's own tables already use
+			// correctly (marketplace_browse_table.go, search.go). The
+			// verbose-only "Host" column has no Oracle counterpart at all
+			// (list_cmd's verbose flag only affects exception-traceback
+			// printing) -- an apm-go-only superset column, untouched by
+			// this ticket; only its casing is aligned for consistency.
+			headers := []string{"Name", "Source", "Ref", "Path"}
 			if verbose {
-				headers = []string{"NAME", "SOURCE", "REF", "HOST", "PATH"}
+				headers = []string{"Name", "Source", "Ref", "Host", "Path"}
 			}
 			rows := make([][]string, 0, len(sources))
-			for _, s := range sources {
+			for i := range sources {
+				s := &sources[i]
 				if verbose {
-					rows = append(rows, []string{s.Name, s.URL, s.Ref, s.Host, s.Path})
+					rows = append(rows, []string{s.Name, displaySource(s), s.Ref, s.Host, s.Path})
 				} else {
-					rows = append(rows, []string{s.Name, s.URL, s.Ref, s.Path})
+					rows = append(rows, []string{s.Name, displaySource(s), s.Ref, s.Path})
 				}
 			}
+			// Ticket 26: upstream's table carries a title
+			// (`Table(title="Registered Marketplaces", ...)`,
+			// __init__.py:877) that apm-go's list table never printed at
+			// all -- unlike browse/search's own tables (renderBrowseTable/
+			// renderSearchTable), which already print an equivalent title
+			// line before calling ux.Table. This is the same convention
+			// those two already use, not a new one.
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "Registered Marketplaces")
 			ux.Table(w, headers, rows)
+			// Upstream __init__.py:883-886's post-table usage hint.
+			ux.Info(w, "Use 'apm-go marketplace browse <name>' to see plugins")
 			return nil
 		},
 	}
@@ -401,16 +500,16 @@ func marketplaceBrowseCmd() *cobra.Command {
 				return err
 			}
 			if src == nil {
-				return marketplaceNotRegisteredErr(name)
+				return marketplaceNotRegisteredErr("browse", name)
 			}
 			w := cmd.OutOrStdout()
-			sp := ux.Spinner(w, fmt.Sprintf("Fetching plugins from '%s'...", name))
+			// Oracle marketplace browse starts with symbol="search" and keeps
+			// the stream-facing record visible even in non-TTY mode.
+			ux.Running(w, "Fetching plugins from '%s'...", name)
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
-				sp.Fail(fmt.Sprintf("could not reach marketplace %q", name))
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
-			sp.Success(fmt.Sprintf("Fetched %d plugin(s) from '%s'", len(m.Plugins), name))
 			if len(m.Plugins) == 0 {
 				ux.Warn(w, "Marketplace '%s' has no plugins", name)
 				return nil
@@ -430,7 +529,7 @@ func marketplaceBrowseCmd() *cobra.Command {
 			fmt.Fprintln(w)
 			renderBrowseTable(w, fmt.Sprintf("Plugins in '%s'", name), rows)
 			if verbose {
-				ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("%d plugin(s) in %q", len(m.Plugins), name)}})
+				ux.List(w, []ux.Item{{Text: fmt.Sprintf("%d plugin(s) in %q", len(m.Plugins), name)}})
 			}
 			ux.Info(w, "Install a plugin: apm-go install <plugin-name>@%s", name)
 			return nil
@@ -463,15 +562,19 @@ func marketplaceUpdateCmd() *cobra.Command {
 					return err
 				}
 				if src == nil {
-					return marketplaceNotRegisteredErr(name)
+					return marketplaceNotRegisteredErr("update", name)
 				}
+				// Oracle __init__.py:977 starts this branch with symbol="gear".
+				ux.Gear(w, "Refreshing marketplace '%s'...", name)
 				m, err := marketplace.Fetch(context.Background(), src)
 				if err != nil {
 					return fmt.Errorf("refresh marketplace %q: %w", name, err)
 				}
-				ux.Success(w, "Refreshed marketplace %q (%d plugins)", name, len(m.Plugins))
+				// Oracle commands/marketplace/__init__.py:980-982 uses
+				// symbol="check" for the single-marketplace completion.
+				ux.Check(w, "Marketplace '%s' updated (%d plugins)", name, len(m.Plugins))
 				if verbose {
-					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", src.URL)}})
+					ux.List(w, []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(src))}})
 				}
 				return nil
 			}
@@ -480,18 +583,35 @@ func marketplaceUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Upstream __init__.py:980-982: an empty registry is reported,
+			// never a silent exit-0 with zero output.
+			if len(sources) == 0 {
+				ux.Info(w, "No marketplaces registered.")
+				return nil
+			}
+			// Oracle __init__.py:989 starts the all-marketplace branch with
+			// symbol="gear".
+			ux.Gear(w, "Refreshing %d marketplace(s)...", len(sources))
 			for i := range sources {
-				s := sources[i]
-				m, ferr := marketplace.Fetch(context.Background(), &s)
+				s := &sources[i]
+				m, ferr := marketplace.Fetch(context.Background(), s)
 				if ferr != nil {
 					ux.Error(cmd.ErrOrStderr(), "failed to refresh marketplace %q: %v", s.Name, ferr)
 					continue
 				}
-				ux.Success(w, "Refreshed marketplace %q (%d plugins)", s.Name, len(m.Plugins))
+				// The Oracle renders each successful item as a tree continuation
+				// (commands/marketplace/__init__.py:994), so keep this detail as
+				// an unmarked continuation rather than a second success record or
+				// a dash-list item.
+				ux.Plain(w, "  %s", fmt.Sprintf("%s (%d plugins)", s.Name, len(m.Plugins)))
 				if verbose {
-					ux.BulletList(w, []ux.Item{{Text: fmt.Sprintf("source: %s", s.URL)}})
+					ux.List(w, []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(s))}})
 				}
 			}
+			// Upstream __init__.py:993's closing line.
+			// Oracle commands/marketplace/__init__.py:999 uses
+			// logger.success(..., symbol="check").
+			ux.Check(w, "Marketplace cache refreshed")
 			return nil
 		},
 	}
@@ -522,7 +642,7 @@ func marketplaceRemoveCmd() *cobra.Command {
 				return err
 			}
 			if src == nil {
-				return marketplaceNotRegisteredErr(name)
+				return marketplaceNotRegisteredErr("remove", name)
 			}
 			if !yes {
 				// C10: confirmOrRequireYes (not the old bare
@@ -531,24 +651,28 @@ func marketplaceRemoveCmd() *cobra.Command {
 				// never conflated with "user declined" -- it requires
 				// -y/--yes instead, the same as an outright non-interactive
 				// session.
+				// Upstream __init__.py:1023-1026's prompt names the source
+				// alongside the alias, and a decline prints "Cancelled".
 				proceed, err := confirmOrRequireYes(
-					fmt.Sprintf("Remove marketplace %q?", name),
+					fmt.Sprintf("Remove marketplace %q (%s)?", name, displaySource(src)),
 					"marketplace remove requires -y/--yes in a non-interactive environment",
 				)
 				if err != nil {
 					return err
 				}
 				if !proceed {
-					ux.Info(cmd.ErrOrStderr(), "Aborted.")
+					ux.Info(cmd.ErrOrStderr(), "Cancelled")
 					return nil
 				}
 			}
 			if err := marketplace.RemoveSource(name); err != nil {
 				return err
 			}
-			ux.Success(cmd.OutOrStdout(), "Removed marketplace %q", name)
+			// Oracle commands/marketplace/__init__.py:1039 uses
+			// logger.success(..., symbol="check").
+			ux.Check(cmd.OutOrStdout(), "Marketplace '%s' removed", name)
 			if verbose {
-				ux.BulletList(cmd.OutOrStdout(), []ux.Item{{Text: fmt.Sprintf("source: %s", src.URL)}})
+				ux.List(cmd.OutOrStdout(), []ux.Item{{Text: fmt.Sprintf("source: %s", displaySource(src))}})
 			}
 			return nil
 		},
@@ -568,9 +692,14 @@ func marketplaceRemoveCmd() *cobra.Command {
 // (exit 1) when any error was found.
 func marketplaceValidateCmd() *cobra.Command {
 	var verbose bool
+	var checkRefs bool
 	cmd := &cobra.Command{
+		// Ticket 11: matches validate.py:13's Click `help=` string verbatim
+		// -- help_semantic's description_paragraph comparison requires it
+		// byte-for-byte, and Click uses this same string for both the
+		// parent `marketplace --help` one-liner and validate's own --help.
 		Use:          "validate NAME",
-		Short:        "Validate a registered marketplace's manifest",
+		Short:        "Validate marketplace structure and plugin schema",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -580,15 +709,48 @@ func marketplaceValidateCmd() *cobra.Command {
 				return err
 			}
 			if src == nil {
-				return marketplaceNotRegisteredErr(name)
+				return marketplaceNotRegisteredErr("validate", name)
 			}
+			w := cmd.OutOrStdout()
+			// Mirrors upstream validate.py:29-36's pre-fetch progress and
+			// post-fetch plugin count. validate.py:29's
+			// logger.start(..., symbol="gear") uses the Oracle's single-quote
+			// convention and its "gear" symbol (STATUS_SYMBOLS -> "[*]",
+			// ux.Gear's own doc comment) -- ticket 22.
+			ux.Gear(w, "Validating marketplace '%s'...", name)
 			m, err := marketplace.Fetch(context.Background(), src)
 			if err != nil {
 				return fmt.Errorf("could not reach marketplace %q: %w", name, err)
 			}
 
-			w := cmd.OutOrStdout()
-			if verbose {
+			// Per-check rendering, mirroring upstream validate.py:54-80:
+			// every check prints a line -- a passing check included -- and
+			// the Summary counts passed checks and individual warning/error
+			// messages, not an approximation.
+			checks := marketplace.ValidateChecks(m)
+
+			// has_structure_errors (validate.py:31-33): gates the plugin
+			// count, verbose per-plugin detail, and every OTHER check's
+			// passing line below -- a broken manifest means "N plugins"
+			// (and Schema/Names having "passed") is misleading noise, not
+			// useful signal (ticket 11).
+			hasStructureErrors := false
+			for _, c := range checks {
+				if c.CheckName != "Structure" {
+					continue
+				}
+				for _, f := range c.Findings {
+					if f.Level == marketplace.LevelError {
+						hasStructureErrors = true
+					}
+				}
+			}
+
+			if !hasStructureErrors {
+				ux.Info(w, "Found %d plugins", len(m.Plugins))
+			}
+
+			if verbose && !hasStructureErrors {
 				// Mirrors Python's validate.py:38-42 per-plugin verbose
 				// detail (source type: dict vs string), printed after the
 				// fetch and before the validation results.
@@ -600,57 +762,95 @@ func marketplaceValidateCmd() *cobra.Command {
 					}
 					items[i] = ux.Item{Text: fmt.Sprintf("%s: source type: %s", p.Name, sourceType)}
 				}
-				ux.BulletList(w, items)
+				ux.List(w, items)
 			}
 
-			findings := marketplace.Validate(m)
-			if len(findings) > 0 {
-				items := make([]ux.Item, len(findings))
-				for i, f := range findings {
-					icon := ux.SymbolWarn
-					if f.Level == marketplace.LevelError {
-						icon = ux.SymbolError
-					}
-					items[i] = ux.Item{Text: fmt.Sprintf("%s %s", icon, f.Message)}
-				}
-				ux.BulletList(w, items)
+			// check-refs placeholder: mirrors upstream validate.py:49-54
+			// exactly -- results are already computed above, this warning
+			// prints before they're rendered, and it performs no ref lookup
+			// or network call of its own.
+			if checkRefs {
+				ux.Warn(w, "Ref checking not yet implemented -- skipping ref reachability checks")
 			}
-			passed, warnings, errs := summarizeFindings(m, findings)
+
+			passed, warnings, errs := 0, 0, 0
+			fmt.Fprintln(w)
+			ux.Info(w, "Validation Results:")
+			for _, check := range checks {
+				hasErr, hasWarn := false, false
+				for _, f := range check.Findings {
+					if f.Level == marketplace.LevelError {
+						hasErr = true
+					} else {
+						hasWarn = true
+					}
+				}
+				switch {
+				case !hasErr && !hasWarn:
+					// validate.py:60-64: a fully-passing check is skipped
+					// entirely (not just uncounted) once Structure itself
+					// has already failed -- "Schema: passed" would be
+					// misleading when the manifest couldn't even parse.
+					if hasStructureErrors {
+						continue
+					}
+					// validate.py:66: logger.success(..., symbol="check") ->
+					// "[+] " (ux.Check's own doc comment), not the
+					// width-3-centered " + " ux.Success renders -- ticket 22.
+					ux.Check(w, "  %s: passed", check.CheckName)
+					passed++
+				case hasWarn && !hasErr:
+					for _, f := range check.Findings {
+						ux.Warn(w, "  %s: %s", check.CheckName, f.Message)
+						warnings++
+					}
+				default:
+					// validate.py:70-74: errors first, then warnings --
+					// Python's ValidationResult keeps them in two separate
+					// lists; Findings is one mixed slice, so filter twice
+					// to reproduce that grouping regardless of append order.
+					for _, f := range check.Findings {
+						if f.Level == marketplace.LevelError {
+							ux.Error(w, "  %s: %s", check.CheckName, f.Message)
+							errs++
+						}
+					}
+					for _, f := range check.Findings {
+						if f.Level == marketplace.LevelWarning {
+							ux.Warn(w, "  %s: %s", check.CheckName, f.Message)
+							warnings++
+						}
+					}
+				}
+			}
+			fmt.Fprintln(w)
 			ux.Info(w, "Summary: %d passed, %d warnings, %d errors", passed, warnings, errs)
 			if errs > 0 {
-				return fmt.Errorf("marketplace %q failed validation with %d error(s)", name, errs)
+				// validate.py:81-82: `sys.exit(1)` with no additional
+				// message -- the Results/Summary lines above already said
+				// everything. withSilentExitCode matches that contract
+				// (see its own doc comment; first added for ticket 08's
+				// doctor, same "[x] <message>" extra-line bug shape here).
+				return withSilentExitCode(1, fmt.Errorf("marketplace %q failed validation with %d error(s)", name, errs))
 			}
 			return nil
 		},
 	}
 	// C1: doc's marketplace.md:283-285 promises --verbose/-v on every
 	// subcommand; validate was missing it entirely (an unknown-flag hard
-	// error).
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print each plugin's source type before the validation results")
+	// error). Description matches validate.py:18's Click option help
+	// verbatim (ticket 11: help_semantic requires per-flag description
+	// equality, not just the flag/alias/default set).
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed output")
+	// Ticket 06: upstream validate.py:16-18 accepts --check-refs as a
+	// hidden, not-yet-implemented placeholder (network ref reachability
+	// checking); ported as a hidden no-op for CLI surface parity, not a
+	// real feature.
+	cmd.Flags().BoolVar(&checkRefs, "check-refs", false, "verify version refs are reachable (network) -- not yet implemented")
+	if err := cmd.Flags().MarkHidden("check-refs"); err != nil {
+		panic(err)
+	}
 	return cmd
-}
-
-// summarizeFindings turns Validate's flat []Finding slice into the
-// passed/warnings/errors counts validate's Summary line reports. "passed" is
-// counted against a fixed unit count (the manifest name check, plus one unit
-// per plugin) minus the number of errors, floored at zero -- Validate does
-// not expose which specific check(s) each finding came from, so this is an
-// approximation of "how much of the manifest came back clean", not a
-// literal per-check tally.
-func summarizeFindings(m *marketplace.MarketplaceManifest, findings []marketplace.Finding) (passed, warnings, errs int) {
-	for _, f := range findings {
-		if f.Level == marketplace.LevelError {
-			errs++
-		} else {
-			warnings++
-		}
-	}
-	total := 1 + len(m.Plugins)
-	passed = total - errs
-	if passed < 0 {
-		passed = 0
-	}
-	return passed, warnings, errs
 }
 
 // marketplaceBuildCmd implements mkt-019: `marketplace build` was removed

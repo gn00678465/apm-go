@@ -28,6 +28,71 @@ func TestLoadRegistry_MissingFileReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+// TestLoadRegistry_MissingFile_MaterialisesEmptyRegistryOnDisk is ticket 24
+// AC1(ii)/AC4: the Oracle's registry.py:_load() (:61-81) unconditionally
+// calls _ensure_file() (:30-39) at the START of every load, before any name
+// lookup runs -- so a pure, unqualified read (get_registered_marketplaces,
+// no name lookup at all -- exactly `marketplace list`'s call shape) writes
+// {"marketplaces": []} to disk on a fresh install, not only a lookup that
+// happens to miss. LoadRegistry must do the same, with byte-identical
+// content to json.dump({"marketplaces": []}, f, indent=2) (no trailing
+// newline).
+func TestLoadRegistry_MissingFile_MaterialisesEmptyRegistryOnDisk(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	t.Setenv("APM_CONFIG_DIR", dir)
+	path := filepath.Join(dir, "marketplaces.json")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("test setup: %q already exists", path)
+	}
+
+	// Act
+	sources, err := LoadRegistry()
+
+	// Assert
+	if err != nil {
+		t.Fatalf("LoadRegistry() on a missing file returned error: %v", err)
+	}
+	if len(sources) != 0 {
+		t.Errorf("LoadRegistry() = %#v, want an empty slice", sources)
+	}
+	data, statErr := os.ReadFile(path)
+	if statErr != nil {
+		t.Fatalf("LoadRegistry() did not materialise %q on disk: %v", path, statErr)
+	}
+	if want := "{\n  \"marketplaces\": []\n}"; string(data) != want {
+		t.Errorf("materialised registry = %q, want %q (byte-identical to the Oracle's json.dump indent=2)", string(data), want)
+	}
+}
+
+// TestLoadRegistry_ExistingFile_NeverRewritten proves the Compatibility
+// section's second rule: a read must not touch a registry file that already
+// exists, even though LoadRegistry now writes one when it is missing.
+func TestLoadRegistry_ExistingFile_NeverRewritten(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	t.Setenv("APM_CONFIG_DIR", dir)
+	path := filepath.Join(dir, "marketplaces.json")
+	original := `{"marketplaces":[{"name":"acme","url":"/abs/local/path"}]}`
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	if _, err := LoadRegistry(); err != nil {
+		t.Fatalf("LoadRegistry() returned error: %v", err)
+	}
+
+	// Assert
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Errorf("registry file was rewritten by a pure read;\ngot:\n%s\nwant unchanged:\n%s", string(data), original)
+	}
+}
+
 // TestSaveRegistry_RoundTrip covers the atomic-write path (temp file +
 // rename): what SaveRegistry writes, LoadRegistry must read back unchanged,
 // including a fresh $APM_CONFIG_DIR that does not exist yet (mkt-002's
@@ -320,6 +385,34 @@ func TestRemoveSource_NotFoundReturnsError(t *testing.T) {
 	// Assert
 	if err == nil {
 		t.Fatalf("RemoveSource() returned no error, want one for an unregistered name")
+	}
+}
+
+// TestRemoveSource_UnregisteredError_IncludesRemediation covers B-MAJOR-2
+// (external audit): PRD R6 requires registry.go's own "is not registered"
+// error -- not only the richer helper cmd/apm-go/marketplace.go layers on
+// top for its own CLI callers -- to point at the remedy commands. Any caller
+// that invokes RemoveSource directly, skipping that CLI-layer check, must
+// still get actionable guidance instead of a bare, unhelpful message.
+func TestRemoveSource_UnregisteredError_IncludesRemediation(t *testing.T) {
+	// Arrange
+	writeRegistryFixture(t, existingUnrelatedFixture())
+
+	// Act
+	err := RemoveSource("missing")
+
+	// Assert
+	if err == nil {
+		t.Fatalf("RemoveSource() returned no error, want one for an unregistered name")
+	}
+	if !strings.Contains(err.Error(), `marketplace "missing" is not registered`) {
+		t.Errorf("error = %q, want it to contain the unregistered-name message verbatim", err.Error())
+	}
+	if !strings.Contains(err.Error(), "marketplace list") {
+		t.Errorf("error = %q, want it to mention `marketplace list`", err.Error())
+	}
+	if !strings.Contains(err.Error(), "marketplace add") {
+		t.Errorf("error = %q, want it to mention `marketplace add`", err.Error())
 	}
 }
 

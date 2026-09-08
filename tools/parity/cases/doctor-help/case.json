@@ -1,0 +1,5 @@
+{
+  "id": "doctor-help",
+  "argv": ["doctor", "--help"],
+  "rewrite_binary_name": true
+}

@@ -1,0 +1,5 @@
+{
+  "id": "pack-marketplace-multi-output",
+  "argv": ["pack", "-m", "all"],
+  "rewrite_binary_name": true
+}

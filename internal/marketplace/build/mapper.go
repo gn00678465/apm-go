@@ -3,8 +3,10 @@
 // authoring block, internal/marketplace/authoring.AuthoringConfig) and
 // resolved (builder.go's ResolvePackages output) into the exact field
 // shape the upstream Claude Code marketplace.json schema subset expects,
-// with every APM-only field (build/tagPattern/include_prerelease/category)
-// stripped and no semver range ever leaking into an output "version".
+// with every APM-only field (build/tagPattern/include_prerelease) stripped
+// -- category is a curator-declared field upstream ALSO emits for claude
+// (see ClaudePlugin's own doc comment), so it is passed through, not
+// stripped -- and no semver range ever leaking into an output "version".
 //
 // Ported field-by-field from Python apm's output_mappers.py
 // (ClaudeMarketplaceMapper.compose, lines 53-223) -- see design.md's
@@ -57,8 +59,34 @@ type ClaudePlugin struct {
 	License     string            `json:"license,omitempty"`
 	Repository  string            `json:"repository,omitempty"`
 	Tags        []string          `json:"tags,omitempty"`
-	Homepage    string            `json:"homepage,omitempty"`
-	Source      any               `json:"source"`
+	// Category mirrors upstream's claude marketplace.json output
+	// (eval-real-run-20260728.md:243-263: "category 在 claude 輸出裡也會被帶
+	// 出（雖然只有 codex 才強制要求）"). This field used to be deliberately
+	// omitted here (mkt-052 修訂版's prior ruling, tracked by this file's own
+	// now-updated file-header comment and mapper_test.go's
+	// TestClaudeMapper_Output_NoCategoryOrAPMFieldsInJSON) -- that was a real
+	// gap relative to upstream, not a considered design choice with a
+	// documented tradeoff; see agent-schema.md's now-removed "與上游的刻意差
+	// 異：category" callout for the corrected record. Emitting it here also
+	// retires apm-claude-marketplace.schema.json's "category is schema-only"
+	// whitelist exception (schema_sync_test.go's wantSchemaOnlyAllowed).
+	//
+	// POSITION (ticket 28): between "tags" and "homepage", NOT immediately
+	// after "description" where it sat until now. The pinned Oracle builds
+	// this dict by insertion order -- name, description, version, author,
+	// license, repository, tags, category, homepage, source
+	// (marketplace/output_mappers.py:197-208) -- and `pack -m all` on a
+	// package declaring both a version and a category proves it live:
+	// Oracle emits name/version/category/source, apm-go emitted
+	// name/category/version/source. The earlier "immediately after
+	// description" reading came from testdata/upstream-claude-marketplace
+	// .golden.json, whose single entry has no version/author/license/
+	// repository/tags at all -- so it renders identically under BOTH
+	// orderings and never actually pinned the position. It still passes
+	// unchanged.
+	Category string `json:"category,omitempty"`
+	Homepage string `json:"homepage,omitempty"`
+	Source   any    `json:"source"`
 }
 
 // RemoteSource is a remote package's structured plugin.source dict
@@ -76,11 +104,27 @@ type RemoteSource struct {
 	Path   string `json:"path,omitempty"`
 	Ref    string `json:"ref,omitempty"`
 	SHA    string `json:"sha,omitempty"`
+	// TagPattern is the producer's effective tag convention, propagated so a
+	// consumer can resolve semver ranges the same way without re-reading
+	// apm.yml (upstream v0.27.0 output_mappers.py's _set_effective_tag_pattern,
+	// inserted after the sha block -- hence this field's position).
+	TagPattern string `json:"tag_pattern,omitempty"`
 }
+
+// ClaudeSourceStyle selects how Claude marketplace entries refer to GitHub.
+// The zero value intentionally means github, preserving the Oracle's output.
+type ClaudeSourceStyle string
+
+const (
+	ClaudeSourceStyleGithub ClaudeSourceStyle = "github"
+	ClaudeSourceStyleURL    ClaudeSourceStyle = "url"
+)
 
 // ClaudeMapper implements mkt-050/052 修訂版's Claude Code marketplace.json
 // output composition.
-type ClaudeMapper struct{}
+type ClaudeMapper struct {
+	SourceStyle ClaudeSourceStyle
+}
 
 // Compose produces the Claude marketplace.json document for resolved,
 // against cfg's owner/metadata/packages[] declarations. The returned
@@ -90,7 +134,12 @@ type ClaudeMapper struct{}
 // subtractPluginRoot's PluginRootError -- pluginRoot subtraction yielding
 // an empty, absolute, or traversal-containing path, design.md's "結果為
 // 空/絕對/含 .. -> BuildError").
-func (ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedPackage) (ClaudeDocument, []string, error) {
+func (m ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedPackage) (ClaudeDocument, []string, error) {
+	sourceStyle, err := normalizeClaudeSourceStyle(m.SourceStyle)
+	if err != nil {
+		return ClaudeDocument{}, nil, err
+	}
+
 	doc := ClaudeDocument{Name: cfg.Name}
 	if cfg.DescriptionOverridden && cfg.Description != "" {
 		doc.Description = cfg.Description
@@ -108,7 +157,7 @@ func (ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedP
 	var warnings []string
 	plugins := make([]ClaudePlugin, 0, len(resolved))
 	for _, pkg := range resolved {
-		plugin, warning, err := composeClaudePlugin(pkg, pluginRoot)
+		plugin, warning, err := composeClaudePlugin(pkg, pluginRoot, sourceStyle)
 		if err != nil {
 			return ClaudeDocument{}, nil, err
 		}
@@ -123,11 +172,21 @@ func (ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedP
 	return doc, warnings, nil
 }
 
+func normalizeClaudeSourceStyle(style ClaudeSourceStyle) (ClaudeSourceStyle, error) {
+	if style == "" {
+		return ClaudeSourceStyleGithub, nil
+	}
+	if style == ClaudeSourceStyleGithub || style == ClaudeSourceStyleURL {
+		return style, nil
+	}
+	return "", fmt.Errorf("unknown Claude source style %q", style)
+}
+
 // composeClaudePlugin builds one plugins[] entry for pkg, per design.md's
 // plugin-level field table.
-func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string) (ClaudePlugin, string, error) {
+func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string, sourceStyle ClaudeSourceStyle) (ClaudePlugin, string, error) {
 	entry := pkg.Entry
-	plugin := ClaudePlugin{Name: entry.Name}
+	plugin := ClaudePlugin{Name: entry.Name, Category: entry.Category}
 
 	// description/version: for a remote package, pkg.RemoteDescription/
 	// RemoteVersion are already the final curator-wins-resolved values
@@ -191,7 +250,7 @@ func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string) (ClaudePlugin, 
 		}
 		plugin.Source = sourceValue
 	} else {
-		plugin.Source = composeRemoteSource(pkg)
+		plugin.Source = composeRemoteSource(pkg, sourceStyle)
 	}
 
 	return plugin, warning, nil
@@ -206,15 +265,21 @@ func composeClaudePlugin(pkg ResolvedPackage, pluginRoot string) (ClaudePlugin, 
 //     github.com) -> {"source":"url", "url"}
 //  4. otherwise -> {"source":"github", "repo"}
 //
+// The URL style is a deliberate apm-go-only superset of the Oracle's
+// output_mappers.py:247-257: it gives github.com packages an HTTPS URL for
+// consumers whose Claude Code install cannot authenticate over SSH.
+//
 // ref/sha are appended to whichever of 2-4 fired, when known.
 // ResolvedPackage carries no SourceURL/sourceBase field (design.md's
 // explicit "sourceBase 明確延後"), so the URL a non-default host emits is
 // always derived from Host+SourceRepo, never a curator-composed
 // sourceBase URL.
-func composeRemoteSource(pkg ResolvedPackage) *RemoteSource {
+func composeRemoteSource(pkg ResolvedPackage, style ClaudeSourceStyle) *RemoteSource {
 	remoteURL := ""
 	if pkg.Host != "" {
 		remoteURL = "https://" + pkg.Host + "/" + pkg.SourceRepo
+	} else if style == ClaudeSourceStyleURL {
+		remoteURL = "https://github.com/" + pkg.SourceRepo
 	}
 
 	src := &RemoteSource{}
@@ -239,6 +304,9 @@ func composeRemoteSource(pkg ResolvedPackage) *RemoteSource {
 	}
 	if pkg.SHA != "" {
 		src.SHA = pkg.SHA
+	}
+	if pkg.EffectiveTagPattern != "" {
+		src.TagPattern = pkg.EffectiveTagPattern
 	}
 	return src
 }

@@ -1,0 +1,5 @@
+{
+  "id": "plugin-init-help",
+  "argv": ["plugin", "init", "--help"],
+  "rewrite_binary_name": true
+}

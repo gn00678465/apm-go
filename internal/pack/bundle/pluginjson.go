@@ -8,10 +8,16 @@ import (
 )
 
 // Author is plugin.json's structured author object.
+//
+// json tags document (they are not used for marshaling -- authorValue below
+// builds the JSONValue tree by hand) the exact plugin.json key names this
+// type maps to, so schema_sync_test.go's reflect-based drift check has a
+// tag to read for this struct too, matching the other schema-checked types
+// in mapper.go/codexmapper.go.
 type Author struct {
-	Name  string
-	Email string
-	URL   string
+	Name  string `json:"name"`
+	Email string `json:"email,omitempty"`
+	URL   string `json:"url,omitempty"`
 }
 
 // PluginManifest is a synthesized plugin.json payload, in the exact field
@@ -27,19 +33,24 @@ type Author struct {
 // importing pluginmanifest -- pluginmanifest already needs to import
 // bundle for JSONValue/ReadMCPServers/SanitizeServers, so the reverse
 // import would be a package cycle.
+//
+// json tags are likewise documentation-only here (see Author's doc comment
+// above) -- ToJSONValue below is the actual marshaling logic -- but they
+// give schema_sync_test.go's drift check the same tag-driven field-name
+// contract used for every other schema-checked type in this task.
 type PluginManifest struct {
-	Name        string
-	Version     string
-	Description string
-	Author      *Author
-	License     string
-	Homepage    string
-	Repository  string
-	Keywords    []string
+	Name        string   `json:"name"`
+	Version     string   `json:"version,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Author      *Author  `json:"author,omitempty"`
+	License     string   `json:"license,omitempty"`
+	Homepage    string   `json:"homepage,omitempty"`
+	Repository  string   `json:"repository,omitempty"`
+	Keywords    []string `json:"keywords,omitempty"`
 	// MCPServers is only set for the claude ecosystem; nil/empty means
 	// "omit the mcpServers key entirely" (matches Python's manifest.pop /
 	// conditional assignment, build_plugin_manifest:372-378).
-	MCPServers *JSONValue
+	MCPServers *JSONValue `json:"mcpServers,omitempty"`
 }
 
 // Synthesize builds a PluginManifest by reading root (apm.yml's top-level

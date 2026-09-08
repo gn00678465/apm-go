@@ -1,0 +1,5 @@
+This directory is deliberately empty of a `git` executable: it is
+doctor-git-missing's fault-injection fixture, paired with
+path_exclusive: true in case.json so this directory becomes the ENTIRE
+PATH for both sides -- an empty leading directory alone does not hide a
+real `git` further down an inherited PATH (ticket 08 investigation).

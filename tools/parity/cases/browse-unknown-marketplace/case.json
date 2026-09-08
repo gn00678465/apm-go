@@ -1,0 +1,6 @@
+{
+  "id": "browse-unknown-marketplace",
+  "argv": ["marketplace", "browse", "nonexistent"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

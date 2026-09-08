@@ -137,6 +137,13 @@ func (r *RealPackageLoader) resolveCloneURL(ref *manifest.DependencyReference) s
 	if ref.Owner == "" && ref.Repo == "" && ref.RepoURL != "" {
 		return ref.RepoURL
 	}
+	repoPath := ref.RepoURL
+	if repoPath == "" {
+		repoPath = ref.Owner + "/" + ref.Repo
+	}
+	if ref.ArtifactoryPrefix != "" {
+		repoPath = ref.ArtifactoryPrefix + "/" + repoPath
+	}
 	if ref.Scheme != "" {
 		switch ref.Scheme {
 		case "https", "http":
@@ -144,26 +151,26 @@ func (r *RealPackageLoader) resolveCloneURL(ref *manifest.DependencyReference) s
 			if host == "" {
 				host = r.defaultHost()
 			}
-			return ref.Scheme + "://" + host + "/" + ref.Owner + "/" + ref.Repo + ".git"
+			return ref.Scheme + "://" + host + "/" + repoPath + ".git"
 		case "ssh":
 			host := ref.Host
 			if host == "" {
 				host = r.defaultHost()
 			}
-			return "ssh://git@" + host + "/" + ref.Owner + "/" + ref.Repo + ".git"
+			return "ssh://git@" + host + "/" + repoPath + ".git"
 		case "git":
 			host := ref.Host
 			if host == "" {
 				host = r.defaultHost()
 			}
-			return "git@" + host + ":" + ref.Owner + "/" + ref.Repo + ".git"
+			return "git@" + host + ":" + repoPath + ".git"
 		}
 	}
 	host := ref.Host
 	if host == "" {
 		host = r.defaultHost()
 	}
-	return "https://" + host + "/" + ref.Owner + "/" + ref.Repo + ".git"
+	return "https://" + host + "/" + repoPath + ".git"
 }
 
 func (r *RealPackageLoader) defaultHost() string {

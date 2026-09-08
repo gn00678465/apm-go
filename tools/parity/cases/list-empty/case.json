@@ -1,0 +1,6 @@
+{
+  "id": "list-empty",
+  "argv": ["marketplace", "list"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

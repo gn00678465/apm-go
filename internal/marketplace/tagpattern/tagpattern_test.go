@@ -1,6 +1,7 @@
 package tagpattern
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/semver"
@@ -96,5 +97,78 @@ func TestFilterTags_MonorepoNameScoping(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("FilterTags()[%d] = %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestFilterTags_PatternWithoutVersionPlaceholder_DropsEverything documents
+// the fail-silent mode that Validate exists to prevent: a pattern with no
+// "{version}" placeholder compiles into a regex with no "version" capture
+// group, so ExtractVersion's SubexpIndex lookup returns -1 and every tag is
+// reported as non-matching. The user-visible symptom is "no matching version"
+// -- pointing at the tags rather than at the malformed pattern.
+func TestFilterTags_PatternWithoutVersionPlaceholder_DropsEverything(t *testing.T) {
+	tags := []semver.TagInfo{
+		{Name: "v1.0.0", Commit: "aaa"},
+		{Name: "v2.3.4", Commit: "bbb"},
+		{Name: "pkg-v2.3.4", Commit: "ccc"},
+	}
+	got := FilterTags(tags, "{name}", "pkg")
+	if len(got) != 0 {
+		t.Fatalf("precondition changed: expected the broken pattern to drop every tag, got %v", got)
+	}
+	re := Compile("{name}", "pkg")
+	if idx := re.SubexpIndex("version"); idx != -1 {
+		t.Errorf("SubexpIndex(\"version\") = %d, want -1 (no capture group is what makes this silent)", idx)
+	}
+}
+
+// TestValidate mirrors upstream v0.27.0 marketplace/tag_pattern.py's
+// validate_tag_pattern, rule for rule:
+//   - blank (or whitespace-only) is rejected
+//   - any "{...}" token other than {version}/{name} is rejected
+//   - "{version}" must appear exactly once (zero and two both rejected)
+//   - the accepted value is returned strip()'d
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		want    string
+		wantErr string // substring that must appear; "" means expect success
+	}{
+		{"plain default", "v{version}", "v{version}", ""},
+		{"bare version", "{version}", "{version}", ""},
+		{"monorepo form", "{name}-v{version}", "{name}-v{version}", ""},
+		{"name after version", "{version}-{name}", "{version}-{name}", ""},
+		{"surrounding space normalized", "  v{version}\t", "v{version}", ""},
+		{"empty", "", "", "non-empty"},
+		{"whitespace only", "   ", "", "non-empty"},
+		{"no version placeholder", "{name}", "", "exactly one"},
+		{"no placeholder at all", "release", "", "exactly one"},
+		{"two version placeholders", "v{version}-{version}", "", "exactly one"},
+		{"unsupported placeholder", "{foo}-v{version}", "", "unsupported placeholder"},
+		{"empty braces", "{}v{version}", "", "unsupported placeholder"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Validate(tt.pattern, "build.tagPattern")
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Validate(%q) unexpected error: %v", tt.pattern, err)
+				}
+				if got != tt.want {
+					t.Errorf("Validate(%q) = %q, want %q", tt.pattern, got, tt.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Validate(%q) = %q, want error containing %q", tt.pattern, got, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Validate(%q) error = %q, want it to contain %q", tt.pattern, err.Error(), tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), "build.tagPattern") {
+				t.Errorf("Validate(%q) error = %q, must name the context so the user knows which key is wrong", tt.pattern, err.Error())
+			}
+		})
 	}
 }

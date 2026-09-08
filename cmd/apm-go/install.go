@@ -49,6 +49,11 @@ type installDeps struct {
 	// success summary. The zero value (false) keeps every default output
 	// byte-identical to before this field existed.
 	verbose bool
+	// dev routes positional packages into devDependencies.apm instead of
+	// dependencies.apm (--dev, R9/AC42-45, design.md §11). The zero value
+	// (false) keeps every call without --dev byte-identical to before this
+	// field existed (AC44's regression gate).
+	dev bool
 }
 
 func installCmd() *cobra.Command {
@@ -68,6 +73,7 @@ func installCmd() *cobra.Command {
 	var mcpRegistry string
 	var mcpForce bool
 	var allowInsecure bool
+	var dev bool
 
 	cmd := &cobra.Command{
 		Use:   "install [packages...]",
@@ -158,6 +164,7 @@ func installCmd() *cobra.Command {
 				maxArchiveBytes: maxArchiveBytes,
 				allowInsecure:   allowInsecure,
 				verbose:         verbose,
+				dev:             dev,
 			}
 			err := runInstall(deps, frozen, noProvenance, targetFlag, skillFlags, args)
 			// R17 (codex H8): suppress cobra's default usage dump for JUST
@@ -192,6 +199,7 @@ func installCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mcpRegistry, "registry", "", "MCP registry URL for resolving --mcp NAME (requires --mcp; not valid with --url or a stdio command)")
 	cmd.Flags().BoolVar(&mcpForce, "force", false, "overwrite a conflicting existing --mcp entry non-interactively")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "permit direct http:// (non-TLS) dependencies")
+	cmd.Flags().BoolVar(&dev, "dev", false, "install positional packages into devDependencies.apm instead of dependencies.apm")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
 		"print extra diagnostics (currently: list every pinned dependency after a successful --frozen install)")
 
@@ -230,6 +238,25 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		}
 		if len(packages) == 0 {
 			return fmt.Errorf("--skill requires at least one positional package to install")
+		}
+	}
+
+	// --dev requires an actual package to route into devDependencies.apm,
+	// and frozen installs never reach the manifest-write path at all: a
+	// frozen run returns from the "3. Frozen install" branch below (well
+	// before persistPackagesToManifest), so `--frozen --dev X` against an
+	// already-declared dependency previously printed
+	// moveDependencyBetweenSections' "moved from ... to devDependencies.apm"
+	// info message (a pure in-memory mutation of m, made before frozen mode
+	// is even checked) and then silently discarded it -- a misleading
+	// success-shaped message for a change that was never persisted. Reject
+	// up front, mirroring the --skill guard immediately above.
+	if deps.dev {
+		if frozen {
+			return fmt.Errorf("--dev is not supported with a frozen install (frozen installs pin exactly what's locked, with no section changes)")
+		}
+		if len(packages) == 0 {
+			return fmt.Errorf("--dev requires at least one positional package to install")
 		}
 	}
 
@@ -280,22 +307,41 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// here first, that key-space mismatch made `existing` silently miss an
 	// already-declared local-path dependency on every subsequent positional
 	// re-install of it, duplicating its apm.yml/lockfile entry instead of
-	// recognizing it as already declared.
+	// recognizing it as already declared. m.ParsedDevDeps is normalized here
+	// too (external Tier-2 audit finding, scenario A/B below) so its keys
+	// are computed the same way BEFORE existing/existingIsDev is indexed.
 	for _, d := range m.ParsedDeps {
 		normalizeLocalDep(d)
 	}
+	for _, d := range m.ParsedDevDeps {
+		normalizeLocalDep(d)
+	}
 	existing := make(map[string]bool)
-	// existingByIdentity indexes m.ParsedDeps by canonical repo identity
-	// (BUG-1, design.md §2/H2/H7): a positional package sharing GitHub
-	// repository identity with an already-declared dependency -- even
-	// spelled with different case ("Owner/Repo" vs "owner/repo") -- must
-	// resolve to that SAME first-declared dep key below, never appended as
-	// a second m.ParsedDeps entry the resolver/deploy would then process as
-	// if it were a genuinely different repository (the root cause of
-	// "Resolved 2" for one physical repo, shadowed-primitive noise, and a
-	// "deployed 0 files" ghost). Local/parent refs have no stable identity
-	// (deploy.CanonicalDepKey returns "") and are intentionally excluded --
-	// they keep relying on the exact-string `existing` map above/below.
+	// existingIsDev tracks, for every key in `existing`, which section it is
+	// CURRENTLY declared in (true = devDependencies.apm, false =
+	// dependencies.apm). Used below to detect a positional re-install whose
+	// --dev flag (or lack thereof) targets the OTHER section than where the
+	// dependency is presently declared -- external Tier-2 audit finding: the
+	// dedup below previously only ever indexed m.ParsedDeps, so re-installing
+	// an already-declared devDependencies.apm entry silently appended a
+	// SECOND, duplicate entry into dependencies.apm (and vice versa) instead
+	// of relocating it. Per the 2026-07-30 decision (npm `npm i [-D] X`
+	// parity), the fix is to MOVE the dependency to the section this call's
+	// flag names (moveDependencyBetweenSections below), not to leave it
+	// alone or duplicate it.
+	existingIsDev := make(map[string]bool)
+	// existingByIdentity indexes m.ParsedDeps/m.ParsedDevDeps by canonical
+	// repo identity (BUG-1, design.md §2/H2/H7): a positional package
+	// sharing GitHub repository identity with an already-declared
+	// dependency -- even spelled with different case ("Owner/Repo" vs
+	// "owner/repo") -- must resolve to that SAME first-declared dep key
+	// below, never appended as a second entry the resolver/deploy would then
+	// process as if it were a genuinely different repository (the root
+	// cause of "Resolved 2" for one physical repo, shadowed-primitive
+	// noise, and a "deployed 0 files" ghost). Local/parent refs have no
+	// stable identity (deploy.CanonicalDepKey returns "") and are
+	// intentionally excluded -- they keep relying on the exact-string
+	// `existing` map above/below.
 	existingByIdentity := make(map[string]string)
 	// foldedRefByKey remembers which literal ref currently "owns" each
 	// first-declared dep key, purely so a same-identity fold below (either
@@ -305,17 +351,22 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// without at least a warning -- a fold onto a different Reference is
 	// the first-declared ref winning, but the caller is told about it).
 	foldedRefByKey := make(map[string]*manifest.DependencyReference)
-	for _, d := range m.ParsedDeps {
-		if k := deploy.DepRefKey(d); k != "" {
-			existing[k] = true
-			foldedRefByKey[k] = d
-			if id := deploy.CanonicalDepKey(d); id != "" {
-				if _, ok := existingByIdentity[id]; !ok {
-					existingByIdentity[id] = k
+	indexDeclaredSection := func(refs []*manifest.DependencyReference, isDev bool) {
+		for _, d := range refs {
+			if k := deploy.DepRefKey(d); k != "" {
+				existing[k] = true
+				existingIsDev[k] = isDev
+				foldedRefByKey[k] = d
+				if id := deploy.CanonicalDepKey(d); id != "" {
+					if _, ok := existingByIdentity[id]; !ok {
+						existingByIdentity[id] = k
+					}
 				}
 			}
 		}
 	}
+	indexDeclaredSection(m.ParsedDeps, false)
+	indexDeclaredSection(m.ParsedDevDeps, true)
 	// persistPackages mirrors packages 1:1 for the persistPackagesToManifest
 	// call in deployAndFinalize below, substituting each marketplace
 	// reference's RESOLVED canonical for the raw CLI string (mkt-030): the
@@ -333,6 +384,19 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	// this same call (BUG-1) is still recognized as a duplicate and skipped,
 	// without marking the first, genuinely-new occurrence as pre-existing.
 	appendedThisCall := make(map[string]bool)
+	// manifestSectionMoved is set whenever moveDependencyBetweenSections
+	// below actually relocates an already-declared dependency between
+	// dependencies.apm/devDependencies.apm THIS call. It must gate the
+	// no-op check in deployAndFinalize alongside lockfile.IsSemanticEqual:
+	// a section move can leave the LOCKFILE content unchanged (e.g. a
+	// legacy lock entry whose package_type was never populated by an
+	// earlier version of apm-go reads as "" both before and after moving
+	// the dependency OUT of devDependencies.apm, since the post-move value
+	// is also ""), in which case IsSemanticEqual alone would report a false
+	// no-op and persistPackagesToManifest -- the only place the actual
+	// apm.yml section move gets written -- would never run (2026-07-30
+	// Tier-2 finding).
+	manifestSectionMoved := false
 	if len(packages) > 0 {
 		// mi-fix (MI2): key by deploy.DepRefKey (RepoURL, or
 		// RepoURL/VirtualPath) instead of bare RepoURL, matching the identity
@@ -413,10 +477,35 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 			// PRECEDING positional package (not apm.yml) already added this
 			// same call (BUG-1).
 			if existing[key] || appendedThisCall[key] {
+				// External Tier-2 audit finding (scenario A/B): a package
+				// already declared, but in the OTHER section than this
+				// call's --dev flag names, must be MOVED there -- never left
+				// alone (which would leave devDependencies.apm/package_type
+				// stale, scenario B) and never duplicated into both sections
+				// (scenario A). appendedThisCall[key] is deliberately
+				// excluded from this branch: an earlier positional package
+				// THIS call already placed is always already in the correct
+				// section (deps.dev is constant for the whole call).
+				if existing[key] && !appendedThisCall[key] && existingIsDev[key] != deps.dev {
+					if moveDependencyBetweenSections(m, key, deps.dev) {
+						manifestSectionMoved = true
+					}
+					existingIsDev[key] = deps.dev
+					appendedThisCall[key] = true
+				}
 				continue
 			}
 			appendedThisCall[key] = true
-			m.ParsedDeps = append(m.ParsedDeps, ref)
+			// R9/AC42: --dev routes this call's positional packages into
+			// devDependencies.apm instead of dependencies.apm. allDirectDeps
+			// (resolver root seeding, allDirectDeps-based scans) already
+			// treats m.ParsedDevDeps uniformly with m.ParsedDeps, so no other
+			// change is needed for resolution/deploy to pick this up.
+			if deps.dev {
+				m.ParsedDevDeps = append(m.ParsedDevDeps, ref)
+			} else {
+				m.ParsedDeps = append(m.ParsedDeps, ref)
+			}
 		}
 	}
 
@@ -608,11 +697,14 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 				// a stale/tampered checkout is replaced rather than
 				// silently trusted.
 				ref := &manifest.DependencyReference{
-					RepoURL:     dep.RepoURL,
-					VirtualPath: dep.VirtualPath,
-					Owner:       ownerFromRepoURL(dep.RepoURL),
-					Repo:        repoFromRepoURL(dep.RepoURL),
-					Source:      "git",
+					RepoURL:           dep.RepoURL,
+					Host:              dep.Host,
+					Port:              dep.Port,
+					ArtifactoryPrefix: dep.RegistryPrefix,
+					VirtualPath:       dep.VirtualPath,
+					Owner:             ownerFromRepoURL(dep.RepoURL),
+					Repo:              repoFromRepoURL(dep.RepoURL),
+					Source:            "git",
 				}
 				// Frozen mode already has the authoritative locked commit;
 				// prefer it over resolved_ref (which may name a mutable
@@ -758,6 +850,29 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 		return err
 	}
 
+	// R9.4/AC45: mark every DIRECT devDependencies.apm entry's lockfile
+	// record with package_type, mirroring upstream's package_type:
+	// marketplace_plugin marker (research/eval-real-run-20260728.md §D5).
+	// Keyed off m.ParsedDevDeps -- not deps.dev/this call's --dev flag --
+	// so a bare `apm install` that merely re-resolves an already-declared
+	// devDependencies.apm entry keeps reporting the same package_type
+	// (idempotency: TestRunInstall_DevDependency_SecondBareInstallIsNoOp).
+	// Transitive dependencies pulled in BY a dev dependency are NOT marked:
+	// devKeys only ever contains direct entries.
+	if len(m.ParsedDevDeps) > 0 {
+		devKeys := make(map[string]bool, len(m.ParsedDevDeps))
+		for _, d := range m.ParsedDevDeps {
+			if k := deploy.DepRefKey(d); k != "" {
+				devKeys[k] = true
+			}
+		}
+		for i := range newLock.Dependencies {
+			if devKeys[newLock.Dependencies[i].UniqueKey()] {
+				newLock.Dependencies[i].PackageType = lockfile.PackageTypeMarketplacePlugin
+			}
+		}
+	}
+
 	// There are resolved dependencies to deploy but target resolution came up
 	// empty (no --target, no apm.yml target:, no auto-detected harness
 	// signal): fail loud with a teaching message and exit 2 (install.md's
@@ -776,7 +891,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node)
 }
 
 // printFrozenVerifiedDeps lists every dependency a successful --frozen
@@ -793,7 +908,7 @@ func printFrozenVerifiedDeps(w io.Writer, lock *lockfile.Lockfile) {
 	for i := range lock.Dependencies {
 		items[i] = ux.Item{Text: lock.Dependencies[i].UniqueKey()}
 	}
-	ux.BulletList(w, items)
+	ux.List(w, items)
 }
 
 // noDeployTargetError marks errNoDeployTarget's failure so installCmd's RunE
@@ -826,8 +941,8 @@ func errNoDeployTarget() error {
 	}
 	b.WriteString("\nTo fix, do one of the following:\n")
 	b.WriteString("  1. Pass --target <name> (e.g. --target claude)\n")
-	b.WriteString("  2. Add a target: field to apm.yml, e.g.:\n")
-	b.WriteString("       target:\n")
+	b.WriteString("  2. Add a targets: field to apm.yml, e.g.:\n")
+	b.WriteString("       targets:\n")
 	b.WriteString("         - claude\n")
 	b.WriteString("  3. Create one of the marker paths above so apm-go can auto-detect a target\n")
 	return withExitCode(2, &noDeployTargetError{err: errors.New(b.String())})
@@ -909,7 +1024,7 @@ func runLocalBundleInstall(info *localbundle.BundleInfo, bundleArg, targetFlag s
 		for i, e := range errs {
 			items[i] = ux.Item{Text: e}
 		}
-		ux.BulletList(os.Stderr, items)
+		ux.List(os.Stderr, items)
 		return fmt.Errorf("bundle integrity check failed for %s", bundleArg)
 	}
 
@@ -1444,6 +1559,9 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 	for _, dep := range result.Deps {
 		ld := lockfile.LockedDep{
 			RepoURL:        dep.RepoURL,
+			Host:           dep.Host,
+			Port:           dep.Port,
+			RegistryPrefix: dep.ArtifactoryPrefix,
 			VirtualPath:    dep.VirtualPath,
 			Source:         kindToSource(dep.Kind),
 			ResolvedTag:    dep.ResolvedTag,
@@ -1583,7 +1701,9 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // point (effectiveSkillSubsets, design.md §1.2c) -- the ONLY source
 // deploy.Run's SkillFilter is built from, so a bare re-deploy honors every
 // already-persisted subset, not just the one this call's --skill flag named.
-func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+// dev (R9/AC42) selects which apm.yml section packages is persisted into --
+// always false for `update`, which never persists positional packages.
+func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
 	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
 	// localProjectDeployed is R16's post-deploy decision point (design.md
 	// §3, codex M2): whether THIS run's deploy.Run actually deployed at
@@ -1732,7 +1852,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 				})
 			}
 			ux.Info(os.Stdout, "MCP servers configured:")
-			ux.BulletList(os.Stdout, mcpItems)
+			ux.List(os.Stdout, mcpItems)
 		}
 
 		// Pollution convergence (design.md §1.2g, codex C1, prd.md B2-3/
@@ -1749,8 +1869,18 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 		}
 	}
 
-	// 7. No-op check
-	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) {
+	// 7. No-op check. manifestSectionMoved must gate this alongside lockfile
+	// equality (2026-07-30 Tier-2 finding): a dependencies.apm/
+	// devDependencies.apm section move can leave the lockfile's own
+	// comparison fields unchanged -- notably PackageType, which reads "" on
+	// BOTH sides of a move-out-of-dev when the pre-move lock predates the
+	// package_type feature and was never marked -- while the manifest still
+	// genuinely needs the write that only happens below/in
+	// persistPackagesToManifest. Without this, IsSemanticEqual alone would
+	// report a false "Already up to date" and the section move's apm.yml
+	// write would silently never happen, despite the "moved from ..."
+	// info message already printed above.
+	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) && !manifestSectionMoved {
 		ux.Info(os.Stdout, "Already up to date")
 		return nil
 	}
@@ -1767,7 +1897,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 
 	// 9. Persist positional packages to apm.yml
 	if len(packages) > 0 {
-		if err := persistPackagesToManifest(node, packages, effectiveSubsets); err != nil {
+		if err := persistPackagesToManifest(node, packages, effectiveSubsets, dev); err != nil {
 			return fmt.Errorf("update apm.yml: %w", err)
 		}
 		manifestBytes, err := yamlcore.SafeDump(node)
@@ -1778,6 +1908,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 			return fmt.Errorf("write apm.yml: %w", err)
 		}
 	}
+	updateGitignoreForApmModules()
 
 	fmt.Println()
 	// Closing summary. Built as parts joined with " and " so R15's MCP-count
@@ -1836,10 +1967,56 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 		items = append(items, ux.Item{Text: text, Muted: !isNew})
 	}
 	if len(items) > 0 {
-		ux.BulletList(os.Stdout, items)
+		ux.List(os.Stdout, items)
 	}
 
 	return nil
+}
+
+// updateGitignoreForApmModules mirrors the Oracle's project-scope install
+// helper (src/apm_cli/commands/_helpers.py:489-527 and
+// src/apm_cli/install/pipeline.py:807-813): keep the generated dependency
+// cache out of version control, while preserving an existing .gitignore.
+// Gitignore maintenance is best-effort in the Oracle, so read/write failures
+// are warnings rather than install failures.
+func updateGitignoreForApmModules() {
+	updateGitignoreForApmModulesWithWrite(io.WriteString)
+}
+
+func updateGitignoreForApmModulesWithWrite(write func(io.Writer, string) (int, error)) {
+	const pattern = "apm_modules/"
+
+	data, err := os.ReadFile(".gitignore")
+	if err != nil && !os.IsNotExist(err) {
+		ux.Warn(os.Stdout, "Could not read .gitignore: %v", err)
+		return
+	}
+	current := string(data)
+	lines := strings.Split(current, "\n")
+	if strings.HasSuffix(current, "\n") {
+		lines = lines[:len(lines)-1]
+	}
+	for _, line := range lines {
+		if strings.TrimSpace(strings.TrimSuffix(line, "\r")) == pattern {
+			return
+		}
+	}
+
+	f, err := os.OpenFile(".gitignore", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		ux.Warn(os.Stdout, "Could not update .gitignore: %v", err)
+		return
+	}
+	defer f.Close()
+	appendContent := "\n# APM dependencies\n" + pattern + "\n"
+	if len(lines) > 0 && strings.TrimSpace(strings.TrimSuffix(lines[len(lines)-1], "\r")) != "" {
+		appendContent = "\n" + appendContent
+	}
+	if _, err := write(f, appendContent); err != nil {
+		ux.Warn(os.Stdout, "Could not update .gitignore: %v", err)
+		return
+	}
+	ux.Info(os.Stdout, "Added %s to .gitignore", pattern)
 }
 
 // deployedFilesTree groups a single dependency's deployed files by
@@ -2004,12 +2181,25 @@ func depVersionLabel(dep resolver.ResolvedDep) string {
 func toLockDeps(deps []resolver.ResolvedDep) []lockfile.LockedDep {
 	result := make([]lockfile.LockedDep, len(deps))
 	for i, d := range deps {
-		result[i] = lockfile.LockedDep{Source: kindToSource(d.Kind)}
+		result[i] = lockfile.LockedDep{
+			Host:           d.Host,
+			Port:           d.Port,
+			RegistryPrefix: d.ArtifactoryPrefix,
+			Source:         kindToSource(d.Kind),
+		}
 	}
 	return result
 }
 
-func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSubsets map[string][]string) error {
+// persistPackagesToManifest persists packages into apm.yml's
+// dependencies.apm sequence, or -- when dev is true (R9/AC42-43) --
+// devDependencies.apm instead. A freshly-created devDependencies key is
+// inserted right after includes: (falling back to the end of the document if
+// no includes: key exists), matching the R2 semantic key order established
+// by 07-29-targets-init-shape's buildManifestNode (design.md §11 "鍵序約束").
+// A freshly-created dependencies key keeps its prior append-at-end placement
+// unchanged (AC44: the non-dev path must stay byte-identical).
+func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSubsets map[string][]string, dev bool) error {
 	root := doc
 	if root.Kind == yamllib.DocumentNode && len(root.Content) > 0 {
 		root = root.Content[0]
@@ -2018,20 +2208,35 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 		return fmt.Errorf("manifest root is not a mapping")
 	}
 
-	// Find or create dependencies.apm sequence
+	sectionKey := "dependencies"
+	otherSectionKey := "devDependencies"
+	if dev {
+		sectionKey, otherSectionKey = "devDependencies", "dependencies"
+	}
+
+	// Find or create the target section's mapping node.
 	var depsNode *yamllib.Node
 	for i := 0; i < len(root.Content)-1; i += 2 {
-		if root.Content[i].Value == "dependencies" {
+		if root.Content[i].Value == sectionKey {
 			depsNode = root.Content[i+1]
 			break
 		}
 	}
 	if depsNode == nil {
 		depsNode = &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
-		root.Content = append(root.Content,
-			&yamllib.Node{Kind: yamllib.ScalarNode, Value: "dependencies", Tag: "!!str"},
-			depsNode,
-		)
+		keyNode := &yamllib.Node{Kind: yamllib.ScalarNode, Value: sectionKey, Tag: "!!str"}
+		if dev {
+			insertAt := len(root.Content)
+			for i := 0; i < len(root.Content)-1; i += 2 {
+				if root.Content[i].Value == "includes" {
+					insertAt = i + 2
+					break
+				}
+			}
+			root.Content = insertKeyValueAt(root.Content, insertAt, keyNode, depsNode)
+		} else {
+			root.Content = append(root.Content, keyNode, depsNode)
+		}
 	}
 
 	var apmSeq *yamllib.Node
@@ -2059,15 +2264,25 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 	// forms, which never carry a skill subset -- the source matrix only
 	// supports skills: on the git dict form, so an empty identity is never
 	// looked up in effectiveSubsets).
+	//
+	// The two indexes are populated INDEPENDENTLY (2026-07-30 round-4 fix):
+	// entryDepString only recognizes a ScalarNode or a MappingNode carrying
+	// a "git:" key, so it returns "" for any other dict shape ParseDepDict
+	// still accepts -- notably the legacy `{name: owner/repo}` shorthand,
+	// whose canonical identity is the SAME git identity as the plain scalar
+	// form. An earlier version `continue`-d past the WHOLE entry whenever
+	// entryDepString returned "", which skipped entryCanonicalIdentity too
+	// and left such an entry out of existingByIdentity entirely -- so
+	// re-declaring it (same section, no cross-section move involved)
+	// silently appended a second, duplicate entry instead of being
+	// recognized as already-present.
 	existingByIdentity := make(map[string]int)
 	existingPkgs := make(map[string]bool)
 	if apmSeq.Kind == yamllib.SequenceNode {
 		for i, entry := range apmSeq.Content {
-			raw := entryDepString(entry)
-			if raw == "" {
-				continue
+			if raw := entryDepString(entry); raw != "" {
+				existingPkgs[raw] = true
 			}
-			existingPkgs[raw] = true
 			// Identity comes from the FULL entry, not just its git value: a
 			// monorepo dict `{git: repo, path: sub}` is a different
 			// dependency from bare `repo` (CanonicalDepKey includes the
@@ -2080,7 +2295,16 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 		}
 	}
 
+	// otherApmSeq is the OTHER section's apm sequence (read-only lookup --
+	// never created if absent, unlike depsNode/apmSeq above). External
+	// Tier-2 audit finding (scenario A/B): a package already declared here
+	// must be relocated into the target section below rather than left to
+	// accumulate as a duplicate in both (npm `npm i [-D] X` parity -- this
+	// call's --dev flag is the final word on section ownership).
+	otherApmSeq := findApmSeq(root, otherSectionKey)
+
 	appended := false
+	movedOut := false
 	for _, pkg := range packages {
 		identity := canonicalIdentityForDepString(pkg)
 
@@ -2091,16 +2315,49 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 				// `continue` that left a stale apm.yml value behind.
 				setEntrySkillSubset(apmSeq, idx, effectiveSubsets[identity])
 				appended = true
+				// 2026-07-30 round-5 fix: the package can ALSO be declared in
+				// the OTHER section (a pre-existing polluted apm.yml, or a
+				// prior run that appended before this cleanup existed). The
+				// early `continue` below used to skip straight past the
+				// cross-section relocation logic further down this loop,
+				// leaving the duplicate in the other section forever --
+				// re-running install never healed it. Clean it up here too.
+				if removeMatchingEntry(otherApmSeq, pkg, identity) != nil {
+					movedOut = true
+				}
 				continue
 			}
 		} else if existingPkgs[pkg] {
+			if removeMatchingEntry(otherApmSeq, pkg, identity) != nil {
+				movedOut = true
+			}
 			continue
 		}
 
+		// Not declared in the target section. If it's declared in the OTHER
+		// section, relocate it here instead of writing a second, duplicate
+		// entry (external Tier-2 audit finding, scenario A/B).
+		movedEntry := removeMatchingEntry(otherApmSeq, pkg, identity)
+		if movedEntry != nil {
+			movedOut = true
+		}
+
 		subset := effectiveSubsets[identity]
-		if len(subset) > 0 {
+		switch {
+		case movedEntry != nil:
+			// 2026-07-30 Tier-2 finding: transplant the ORIGINAL entry node
+			// removed from the other section instead of rebuilding a fresh
+			// {git, skills}/scalar entry from just pkg -- rebuilding here
+			// silently dropped every other persisted field (ref:, alias:,
+			// path:, ...) a cross-section move carried, e.g. `{git: acme/foo,
+			// ref: stable}` became a bare `acme/foo` scalar. Only the
+			// skills: field is adjusted, via the SAME setEntrySkillSubset
+			// helper the same-section update path above already uses.
+			apmSeq.Content = append(apmSeq.Content, movedEntry)
+			setEntrySkillSubset(apmSeq, len(apmSeq.Content)-1, subset)
+		case len(subset) > 0:
 			apmSeq.Content = append(apmSeq.Content, newGitSkillEntry(pkg, subset))
-		} else {
+		default:
 			// String form
 			apmSeq.Content = append(apmSeq.Content,
 				&yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"},
@@ -2131,7 +2388,81 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 	if appended {
 		apmSeq.Style &^= yamllib.FlowStyle
 	}
+	// A relocated-out other-section sequence emptying to zero entries stays
+	// a normal `apm: []` skeleton (2026-07-30 decision) -- no special
+	// handling needed here beyond keeping its style normalized, matching
+	// apmSeq's own treatment above.
+	if movedOut && otherApmSeq != nil {
+		otherApmSeq.Style &^= yamllib.FlowStyle
+	}
 
+	return nil
+}
+
+// insertKeyValueAt returns a copy of content (a flat key/value-alternating
+// yaml.Node slice) with the key/val pair inserted at position at (an even
+// index -- a key position). Used to place a freshly-created devDependencies
+// key at a specific key-order position instead of appending at the end.
+func insertKeyValueAt(content []*yamllib.Node, at int, key, val *yamllib.Node) []*yamllib.Node {
+	out := make([]*yamllib.Node, 0, len(content)+2)
+	out = append(out, content[:at]...)
+	out = append(out, key, val)
+	out = append(out, content[at:]...)
+	return out
+}
+
+// findApmSeq locates <sectionKey>.apm's sequence node under root, or nil if
+// the section, or its apm: key, doesn't exist. Read-only lookup -- unlike
+// the target-section find-or-create logic in persistPackagesToManifest,
+// this NEVER creates the section: it's used to look for an already-declared
+// dependency that a move-between-sections needs to remove FROM, not a
+// target to write into.
+func findApmSeq(root *yamllib.Node, sectionKey string) *yamllib.Node {
+	for i := 0; i < len(root.Content)-1; i += 2 {
+		if root.Content[i].Value != sectionKey {
+			continue
+		}
+		section := root.Content[i+1]
+		if section.Kind != yamllib.MappingNode {
+			return nil
+		}
+		for j := 0; j < len(section.Content)-1; j += 2 {
+			if section.Content[j].Value == "apm" {
+				return section.Content[j+1]
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+// removeMatchingEntry removes the FIRST entry in seq matching identity (via
+// entryCanonicalIdentity) or, when identity is "", pkg (via entryDepString
+// literal match). Used by persistPackagesToManifest to relocate an
+// already-declared dependency out of the section this call's --dev flag did
+// NOT target (external Tier-2 audit finding, scenario A/B: this call's flag
+// is the final word on section ownership, npm `npm i [-D] X` parity).
+// Returns the removed entry NODE itself (nil for a nil/non-sequence seq, or
+// when nothing matches) -- not just whether something was removed -- so the
+// caller can transplant its original fields (ref:, alias:, path:, skills:,
+// ...) into the target section instead of rebuilding a fresh entry from just
+// pkg, which would silently drop everything but the git value (2026-07-30
+// Tier-2 finding).
+func removeMatchingEntry(seq *yamllib.Node, pkg, identity string) *yamllib.Node {
+	if seq == nil || seq.Kind != yamllib.SequenceNode {
+		return nil
+	}
+	for i, entry := range seq.Content {
+		if identity != "" {
+			if entryCanonicalIdentity(entry) != identity {
+				continue
+			}
+		} else if entryDepString(entry) != pkg {
+			continue
+		}
+		seq.Content = append(seq.Content[:i], seq.Content[i+1:]...)
+		return entry
+	}
 	return nil
 }
 
@@ -2373,6 +2704,59 @@ func localPathForManifest(abs string) string {
 		rel = "./" + rel
 	}
 	return rel
+}
+
+// moveDependencyBetweenSections relocates the ALREADY-DECLARED dependency
+// identified by key from its current section (m.ParsedDeps or
+// m.ParsedDevDeps -- whichever is NOT what toDev names) into the section
+// this call's --dev flag requested, and tells the user about it (never
+// silent). This is the fix for the external Tier-2 audit's scenario A/B
+// finding: a positional re-install of an already-declared dependency,
+// targeting the OTHER section than where it's currently declared, must MOVE
+// it there -- mirroring npm's `npm i [-D] X` behavior of relocating an
+// already-declared dependency between sections -- instead of leaving a
+// duplicate entry behind in both. A no-op (returns false, changing nothing)
+// if key isn't actually found in the expected source section. The returned
+// bool tells the caller whether a move actually happened, so it can force a
+// write even when the resulting lockfile happens to compare equal to the
+// existing one (manifestSectionMoved, install.go's runInstall -- see its
+// declaration for why lockfile equality alone isn't sufficient).
+func moveDependencyBetweenSections(m *manifest.Manifest, key string, toDev bool) bool {
+	if toDev {
+		ref, rest := extractDepByKey(m.ParsedDeps, key)
+		if ref == nil {
+			return false
+		}
+		m.ParsedDeps = rest
+		m.ParsedDevDeps = append(m.ParsedDevDeps, ref)
+		ux.Info(os.Stdout, "%s: moved from dependencies.apm to devDependencies.apm (--dev)", key)
+		return true
+	}
+	ref, rest := extractDepByKey(m.ParsedDevDeps, key)
+	if ref == nil {
+		return false
+	}
+	m.ParsedDevDeps = rest
+	m.ParsedDeps = append(m.ParsedDeps, ref)
+	ux.Info(os.Stdout, "%s: moved from devDependencies.apm to dependencies.apm", key)
+	return true
+}
+
+// extractDepByKey removes and returns the FIRST dependency reference in refs
+// whose deploy.DepRefKey matches key, along with the remaining slice (a new
+// backing array, so the original slice/caller's other references aren't
+// aliased by the removal). Returns (nil, refs) unchanged if key isn't found.
+func extractDepByKey(refs []*manifest.DependencyReference, key string) (*manifest.DependencyReference, []*manifest.DependencyReference) {
+	rest := make([]*manifest.DependencyReference, 0, len(refs))
+	var found *manifest.DependencyReference
+	for _, r := range refs {
+		if found == nil && deploy.DepRefKey(r) == key {
+			found = r
+			continue
+		}
+		rest = append(rest, r)
+	}
+	return found, rest
 }
 
 // normalizeLocalDep rewrites a local-directory dependency in place into the

@@ -1,0 +1,6 @@
+{
+  "name": "sample",
+  "plugins": [
+    {"name": "local-tool", "source": "./local-tool", "description": "A local tool", "tags": ["tools"]}
+  ]
+}

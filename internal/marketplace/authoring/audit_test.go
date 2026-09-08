@@ -374,7 +374,7 @@ func TestAuditPlugin_UnsupportedSource_NeverFetches(t *testing.T) {
 	plugin := marketplace.MarketplacePlugin{Name: "p", Source: "./relative"}
 
 	// Act
-	report := auditPlugin(plugin, "acme", "github.com", panicApmYMLFetcher{})
+	report := auditPlugin(plugin, "acme", "github.com", "", "", panicApmYMLFetcher{})
 
 	// Assert
 	if report.FetchStatus != FetchUnsupportedSource {
@@ -388,7 +388,7 @@ func TestAuditPlugin_NoManifest(t *testing.T) {
 	fetcher := &fakeApmYMLFetcher{}
 
 	// Act
-	report := auditPlugin(plugin, "acme", "github.com", fetcher)
+	report := auditPlugin(plugin, "acme", "github.com", "", "", fetcher)
 
 	// Assert
 	if report.FetchStatus != FetchNoManifest {
@@ -404,7 +404,7 @@ func TestAuditPlugin_NetworkError(t *testing.T) {
 	}}
 
 	// Act
-	report := auditPlugin(plugin, "acme", "github.com", fetcher)
+	report := auditPlugin(plugin, "acme", "github.com", "", "", fetcher)
 
 	// Assert
 	if report.FetchStatus != FetchNetworkError {
@@ -423,7 +423,7 @@ func TestAuditPlugin_ParseError_MalformedYAML(t *testing.T) {
 	}}
 
 	// Act
-	report := auditPlugin(plugin, "acme", "github.com", fetcher)
+	report := auditPlugin(plugin, "acme", "github.com", "", "", fetcher)
 
 	// Assert
 	if report.FetchStatus != FetchParseError {
@@ -439,7 +439,7 @@ func TestAuditPlugin_ParseError_RootNotAMapping(t *testing.T) {
 	}}
 
 	// Act
-	report := auditPlugin(plugin, "acme", "github.com", fetcher)
+	report := auditPlugin(plugin, "acme", "github.com", "", "", fetcher)
 
 	// Assert
 	if report.FetchStatus != FetchParseError {
@@ -457,7 +457,7 @@ func TestAuditPlugin_OK_CleanDeps_NoIssues(t *testing.T) {
 	}}
 
 	// Act
-	report := auditPlugin(plugin, "acme", "github.com", fetcher)
+	report := auditPlugin(plugin, "acme", "github.com", "", "", fetcher)
 
 	// Assert
 	if report.FetchStatus != FetchOK {
@@ -482,7 +482,7 @@ func TestAuditPlugin_OK_BypassInDependenciesAndDevDependencies(t *testing.T) {
 	}}
 
 	// Act
-	report := auditPlugin(plugin, "acme-marketplace", "github.com", fetcher)
+	report := auditPlugin(plugin, "acme-marketplace", "github.com", "", "", fetcher)
 
 	// Assert
 	if report.FetchStatus != FetchOK {
@@ -524,7 +524,7 @@ func TestRunAudit_IsolatesPerPluginFailures(t *testing.T) {
 	}
 
 	// Act
-	reports := RunAudit(m, "acme-marketplace", "github.com", fetcher)
+	reports := RunAudit(m, "acme-marketplace", "github.com", "", fetcher)
 
 	// Assert
 	if len(reports) != 4 {

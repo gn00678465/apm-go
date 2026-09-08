@@ -1,0 +1,5 @@
+{
+  "id": "pack-format-missing-arg",
+  "argv": ["pack", "--format"],
+  "rewrite_binary_name": true
+}

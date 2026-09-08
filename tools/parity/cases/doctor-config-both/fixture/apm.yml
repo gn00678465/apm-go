@@ -1,0 +1,10 @@
+name: demo
+description: d
+version: 0.1.0
+marketplace:
+  owner:
+    name: acme
+  packages:
+    - name: pkg
+      source: acme/pkg
+      version: "^1.0.0"

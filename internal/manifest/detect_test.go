@@ -77,3 +77,24 @@ func TestDetectTargets_AllSignals(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectTargets_OracleOrder(t *testing.T) {
+	dir := t.TempDir()
+	for _, path := range []string{".claude", ".codex", ".opencode"} {
+		if err := os.MkdirAll(filepath.Join(dir, path), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".github", "copilot-instructions.md"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := DetectTargets(dir)
+	want := []string{"claude", "codex", "copilot", "opencode"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("DetectTargets() = %v, want Oracle order %v", got, want)
+	}
+}

@@ -218,7 +218,7 @@ func TestFrozen_RegistryNetwork_RequiresExperimentalFlag(t *testing.T) {
 func TestFrozen_Network_401_NamesEnvVar(t *testing.T) {
 	enableRegistries(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "denied", 401)
+		http.Error(w, "denied", http.StatusUnauthorized)
 	}))
 	t.Cleanup(srv.Close)
 

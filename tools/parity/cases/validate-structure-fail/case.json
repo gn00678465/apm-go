@@ -1,0 +1,7 @@
+{
+  "id": "validate-structure-fail",
+  "argv": ["marketplace", "validate", "broken"],
+  "setup_argv": [["marketplace", "add", "./fixture", "--name", "broken"]],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["rendering"]
+}

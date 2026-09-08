@@ -55,6 +55,12 @@ unimplemented subsystems.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := os.ReadFile("apm.lock.yaml")
 			if err != nil {
+				if os.IsNotExist(err) {
+					// Oracle commands/audit.py:912-916 treats a missing
+					// lockfile as an empty audit and exits successfully.
+					ux.Info(cmd.OutOrStdout(), "No apm.lock.yaml found -- nothing to scan. Use --file to scan a specific file.")
+					return nil
+				}
 				return fmt.Errorf("read apm.lock.yaml: %w", err)
 			}
 			node, err := yamlcore.SafeLoad(data)
@@ -70,6 +76,10 @@ unimplemented subsystems.`,
 				return runAuditContentScan(cmd.OutOrStdout(), cmd.ErrOrStderr(), lock)
 			}
 
+			// Oracle commands/audit.py:923 emits the default scan record with
+			// symbol="success" (the running glyph is [>]) before checking the
+			// deployed-file set.
+			ux.Running(cmd.OutOrStdout(), "Scanning installed packages and deployed files...")
 			viol := lockfile.VerifyDeployedState(lock, ".")
 			if len(viol) > 0 {
 				for _, v := range viol {
@@ -88,6 +98,12 @@ unimplemented subsystems.`,
 				count += len(lock.Dependencies[i].DeployedHashes)
 			}
 			count += len(lock.LocalDeployedHashes)
+			if count == 0 {
+				// Oracle commands/audit.py:950 uses a progress/info record for
+				// the empty deployed-file case and exits 0.
+				ux.Info(cmd.OutOrStdout(), "No deployed files found")
+				return nil
+			}
 			ux.Success(cmd.OutOrStdout(), "audit: %d deployed files verified", count)
 			// R12c (prd.md/design.md §3): the verified-file paths are
 			// already sitting in lock's DeployedHashes/LocalDeployedHashes
@@ -145,5 +161,5 @@ func printAuditVerifiedFiles(w io.Writer, lock *lockfile.Lockfile) {
 	if len(items) == 0 {
 		return
 	}
-	ux.BulletList(w, items)
+	ux.List(w, items)
 }

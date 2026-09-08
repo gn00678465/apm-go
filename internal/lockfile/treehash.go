@@ -143,7 +143,7 @@ func computeCanonicalTreeHash(node *treeNode) string {
 	for _, name := range names {
 		child := node.children[name]
 		var hash string
-		if child.children != nil && len(child.children) > 0 {
+		if len(child.children) > 0 {
 			hash = computeCanonicalTreeHash(child)
 		} else {
 			hash = child.blobHash

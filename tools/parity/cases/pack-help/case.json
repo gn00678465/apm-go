@@ -1,0 +1,5 @@
+{
+  "id": "pack-help",
+  "argv": ["pack", "--help"],
+  "rewrite_binary_name": true
+}

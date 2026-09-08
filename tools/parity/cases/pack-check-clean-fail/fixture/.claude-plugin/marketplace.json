@@ -1,0 +1,13 @@
+{
+  "name": "check-clean-fixture",
+  "owner": {
+    "name": "Parity Fixture Owner"
+  },
+  "plugins": [
+    {
+      "name": "pkg-a",
+      "version": "1.0.0",
+      "source": "./pkg-a"
+    }
+  ]
+}

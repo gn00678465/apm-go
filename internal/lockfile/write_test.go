@@ -97,6 +97,34 @@ func TestWriteLockfile_RoundTrip_UnknownFields(t *testing.T) {
 	}
 }
 
+func TestWriteLockfile_RepositoryRouteMetadata(t *testing.T) {
+	data := []byte("lockfile_version: \"1\"\ndependencies:\n  - repo_url: owner/repo\n    host: art.corp\n    port: 7999\n    registry_prefix: artifactory/github\n    source: git\n")
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf, err := ParseLockfile(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lf.Dependencies) != 1 {
+		t.Fatalf("dependencies = %d, want 1", len(lf.Dependencies))
+	}
+	dep := lf.Dependencies[0]
+	if dep.Host != "art.corp" || dep.Port != 7999 || dep.RegistryPrefix != "artifactory/github" {
+		t.Fatalf("route metadata = host=%q port=%d prefix=%q", dep.Host, dep.Port, dep.RegistryPrefix)
+	}
+	out, err := WriteLockfile(lf, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"host: art.corp", "port: 7999", "registry_prefix: artifactory/github"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("serialized lockfile missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestDetermineVersion(t *testing.T) {
 	tests := []struct {
 		name     string

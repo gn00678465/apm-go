@@ -59,21 +59,17 @@ type CodexLocalSource struct {
 	Path   string `json:"path"`
 }
 
-// CategoryRequiredError is mkt-053's category-required gate: every resolved
-// package must declare a non-empty category for Codex output. This is the
-// ONLY place this rule is enforced (F3 fix): it deliberately does not also
-// live in internal/marketplace/authoring.LoadAuthoringConfig's config-
-// loading layer, since that loader is shared by callers (e.g. `apm pack -m
-// claude`, `apm marketplace package add/remove/set`) that must not be
-// blocked by a codex-only rule when codex was never actually going to be
-// composed -- mirroring the Python original's own compose-time-only
-// BuildError (output_mappers.py, not yml_schema.py).
+// CategoryRequiredError is mkt-053's defensive category-required gate: every
+// resolved package must declare a non-empty category for Codex output. Pack's
+// earlier config validation mirrors yml_schema.py:1294-1304; this second
+// check preserves the Oracle output_mappers.py:320-322 wording for direct
+// composition callers and protects this mapper if it is reused independently.
 type CategoryRequiredError struct {
 	Package string
 }
 
 func (e *CategoryRequiredError) Error() string {
-	return fmt.Sprintf("package %q is missing category required for Codex output", e.Package)
+	return fmt.Sprintf("package '%s' is missing category required for Codex output", e.Package)
 }
 
 // CodexMapper implements mkt-052/053's Codex marketplace.json output
@@ -150,6 +146,12 @@ func composeCodexSource(pkg ResolvedPackage) any {
 	}
 	if pkg.SHA != "" {
 		src.SHA = pkg.SHA
+	}
+	// Upstream calls _set_effective_tag_pattern on both codex source branches
+	// (output_mappers.py:372 and :382); apm-go reaches both through this one
+	// shared tail, so a single assignment covers them.
+	if pkg.EffectiveTagPattern != "" {
+		src.TagPattern = pkg.EffectiveTagPattern
 	}
 	return src
 }

@@ -1,0 +1,5 @@
+{
+  "id": "pack-marketplace-success",
+  "argv": ["pack", "-m", "claude"],
+  "rewrite_binary_name": true
+}

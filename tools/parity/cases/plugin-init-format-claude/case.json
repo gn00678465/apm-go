@@ -1,0 +1,6 @@
+{
+  "id": "plugin-init-format-claude",
+  "argv": ["plugin", "init", "plugin-init-fixture", "--format", "claude", "--yes"],
+  "env": {"GIT_CONFIG_GLOBAL": "<TMP>/.gitconfig-fixture"},
+  "rewrite_binary_name": true
+}

@@ -111,6 +111,13 @@ func Migrate(dir string, opts MigrateOptions) (diff string, err error) {
 		return "", fmt.Errorf("apm.yml already has a 'marketplace:' block; re-run with --force/--yes/-y to overwrite")
 	}
 
+	// Oracle marketplace/migration.py:_build_marketplace_block omits
+	// inheritable name/description/version fields when they already match the
+	// surrounding apm.yml. Keep only genuine marketplace overrides in the new
+	// block; this also makes migration's output agree with the Oracle while
+	// preserving the legacy node objects for all other fields and comments.
+	stripInheritedLegacyFields(legacyRoot, root)
+
 	// Move legacyRoot in as the marketplace: key's value node -- the same
 	// *yaml.Node object the legacy file's parse produced, comments and
 	// all -- either replacing an existing (null, or --force'd non-null)
@@ -149,6 +156,35 @@ func Migrate(dir string, opts MigrateOptions) (diff string, err error) {
 		return "", fmt.Errorf("apm.yml was migrated but marketplace.yml could not be removed: %w", err)
 	}
 	return diff, nil
+}
+
+// stripInheritedLegacyFields removes legacy top-level fields whose scalar
+// values are identical to the destination apm.yml's top-level values. A
+// differing value remains an explicit marketplace override, matching the
+// Oracle's migration helper.
+func stripInheritedLegacyFields(legacy, apmRoot *yaml.Node) {
+	if legacy == nil || legacy.Kind != yaml.MappingNode || apmRoot == nil || apmRoot.Kind != yaml.MappingNode {
+		return
+	}
+	inherited := map[string]bool{"name": true, "description": true, "version": true}
+	filtered := make([]*yaml.Node, 0, len(legacy.Content))
+	for i := 0; i+1 < len(legacy.Content); i += 2 {
+		key, value := legacy.Content[i], legacy.Content[i+1]
+		if inherited[key.Value] && value.Kind == yaml.ScalarNode && scalarMappingValue(apmRoot, key.Value) == value.Value {
+			continue
+		}
+		filtered = append(filtered, key, value)
+	}
+	legacy.Content = filtered
+}
+
+func scalarMappingValue(root *yaml.Node, key string) string {
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == key && root.Content[i+1].Kind == yaml.ScalarNode {
+			return root.Content[i+1].Value
+		}
+	}
+	return "\x00"
 }
 
 // topLevelKeyIndex returns the Content index of key's key-node within

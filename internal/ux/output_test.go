@@ -2,6 +2,7 @@ package ux
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
@@ -162,6 +163,17 @@ func TestBulletList_MutedItemUsesColorMutedNotPlainText(t *testing.T) {
 	}
 }
 
+func TestList_StreamFacingUsesDashContinuations(t *testing.T) {
+	var buf bytes.Buffer
+	List(&buf, []Item{{Text: "top"}, {Level: 1, Text: "child"}})
+	if got, want := buf.String(), "  - top\n    - child\n"; got != want {
+		t.Fatalf("List output = %q, want %q", got, want)
+	}
+	if strings.Contains(buf.String(), SymbolList) {
+		t.Fatalf("List output contains TUI list symbol %q: %q", SymbolList, buf.String())
+	}
+}
+
 func TestTree_Golden_NestedChildren(t *testing.T) {
 	// Arrange
 	var buf bytes.Buffer
@@ -235,6 +247,158 @@ func TestDiff_Golden(t *testing.T) {
 	for _, want := range []string{"--- a/file", "+++ b/file", "@@ -1 +1 @@", "-old line", "+new line", "context line"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("Diff output missing %q: %q", want, out)
+		}
+	}
+}
+
+// withTerminalWidth forces terminalWidthFor to report a fixed width for the
+// duration of the test, standing in for a real TTY of that size.
+func withTerminalWidth(t *testing.T, width int) {
+	t.Helper()
+	orig := terminalWidthFor
+	terminalWidthFor = func(io.Writer) int { return width }
+	t.Cleanup(func() { terminalWidthFor = orig })
+}
+
+// TestTable_OverflowingTerminalIsCappedAndWrapped covers the narrow-window
+// case the fixed-content-width rendering used to break: a table wider than
+// the terminal must shrink to the terminal width, word-wrapping cell content
+// inside its column instead of letting the terminal hard-break the box.
+func TestTable_OverflowingTerminalIsCappedAndWrapped(t *testing.T) {
+	// Arrange
+	withTerminalWidth(t, 40)
+	var buf bytes.Buffer
+	longCell := "a-very-long-detail message that is far wider than forty columns in total"
+
+	// Act
+	Table(&buf, []string{"NAME", "DETAIL"}, [][]string{{"tool", longCell}})
+
+	// Assert
+	out := buf.String()
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if got := lipgloss.Width(line); got > 40 {
+			t.Errorf("line %q is %d columns wide, want <= 40 (terminal width)", line, got)
+		}
+	}
+	// The wrapped content must survive: spot-check a word from the long
+	// cell's head and tail.
+	if !strings.Contains(out, "a-very-long-detail") || !strings.Contains(out, "total") {
+		t.Errorf("output = %q, want the long cell's content preserved across wrapped lines", out)
+	}
+	lines := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1
+	if lines <= 4 {
+		t.Errorf("output has %d lines, want > 4 (borders + multiple wrapped content lines)", lines)
+	}
+}
+
+// TestTable_NarrowTableIsNotStretchedToTerminalWidth proves the cap only
+// applies on overflow: Table.Width() would otherwise EXPAND a small table's
+// columns to fill the terminal.
+func TestTable_NarrowTableIsNotStretchedToTerminalWidth(t *testing.T) {
+	// Arrange: render once with no width constraint as the baseline.
+	var baseline bytes.Buffer
+	Table(&baseline, []string{"A"}, [][]string{{"x"}})
+
+	withTerminalWidth(t, 200)
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, []string{"A"}, [][]string{{"x"}})
+
+	// Assert
+	if buf.String() != baseline.String() {
+		t.Errorf("narrow table under a wide terminal = %q, want the unconstrained rendering %q", buf.String(), baseline.String())
+	}
+}
+
+// TestTerminalWidthFor_NonTerminalWriterReportsZero locks the default: a
+// bytes.Buffer (tests, pipes, logs) is never width-constrained.
+func TestTerminalWidthFor_NonTerminalWriterReportsZero(t *testing.T) {
+	if got := terminalWidthFor(&bytes.Buffer{}); got != 0 {
+		t.Errorf("terminalWidthFor(bytes.Buffer) = %d, want 0", got)
+	}
+}
+
+// TestTable_MultilineCellsDrawRowSeparators covers the 2026-08-07 ruling:
+// once any cell spans multiple lines, adjacent rows need separator lines to
+// stay distinguishable.
+func TestTable_MultilineCellsDrawRowSeparators(t *testing.T) {
+	// Arrange: headerless two-row table, first cell multi-line.
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, nil, [][]string{{"first line\nsecond line"}, {"row two"}})
+
+	// Assert: a row-separator junction appears between the two rows.
+	if !strings.Contains(buf.String(), "├") {
+		t.Errorf("output = %q, want a row separator between multi-line rows", buf.String())
+	}
+}
+
+// TestTable_SingleLineRowsKeepSeparatorFreeRendering locks the default: a
+// plain single-line table gains no separators (and no headerless "├" at
+// all).
+func TestTable_SingleLineRowsKeepSeparatorFreeRendering(t *testing.T) {
+	// Arrange
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, nil, [][]string{{"a"}, {"b"}})
+
+	// Assert
+	if strings.Contains(buf.String(), "├") {
+		t.Errorf("output = %q, want no row separators for single-line rows", buf.String())
+	}
+}
+
+// TestTable_CappedWrappingDrawsRowSeparators: wrapping introduced by the
+// terminal-width cap also triggers separators, so wrapped rows in a narrow
+// window stay readable.
+func TestTable_CappedWrappingDrawsRowSeparators(t *testing.T) {
+	// Arrange
+	withTerminalWidth(t, 30)
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, nil, [][]string{
+		{"one", "a rather long cell that will certainly wrap at thirty columns"},
+		{"two", "another long cell that will also wrap at thirty columns"},
+	})
+
+	// Assert
+	out := buf.String()
+	if !strings.Contains(out, "├") {
+		t.Errorf("output = %q, want row separators once the width cap wraps cells", out)
+	}
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if got := lipgloss.Width(line); got > 30 {
+			t.Errorf("line %q is %d columns wide, want <= 30", line, got)
+		}
+	}
+}
+
+// TestTable_ExactTerminalWidthIsShrunkByOneColumn covers the "right border
+// missing" report: a table whose natural width EQUALS the terminal width
+// puts its right border in the last column, which Windows terminals clip or
+// wrap -- so exact-width tables must shrink by one column too.
+func TestTable_ExactTerminalWidthIsShrunkByOneColumn(t *testing.T) {
+	// Arrange: measure the natural width first (buffer -> no constraint).
+	headers := []string{"NAME", "DETAIL"}
+	rows := [][]string{{"tool", "a modestly long detail cell"}}
+	var natural bytes.Buffer
+	Table(&natural, headers, rows)
+	naturalWidth := lipgloss.Width(strings.Split(natural.String(), "\n")[0])
+
+	withTerminalWidth(t, naturalWidth)
+	var buf bytes.Buffer
+
+	// Act
+	Table(&buf, headers, rows)
+
+	// Assert
+	for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		if got := lipgloss.Width(line); got >= naturalWidth {
+			t.Errorf("line %q is %d columns wide, want <= %d (one column narrower than the terminal)", line, got, naturalWidth-1)
 		}
 	}
 }

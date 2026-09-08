@@ -1,0 +1,5 @@
+{
+  "id": "version",
+  "argv": ["--version"],
+  "expected_taxonomy": ["negative-control"]
+}

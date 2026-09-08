@@ -1,0 +1,6 @@
+{
+  "id": "install-local-path-dep",
+  "argv": ["install", "./dep", "--target", "claude"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

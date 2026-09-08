@@ -133,7 +133,7 @@ func TestRunUninstall_AntigravityBundleUserFileSurvives(t *testing.T) {
 // TestRunUninstall_AntigravityTamperedManifestKeptWithWarning locks un-053's
 // non-negotiable safety line for plugin.json specifically: a hand-edited
 // manifest whose bytes no longer match the recorded hash is kept (not force-
-// deleted) with a stderr warning, leaving a non-empty "known limitation"
+// deleted) with a stdout warning, leaving a non-empty "known limitation"
 // bundle directory behind (design.md R7) -- while a sibling file that still
 // matches its recorded hash is removed normally.
 func TestRunUninstall_AntigravityTamperedManifestKeptWithWarning(t *testing.T) {
@@ -167,13 +167,13 @@ func TestRunUninstall_AntigravityTamperedManifestKeptWithWarning(t *testing.T) {
 	}
 	writeUninstallLockfileFixture(t, lock)
 
-	stderr := captureUninstallStderr(t, func() {
+	stdout := captureUninstallStdout(t, func() {
 		if err := runUninstall([]string{"acme/dep-b"}, uninstallOptions{}); err != nil {
 			t.Fatalf("runUninstall: %v", err)
 		}
 	})
-	if !strings.Contains(stderr, "modified since deploy (hash mismatch)") {
-		t.Errorf(`expected a stderr warning containing "modified since deploy (hash mismatch)", got:\n%s`, stderr)
+	if !strings.Contains(stdout, "modified since deploy (hash mismatch)") {
+		t.Errorf(`expected a stdout warning containing "modified since deploy (hash mismatch)", got:\n%s`, stdout)
 	}
 
 	got, err := os.ReadFile(manifestPath)

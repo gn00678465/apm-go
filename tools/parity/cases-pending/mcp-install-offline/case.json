@@ -1,0 +1,5 @@
+{
+  "id": "mcp-install-offline",
+  "argv": ["install", "--mcp", "demo", "--url", "https://example.com/mcp", "--target", "claude"],
+  "rewrite_binary_name": true
+}

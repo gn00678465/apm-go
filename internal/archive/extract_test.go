@@ -280,6 +280,26 @@ func TestContainedKey(t *testing.T) {
 	}
 }
 
+// TestValidatedRelPath covers the exported helper archive-WRITING callers
+// (internal/pack/bundle's --archive support, ticket 17 phase 2) use to
+// apply the SAME entry-name invariant this package's own extraction side
+// enforces on read.
+func TestValidatedRelPath(t *testing.T) {
+	valid := []string{"plugin.json", "skills/hello/SKILL.md", "a/b/c"}
+	for _, name := range valid {
+		if _, err := ValidatedRelPath(name); err != nil {
+			t.Errorf("ValidatedRelPath(%q) = %v, want no error", name, err)
+		}
+	}
+
+	invalid := []string{"/etc/passwd", "..", "../escape", "a/../../escape"}
+	for _, name := range invalid {
+		if _, err := ValidatedRelPath(name); err == nil {
+			t.Errorf("ValidatedRelPath(%q) = nil error, want a rejection", name)
+		}
+	}
+}
+
 func TestSafeExtract_GzipMagicButInvalid(t *testing.T) {
 	// gzip magic 1f 8b but not a valid gzip stream -> gzip.NewReader errors.
 	data := []byte{0x1f, 0x8b, 0x00, 0x00, 0x00}

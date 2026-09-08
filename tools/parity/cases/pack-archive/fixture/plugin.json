@@ -1,0 +1,9 @@
+{
+  "name": "pack-parity-fixture",
+  "version": "1.0.0",
+  "description": "Parity fixture for pack --archive",
+  "author": {
+    "name": "Parity Fixture"
+  },
+  "license": "MIT"
+}

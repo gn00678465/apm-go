@@ -10,6 +10,14 @@ type TagLister interface {
 	ListTags(repoURL string) ([]semver.TagInfo, error)
 }
 
+// ReferenceTagLister is an optional extension for tag sources that need the
+// full dependency reference to rebuild a remote URL. Plain TagLister mocks
+// remain valid; production gitops uses this to preserve host, scheme, and
+// ArtifactoryPrefix while resolving semver dependencies.
+type ReferenceTagLister interface {
+	ListTagsForRef(ref *manifest.DependencyReference) ([]semver.TagInfo, error)
+}
+
 // PackageLoader abstracts package download/clone for testing.
 // Given a dependency reference and its resolved version, load and parse
 // the sub-manifest to discover transitive dependencies.
@@ -68,16 +76,19 @@ func (c ResolverConfig) maxDepth() int {
 
 // ResolvedDep represents a fully resolved dependency in the graph.
 type ResolvedDep struct {
-	Key         string // unique key (repo_url or repo_url/virtual_path)
-	RepoURL     string
-	VirtualPath string
-	Kind        ReferenceKind
-	Constraint  string // original manifest range (verbatim)
-	ResolvedTag string // pinned tag (git-semver)
-	ResolvedRef string // pinned ref (git-literal: branch/tag/SHA)
-	Commit      string // resolved commit SHA
-	Depth       int
-	ResolvedBy  string // chain that contributed tightest constraint
+	Key               string // unique key (repo_url or repo_url/virtual_path)
+	RepoURL           string
+	Host              string
+	Port              int
+	ArtifactoryPrefix string
+	VirtualPath       string
+	Kind              ReferenceKind
+	Constraint        string // original manifest range (verbatim)
+	ResolvedTag       string // pinned tag (git-semver)
+	ResolvedRef       string // pinned ref (git-literal: branch/tag/SHA)
+	Commit            string // resolved commit SHA
+	Depth             int
+	ResolvedBy        string // chain that contributed tightest constraint
 }
 
 // ConstraintEntry records one constraint path to a package identity.

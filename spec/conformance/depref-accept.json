@@ -1,0 +1,1357 @@
+{
+  "oracle_commit": "b75a02b1cfab3ffa5e1952916045b6d5374090ae",
+  "rows": [
+    {
+      "input": "owner/repo",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo#v1.0.0",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo#^1.0.0",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo.git",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/REPO",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "a_b/c-d.e",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "1/2",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo/sub/dir",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo/prompts/review.prompt.md",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo/skills/my-skill",
+      "category": "shorthand",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "just-one-word",
+      "category": "shorthand",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/repo?x",
+      "category": "shorthand",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "pkg@mkt",
+      "category": "shorthand",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/",
+      "category": "shorthand",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner//repo",
+      "category": "shorthand",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "github.com/owner/repo",
+      "category": "shorthand-host",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "gitlab.com/owner/repo#main",
+      "category": "shorthand-host",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "gitlab.com/owner/repo/skills/my-skill",
+      "category": "shorthand-host",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x.io/owner/repo",
+      "category": "shorthand-host",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x/owner/repo",
+      "category": "shorthand-host",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x/owner/repo/sub/dir",
+      "category": "shorthand-host",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "-x.io/owner/repo",
+      "category": "shorthand-host",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "x-.io/owner/repo",
+      "category": "shorthand-host",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "x..io/owner/repo",
+      "category": "shorthand-host",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "x.io:443/owner/repo",
+      "category": "shorthand-port",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x.io:8443/owner/repo",
+      "category": "shorthand-port",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x.io:70000/owner/repo",
+      "category": "shorthand-port",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "x.io:abc/owner/repo",
+      "category": "shorthand-port",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner:1234/repo",
+      "category": "shorthand-port",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": ":443/owner/repo",
+      "category": "shorthand-port",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://gitlab.com/acme/repo.git",
+      "category": "https",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://gitlab.com/acme/repo.git#v2.0",
+      "category": "https",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "http://internal.example.com/team/project",
+      "category": "https",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x/owner/repo",
+      "category": "https",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://x.io/owner/repo",
+      "category": "https",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/repo?x",
+      "category": "https-query",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/repo?x=1&y=2",
+      "category": "https-query",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/repo?x#ref",
+      "category": "https-query",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/repo#ref?notquery",
+      "category": "https-query",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io:8443/owner/repo",
+      "category": "https-port",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io:99999/owner/repo",
+      "category": "https-port",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://-x.io/owner/repo",
+      "category": "https",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://",
+      "category": "https",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https:///owner/repo",
+      "category": "https",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://x.io/owner/repo.git",
+      "category": "https",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/repo/sub/dir",
+      "category": "https",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://1.2.3.4/owner/repo",
+      "category": "https-ip",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://[::1]/owner/repo",
+      "category": "https-ipv6",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "HTTPS://x.io/owner/repo",
+      "category": "scheme-case",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "Https://x.io/owner/repo",
+      "category": "scheme-case",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "hTTps://x.io/owner/repo",
+      "category": "scheme-case",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "HTTP://x.io/owner/repo",
+      "category": "scheme-case",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "Http://x.io/owner/repo",
+      "category": "scheme-case",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "SSH://git@host.io/owner/repo",
+      "category": "scheme-case",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "Ssh://git@host.io/owner/repo",
+      "category": "scheme-case",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://git@host/owner/repo",
+      "category": "ssh",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://alice@host/owner/repo",
+      "category": "ssh-user",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host/owner/repo",
+      "category": "ssh-user",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://git@host:7999/owner/repo.git",
+      "category": "ssh-port",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://alice@host/owner/repo?x",
+      "category": "ssh-query",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://alice@host/owner/repo#ref",
+      "category": "ssh",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://-alice@host/owner/repo",
+      "category": "ssh-user",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://%2DoProxyCommand=evil@host/owner/repo",
+      "category": "ssh-user",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://a.b+c_d@host/owner/repo",
+      "category": "ssh-user",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host.io/owner/repo@alias",
+      "category": "ssh-path-alias",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "git@host.io:owner/repo@alias",
+      "category": "scp-path-alias",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://alice:p%25@host.io/owner/repo",
+      "category": "ssh-userinfo-percent-after-decode",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Percent-encoded characters are not allowed in SSH userinfo. Use the literal username (e.g. 'ssh://myuser@host/...')."
+    },
+    {
+      "input": "ssh://host!bang/owner/repo",
+      "category": "ssh-host-charset",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host_name/owner/repo",
+      "category": "ssh-host-charset",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host%20name/owner/repo",
+      "category": "ssh-host-charset",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "git@github.com:owner/repo.git",
+      "category": "scp",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "git@github.com:owner/repo.git#v1.0.0",
+      "category": "scp",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "alice@host:owner/repo",
+      "category": "scp-user",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "-alice@host:owner/repo",
+      "category": "scp-user",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "git@gitlab.com:acme/repo/sub/path.git",
+      "category": "scp",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "git@host.io:2222/owner/repo",
+      "category": "scp-port",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "It looks like '2222' in 'git@host.io:2222/owner/repo' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  ssh://git@host.io:2222/owner/repo"
+    },
+    {
+      "input": "git@host.io:2222",
+      "category": "scp-port",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "It looks like '2222' in 'git@host.io:2222' is a port number, but no repository path follows it. SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form: ssh://git@host.io:2222/<owner>/<repo>.git"
+    },
+    {
+      "input": "git@host.io:2222/owner/repo.git",
+      "category": "scp-port",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "It looks like '2222' in 'git@host.io:2222/owner/repo' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  ssh://git@host.io:2222/owner/repo.git"
+    },
+    {
+      "input": "git@host.io:2222/owner/repo#main",
+      "category": "scp-port",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "It looks like '2222' in 'git@host.io:2222/owner/repo' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  ssh://git@host.io:2222/owner/repo#main"
+    },
+    {
+      "input": "git@host.io:2222/owner/repo@alias",
+      "category": "scp-port",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "It looks like '2222' in 'git@host.io:2222/owner/repo' is a port number, but SCP-style URLs (<user>@host:path) cannot carry a port. Use the ssh:// URL form instead:\n  ssh://git@host.io:2222/owner/repo@alias"
+    },
+    {
+      "input": "git@host.io:0/owner/repo",
+      "category": "scp-port",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "git@host.io:65536/owner/repo",
+      "category": "scp-port",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "git@host.io:abc/owner/repo",
+      "category": "scp-port",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo@alias",
+      "category": "bare-alias",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/repo@alias'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/repo#v1@alias",
+      "category": "bare-alias",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/repo#v1@alias'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/repo#package@v1.0.1",
+      "category": "bare-alias-version",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo#package@v1.0.1-rc.1",
+      "category": "bare-alias-version",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo#package@v1.0.1+build",
+      "category": "bare-alias-version",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo#package@v1.0.1-rc.1+build",
+      "category": "bare-alias-version",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/repo#package@v1.0.1-rc.1+build'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/repo#package@notaversion",
+      "category": "bare-alias-version",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/repo#package@notaversion'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/repo@bad\u007f",
+      "category": "bare-alias-preview",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/repo@bad?'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr@alias",
+      "category": "bare-alias-preview",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr...'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/repo%40alias",
+      "category": "bare-alias-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/repo%40alias'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/%40alias",
+      "category": "bare-alias-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Shorthand '@alias' is not supported in 'owner/%40alias'. Use object form with 'git:', optional 'path:', and 'alias:' fields to install a dependency under a custom directory name. See: https://microsoft.github.io/apm/consumer/manage-dependencies/#reference-formats"
+    },
+    {
+      "input": "owner/%40%zz",
+      "category": "bare-alias-percent",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path: malformed percent-encoding"
+    },
+    {
+      "input": "owner/repo#v%40",
+      "category": "bare-alias-percent",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/repo@alias",
+      "category": "bare-alias-url",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: repo@alias"
+    },
+    {
+      "input": "http://x.io/owner/repo@alias",
+      "category": "bare-alias-url",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: repo@alias"
+    },
+    {
+      "input": "owner/repo/prompts/x.prompt.md",
+      "category": "virtual-extension",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo/prompts/x.instructions.md",
+      "category": "virtual-extension",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo/agents/x.agent.md",
+      "category": "virtual-extension",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/repo/prompts/x.chatmode.md",
+      "category": "virtual-extension",
+      "accepted": false,
+      "error_type": "InvalidVirtualPackageExtensionError",
+      "error": "Invalid virtual package path 'prompts/x.chatmode.md'. Individual files must end with one of: .prompt.md, .instructions.md, .agent.md. For subdirectory packages, the path should not have a file extension."
+    },
+    {
+      "input": "owner/repo/prompts/x.md",
+      "category": "virtual-extension",
+      "accepted": false,
+      "error_type": "InvalidVirtualPackageExtensionError",
+      "error": "Invalid virtual package path 'prompts/x.md'. Individual files must end with one of: .prompt.md, .instructions.md, .agent.md. For subdirectory packages, the path should not have a file extension."
+    },
+    {
+      "input": "owner/repo/prompts/x.yml",
+      "category": "virtual-extension",
+      "accepted": false,
+      "error_type": "InvalidVirtualPackageExtensionError",
+      "error": "Invalid virtual package path 'prompts/x.yml'. Individual files must end with one of: .prompt.md, .instructions.md, .agent.md. For subdirectory packages, the path should not have a file extension."
+    },
+    {
+      "input": "owner/repo/prompts/x.txt",
+      "category": "virtual-extension",
+      "accepted": false,
+      "error_type": "InvalidVirtualPackageExtensionError",
+      "error": "Invalid virtual package path 'prompts/x.txt'. Individual files must end with one of: .prompt.md, .instructions.md, .agent.md. For subdirectory packages, the path should not have a file extension."
+    },
+    {
+      "input": "owner/repo/prompts/x.collection.yml",
+      "category": "virtual-collection",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": ".collection.yml is no longer supported. Convert 'prompts/x.collection.yml' to an apm.yml with a 'dependencies' section. See: https://microsoft.github.io/apm/guides/dependencies/"
+    },
+    {
+      "input": "owner/repo/prompts/x.collection.yaml",
+      "category": "virtual-collection",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": ".collection.yml is no longer supported. Convert 'prompts/x.collection.yaml' to an apm.yml with a 'dependencies' section. See: https://microsoft.github.io/apm/guides/dependencies/"
+    },
+    {
+      "input": "art.corp/artifactory/github/owner/repo",
+      "category": "artifactory",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "art.corp/artifactory/github/owner/repo/sub",
+      "category": "artifactory",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "Art.corp/Artifactory/GitHub/owner/repo",
+      "category": "artifactory",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "art.corp/artifactory/github/owner",
+      "category": "artifactory",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://art.corp/artifactory/github/owner/repo",
+      "category": "artifactory",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://art.corp/artifactory/github/owner/repo/sub",
+      "category": "artifactory",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "art.corp/notartifactory/github/owner/repo",
+      "category": "artifactory",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/%72epo",
+      "category": "percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %72epo"
+    },
+    {
+      "input": "owner/%2572epo",
+      "category": "percent-double",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %2572epo"
+    },
+    {
+      "input": "owner/%2Frepo",
+      "category": "percent-separator",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %2Frepo"
+    },
+    {
+      "input": "owner/%2frepo",
+      "category": "percent-separator",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %2frepo"
+    },
+    {
+      "input": "owner/%2e/repo",
+      "category": "percent-traversal",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path 'owner/%2e': segment '%2e' is a traversal sequence"
+    },
+    {
+      "input": "owner/%2E/repo",
+      "category": "percent-traversal",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path 'owner/%2E': segment '%2E' is a traversal sequence"
+    },
+    {
+      "input": "owner/%5Crepo",
+      "category": "percent-separator",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %5Crepo"
+    },
+    {
+      "input": "owner/%5C%5Crepo",
+      "category": "percent-separator",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %5C%5Crepo"
+    },
+    {
+      "input": "owner/%zzrepo",
+      "category": "percent",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/%2e%2e/repo",
+      "category": "percent-traversal",
+      "accepted": false,
+      "error_type": "PathTraversalError"
+    },
+    {
+      "input": "owner/%00repo",
+      "category": "percent-control",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "host.io/owner/%72epo",
+      "category": "percent-host",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %72epo"
+    },
+    {
+      "input": "host.io/owner/%2Frepo",
+      "category": "percent-host",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: %2Frepo"
+    },
+    {
+      "input": "host.io/owner/%2e/repo",
+      "category": "percent-host",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path 'owner/%2e/repo': segment '%2e' is a traversal sequence"
+    },
+    {
+      "input": "host.io/%2e%2e/%2e%2e/etc/passwd",
+      "category": "percent-host",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path '%2e%2e/%2e%2e/etc/passwd': segment '%2e%2e' is a traversal sequence"
+    },
+    {
+      "input": "owner/repo/",
+      "category": "shorthand-empty",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner//",
+      "category": "shorthand-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "host.io//owner/repo",
+      "category": "shorthand-host-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "host.io/owner//repo",
+      "category": "shorthand-host-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "host.io/owner/repo/",
+      "category": "shorthand-host-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository path component: "
+    },
+    {
+      "input": "https://x.io/owner/%72epo",
+      "category": "https-percent",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/%2Frepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to a path separator"
+    },
+    {
+      "input": "https://x.io/owner/%2frepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to a path separator"
+    },
+    {
+      "input": "https://x.io/owner/%2e/repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: segment '%2e' is a traversal sequence"
+    },
+    {
+      "input": "https://x.io/owner/%2E/repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: segment '%2E' is a traversal sequence"
+    },
+    {
+      "input": "https://x.io/owner/%5Crepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to a path separator"
+    },
+    {
+      "input": "https://x.io/owner/%5C%5Crepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to a path separator"
+    },
+    {
+      "input": "https://x.io/%72wner/repo",
+      "category": "https-percent",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/%C3%A9repo",
+      "category": "https-percent",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/%2572epo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: residual percent-encoding is not allowed"
+    },
+    {
+      "input": "https://x.io/owner/%zzrepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: malformed percent-encoding"
+    },
+    {
+      "input": "https://x.io/owner/%0zrepo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: malformed percent-encoding"
+    },
+    {
+      "input": "https://x.io/owner/%",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: malformed percent-encoding"
+    },
+    {
+      "input": "https://x.io/owner/%a",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: malformed percent-encoding"
+    },
+    {
+      "input": "https://x.io/owner/%e0%a0repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must be valid UTF-8"
+    },
+    {
+      "input": "https://x.io/owner/%00repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: percent-encoding must not decode to control characters"
+    },
+    {
+      "input": "https://x.io/owner/\\repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not contain path separators"
+    },
+    {
+      "input": "https://x.io/owner/a b",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must use percent-encoded UTF-8 bytes"
+    },
+    {
+      "input": "https://x.io/owner/\u00e9repo",
+      "category": "https-percent",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must use percent-encoded UTF-8 bytes"
+    },
+    {
+      "input": "https://x.io/",
+      "category": "https-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
+    },
+    {
+      "input": "https://x.io///owner/repo",
+      "category": "https-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
+    },
+    {
+      "input": "https://x.io/owner//",
+      "category": "https-empty",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
+    },
+    {
+      "input": "./packages/local",
+      "category": "local",
+      "accepted": true,
+      "is_local": true
+    },
+    {
+      "input": "./foo/bar",
+      "category": "local",
+      "accepted": true,
+      "is_local": true
+    },
+    {
+      "input": "../../../etc/passwd",
+      "category": "local-traversal",
+      "known_gap": "The Oracle's is_local_path branch (reference.py:1754-1768) accepts ANY relative local path whose basename isn't '.'/'..' -- it performs NO traversal/escape check at all, so a '../'-climbing path is accepted as a local dependency (is_local=True). apm-go's containsEscape is a DELIBERATE, pre-existing security hardening beyond the Oracle (see depref.go's own doc comment) that rejects this outright; matching the Oracle here would be a security regression, not a parity fix, so this row's rejection is kept and NOT relaxed to match.",
+      "apmgo_accepted": false,
+      "accepted": true,
+      "is_local": true
+    },
+    {
+      "input": "../secret",
+      "category": "local-traversal",
+      "known_gap": "Same intentional divergence as '../../../etc/passwd' above.",
+      "apmgo_accepted": false,
+      "accepted": true,
+      "is_local": true
+    },
+    {
+      "input": "%2e%2e/%2e%2e/etc/passwd",
+      "category": "percent-traversal",
+      "accepted": false,
+      "error_type": "PathTraversalError",
+      "error": "Invalid repository path '%2e%2e/%2e%2e': segment '%2e%2e' is a traversal sequence"
+    },
+    {
+      "input": "~/my-skills",
+      "category": "local",
+      "accepted": true,
+      "is_local": true
+    },
+    {
+      "input": "/etc/passwd",
+      "category": "local-absolute",
+      "accepted": true,
+      "is_local": true
+    },
+    {
+      "input": "/absolute/path",
+      "category": "local-absolute",
+      "accepted": true,
+      "is_local": true
+    },
+    {
+      "input": "",
+      "category": "empty",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "   ",
+      "category": "empty",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/repo\u0001",
+      "category": "control",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/repo\t",
+      "category": "control",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "dev.azure.com/org/project/_git/repo",
+      "category": "ado",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "dev.azure.com/org/project/repo",
+      "category": "ado",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "dev.azure.com/org/project/_git/repo/sub/path",
+      "category": "ado",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "dev.azure.com/org/project/_git/repo/x.prompt.md",
+      "category": "ado",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "myorg.visualstudio.com/project/_git/repo",
+      "category": "ado-legacy",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "myorg.visualstudio.com/project/repo",
+      "category": "ado-legacy",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://dev.azure.com/org/project/_git/repo",
+      "category": "ado",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://dev.azure.com/org/project/repo",
+      "category": "ado",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://dev.azure.com/org/project/_git/repo/sub/path",
+      "category": "ado",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://dev.azure.com/org/project/_git/repo/x.prompt.md",
+      "category": "ado",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://myorg.visualstudio.com/project/_git/repo",
+      "category": "ado-legacy",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://myorg.visualstudio.com/project/repo",
+      "category": "ado-legacy",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "gitlab.com/group/repo",
+      "category": "gitlab-nested",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "gitlab.com/group/subgroup/repo",
+      "category": "gitlab-nested",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "gitlab.com/group/subgroup/deep/repo",
+      "category": "gitlab-nested",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "gitlab.com/group/repo/prompts/x.prompt.md",
+      "category": "gitlab-nested",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "gitlab.com/group/subgroup/repo/prompts/x.prompt.md",
+      "category": "gitlab-nested",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "gitlab.com/group/subgroup/deep/repo/prompts/x.prompt.md",
+      "category": "gitlab-nested",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x.io/group/subgroup/repo",
+      "category": "generic-nested",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x.io/group/subgroup/repo/prompts/x.prompt.md",
+      "category": "generic-nested",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://user:pass@x.io/owner/repo",
+      "category": "url-userinfo",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://user@x.io/owner/repo",
+      "category": "url-userinfo",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://%2Duser@host.io/owner/repo",
+      "category": "ssh-userinfo-percent",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://x.io//owner/repo",
+      "category": "url-leading-double-slash",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
+    },
+    {
+      "input": "https://x.io/owner//repo",
+      "category": "url-internal-double-slash",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
+    },
+    {
+      "input": "https://x.io/owner/repo/",
+      "category": "url-trailing-slash",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: path segments must not be empty"
+    },
+    {
+      "input": "ssh://host.io//owner/repo",
+      "category": "ssh-leading-double-slash",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://host.io/owner//repo",
+      "category": "ssh-internal-double-slash",
+      "accepted": false,
+      "error_type": "PathTraversalError"
+    },
+    {
+      "input": "ssh://host.io/owner/repo/",
+      "category": "ssh-trailing-slash",
+      "accepted": false,
+      "error_type": "PathTraversalError"
+    },
+    {
+      "input": "https://x.io:0/owner/repo",
+      "category": "url-port-zero",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io:/owner/repo",
+      "category": "url-port-empty",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io:65536/owner/repo",
+      "category": "url-port-overflow",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://host.io:0/owner/repo",
+      "category": "ssh-port-zero",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "x.io:0/owner/repo",
+      "category": "shorthand-port-zero",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "https://X.IO/owner/repo",
+      "category": "url-uppercase-host",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "https://x.io/owner/%2572epo",
+      "category": "url-double-encoded",
+      "accepted": false,
+      "error_type": "ValueError",
+      "error": "Invalid repository URL path: residual percent-encoding is not allowed"
+    },
+    {
+      "input": "owner/repo#%e0%a0",
+      "category": "percent-truncated-utf8-ref",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "owner/%e0%a0repo",
+      "category": "percent-truncated-utf8-repo",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/%a0repo",
+      "category": "percent-lone-continuation",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "owner/%f0%90repo",
+      "category": "percent-truncated-4byte",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://one@two@host.io/owner/repo",
+      "category": "ssh-userinfo-double-at",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://one@@host.io/owner/repo",
+      "category": "ssh-userinfo-double-at",
+      "accepted": false,
+      "error_type": "ValueError"
+    },
+    {
+      "input": "ssh://alice:pw@host.io/owner/repo",
+      "category": "ssh-userinfo-password",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://alice:@host.io/owner/repo",
+      "category": "ssh-userinfo-password",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://@host.io/owner/repo",
+      "category": "ssh-userinfo-empty",
+      "accepted": true,
+      "is_local": false
+    },
+    {
+      "input": "ssh://:pw@host.io/owner/repo",
+      "category": "ssh-userinfo-empty",
+      "accepted": true,
+      "is_local": false
+    }
+  ]
+}

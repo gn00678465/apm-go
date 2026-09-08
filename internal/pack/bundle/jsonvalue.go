@@ -276,10 +276,22 @@ func writeJSONString(buf *bytes.Buffer, s string) {
 			buf.WriteString(`\r`)
 		case '\t':
 			buf.WriteString(`\t`)
+		case '\b':
+			buf.WriteString(`\b`)
+		case '\f':
+			buf.WriteString(`\f`)
 		default:
-			if r < 0x20 {
+			// Python json.dumps(ensure_ascii=True) (the default every
+			// upstream writer behind this marshaller uses): everything
+			// outside printable ASCII becomes \uXXXX, non-BMP as a UTF-16
+			// surrogate pair, lowercase hex.
+			switch {
+			case r < 0x20 || r >= 0x7f && r <= 0xffff:
 				fmt.Fprintf(buf, `\u%04x`, r)
-			} else {
+			case r > 0xffff:
+				r -= 0x10000
+				fmt.Fprintf(buf, `\u%04x\u%04x`, 0xd800+(r>>10), 0xdc00+(r&0x3ff))
+			default:
 				buf.WriteRune(r)
 			}
 		}

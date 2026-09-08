@@ -79,9 +79,11 @@ func runCompile(targetFlag, projectDir string) error {
 			for i, src := range result.Sources {
 				items[i] = ux.Item{Text: src}
 			}
-			ux.BulletList(os.Stdout, items)
+			ux.List(os.Stdout, items)
 		}
-		ux.Success(os.Stdout, "Compiled %d instruction(s) to %s", result.InstructionCount, result.Path)
+		// Oracle commands/compile/cli.py:415 and :444 use
+		// logger.success(..., symbol="check") for completed writes.
+		ux.Check(os.Stdout, "Compiled %d instruction(s) to %s", result.InstructionCount, result.Path)
 	} else {
 		ux.Info(os.Stdout, "No changes detected; preserving existing AGENTS.md for idempotency")
 	}

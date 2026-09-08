@@ -1,0 +1,6 @@
+{
+  "id": "marketplace-audit-unregistered",
+  "argv": ["marketplace", "audit", "nonexistent"],
+  "rewrite_binary_name": true,
+  "expected_taxonomy": ["F01"]
+}

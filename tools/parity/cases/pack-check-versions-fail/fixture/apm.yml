@@ -1,0 +1,13 @@
+name: check-versions-fixture
+version: 1.0.0
+license: MIT
+marketplace:
+  owner:
+    name: Parity Fixture Owner
+  outputs:
+    - claude
+  versioning:
+    strategy: lockstep
+  packages:
+    - name: pkg-a
+      source: ./pkg-a

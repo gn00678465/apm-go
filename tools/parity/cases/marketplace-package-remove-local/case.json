@@ -1,0 +1,6 @@
+{
+  "id": "marketplace-package-remove-local",
+  "setup_argv": [["marketplace", "package", "add", "./pkg", "--name", "local-pkg", "--version", "1.0.0", "--no-verify"]],
+  "argv": ["marketplace", "package", "remove", "local-pkg", "--yes"],
+  "rewrite_binary_name": true
+}
