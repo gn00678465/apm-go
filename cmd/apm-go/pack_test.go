@@ -1344,14 +1344,25 @@ func TestPack_LocalSourceBecomesJunctionAfterAdd_Rejected(t *testing.T) {
 		t.Skip("directory junctions are a Windows-only concept")
 	}
 
-	// Arrange: `package add ./later` while "later" does not exist yet.
+	// Arrange: `package add ./later` while "later" is an ordinary,
+	// contained directory (ticket 20 made `add` reject a source that does
+	// not exist, so the TOCTOU window opens after a legitimate add).
 	dir := chdirTemp(t)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: acme\n  packages: []\n"
 	if err := os.WriteFile("apm.yml", []byte(apmYML), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir("later", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("later", "apm.yml"), []byte("name: later\nversion: 1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if out, err := runMarketplaceCmd(t, "package", "add", "./later"); err != nil {
-		t.Fatalf("package add ./later (not yet on disk, legitimate per mkt-046) returned error: %v (output: %s)", err, out)
+		t.Fatalf("package add ./later returned error: %v (output: %s)", err, out)
+	}
+	if err := os.RemoveAll("later"); err != nil {
+		t.Fatal(err)
 	}
 
 	// The path becomes a directory junction pointing outside the project

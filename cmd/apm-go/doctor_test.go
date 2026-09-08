@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -317,6 +318,9 @@ func TestDoctor_Help_MatchesUpstream(t *testing.T) {
 func TestDoctor_ExecGit_UsesSecureGitEnv(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("needs sh")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake git is a #!/bin/sh script; Windows PATH lookup needs a PATHEXT executable")
 	}
 	bin := t.TempDir()
 	envFile := filepath.Join(bin, "env.txt")

@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -22,6 +23,16 @@ func captureInitOutput(t *testing.T, fn func()) (stdout, stderr string) {
 	if err != nil {
 		t.Fatalf("stderr pipe: %v", err)
 	}
+	// Drain both pipes while fn runs: a Windows anonymous pipe holds 4 KiB,
+	// so a writer that fills it before this function reads (the clack
+	// success Note does) blocks forever if the reads only start afterwards.
+	type read struct {
+		data []byte
+		err  error
+	}
+	outCh, errCh := make(chan read, 1), make(chan read, 1)
+	go func() { b, err := io.ReadAll(outR); outCh <- read{b, err} }()
+	go func() { b, err := io.ReadAll(errR); errCh <- read{b, err} }()
 	origOut, origErr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = outW, errW
 	fn()
@@ -32,15 +43,15 @@ func captureInitOutput(t *testing.T, fn func()) (stdout, stderr string) {
 	if err := errW.Close(); err != nil {
 		t.Fatalf("close stderr pipe: %v", err)
 	}
-	out, err := io.ReadAll(outR)
-	if err != nil {
-		t.Fatalf("read stdout pipe: %v", err)
+	out := <-outCh
+	if out.err != nil {
+		t.Fatalf("read stdout pipe: %v", out.err)
 	}
-	errOut, err := io.ReadAll(errR)
-	if err != nil {
-		t.Fatalf("read stderr pipe: %v", err)
+	errOut := <-errCh
+	if errOut.err != nil {
+		t.Fatalf("read stderr pipe: %v", errOut.err)
 	}
-	return string(out), string(errOut)
+	return string(out.data), string(errOut.data)
 }
 
 func assertContainsAll(t *testing.T, output string, want []string) {
@@ -187,6 +198,9 @@ func TestInitSuccessOutput_AgentrcAndInstructionBranches(t *testing.T) {
 
 			pathDir := t.TempDir()
 			if tt.withAgentrc {
+				if runtime.GOOS == "windows" {
+					t.Skip("the fake agentrc is a #!/bin/sh script; Windows PATH lookup needs a PATHEXT executable")
+				}
 				agentrc := filepath.Join(pathDir, "agentrc")
 				if err := os.WriteFile(agentrc, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 					t.Fatal(err)

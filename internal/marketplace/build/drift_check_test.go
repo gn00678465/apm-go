@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
@@ -103,6 +104,9 @@ func TestCheckMarketplaceDrift_Unchanged(t *testing.T) {
 }
 
 func TestCheckMarketplaceDrift_Missing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ErrorMessages embeds the OS path separator; the expected string is the Oracle's POSIX form")
+	}
 	root := t.TempDir()
 	cfg := driftFixtureConfig()
 
