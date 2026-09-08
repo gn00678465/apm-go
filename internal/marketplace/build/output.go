@@ -28,9 +28,32 @@ import (
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
-// KnownOutputFormats is mkt-054's set of known marketplace output profile
-// names ("claude", "codex") -- mirroring Python's known_output_names().
-var KnownOutputFormats = map[string]bool{"claude": true, "codex": true}
+// defaultOutputPaths maps every known marketplace output profile name
+// (mkt-054, mirroring Python's known_output_names()) to its default output
+// path -- never the repo root.
+//
+// One table, because the two things derived from it have to agree and a test
+// cannot enforce that when one of them is a switch: a `case` added there
+// without a matching entry in the name set is not enumerable, so nothing can
+// notice it is unreachable. Deriving both from this map makes the two
+// physically the same list instead of two lists a reviewer has to keep in
+// step (external audit, 2026-08-13).
+var defaultOutputPaths = map[string]string{
+	"claude": filepath.Join(".claude-plugin", "marketplace.json"),
+	"codex":  filepath.Join(".agents", "plugins", "marketplace.json"),
+}
+
+// KnownOutputFormats is the set of accepted output profile names, derived
+// from defaultOutputPaths.
+var KnownOutputFormats = knownOutputFormats()
+
+func knownOutputFormats() map[string]bool {
+	names := make(map[string]bool, len(defaultOutputPaths))
+	for name := range defaultOutputPaths {
+		names[name] = true
+	}
+	return names
+}
 
 // ComposeOptions carries output-mapper options. The variadic form keeps the
 // existing default call sites byte-identical while allowing pack's Claude
@@ -62,17 +85,11 @@ func ComposeDocument(format string, cfg *authoring.AuthoringConfig, resolved []R
 	}
 }
 
-// DefaultOutputPath returns format's default output path (mkt-054: never
-// the repo root) and whether format is a known profile name at all.
+// DefaultOutputPath returns format's default output path and whether format
+// is a known profile name at all.
 func DefaultOutputPath(format string) (string, bool) {
-	switch format {
-	case "claude":
-		return filepath.Join(".claude-plugin", "marketplace.json"), true
-	case "codex":
-		return filepath.Join(".agents", "plugins", "marketplace.json"), true
-	default:
-		return "", false
-	}
+	path, ok := defaultOutputPaths[format]
+	return path, ok
 }
 
 // ResolveOutputPath computes format's final output path (mkt-054), applying

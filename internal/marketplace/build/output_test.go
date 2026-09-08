@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -317,5 +318,29 @@ func TestWriteOutput_OverwritesExistingFileAtomically(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "fresh") {
 		t.Errorf("expected fresh content to be written, got: %s", data)
+	}
+}
+
+// TestKnownOutputFormats_IsDerivedFromTheDefaultPathTable covers what the
+// derivation cannot: defaultOutputPaths is now the single source for both
+// KnownOutputFormats and DefaultOutputPath, so the two can no longer drift
+// apart -- an external audit (2026-08-13) showed the previous version of
+// this test could not actually detect the reverse direction, because a
+// `case` added to a switch is not enumerable and its hand-written mirror
+// list would simply go stale with it.
+//
+// What is left to pin is membership. The profile set is user-facing:
+// --marketplace validates against it and pack writes one file per configured
+// profile, so adding or removing one is a CLI contract change and should
+// surface as a failing test rather than only in a diff.
+func TestKnownOutputFormats_IsDerivedFromTheDefaultPathTable(t *testing.T) {
+	for format := range KnownOutputFormats {
+		if _, ok := DefaultOutputPath(format); !ok {
+			t.Errorf("KnownOutputFormats accepts %q, but DefaultOutputPath has no path for it", format)
+		}
+	}
+	want := map[string]bool{"claude": true, "codex": true}
+	if !reflect.DeepEqual(KnownOutputFormats, want) {
+		t.Errorf("KnownOutputFormats = %v, want %v; adding or removing an output profile changes what --marketplace accepts and what pack writes", KnownOutputFormats, want)
 	}
 }
