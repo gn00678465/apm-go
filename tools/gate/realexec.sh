@@ -8,6 +8,8 @@
 set -eu
 
 ART=${GATE_ART:?GATE_ART is required}
+# Absolute: the steps below cd into the sandbox and still address $SB.
+case "$ART" in /*|?:*) ;; *) ART="$PWD/$ART" ;; esac
 BIN=${GATE_BIN:?GATE_BIN (built apm-go binary) is required}
 SB="$ART/sandbox"
 rm -rf "$SB"
