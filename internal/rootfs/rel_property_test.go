@@ -2,6 +2,7 @@ package rootfs
 
 import (
 	"math/rand"
+	"os"
 	"path/filepath"
 	"testing"
 	"testing/quick"
@@ -31,5 +32,25 @@ func TestRelContainmentProperty(t *testing.T) {
 	}
 	if err := quick.Check(f, &quick.Config{MaxCount: 300, Rand: rand.New(rand.NewSource(4))}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The parent directory itself is the one escape filepath.Rel reports as a
+// bare ".." with no separator after it; the prefix check alone would let
+// it through (tools/gate.sh mutant rel-exact-parent-escapes).
+func TestRelRefusesExactParentProperty(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "root")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rw, err := OpenRootWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
+	for _, p := range []string{filepath.Dir(dir), filepath.Join(dir, ".."), filepath.Join(dir, "x", "..", "..")} {
+		if _, err := rw.Rel(p); err == nil {
+			t.Errorf("Rel(%q) accepted the root's parent directory", p)
+		}
 	}
 }

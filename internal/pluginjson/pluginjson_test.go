@@ -74,3 +74,36 @@ func TestScaffold_WriteFileError(t *testing.T) {
 		t.Fatal("Scaffold() into a nonexistent directory: err = nil, want an error")
 	}
 }
+
+// A failure on the SECOND staged file must roll the first one back out of
+// the project root; the cmd-level test fails on the first file, so the
+// committed-list rollback branch had no test until tools/gate.sh's mutant
+// stage-rollback-skipped survived.
+func TestStagedScaffold_RollsBackAlreadyCommittedFiles(t *testing.T) {
+	root := t.TempDir()
+	st, err := NewStagedScaffold(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Cleanup()
+	for _, name := range []string{"first.json", "second.json"} {
+		if err := os.WriteFile(st.Add(name), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restore := SetCommitHookForTest(func(name string) error {
+		if name == "second.json" {
+			return os.ErrPermission
+		}
+		return nil
+	})
+	defer restore()
+	if err := st.Commit(); err == nil {
+		t.Fatal("Commit succeeded, want the injected failure on second.json")
+	}
+	for _, name := range []string{"first.json", "second.json"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Errorf("%s left in the project root after a failed commit (err=%v)", name, err)
+		}
+	}
+}
