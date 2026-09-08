@@ -62,7 +62,12 @@ func marketplaceAuditCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero when any plugin has bypass dependencies or unverifiable fetch errors")
+	// v0.28.0 (PR #2460, audit.py:20-22) rewrote this help alongside the two
+	// new --strict failure modes implemented above: the flag no longer exits
+	// non-zero only on bypasses and fetch errors, it also fails an audit that
+	// verified nothing (all skipped, or no plugins at all). The old wording
+	// described a narrower flag than the one that now ships.
+	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero on bypasses, fetch errors, or no verified plugins")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print extra diagnostics, including clean/skipped plugins")
 	return cmd
 }

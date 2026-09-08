@@ -311,3 +311,23 @@ func TestMarketplaceAudit_Strict_NetworkErrorFails(t *testing.T) {
 		t.Fatalf("marketplace audit --strict returned no error for a network-error finding (output: %s)", out)
 	}
 }
+
+// TestMarketplaceAuditCmd_StrictHelpDescribesEveryFailureMode pins --strict's
+// help against the three conditions it actually exits non-zero on. The
+// v0.28.0 alignment (PR #2460) added two of them -- an audit where every
+// plugin was skipped, and one where nothing was audited at all -- and the
+// implementation landed while this sentence kept describing the older,
+// narrower flag. Nothing referenced the string, so the drift was invisible:
+// a help text is the only place a flag's contract is stated to the user, and
+// there is no compiler check that it matches the branches below it.
+func TestMarketplaceAuditCmd_StrictHelpDescribesEveryFailureMode(t *testing.T) {
+	flag := marketplaceAuditCmd().Flags().Lookup("strict")
+	if flag == nil {
+		t.Fatal("marketplace audit is missing --strict")
+	}
+	for _, want := range []string{"bypass", "fetch error", "no verified plugins"} {
+		if !strings.Contains(flag.Usage, want) {
+			t.Errorf("--strict help %q does not mention %q; the flag exits non-zero for it", flag.Usage, want)
+		}
+	}
+}
