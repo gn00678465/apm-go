@@ -258,8 +258,9 @@ func readProfile(path, module string) (map[string][]block, error) {
 // execLines marks the lines that carry an executable statement. Compound
 // statements contribute their header line only (their bodies are visited
 // separately); simple statements contribute every line they span.
-func execLines(fset *token.FileSet, f *ast.File) map[int]bool {
+func execLines(fset *token.FileSet, f *ast.File, src []byte) map[int]bool {
 	lines := map[int]bool{}
+	srcLines := strings.Split(string(src), "\n")
 	mark := func(from, to token.Pos) {
 		a, b := fset.Position(from).Line, fset.Position(to).Line
 		for l := a; l <= b; l++ {
@@ -271,9 +272,22 @@ func execLines(fset *token.FileSet, f *ast.File) map[int]bool {
 		if !ok {
 			return true
 		}
+		defer func() {
+			// Within a multi-line statement, a line holding only closing
+			// delimiters or a comment executes nothing; drop it after the
+			// statement's range was marked so the exclusion stays narrow.
+			for l := fset.Position(st.Pos()).Line; l <= fset.Position(st.End()).Line; l++ {
+				if lines[l] && isDelimiterOrCommentLine(srcLines, l) {
+					delete(lines, l)
+				}
+			}
+		}()
 		switch s := st.(type) {
-		case *ast.BlockStmt:
-		case *ast.CaseClause, *ast.CommClause, *ast.LabeledStmt,
+		case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
+			// Blocks and case/default labels carry no code of their own;
+			// go cover never emits a block for a label line, so marking
+			// it would report a classifier artefact as "unmapped".
+		case *ast.LabeledStmt,
 			*ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
 			mark(st.Pos(), st.Pos())
 		case *ast.IfStmt:
@@ -287,6 +301,19 @@ func execLines(fset *token.FileSet, f *ast.File) map[int]bool {
 		return true
 	})
 	return lines
+}
+
+// isDelimiterOrCommentLine reports whether 1-based line l of src is only
+// closing delimiters (e.g. "}", "})", "}()", "},") or a line comment.
+func isDelimiterOrCommentLine(srcLines []string, l int) bool {
+	if l < 1 || l > len(srcLines) {
+		return false
+	}
+	t := strings.TrimSpace(srcLines[l-1])
+	if t == "" || strings.HasPrefix(t, "//") {
+		return true
+	}
+	return strings.Trim(t, "}]),(") == ""
 }
 
 func ignoredGoFiles(dirs []string) (map[string]bool, error) {
@@ -417,7 +444,7 @@ func runUnits(args []string) error {
 			return err
 		}
 		syms := fileSymbols(fset, f)
-		execL := execLines(fset, f)
+		execL := execLines(fset, f, src)
 		units := map[string][2]int{} // covered, exec
 		order := []string{}
 		for _, r := range d.added {
@@ -550,7 +577,7 @@ func runCoverage(args []string) error {
 		if err != nil {
 			return err
 		}
-		execL := execLines(fset, f)
+		execL := execLines(fset, f, src)
 		abs := filepath.ToSlash(filepath.Join(cwd, p))
 		isPlatformExcluded := ignored[abs]
 		fileLines := 0
