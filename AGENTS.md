@@ -39,7 +39,7 @@ Release-size build (same flags CI uses):
 go build -trimpath -ldflags "-s -w" -o bin/apm-go ./cmd/apm-go
 ```
 
-No Makefile or task runner — `go build` and `go test` are the only entry points.
+No Makefile or task runner — `go build` and `go test` are the only build/test entry points. `tools/gate.sh` is the verification gate (suite, vet, gofmt, staticcheck, shuffled suite health, property tests, supply chain, real execution of the plugin/marketplace commands, manual mutation, changed-line coverage); it writes its artifacts under `.gate/` and pins its tool versions in `tools/gate/versions.env`.
 
 ## Release
 

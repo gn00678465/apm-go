@@ -99,3 +99,6 @@ kitty-ops/ops-index.jsonl
 !.claude/CLAUDE.md
 !.claude/rules/
 !.claude/settings.json
+
+# verification-gate artifacts (tools/gate.sh)
+.gate/
