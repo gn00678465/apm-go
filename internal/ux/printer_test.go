@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"charm.land/lipgloss/v2"
 )
 
 // TestPrinters_Golden_NonTTYWriterHasNoANSI proves per-writer color
@@ -113,5 +115,36 @@ func TestPlain_NoSymbol_NoANSI_Newline(t *testing.T) {
 	}
 	if strings.Contains(got, "\x1b[") {
 		t.Errorf("ANSI leaked into non-TTY writer: %q", got)
+	}
+}
+
+// TestSymbolLine_MessageCarriesSeverityColor is the 2026-08-11 ruling: the
+// message text is rendered through the same severity style as the symbol, not
+// left unstyled. A mutation that drops style.Render(msg) back to a bare msg
+// fails this whenever the active color profile emits ANSI, and the
+// ANSI-stripped assertion below keeps the test meaningful (rather than
+// vacuously true) on a profile that emits none.
+func TestSymbolLine_MessageCarriesSeverityColor(t *testing.T) {
+	styles := map[string]lipgloss.Style{
+		"success": successStyle,
+		"info":    infoStyle,
+		"warn":    warnStyle,
+		"error":   errorStyle,
+	}
+
+	for name, style := range styles {
+		t.Run(name, func(t *testing.T) {
+			// Act
+			got := symbolLine(style, "!", "hello")
+
+			// Assert: the message half is the styled render, not the raw text.
+			if !strings.Contains(got, style.Render("hello")) {
+				t.Errorf("symbolLine() = %q, want it to contain the styled message %q", got, style.Render("hello"))
+			}
+			// ...and the visible text is unchanged by the styling.
+			if visible := stripANSI(got); visible != " ! hello" {
+				t.Errorf("visible text = %q, want %q", visible, " ! hello")
+			}
+		})
 	}
 }

@@ -104,7 +104,12 @@ func printLine(w io.Writer, style lipgloss.Style, symbol, format string, a ...an
 }
 
 // symbolLine is printLine's rendering step: "<symbol><message>" with the
-// symbol styled and centered in a width-3 column. Exposed through
+// symbol styled and centered in a width-3 column.
+//
+// Both halves carry the severity color (2026-08-11 user ruling): a warning
+// whose symbol is amber but whose text is default-white reads as an ordinary
+// line with a decoration, and severity is the thing worth seeing at a glance.
+// Only the symbol is bold, so it still stands out within its own color. Exposed through
 // ProgressText/HintText for callers that embed a status record in another
 // surface (the clack transcript) instead of printing it to a stream --
 // rendering to a string keeps the styling, which a non-TTY buffer written
@@ -112,7 +117,7 @@ func printLine(w io.Writer, style lipgloss.Style, symbol, format string, a ...an
 func symbolLine(style lipgloss.Style, symbol, format string, a ...any) string {
 	msg := fmt.Sprintf(format, a...)
 	symStyle := style.Bold(true).AlignHorizontal(lipgloss.Center).Width(3)
-	return symStyle.Render(symbol) + msg
+	return symStyle.Render(symbol) + style.Render(msg)
 }
 
 // ProgressText returns Progress's line as a styled string.

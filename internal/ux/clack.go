@@ -199,7 +199,9 @@ func (c *Clack) Embed(block string) {
 // transcript -- calling ux.Warn directly would print a line with no gutter and
 // visibly break the connecting line.
 func (c *Clack) Warn(format string, a ...any) {
-	msg := warnStyle.Bold(true).Render(SymbolWarn) + " " + fmt.Sprintf(format, a...)
+	// Same severity-color-carries-the-text rule as printer.go's symbolLine
+	// (2026-08-11 ruling); the gutter keeps its own muted color.
+	msg := warnStyle.Bold(true).Render(SymbolWarn) + " " + warnStyle.Render(fmt.Sprintf(format, a...))
 	lipgloss.Fprintln(c.w, mutedStyle.Render(c.sym.Bar)+"  "+msg)
 }
 
