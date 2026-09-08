@@ -111,13 +111,14 @@ must_not_exist "$SB/outside2"
 step adv-pack-format-unknown 2 "$BIN" pack --format nope
 step adv-pack-format-conflict 2 "$BIN" pack --format agent-plugin --claude-plugin
 cd ../mk
+cp apm.yml "$SB/mk-apm.yml.before"
 step adv-pkg-add-traversal 2 "$BIN" marketplace package add ../demo --name t --no-verify
 must_grep adv-pkg-add-traversal '".." path segment'
 step adv-pkg-tagpattern-double 2 "$BIN" marketplace package add ./packages/demo --name d2 --tag-pattern '{version}{version}' --no-verify
 must_grep adv-pkg-tagpattern-double "exactly one {version}"
 step adv-pkg-tagpattern-unsupported 2 "$BIN" marketplace package add ./packages/demo --name d3 --tag-pattern '{oops}v{version}' --no-verify
 must_grep adv-pkg-tagpattern-unsupported "unsupported placeholder"
-steps=$((steps + 1)); if grep -qE 'name: d[23]' apm.yml; then echo "FAIL  rejected package was written to apm.yml"; failures=$((failures + 1)); else echo "ok    rejected packages left apm.yml untouched"; fi
+steps=$((steps + 1)); if cmp -s apm.yml "$SB/mk-apm.yml.before"; then echo "ok    rejected packages left apm.yml byte-identical"; else echo "FAIL  a rejected package add changed apm.yml"; failures=$((failures + 1)); fi
 
 echo "real-execution: $((steps - failures))/$steps checks passed"
 [ "$failures" -eq 0 ]

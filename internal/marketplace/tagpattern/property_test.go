@@ -2,6 +2,7 @@ package tagpattern
 
 import (
 	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/quick"
@@ -16,7 +17,7 @@ func TestRenderExtractRoundTripProperty(t *testing.T) {
 	f := func(pi, ni uint8, major, minor, patch uint16) bool {
 		p := patterns[int(pi)%len(patterns)]
 		name := names[int(ni)%len(names)]
-		version := itoa(int(major)) + "." + itoa(int(minor)) + "." + itoa(int(patch))
+		version := strconv.Itoa(int(major)) + "." + strconv.Itoa(int(minor)) + "." + strconv.Itoa(int(patch))
 		if _, err := Validate(p, "packages[0].tag_pattern"); err != nil {
 			return false
 		}
@@ -45,16 +46,4 @@ func TestValidateRejectsMalformedProperty(t *testing.T) {
 	if err := quick.Check(f, &quick.Config{MaxCount: 200, Rand: rand.New(rand.NewSource(2))}); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }

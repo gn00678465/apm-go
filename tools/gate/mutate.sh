@@ -48,7 +48,10 @@ while IFS="$TAB" read -r name file old new; do
   if test_cmd > "$LOGS/$name.log" 2>&1; then
     echo "SURVIVED  $name ($file)"
     survived=$((survived + 1))
-  elif grep -qE '^(--- FAIL|FAIL|panic:)' "$LOGS/$name.log"; then
+  elif grep -q 'build failed' "$LOGS/$name.log"; then
+    echo "BROKEN    $name ($file): package did not compile under the mutant"
+    broken=$((broken + 1))
+  elif grep -qE '^(--- FAIL|panic:)' "$LOGS/$name.log"; then
     reason=$(grep -m1 -E '^--- FAIL' "$LOGS/$name.log" || true)
     echo "killed    $name ($file) ${reason:-}"
     killed=$((killed + 1))

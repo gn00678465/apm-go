@@ -296,3 +296,44 @@ func findMappingChildForTest(t *testing.T, m *yaml.Node, key string) *yaml.Node 
 	t.Fatalf("key %q not found", key)
 	return nil
 }
+
+// Replacing a whole value must stop before the NEXT key's own leading
+// comments and the blank line that separates them: those lines belong to
+// the next key, not to the value being replaced. Found by an independent
+// review of the marketplace "remove last package" fix, which took this
+// whole-value path and lost a user comment (PRODUCT.md: user files are
+// patched, never rewritten).
+func TestPatchMappingPath_WholeValueReplace_KeepsNextKeyLeadingComment(t *testing.T) {
+	src := []byte("name: demo\nmarketplace:\n  owner:\n    name: me\n  packages:\n    - name: old\n      source: ./old\n      # trailing comment inside the old value\n\n# keep next description\ndescription: keep\n")
+	doc, err := SafeLoad(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := doc.Content[0]
+	var mkt *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "marketplace" {
+			mkt = root.Content[i+1]
+		}
+	}
+	for i := 0; i+1 < len(mkt.Content); i += 2 {
+		if mkt.Content[i].Value == "packages" {
+			mkt.Content[i+1].Content = nil
+			mkt.Content[i+1].Style = 0
+		}
+	}
+	out, ok, err := PatchMappingPath(src, doc, []string{"marketplace", "packages"})
+	if err != nil || !ok {
+		t.Fatalf("PatchMappingPath ok=%v err=%v", ok, err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "  packages: []\n") {
+		t.Errorf("empty sequence not rendered as []:\n%s", got)
+	}
+	if !strings.Contains(got, "\n\n# keep next description\ndescription: keep\n") {
+		t.Errorf("the next key's leading comment and blank line were swallowed:\n%s", got)
+	}
+	if strings.Contains(got, "trailing comment inside the old value") {
+		t.Errorf("a comment inside the replaced value survived:\n%s", got)
+	}
+}

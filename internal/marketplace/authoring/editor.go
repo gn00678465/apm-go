@@ -121,12 +121,12 @@ func validateEditedPackageBytes(out []byte, prefix []string) error {
 // more common) case where packages: already exists: this function makes
 // no change to doc at all in that case.
 //
-// A "packages" key that exists but isn't a SequenceNode (e.g. an explicit
-// null) cannot reach this function in practice: every caller loads and
-// validates the config via LoadAuthoringConfig first, and schema.go's own
-// parsePackages already hard-errors on a non-sequence packages: value, so
-// AddPackage/SetPackage/RemovePackage return that error before ever
-// calling editPackagesFile.
+// A "packages" key whose value is null DOES reach this function:
+// LoadAuthoringConfig accepts "packages:" with no value (schema.go treats it
+// as an empty list), and an older remove left exactly that behind. Such a
+// value is replaced in place with an empty sequence -- never by appending a
+// second "packages" key, which has no position in src for the patch walk.
+// Any other non-sequence value is still rejected by parsePackages first.
 func packagesSequenceNode(doc *yaml.Node, prefix []string) (*yaml.Node, error) {
 	root := doc
 	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
