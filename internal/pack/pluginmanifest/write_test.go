@@ -153,3 +153,89 @@ func TestWrite_ClaudePath_NoGithubInfoLine(t *testing.T) {
 		t.Errorf("output = %q, claude output must not print the .github/ info line", buf.String())
 	}
 }
+
+// TestWrite_HardLinkedTargetIsNotWrittenThrough is the regression for the
+// escape an external audit found on 2026-08-12: a hard link planted inside
+// the project at the manifest's path, whose other name lives OUTSIDE the
+// project, is invisible to every path-based containment check -- Lstat
+// reports an ordinary file, because that is exactly what it is. os.WriteFile
+// truncates in place and so wrote through to the outside name; measured with
+// `pack --force`, the outside file's contents were replaced by the manifest.
+//
+// A temp-file-plus-rename replaces the directory entry instead, leaving the
+// other name pointing at the original inode.
+func TestWrite_HardLinkedTargetIsNotWrittenThrough(t *testing.T) {
+	// Arrange: <outside>/victim.json, hard-linked to <root>/.claude-plugin/plugin.json
+	base := t.TempDir()
+	root := filepath.Join(base, "R")
+	outside := filepath.Join(base, "O")
+	if err := os.MkdirAll(filepath.Join(root, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(outside, "victim.json")
+	const victimContent = `{"SECRET":"must-not-be-destroyed"}`
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(victim, filepath.Join(root, ".claude-plugin", "plugin.json")); err != nil {
+		t.Skipf("cannot create a hard link on this host: %v", err)
+	}
+
+	// Act: --force, so the existing-file guard does not short-circuit the write
+	var buf bytes.Buffer
+	wrote, err := Write(&buf, root, "claude", &bundle.PluginManifest{Name: "demo"}, true, false)
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if !wrote {
+		t.Fatalf("Write() wrote = false, want true (output: %s)", buf.String())
+	}
+
+	// Assert
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(got) != victimContent {
+		t.Errorf("the file outside the project was written through the hard link:\ngot  %s\nwant %s", got, victimContent)
+	}
+}
+
+// TestManifestMode_KeepsAnExistingFilesPermissions is the 86ada0b regression.
+// That commit replaced os.WriteFile(path, data, 0o644) with a temp-file +
+// rename, and reproduced the mode with an unconditional os.Chmod(tmp, 0o644).
+// os.WriteFile applies its mode argument only when it CREATES the file, so an
+// existing manifest kept whatever permissions it already had; the chmod reset
+// them on every --force overwrite.
+func TestManifestMode_KeepsAnExistingFilesPermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plugin.json")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 0444 is the one non-default mode Windows also records (it maps to the
+	// read-only attribute), so this assertion is meaningful on every platform.
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	want := os.FileMode(0o444)
+	if info, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if got := info.Mode().Perm(); got != want {
+		t.Skipf("this filesystem stored %v rather than %v; nothing to assert", got, want)
+	}
+
+	if got := manifestMode(path); got != want {
+		t.Errorf("manifestMode(existing %v file) = %v, want %v", want, got, want)
+	}
+}
+
+func TestManifestMode_NewFileGetsTheDefault(t *testing.T) {
+	dir := t.TempDir()
+	if got, want := manifestMode(filepath.Join(dir, "absent.json")), os.FileMode(0o644); got != want {
+		t.Errorf("manifestMode(absent) = %v, want %v", got, want)
+	}
+}

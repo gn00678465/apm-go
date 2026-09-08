@@ -72,17 +72,95 @@ func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest,
 	}
 	// Re-check containment after mkdir to shrink the TOCTOU window, mirroring
 	// write_plugin_manifest's second ensure_path_within call.
-	if _, err := build.EnsureWithinRoot(projectRoot, relPath); err != nil {
+	//
+	// The re-resolved path replaces absPath rather than being discarded:
+	// EnsureWithinRoot returns the RESOLVED path precisely so that callers
+	// write to the location that was checked (output.go's doc comment), and
+	// MkdirAll has just materialised directories that did not exist during the
+	// first call -- resolveSymlinks treats a missing component as literal
+	// (output.go:276-280), so the first call's answer was taken before those
+	// components could be resolved at all.
+	checkedPath, err := build.EnsureWithinRoot(projectRoot, relPath)
+	if err != nil {
 		return false, err
 	}
+	absPath = checkedPath
 
 	data := append(bundle.MarshalIndent(m.ToJSONValue()), '\n')
-	if err := os.WriteFile(absPath, data, 0o644); err != nil {
-		return false, fmt.Errorf("write plugin manifest %s: %w", absPath, err)
+	if err := writeFileAtomic(absPath, data); err != nil {
+		return false, err
 	}
 
 	// Oracle core/plugin_manifest.py:483-484 emits this through
 	// _emit(..., "check"), so the stream glyph is "[+]".
 	ux.Check(w, "Generated plugin manifest: %s", absPath)
 	return true, nil
+}
+
+// writeFileAtomic writes data to path via a temp file in the same directory
+// plus a rename, matching build.WriteOutput's existing pattern for the
+// marketplace document.
+//
+// os.WriteFile is not used because it TRUNCATES the existing file in place,
+// which writes through every name that file has. An external audit
+// (2026-08-12) showed the consequence: a hard link planted inside the project
+// at .codex-plugin/plugin.json, pointing at a file outside the project, has
+// no distinguishing feature any path check can see -- Lstat reports an
+// ordinary file -- and `pack --force` destroyed the outside file's contents.
+// A rename replaces the directory entry instead, so the other name keeps its
+// original inode and contents. Verified end to end: same fixture, victim file
+// unchanged afterwards.
+//
+// Containment still governs WHERE the temp file and the final path live; this
+// only changes HOW the bytes land.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".plugin-*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file for %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp file for %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file for %s: %w", path, err)
+	}
+	if err := os.Chmod(tmpPath, manifestMode(path)); err != nil {
+		return fmt.Errorf("chmod temp file for %s: %w", path, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("write plugin manifest %s: %w", path, err)
+	}
+	return nil
+}
+
+// manifestMode is the permission set writeFileAtomic gives the manifest: the
+// mode an existing manifest already carries, or 0644 for a new one.
+//
+// os.CreateTemp always creates 0600 and ignores the process umask, so the temp
+// file's mode has to be set explicitly. The unconditional os.Chmod(tmp, 0o644)
+// this replaced got the new-file case roughly right but reset the mode of
+// every file it overwrote -- os.WriteFile(path, data, 0o644), which the atomic
+// write replaced (86ada0b), applies its mode argument only when it CREATES the
+// file, so a manifest a user or a collaborator had narrowed to 0600 stayed
+// 0600 across `pack --force` before that commit and stopped doing so after it.
+//
+// Known deviation, recorded rather than silently kept: for a NEW manifest this
+// still bypasses the process umask, because the kernel applies umask only to
+// the mode passed to open(2) and os.CreateTemp hardcodes 0600. Reproducing
+// os.WriteFile exactly would mean hand-rolling the temp-file creation with
+// os.OpenFile(O_CREATE|O_EXCL) and its own random naming, which trades a
+// well-tested stdlib primitive for ~20 lines of security-relevant code. The
+// sibling writer for marketplace.json (build.WriteOutput) does not chmod at
+// all and therefore leaves 0600; these two should be made consistent, which is
+// a separate decision from this regression fix.
+func manifestMode(path string) os.FileMode {
+	if info, err := os.Stat(path); err == nil {
+		return info.Mode().Perm()
+	}
+	return 0o644
 }
