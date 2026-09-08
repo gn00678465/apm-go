@@ -737,10 +737,24 @@ func TestPackCmd_LegacySkillPaths_IsANoOp(t *testing.T) {
 			t.Errorf("bundle file %q present without the flag, missing with it", relPath)
 			continue
 		}
-		if gotContent != wantContent {
+		if stripPackedAt(gotContent) != stripPackedAt(wantContent) {
 			t.Errorf("bundle file %q content differs with --legacy-skill-paths", relPath)
 		}
 	}
+}
+
+// stripPackedAt drops the lockfile's second-resolution `packed_at:` stamp so
+// two pack runs that straddle a second boundary still compare equal; every
+// other byte of the bundle must match.
+func stripPackedAt(s string) string {
+	var kept []string
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "packed_at:") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // TestPackCmd_LegacySkillPaths_IsANoOp_PluginManifestPath is the
