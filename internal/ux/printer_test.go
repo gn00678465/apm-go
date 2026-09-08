@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // TestPrinters_Golden_NonTTYWriterHasNoANSI proves per-writer color
@@ -142,7 +143,7 @@ func TestSymbolLine_MessageCarriesSeverityColor(t *testing.T) {
 				t.Errorf("symbolLine() = %q, want it to contain the styled message %q", got, style.Render("hello"))
 			}
 			// ...and the visible text is unchanged by the styling.
-			if visible := stripANSI(got); visible != " ! hello" {
+			if visible := ansi.Strip(got); visible != " ! hello" {
 				t.Errorf("visible text = %q, want %q", visible, " ! hello")
 			}
 		})
