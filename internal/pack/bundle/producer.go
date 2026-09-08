@@ -184,8 +184,13 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	safeName := sanitizeBundleName(opts.PkgName)
 	safeVersion := sanitizeBundleName(opts.PkgVersion)
 	bundleRel := safeName + "-" + safeVersion
-	absBundleDir, err := build.EnsureWithinRoot(opts.OutputDir, bundleRel)
-	if err != nil {
+	// Validation only -- the resolved path it returns is deliberately
+	// dropped. What gets reported and written is the literal
+	// <OutputDir>/<bundleRel>, which is where the directory handle below
+	// actually puts the bundle; those two forms diverge when bundleRel is an
+	// existing in-project symlink, and a dry-run that names a different
+	// directory from the real run would be worse than useless.
+	if _, err := build.EnsureWithinRoot(opts.OutputDir, bundleRel); err != nil {
 		return nil, err
 	}
 
@@ -194,7 +199,7 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 		// ~988): when --archive is set, report the archive's PROJECTED path
 		// without writing anything at all -- not the directory that would
 		// have been built.
-		bundlePath := absBundleDir
+		bundlePath := filepath.Join(opts.OutputDir, bundleRel)
 		if opts.Archive {
 			bundlePath = projectedArchivePath(opts.OutputDir, bundleRel, effectiveArchiveFormat(opts.ArchiveFormat))
 		}
@@ -203,13 +208,35 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 
 	scanBundleSources(w, fileMap, opts.Force)
 
-	if err := os.RemoveAll(absBundleDir); err != nil {
-		return nil, fmt.Errorf("clear existing bundle directory: %w", err)
-	}
-	if err := os.MkdirAll(absBundleDir, 0o755); err != nil {
+	// Every write below goes through a directory handle taken once, instead
+	// of through the resolved path string absBundleDir. EnsureWithinRoot
+	// above still validates, but a string cannot stop an ancestor being
+	// swapped for a junction between the check and the write (external audit
+	// 2026-08-13, reproduced locally).
+	outRW, err := build.OpenRootWriter(opts.OutputDir)
+	if err != nil {
 		return nil, err
 	}
-	if err := writeBundleFiles(absBundleDir, fileMap); err != nil {
+	defer outRW.Close()
+
+	if err := outRW.RemoveAll(bundleRel); err != nil {
+		return nil, fmt.Errorf("clear existing bundle directory: %w", err)
+	}
+	bundleRW, err := outRW.Sub(bundleRel)
+	if err != nil {
+		return nil, err
+	}
+	defer bundleRW.Close()
+
+	// The reported directory is the one actually written through, not
+	// EnsureWithinRoot's resolved form. The two differ when bundleRel is an
+	// existing in-project symlink: RemoveAll deletes the link and Sub creates
+	// a real directory in its place, so the resolved path names somewhere
+	// nothing was written (external audit 2026-08-13 -- introduced by this
+	// commit's own predecessor, not pre-existing).
+	bundleDir := bundleRW.Dir()
+
+	if err := writeBundleFiles(bundleRW, bundleDir, fileMap); err != nil {
 		return nil, err
 	}
 
@@ -218,13 +245,13 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	// trailing newline (only write_plugin_manifest's standalone top-level
 	// plugin.json does).
 	if !mergedHooks.IsEmptyObject() {
-		if err := os.WriteFile(filepath.Join(absBundleDir, "hooks.json"), MarshalIndent(mergedHooks.SortedClone()), 0o644); err != nil {
+		if err := bundleRW.WriteFile("hooks.json", MarshalIndent(mergedHooks.SortedClone()), 0o644); err != nil {
 			return nil, err
 		}
 	}
 	if !mergedMCP.IsEmptyObject() {
 		wrapped := ObjectValue(JSONField{Key: "mcpServers", Val: mergedMCP})
-		if err := os.WriteFile(filepath.Join(absBundleDir, ".mcp.json"), MarshalIndent(wrapped.SortedClone()), 0o644); err != nil {
+		if err := bundleRW.WriteFile(".mcp.json", MarshalIndent(wrapped.SortedClone()), 0o644); err != nil {
 			return nil, err
 		}
 	}
@@ -234,17 +261,17 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 		return nil, err
 	}
 	pluginJSON = stripSchemaInvalidKeys(w, pluginJSON)
-	if err := os.WriteFile(filepath.Join(absBundleDir, "plugin.json"), MarshalIndent(pluginJSON), 0o644); err != nil {
+	if err := bundleRW.WriteFile("plugin.json", MarshalIndent(pluginJSON), 0o644); err != nil {
 		return nil, err
 	}
 
 	if opts.Lockfile != nil {
-		if err := embedPackLockfile(absBundleDir, opts.Lockfile, opts.LockfileNode, opts.Target, opts.Format); err != nil {
+		if err := embedPackLockfile(bundleRW, opts.Lockfile, opts.LockfileNode, opts.Target, opts.Format); err != nil {
 			return nil, err
 		}
 	}
 
-	bundlePath := absBundleDir
+	bundlePath := bundleDir
 	if opts.Archive {
 		// Mirrors export_plugin_bundle's real-run sequence
 		// (plugin_exporter.py: ~1050-1061): the directory bundle is always
@@ -253,10 +280,10 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 		// the directory) is reported as the bundle path.
 		archiveFormat := effectiveArchiveFormat(opts.ArchiveFormat)
 		archivePath := projectedArchivePath(opts.OutputDir, bundleRel, archiveFormat)
-		if err := writeArchive(absBundleDir, archivePath, archiveFormat); err != nil {
+		if err := writeArchive(bundleDir, archivePath, archiveFormat); err != nil {
 			return nil, err
 		}
-		if err := os.RemoveAll(absBundleDir); err != nil {
+		if err := os.RemoveAll(bundleDir); err != nil {
 			return nil, fmt.Errorf("remove intermediate bundle directory: %w", err)
 		}
 		bundlePath = archivePath
@@ -401,21 +428,30 @@ func scanBundleSources(w io.Writer, fileMap *FileMap, force bool) {
 // only valid relative paths, and MergeFileMap's validOutputRel already
 // rejected traversal/absolute paths, but the write loop re-checks
 // containment per file, mirroring plugin_exporter.py:600-611).
-func writeBundleFiles(bundleDir string, fileMap *FileMap) error {
+// bundleDir is passed alongside rw only so EnsureWithinRoot can keep making
+// the SKIP decision it always made: an entry whose key escapes the bundle is
+// dropped silently, which is a different outcome from a write that fails. rw
+// then performs the write, so the containment that decides where bytes land
+// is the handle's, not the string's.
+func writeBundleFiles(rw *build.RootWriter, bundleDir string, fileMap *FileMap) error {
 	for _, key := range fileMap.Keys() {
 		src, _ := fileMap.Source(key)
 		info, err := os.Lstat(src)
 		if err != nil || info.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		absDest, err := build.EnsureWithinRoot(bundleDir, key)
-		if err != nil {
+		if _, err := build.EnsureWithinRoot(bundleDir, key); err != nil {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(absDest), 0o755); err != nil {
-			return err
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", src, err)
 		}
-		if err := copyFile(src, absDest); err != nil {
+		mode := os.FileMode(0o644)
+		if fi, err := os.Stat(src); err == nil {
+			mode = fi.Mode()
+		}
+		if err := rw.WriteFile(key, data, mode); err != nil {
 			return err
 		}
 	}
@@ -528,26 +564,24 @@ func sanitizeBundleName(name string) string {
 // apm.lock.yaml itself) and writes apm.lock.yaml with an embedded pack:
 // section, mirroring export_plugin_bundle step 14b (plugin_exporter.py:
 // 632-660).
-func embedPackLockfile(bundleDir string, lf *lockfile.Lockfile, original *yaml.Node, target, format string) error {
+// The walk reads through rw's handle rather than the filesystem path: its
+// result becomes the integrity manifest install later verifies against, so a
+// link planted mid-walk must not be able to get an outside file hashed in.
+func embedPackLockfile(rw *build.RootWriter, lf *lockfile.Lockfile, original *yaml.Node, target, format string) error {
 	bundleFiles := map[string]string{}
-	walkErr := filepath.WalkDir(bundleDir, func(p string, d fs.DirEntry, err error) error {
+	walkErr := fs.WalkDir(rw.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {
 			return nil
 		}
-		rel, rerr := filepath.Rel(bundleDir, p)
-		if rerr != nil {
+		if p == "apm.lock.yaml" {
 			return nil
 		}
-		relSlash := filepath.ToSlash(rel)
-		if relSlash == "apm.lock.yaml" {
-			return nil
-		}
-		data, rerr := os.ReadFile(p)
+		data, rerr := rw.ReadFile(p)
 		if rerr != nil {
 			return nil
 		}
 		sum := sha256.Sum256(data)
-		bundleFiles[relSlash] = hex.EncodeToString(sum[:])
+		bundleFiles[p] = hex.EncodeToString(sum[:])
 		return nil
 	})
 	if walkErr != nil {
@@ -567,5 +601,5 @@ func embedPackLockfile(bundleDir string, lf *lockfile.Lockfile, original *yaml.N
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(bundleDir, "apm.lock.yaml"), enriched, 0o644)
+	return rw.WriteFile("apm.lock.yaml", enriched, 0o644)
 }

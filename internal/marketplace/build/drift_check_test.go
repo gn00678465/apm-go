@@ -177,3 +177,28 @@ func TestJsonCompactASCII_EscapesNonASCII(t *testing.T) {
 		t.Errorf("jsonCompactASCII = %q, want %q (non-ASCII escaped, matching Python's ensure_ascii=True)", got, want)
 	}
 }
+
+// TestCheckMarketplaceDrift_AbsoluteOutputPathIsNotReportedMissing is the
+// gate-side half of the absolute-path contract. --marketplace-path may be
+// given as an absolute path inside the project; EnsureWithinRoot accepts it.
+// If the read cannot handle that form it fails, loadOnDisk folds any read
+// error into "not on disk", and the gate reports drift against a file that is
+// actually byte-correct -- a release gate failing closed on a clean tree.
+func TestCheckMarketplaceDrift_AbsoluteOutputPathIsNotReportedMissing(t *testing.T) {
+	root := t.TempDir()
+	cfg := driftFixtureConfig()
+	doc, _, err := ComposeDocument("claude", cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeMarketplaceDriftFixture(t, root, doc)
+
+	abs := filepath.Join(root, ".claude-plugin", "marketplace.json")
+	report, err := CheckMarketplaceDrift(cfg, nil, root, nil, map[string]string{"claude": abs})
+	if err != nil {
+		t.Fatalf("CheckMarketplaceDrift() error = %v", err)
+	}
+	if !report.OK {
+		t.Fatalf("report.OK = false for an unchanged file named by an absolute path; outputs=%+v", report.Outputs)
+	}
+}

@@ -2219,3 +2219,63 @@ func TestDisplayPath(t *testing.T) {
 		t.Errorf("displayPath(%q) = %q, want %q", abs, got, want)
 	}
 }
+
+// TestPack_OutputDirectoryIsAJunction_NothingEscapes covers the OUTPUT side of
+// containment end to end. Every existing junction test in this file plants the
+// link on a package SOURCE; nothing exercised the path pack writes to, which
+// is where an external audit (2026-08-13) found the reachable window.
+//
+// Two layers have to hold for this to pass, and this test does not
+// distinguish them -- that is the point of having it at the command boundary:
+// build.EnsureWithinRoot rejects a junction that is already in place, and
+// build.RootWriter's pinned handle rejects one swapped in after that check.
+// The post-check swap specifically is covered by
+// TestRootWriter_RefusesAfterAnAncestorIsSwappedForALink in
+// internal/marketplace/build, because reproducing that race deterministically
+// needs a seam this CLI does not have.
+func TestPack_OutputDirectoryIsAJunction_NothingEscapes(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("directory junctions are a Windows-only concept")
+	}
+
+	dir := chdirTemp(t)
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkgs", "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// .claude-plugin -- where the claude profile writes marketplace.json --
+	// is a junction pointing out of the project.
+	link := filepath.Join(dir, ".claude-plugin")
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, outside).CombinedOutput(); err != nil {
+		t.Skipf("SKIPPED: cannot create a directory junction here (%v: %s); the output-containment guard is untested by this run", err, out)
+	}
+
+	writePackApmYML(t, `name: demo
+marketplace:
+  owner:
+    name: Acme
+  outputs:
+    claude: {}
+  packages:
+    - name: tool-a
+      source: ./pkgs/a
+      category: utility
+`)
+
+	out, err := runPackCmd(t)
+
+	if err == nil {
+		t.Errorf("pack succeeded while its output directory was a junction pointing outside the project (output: %s)", out)
+	}
+	entries, rerr := os.ReadDir(outside)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("pack wrote %v outside the project", names)
+	}
+}

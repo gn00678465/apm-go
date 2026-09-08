@@ -965,9 +965,18 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 		return nil, err
 	}
 
+	// One directory handle for the whole run: every output is written
+	// through it, so an ancestor swapped for a junction mid-run cannot
+	// redirect a write the way a re-walked path string could.
+	rw, err := build.OpenRootWriter(".")
+	if err != nil {
+		return nil, err
+	}
+	defer rw.Close()
+
 	renders := make([]marketplaceRender, 0, len(activeOutputs))
 	for _, format := range activeOutputs {
-		r, err := packOneOutput(cmd, format, cfg, resolved, configPaths, cliOverrides, opts)
+		r, err := packOneOutput(cmd, rw, format, cfg, resolved, configPaths, cliOverrides, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -981,6 +990,7 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 // to print its deferred tail line.
 func packOneOutput(
 	cmd *cobra.Command,
+	rw *build.RootWriter,
 	format string,
 	cfg *authoring.AuthoringConfig,
 	resolved []build.ResolvedPackage,
@@ -991,6 +1001,17 @@ func packOneOutput(
 	if err != nil {
 		return marketplaceRender{}, err
 	}
+	// EnsureWithinRoot is kept as a validation gate even though rw now decides
+	// where the written bytes land: it is what fails closed on a drive-relative
+	// --marketplace-path override and what reports a link cycle, and it does so
+	// before anything is composed or written.
+	//
+	// Its resolved path is still used below, but only to READ the file being
+	// replaced (ComputeOutputDiff) and to name the output in messages -- never
+	// to write. That read carries a narrower form of the same exposure the
+	// write no longer has: a swapped ancestor could make the diff describe an
+	// outside file. Closing it means routing the read through rw as well, which
+	// this change does not do.
 	absPath, err := build.EnsureWithinRoot(".", outputPath)
 	if err != nil {
 		return marketplaceRender{}, err
@@ -1020,7 +1041,7 @@ func packOneOutput(
 		return render, nil
 	}
 
-	if err := build.WriteOutput(absPath, doc); err != nil {
+	if err := build.WriteOutput(rw, outputPath, doc); err != nil {
 		return marketplaceRender{}, err
 	}
 	return render, nil

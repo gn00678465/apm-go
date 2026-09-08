@@ -400,44 +400,46 @@ func splitPathComponents(p string) []string {
 	return out
 }
 
-// WriteOutput serializes doc as 2-space-indented JSON with a trailing
-// newline (matching Python's `json.dumps(data, indent=2,
-// ensure_ascii=False) + "\n"`, minus HTML-escaping which Python's json
-// module never applies either) and atomically writes it to path (temp file
-// in the same directory, then rename), creating any missing parent
-// directories first.
-func WriteOutput(path string, doc any) error {
+// marshalOutput encodes doc exactly as WriteOutput writes it: HTML escaping
+// off (so a package URL keeps its & and < verbatim) and two-space indent,
+// with the trailing newline json.Encoder appends. Shared with the
+// --check-clean drift gate (drift_check.go), which must compare against the bytes
+// that would actually land on disk rather than a second, subtly different
+// encoding.
+func marshalOutput(doc any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(doc); err != nil {
-		return fmt.Errorf("marshal %s: %w", path, err)
+		return nil, err
 	}
+	return buf.Bytes(), nil
+}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create output directory %q: %w", dir, err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".marketplace-*.json.tmp")
+// WriteOutput serializes doc as 2-space-indented JSON with a trailing newline
+// (matching Python's `json.dumps(data, indent=2, ensure_ascii=False)` plus a
+// trailing newline, minus HTML-escaping which Python's json module never
+// applies either) and
+// atomically writes it to rel, a path relative to rw's boundary.
+//
+// It takes a RootWriter rather than a path string because a resolved path
+// string cannot survive the trip: between the containment check that produced
+// it and the MkdirAll/CreateTemp/Rename that consumed it, a process able to
+// write inside the project could swap an ancestor for a junction and redirect
+// all three (external audit 2026-08-13, reproduced locally). rw holds a
+// directory handle taken once, so that swap is unreachable rather than merely
+// unlikely.
+func WriteOutput(rw *RootWriter, rel string, doc any) error {
+	encoded, err := marshalOutput(doc)
 	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+		return fmt.Errorf("marshal %s: %w", rw.Path(rel), err)
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // no-op once the rename below succeeds
-
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write temp file: %w", err)
+	rel, err = rw.Rel(rel)
+	if err != nil {
+		return err
 	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename temp file to %q: %w", path, err)
-	}
-	return nil
+	return rw.WriteFileAtomic(rel, encoded)
 }
 
 // OutputDiff is the per-output plugin classification `pack --json`'s

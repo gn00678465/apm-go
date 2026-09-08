@@ -204,38 +204,10 @@ func TestWrite_HardLinkedTargetIsNotWrittenThrough(t *testing.T) {
 	}
 }
 
-// TestManifestMode_KeepsAnExistingFilesPermissions is the 86ada0b regression.
-// That commit replaced os.WriteFile(path, data, 0o644) with a temp-file +
-// rename, and reproduced the mode with an unconditional os.Chmod(tmp, 0o644).
-// os.WriteFile applies its mode argument only when it CREATES the file, so an
-// existing manifest kept whatever permissions it already had; the chmod reset
-// them on every --force overwrite.
-func TestManifestMode_KeepsAnExistingFilesPermissions(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "plugin.json")
-	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// 0444 is the one non-default mode Windows also records (it maps to the
-	// read-only attribute), so this assertion is meaningful on every platform.
-	if err := os.Chmod(path, 0o444); err != nil {
-		t.Fatal(err)
-	}
-	want := os.FileMode(0o444)
-	if info, err := os.Stat(path); err != nil {
-		t.Fatal(err)
-	} else if got := info.Mode().Perm(); got != want {
-		t.Skipf("this filesystem stored %v rather than %v; nothing to assert", got, want)
-	}
-
-	if got := manifestMode(path); got != want {
-		t.Errorf("manifestMode(existing %v file) = %v, want %v", want, got, want)
-	}
-}
-
-func TestManifestMode_NewFileGetsTheDefault(t *testing.T) {
-	dir := t.TempDir()
-	if got, want := manifestMode(filepath.Join(dir, "absent.json")), os.FileMode(0o644); got != want {
-		t.Errorf("manifestMode(absent) = %v, want %v", got, want)
-	}
-}
+// Mode handling moved to build.RootWriter when the writer stopped using path
+// strings (2026-08-13): the permission-preservation and hard-link tests that
+// used to live here are now TestRootWriter_WriteFileAtomicKeepsAnExistingFilesMode,
+// TestRootWriter_WriteFileAtomicCreatesAWritableFile and
+// TestRootWriter_WriteFileAtomicDoesNotWriteThroughAHardLink in
+// internal/marketplace/build, alongside the containment tests they share a
+// code path with.

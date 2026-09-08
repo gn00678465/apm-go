@@ -3,7 +3,6 @@ package build
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"unicode/utf16"
@@ -130,8 +129,18 @@ func jsonKeyDiff(oldVal, newVal any, prefix string) []DriftDifference {
 // loadOnDisk mirrors _load_on_disk (drift_check.py:141-148): (nil, false)
 // when path does not exist; (nil, true) when it exists but fails to parse
 // as JSON; (decoded, true) otherwise.
-func loadOnDisk(path string) (any, bool) {
-	data, err := os.ReadFile(path)
+// loadOnDisk reads rel through rw's directory handle rather than a resolved
+// path string. The gate's own verdict is what is at stake: if an ancestor can
+// be swapped for a junction after the containment check, the gate compares
+// against a file outside the project and reports the working tree clean while
+// the committed artifact is stale. A release gate that can be made to pass by
+// planting a link is not a gate.
+func loadOnDisk(rw *RootWriter, rel string) (any, bool) {
+	rel, relErr := rw.Rel(rel)
+	if relErr != nil {
+		return nil, false
+	}
+	data, err := rw.ReadFile(rel)
 	if err != nil {
 		return nil, false
 	}
@@ -163,6 +172,14 @@ func CheckMarketplaceDrift(
 		configured = []string{"claude"}
 	}
 
+	// One directory handle for the whole gate, matching how the producers
+	// write: every read below goes through it.
+	rw, err := OpenRootWriter(projectRoot)
+	if err != nil {
+		return DriftReport{}, err
+	}
+	defer rw.Close()
+
 	var reports []DriftOutputReport
 	for _, format := range configured {
 		if !KnownOutputFormats[format] {
@@ -173,8 +190,10 @@ func CheckMarketplaceDrift(
 		if err != nil {
 			return DriftReport{}, err
 		}
-		absPath, err := EnsureWithinRoot(projectRoot, outputPath)
-		if err != nil {
+		// Validation only: the resolved string is deliberately dropped so it
+		// cannot be carried to the read below. EnsureWithinRoot still fails
+		// closed on a drive-relative override and still reports a link cycle.
+		if _, err := EnsureWithinRoot(projectRoot, outputPath); err != nil {
 			return DriftReport{}, err
 		}
 
@@ -195,7 +214,7 @@ func CheckMarketplaceDrift(
 			return DriftReport{}, err
 		}
 
-		onDisk, exists := loadOnDisk(absPath)
+		onDisk, exists := loadOnDisk(rw, outputPath)
 		if !exists {
 			diffs := jsonKeyDiff(map[string]any{}, canonicalNew, "")
 			reports = append(reports, DriftOutputReport{Format: format, Path: outputPath, Status: "missing", Differences: diffs})

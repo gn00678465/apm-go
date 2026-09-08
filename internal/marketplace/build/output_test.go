@@ -614,11 +614,17 @@ func TestEnsureWithinRoot_SymlinkedRootItself_Passes(t *testing.T) {
 func TestWriteOutput_WritesTwoSpaceIndentedJSONWithTrailingNewline(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
+	rw, err := OpenRootWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
+	rel := "nested/marketplace.json"
 	path := filepath.Join(dir, "nested", "marketplace.json")
 	doc := map[string]any{"name": "demo", "plugins": []any{}}
 
 	// Act
-	if err := WriteOutput(path, doc); err != nil {
+	if err := WriteOutput(rw, rel, doc); err != nil {
 		t.Fatalf("WriteOutput() error = %v", err)
 	}
 
@@ -641,8 +647,13 @@ func TestWriteOutput_WritesTwoSpaceIndentedJSONWithTrailingNewline(t *testing.T)
 
 func TestWriteOutput_CreatesMissingParentDirectories(t *testing.T) {
 	dir := t.TempDir()
+	rw, err := OpenRootWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
 	path := filepath.Join(dir, "a", "b", "c", "marketplace.json")
-	if err := WriteOutput(path, map[string]any{"name": "demo"}); err != nil {
+	if err := WriteOutput(rw, "a/b/c/marketplace.json", map[string]any{"name": "demo"}); err != nil {
 		t.Fatalf("WriteOutput() error = %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -652,12 +663,17 @@ func TestWriteOutput_CreatesMissingParentDirectories(t *testing.T) {
 
 func TestWriteOutput_OverwritesExistingFileAtomically(t *testing.T) {
 	dir := t.TempDir()
+	rw, err := OpenRootWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
 	path := filepath.Join(dir, "marketplace.json")
 	if err := os.WriteFile(path, []byte("stale content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := WriteOutput(path, map[string]any{"name": "fresh"}); err != nil {
+	if err := WriteOutput(rw, "marketplace.json", map[string]any{"name": "fresh"}); err != nil {
 		t.Fatalf("WriteOutput() error = %v", err)
 	}
 

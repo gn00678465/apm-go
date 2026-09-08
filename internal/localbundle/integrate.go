@@ -94,6 +94,18 @@ var targetRoutingTable = map[string]targetRouting{
 // (cmd/apm-go/install.go) is responsible for deciding whether/how to warn
 // before ever calling this function with an empty targets slice.
 func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets []string, projectDir string) (*IntegrateResult, error) {
+	// One directory handle for every file this deploys. EnsureWithinRoot
+	// still decides which entries are safe to deploy at all (and still logs
+	// the ones it drops), but the handle is what the bytes actually go
+	// through: a resolved path string cannot survive an ancestor being
+	// swapped for a junction between the check and the write (external audit
+	// 2026-08-13, reproduced locally).
+	projectRW, err := build.OpenRootWriter(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	defer projectRW.Close()
+
 	result := &IntegrateResult{Hashes: map[string]string{}}
 	if len(targets) == 0 {
 		return result, nil
@@ -110,7 +122,7 @@ func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets [
 			continue
 		}
 		for _, rel := range relKeys {
-			record, deployed, err := deployBundleFile(bundleDir, rel, routing, target, projectDir, result)
+			record, deployed, err := deployBundleFile(bundleDir, rel, routing, target, projectDir, projectRW, result)
 			if err != nil {
 				return nil, err
 			}
@@ -193,7 +205,7 @@ func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets [
 //     only exercises claude+copilot, both of which DO have a native
 //     instructions primitive, so this deviation does not affect that
 //     fixture's byte-identical comparison.
-func deployBundleFile(bundleDir, rel string, routing targetRouting, target, projectDir string, result *IntegrateResult) (record string, ok bool, err error) {
+func deployBundleFile(bundleDir, rel string, routing targetRouting, target, projectDir string, projectRW *build.RootWriter, result *IntegrateResult) (record string, ok bool, err error) {
 	firstSeg := ""
 	if idx := strings.IndexByte(rel, '/'); idx >= 0 {
 		firstSeg = rel[:idx]
@@ -238,8 +250,12 @@ func deployBundleFile(bundleDir, rel string, routing targetRouting, target, proj
 		return "", false, nil
 	}
 
-	absDest, derr := build.EnsureWithinRoot(filepath.Join(projectDir, filepath.FromSlash(root)), filepath.FromSlash(rel))
-	if derr != nil {
+	// Validation only: the returned path is deliberately dropped. What this
+	// call still buys is the SKIP decision -- an entry that escapes the
+	// target's own root is logged and left undeployed rather than failing
+	// the install -- and it makes that decision against the tighter
+	// projectDir/<root> boundary than the handle below enforces.
+	if _, derr := build.EnsureWithinRoot(filepath.Join(projectDir, filepath.FromSlash(root)), filepath.FromSlash(rel)); derr != nil {
 		result.Diags = append(result.Diags, fmt.Sprintf("skipped unsafe bundle entry %q: %v", rel, derr))
 		return "", false, nil
 	}
@@ -251,10 +267,18 @@ func deployBundleFile(bundleDir, rel string, routing targetRouting, target, proj
 	if normalized, isText := normalizedBundleText(rel, data); isText {
 		data = normalized
 	}
-	if err := os.MkdirAll(filepath.Dir(absDest), 0o755); err != nil {
-		return "", false, fmt.Errorf("create deploy dir for %s: %w", rel, err)
+	// Narrow the handle to this target's own root before writing. A handle on
+	// projectDir alone would be a WIDER boundary than the check above:
+	// os.Root follows links that stay inside it, so swapping .claude for a
+	// link to .github would land the file in .github while the record still
+	// says .claude (external audit 2026-08-13). Sub confines the write to the
+	// same directory EnsureWithinRoot just validated against.
+	rootRW, rerr := projectRW.Sub(root)
+	if rerr != nil {
+		return "", false, rerr
 	}
-	if err := os.WriteFile(absDest, data, 0o644); err != nil {
+	defer rootRW.Close()
+	if err := rootRW.WriteFile(rel, data, 0o644); err != nil {
 		return "", false, fmt.Errorf("write bundle file %s: %w", rel, err)
 	}
 
