@@ -372,3 +372,47 @@ func TestProduce_BundleDirNamesWhereItActuallyWrote(t *testing.T) {
 		t.Errorf("BundleDir does not contain the bundle it claims to: %v", statErr)
 	}
 }
+
+// TestProduce_RefusesAnOutputDirectoryThatEscapesTheProject pins the boundary
+// itself. pack defaults OutputDir to <root>/build and, before this, only ran
+// an explicit -o through EnsureWithinRoot -- so a junction planted at build/
+// made os.OpenRoot(OutputDir) open the confinement boundary OUTSIDE the
+// project. Every write after that was confined to somewhere it should never
+// have reached, which is the opposite of what a handle is for.
+//
+// The fix reaches the boundary through the project root's own handle, so the
+// escaping component is refused by os.Root rather than trusted as a root.
+func TestProduce_RefusesAnOutputDirectoryThatEscapesTheProject(t *testing.T) {
+	base := t.TempDir()
+	projectRoot := filepath.Join(base, "project")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{projectRoot, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWriteFile(t, filepath.Join(projectRoot, ".apm", "agents", "foo.md"), "content")
+
+	outputDir := filepath.Join(projectRoot, "build")
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", outputDir, outside).CombinedOutput(); err != nil {
+			t.Skipf("SKIPPED: cannot create a directory junction here (%v: %s)", err, out)
+		}
+	} else if err := os.Symlink(outside, outputDir); err != nil {
+		t.Skipf("SKIPPED: cannot create a symlink here: %v", err)
+	}
+
+	var buf bytes.Buffer
+	_, err := Produce(&buf, baseOpts(t, projectRoot, outputDir))
+	if err == nil {
+		t.Fatalf("Produce() returned no error; an output directory that leaves the project must be refused. Output: %s", buf.String())
+	}
+
+	entries, rerr := os.ReadDir(outside)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("wrote %d entries outside the project: %v", len(entries), entries)
+	}
+}

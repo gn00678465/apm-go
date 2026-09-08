@@ -213,7 +213,25 @@ func Produce(w io.Writer, opts ProduceOptions) (*ProduceResult, error) {
 	// above still validates, but a string cannot stop an ancestor being
 	// swapped for a junction between the check and the write (external audit
 	// 2026-08-13, reproduced locally).
-	outRW, err := build.OpenRootWriter(opts.OutputDir)
+	//
+	// The boundary is reached FROM the project root through a handle rather
+	// than opened on the OutputDir string. pack defaults OutputDir to
+	// <root>/build and only runs -o through EnsureWithinRoot, so opening a
+	// handle on that name directly would follow a junction planted at build/
+	// and put the whole "confined" boundary outside the project -- every write
+	// after it would then be confined to somewhere it should never have
+	// reached (external audit 2026-09-08). Sub goes through the project root's
+	// own handle, which refuses a component that leaves it.
+	projRW, err := build.OpenRootWriter(opts.ProjectRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer projRW.Close()
+	outRel, err := projRW.Rel(opts.OutputDir)
+	if err != nil {
+		return nil, err
+	}
+	outRW, err := projRW.Sub(outRel)
 	if err != nil {
 		return nil, err
 	}

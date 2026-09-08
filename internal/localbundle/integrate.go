@@ -94,12 +94,20 @@ var targetRoutingTable = map[string]targetRouting{
 // (cmd/apm-go/install.go) is responsible for deciding whether/how to warn
 // before ever calling this function with an empty targets slice.
 func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets []string, projectDir string) (*IntegrateResult, error) {
-	// One directory handle for every file this deploys. EnsureWithinRoot
-	// still decides which entries are safe to deploy at all (and still logs
-	// the ones it drops), but the handle is what the bytes actually go
-	// through: a resolved path string cannot survive an ancestor being
-	// swapped for a junction between the check and the write (external audit
-	// 2026-08-13, reproduced locally).
+	// One directory handle for every BUNDLE file this deploys.
+	// EnsureWithinRoot still decides which entries are safe to deploy at all
+	// (and still logs the ones it drops), but the handle is what the bytes
+	// actually go through: a resolved path string cannot survive an ancestor
+	// being swapped for a junction between the check and the write (external
+	// audit 2026-08-13, reproduced locally).
+	//
+	// Two paths below are NOT covered by it, recorded here rather than left
+	// for the next reader to discover: the MCP config write goes through
+	// deploy.MCPTarget.WriteMCP(prims, projectDir), which takes a path string
+	// and does its own os.MkdirAll/os.WriteFile, and the integrity hashes are
+	// read back with lockfile.HashFileBytes on a joined path string. Closing
+	// either means changing an interface outside this package (external audit
+	// 2026-09-08).
 	projectRW, err := build.OpenRootWriter(projectDir)
 	if err != nil {
 		return nil, err
@@ -278,7 +286,12 @@ func deployBundleFile(bundleDir, rel string, routing targetRouting, target, proj
 		return "", false, rerr
 	}
 	defer rootRW.Close()
-	if err := rootRW.WriteFile(rel, data, 0o644); err != nil {
+	// Atomic, not in-place: WriteFile truncates the inode, which writes
+	// through every name it has. A hard link planted at rel is invisible to
+	// Lstat and to every path check above it, so only the rename-based form
+	// keeps an outside file intact (rootwriter.go says so at WriteFile's own
+	// doc comment; this caller was using the wrong one).
+	if err := rootRW.WriteFileAtomic(rel, data); err != nil {
 		return "", false, fmt.Errorf("write bundle file %s: %w", rel, err)
 	}
 

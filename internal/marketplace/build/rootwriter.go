@@ -78,7 +78,7 @@ func (rw *RootWriter) Close() error {
 // that lies outside the boundary rather than silently producing a "..".
 func (rw *RootWriter) Rel(p string) (string, error) {
 	if !filepath.IsAbs(p) {
-		return p, nil
+		return filepath.Clean(p), nil
 	}
 	absDir, err := filepath.Abs(rw.dir)
 	if err != nil {

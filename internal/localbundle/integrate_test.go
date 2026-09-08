@@ -311,3 +311,53 @@ func TestNormalizedBundleText(t *testing.T) {
 		})
 	}
 }
+
+// TestIntegrateLocalBundle_DoesNotWriteThroughAHardLink pins the write shape.
+// The deploy path is confined by a directory handle, but confinement decides
+// WHICH directory entry is written, not whether writing it destroys an inode
+// shared with a file elsewhere: an in-place truncate writes through every name
+// the inode has, and a hard link is invisible to Lstat and to every path check
+// above it. Only the rename-based write leaves the other name intact.
+func TestIntegrateLocalBundle_DoesNotWriteThroughAHardLink(t *testing.T) {
+	bundleDir := buildTestBundle(t)
+	meta := bundleTestPackMeta(t, bundleDir)
+	base := t.TempDir()
+	projectDir := filepath.Join(base, "project")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{filepath.Join(projectDir, ".claude", "agents"), outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Arrange: an outside file, hard-linked to the path the bundle deploys to.
+	victim := filepath.Join(outside, "victim.md")
+	const victimContent = "MUST-NOT-BE-DESTROYED"
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(victim, filepath.Join(projectDir, ".claude", "agents", "foo.md")); err != nil {
+		t.Skipf("SKIPPED: cannot create a hard link here: %v", err)
+	}
+
+	// Act
+	if _, err := IntegrateLocalBundle(bundleDir, meta, []string{"claude"}, projectDir); err != nil {
+		t.Fatalf("IntegrateLocalBundle() error = %v", err)
+	}
+
+	// Assert: the deploy landed, and the other name still has its own content.
+	deployed, err := os.ReadFile(filepath.Join(projectDir, ".claude", "agents", "foo.md"))
+	if err != nil {
+		t.Fatalf("read deployed file: %v", err)
+	}
+	if string(deployed) != "# agent foo" {
+		t.Errorf("deployed file = %q, want the bundle's content", deployed)
+	}
+	got, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatalf("read victim: %v", err)
+	}
+	if string(got) != victimContent {
+		t.Errorf("outside file = %q, want %q untouched", got, victimContent)
+	}
+}

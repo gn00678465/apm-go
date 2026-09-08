@@ -639,7 +639,13 @@ func loadPackManifest() (m *manifest.Manifest, root *yamllib.Node, err error) {
 // rather than a second, hand-rolled check.
 func resolvePackOutputDir(raw string) (string, error) {
 	if raw == "" {
-		return filepath.Join(".", "build"), nil
+		// The default is validated too. It used to be returned unchecked, on
+		// the reasoning that a constant cannot escape -- but "build" names a
+		// directory the project can contain, and a junction planted there
+		// escapes exactly like a hostile -o value would. The producer's own
+		// handle is what structurally confines the write; this check is what
+		// reports the problem before any work is done.
+		return build.EnsureWithinRoot(".", filepath.Join(".", "build"))
 	}
 	return build.EnsureWithinRoot(".", raw)
 }

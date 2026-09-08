@@ -370,9 +370,14 @@ func TestRootWriter_RelAcceptsAnAbsolutePathInsideTheBoundary(t *testing.T) {
 		t.Errorf("Rel() = %q, want %q", got, want)
 	}
 
-	// A relative path is already in the required form and passes through.
-	if got, err := rw.Rel("dist/marketplace.json"); err != nil || got != "dist/marketplace.json" {
-		t.Errorf("Rel(relative) = %q, %v; want it returned unchanged", got, err)
+	// A relative path is already inside the boundary; it is only normalised,
+	// so that a caller's "./build" reaches Sub as the single component os.Root
+	// expects rather than a leading-dot path.
+	if got, err := rw.Rel("dist/marketplace.json"); err != nil || got != filepath.Clean("dist/marketplace.json") {
+		t.Errorf("Rel(relative) = %q, %v; want %q", got, err, filepath.Clean("dist/marketplace.json"))
+	}
+	if got, err := rw.Rel("./build"); err != nil || got != "build" {
+		t.Errorf("Rel(\"./build\") = %q, %v; want %q", got, err, "build")
 	}
 
 	// Outside the boundary fails closed rather than producing a "..".
