@@ -1,0 +1,141 @@
+schema_version: 2.0.0
+governance:
+  testing:
+    min_coverage: 80
+    tdd_required: true
+    framework: ''
+    type_checking: ''
+  quality:
+    linting: ''
+    pr_approvals: 1
+    pre_commit_hooks: false
+  commits: {}
+  performance:
+    cli_timeout_seconds: 2.0
+    dashboard_max_wps: 100
+  branch_strategy:
+    main_branch: main
+    rules: []
+  charter:
+    selected_paradigms: []
+    selected_directives: []
+    selected_tactics: []
+    selected_styleguides: []
+    selected_toolguides: []
+    selected_procedures: []
+    selected_agent_profiles: []
+    selected_mission_step_contracts: []
+    selected_glossary_packs: []
+    selected_assets: []
+    available_tools: []
+    authority_paths: []
+    governance_references: []
+  activations: []
+  enforcement: {}
+directives:
+  directives:
+  - id: DIR-001
+    title: 'Test-First Development (`DIRECTIVE_034`): Require '
+    description: 'Test-First Development (`DIRECTIVE_034`): Require test-first behavior across acceptance and implementation layers, selecting tactics based on scope and risk. Tests define the contract before production code is written.'
+    severity: warn
+    references:
+    - DIRECTIVE_034
+  - id: DIR-002
+    title: 'Test and Typecheck Quality Gate (`DIRECTIVE_030`):'
+    description: 'Test and Typecheck Quality Gate (`DIRECTIVE_030`): Code changes must pass the relevant automated tests and static validation gates before handoff so regressions and interface drift are caught early.'
+    severity: warn
+    references:
+    - DIRECTIVE_030
+  - id: DIR-003
+    title: Specification Fidelity Requirement (`DIRECTIVE_010
+    description: 'Specification Fidelity Requirement (`DIRECTIVE_010`): Implemented behavior and produced artifacts must remain faithful to approved specifications, with any necessary deviations explicitly documented and reviewed before acceptance.'
+    severity: warn
+    references:
+    - DIRECTIVE_010
+  - id: DIR-004
+    title: 'Locality of Change (`DIRECTIVE_024`): Changes shou'
+    description: 'Locality of Change (`DIRECTIVE_024`): Changes should stay close to the problem being solved to reduce blast radius, simplify review, and lower regression risk.'
+    severity: warn
+    references:
+    - DIRECTIVE_024
+  - id: DIR-005
+    title: 'Targeted Staging Policy (`DIRECTIVE_033`): Agent-a'
+    description: 'Targeted Staging Policy (`DIRECTIVE_033`): Agent-authored commits must stage only the expected deliverables for the current work package. Blanket staging commands that could inadvertently include unrelated changes, secrets, or build artefacts are prohibited.'
+    severity: warn
+    references:
+    - DIRECTIVE_033
+  - id: DIR-006
+    title: Canonical Sources and Unification (`DIRECTIVE_044`
+    description: 'Canonical Sources and Unification (`DIRECTIVE_044`): Agents and operators must use the canonical doctrine template, skill, or CLI command rather than improvising a substitute or copying from a prior mission artifact, because older artifacts drift from the canonical surface and copying them propagates the drift. When a concept is found to live in more than one location (a split-brain surface), the correct response is to consolidate to a single canonical authority — not to add the same behavior to every copy. A documented CLI command that is absent from the running tool is a gap to file upstream, not an invitation to hand-roll a workaround.'
+    severity: warn
+    references:
+    - DIRECTIVE_044
+  - id: DIR-007
+    title: PRs-Only and Read-Intent Before High-Risk Operatio
+    description: 'PRs-Only and Read-Intent Before High-Risk Operations (`DIRECTIVE_045`): All changes to the remote main branch go through pull requests — agents never push directly or merge without explicit operator instruction. Before executing any high-risk git operation (merge, rebase, deletion, force operations), agents must read the mission spec and current context first. Neither rule may be bypassed under time pressure or assumed from a task title alone.'
+    severity: warn
+    references:
+    - DIRECTIVE_045
+  - id: DIR-008
+    title: Decision Documentation Requirement (`DIRECTIVE_003
+    description: 'Decision Documentation Requirement (`DIRECTIVE_003`): Material technical and governance decisions must be captured with enough context that future contributors can understand why a path was chosen and what constraints must remain true.'
+    severity: warn
+    references:
+    - DIRECTIVE_003
+  - id: DIR-009
+    title: 'Living Documentation Sync (`DIRECTIVE_037`): Behav'
+    description: 'Living Documentation Sync (`DIRECTIVE_037`): Behavior-describing artifacts must evolve together. When observable behavior changes, the canonical examples, acceptance checks, narrative specifications, user documentation, glossary terms, code-level documentation, and architecture records must be updated in the same change so no reader is left with a stale picture of the system.'
+    severity: warn
+    references:
+    - DIRECTIVE_037
+  - id: DIR-010
+    title: 'Respect risk boundaries: Three failure classes are'
+    description: "Respect risk boundaries: Three failure classes are all error severity and each alone blocks merge. (A) Output-contract break: any change to stdout/stderr words, exit codes or generated file trees without a corresponding corpus case and, where needed, a waiver with reason. (B) User-file damage: apm.yml, apm.lock.yaml and the generated context files are user-edited; every mutation goes through yamlcore splice/patch helpers preserving comments, ordering and formatting — marshal-and-rewrite is forbidden; deploys must never overwrite user content outside the managed markers. (C) Security: every git call site under gitops.ApplySecureGitEnv; every YAML ingestion through yamlcore.SafeLoad (no anchors, merge keys, custom tags); the security scan policy is fail-closed (unknown policy blocks); archive extraction keeps size/count caps; no credentials in source, logs or test fixtures. Out of bounds for any agent without an explicit user ruling: changing the lockfile format, adding MCP servers to the lockfile, re-baselining the parity corpus, force-pushing, deleting waivers, or editing files outside the mission's declared scope."
+    severity: warn
+    references: []
+  - id: DIR-011
+    title: 'Keep documentation synchronized with workflow and '
+    description: 'Keep documentation synchronized with workflow and behavior changes: Three canonical documents, one topic each, never duplicated: PRODUCT.md (product facts, users, constraints, terminal UI design), ARCHITECTURE.md (package layout, layer responsibilities, data flows, cross-cutting concerns), AGENTS.md (engineering rules and testing patterns for agents; CLAUDE.md only imports AGENTS.md and PRODUCT.md). A rule that already lives in one of them is referenced, not restated, elsewhere. Deviations from the output contract are documented at the deviation site in cmd/apm-go/*.go with the reason; an undocumented deviation is a finding. Working notes and tickets live in .scratch/parity-runner/issues/ (one file per ticket); research notes in docs/research/. Documentation that describes behaviour must be updated in the same work package as the behaviour change. None of these documents records information about external or upstream projects; they describe apm-go only.'
+    severity: warn
+    references: []
+catalog:
+  mission: ''
+  template_set: ''
+  languages: []
+  references: []
+overrides: {}
+metadata:
+  generated_at: '2026-09-08T21:29:54Z'
+  bundle_schema_version: 2
+activated_directives:
+- 034-test-first-development
+- 030-test-and-typecheck-quality-gate
+- 010-specification-fidelity-requirement
+- 024-locality-of-change
+- 033-targeted-staging-policy
+- 044-canonical-sources-and-unification
+- 045-prs-only-and-read-intent
+- 003-decision-documentation-requirement
+- 037-living-documentation-sync
+activated_tactics:
+- tdd-red-green-refactor
+- acceptance-test-first
+- review-intent-and-risk-first
+- reviewer-implementer-role-separation
+- quality-gate-verification
+- change-apply-smallest-viable-diff
+- input-validation-fail-fast
+activated_styleguides: []
+activated_toolguides: []
+activated_paradigms:
+- execution-lanes
+- specification-by-example
+activated_procedures: []
+activated_agent_profiles: []
+activated_mission_step_contracts: []
+activated_glossary_packs: []
+mission_type_activations:
+- software-dev
+- documentation
+- research
+- plan
