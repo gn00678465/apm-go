@@ -833,7 +833,13 @@ func (sc *jsonScanner) parseNumber() (jsonNumber, error) {
 			sc.pos++
 		}
 	}
+	intStart := sc.pos
 	digits()
+	// A sign with no digit after it ("-") is not a number; comparing against
+	// start alone never fired because the sign itself advanced pos.
+	if sc.pos == intStart {
+		return "", fmt.Errorf("invalid number at byte %d", start)
+	}
 	if sc.pos < len(sc.data) && sc.data[sc.pos] == '.' {
 		sc.pos++
 		digits()
@@ -844,9 +850,6 @@ func (sc *jsonScanner) parseNumber() (jsonNumber, error) {
 			sc.pos++
 		}
 		digits()
-	}
-	if sc.pos == start {
-		return "", fmt.Errorf("invalid number at byte %d", start)
 	}
 	return jsonNumber(sc.data[start:sc.pos]), nil
 }

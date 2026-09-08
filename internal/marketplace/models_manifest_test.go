@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -753,6 +754,66 @@ func TestPrintableASCIIText(t *testing.T) {
 	for _, tt := range tests {
 		if got := printableASCIIText(tt.in); got != tt.want {
 			t.Errorf("printableASCIIText(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// Every error branch of the hand-rolled JSON scanner, one malformed input
+// each. The messages are apm-go's own (encoding/json is bypassed on purpose,
+// see decodeOrderedJSON), so the exact wording is what a user sees when a
+// marketplace.json is corrupt.
+func TestDecodeOrderedJSON_Errors(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", "unexpected end of JSON"},
+		{"@", `unexpected character '@'`},
+		{"tru", "invalid literal at byte 0, expected true"},
+		{"nul", "invalid literal at byte 0, expected null"},
+		{"-", "invalid number at byte 0"},
+		{"1 2", "trailing data after JSON value"},
+		{"[1", "unterminated array"},
+		{"[1;2]", "expected ',' or ']'"},
+		{`{"a" 1}`, "expected ':'"},
+		{`{"a":1`, "unterminated object"},
+		{`{"a":1 "b":2}`, "expected ',' or '}'"},
+		{`{1:2}`, "expected string"},
+		{`"abc`, "unterminated string"},
+		{`"\`, "unterminated escape"},
+		{`"\q"`, `invalid escape \q`},
+		{`"\u12"`, `truncated \u escape`},
+		{`"\uZZZZ"`, `invalid hex digit in \u escape`},
+	}
+	for _, tc := range cases {
+		_, err := decodeOrderedJSON(json.RawMessage(tc.in))
+		if err == nil {
+			t.Errorf("decodeOrderedJSON(%q) = nil error, want %q", tc.in, tc.want)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("decodeOrderedJSON(%q) error = %q, want substring %q", tc.in, err.Error(), tc.want)
+		}
+	}
+}
+
+func TestJSONValueKindAndPythonTruthy_EdgeBranches(t *testing.T) {
+	if got := jsonValueKind(json.RawMessage("  ")); got != "absent" {
+		t.Errorf(`jsonValueKind("  ") = %q, want "absent"`, got)
+	}
+	if isValidRemoteCoordinate("   ") {
+		t.Error("isValidRemoteCoordinate(blank) = true, want false")
+	}
+	truthy := []struct {
+		v    any
+		want bool
+	}{
+		{nil, false}, {false, false}, {true, true}, {"", false}, {"x", true},
+		{float64(0), false}, {float64(2), true},
+		{map[string]any{}, false}, {map[string]any{"k": 1}, true},
+		{[]any{}, false}, {[]any{1}, true},
+		{42, true}, // any other type is truthy, as in Python
+	}
+	for _, tc := range truthy {
+		if got := pythonTruthy(tc.v); got != tc.want {
+			t.Errorf("pythonTruthy(%#v) = %v, want %v", tc.v, got, tc.want)
 		}
 	}
 }

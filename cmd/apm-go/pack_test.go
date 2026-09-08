@@ -10,6 +10,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -2302,5 +2303,76 @@ marketplace:
 			names = append(names, e.Name())
 		}
 		t.Errorf("pack wrote %v outside the project", names)
+	}
+}
+
+// packJSONFromOutput extracts the JSON envelope pack --json writes to stdout
+// (status lines go to stderr in that mode, but runPackCmd captures both).
+func packJSONFromOutput(t *testing.T, out string) packJSONEnvelope {
+	t.Helper()
+	start, end := strings.Index(out, "{"), strings.LastIndex(out, "}")
+	if start < 0 || end < start {
+		t.Fatalf("no JSON object in output:\n%s", out)
+	}
+	var env packJSONEnvelope
+	if err := json.Unmarshal([]byte(out[start:end+1]), &env); err != nil {
+		t.Fatalf("envelope is not valid JSON: %v\n%s", err, out[start:end+1])
+	}
+	return env
+}
+
+func packJSONErrorCodes(env packJSONEnvelope) []string {
+	codes := make([]string, 0, len(env.Errors))
+	for _, e := range env.Errors {
+		codes = append(codes, e.Code+": "+e.Message)
+	}
+	return codes
+}
+
+// A failed --check-versions gate under --json must be reported IN the
+// envelope (pack.py:548-550's gate_errors merge), not only via exit 3, so a
+// CI consumer reading stdout alone learns why.
+func TestPackCmd_JSON_VersionMisalignment_ErrorEnvelope(t *testing.T) {
+	dir := chdirTemp(t)
+	writeLockstepFixture(t, dir, "1.0.0", "2.0.0")
+
+	out, err := runPackCmd(t, "--json", "--check-versions", "--dry-run", "-m", "none")
+	if exitCodeOf(err) != 3 {
+		t.Fatalf("exitCodeOf(err) = %d, want 3 (output: %s)", exitCodeOf(err), out)
+	}
+	env := packJSONFromOutput(t, out)
+	if env.OK {
+		t.Error("ok = true, want false when the version gate failed")
+	}
+	if got, want := strings.Join(packJSONErrorCodes(env), ";"), "version_misalignment: version alignment check failed"; got != want {
+		t.Errorf("errors = %q, want %q", got, want)
+	}
+}
+
+// Same contract for --check-clean: drift is exit 4 AND an envelope error.
+func TestPackCmd_JSON_MarketplaceDrift_ErrorEnvelope(t *testing.T) {
+	dir := chdirTemp(t)
+	writeLockstepFixture(t, dir, "1.0.0", "1.0.0")
+	if _, err := runPackCmd(t); err != nil {
+		t.Fatalf("seed pack returned error: %v", err)
+	}
+	data, rerr := os.ReadFile(filepath.Join(dir, "apm.yml"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "apm.yml"), []byte(strings.Replace(string(data), "Acme", "Acme Renamed", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runPackCmd(t, "--json", "--check-clean", "--dry-run", "-m", "none")
+	if exitCodeOf(err) != 4 {
+		t.Fatalf("exitCodeOf(err) = %d, want 4 (output: %s)", exitCodeOf(err), out)
+	}
+	env := packJSONFromOutput(t, out)
+	if env.OK {
+		t.Error("ok = true, want false when the drift gate failed")
+	}
+	if got, want := strings.Join(packJSONErrorCodes(env), ";"), "marketplace_drift: marketplace working tree dirty"; got != want {
+		t.Errorf("errors = %q, want %q", got, want)
 	}
 }

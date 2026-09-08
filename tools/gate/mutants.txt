@@ -8,3 +8,5 @@ tagpattern-multi-version	internal/marketplace/tagpattern/tagpattern.go	if n := s
 archive-suffix-wrong	internal/pack/bundle/archive.go	suffix = ".tar.gz"	suffix = ".tgz"
 plugin-format-inverted	cmd/apm-go/plugin.go	if pm == pluginModeAgent {	if pm != pluginModeAgent {
 stage-rollback-skipped	internal/pluginjson/stage.go	for _, name := range committed {	for _, name := range []string(nil) {
+pack-json-error-code	cmd/apm-go/pack.go	Code: "version_misalignment", Message: "version alignment check failed"	Code: "version_misaligned", Message: "version alignment check failed"
+json-number-sign-only-accepted	internal/marketplace/models.go	if sc.pos == intStart {	if false {
