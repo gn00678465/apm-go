@@ -18,10 +18,9 @@ import (
 // compileCmd implements apm-go's minimal agents-family subset of the Python
 // oracle's `apm compile`: it compiles local + dependency *.instructions.md
 // primitives into a single project-root AGENTS.md for antigravity/codex/
-// opencode (see .trellis/tasks/07-11-agents-md-compile/design.md). v1
-// deliberately exposes only -t/--target -- no --dry-run/--watch/--validate/
-// --root/--clean/--single-agents/--no-links/--no-constitution, all of which
-// are documented non-goals (design.md §1).
+// opencode.
+// v1 僅提供 -t/--target；以下旗標不在此版本範圍內：
+// --dry-run/--watch/--validate/--root/--clean/--single-agents/--no-links/--no-constitution。
 func compileCmd() *cobra.Command {
 	var targetFlag string
 	cmd := &cobra.Command{
