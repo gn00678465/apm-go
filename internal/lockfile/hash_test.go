@@ -160,3 +160,24 @@ func containsSubstr(s, sub string) bool {
 	}
 	return false
 }
+
+// TestHashBytes_MatchesHashFileBytes pins the two hashers to one envelope.
+// localbundle switched the integrity manifest from HashFileBytes on a joined
+// path string to HashBytes on what a directory handle read, and that manifest
+// is what install verifies against later: if the two disagreed by even the
+// envelope prefix, every previously recorded hash would fail verification.
+func TestHashBytes_MatchesHashFileBytes(t *testing.T) {
+	for _, content := range []string{"", "plain", "with\nnewlines\n", "\x00\x01binary"} {
+		path := filepath.Join(t.TempDir(), "f")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fromFile, err := HashFileBytes(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := HashBytes([]byte(content)); got != fromFile {
+			t.Errorf("HashBytes(%q) = %s, HashFileBytes = %s", content, got, fromFile)
+		}
+	}
+}

@@ -33,6 +33,18 @@ func ParseHashEnvelope(s string) (algo, hexStr string, err error) {
 	return "", "", fmt.Errorf("invalid hash envelope %q", s)
 }
 
+// HashBytes computes SHA-256 of b and returns the envelope string.
+//
+// It exists so a caller that already holds the bytes -- because it read them
+// through a directory handle rather than a path string -- can produce the same
+// envelope without a second, unconfined os.Open. The integrity manifest is
+// what install later verifies against, so what gets hashed must be what the
+// handle actually read.
+func HashBytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return HashEnvelope("sha256", hex.EncodeToString(sum[:]))
+}
+
 // HashFileBytes computes SHA-256 of file contents and returns envelope string.
 func HashFileBytes(path string) (string, error) {
 	f, err := os.Open(path)

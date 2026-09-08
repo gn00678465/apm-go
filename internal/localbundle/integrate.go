@@ -137,10 +137,16 @@ func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets [
 			if !deployed {
 				continue
 			}
-			hash, herr := lockfile.HashFileBytes(filepath.Join(projectDir, filepath.FromSlash(record)))
-			if herr != nil {
-				return nil, fmt.Errorf("hash deployed file %s: %w", record, herr)
+			// Read back through the same handle the file was written through.
+			// A joined path string would walk the directory chain again, and this
+			// hash IS the integrity manifest install verifies against later: an
+			// ancestor swapped between write and read would record the digest of
+			// a file outside the project as if it were the deployed one.
+			deployedBytes, rerr := projectRW.ReadFile(record)
+			if rerr != nil {
+				return nil, fmt.Errorf("hash deployed file %s: %w", record, rerr)
 			}
+			hash := lockfile.HashBytes(deployedBytes)
 			result.Files = append(result.Files, record)
 			result.Hashes[record] = hash
 		}
@@ -165,10 +171,14 @@ func IntegrateLocalBundle(bundleDir string, meta *bundle.PackMetadata, targets [
 			result.Diags = append(result.Diags, diags...)
 			for _, f := range files {
 				mcpFilesWritten++
-				hash, herr := lockfile.HashFileBytes(filepath.Join(projectDir, f))
-				if herr != nil {
-					return nil, fmt.Errorf("hash mcp file %s: %w", f, herr)
+				// The MCP file is still WRITTEN through WriteMCP's own path
+				// string (see this function's opening comment); reading it back
+				// through the handle at least confines what the manifest records.
+				mcpBytes, rerr := projectRW.ReadFile(f)
+				if rerr != nil {
+					return nil, fmt.Errorf("hash mcp file %s: %w", f, rerr)
 				}
+				hash := lockfile.HashBytes(mcpBytes)
 				result.Files = append(result.Files, f)
 				result.Hashes[f] = hash
 			}
