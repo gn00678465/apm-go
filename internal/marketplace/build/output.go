@@ -218,6 +218,27 @@ func ymlScalarString(m *yaml.Node, key string) string {
 // to every resolved output path regardless of whether it came from a CLI
 // override, an apm.yml override, or a profile default. Returns the resolved
 // absolute path on success.
+//
+// Containment is decided on SYMLINK-RESOLVED paths, not merely lexical ones
+// (2026-08-12): a directory symlink inside the root pointing outside it has a
+// perfectly innocent lexical form, so an Abs/Clean/Rel-only check let every
+// writer downstream follow the link out of the project. Upstream resolves for
+// the same reason and says so verbatim -- "symlinks are resolved so that a
+// link pointing outside the base is caught as well"
+// (v0.28.0:src/apm_cli/utils/path_security.py:98-119).
+//
+// BOTH sides are resolved. Resolving only the path would reject every project
+// whose root is itself reached through a symlink (macOS's /tmp -> /private/tmp
+// being the everyday case), turning a security fix into a false-positive
+// generator.
+//
+// The value returned is the RESOLVED path, so that callers write to the exact
+// location that was checked. Returning the lexical form instead leaves a
+// check-A-write-B window (flagged by an external audit on 2026-08-12): the
+// lexical path re-traverses every link on each use, so swapping one of those
+// links for an outward-pointing one after the check but before the write
+// redirects the write. For a project containing no links the two forms are
+// identical, so ordinary output is unchanged.
 func EnsureWithinRoot(root, path string) (string, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -233,11 +254,150 @@ func EnsureWithinRoot(root, path string) (string, error) {
 		return "", fmt.Errorf("resolve output path %q: %w", path, err)
 	}
 
-	rel, err := filepath.Rel(absRoot, absPath)
+	resolvedRoot, err := resolveSymlinks(absRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root %q: %w", root, err)
+	}
+	resolvedPath, err := resolveSymlinks(absPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve output path %q: %w", path, err)
+	}
+
+	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("output path %q escapes the project root %q", path, absRoot)
 	}
-	return absPath, nil
+	return resolvedPath, nil
+}
+
+// maxLinkHops bounds symlink chasing so a link cycle cannot spin forever.
+// POSIX implementations use a similar small constant.
+const maxLinkHops = 32
+
+// resolveSymlinks returns path with every link-like component replaced by its
+// target, walking the path one component at a time from the volume root down.
+// Components that do not exist yet are appended verbatim -- the normal case
+// for an output file and the directories leading to it on a first run --
+// mirroring Python's Path.resolve(strict=False).
+//
+// filepath.EvalSymlinks is deliberately NOT used: on Windows it does not
+// resolve JUNCTIONS (measured on go1.26.3 -- EvalSymlinks returns a junction
+// path unchanged and Lstat reports ModeIrregular rather than ModeSymlink),
+// and a junction is precisely the escape a Windows attacker would reach for,
+// since creating one needs no privilege while creating a symlink does.
+// os.Readlink does report a junction's target, so a hand-rolled walk over
+// Lstat+Readlink covers symlinks and junctions on every platform.
+//
+// A link-like component whose target cannot be read is left as-is rather than
+// rejected: Windows marks several benign reparse points (OneDrive placeholders,
+// dedup stubs) ModeIrregular too, and those redirect nothing an attacker
+// controls. Failing closed on them would break ordinary projects stored in
+// OneDrive folders.
+//
+// Only existing components can carry a link, so appending the non-existent
+// tail loses no protection: a component that does not exist cannot redirect
+// anywhere, and one created as a link afterwards would be followed by the
+// write itself -- the same check-then-write window every filesystem guard in
+// this codebase has.
+func resolveSymlinks(path string) (string, error) {
+	volume := filepath.VolumeName(path)
+	resolved := volume + string(filepath.Separator)
+	pending := splitPathComponents(path[len(volume):])
+	hops := 0
+
+	for len(pending) > 0 {
+		part := pending[0]
+		pending = pending[1:]
+
+		switch part {
+		case ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+
+		candidate := filepath.Join(resolved, part)
+		info, err := os.Lstat(candidate)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// This component and everything after it is new; nothing
+				// that does not exist can redirect anywhere.
+				resolved = candidate
+				continue
+			}
+			return "", err
+		}
+		if info.Mode()&(os.ModeSymlink|os.ModeIrregular) == 0 {
+			resolved = candidate
+			continue
+		}
+		target, rerr := os.Readlink(candidate)
+		if rerr != nil {
+			resolved = candidate // a reparse point we cannot follow; see doc comment
+			continue
+		}
+
+		hops++
+		if hops > maxLinkHops {
+			return "", fmt.Errorf("too many symbolic links while resolving %q", path)
+		}
+		base, parts, terr := linkTargetStart(target, resolved)
+		if terr != nil {
+			return "", terr
+		}
+		// The target's own components go back on the queue instead of being
+		// substituted wholesale: each of them must be examined in turn,
+		// because any one of them can be a link of its own. Substituting a
+		// multi-segment target and Lstat-ing the joined result instead is the
+		// bug an external audit found here on 2026-08-12 -- Lstat follows
+		// intermediate links silently, so "<root>/b/leaf" reports a plain
+		// directory even when b leaves the root.
+		resolved = base
+		pending = append(append([]string(nil), parts...), pending...)
+	}
+	return resolved, nil
+}
+
+// linkTargetStart says where a link target starts resolving from and which
+// components remain to be walked. linkDir is the already-resolved directory
+// holding the link.
+//
+// The Windows-only middle cases are why filepath.IsAbs alone is not enough:
+// IsAbs(`\outside`) is false and VolumeName(`C:foo`) is "C:" while IsAbs is
+// still false (both measured on go1.26.3), yet neither is relative to the
+// link's directory.
+func linkTargetStart(target, linkDir string) (string, []string, error) {
+	if filepath.IsAbs(target) {
+		volume := filepath.VolumeName(target)
+		return volume + string(filepath.Separator), splitPathComponents(target[len(volume):]), nil
+	}
+	if filepath.VolumeName(target) != "" {
+		// Drive-relative ("C:foo"): resolves against that drive's current
+		// directory, which is per-process state this guard cannot observe.
+		// Fail closed rather than guess.
+		return "", nil, fmt.Errorf("unsupported drive-relative link target %q", target)
+	}
+	if len(target) > 0 && os.IsPathSeparator(target[0]) {
+		// Volume-rooted without a volume ("\outside"): rooted at the volume
+		// the LINK lives on, not at the link's directory.
+		return filepath.VolumeName(linkDir) + string(filepath.Separator), splitPathComponents(target), nil
+	}
+	return linkDir, splitPathComponents(target), nil
+}
+
+// splitPathComponents splits p into non-empty path components, honouring both
+// separators on Windows and only "/" elsewhere (a backslash is a legal
+// filename character on Unix). "." and ".." are kept: the caller interprets
+// them.
+func splitPathComponents(p string) []string {
+	var out []string
+	for _, part := range strings.Split(filepath.ToSlash(p), "/") {
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // WriteOutput serializes doc as 2-space-indented JSON with a trailing
