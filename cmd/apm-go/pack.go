@@ -529,13 +529,19 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 		}
 		// A failed gate is reported IN the envelope as well as through the
 		// exit code (pack.py:548-550's gate_errors merge), so a consumer
-		// reading only stdout still learns why.
+		// reading only stdout still learns why. One error per report row,
+		// with the Oracle's codes and error_messages() wording
+		// (pack.py:470-471 and :526-527) -- not a fixed summary.
 		if gates.versionFailed {
-			env.Errors = append(env.Errors, packJSONError{Code: "version_misalignment", Message: "version alignment check failed"})
+			for _, msg := range gates.version.ErrorMessages() {
+				env.Errors = append(env.Errors, packJSONError{Code: "version_misaligned", Message: msg})
+			}
 			env.OK = false
 		}
 		if gates.driftFailed {
-			env.Errors = append(env.Errors, packJSONError{Code: "marketplace_drift", Message: "marketplace working tree dirty"})
+			for _, msg := range gates.drift.ErrorMessages() {
+				env.Errors = append(env.Errors, packJSONError{Code: "marketplace_drift", Message: msg})
+			}
 			env.OK = false
 		}
 		if err := emitPackJSON(cmd.OutOrStdout(), env); err != nil {

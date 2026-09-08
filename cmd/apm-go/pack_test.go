@@ -2331,7 +2331,9 @@ func packJSONErrorCodes(env packJSONEnvelope) []string {
 
 // A failed --check-versions gate under --json must be reported IN the
 // envelope (pack.py:548-550's gate_errors merge), not only via exit 3, so a
-// CI consumer reading stdout alone learns why.
+// CI consumer reading stdout alone learns why. The Oracle appends one
+// {"code": "version_misaligned", "message": <error_messages() row>} per
+// misaligned package (pack.py:470-471, version_check.py:65-96).
 func TestPackCmd_JSON_VersionMisalignment_ErrorEnvelope(t *testing.T) {
 	dir := chdirTemp(t)
 	writeLockstepFixture(t, dir, "1.0.0", "2.0.0")
@@ -2344,12 +2346,14 @@ func TestPackCmd_JSON_VersionMisalignment_ErrorEnvelope(t *testing.T) {
 	if env.OK {
 		t.Error("ok = true, want false when the version gate failed")
 	}
-	if got, want := strings.Join(packJSONErrorCodes(env), ";"), "version_misalignment: version alignment check failed"; got != want {
+	if got, want := strings.Join(packJSONErrorCodes(env), ";"), "version_misaligned: pkgs/a: expected 1.0.0, found 2.0.0"; got != want {
 		t.Errorf("errors = %q, want %q", got, want)
 	}
 }
 
-// Same contract for --check-clean: drift is exit 4 AND an envelope error.
+// Same contract for --check-clean: drift is exit 4 AND one
+// {"code": "marketplace_drift", "message": <error_messages() row>} per
+// drifted output (pack.py:526-527, drift_check.py:81-89).
 func TestPackCmd_JSON_MarketplaceDrift_ErrorEnvelope(t *testing.T) {
 	dir := chdirTemp(t)
 	writeLockstepFixture(t, dir, "1.0.0", "1.0.0")
@@ -2372,7 +2376,9 @@ func TestPackCmd_JSON_MarketplaceDrift_ErrorEnvelope(t *testing.T) {
 	if env.OK {
 		t.Error("ok = true, want false when the drift gate failed")
 	}
-	if got, want := strings.Join(packJSONErrorCodes(env), ";"), "marketplace_drift: marketplace working tree dirty"; got != want {
+	got := strings.Join(packJSONErrorCodes(env), ";")
+	// The path segment carries the OS separator (the Oracle's Path does too).
+	if want := "marketplace_drift: " + filepath.Join(".claude-plugin", "marketplace.json") + ": 1 differences vs. regenerated output"; got != want {
 		t.Errorf("errors = %q, want %q", got, want)
 	}
 }
