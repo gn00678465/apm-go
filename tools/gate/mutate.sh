@@ -36,7 +36,8 @@ if ! test_cmd > "$LOGS/_baseline.log" 2>&1; then
 fi
 
 total=0; killed=0; survived=0; broken=0
-while IFS='|' read -r name file old new; do
+TAB=$(printf '	')
+while IFS="$TAB" read -r name file old new; do
   case "$name" in ''|'#'*) continue ;; esac
   total=$((total + 1))
   if ! (cd "$COPY" && "$GATETOOL" replace -file "$file" -old "$old" -new "$new") > "$LOGS/$name.apply.log" 2>&1; then
