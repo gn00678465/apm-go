@@ -1,7 +1,6 @@
 package deploy
 
 import (
-
 	"github.com/apm-go/apm/internal/manifest"
 )
 

@@ -7,8 +7,8 @@ import (
 
 	"github.com/apm-go/apm/internal/marketplace/build"
 	"github.com/apm-go/apm/internal/pack/bundle"
-	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/rootfs"
+	"github.com/apm-go/apm/internal/ux"
 )
 
 // PluginEcosystemPaths mirrors core/plugin_manifest.py's

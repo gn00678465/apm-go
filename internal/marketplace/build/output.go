@@ -25,8 +25,8 @@ import (
 	"go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
-	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/apm-go/apm/internal/rootfs"
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 // defaultOutputPaths maps every known marketplace output profile name

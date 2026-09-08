@@ -16,9 +16,9 @@ import (
 
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/marketplace/build"
+	"github.com/apm-go/apm/internal/rootfs"
 	"github.com/apm-go/apm/internal/security"
 	"github.com/apm-go/apm/internal/ux"
-	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // DepSource is one dependency's already-resolved install location, fed to

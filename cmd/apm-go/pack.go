@@ -16,10 +16,10 @@ import (
 	"github.com/apm-go/apm/internal/pack"
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/pack/pluginmanifest"
+	"github.com/apm-go/apm/internal/rootfs"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
-	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // marketplaceDocsURL is the docs anchor renderMarketplaceCatalog points at,
