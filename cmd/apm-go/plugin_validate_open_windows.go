@@ -2,27 +2,25 @@
 
 package main
 
-import "os"
-
-// openManifestFileForPlatform opens path with a plain os.Open. Used only
-// by readAndValidate's no-boundary path (a caller's own path argument,
-// WP03 finding 2): the boundary path (a directory-probed candidate)
-// resolves through os.OpenRoot instead (readManifestInRoot, WP03 round-3
-// review), which closes the parent-directory containment race this
-// function never addressed.
+// rootOpenExtraFlags is ORed into os.O_RDONLY for every manifest open that
+// goes through (*os.Root).OpenFile. Windows has no O_NONBLOCK and no FIFO
+// type, so there is nothing to add here; the constant exists so both
+// platforms feed the same call site (openRootFile in plugin_validate.go).
 //
 // Win32 does have an open-without-following capability --
 // FILE_FLAG_OPEN_REPARSE_POINT, which os.Root's own Lstat equivalent uses
-// (os/root_windows.go) -- but it opens the reparse point object itself,
-// not the target's data, so it has no use for a call that must read the
-// manifest's actual bytes; there is no windows analogue of O_NOFOLLOW for
-// a data-read open. A symlink (reparse point) swapped into path after the
-// pre-open Lstat in readAndValidate IS followed by this call; there is no
-// FIFO-blocking risk because windows has no FIFO type. The only guard
-// against the substituted-target case on this platform is the Fstat +
-// os.SameFile comparison readAndValidate performs against that pre-open
-// Lstat, after this open has already returned -- the same guard the unix
-// build also relies on for that comparison, per its own comment.
-func openManifestFileForPlatform(path string) (*os.File, error) {
-	return os.Open(path)
-}
+// (os/root_windows.go) -- and using it does not disqualify it the way the
+// earlier version of this comment claimed: for an ordinary file it opens
+// normally, and for a symlink it opens the link object itself rather than
+// following it, which is one way to implement a no-follow policy. It is
+// still not usable here, for a narrower reason -- opened that way, a
+// symlink candidate yields the link's own (non-regular) metadata and no
+// readable data stream for the target, and this call must read the
+// manifest's actual bytes. There is no windows analogue of O_NOFOLLOW for a
+// data-read open; a symlink swapped into the boundary after the pre-open
+// Lstat can still be followed by this Open as long as its target stays
+// inside the boundary -- os.Root's own escape check refuses a target
+// outside it, and the Fstat + os.SameFile comparison performed after this
+// Open returns is what still catches a substituted in-boundary target, on
+// both platforms alike.
+const rootOpenExtraFlags = 0

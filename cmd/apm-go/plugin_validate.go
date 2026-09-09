@@ -131,26 +131,31 @@ func readError(path string, cause error) error {
 // finishing) cannot be reproduced reliably across platforms in a test.
 type manifestFile = io.ReadCloser
 
-// openManifestFile is the seam readAndValidate opens the manifest through,
-// overridable by tests. The size comes from Stat on this same open handle
-// (fstat on the fd), not a second path-based Stat call, so a link swapped
-// into manifestPath after openManifestFile returns cannot change what size
-// gets checked.
+// openRootFile is the seam both readAndValidate branches open a manifest
+// through, overridable by tests (WP03 round-4 review findings 1-2): root
+// is already opened at the boundary directory -- the directory-probed
+// candidate's own directory, or the caller's path argument's parent
+// directory -- and rel is the name to open within it, so the two branches
+// share this one open implementation instead of the probed candidate going
+// through os.Root while a named file argument ran a second, weaker flow
+// that could follow a link swapped in outside that boundary.
 //
-// The open itself goes through openManifestFileForPlatform
-// (plugin_validate_open_unix.go / plugin_validate_open_windows.go), which
-// is where the check-then-open race (WP03 round-2 review finding 1) is
-// constrained, to a degree that differs by platform: on unix,
-// O_NOFOLLOW|O_NONBLOCK makes the open refuse a symlink swapped into path
-// after the pre-open Lstat below and return immediately rather than block
-// on a FIFO with no writer; on windows there is no such flag and no FIFO
-// type, so a swapped-in symlink IS followed by this open, and the Fstat +
-// os.SameFile comparison against that Lstat, performed below after this
-// call returns, is the only guard on that platform. Neither platform's
-// open result can be trusted alone -- the comparison below is required on
-// both.
-var openManifestFile = func(path string) (manifestFile, os.FileInfo, error) {
-	f, err := openManifestFileForPlatform(path)
+// The size comes from Stat on this same open handle (fstat on the fd), not
+// a second path-based Stat call, so a link swapped into rel after
+// openRootFile returns cannot change what size gets checked.
+//
+// os.Root guarantees the open cannot resolve outside root, but that alone
+// does not close every gap: it does not make the open non-blocking, and it
+// still follows a symlink whose target stays inside root. rootOpenExtraFlags
+// (plugin_validate_open_unix.go / plugin_validate_open_windows.go) supplies
+// O_NONBLOCK on unix so a candidate swapped to a FIFO with no writer between
+// the pre-open Lstat and this Open returns immediately instead of blocking
+// forever; windows has no such flag and no FIFO type. Neither platform's
+// open result can be trusted alone for the symlink case -- the Fstat +
+// os.SameFile comparison performed by the caller after this returns is the
+// guard both platforms still rely on for that.
+var openRootFile = func(root *os.Root, rel string) (manifestFile, os.FileInfo, error) {
+	f, err := root.OpenFile(rel, os.O_RDONLY|rootOpenExtraFlags, 0)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -173,9 +178,14 @@ func readAndValidate(manifestPath, boundary string) (pluginjson.Report, error) {
 		return readManifestInRoot(manifestPath, boundary)
 	}
 
-	// No directory to escape (WP03 finding 2): the regular-file check plus
-	// the post-open os.SameFile comparison in finishRead is the full
-	// policy here.
+	// No probed directory to escape, but naming a file directly is not
+	// authorisation to follow an external link swapped in during the
+	// check-then-open race either (WP03 round-4 review finding 2): the
+	// open below runs through the same os.Root boundary as the
+	// directory-probed branch, rooted at manifestPath's own parent
+	// directory, instead of a second, weaker open flow keyed on the raw
+	// path alone. The regular-file check plus the post-open os.SameFile
+	// comparison in finishRead remains the full policy on top of that.
 	checkInfo, err := os.Lstat(manifestPath)
 	if err != nil {
 		return pluginjson.Report{}, readError(manifestPath, err)
@@ -184,9 +194,15 @@ func readAndValidate(manifestPath, boundary string) (pluginjson.Report, error) {
 		return pluginjson.Report{}, readError(manifestPath, errNotRegularFile)
 	}
 
-	f, openInfo, err := openManifestFile(manifestPath)
+	root, err := os.OpenRoot(filepath.Dir(manifestPath))
 	if err != nil {
 		return pluginjson.Report{}, readError(manifestPath, err)
+	}
+	defer root.Close()
+
+	f, openInfo, err := openRootFile(root, filepath.Base(manifestPath))
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, rootEscapeErr(err))
 	}
 	defer f.Close()
 
@@ -204,14 +220,15 @@ func readAndValidate(manifestPath, boundary string) (pluginjson.Report, error) {
 // file) without the escaping state ever being what containment examined --
 // proven by TestPluginValidate_Finding_ParentSymlinkRaceAcrossLookups.
 //
-// os.OpenRoot(boundary) pins one directory handle; Lstat and Open below
-// both resolve rel against that SAME handle, and each resolves and
+// os.OpenRoot(boundary) pins one directory handle; Lstat and openRootFile
+// below both resolve rel against that SAME handle, and each resolves and
 // escape-checks every component of the walk fresh, at the moment of that
 // specific call -- there is no separate containment step whose verdict can
 // go stale before the open it was meant to gate. This closes the parent
-// case; the leaf-level race between Lstat and Open (a symlink or a
-// different file swapped in between the two) is unaffected by this and
-// remains os.SameFile's job, exactly as on the no-boundary path above.
+// case; the leaf-level race between Lstat and Open (a symlink, or a
+// candidate swapped to a FIFO, between the two) is unaffected by this and
+// remains os.SameFile's and rootOpenExtraFlags's job respectively, exactly
+// as on the no-boundary path above.
 func readManifestInRoot(manifestPath, boundary string) (pluginjson.Report, error) {
 	rel, err := filepath.Rel(boundary, manifestPath)
 	if err != nil {
@@ -236,16 +253,11 @@ func readManifestInRoot(manifestPath, boundary string) (pluginjson.Report, error
 		return pluginjson.Report{}, readError(manifestPath, errNotRegularFile)
 	}
 
-	f, err := root.Open(rel)
+	f, openInfo, err := openRootFile(root, rel)
 	if err != nil {
 		return pluginjson.Report{}, readError(manifestPath, rootEscapeErr(err))
 	}
 	defer f.Close()
-
-	openInfo, err := f.Stat()
-	if err != nil {
-		return pluginjson.Report{}, readError(manifestPath, err)
-	}
 
 	return finishRead(manifestPath, checkInfo, openInfo, f)
 }
