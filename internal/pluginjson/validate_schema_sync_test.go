@@ -292,15 +292,6 @@ func stringSet(values ...string) map[string]bool {
 	return out
 }
 
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // assertFieldSetsEqual mirrors internal/pack/bundle/schema_sync_test.go's
 // identical-in-spirit helper: report BOTH directions of a mismatch (only in
 // a, only in b), never a bare boolean, so a failure's message alone tells a
