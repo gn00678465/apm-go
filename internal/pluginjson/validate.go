@@ -91,6 +91,7 @@ const (
 	kindDependencyList
 	kindArrayOfObject
 	kindStringOrArrayOfObject
+	kindStringOrObjectOrMixedArray
 )
 
 // ruleSource records where a known field comes from (research.md R-03),
@@ -141,11 +142,25 @@ var rules = []rule{
 	{Name: "dependencies", Kind: kindDependencyList, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "description", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "homepage", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
-	{Name: "hooks", Kind: kindStringArrayOrObject, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
+	// anyOf a "./"-suffixed .json path string, an object of event-name ->
+	// hook-entry arrays, or an array whose OWN elements may individually be
+	// either of those two shapes -- upstream b75a02b1's vendored schema's
+	// array branch items anyOf a path string alongside an inline hooks
+	// object, in the very same array. kindStringArrayOrObject (array-of-
+	// string only) wrongly rejected that object-array element (WP02 finding 1).
+	{Name: "hooks", Kind: kindStringOrObjectOrMixedArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "keywords", Kind: kindArrayOfString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "license", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
-	{Name: "lspServers", Kind: kindStringArrayOrObject, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
-	{Name: "mcpServers", Kind: kindStringArrayOrObject, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
+	// Same anyOf shape as "hooks" above (path string, keyed object, or an
+	// array mixing string and object elements) -- upstream b75a02b1's
+	// vendored schema's array branch items anyOf a path string alongside an
+	// inline LSP-server-configurations object.
+	{Name: "lspServers", Kind: kindStringOrObjectOrMixedArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
+	// Same anyOf shape as "hooks"/"lspServers" above -- upstream b75a02b1's
+	// vendored schema's array branch items anyOf a path string, a
+	// stdio/sse/http/ws server URL string, or an inline MCP-server-
+	// configurations object, all three within the very same array.
+	{Name: "mcpServers", Kind: kindStringOrObjectOrMixedArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	// anyOf a "./"-prefixed .json path string or an array of objects (each
 	// requiring name/command/description) -- upstream b75a02b1's vendored
 	// tests/fixtures/schemas/claude-code-plugin.schema.json, "monitors";
@@ -597,6 +612,11 @@ func checkKind(raw json.RawMessage, kind ruleKind) bool {
 		}
 		_, ok := decodeArrayOfStrings(raw)
 		return ok
+	case kindStringOrObjectOrMixedArray:
+		if isJSONString(raw) || isJSONObject(raw) {
+			return true
+		}
+		return isArrayOfStringOrObject(raw)
 	case kindDependencyList:
 		return isJSONArray(raw)
 	case kindArrayOfObject:
@@ -606,6 +626,28 @@ func checkKind(raw json.RawMessage, kind ruleKind) bool {
 	default:
 		return false
 	}
+}
+
+// isArrayOfStringOrObject reports whether raw is a JSON array whose every
+// element is individually a JSON string or a JSON object (kindStringOrObjectOrMixedArray,
+// e.g. "hooks"/"mcpServers"/"lspServers": the vendored schema's array branch
+// items anyOf a path string alongside an inline configuration object, both
+// legal in the very same array -- unlike "commands", whose array branch is
+// string-only (kindStringArrayOrObject)).
+func isArrayOfStringOrObject(raw json.RawMessage) bool {
+	if !isJSONArray(raw) {
+		return false
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return false
+	}
+	for _, e := range arr {
+		if !isJSONString(e) && !isJSONObject(e) {
+			return false
+		}
+	}
+	return true
 }
 
 // isArrayOfObjects reports whether raw is a JSON array whose every element
@@ -638,7 +680,7 @@ func kindMismatchMessage(field string, kind ruleKind) string {
 		return fmt.Sprintf("'%s' must be an array of strings", field)
 	case kindStringOrArray:
 		return fmt.Sprintf("'%s' must be a string or array", field)
-	case kindStringArrayOrObject:
+	case kindStringArrayOrObject, kindStringOrObjectOrMixedArray:
 		return fmt.Sprintf("'%s' must be a string, array, or object", field)
 	case kindDependencyList:
 		return fmt.Sprintf("'%s' must be an array", field)

@@ -433,6 +433,8 @@ func ruleKindKnownSchemaTypes(k ruleKind) map[string]bool {
 		return stringSet("string", "array")
 	case kindStringArrayOrObject:
 		return stringSet("string", "object", "array")
+	case kindStringOrObjectOrMixedArray:
+		return stringSet("string", "object", "array")
 	case kindDependencyList:
 		return stringSet("array")
 	case kindArrayOfObject:
@@ -468,6 +470,8 @@ func ruleKindArrayItemCommitment(k ruleKind) map[string]bool {
 		return stringSet("object")
 	case kindStringArrayOrObject:
 		return stringSet("string")
+	case kindStringOrObjectOrMixedArray:
+		return stringSet("string", "object")
 	default:
 		return nil
 	}
