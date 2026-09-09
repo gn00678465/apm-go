@@ -9,6 +9,7 @@ package pluginjson
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -484,5 +485,224 @@ func TestValidate(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","metadata":{"n":1e1000},"skills":"/outside"}`)), false, []Finding{
 			{Paths, LevelError, "'skills' must not be an absolute path"},
 		})
+	})
+
+	t.Run("EdgeCase-dependencies-whole-field-not-array", func(t *testing.T) {
+		// contracts/cli-plugin-validate.md's Messages table has no dedicated
+		// scenario for "dependencies" itself being non-array (only the
+		// dependencies[i] element messages are listed); checkDependencies'
+		// own doc comment picks "must be an array" to follow that table's
+		// naming convention for the unlisted case.
+		assertReport(t, Validate([]byte(`{"name":"x","dependencies":"oops"}`)), false, []Finding{
+			{Fields, LevelError, "'dependencies' must be an array"},
+		})
+	})
+
+	t.Run("EdgeCase-author-unknown-subfield-ignored", func(t *testing.T) {
+		// checkAuthor only type-checks name/email/url; data-model.md's rule
+		// table has no unrecognized-subfield check for nested author keys
+		// (unlike experimental), so an extra key produces no finding at all.
+		assertReport(t, Validate([]byte(`{"name":"x","author":{"foo":"bar"}}`)), false, nil)
+	})
+
+	t.Run("EdgeCase-experimental-subkey-did-you-mean", func(t *testing.T) {
+		// 'theme' is a Damerau-Levenshtein distance of 1 from 'themes'
+		// (contracts/cli-plugin-validate.md: suggestion when distance <= 2),
+		// exercising unrecognizedExperimentalFinding's own suggestion branch
+		// rather than the top-level unrecognizedFinding one US2-AS1 pins.
+		assertReport(t, Validate([]byte(`{"name":"x","experimental":{"theme":1}}`)), false, []Finding{
+			{Unrecognized, LevelWarning, "unrecognized field 'experimental.theme' (did you mean 'themes'?)"},
+		})
+	})
+
+	t.Run("EdgeCase-keywords-element-not-string", func(t *testing.T) {
+		// Distinct from US1-AS4 (keywords itself not an array): here the
+		// field IS an array, but one element is not a string, so the
+		// failure comes from decodeArrayOfStrings' element loop rather than
+		// the top-level isJSONArray check.
+		assertReport(t, Validate([]byte(`{"name":"x","keywords":[1]}`)), false, []Finding{
+			{Fields, LevelError, "'keywords' must be an array of strings"},
+		})
+	})
+
+	t.Run("EdgeCase-hooks-bare-scalar-rejected", func(t *testing.T) {
+		// Neither a path string, an inline object, nor an array -- must fail
+		// before ever reaching isArrayOfStringOrObject's element loop
+		// (EdgeCase-hooks-array-element-wrong-type-rejected covers that).
+		assertReport(t, Validate([]byte(`{"name":"x","hooks":42}`)), false, []Finding{
+			{Fields, LevelError, "'hooks' must be a string, array, or object"},
+		})
+	})
+
+	t.Run("EdgeCase-channels-bare-scalar-rejected", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","channels":42}`)), false, []Finding{
+			{Fields, LevelError, "'channels' must be an array of objects"},
+		})
+	})
+
+	t.Run("EdgeCase-defaultEnabled-wrong-type", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","defaultEnabled":"yes"}`)), false, []Finding{
+			{Fields, LevelError, "'defaultEnabled' must be a boolean"},
+		})
+	})
+}
+
+// TestCheckStringUnknown pins Check.String()'s fallback for a Check value
+// outside the five declared constants -- unreachable through Validate()
+// (which only ever constructs the five), so it is exercised directly on the
+// exported type/method.
+func TestCheckStringUnknown(t *testing.T) {
+	if got := Check(99).String(); got != "Unknown" {
+		t.Errorf("Check(99).String() = %q, want %q", got, "Unknown")
+	}
+}
+
+// TestValidateInternalDefensiveBranches exercises the package's own
+// defensive contract on its unexported helpers directly: never panic on
+// malformed input, return the documented empty/zero result instead.
+//
+// Every raw value Validate() itself hands to these helpers is already a
+// complete, syntactically-valid JSON fragment extracted by an earlier
+// json.Unmarshal/json.Decoder pass over the same bytes -- re-decoding it can
+// therefore never fail, which makes these branches unreachable through
+// Validate([]byte) alone (confirmed empirically: re-unmarshaling identical
+// bytes, including pathological ones like 1e1000, duplicate keys, and lone
+// UTF-16 surrogates, never diverges from the first, successful parse). The
+// only way to observe the guard is to feed the helper input a real parse
+// could never produce, which is legitimate here because validate_test.go is
+// `package pluginjson`, not an external test package.
+func TestValidateInternalDefensiveBranches(t *testing.T) {
+	t.Run("checkAuthor-malformed-object", func(t *testing.T) {
+		if got := checkAuthor(json.RawMessage(`{"name":`)); got != nil {
+			t.Errorf("checkAuthor(malformed) = %+v, want nil", got)
+		}
+	})
+
+	t.Run("checkDependencies-malformed-array", func(t *testing.T) {
+		if got := checkDependencies(json.RawMessage(`[1,`)); got != nil {
+			t.Errorf("checkDependencies(malformed) = %+v, want nil", got)
+		}
+	})
+
+	t.Run("checkDependencyElement-malformed-object", func(t *testing.T) {
+		if got := checkDependencyElement(0, json.RawMessage(`{"name":`)); got != nil {
+			t.Errorf("checkDependencyElement(malformed) = %+v, want nil", got)
+		}
+	})
+
+	t.Run("checkExperimental-malformed-object", func(t *testing.T) {
+		ee, ep, eu := checkExperimental(json.RawMessage(`{"themes":`))
+		if ee != nil || ep != nil || eu != nil {
+			t.Errorf("checkExperimental(malformed) = (%+v, %+v, %+v), want (nil, nil, nil)", ee, ep, eu)
+		}
+	})
+
+	t.Run("rawKind-empty-matches-no-kind", func(t *testing.T) {
+		if got := rawKind(json.RawMessage("")); got != 0 {
+			t.Errorf("rawKind(empty) = %v, want 0", got)
+		}
+		if isJSONString(json.RawMessage("")) || isJSONObject(json.RawMessage("  ")) ||
+			isJSONArray(json.RawMessage("")) || isJSONBool(json.RawMessage("")) {
+			t.Error("empty/whitespace RawMessage must match no JSON kind")
+		}
+	})
+
+	t.Run("decodeString-truncated", func(t *testing.T) {
+		s, ok := decodeString(json.RawMessage(`"abc`))
+		if ok || s != "" {
+			t.Errorf("decodeString(truncated) = (%q, %v), want (\"\", false)", s, ok)
+		}
+	})
+
+	t.Run("decodeArrayOfStrings-malformed", func(t *testing.T) {
+		got, ok := decodeArrayOfStrings(json.RawMessage(`[1,`))
+		if ok || got != nil {
+			t.Errorf("decodeArrayOfStrings(malformed) = (%v, %v), want (nil, false)", got, ok)
+		}
+	})
+
+	t.Run("checkKind-dependencyList-implemented-for-completeness", func(t *testing.T) {
+		// checkKind's own doc comment: kindDependencyList is only reached
+		// defensively today (Validate special-cases "dependencies" before
+		// ever calling checkKind with it), since data-model.md's rule table
+		// lists dependency-list as a legitimate Kind.
+		if !checkKind(json.RawMessage(`[]`), kindDependencyList) {
+			t.Error("checkKind([], kindDependencyList) = false, want true")
+		}
+		if checkKind(json.RawMessage(`{}`), kindDependencyList) {
+			t.Error("checkKind({}, kindDependencyList) = true, want false")
+		}
+	})
+
+	t.Run("checkKind-unknown-kind-rejects", func(t *testing.T) {
+		if checkKind(json.RawMessage(`"x"`), ruleKind(99)) {
+			t.Error("checkKind with an unknown ruleKind = true, want false")
+		}
+	})
+
+	t.Run("isArrayOfStringOrObject-malformed-array", func(t *testing.T) {
+		if isArrayOfStringOrObject(json.RawMessage(`[1,`)) {
+			t.Error("isArrayOfStringOrObject(malformed) = true, want false")
+		}
+	})
+
+	t.Run("isArrayOfObjects-malformed-array", func(t *testing.T) {
+		if isArrayOfObjects(json.RawMessage(`[1,`)) {
+			t.Error("isArrayOfObjects(malformed) = true, want false")
+		}
+	})
+
+	t.Run("kindMismatchMessage-dependencyList", func(t *testing.T) {
+		if got := kindMismatchMessage("dependencies", kindDependencyList); got != "'dependencies' must be an array" {
+			t.Errorf("kindMismatchMessage(dependencyList) = %q, want %q", got, "'dependencies' must be an array")
+		}
+	})
+
+	t.Run("kindMismatchMessage-unknown-kind", func(t *testing.T) {
+		want := "'field' has an unrecognized type"
+		if got := kindMismatchMessage("field", ruleKind(99)); got != want {
+			t.Errorf("kindMismatchMessage(unknown) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("pathValues-malformed-array", func(t *testing.T) {
+		elems, isArray, ok := pathValues(json.RawMessage(`[1,`))
+		if elems != nil || isArray || ok {
+			t.Errorf("pathValues(malformed) = (%v, %v, %v), want (nil, false, false)", elems, isArray, ok)
+		}
+	})
+}
+
+// TestScanObjectKeysDefensive exercises scanObjectKeys' own error returns
+// directly with byte sequences no Validate() call can produce (every caller
+// hands it a value already known syntactically valid) -- see
+// TestValidateInternalDefensiveBranches' doc comment for why direct calls
+// are the only way to reach these.
+func TestScanObjectKeysDefensive(t *testing.T) {
+	assertEmpty := func(t *testing.T, label string, order []string, counts map[string]int) {
+		t.Helper()
+		if len(order) != 0 || len(counts) != 0 {
+			t.Errorf("%s: scanObjectKeys = (%v, %v), want both empty", label, order, counts)
+		}
+	}
+
+	t.Run("empty-input-first-token-eof", func(t *testing.T) {
+		order, counts := scanObjectKeys([]byte(""))
+		assertEmpty(t, "empty", order, counts)
+	})
+
+	t.Run("top-level-array-not-object", func(t *testing.T) {
+		order, counts := scanObjectKeys([]byte("[1,2]"))
+		assertEmpty(t, "array", order, counts)
+	})
+
+	t.Run("malformed-key-token", func(t *testing.T) {
+		order, counts := scanObjectKeys([]byte(`{@`))
+		assertEmpty(t, "malformed key", order, counts)
+	})
+
+	t.Run("malformed-value-token", func(t *testing.T) {
+		order, counts := scanObjectKeys([]byte(`{"a":`))
+		assertEmpty(t, "malformed value", order, counts)
 	})
 }
