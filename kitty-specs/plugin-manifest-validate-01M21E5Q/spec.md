@@ -56,11 +56,11 @@ CI 對 plugin 倉庫執行 `apm-go plugin validate --strict`，把「Claude Code
 
 ### User Story 3 - 敵意或損壞的 manifest 得到明確診斷而非崩潰 (Priority: P3)
 
-作者或自動化流程把損壞、過大、深巢狀或非 UTF-8 的檔案丟給驗證器時，得到一行 Structure 錯誤與 exit 1，其他檢查不列出；驗證過程不寫入、不修改任何檔案。
+作者或自動化流程把損壞、深巢狀或非 UTF-8 的檔案丟給驗證器時，得到一行 Structure 錯誤與 exit 1，其他檢查不列出；過大的檔案則由 CLI 在讀取前以 `could not read` 一行拒絕，同樣 exit 1 且不印 Results 與 Summary。兩種情形都不寫入、不修改任何檔案。
 
 **Why this priority**: 驗證器會被用在 CI 與不受信任的第三方 plugin 上；崩潰或誤寫檔比誤報更糟。
 
-**Independent Test**: 對 `{`、`[]`、空檔、含 0xFF 位元組、1 MiB 的 `[[[[…`、6 MiB 檔各執行一次，全部得到 Structure error 與 exit 1，且目錄快照前後位元相同。
+**Independent Test**: 對 `{`、`[]`、空檔、含 0xFF 位元組、1 MiB 的 `[[[[…` 各執行一次，全部得到 Structure error 與 exit 1；6 MiB 檔得到 `could not read` 一行與 exit 1，不印 Results 與 Summary。所有情形的目錄快照前後位元相同。
 
 **Acceptance Scenarios**:
 
