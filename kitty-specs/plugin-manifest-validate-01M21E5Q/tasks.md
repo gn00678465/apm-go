@@ -26,7 +26,7 @@
 **Goal**: A pure function `Validate(data []byte) Report` in `internal/pluginjson` that runs Structure, Name, Fields, Paths, and Unrecognized checks against a rule table, producing the `Finding`/`Report` shapes `data-model.md` defines.
 **Independent Test**: `go test ./internal/pluginjson/ -run TestValidate` is green with one subtest per spec.md acceptance scenario/edge case that IC-01 covers (Structure, Name, Fields, Paths, Unrecognized).
 **Prompt**: `tasks/WP01-validator-core.md`
-**Requirement Refs**: FR-003, FR-004, FR-005, FR-006, FR-007, NFR-002, NFR-003, C-004
+**Requirement Refs**: FR-003, FR-004, FR-005, FR-006, FR-007, NFR-002, NFR-003, C-002, C-004, C-007, SC-002
 
 ### Included Subtasks
 
@@ -64,7 +64,7 @@ T007 Write `internal/pluginjson/validate_test.go`: one table-driven subtest per 
 **Goal**: Turn C-004's "known fields = schema ∪ docs ∪ apm-go" rule and NFR-002/NFR-004 into executable, anti-drift tests: a vendored official schema, a sync test asserting the rule table against it, a `testing/quick` property test, and a native Go fuzz target.
 **Independent Test**: `go test ./internal/pluginjson/` (schema sync + property) green; `go test ./internal/pluginjson/ -run '^$' -fuzz FuzzValidateBytes -fuzztime 30s` reports no crashers.
 **Prompt**: `tasks/WP02-hardening-evidence.md`
-**Requirement Refs**: NFR-002, NFR-004, C-004, SC-002, SC-003
+**Requirement Refs**: NFR-002, NFR-004, C-004, SC-003
 
 ### Included Subtasks
 
@@ -100,7 +100,7 @@ T012 Run `go test ./internal/pluginjson/ -run '^$' -fuzz FuzzValidateBytes -fuzz
 **Goal**: `apm-go plugin validate [path] [--strict] [-v]` wired into `cmd/apm-go`: manifest location (upstream `find_plugin_json` order), rendering matching `contracts/cli-plugin-validate.md` byte-for-byte, `--strict`/`-v` flags, and exit 0/1/2.
 **Independent Test**: `quickstart.md`'s three manual scenarios (clean scaffold, typo field, broken manifest) reproduce exactly; `go test ./cmd/apm-go/ -run TestPluginValidate` is green.
 **Prompt**: `tasks/WP03-cli-subcommand.md`
-**Requirement Refs**: FR-001, FR-002, FR-008, FR-009, FR-010, FR-011, FR-012, NFR-001, NFR-003, NFR-005, C-003
+**Requirement Refs**: FR-001, FR-002, FR-008, FR-009, FR-010, FR-011, FR-012, NFR-001, NFR-003, NFR-005, C-002, C-003, C-005, C-006, SC-002, SC-004
 
 ### Included Subtasks
 
@@ -136,13 +136,13 @@ T017 Write `cmd/apm-go/plugin_validate_test.go`: one cobra end-to-end subtest pe
 **Goal**: Make C-005's documentation commitment and the plan's Gate 2 disposition (realexec-fixed contract, no parity case) real: new `realexec.sh` steps, new mutants, and the four-document update (PRODUCT.md, ARCHITECTURE.md, README.md, README.zh-TW.md), then a full green `tools/gate.sh` run.
 **Independent Test**: `sh tools/gate.sh -scope plugin-manifest-validate` exits 0 with an evidence report under `.gate/plugin-manifest-validate/`.
 **Prompt**: `tasks/WP04-gate-and-docs.md`
-**Requirement Refs**: C-001, C-005, SC-001, SC-004, SC-005, SC-006
+**Requirement Refs**: C-001, C-005, SC-001, SC-005, SC-006
 
 ### Included Subtasks
 
 T018 Add 2 happy-path steps to `tools/gate/realexec.sh`: validate the `plugin init --target claude` scaffold and the `plugin init --format agent-plugin` scaffold, each asserting exit 0, the complete stdout against a recorded expectation, an empty stderr, and a recursive before/after comparison of the fixture tree (ticket 34 verification strength)
 T019 Add 4 adversarial steps to `tools/gate/realexec.sh`: invalid-JSON manifest (exit 1, Structure message), a path field escaping the plugin root (exit 1, Paths message), a typo'd field with `--strict` (exit 1), and a directory with no candidate manifest (exit 1, "no plugin.json found" + all four candidate paths) — each asserting the exact exit code, the complete stdout against a recorded expectation, an empty stderr, and a recursive before/after comparison of the fixture tree (ticket 34 verification strength)
-T020 Add 2 mutants to `tools/gate/mutants.txt` targeting `internal/pluginjson/validate.go` with unique, single-occurrence anchor strings: one inverting a Fields type-check branch, one making `--strict` fail to upgrade a warning to a failing exit
+T020 Add 2 mutants to `tools/gate/mutants.txt` with unique, single-occurrence anchor strings: one inverting a Fields type-check branch in `internal/pluginjson/validate.go`, one in `cmd/apm-go/plugin_validate.go` making `--strict` fail to upgrade a warning to a failing exit
 T021 [P] Update `PRODUCT.md`'s Capabilities command surface list to include `plugin validate` alongside `plugin`'s existing entries, and add it to the constraints list documenting the deviation from Oracle parity (no corresponding upstream command)
 T022 [P] Update `ARCHITECTURE.md` §2's `pluginjson` package row to add a `Validate` entry point, and append one sentence to §3.5 noting `plugin validate` is a read-only, Oracle-less sibling command sharing `runInitCore`'s package but not its data flow
 T023 [P] Update `README.md` and `README.zh-TW.md` command tables to list `plugin validate` next to `plugin init`
@@ -194,7 +194,7 @@ T024 Run `sh tools/gate.sh -scope plugin-manifest-validate` to completion; fix a
 | FR-011 | WP03 |
 | FR-012 | WP03 |
 | NFR-001 | WP03 |
-| NFR-002 | WP02 |
+| NFR-002 | WP01, WP02 |
 | NFR-003 | WP01, WP03 |
 | NFR-004 | WP02 |
 | NFR-005 | WP03 |
@@ -233,11 +233,11 @@ T024 Run `sh tools/gate.sh -scope plugin-manifest-validate` to completion; fix a
 | T013 | Manifest location logic | WP03 | P1 | No |
 | T014 | Result rendering | WP03 | P1 | No |
 | T015 | --strict + exit codes | WP03 | P1 | No |
-| T016 | Wire into plugin.go + rewrite deviation comment | WP03 | P1 | No |
+| T016 | Wire into plugin.go + rewrite deviation comment | WP03 | P1 | Yes |
 | T017 | plugin_validate_test.go end-to-end scenarios | WP03 | P1 | No |
 | T018 | realexec.sh happy-path steps (2) | WP04 | P2 | No |
 | T019 | realexec.sh adversarial steps (4) | WP04 | P2 | No |
-| T020 | mutants.txt +2 | WP04 | P2 | No |
+| T020 | mutants.txt +2 | WP04 | P2 | Yes |
 | T021 | PRODUCT.md update | WP04 | P2 | Yes |
 | T022 | ARCHITECTURE.md update | WP04 | P2 | Yes |
 | T023 | README.md / README.zh-TW.md update | WP04 | P2 | Yes |
