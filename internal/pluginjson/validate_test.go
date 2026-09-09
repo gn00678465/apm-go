@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func assertReport(t *testing.T, got Report, wantStructureFailed bool, want []Finding) {
@@ -555,6 +557,35 @@ func TestValidate(t *testing.T) {
 			{Fields, LevelError, "'defaultEnabled' must be a boolean"},
 		})
 	})
+}
+
+// TestValidate_LongUnknownKeyRespondsPromptly is the counterexample for the
+// HIGH pre-merge audit finding against NFR-002 (kitty-specs/plugin-manifest-
+// validate-01M21E5Q/spec.md): suggestFor's damerauLevenshtein call built a
+// full (len(key)+1)x(len(candidate)+1) edit-distance matrix for every
+// candidate before checking whether the two lengths could possibly be within
+// the <=2 suggestion threshold. A syntactically legal manifest carrying a
+// multi-MiB unknown key (well under the 5 MiB whole-file cap) made that
+// matrix -- and the per-row slice allocations backing it -- on the order of
+// hundreds of MB and millions of allocations per candidate, for a field that
+// can never earn a suggestion in the first place. Validate must still return
+// promptly with the plain Unrecognized finding and no "(did you mean ...)"
+// suggestion.
+func TestValidate_LongUnknownKeyRespondsPromptly(t *testing.T) {
+	longKey := strings.Repeat("k", 4*1024*1024)
+	data := []byte(`{"name":"x","` + longKey + `":1}`)
+
+	start := time.Now()
+	report := Validate(data)
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("Validate took %s for a %d-byte unknown key; want well under 2s", elapsed, len(longKey))
+	}
+	want := []Finding{
+		{Unrecognized, LevelWarning, fmt.Sprintf("unrecognized field '%s'", longKey)},
+	}
+	assertReport(t, report, false, want)
 }
 
 // TestCheckStringUnknown pins Check.String()'s fallback for a Check value

@@ -873,19 +873,37 @@ func damerauLevenshtein(a, b string) int {
 	return d[la][lb]
 }
 
+// suggestThreshold is the maximum damerauLevenshtein distance suggestFor
+// will offer a suggestion for.
+const suggestThreshold = 2
+
 // suggestFor returns the candidate closest to key by damerauLevenshtein when
-// that distance is <= 2, breaking ties alphabetically; "" when none qualify.
+// that distance is <= suggestThreshold, breaking ties alphabetically; "" when
+// none qualify.
 func suggestFor(key string, candidates []string) string {
+	keyLen := utf8.RuneCountInString(key)
 	best := ""
 	bestDist := -1
 	for _, c := range candidates {
+		// A rune-length gap beyond the threshold rules the candidate out
+		// before damerauLevenshtein ever runs: its edit distance can never
+		// be smaller than that gap, so computing it -- allocating an
+		// O(len(key)*len(c)) matrix to do so -- for a candidate this far off
+		// can never change the result. Without this, an unknown key of a
+		// few MiB (legal under the whole-manifest 5 MiB cap) built that
+		// matrix once per candidate, hundreds of MB and millions of
+		// allocations for a suggestion that could never fire (NFR-002).
+		gap := keyLen - utf8.RuneCountInString(c)
+		if gap > suggestThreshold || gap < -suggestThreshold {
+			continue
+		}
 		dist := damerauLevenshtein(key, c)
 		if bestDist == -1 || dist < bestDist || (dist == bestDist && c < best) {
 			bestDist = dist
 			best = c
 		}
 	}
-	if bestDist >= 0 && bestDist <= 2 {
+	if bestDist >= 0 && bestDist <= suggestThreshold {
 		return best
 	}
 	return ""
