@@ -39,6 +39,24 @@ func writeManifest(t *testing.T, dir, rel, content string) {
 	}
 }
 
+// requireSymlinkSupport skips the calling test only if this host actually
+// cannot create a symlink, instead of assuming Windows never can: Developer
+// Mode (or elevation) lets os.Symlink succeed on Windows, and a blanket
+// runtime.GOOS=="windows" skip would then hide these tests' evidence on a
+// machine where the capability is present.
+func requireSymlinkSupport(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink creation unavailable on this host (%v); needs Developer Mode or elevation on Windows", err)
+	}
+}
+
 // snapshotTree is this file's name for the package's shared treeSnapshot
 // helper (pack_format_test.go) -- NFR-001's before/after read-only proof.
 func snapshotTree(t *testing.T, dir string) map[string]string {
@@ -593,9 +611,7 @@ func execPluginValidateFull(t *testing.T, args ...string) (stdout, stderr string
 // a symlink, so a real file reached through a symlinked PARENT directory
 // was never checked at all and would have been read.
 func TestPluginValidate_Finding1_ParentSymlinkEscapeRejected(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating a symlink requires elevated privileges on windows; the parent-directory containment check is exercised on unix")
-	}
+	requireSymlinkSupport(t)
 	outside := t.TempDir()
 	writeManifest(t, outside, "plugin.json", `{"name":"escaped-content"}`)
 
@@ -634,9 +650,7 @@ func TestPluginValidate_Finding1_ParentSymlinkEscapeRejected(t *testing.T) {
 // with no containment or regular-file check at all. NFR-003 authorizes no
 // such exception.
 func TestPluginValidate_Finding2_DirectSymlinkArgumentRejected(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating a symlink requires elevated privileges on windows; the regular-file check is exercised on unix")
-	}
+	requireSymlinkSupport(t)
 	real := t.TempDir()
 	writeManifest(t, real, "real.json", `{"name":"x"}`)
 	link := filepath.Join(t.TempDir(), "plugin.json")
@@ -663,9 +677,7 @@ func TestPluginValidate_Finding2_DirectSymlinkArgumentRejected(t *testing.T) {
 // for being a symlink, before the containment check ever runs, even though
 // its target is a sibling file inside the same directory.
 func TestPluginValidate_Finding2_ProbedSymlinkCandidateRejectedEvenWithinTree(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating a symlink requires elevated privileges on windows; the regular-file check is exercised on unix")
-	}
+	requireSymlinkSupport(t)
 	dir := t.TempDir()
 	writeManifest(t, dir, "real.json", `{"name":"x"}`)
 	if err := os.Symlink(filepath.Join(dir, "real.json"), filepath.Join(dir, "plugin.json")); err != nil {
