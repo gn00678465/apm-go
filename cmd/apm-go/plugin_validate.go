@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,9 +15,10 @@ import (
 )
 
 // maxManifestBytes is the primary enforcement point for the 5 MiB cap
-// (T013 step 6): the Stat here rejects an oversized file before any read,
-// so pluginjson.Validate's own defensive length check is a second line of
-// defense only, never the first to see an oversized manifest's bytes.
+// (T013 step 6): readAndValidate rejects an oversized file before any read
+// completes, so pluginjson.Validate's own defensive length check is a
+// second line of defense only, never the first to see an oversized
+// manifest's bytes.
 const maxManifestBytes = 5 * 1024 * 1024
 
 // pluginValidateCmd is `apm-go plugin validate` (mission plugin-manifest-
@@ -63,24 +65,28 @@ func pluginValidateCmd() *cobra.Command {
 	return cmd
 }
 
-// runPluginValidate implements the fixed locate -> stat (size cap) -> read
-// -> Validate -> render -> exit sequence (data-model.md "State
-// transitions"). Any step failure prints its own ` x <message>` line and
-// returns withSilentExitCode(1, ...) so main's error renderer does not
-// print a second, redundant line.
+// runPluginValidate implements the fixed locate -> announce -> read
+// (regular-file/boundary/size) -> Validate -> render -> exit sequence
+// (data-model.md "State transitions"). Locate failure (no candidate exists
+// at all) prints before any progress line, matching contracts/cli-plugin-
+// validate.md's "找不到 manifest" row; every failure past that point --
+// including a disallowed file type, an escaping symlink, an oversized file,
+// and an OS-reported I/O error -- is a "could not read" failure that prints
+// after the progress line with no Results/Summary block (same contract,
+// "無法讀取 manifest" row). Both step failures return withSilentExitCode(1,
+// ...) so main's error renderer does not print a second, redundant line.
 func runPluginValidate(cmd *cobra.Command, path string, strict, verbose bool) error {
 	w := cmd.OutOrStdout()
 
-	manifestPath, locErr := locatePluginManifest(path)
+	loc, locErr := locatePluginManifest(path)
 	if locErr != nil {
 		ux.Error(w, "%s", locErr)
 		return withSilentExitCode(1, locErr)
 	}
 
-	displayPath := filepath.ToSlash(manifestPath)
-	ux.Progress(w, "Validating plugin '%s'...", displayPath)
+	ux.Progress(w, "Validating plugin '%s'...", displayManifestPath(loc.path))
 
-	report, readErr := readAndValidate(manifestPath)
+	report, readErr := readAndValidate(loc.path, loc.boundary)
 	if readErr != nil {
 		ux.Error(w, "%s", readErr)
 		return withSilentExitCode(1, readErr)
@@ -97,30 +103,128 @@ func runPluginValidate(cmd *cobra.Command, path string, strict, verbose bool) er
 	return nil
 }
 
-// readAndValidate performs T013 steps 6-7 (size cap, then read) followed by
-// WP01's pure Validate. An oversized file never reaches os.ReadFile: its
-// Report is synthesized directly in the same shape structureFailure would
-// produce, so rendering (T014) does not need to know which path produced it.
-func readAndValidate(manifestPath string) (pluginjson.Report, error) {
-	info, err := os.Stat(manifestPath)
+// errNotRegularFile and errEscapesPath are the two read-boundary policy
+// violations locatePluginManifest cannot rule out by name alone (WP03
+// review findings 1-2): NFR-003 grants no exception for a symlink, FIFO,
+// device, or socket -- whether it is the caller's own path argument or a
+// directory-probed candidate -- and no exception for a candidate that
+// resolves outside the directory it was probed under. Both are enforced in
+// readAndValidate, uniformly, regardless of how manifestPath was obtained.
+var (
+	errNotRegularFile = errors.New("not a regular file")
+	errEscapesPath    = errors.New("outside the given path")
+)
+
+// readError renders the read-failure wording contracts/cli-plugin-
+// validate.md's "無法讀取 manifest" row carries (WP03 review finding 6):
+// one family, covering a disallowed file type, an escaping path, an
+// oversized file, and a genuine OS I/O error alike.
+func readError(path string, cause error) error {
+	return fmt.Errorf("could not read '%s': %w", filepath.ToSlash(path), cause)
+}
+
+// manifestFile is the minimal handle readAndValidate reads a manifest
+// through. *os.File satisfies it directly; tests substitute a fake whose
+// Read yields more bytes than its own Stat reported, which is how the
+// bounded-read refusal below is proven deterministically -- a real
+// filesystem race (grow the file between the size check and the read
+// finishing) cannot be reproduced reliably across platforms in a test.
+type manifestFile = io.ReadCloser
+
+// openManifestFile is the seam readAndValidate opens the manifest through,
+// overridable by tests. The size comes from Stat on this same open handle
+// (fstat on the fd), not a second path-based Stat call, so a link swapped
+// into manifestPath after openManifestFile returns cannot change what size
+// gets checked.
+var openManifestFile = func(path string) (manifestFile, os.FileInfo, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return pluginjson.Report{}, fmt.Errorf("could not read %s: %w", filepath.ToSlash(manifestPath), err)
+		return nil, nil, err
 	}
-	if info.Size() > maxManifestBytes {
-		return pluginjson.Report{
-			Findings: []pluginjson.Finding{{
-				Check:   pluginjson.Structure,
-				Level:   pluginjson.LevelError,
-				Message: fmt.Sprintf("file exceeds 5 MiB cap (%d bytes)", info.Size()),
-			}},
-			StructureFailed: true,
-		}, nil
-	}
-	data, err := os.ReadFile(manifestPath)
+	info, err := f.Stat()
 	if err != nil {
-		return pluginjson.Report{}, fmt.Errorf("could not read %s: %w", filepath.ToSlash(manifestPath), err)
+		f.Close()
+		return nil, nil, err
+	}
+	return f, info, nil
+}
+
+// readAndValidate performs T013 steps 6-7 (regular-file/boundary check,
+// size cap, then read) followed by WP01's pure Validate. boundary is the
+// directory a directory-probed candidate must resolve inside, or "" when
+// manifestPath was the caller's own path argument (WP03 review finding 2:
+// an explicit argument gets no containment check, only the same
+// regular-file requirement -- there is no directory to escape).
+//
+// The boundary closes two gaps found in WP03 review:
+//   - finding 1/2: a symlink is rejected outright (errNotRegularFile),
+//     never resolved-and-checked-for-escape; a directory-probed candidate
+//     whose real location (parent symlinks included) falls outside
+//     boundary is rejected as errEscapesPath. The file actually opened is
+//     held to the same constraint via a post-open os.SameFile comparison
+//     against the pre-open Lstat, so a link swapped into manifestPath
+//     between the two calls cannot substitute a different file.
+//   - finding 3: the actual read is bounded to maxManifestBytes+1 via
+//     io.LimitReader regardless of what Stat/Fstat reported, so a file
+//     grown after the size check is refused here instead of being read in
+//     full and handed to pluginjson.Validate.
+func readAndValidate(manifestPath, boundary string) (pluginjson.Report, error) {
+	checkInfo, err := os.Lstat(manifestPath)
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, err)
+	}
+	if !checkInfo.Mode().IsRegular() {
+		return pluginjson.Report{}, readError(manifestPath, errNotRegularFile)
+	}
+	if boundary != "" && !pathStaysWithin(boundary, manifestPath) {
+		return pluginjson.Report{}, readError(manifestPath, errEscapesPath)
+	}
+
+	f, openInfo, err := openManifestFile(manifestPath)
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, err)
+	}
+	defer f.Close()
+
+	if !openInfo.Mode().IsRegular() || !os.SameFile(checkInfo, openInfo) {
+		return pluginjson.Report{}, readError(manifestPath, errNotRegularFile)
+	}
+
+	if openInfo.Size() > maxManifestBytes {
+		return pluginjson.Report{}, readError(manifestPath, fmt.Errorf("file exceeds 5 MiB cap (%d bytes)", openInfo.Size()))
+	}
+	// Bounded regardless of what Stat/Fstat reported: a file grown after
+	// that check (finding 3's TOCTOU) is caught here instead of being read
+	// in full and handed to pluginjson.Validate, which has no visibility
+	// into how much was actually requested from disk.
+	data, err := io.ReadAll(io.LimitReader(f, maxManifestBytes+1))
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, err)
+	}
+	if len(data) > maxManifestBytes {
+		return pluginjson.Report{}, readError(manifestPath, fmt.Errorf("file exceeds 5 MiB cap (%d bytes)", len(data)))
 	}
 	return pluginjson.Validate(data), nil
+}
+
+// displayManifestPath relativizes manifestPath to the current working
+// directory for the "Validating plugin '<relative manifest path>'..." line
+// (WP03 review finding 4): an absolute path or directory argument must not
+// leak an absolute path into that line. The path actually opened is
+// unaffected -- only this display value is relativized. Falling back to
+// the absolute, slash-converted path when Rel fails (e.g. a different
+// volume on Windows) keeps the line well-formed rather than erroring the
+// command over a display detail.
+func displayManifestPath(manifestPath string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return filepath.ToSlash(manifestPath)
+	}
+	rel, err := filepath.Rel(cwd, manifestPath)
+	if err != nil {
+		return filepath.ToSlash(manifestPath)
+	}
+	return filepath.ToSlash(rel)
 }
 
 // checkRenderOrder is the fixed output order (data-model.md, T014 step 4).
@@ -180,54 +284,63 @@ func renderReport(w io.Writer, report pluginjson.Report, verbose bool) (passed, 
 	return passed, warnings, errs
 }
 
-// locatePluginManifest resolves path to exactly one manifest file (T013):
-// a regular file (or a symlink -- trusted as given, since the user named it
-// explicitly rather than apm-go discovering it) IS the manifest; a
-// directory is probed via bundle.PluginJSONCandidates in upstream order.
-// Lstat failing (path does not exist) falls through to directory probing,
-// which then fails every candidate too, producing the same "not found"
-// message with path as <dir> -- a reasonable, untested-but-safe fallback
-// for a typo'd path.
-func locatePluginManifest(path string) (string, error) {
-	if info, err := os.Lstat(path); err == nil && !info.IsDir() {
-		return path, nil
-	}
-	return locateInDir(path)
+// manifestLocation is locatePluginManifest's result: the candidate path to
+// read, plus the directory readAndValidate must hold it inside (boundary),
+// or "" when path was the caller's own argument and no directory-escape
+// check applies (WP03 review finding 2).
+type manifestLocation struct {
+	path     string
+	boundary string
 }
 
-// locateInDir implements T013 steps 3-5: the first candidate that EXISTS
-// (Lstat succeeds, regular file or symlink) is selected -- selection never
-// falls back to the next candidate just because the selected one turns out
-// to be an escaping symlink; NFR-003 fails that selection outright, exactly
-// like no candidate existing at all.
-func locateInDir(dir string) (string, error) {
-	var selected string
+// locatePluginManifest resolves path to exactly one manifest candidate by
+// NAME (T013): a directory is probed via bundle.PluginJSONCandidates in
+// upstream order; anything else that exists is that candidate. Locating
+// deliberately does not check the candidate's type or containment -- per
+// contracts/cli-plugin-validate.md, those are read-boundary failures
+// (readAndValidate's job, reported after the progress line), not location
+// failures. Lstat failing (path does not exist) falls through to directory
+// probing, which then fails every candidate too, producing the same "not
+// found" message with path as <dir> -- a reasonable, untested-but-safe
+// fallback for a typo'd path.
+func locatePluginManifest(path string) (manifestLocation, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return locateInDir(path)
+	}
+	if info.IsDir() {
+		return locateInDir(path)
+	}
+	return manifestLocation{path: path}, nil
+}
+
+// locateInDir implements T013 steps 3-5: the first candidate whose Lstat
+// succeeds is selected by name alone -- selection never falls back to the
+// next candidate because the selected one turns out to be disallowed;
+// NFR-003 fails that selection's read outright (via readAndValidate),
+// exactly as if no candidate existing at all, but only after the progress
+// line has named it.
+func locateInDir(dir string) (manifestLocation, error) {
 	for _, candidate := range bundle.PluginJSONCandidates {
 		candPath := filepath.Join(dir, candidate)
 		if _, err := os.Lstat(candPath); err == nil {
-			selected = candPath
-			break
+			return manifestLocation{path: candPath, boundary: dir}, nil
 		}
 	}
-	if selected == "" {
-		return "", notFoundError(dir)
-	}
-	info, err := os.Lstat(selected)
-	if err != nil {
-		return "", notFoundError(dir)
-	}
-	if info.Mode()&os.ModeSymlink != 0 && !symlinkStaysWithin(dir, selected) {
-		return "", notFoundError(dir)
-	}
-	return selected, nil
+	return manifestLocation{}, notFoundError(dir)
 }
 
-// symlinkStaysWithin resolves candPath's link target BEFORE any read and
-// reports whether it stays inside dir's tree (NFR-003: never follow a
-// symlink to outside path). A target that cannot be resolved (broken link,
-// permission error) is treated as escaping -- there is nothing safe to read
-// through it either way.
-func symlinkStaysWithin(dir, candPath string) bool {
+// pathStaysWithin resolves candPath's real location BEFORE any read --
+// following every symlink in the chain, parent directory components
+// included -- and reports whether it stays inside dir's tree (NFR-003:
+// never follow a symlink to outside path). This runs unconditionally, not
+// only when candPath's own Lstat shows a symlink: a symlinked PARENT
+// directory (e.g. dir/.claude-plugin -> /outside) escapes the boundary just
+// as surely as a symlinked leaf, and checking only the leaf's mode bit, as
+// the pre-fix code did, missed it entirely (WP03 review finding 1). A
+// target that cannot be resolved (broken link, permission error) is treated
+// as escaping -- there is nothing safe to read through it either way.
+func pathStaysWithin(dir, candPath string) bool {
 	resolved, err := filepath.EvalSymlinks(candPath)
 	if err != nil {
 		return false
