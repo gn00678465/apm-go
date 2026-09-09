@@ -486,10 +486,14 @@ func writeBundleFiles(rw *rootfs.RootWriter, bundleDir string, fileMap *FileMap)
 	return nil
 }
 
-// pluginJSONCandidates mirrors find_plugin_json's search order
+// PluginJSONCandidates mirrors find_plugin_json's search order
 // (utils/helpers.py:105-129): project-root plugin.json first, then each
-// known ecosystem's convention path.
-var pluginJSONCandidates = []string{
+// known ecosystem's convention path. Exported (mission
+// plugin-manifest-validate-01M21E5Q, WP03/T013) so `cmd/apm-go/plugin_
+// validate.go` probes the same list rather than restating it -- the probe
+// order has exactly one definition and cannot drift between `pack` and
+// `plugin validate`.
+var PluginJSONCandidates = []string{
 	"plugin.json",
 	filepath.Join(".github", "plugin", "plugin.json"),
 	filepath.Join(".claude-plugin", "plugin.json"),
@@ -502,7 +506,7 @@ var pluginJSONCandidates = []string{
 // (core/plugin_manifest.py:286-330). A found-but-unparsable plugin.json
 // warns and falls back to synthesis rather than erroring.
 func findOrSynthesizePluginJSON(w io.Writer, projectRoot string, apmYMLNode *yaml.Node, suppressMissingInfo bool) (JSONValue, error) {
-	for _, rel := range pluginJSONCandidates {
+	for _, rel := range PluginJSONCandidates {
 		p := filepath.Join(projectRoot, rel)
 		data, err := os.ReadFile(p)
 		if err != nil {

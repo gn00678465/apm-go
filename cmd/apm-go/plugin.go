@@ -4,15 +4,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// pluginCmd is the `apm-go plugin` command group (R3.1). Upstream has
-// exactly one subcommand (commands/plugin/__init__.py:16-21), so this group
-// intentionally has exactly one child (AC30).
+// pluginCmd is the `apm-go plugin` command group (R3.1). Upstream
+// (commands/plugin/__init__.py:16-21, pinned v0.29.0 and `main`) has
+// exactly one subcommand (`init`); `validate` is an apm-go-only addition
+// closing the second half of issue #13, with no Oracle counterpart -- see
+// pluginValidateCmd's own doc comment (mission plugin-manifest-validate-
+// 01M21E5Q) for its output-contract disposition.
 func pluginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "plugin",
 		Short: "Commands for authoring APM plugins",
 	}
 	cmd.AddCommand(pluginInitCmd())
+	cmd.AddCommand(pluginValidateCmd())
 	return cmd
 }
 
