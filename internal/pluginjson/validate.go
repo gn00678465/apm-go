@@ -90,6 +90,7 @@ const (
 	kindStringArrayOrObject
 	kindDependencyList
 	kindArrayOfObject
+	kindStringOrArrayOfObject
 )
 
 // ruleSource records where a known field comes from (research.md R-03),
@@ -140,7 +141,12 @@ var rules = []rule{
 	{Name: "license", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "lspServers", Kind: kindStringArrayOrObject, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "mcpServers", Kind: kindStringArrayOrObject, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
-	{Name: "monitors", Kind: kindStringOrArray, Mismatch: LevelError, Source: sourceSchema},
+	// anyOf a "./"-prefixed .json path string or an array of objects (each
+	// requiring name/command/description) -- upstream b75a02b1's vendored
+	// tests/fixtures/schemas/claude-code-plugin.schema.json, "monitors";
+	// never a bare string array like themes/commands/skills. Element field
+	// requirements are out of scope for FR-005 (shape only).
+	{Name: "monitors", Kind: kindStringOrArrayOfObject, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "name", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "outputStyles", Kind: kindStringOrArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "repository", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
@@ -576,6 +582,8 @@ func checkKind(raw json.RawMessage, kind ruleKind) bool {
 		return isJSONArray(raw)
 	case kindArrayOfObject:
 		return isArrayOfObjects(raw)
+	case kindStringOrArrayOfObject:
+		return isJSONString(raw) || isArrayOfObjects(raw)
 	default:
 		return false
 	}
@@ -617,6 +625,8 @@ func kindMismatchMessage(field string, kind ruleKind) string {
 		return fmt.Sprintf("'%s' must be an array", field)
 	case kindArrayOfObject:
 		return fmt.Sprintf("'%s' must be an array of objects", field)
+	case kindStringOrArrayOfObject:
+		return fmt.Sprintf("'%s' must be a string or array of objects", field)
 	default:
 		return fmt.Sprintf("'%s' has an unrecognized type", field)
 	}
