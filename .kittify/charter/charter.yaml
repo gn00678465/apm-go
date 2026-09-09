@@ -131,7 +131,8 @@ activated_paradigms:
 - execution-lanes
 - specification-by-example
 activated_procedures: []
-activated_agent_profiles: []
+activated_agent_profiles:
+- implementer-ivan
 activated_mission_step_contracts: []
 activated_glossary_packs: []
 mission_type_activations:

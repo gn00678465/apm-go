@@ -21,6 +21,7 @@ history:
 - at: '2026-09-09T02:01:55Z'
   actor: system
   action: Prompt generated via /spec-kitty.tasks
+agent: claude
 agent_profile: implementer-ivan
 authoritative_surface: internal/pluginjson/testdata/
 create_intent:
