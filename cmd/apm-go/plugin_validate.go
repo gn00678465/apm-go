@@ -327,7 +327,19 @@ func displayManifestPath(manifestPath string) string {
 	if err != nil {
 		return absoluteSlashPath(manifestPath)
 	}
-	rel, err := filepath.Rel(cwd, manifestPath)
+	// filepath.Rel requires both operands to be absolute or both relative;
+	// cwd is always absolute, so an as-given relative manifestPath (the
+	// ordinary case a user types: a relative dir/file, ".", a ".."
+	// segment) always errored here and fell through to the absolute
+	// fallback below -- the contract reserves that fallback for the
+	// cross-volume case alone. Absolute-ing manifestPath first (also
+	// cleaning any ".." segment) makes both operands absolute so Rel can
+	// succeed whenever they share a volume.
+	absManifestPath, err := filepath.Abs(manifestPath)
+	if err != nil {
+		return absoluteSlashPath(manifestPath)
+	}
+	rel, err := filepath.Rel(cwd, absManifestPath)
 	if err != nil {
 		return absoluteSlashPath(manifestPath)
 	}
