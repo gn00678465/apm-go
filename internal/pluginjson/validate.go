@@ -12,6 +12,16 @@
 // ScaffoldAgent in pluginjson.go), which must never be flagged Unrecognized.
 package pluginjson
 
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
 // Check identifies one of the five validation categories, in the fixed
 // output order data-model.md specifies (Findings are ordered by Check).
 type Check int
@@ -142,13 +152,583 @@ var rules = []rule{
 	{Name: "extensions", Kind: kindObject, Mismatch: LevelError, Source: sourceApmGo},
 }
 
+var ruleIndex = buildRuleIndex(rules)
+
+func buildRuleIndex(rs []rule) map[string]rule {
+	idx := make(map[string]rule, len(rs))
+	for _, r := range rs {
+		idx[r.Name] = r
+	}
+	return idx
+}
+
+var topLevelNames = collectNames(rules)
+
+func collectNames(rs []rule) []string {
+	names := make([]string, len(rs))
+	for i, r := range rs {
+		names[i] = r.Name
+	}
+	return names
+}
+
+const maxManifestBytes = 5 * 1024 * 1024
+
 // Validate checks manifest bytes against all five categories and returns a
 // Report. It performs no filesystem access, imports stdlib only (C-002),
 // and never panics on malformed input (NFR-002).
 //
-// STUB (T001): fleshed out by T002-T006. Returning a zero Report here is
-// this WP's committed RED state -- validate_test.go's table expects real
-// findings, so every non-trivial subtest fails until the check bodies land.
+// Structure (T002) runs first and, on any error, returns immediately with
+// only that finding (data-model.md StructureFailed). The remaining four
+// checks (T003-T006) then run as a single pass over the manifest's
+// top-level keys in file order, since several of them (Fields' errors-
+// before-warnings grouping, Paths' array indices, Unrecognized's
+// experimental.* nesting) all need that same file-order key list.
 func Validate(data []byte) Report {
-	return Report{}
+	if n := len(data); n > maxManifestBytes {
+		return structureFailure(fmt.Sprintf("file exceeds 5 MiB cap (%d bytes)", n))
+	}
+	if !utf8.Valid(data) {
+		return structureFailure("invalid UTF-8")
+	}
+
+	var probe json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return structureFailure("invalid JSON: " + err.Error())
+	}
+	if !isJSONObject(probe) {
+		return structureFailure("top-level value must be an object")
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return structureFailure("invalid JSON: " + err.Error())
+	}
+
+	rawOrder, counts := scanObjectKeys(data)
+	dedupedKeys := dedupeKeepFirst(rawOrder)
+
+	var findings []Finding
+	seenDup := make(map[string]bool, len(counts))
+	for _, k := range rawOrder {
+		if counts[k] >= 2 && !seenDup[k] {
+			seenDup[k] = true
+			findings = append(findings, Finding{Structure, LevelWarning, fmt.Sprintf("duplicate key '%s' (last value wins)", k)})
+		}
+	}
+
+	findings = append(findings, checkName(m)...)
+
+	var fieldErrs, fieldWarns, pathErrs, unrec []Finding
+	for _, key := range dedupedKeys {
+		if key == "name" {
+			continue
+		}
+		r, isKnown := ruleIndex[key]
+		if !isKnown {
+			unrec = append(unrec, unrecognizedFinding(key))
+			continue
+		}
+		raw := m[key]
+
+		switch key {
+		case "metadata":
+			if !isJSONObject(raw) {
+				fieldWarns = append(fieldWarns, Finding{Fields, LevelWarning, "'metadata' should be an object; Claude Code ignores other values"})
+			}
+		case "experimental":
+			if !isJSONObject(raw) {
+				fieldWarns = append(fieldWarns, Finding{Fields, LevelWarning, "'experimental' should be an object; Claude Code ignores other values"})
+			} else {
+				ee, ep, eu := checkExperimental(raw)
+				fieldErrs = append(fieldErrs, ee...)
+				pathErrs = append(pathErrs, ep...)
+				unrec = append(unrec, eu...)
+			}
+		case "author":
+			if !checkKind(raw, kindObject) {
+				fieldErrs = append(fieldErrs, Finding{Fields, LevelError, kindMismatchMessage("author", kindObject)})
+			} else {
+				fieldErrs = append(fieldErrs, checkAuthor(raw)...)
+			}
+		case "dependencies":
+			fieldErrs = append(fieldErrs, checkDependencies(raw)...)
+		default:
+			if !checkKind(raw, r.Kind) {
+				fnd := Finding{Fields, r.Mismatch, kindMismatchMessage(key, r.Kind)}
+				if r.Mismatch == LevelError {
+					fieldErrs = append(fieldErrs, fnd)
+				} else {
+					fieldWarns = append(fieldWarns, fnd)
+				}
+			} else if r.IsPath {
+				pathErrs = append(pathErrs, checkPathField(key, raw)...)
+			}
+		}
+
+		if key == "themes" || key == "monitors" {
+			unrec = append(unrec, Finding{Unrecognized, LevelWarning, fmt.Sprintf("'%s' belongs under 'experimental'", key)})
+		}
+	}
+
+	findings = append(findings, fieldErrs...)
+	findings = append(findings, fieldWarns...)
+	findings = append(findings, pathErrs...)
+	findings = append(findings, unrec...)
+
+	return Report{Findings: findings, KnownFieldsPresent: knownFieldsPresent(dedupedKeys)}
+}
+
+func structureFailure(message string) Report {
+	return Report{
+		Findings:        []Finding{{Structure, LevelError, message}},
+		StructureFailed: true,
+	}
+}
+
+// checkName implements the Name check (T003): missing/type/empty/space/
+// control/bidi are mutually-exclusive errors checked in this fixed order,
+// stopping at the first that fires; kebab-case is a warning checked only
+// when none of those errors fired.
+func checkName(m map[string]json.RawMessage) []Finding {
+	raw, present := m["name"]
+	if !present {
+		return []Finding{{Name, LevelError, "missing required field 'name'"}}
+	}
+	s, ok := decodeString(raw)
+	if !ok {
+		return []Finding{{Name, LevelError, "'name' must be a string"}}
+	}
+	if s == "" {
+		return []Finding{{Name, LevelError, "'name' must not be empty"}}
+	}
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			return []Finding{{Name, LevelError, "'name' must not contain spaces"}}
+		}
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return []Finding{{Name, LevelError, "'name' must not contain control characters"}}
+		}
+	}
+	for _, r := range s {
+		if bidiFormattingChars[r] {
+			return []Finding{{Name, LevelError, "'name' must not contain bidirectional formatting characters"}}
+		}
+	}
+	if !kebabCaseRe.MatchString(s) {
+		return []Finding{{Name, LevelWarning, "'name' is not kebab-case"}}
+	}
+	return nil
+}
+
+// checkAuthor implements T004 step 3: only sub-fields that are present and
+// not strings are reported; author has no required sub-fields here.
+func checkAuthor(raw json.RawMessage) []Finding {
+	var sub map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &sub); err != nil {
+		return nil
+	}
+	var findings []Finding
+	for _, k := range []string{"name", "email", "url"} {
+		if v, present := sub[k]; present && !isJSONString(v) {
+			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'author.%s' must be a string", k)})
+		}
+	}
+	return findings
+}
+
+// checkDependencies implements T004 step 4. The whole-field-not-an-array
+// shape has no scenario in the contract's Messages table; "must be an
+// array" follows the table's own naming convention for an unlisted case.
+func checkDependencies(raw json.RawMessage) []Finding {
+	if !isJSONArray(raw) {
+		return []Finding{{Fields, LevelError, "'dependencies' must be an array"}}
+	}
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return nil
+	}
+	var findings []Finding
+	for i, elem := range elems {
+		if !isJSONObject(elem) {
+			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d]' must be a string or object", i)})
+			continue
+		}
+		var sub map[string]json.RawMessage
+		if err := json.Unmarshal(elem, &sub); err != nil {
+			continue
+		}
+		if _, hasName := sub["name"]; !hasName {
+			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d]' is missing 'name'", i)})
+		}
+		if v, hasVersion := sub["version"]; hasVersion && !isJSONString(v) {
+			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d].version' must be a string", i)})
+		}
+	}
+	return findings
+}
+
+// checkExperimental implements T004 step 5 and the experimental.* half of
+// T006: themes/monitors get the same Fields+Paths treatment as any other
+// IsPath rule (but at Fields error level even though the parent field is
+// warning-tier); every other sub-key is Unrecognized's concern.
+func checkExperimental(raw json.RawMessage) (fieldErrs, pathErrs, unrec []Finding) {
+	subOrder, subCounts := scanObjectKeys(raw)
+	subOrder = dedupeKeepFirst(subOrder)
+	_ = subCounts
+	var sub map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &sub); err != nil {
+		return nil, nil, nil
+	}
+	for _, sk := range subOrder {
+		switch sk {
+		case "themes", "monitors":
+			sraw := sub[sk]
+			field := "experimental." + sk
+			if !checkKind(sraw, kindStringOrArray) {
+				fieldErrs = append(fieldErrs, Finding{Fields, LevelError, fmt.Sprintf("'%s' must be a string or array", field)})
+				continue
+			}
+			pathErrs = append(pathErrs, checkPathField(field, sraw)...)
+		default:
+			unrec = append(unrec, unrecognizedExperimentalFinding(sk))
+		}
+	}
+	return fieldErrs, pathErrs, unrec
+}
+
+// checkPathField runs the Paths syntax check (T005) on every value of a
+// path-typed field already confirmed (by the caller) to be a JSON string or
+// array of strings; an object-form value (hooks/mcpServers/lspServers) is
+// legal and produces no findings here.
+func checkPathField(field string, raw json.RawMessage) []Finding {
+	values, isArray, ok := pathValues(raw)
+	if !ok {
+		return nil
+	}
+	var findings []Finding
+	for i, v := range values {
+		name := field
+		if isArray {
+			name = fmt.Sprintf("%s[%d]", field, i)
+		}
+		if msg := pathSyntaxError(name, v); msg != "" {
+			findings = append(findings, Finding{Paths, LevelError, msg})
+		}
+	}
+	return findings
+}
+
+func unrecognizedFinding(key string) Finding {
+	msg := fmt.Sprintf("unrecognized field '%s'", key)
+	if s := suggestFor(key, topLevelNames); s != "" {
+		msg += fmt.Sprintf(" (did you mean '%s'?)", s)
+	}
+	return Finding{Unrecognized, LevelWarning, msg}
+}
+
+var experimentalKnownSubKeys = []string{"themes", "monitors"}
+
+func unrecognizedExperimentalFinding(subKey string) Finding {
+	msg := fmt.Sprintf("unrecognized field 'experimental.%s'", subKey)
+	if s := suggestFor(subKey, experimentalKnownSubKeys); s != "" {
+		msg += fmt.Sprintf(" (did you mean '%s'?)", s)
+	}
+	return Finding{Unrecognized, LevelWarning, msg}
+}
+
+// -- low-level JSON-shape and path-syntax helpers --
+
+var winAbsPathRe = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+var kebabCaseRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+var bidiFormattingChars = map[rune]bool{
+	0x200E: true, 0x200F: true,
+	0x202A: true, 0x202B: true, 0x202C: true, 0x202D: true, 0x202E: true,
+	0x2066: true, 0x2067: true, 0x2068: true, 0x2069: true,
+}
+
+func rawKind(raw json.RawMessage) byte {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 {
+		return 0
+	}
+	return t[0]
+}
+
+func isJSONString(raw json.RawMessage) bool { return rawKind(raw) == '"' }
+func isJSONObject(raw json.RawMessage) bool { return rawKind(raw) == '{' }
+func isJSONArray(raw json.RawMessage) bool  { return rawKind(raw) == '[' }
+func isJSONBool(raw json.RawMessage) bool {
+	k := rawKind(raw)
+	return k == 't' || k == 'f'
+}
+
+func decodeString(raw json.RawMessage) (string, bool) {
+	if !isJSONString(raw) {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+func decodeArrayOfStrings(raw json.RawMessage) ([]string, bool) {
+	if !isJSONArray(raw) {
+		return nil, false
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return nil, false
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		s, ok := decodeString(e)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
+}
+
+// checkKind reports whether raw matches kind's JSON shape. kindDependencyList
+// is only reached defensively (Validate special-cases "dependencies" before
+// ever calling checkKind on it) but is implemented for completeness.
+func checkKind(raw json.RawMessage, kind ruleKind) bool {
+	switch kind {
+	case kindString:
+		return isJSONString(raw)
+	case kindObject:
+		return isJSONObject(raw)
+	case kindBool:
+		return isJSONBool(raw)
+	case kindArrayOfString:
+		_, ok := decodeArrayOfStrings(raw)
+		return ok
+	case kindStringOrArray:
+		if isJSONString(raw) {
+			return true
+		}
+		_, ok := decodeArrayOfStrings(raw)
+		return ok
+	case kindStringArrayOrObject:
+		if isJSONString(raw) || isJSONObject(raw) {
+			return true
+		}
+		_, ok := decodeArrayOfStrings(raw)
+		return ok
+	case kindDependencyList:
+		return isJSONArray(raw)
+	default:
+		return false
+	}
+}
+
+func kindMismatchMessage(field string, kind ruleKind) string {
+	switch kind {
+	case kindString:
+		return fmt.Sprintf("'%s' must be a string", field)
+	case kindObject:
+		return fmt.Sprintf("'%s' must be an object", field)
+	case kindBool:
+		return fmt.Sprintf("'%s' must be a boolean", field)
+	case kindArrayOfString:
+		return fmt.Sprintf("'%s' must be an array of strings", field)
+	case kindStringOrArray:
+		return fmt.Sprintf("'%s' must be a string or array", field)
+	case kindStringArrayOrObject:
+		return fmt.Sprintf("'%s' must be a string, array, or object", field)
+	case kindDependencyList:
+		return fmt.Sprintf("'%s' must be an array", field)
+	default:
+		return fmt.Sprintf("'%s' has an unrecognized type", field)
+	}
+}
+
+// pathValues extracts the string(s) to run the Paths syntax check against.
+// ok is false when raw is neither a JSON string nor an array of strings
+// (an object-form hooks/mcpServers/lspServers value, or a value T004 has
+// already reported a Fields mismatch for) -- callers must not add a Paths
+// finding in that case.
+func pathValues(raw json.RawMessage) (values []string, isArray bool, ok bool) {
+	if s, sok := decodeString(raw); sok {
+		return []string{s}, false, true
+	}
+	if arr, aok := decodeArrayOfStrings(raw); aok {
+		return arr, true, true
+	}
+	return nil, false, false
+}
+
+// isAbsolutePathValue reports whether v is an absolute path by POSIX (/) or
+// Windows (drive letter or UNC) convention -- these are manifest string
+// values, not OS paths, so both forms are checked regardless of host OS.
+func isAbsolutePathValue(v string) bool {
+	return strings.HasPrefix(v, "/") || winAbsPathRe.MatchString(v)
+}
+
+func hasDotDotSegment(v string) bool {
+	for _, seg := range strings.FieldsFunc(v, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// pathSyntaxError returns the Paths message for v under field's name, or ""
+// if v is syntactically valid. Absolute is checked before the './' prefix:
+// almost every absolute value (POSIX or Windows) also fails the prefix
+// check, so checking prefix first would make the dedicated "must not be an
+// absolute path" message (contracts/cli-plugin-validate.md) unreachable.
+func pathSyntaxError(field, v string) string {
+	if isAbsolutePathValue(v) {
+		return fmt.Sprintf("'%s' must not be an absolute path", field)
+	}
+	if !strings.HasPrefix(v, "./") {
+		return fmt.Sprintf("'%s' must start with './'", field)
+	}
+	if hasDotDotSegment(v) {
+		return fmt.Sprintf("'%s' must not contain '..'", field)
+	}
+	return ""
+}
+
+// scanObjectKeys walks data's outermost JSON object (data must already be
+// known-valid JSON) and returns its top-level keys in file order (with
+// repeats, for duplicate-key detection) plus an occurrence count per key.
+// Reused for both the manifest's own top-level keys (Structure/duplicate-
+// key detection, KnownFieldsPresent) and, given one field's raw value, that
+// field's own nested keys (experimental.* file order).
+func scanObjectKeys(data []byte) (order []string, counts map[string]int) {
+	counts = map[string]int{}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	type frame struct {
+		isObject    bool
+		awaitingKey bool
+	}
+	var stack []frame
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '{', '[':
+				stack = append(stack, frame{isObject: t == '{', awaitingKey: t == '{'})
+			case '}', ']':
+				stack = stack[:len(stack)-1]
+				if len(stack) > 0 && stack[len(stack)-1].isObject {
+					stack[len(stack)-1].awaitingKey = true
+				}
+			}
+		default:
+			if len(stack) == 0 {
+				continue
+			}
+			top := &stack[len(stack)-1]
+			if !top.isObject {
+				continue
+			}
+			if top.awaitingKey {
+				key, _ := t.(string)
+				if len(stack) == 1 {
+					order = append(order, key)
+					counts[key]++
+				}
+				top.awaitingKey = false
+			} else {
+				top.awaitingKey = true
+			}
+		}
+	}
+	return order, counts
+}
+
+func dedupeKeepFirst(keys []string) []string {
+	seen := make(map[string]bool, len(keys))
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out
+}
+
+func knownFieldsPresent(dedupedKeys []string) []string {
+	var out []string
+	for _, k := range dedupedKeys {
+		if _, ok := ruleIndex[k]; ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// damerauLevenshtein returns the optimal-string-alignment edit distance
+// (insertion, deletion, substitution, adjacent transposition) between a and
+// b over runes, used by the Unrecognized check's "did you mean" suggestion
+// (research.md/T006: plain Levenshtein can overcount an adjacent-swap typo
+// by one, which matters right at the <=2 suggestion threshold).
+func damerauLevenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	la, lb := len(ra), len(rb)
+	d := make([][]int, la+1)
+	for i := range d {
+		d[i] = make([]int, lb+1)
+		d[i][0] = i
+	}
+	for j := 0; j <= lb; j++ {
+		d[0][j] = j
+	}
+	for i := 1; i <= la; i++ {
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			min := d[i-1][j] + 1
+			if v := d[i][j-1] + 1; v < min {
+				min = v
+			}
+			if v := d[i-1][j-1] + cost; v < min {
+				min = v
+			}
+			if i > 1 && j > 1 && ra[i-1] == rb[j-2] && ra[i-2] == rb[j-1] {
+				if v := d[i-2][j-2] + 1; v < min {
+					min = v
+				}
+			}
+			d[i][j] = min
+		}
+	}
+	return d[la][lb]
+}
+
+// suggestFor returns the candidate closest to key by damerauLevenshtein when
+// that distance is <= 2, breaking ties alphabetically; "" when none qualify.
+func suggestFor(key string, candidates []string) string {
+	best := ""
+	bestDist := -1
+	for _, c := range candidates {
+		dist := damerauLevenshtein(key, c)
+		if bestDist == -1 || dist < bestDist || (dist == bestDist && c < best) {
+			bestDist = dist
+			best = c
+		}
+	}
+	if bestDist >= 0 && bestDist <= 2 {
+		return best
+	}
+	return ""
 }
