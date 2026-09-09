@@ -259,6 +259,41 @@ must_match_file plugin-validate-missing-stderr "$SB/plugin-validate-missing.err"
 steps=$((steps + 1))
 if diff -rq empty "$SB/empty.before" >/dev/null 2>&1; then echo "ok    plugin-validate-missing left empty/ byte-identical"; else echo "FAIL  plugin-validate-missing modified empty/"; failures=$((failures + 1)); fi
 
+# plugin validate usage errors (ticket 34 gap, .scratch/parity-runner/issues/
+# 34-oracle-less-command-output-contract.md): too many positional arguments
+# and an unknown flag are CLI-usage mistakes (cobra's own flag-parse error /
+# plugin_validate.go's own len(args)>1 check, both wrapped by withUsageError),
+# not validation findings -- exit 2, stdout empty, stderr the Usage/Try---help
+# preamble plus a plain "Error: " line (main.go's isUsageError branch), and no
+# manifest is ever read since the check runs before path resolution.
+cp -r z "$SB/z-usage1.before"
+: > "$SB/plugin-validate-too-many-args.want.out"
+cat > "$SB/plugin-validate-too-many-args.want.err" <<'EOF'
+Usage: apm-go plugin validate [path] [flags]
+Try 'apm-go plugin validate --help' for help.
+
+Error: accepts at most 1 arg(s), received 2
+EOF
+step_streams plugin-validate-too-many-args 2 "$BIN" plugin validate z extra
+must_match_file plugin-validate-too-many-args-stdout "$SB/plugin-validate-too-many-args.out" "$SB/plugin-validate-too-many-args.want.out"
+must_match_file plugin-validate-too-many-args-stderr "$SB/plugin-validate-too-many-args.err" "$SB/plugin-validate-too-many-args.want.err"
+steps=$((steps + 1))
+if diff -rq z "$SB/z-usage1.before" >/dev/null 2>&1; then echo "ok    plugin-validate-too-many-args left z/ byte-identical"; else echo "FAIL  plugin-validate-too-many-args modified z/"; failures=$((failures + 1)); fi
+
+cp -r z "$SB/z-usage2.before"
+: > "$SB/plugin-validate-unknown-flag.want.out"
+cat > "$SB/plugin-validate-unknown-flag.want.err" <<'EOF'
+Usage: apm-go plugin validate [path] [flags]
+Try 'apm-go plugin validate --help' for help.
+
+Error: unknown flag: --bogus
+EOF
+step_streams plugin-validate-unknown-flag 2 "$BIN" plugin validate z --bogus
+must_match_file plugin-validate-unknown-flag-stdout "$SB/plugin-validate-unknown-flag.out" "$SB/plugin-validate-unknown-flag.want.out"
+must_match_file plugin-validate-unknown-flag-stderr "$SB/plugin-validate-unknown-flag.err" "$SB/plugin-validate-unknown-flag.want.err"
+steps=$((steps + 1))
+if diff -rq z "$SB/z-usage2.before" >/dev/null 2>&1; then echo "ok    plugin-validate-unknown-flag left z/ byte-identical"; else echo "FAIL  plugin-validate-unknown-flag modified z/"; failures=$((failures + 1)); fi
+
 mkdir adv && cd adv
 step adv-add-traversal 1 "$BIN" marketplace add me/.. --name bad
 must_grep adv-add-traversal "traversal"
