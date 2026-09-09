@@ -18,6 +18,9 @@ requirement_refs:
 - NFR-001
 - NFR-003
 - NFR-005
+planning_base_branch: feat/plugin-validate
+merge_target_branch: feat/plugin-validate
+branch_strategy: Planning artifacts for this mission were generated on feat/plugin-validate. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/plugin-validate unless the human explicitly redirects the landing branch.
 subtasks:
 - T013
 - T014
