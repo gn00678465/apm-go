@@ -332,6 +332,29 @@ func TestValidate(t *testing.T) {
 		})
 	})
 
+	t.Run("EdgeCase-hooks-mixed-array-checks-string-past-leading-object", func(t *testing.T) {
+		// Review finding: pathValues required every array element to be a
+		// string, so one object element (legal since defect fix WP02-1) made
+		// the whole array's Paths check silently no-op. The offending string
+		// is index 1, past the object at index 0; the message must keep that
+		// ORIGINAL index, not renumber to 0 after the object is skipped.
+		assertReport(t, Validate([]byte(`{"name":"x","hooks":[{},"/outside"]}`)), false, []Finding{
+			{Paths, LevelError, "'hooks[1]' must not be an absolute path"},
+		})
+	})
+
+	t.Run("EdgeCase-mcpServers-mixed-array-checks-string-past-leading-object", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","mcpServers":[{},"/outside"]}`)), false, []Finding{
+			{Paths, LevelError, "'mcpServers[1]' must not be an absolute path"},
+		})
+	})
+
+	t.Run("EdgeCase-lspServers-mixed-array-checks-string-past-leading-object", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","lspServers":[{},"/outside"]}`)), false, []Finding{
+			{Paths, LevelError, "'lspServers[1]' must not be an absolute path"},
+		})
+	})
+
 	t.Run("EdgeCase-channels-array-of-object-legal", func(t *testing.T) {
 		// Pinned source: upstream b75a02b1's vendored
 		// tests/fixtures/schemas/claude-code-plugin.schema.json declares
