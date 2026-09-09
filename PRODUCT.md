@@ -64,7 +64,7 @@ Call sites never choose a glyph; they call the `ux` printer for the class (`ux.S
 
 ## Capabilities and Constraints
 
-Command surface (`apm-go --help`): `audit`, `compile`, `completion`, `doctor`, `experimental`, `init`, `install`, `marketplace` (add/list/browse/update/remove/validate/init/package/audit), `normalize`, `pack`, `plugin`, `search`, `uninstall`, `update`, `validate`.
+Command surface (`apm-go --help`): `audit`, `compile`, `completion`, `doctor`, `experimental`, `init`, `install`, `marketplace` (add/list/browse/update/remove/validate/init/package/audit), `normalize`, `pack`, `plugin` (init/validate), `search`, `uninstall`, `update`, `validate`.
 
 Constraints future work must preserve:
 
@@ -74,6 +74,7 @@ Constraints future work must preserve:
 - YAML ingestion is restricted to the OpenAPM safe subset (no anchors, merge keys, custom tags) — `spec/conformance/openapm-v0.1.md`.
 - Credential scanning (`internal/security/`) runs in `pack` (warn policy) and `audit` (report); its policy gate is fail-closed (unknown policy = block). It is not part of install/deploy.
 - Deploy targets: claude, codex, copilot, antigravity, opencode, agent-skills (adapter per target).
+- `plugin validate` has no upstream Oracle equivalent (apm-go-only, closing the second half of issue #13); its output contract is fixed by `tools/gate/realexec.sh`, not a `tools/parity` corpus case.
 - Hint text says `apm-go`, not `apm`.
 - No third-party docs/star footer in command output.
 
