@@ -23,3 +23,6 @@ kitty-specs/**/issue-matrix.json merge=spec-kitty-issue-matrix
 kitty-specs/**/meta.json merge=spec-kitty-meta
 kitty-specs/**/traces/*.md merge=spec-kitty-traces
 kitty-specs/**/tasks/*/review-cycle-*.md merge=spec-kitty-review-cycle
+
+# Byte-exact fixtures compared against generated LF output; never CRLF-normalised.
+*.golden.json -text
