@@ -75,38 +75,39 @@ func schemaRequiredList(t *testing.T, root map[string]any) []string {
 	return out
 }
 
-// walkAnyOfAllOf calls visit(n) for node and then recurses into every branch
-// of node's own "anyOf"/"allOf" arrays (the only two composition keywords
-// this vendored schema uses to express a field's multiple legal shapes) --
-// shared traversal for both schemaTypeSet (this node's own declared "type"s)
-// and schemaArrayItemTypeSet (the "type"s reachable inside an array
-// branch's "items").
-func walkAnyOfAllOf(node map[string]any, visit func(map[string]any)) {
+// walkAnyOf calls visit(n) for node and then recurses into every branch of
+// node's own "anyOf" array -- the only composition keyword this vendored
+// schema uses to express a field's multiple legal SHAPES (WP02 finding 3:
+// "allOf" is a same-type pattern refinement here, never a shape alternative,
+// so schemaTypeSet/schemaArrayItemTypeSet must not walk into it; unioning
+// allOf branches into the legal-shape set would hide a future allOf that
+// actually restricts the shape instead of merely narrowing its pattern).
+// assertOnlyKnownCombinators verifies that assumption holds for the current
+// fixture and fails loudly the moment it does not.
+func walkAnyOf(node map[string]any, visit func(map[string]any)) {
 	if node == nil {
 		return
 	}
 	visit(node)
-	for _, key := range []string{"anyOf", "allOf"} {
-		branches, ok := node[key].([]any)
-		if !ok {
-			continue
-		}
-		for _, b := range branches {
-			if bm, ok := b.(map[string]any); ok {
-				walkAnyOfAllOf(bm, visit)
-			}
+	branches, ok := node["anyOf"].([]any)
+	if !ok {
+		return
+	}
+	for _, b := range branches {
+		if bm, ok := b.(map[string]any); ok {
+			walkAnyOf(bm, visit)
 		}
 	}
 }
 
 // schemaTypeSet collects every JSON Schema "type" string reachable from
-// node via anyOf/allOf composition -- the set of top-level JSON shapes a
-// value of this schema node may legally take. It does not descend into
-// "items" (a separate axis: an array branch's element shape, not the
-// field's own shape -- see schemaArrayItemTypeSet).
+// node via anyOf composition -- the set of top-level JSON shapes a value of
+// this schema node may legally take. It does not descend into "items" (a
+// separate axis: an array branch's element shape, not the field's own shape
+// -- see schemaArrayItemTypeSet) or "allOf" (see walkAnyOf).
 func schemaTypeSet(node map[string]any) map[string]bool {
 	out := map[string]bool{}
-	walkAnyOfAllOf(node, func(n map[string]any) {
+	walkAnyOf(node, func(n map[string]any) {
 		if t, ok := n["type"].(string); ok {
 			out[t] = true
 		}
@@ -114,13 +115,13 @@ func schemaTypeSet(node map[string]any) map[string]bool {
 	return out
 }
 
-// schemaArrayItemTypeSet collects, for every anyOf/allOf branch of node that
+// schemaArrayItemTypeSet collects, for every anyOf branch of node that
 // declares "type":"array", the JSON Schema "type" set of that branch's
 // "items" node (itself resolved via schemaTypeSet, so an items node that is
 // itself anyOf-shaped is handled too). Empty when node has no array branch.
 func schemaArrayItemTypeSet(node map[string]any) map[string]bool {
 	out := map[string]bool{}
-	walkAnyOfAllOf(node, func(n map[string]any) {
+	walkAnyOf(node, func(n map[string]any) {
 		if t, _ := n["type"].(string); t != "array" {
 			return
 		}
@@ -135,6 +136,33 @@ func schemaArrayItemTypeSet(node map[string]any) map[string]bool {
 	return out
 }
 
+// walkAnyOfAllOfForPatterns is hasPathPattern's own traversal: unlike
+// schemaTypeSet/schemaArrayItemTypeSet, it also descends into "allOf"
+// branches, because every path pattern in this schema lives inside one
+// (e.g. a string branch's own "pattern" plus an allOf sibling narrowing it
+// further with ".*\.json$"). This is safe only because
+// assertOnlyKnownCombinators independently proves every allOf branch here
+// shares its parent's type -- a pure refinement, not an alternate shape --
+// so walking into it for pattern discovery cannot silently change which
+// shapes are legal, only which of them this helper notices a pattern on.
+func walkAnyOfAllOfForPatterns(node map[string]any, visit func(map[string]any)) {
+	if node == nil {
+		return
+	}
+	visit(node)
+	for _, key := range []string{"anyOf", "allOf"} {
+		branches, ok := node[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, b := range branches {
+			if bm, ok := b.(map[string]any); ok {
+				walkAnyOfAllOfForPatterns(bm, visit)
+			}
+		}
+	}
+}
+
 // hasPathPattern reports whether node's own schema subtree (any anyOf/allOf
 // branch, at any depth) declares "pattern" == pathPatternValue on some
 // node. This is T009 step 3's "own node has pattern ^\./" marker, applied
@@ -145,12 +173,80 @@ func schemaArrayItemTypeSet(node map[string]any) map[string]bool {
 // -- confirmed by direct inspection of the vendored fixture (2026-09-09).
 func hasPathPattern(node map[string]any) bool {
 	found := false
-	walkAnyOfAllOf(node, func(n map[string]any) {
+	walkAnyOfAllOfForPatterns(node, func(n map[string]any) {
 		if p, ok := n["pattern"].(string); ok && p == pathPatternValue {
 			found = true
 		}
 	})
 	return found
+}
+
+// unhandledCombinatorKeys are JSON-Schema composition keywords none of this
+// file's traversal helpers implement. This vendored schema does not use any
+// of them today (verified 2026-09-09); assertOnlyKnownCombinators exists so
+// a future schema update introducing one fails the test loudly instead of
+// walkAnyOf/walkAnyOfAllOfForPatterns silently skipping it and reporting a
+// stale sync result (WP02 finding 3).
+var unhandledCombinatorKeys = []string{"oneOf", "not", "$ref", "if", "then", "else"}
+
+// assertOnlyKnownCombinators walks node (through anyOf, allOf, and items --
+// the only nesting axes this schema uses) and fails the test the moment it
+// finds an unhandledCombinatorKeys entry, or an "allOf" branch that is not a
+// same-type pattern refinement of its parent. It does not attempt to
+// validate every JSON-Schema keyword this fixture contains (deliberately
+// not a general schema engine): only the two axes schemaTypeSet,
+// schemaArrayItemTypeSet, and hasPathPattern actually rely on.
+func assertOnlyKnownCombinators(t *testing.T, path string, node map[string]any) {
+	t.Helper()
+	if node == nil {
+		return
+	}
+	for _, forbidden := range unhandledCombinatorKeys {
+		if _, present := node[forbidden]; present {
+			t.Fatalf("schema node %s uses %q, a combinator none of this file's traversal helpers implement -- extend schemaTypeSet/schemaArrayItemTypeSet/hasPathPattern (and this guard) before trusting sync results against it", path, forbidden)
+		}
+	}
+	if allOf, ok := node["allOf"].([]any); ok {
+		parentType, _ := node["type"].(string)
+		for i, b := range allOf {
+			bm, ok := b.(map[string]any)
+			if !ok {
+				t.Fatalf("schema node %s: allOf[%d] is not an object", path, i)
+			}
+			if bt, ok := bm["type"].(string); ok && bt != parentType {
+				t.Fatalf("schema node %s: allOf[%d] declares type %q, which differs from the parent's own %q -- this is a genuine shape restriction, not a same-type pattern refinement, and this traversal's walkAnyOf deliberately does not union allOf branches into the legal-shape set; that assumption just broke", path, i, bt, parentType)
+			}
+			assertOnlyKnownCombinators(t, fmt.Sprintf("%s.allOf[%d]", path, i), bm)
+		}
+	}
+	if anyOf, ok := node["anyOf"].([]any); ok {
+		for i, b := range anyOf {
+			if bm, ok := b.(map[string]any); ok {
+				assertOnlyKnownCombinators(t, fmt.Sprintf("%s.anyOf[%d]", path, i), bm)
+			}
+		}
+	}
+	if items, ok := node["items"].(map[string]any); ok {
+		assertOnlyKnownCombinators(t, path+".items", items)
+	}
+}
+
+// TestSchemaSync_NoUnhandledCombinators runs assertOnlyKnownCombinators over
+// every top-level schema property so a future vendored-schema update that
+// adds $ref/oneOf/not, or turns an allOf branch into a real type
+// restriction, fails this suite loudly instead of the other sync tests
+// silently reporting a clean result they can no longer trust (WP02 finding
+// 3).
+func TestSchemaSync_NoUnhandledCombinators(t *testing.T) {
+	root := loadSchemaDoc(t)
+	props := schemaProperties(t, root)
+	for name, node := range props {
+		nm, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("schema property %q is not an object node", name)
+		}
+		assertOnlyKnownCombinators(t, "properties."+name, nm)
+	}
 }
 
 func schemaSourceRuleNames() map[string]bool {
@@ -282,33 +378,10 @@ func TestSchemaSync_RequiredIsExactlyName(t *testing.T) {
 }
 
 // TestSchemaSync_PathRuleNamesMatchSchemaPatternFields implements data-
-// model.md's second invariant literally: {r.Name | r.IsPath} must equal
-// (schema's ^\./-pattern field set) ∪ {"workflows", "experimental.themes",
-// "experimental.monitors"}.
-//
-// This is EXPECTED TO FAIL at the time this test was written, for two
-// distinct, separately-reported reasons (see this WP's Activity Log /
-// hand-off report -- not silently downgraded to a superset check, per this
-// WP's explicit instruction to leave a genuine mismatch failing rather than
-// weaken the assertion):
-//
-//  1. The vendored schema's "themes" and "monitors" top-level properties
-//     both carry the ^\./ path pattern (confirmed 2026-09-09 by direct
-//     inspection), but WP01's rule table does not set IsPath for either --
-//     only their experimental.* counterparts do (handled by
-//     checkExperimentalPathField, not a rules-table row). Whether that is
-//     deliberate (top-level themes/monitors are always redirected to
-//     experimental via the Unrecognized "belongs under experimental"
-//     warning, so perhaps their Paths check was intentionally skipped) or
-//     an oversight is WP01's call, not this WP's -- reported, not fixed
-//     here.
-//  2. "experimental.themes" and "experimental.monitors" can never appear as
-//     a literal r.Name: WP01's rules table has no dotted-name rows for
-//     experimental's sub-fields (checkExperimental/checkExperimentalPathField
-//     hardcode "themes"/"monitors" handling directly, unconditionally, not
-//     gated by any rules-table entry). This half of the invariant is
-//     therefore unsatisfiable by {r.Name | r.IsPath} as literally written,
-//     independent of any future fix to (1).
+// model.md's second invariant: {r.Name | r.IsPath} must equal (schema's
+// ^\./-pattern field set) ∪ {"workflows"}. experimental.themes and
+// experimental.monitors are path-checked separately below, by behaviour
+// rather than by rule-table membership (see the comment at their check).
 func TestSchemaSync_PathRuleNamesMatchSchemaPatternFields(t *testing.T) {
 	root := loadSchemaDoc(t)
 	props := schemaProperties(t, root)
