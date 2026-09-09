@@ -219,17 +219,27 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("EdgeCase-dependencies-name-wrong-type", func(t *testing.T) {
-		// {"name":123} has a present "name" key that is not a string --
-		// presence alone must not satisfy the check (T004: "a name field
-		// that is itself a string").
+		// {"name":123} has a present "name" key that is not a string -- this
+		// is a type mismatch, not an absent key, so it must use the generic
+		// "'<field>' must be a string" wording, not "is missing 'name'".
 		assertReport(t, Validate([]byte(`{"name":"x","dependencies":[{"name":123}]}`)), false, []Finding{
-			{Fields, LevelError, "'dependencies[0]' is missing 'name'"},
+			{Fields, LevelError, "'dependencies[0].name' must be a string"},
 		})
 	})
 
 	t.Run("EdgeCase-dependencies-name-null", func(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","dependencies":[{"name":null}]}`)), false, []Finding{
-			{Fields, LevelError, "'dependencies[0]' is missing 'name'"},
+			{Fields, LevelError, "'dependencies[0].name' must be a string"},
+		})
+	})
+
+	t.Run("EdgeCase-dependencies-version-then-name-reverse-order", func(t *testing.T) {
+		// "version" appears before "name" in the manifest text; same-level
+		// findings must keep that file order (data-model.md), the same rule
+		// checkAuthor's sub-object walk already applies to author.<k>.
+		assertReport(t, Validate([]byte(`{"name":"x","dependencies":[{"version":1,"name":2}]}`)), false, []Finding{
+			{Fields, LevelError, "'dependencies[0].version' must be a string"},
+			{Fields, LevelError, "'dependencies[0].name' must be a string"},
 		})
 	})
 
@@ -265,6 +275,30 @@ func TestValidate(t *testing.T) {
 
 	t.Run("EdgeCase-hooks-mcpServers-lspServers-inline-object-legal", func(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","hooks":{"a":1},"mcpServers":{"b":2},"lspServers":{"c":3}}`)), false, nil)
+	})
+
+	t.Run("EdgeCase-channels-array-of-object-legal", func(t *testing.T) {
+		// Pinned source: upstream b75a02b1's vendored
+		// tests/fixtures/schemas/claude-code-plugin.schema.json declares
+		// "channels": {"type":"array","items":{"type":"object",
+		// "properties":{"server":{"type":"string",...}},"required":
+		// ["server"]}} -- elements are objects, never bare strings.
+		assertReport(t, Validate([]byte(`{"name":"x","channels":[{"server":"telegram"}]}`)), false, nil)
+	})
+
+	t.Run("EdgeCase-channels-array-of-string-rejected", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","channels":["telegram"]}`)), false, []Finding{
+			{Fields, LevelError, "'channels' must be an array of objects"},
+		})
+	})
+
+	t.Run("EdgeCase-experimental-subscan-survives-unrepresentable-number", func(t *testing.T) {
+		// Mirrors EdgeCase-key-order-scan-survives-unrepresentable-number but
+		// exercises checkExperimental's own scanObjectKeys call on the
+		// nested experimental object, not just Validate's top-level scan.
+		assertReport(t, Validate([]byte(`{"name":"x","experimental":{"foo":{"n":1e1000},"themes":"./t.md"}}`)), false, []Finding{
+			{Unrecognized, LevelWarning, "unrecognized field 'experimental.foo'"},
+		})
 	})
 
 	t.Run("EdgeCase-top-level-themes-belongs-under-experimental", func(t *testing.T) {
