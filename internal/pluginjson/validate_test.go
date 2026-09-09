@@ -139,6 +139,21 @@ func TestValidate(t *testing.T) {
 		})
 	})
 
+	t.Run("EdgeCase-experimental-monitors-object-array-legal", func(t *testing.T) {
+		// Same anyOf shape as top-level "monitors" (kindStringOrArrayOfObject):
+		// the Claude Code plugins-reference Monitors section allows the same
+		// inline monitor object array directly under experimental.monitors,
+		// not only at the top level -- unlike experimental.themes, which stays
+		// on kindStringOrArray.
+		assertReport(t, Validate([]byte(`{"name":"x","experimental":{"monitors":[{"name":"cpu","command":"echo cpu","description":"CPU monitor"}]}}`)), false, nil)
+	})
+
+	t.Run("EdgeCase-experimental-monitors-array-of-string-rejected", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","experimental":{"monitors":["cpu"]}}`)), false, []Finding{
+			{Fields, LevelError, "'experimental.monitors' must be a string or array of objects"},
+		})
+	})
+
 	// -- US3: hostile/broken input gets one diagnosis, never a crash --
 
 	t.Run("US3-AS1-invalid-json-unbalanced-brace", func(t *testing.T) {
