@@ -223,17 +223,22 @@ func Validate(data []byte) Report {
 		return structureFailure("invalid UTF-8")
 	}
 
-	var probe json.RawMessage
-	if err := json.Unmarshal(data, &probe); err != nil {
-		return structureFailure("invalid JSON: " + err.Error())
-	}
-	if !isJSONObject(probe) {
-		return structureFailure("top-level value must be an object")
-	}
-
+	// A single decode into the map serves both what used to be two decodes:
+	// a syntax error (bad JSON) surfaces as anything other than
+	// *json.UnmarshalTypeError; a non-object top level (array/number/string/
+	// bool) surfaces as *json.UnmarshalTypeError; and a literal `null` top
+	// level -- encoding/json's one type-error-free case for a map target --
+	// decodes with err == nil but leaves m nil, unlike a real (even empty)
+	// object, which always allocates a non-nil map.
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(data, &m); err != nil {
+		if _, ok := err.(*json.UnmarshalTypeError); ok {
+			return structureFailure("top-level value must be an object")
+		}
 		return structureFailure("invalid JSON: " + err.Error())
+	}
+	if m == nil {
+		return structureFailure("top-level value must be an object")
 	}
 
 	rawOrder, counts := scanObjectKeys(data)
@@ -285,13 +290,14 @@ func Validate(data []byte) Report {
 		case "dependencies":
 			fieldErrs = append(fieldErrs, checkDependencies(raw)...)
 		default:
+			// r.Mismatch is always LevelError here: "metadata" and
+			// "experimental", the rule table's only LevelWarning rows, are
+			// intercepted by their own case above and never reach default --
+			// TestSchemaSync_WarningTierRulesHaveExplicitCase fails loudly if
+			// a future rule-table edit adds another warning-tier row without
+			// also giving it an explicit case.
 			if !checkKind(raw, r.Kind) {
-				fnd := Finding{Fields, r.Mismatch, kindMismatchMessage(key, r.Kind)}
-				if r.Mismatch == LevelError {
-					fieldErrs = append(fieldErrs, fnd)
-				} else {
-					fieldWarns = append(fieldWarns, fnd)
-				}
+				fieldErrs = append(fieldErrs, Finding{Fields, r.Mismatch, kindMismatchMessage(key, r.Kind)})
 			} else if r.IsPath {
 				pathErrs = append(pathErrs, checkPathField(key, raw)...)
 			}
@@ -788,10 +794,12 @@ func scanObjectKeys(data []byte) (order []string, counts map[string]int) {
 		if err != nil {
 			return order, counts
 		}
-		key, ok := keyTok.(string)
-		if !ok {
-			return order, counts
-		}
+		// dec.Token() itself errors ("object member name must be a string")
+		// on any non-string object key -- caught by the err != nil check
+		// above -- so this assertion never fails once keyTok reaches here;
+		// kept only because Token()'s return type is any and Go requires an
+		// assertion to obtain the string.
+		key, _ := keyTok.(string)
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
 			return order, counts

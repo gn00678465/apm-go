@@ -468,6 +468,30 @@ func ruleKindArrayItemCommitment(k ruleKind) map[string]bool {
 	}
 }
 
+// explicitWarningTierCaseNames is the exact set of rule names Validate's
+// Fields switch (validate.go) intercepts with their own case arm --
+// "metadata" and "experimental", the rule table's only two Mismatch ==
+// LevelWarning rows today -- before ever reaching the default arm, which
+// always reports a mismatch at LevelError (the dead default-arm warning
+// branch was removed once proven unreachable: metadata/experimental never
+// fall through to it). This test guards that removal: it fails loudly if a
+// future rule-table edit adds another LevelWarning row without also giving
+// it an explicit case, since the default arm would otherwise silently
+// report that rule's mismatch as LevelError instead of the intended
+// LevelWarning.
+var explicitWarningTierCaseNames = stringSet("metadata", "experimental")
+
+func TestSchemaSync_WarningTierRulesHaveExplicitCase(t *testing.T) {
+	for _, r := range rules {
+		if r.Mismatch != LevelWarning {
+			continue
+		}
+		if !explicitWarningTierCaseNames[r.Name] {
+			t.Errorf("rule %q has Mismatch=LevelWarning but no explicit case in Validate's Fields switch (only %v carry one); Validate's default arm always reports a mismatch at LevelError, so this rule's warning would silently become an error -- add an explicit case for %q in Validate before merging this rule-table change", r.Name, []string{"metadata", "experimental"}, r.Name)
+		}
+	}
+}
+
 // TestSchemaSync_RuleKindConsistentWithSchemaType is this WP's answer to the
 // coordinator's explicit ask: compare each Source==schema rule's Kind
 // against the vendored schema's ACTUAL declared type for that property --

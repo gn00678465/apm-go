@@ -182,6 +182,16 @@ func TestValidate(t *testing.T) {
 		})
 	})
 
+	t.Run("EdgeCase-top-level-null", func(t *testing.T) {
+		// Unlike every other non-object top level (array/number/string/bool),
+		// which encoding/json rejects into a map with *json.UnmarshalTypeError,
+		// a literal `null` decodes with err == nil and leaves the map nil --
+		// the one case Validate must catch itself, not via the decode error.
+		assertReport(t, Validate([]byte(`null`)), true, []Finding{
+			{Structure, LevelError, "top-level value must be an object"},
+		})
+	})
+
 	t.Run("US3-AS3-oversize-6MiB", func(t *testing.T) {
 		data := bytes.Repeat([]byte("a"), 6*1024*1024)
 		assertReport(t, Validate(data), true, []Finding{
