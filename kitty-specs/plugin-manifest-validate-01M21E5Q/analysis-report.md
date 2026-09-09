@@ -4,7 +4,7 @@ artifact_type: spec-kitty.analysis-report
 command: /spec-kitty.analyze
 mission_slug: plugin-manifest-validate-01M21E5Q
 mission_id: 01M21E5QYY67PBDKTATX7HG6F1
-generated_at: '2026-09-09T04:20:58.090354+00:00'
+generated_at: '2026-09-09T04:33:06.054950+00:00'
 analyzer_agent: unknown
 input_artifacts:
   spec.md:
@@ -15,80 +15,135 @@ input_artifacts:
     sha256: 711c59dd970562a24692481dfaa90f66bac28ef559421f9207ef4f4b1cca13be
   tasks.md:
     path: kitty-specs\plugin-manifest-validate-01M21E5Q\tasks.md
-    sha256: f757dc8dd5842819b981cedf8931ac896f5a47b968c671ec6cb3af459899e88e
+    sha256: bd3ed2bd5f430b4dd8aa69ccf271981374537477438d1660733ededc63efde85
   charter:
     path: .kittify\charter\charter.yaml
     sha256: 6ebbf8f921b444782654fa565b6768995fea13a8f66a8b5482a22887bd0eb186
 verdict: ready
 issue_counts:
-  high: 0
-  low: 0
+  medium: 6
+  low: 2
   critical: 0
-  medium: 1
+  high: 0
   info: 0
 findings:
-- id: F011
+- id: F012
   severity: medium
   category: inconsistency
-  summary: tasks.md T013's one-line description still says the plugin.json candidate list is duplicated locally with no cross-package export, contradicting WP03-cli-subcommand.md's corrected T013 (export pluginJSONCandidates as PluginJSONCandidates and reuse it) -- the actual fix applied for prior finding F009 landed in the WP file but was never resynced into tasks.md.
+  summary: tasks.md WP01 Requirement Refs line omits C-002 and C-007, which WP01 own frontmatter and tasks.md own Coverage Summary Table both attribute to WP01.
+- id: F013
+  severity: medium
+  category: inconsistency
+  summary: tasks.md WP03 Requirement Refs line omits C-002, C-005, C-006, which WP03 own frontmatter and tasks.md own Coverage Summary Table both attribute to WP03.
+- id: F014
+  severity: medium
+  category: inconsistency
+  summary: tasks.md WP02 Requirement Refs line claims SC-002, but the Coverage Summary Table and SC-002 own content (one test per acceptance scenario, delivered by WP01/WP03) attribute it to WP01 and WP03, not WP02.
+- id: F015
+  severity: medium
+  category: inconsistency
+  summary: tasks.md WP04 Requirement Refs line claims SC-004, but the Coverage Summary Table and SC-004 own content (read-only directory-snapshot equality, delivered by WP03 T017) attribute it to WP03, not WP04.
+- id: F016
+  severity: medium
+  category: inconsistency
+  summary: tasks.md Requirements Coverage Summary Table attributes NFR-002 solely to WP02, contradicting WP01 own Requirement Refs line and frontmatter, which both also claim NFR-002 (WP01 T002 defensive size-cap check).
+- id: F017
+  severity: low
+  category: inconsistency
+  summary: tasks.md Subtask Index marks T016 as Parallel No, but tasks/WP03-cli-subcommand.md own T016 section states Parallel Yes, relative to T013-T015 in principle.
+- id: F018
+  severity: low
+  category: inconsistency
+  summary: tasks.md Subtask Index marks T020 as Parallel No, but tasks/WP04-gate-and-docs.md own T020 section states Parallel Yes, relative to T018/T019 (different file).
+- id: F019
+  severity: medium
+  category: inconsistency
+  summary: tasks.md T020 one-liner says both new mutants target internal/pluginjson/validate.go, but tasks/WP04-gate-and-docs.md T020 step 2 places the second mutant (the strict upgrade-to-failure path) in cmd/apm-go/plugin_validate.go, a file owned by WP03.
 ---
 
 ## Specification Analysis Report
 
-**Mission**: plugin-manifest-validate-01M21E5Q — `apm-go plugin validate`
+Mission: plugin-manifest-validate-01M21E5Q -- apm-go plugin validate
 
-This is a rerun of `/spec-kitty.analyze` after commit b6b258d remediated the three findings (F008, F009, F010) from the prior report (commit d47afde). Every prior finding and this rerun's new finding were verified by reading the current file contents directly, not by trusting the prior report's summary.
+This is the third /spec-kitty.analyze pass. The prior report (commit 9dcc3c7) came back ready with one open medium finding, F011 (tasks.md T013 one-liner contradicted WP03-cli-subcommand.md corrected T013). Before the normal detection passes, this run did a dedicated systematic sweep -- because the same defect class (a tasks.md summary line left contradicting an edited WP file) has now recurred twice (F008, then F011) -- comparing every one of T001-T024 tasks.md row against its owning WP file subtask section, and every WP tasks.md summary block against that WP file frontmatter and Objectives.
 
-### Resolved Since Prior Analysis
+### F011 verification
+
+tasks.md line 107 (WP03 T013) now reads: "the four-candidate probe order (reused from internal/pack/bundle/producer.go, whose pluginJSONCandidates is exported as PluginJSONCandidates for this purpose, so the order has one definition; cmd/apm-go already imports that package, so C-002 adds no import edge)". This matches tasks/WP03-cli-subcommand.md T013 step 1 exactly (export-and-reuse, not duplicate-locally). F011 is resolved -- commit 16a7e6c rewrite is confirmed against the current file contents.
+
+### Resolved Since Prior Analysis (re-verified this pass)
 
 | Prior ID | Severity | Original Issue | Resolution Evidence |
 |---|---|---|---|
-| F001 | critical (charter alignment) | Charter text forbade any output-contract exception mechanism other than waivers/pending cases. | Re-verified: `.kittify/charter/charter.md` Quality Gates (Gate 2) and Exception Policy still carry the third, narrowly-scoped mechanism for a ticket-named apm-go-only command whose pinned Oracle lacks it, naming ticket 34, void if the Oracle later gains the command, "never extends by analogy to another command." Still consistent. |
-| F007 | low (inconsistency) | spec.md's "one check emits both an error and a warning" example was attached to WP01 T002 (Structure), which short-circuits on any error and cannot produce that mix. | Re-verified in `tasks/WP01-validator-core.md` T002 step 8: the mixed error+warning example is attached to the **Fields** check, with an explicit note that Structure's step 6 short-circuits before a duplicate-key warning could sit beside a Structure error. Still correct. |
-| F008 | medium (inconsistency) | tasks.md's T018/T019 one-liners described weaker (substring/single-file) realexec verification than the WP04 prompt file's and ticket 34's full-strength requirement. | Verified in `kitty-specs/plugin-manifest-validate-01M21E5Q/tasks.md` (current) T018/T019: both now read "...each asserting exit 0/the exact exit code, the complete stdout against a recorded expectation, an empty stderr, and a recursive before/after comparison of the fixture tree (ticket 34 verification strength)" — matches `tasks/WP04-gate-and-docs.md`'s T018/T019 exactly. Both artifacts resynced. Fully resolved. |
-| F009 | medium (inconsistency) | research.md R-02 and plan.md IC-02 prescribe reusing `pack/bundle`'s plugin.json candidate list; WP03 T013 instead duplicated it locally, citing a C-002 rationale that does not hold since `cmd/apm-go` already imports `pack/bundle`. | Verified in `tasks/WP03-cli-subcommand.md` T013 step 1 (current): now instructs exporting `pluginJSONCandidates` as `PluginJSONCandidates` in `internal/pack/bundle/producer.go` and referencing `bundle.PluginJSONCandidates` directly from `plugin_validate.go`, matching research.md R-02 and plan.md IC-02. `owned_files` for WP03 now lists `internal/pack/bundle/producer.go`; grepped the whole mission folder and confirmed no other WP's `owned_files` includes that path. The rationale is accurate: `cmd/apm-go` already imports `internal/pack/bundle` today (confirmed via grep — `pack.go`, `install.go`, `audit_content.go`, plus test files — all pre-dating this mission), so exporting one symbol from an already-imported package adds no new edge to ARCHITECTURE.md §1. **However**, the fix was applied only to the WP03 prompt file, not to `tasks.md` itself — see new finding F011 below, which is this rerun's only open item. |
-| F010 | low (ambiguity) | Two WP prompt subtask steps (WP01 T002 step 1, WP03 T014 step 1) retained a stray mid-sentence editorial self-correction ("-- wait," / "...no --"). | Re-verified: both steps now read as direct instructions with no self-correction language. Fully resolved. |
+| F001 | critical (charter alignment) | Charter forbade any output-contract exception mechanism other than waivers/pending cases. | Re-verified: .kittify/charter/charter.md Quality Gates (Gate 2) and Exception Policy still carry the third, ticket-scoped mechanism naming ticket 34; ticket 34 file itself (.scratch/parity-runner/issues/34-oracle-less-command-output-contract.md) still records the same ruling, quote, and 4-surface verification strength plan.md cites. Still consistent. |
+| F007 | low (inconsistency) | The "one check emits both an error and a warning" example was attached to Structure, which short-circuits and cannot produce that mix. | Re-verified in tasks/WP01-validator-core.md T002 step 8: the mixed example is attached to the Fields check, with an explicit note that Structure step 6 short-circuits first. Still correct. |
+| F008 | medium (inconsistency) | tasks.md T018/T019 described weaker (substring) realexec verification than WP04 full-strength requirement. | Re-verified: both tasks.md and tasks/WP04-gate-and-docs.md now read the complete stdout against a recorded expectation, an empty stderr, and a recursive before/after comparison of the fixture tree (ticket 34 verification strength) for T018 and T019. Still resolved. |
+| F009 | medium (inconsistency) | WP03 T013 duplicated the candidate list locally instead of reusing pack/bundle. | Re-verified in tasks/WP03-cli-subcommand.md T013 step 1: exports and reuses bundle.PluginJSONCandidates. Still resolved (this is the same fix F011 re-checks at the tasks.md-sync level). |
+| F010 | low (ambiguity) | Stray mid-sentence editorial self-correction in WP01 T002 step 1 and WP03 T014 step 1. | Re-verified: both read as direct instructions with no self-correction language. Still resolved. |
 
-### Open Findings
+### Systematic Sweep: tasks.md rows vs owning WP files (T001-T024)
 
-| ID | Category | Severity | Location(s) | Summary | Recommendation |
-|----|----------|----------|-------------|---------|----------------|
-| F011 | Inconsistency | MEDIUM | `kitty-specs/plugin-manifest-validate-01M21E5Q/tasks.md` line 107 (WP03 T013 one-liner) vs `tasks/WP03-cli-subcommand.md` T013 step 1 (lines 130-131) | F009's remediation (commit b6b258d) rewrote `tasks/WP03-cli-subcommand.md`'s T013 to export `pluginJSONCandidates` as `PluginJSONCandidates` from `internal/pack/bundle/producer.go` and reuse it from `plugin_validate.go` — matching research.md R-02 and plan.md IC-02 as intended. But `tasks.md`'s own one-line summary for T013 was never resynced: it still reads "the four-candidate probe order (duplicated locally with a doc comment citing `internal/pack/bundle/producer.go`'s `pluginJSONCandidates` as the source of truth — no new cross-package export, per C-002)" — the exact opposite of what the WP file now instructs. This is the same class of defect F008 named (tasks.md not resynced with a corrected WP file), recurring on a sibling finding's fix. tasks.md itself states "Treat this file as the high-level checklist; keep deep implementation detail inside the prompt files," so the WP file's instruction governs implementation — but a reader relying on tasks.md alone (as the implement gate and reviewers often do) is told the wrong design decision. | Rewrite tasks.md's T013 one-liner to state the export-and-reuse approach (or shorten it to defer to the WP file), so tasks.md and `tasks/WP03-cli-subcommand.md` no longer describe opposite C-002 dispositions for the same subtask. |
+Every subtask tasks.md one-liner (Included Subtasks list and Subtask Index table) was compared against its WP file subtask section. T001-T015, T017, T021-T024 approach, file list, and parallel markers match their WP files exactly. Two classes of drift were found, both new:
 
-**Coverage Summary Table:**
+1. Parallel-marker disagreement (F017, F018): tasks.md Subtask Index table is the sole place recording a Parallel yes/no verdict per subtask distinct from the WP file own Parallel line. T016 and T020 disagree between the two documents (tasks.md says No for both; the owning WP file says Yes for both). This affects execution scheduling guidance only -- it does not change what gets built.
+2. File-target disagreement (F019): T020 tasks.md one-liner names a single file (internal/pluginjson/validate.go) for both new mutants, but WP04 own T020 step 2 places the second mutant in cmd/apm-go/plugin_validate.go -- the strict upgrade-to-failure logic lives in WP03 CLI layer, not WP01 validator core. This is the same defect class as F008/F009/F011: a tasks.md summary line describing an approach/location the owning WP file no longer (or never did) state.
+
+### Systematic Sweep: WP summary blocks vs WP file frontmatter/Objectives
+
+Each WP Goal, Independent Test, Dependencies, and Risks lines in tasks.md were compared against the corresponding WP file Objectives/Success-Criteria/Dependencies/Risks sections. Goal, Independent Test, and Dependencies text match in all four WPs. The Requirement Refs line -- a field with no direct WP-file analogue other than the frontmatter requirement_refs list -- disagrees with both the owning WP file frontmatter and tasks.md own Requirements Coverage Summary Table in four places (F012-F015), plus one place where the Coverage Summary Table itself disagrees with a WP own claim (F016):
+
+- WP01 line omits C-002, C-007 (present in its frontmatter and in the Coverage Table C-002/C-007 rows).
+- WP03 line omits C-002, C-005, C-006 (present in its frontmatter and in the Coverage Table rows).
+- WP02 line claims SC-002, but SC-002 (one test per acceptance scenario) is delivered by WP01/WP03 test files, not WP02 fuzz/property/schema-sync files -- the Coverage Table agrees with this, not with WP02 own header line.
+- WP04 line claims SC-004, but SC-004 (read-only directory-snapshot equality) is delivered by WP03 T017 snapshot test, not WP04 gate/doc work -- the Coverage Table agrees with this, not with WP04 own header line.
+- The Coverage Table NFR-002 row names only WP02, but WP01 own header line and frontmatter also claim NFR-002 (WP01 T002 implements a defensive last-line-of-defense size check for it) -- a three-way disagreement where two sources (WP01 header plus WP01 frontmatter) outvote the Coverage Table.
+
+None of F012-F019 changes what code gets written; they are traceability/bookkeeping metadata used for requirement-coverage auditing (DIRECTIVE_003, DIRECTIVE_010), which is why they are rated medium/low rather than high.
+
+### Normal Detection Passes
+
+- Charter alignment: No conflicts. The Gate 2 exception (ticket 34) is present, correctly scoped, and its 4-surface verification strength (stdout/stderr/exit code/file tree, not substrings) is carried consistently through charter.md, plan.md, tasks.md (T018/T019), ticket 34, and WP04 own text.
+- Duplication: None found among FR/NFR/C/SC requirements.
+- Ambiguity: None found (no vague adjectives without measurable criteria; no unresolved placeholders).
+- Underspecification: None found. FR-006 path-typed field list, data-model.md IsPath set, and WP01 Context field list all agree exactly (skills, commands, agents, workflows, hooks, mcpServers, outputStyles, lspServers, experimental.themes, experimental.monitors).
+- Coverage gaps: None. Every FR/NFR/C/SC in spec.md maps to at least one WP in tasks.md Coverage Summary Table.
+- Cross-artifact inconsistency (message text): contracts/cli-plugin-validate.md Messages table, spec.md acceptance-scenario wording, and WP01 per-check message instructions agree verbatim everywhere checked (Structure, Name, Fields, Paths, Unrecognized messages, and the exit-code table).
+- Known-field set: research.md R-03 schema/docs/apm-go field lists, WP01 Context section full known-field set, and data-model.md Rule-table invariants agree exactly (22 schema fields, 5 docs-only fields, 1 apm-go field).
+
+Coverage Summary Table:
 
 | Requirement Key | Has Task? | Task IDs | Notes |
 |-----------------|-----------|----------|-------|
 | FR-001..FR-002, FR-008..FR-012 | Yes | WP03 (T013-T017) | CLI surface, locate, strict, output, exit codes, verbose, help |
 | FR-003..FR-007 | Yes | WP01 (T001-T007) | Structure/Name/Fields/Paths/Unrecognized checks |
 | NFR-001 | Yes | WP03 (T017) | read-only snapshot test |
-| NFR-002 | Yes | WP02 (T011-T012) | fuzz |
+| NFR-002 | Yes | WP01, WP02 (T011-T012) | fuzz; see F016 (Coverage Table itself under-attributes this) |
 | NFR-003 | Yes | WP01, WP03 (T013) | no symlink/parent escape |
 | NFR-004 | Yes | WP02 (T010) | property test |
-| NFR-005 | Yes (rationale-only) | WP03 | plan.md explicitly records this as an intentional non-executable, documented deviation (Low priority) — not a gap |
-| C-001..C-007 | Yes | WP01/WP03/WP04 as mapped in tasks.md's own Requirements Coverage Summary | verified against tasks.md table, no zero-coverage rows found |
-| SC-001..SC-006 | Yes | WP01-WP04 per tasks.md table | no zero-coverage rows found |
+| NFR-005 | Yes (rationale-only) | WP03 | plan.md records this as an intentional non-executable, documented deviation (Low priority) |
+| C-001..C-007 | Yes | WP01/WP03/WP04 per tasks.md Coverage Table | see F012/F013 for header-line omissions |
+| SC-001..SC-006 | Yes | WP01-WP04 per tasks.md Coverage Table | see F014/F015 for header-line misattributions |
 
 No requirement, constraint, or success criterion was found with zero mapped task coverage.
 
-**Charter Alignment Issues:** None open. F001 (the one charter-alignment issue ever raised) remains resolved; the third exception mechanism for an Oracle-less apm-go-only command is still present in `.kittify/charter/charter.md`'s Quality Gates and Exception Policy, correctly scoped to ticket 34.
+Charter Alignment Issues: None open.
 
-**Unmapped Tasks:** None found — every T001-T024 subtask traces to a WP whose Requirement Refs are covered in the spec.
+Unmapped Tasks: None found.
 
-**Metrics:**
+Metrics:
 
 - Total Requirements (FR+NFR): 17 (12 FR + 5 NFR)
 - Total Constraints: 7
 - Total Success Criteria: 6
 - Total Subtasks: 24 (T001-T024)
-- Coverage %: 100% (requirements with >=1 task)
+- Coverage %: 100%
 - Ambiguity Count: 0
 - Duplication Count: 0
-- Inconsistency Count: 1 (F011)
+- Inconsistency Count: 8 (F012-F019)
 - Critical Issues Count: 0
 
 ## Next Actions
 
-- Only one open finding (F011), severity MEDIUM: verdict is `ready`, so `/implement` may proceed for WP01-WP04 without waiting on this fix.
-- Recommended before or during WP03's implementation: resync `tasks.md`'s T013 one-liner (line 107) to match `tasks/WP03-cli-subcommand.md`'s actual instruction (export-and-reuse), since WP03's own `owned_files`/Context section already commit to that approach — leaving tasks.md stating the opposite is a documentation-quality risk, not a functional blocker.
-- No other artifact requires refinement; `/spec-kitty.plan` and `/spec-kitty.tasks` do not need to be rerun.
+- Verdict is ready (no high/critical findings) -- /implement may proceed for WP01-WP04 without waiting on these fixes.
+- Recommended cleanup (all mechanical, no design change): resync tasks.md four WP Requirement Refs lines against each WP file frontmatter requirement_refs (F012, F013), and against the Coverage Summary Table actual SC attributions (F014, F015); fix the Coverage Table NFR-002 row to include WP01 (F016); align the two Subtask Index Parallel cells with their WP files (F017, F018); and correct T020 one-liner to name both target files -- internal/pluginjson/validate.go and cmd/apm-go/plugin_validate.go (F019).
+- Given this is the third consecutive pass to find a tasks.md/WP-file sync gap (F008 to F011 to F012-F019), consider adding this resync check as a standing step at the end of /spec-kitty.tasks generation rather than relying on /spec-kitty.analyze to keep catching it.
