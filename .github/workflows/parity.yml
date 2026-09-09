@@ -106,3 +106,61 @@ jobs:
 
       - name: go test
         run: go test ./... -race
+
+  real-execution:
+    # The Oracle-less half of the output contract (ticket 34,
+    # .scratch/parity-runner/issues/34-oracle-less-command-output-contract.md):
+    # a command with no Oracle counterpart (e.g. `plugin validate`) has its
+    # output contract pinned by tools/gate/realexec.sh instead of a
+    # tools/parity corpus case. Ticket 34 substituted the comparison
+    # mechanism -- it did not exempt the command from CI -- so this job runs
+    # that mechanism on every push/PR, building the binary and invoking the
+    # script exactly the way tools/gate.sh's own real-execution layer does
+    # (same GATE_ART/GATE_BIN contract, same tee-then-grep check for the
+    # summary line and any FAIL). This is not a duplicate of the parity job
+    # above: parity diffs apm-go against the pinned Oracle, this pins
+    # apm-go's own output for the surface that has no Oracle to diff against.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout apm-go
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build apm-go (tools/gate.sh's own build-layer command)
+        run: |
+          mkdir -p .gate/ci
+          go build ./...
+          go build -o .gate/ci/apm-go ./cmd/apm-go
+
+      - name: Run tools/gate/realexec.sh
+        env:
+          GATE_ART: .gate/ci
+          GATE_BIN: .gate/ci/apm-go
+        run: |
+          sh tools/gate/realexec.sh 2>&1 | tee .gate/ci/realexec.log
+          grep -q '^real-execution:' .gate/ci/realexec.log
+          ! grep -q '^FAIL' .gate/ci/realexec.log
+
+      # Runs even on failure (mirrors the parity job's own summary step): the
+      # job log should always end with the human-readable check count, not
+      # just a non-zero exit status.
+      - name: Print realexec summary
+        if: always()
+        run: |
+          if [ -f .gate/ci/realexec.log ]; then
+            tail -1 .gate/ci/realexec.log
+          else
+            echo "no realexec.log written -- the script failed before producing output"
+          fi
+
+      - name: Upload real-execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: realexec-out
+          path: .gate/ci/realexec.log
+          retention-days: 30

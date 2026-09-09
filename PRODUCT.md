@@ -64,20 +64,21 @@ Call sites never choose a glyph; they call the `ux` printer for the class (`ux.S
 
 ## Capabilities and Constraints
 
-Command surface (`apm-go --help`): `audit`, `compile`, `completion`, `doctor`, `experimental`, `init`, `install`, `marketplace` (add/list/browse/update/remove/validate/init/package/audit), `normalize`, `pack`, `plugin`, `search`, `uninstall`, `update`, `validate`.
+Command surface (`apm-go --help`): `audit`, `compile`, `completion`, `doctor`, `experimental`, `init`, `install`, `marketplace` (add/list/browse/update/remove/validate/init/package/audit), `normalize`, `pack`, `plugin` (init/validate), `search`, `uninstall`, `update`, `validate`.
 
 Constraints future work must preserve:
 
-- Output contract: words, exit codes, output bytes, and file trees are gated in CI. Only line-wrap, box-drawing, help layout, status-symbol shape (normalized by the runner), timestamps, and paths may be waived; every waiver is recorded with its reason.
+- Output contract: words, exit codes, output bytes, and file trees are gated in CI. Only line-wrap, box-drawing, help layout, status-symbol shape (normalized by the runner), timestamps, and paths may be waived; every waiver is recorded with its reason. An apm-go-only command that the pinned Oracle does not have cannot have a corpus case; its contract is pinned instead by `tools/gate/realexec.sh` at the same strength (full stdout, stderr, exit code, file tree) and recorded in a ticket that quotes the user ruling - ticket 34 covers `plugin validate`, and the exemption never extends by analogy to another command.
 - Exit codes: usage errors are 2; specific codes via `withExitCode()`.
 - JSON bytes from pack/scaffold go through `bundle.MarshalIndent` (2-space indent, non-ASCII escaped as `\uXXXX`); the marketplace builder alone emits UTF-8 unescaped.
 - YAML ingestion is restricted to the OpenAPM safe subset (no anchors, merge keys, custom tags) — `spec/conformance/openapm-v0.1.md`.
 - Credential scanning (`internal/security/`) runs in `pack` (warn policy) and `audit` (report); its policy gate is fail-closed (unknown policy = block). It is not part of install/deploy.
 - Deploy targets: claude, codex, copilot, antigravity, opencode, agent-skills (adapter per target).
+- `plugin validate` has no upstream Oracle equivalent (apm-go-only, closing the second half of issue #13); its output contract is fixed by `tools/gate/realexec.sh`, not a `tools/parity` corpus case.
 - Hint text says `apm-go`, not `apm`.
 - No third-party docs/star footer in command output.
 
-Terminology: **parity gate** = the `tools/parity` CI run that enforces the output contract; **waiver** = a recorded allowed difference with its reason; **pending case** = a parked corpus case for a documented design deviation; **ticket** = an issue file under `.scratch/parity-runner/issues/`.
+Terminology: **parity gate** = the `tools/parity` CI run that enforces the output contract; **waiver** = a recorded allowed difference with its reason; **pending case** = a parked corpus case for a documented design deviation; **realexec contract** = the output contract of an apm-go-only command with no Oracle counterpart, pinned by `tools/gate/realexec.sh` rather than the parity corpus, one named command per ticket; **ticket** = an issue file under `.scratch/parity-runner/issues/`.
 
 Undecided: the lockfile's external interoperability format, and whether MCP servers belong in the lockfile (ticket 32 A/B rulings, out of scope for the current branch).
 

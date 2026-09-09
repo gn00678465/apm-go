@@ -1,0 +1,16 @@
+{
+  "coordination_branch": "kitty/mission-plugin-manifest-validate-01M21E5Q",
+  "created_at": "2026-09-08T21:18:21.664136+00:00",
+  "flattened": false,
+  "friendly_name": "Plugin manifest validate command",
+  "mission_id": "01M21E5QYY67PBDKTATX7HG6F1",
+  "mission_number": null,
+  "mission_slug": "plugin-manifest-validate-01M21E5Q",
+  "mission_type": "software-dev",
+  "pr_bound": true,
+  "purpose_context": "apm-go plugin init scaffolds plugin.json but nothing checks a hand-edited manifest until Claude Code fails to load it. This mission adds apm-go plugin validate: a read-only check of the manifest against the official Claude Code plugin schema and reference (required name, field types, path-field syntax, unrecognized fields as warnings, --strict for CI), closing the second half of issue #13.",
+  "purpose_tldr": "Let plugin authors and CI confirm a plugin.json will be accepted by Claude Code before packing or publishing.",
+  "slug": "plugin-manifest-validate-01M21E5Q",
+  "target_branch": "feat/plugin-validate",
+  "topology": "coord"
+}

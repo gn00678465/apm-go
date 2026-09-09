@@ -17,9 +17,8 @@ import (
 // operates from the lockfile + disk alone — apm.yml is NOT required.
 //
 // P0 #3 (register §3.1/§5): apm-go audit (bare) and Python's `apm audit`
-// (bare) share a name but check different things -- see Long below and
-// .trellis/spec/backend/cli-parity-notes.md for the full contrast. This
-// task does not change audit's behavior, only documents the gap.
+// (bare) share a name but check different things.
+// 差異見下方 Long 說明。
 //
 // Phase 7 (07-12-p0-parity-quickwins design.md "audit 掃描接線"): --content
 // adds the other half of that contrast -- Python's hidden-Unicode scan

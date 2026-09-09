@@ -41,7 +41,19 @@ answers:
     waiver names its case and reason in tools/parity/waivers.json; a design
     deviation that cannot be waived is parked in tools/parity/cases-pending/
     with a ticket, never silently dropped. Any change to user-visible output,
-    exit codes or generated files must add or update a corpus case. (3) The
+    exit codes or generated files must add or update a corpus case. One
+    narrow class is exempt from that corpus requirement: an apm-go-only
+    command that the pinned Oracle does not have, so that no Oracle-side
+    output exists to compare against. The exemption applies only to a command
+    a ticket names, and only with evidence in that ticket that the pinned
+    Oracle's command tree lacks it. For such a command the output contract is
+    pinned by tools/gate/realexec.sh instead, at the same strength the corpus
+    applies: full stdout, stderr, exit code and the produced file tree, not
+    substrings. The ticket quotes the user ruling that granted the exemption.
+    If the pinned Oracle later gains the command, the exemption is void and
+    the case must be re-ruled; it never extends by analogy to another command.
+    Ticket 34 (.scratch/parity-runner/issues/) records the one exemption
+    granted so far, for `apm-go plugin validate`. (3) The
     verification-gate skill runs on every finished work package and its
     evidence report is attached to the review; a work package without a
     verification-gate report is not reviewable. Additionally: every terminal
@@ -123,8 +135,11 @@ answers:
     folded into the canonical document they affect.
   exception_policy: >
     Exceptions to the output contract are expressed only as waivers in
-    tools/parity/waivers.json (with case id and reason) or as pending cases
-    with a ticket; there is no other mechanism. Exceptions to test-first,
+    tools/parity/waivers.json (with case id and reason), as pending cases
+    with a ticket, or -- solely for an apm-go-only command the pinned Oracle
+    does not have -- as the realexec.sh contract described in Quality Gate 2,
+    recorded in a ticket that names the command, shows the Oracle lacks it,
+    and quotes the user ruling; there is no other mechanism. Exceptions to test-first,
     round-trip, or security rules require an explicit user ruling quoted in
     the PR description and a ticket; the agent may not self-grant them. An
     exception never widens beyond the case it names.
