@@ -92,7 +92,7 @@ CI 對 plugin 倉庫執行 `apm-go plugin validate --strict`，把「Claude Code
 |----|-------|------------|----------|--------|
 | FR-001 | 指令與參數 | As a plugin author, I want `apm-go plugin validate [path] [--strict] [-v\|--verbose]` with `path` defaulting to the current directory so that I can validate any plugin checkout. | High | Open |
 | FR-002 | manifest 定位 | As a plugin author, I want a directory `path` probed in the upstream order `plugin.json`, `.github/plugin/plugin.json`, `.claude-plugin/plugin.json`, `.cursor-plugin/plugin.json`, and a file `path` validated directly, so that the same manifest apm pack and Claude Code read is the one validated. | High | Open |
-| FR-003 | Structure 檢查 | As a plugin author, I want unreadable, oversize (>5 MiB), invalid-UTF-8, invalid-JSON, or non-object manifests reported as one Structure error that suppresses the other checks, so that a broken file gives one clear diagnosis. | High | Open |
+| FR-003 | Structure 檢查 | As a plugin author, I want invalid-UTF-8, invalid-JSON, and non-object manifests reported as one Structure error that suppresses the other checks, so that a broken file gives one clear diagnosis. 定位成功之後的讀取失敗（不是普通檔案、逃出指定路徑、超過 5 MiB、作業系統錯誤）不走 Structure，而是 contracts/cli-plugin-validate.md 的 `could not read` 一族：只印該行、無 Results 與 Summary、exit 1。 | High | Open |
 | FR-004 | Name 檢查 | As a plugin author, I want a missing, non-string, empty, whitespace-, control-, or bidi-containing `name` reported as an error and a non-kebab-case name as a warning, so that the plugin can be namespaced by Claude Code. | High | Open |
 | FR-005 | Fields 型別檢查 | As a plugin author, I want every recognized field checked against its documented type (string / object / boolean / array of strings / string-or-array / string-array-or-object / dependency list), with non-object `metadata` and `experimental` as warnings and every other mismatch as an error, so that a manifest Claude Code would refuse to load fails here first. | High | Open |
 | FR-006 | Paths 語法檢查 | As a plugin author, I want each path-typed field value (`skills`, `commands`, `agents`, `workflows`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `themes`, `monitors`, `experimental.themes`, `experimental.monitors` when given as strings or string arrays) required to start with `./`, not be absolute, and contain no `..` segment, so that manifests the official schema rejects or that upstream drops as traversal attempts are caught without touching the filesystem. | High | Open |
@@ -137,7 +137,7 @@ CI 對 plugin 倉庫執行 `apm-go plugin validate --strict`，把「Claude Code
 
 - **SC-001**: apm-go 自己產生的兩種 plugin scaffold 以驗證器檢查得到 0 warnings、0 errors、exit 0。
 - **SC-002**: 本規格列出的每一個 acceptance scenario 與 edge case 各有一個同名自動化測試，且全部通過。
-- **SC-003**: 對不合法輸入集合（invalid JSON、非物件、空檔、非 UTF-8、深巢狀、超大檔）驗證器 100% 以 Structure error 結束，0 次 panic。
+- **SC-003**: 對不合法輸入集合（invalid JSON、非物件、空檔、非 UTF-8、深巢狀）驗證器 100% 以 Structure error 結束，0 次 panic；超大檔由 CLI 在讀取前以 `could not read` 拒絕，不進入驗證器。
 - **SC-004**: 驗證前後目標目錄快照 100% 相同。
 - **SC-005**: 既有輸出契約：parity gate 96 case、0 unwaived；`go test ./...` 全綠。
 - **SC-006**: issue #13 的兩項需求（`plugin init`、`plugin validate`）皆可由使用者在同一個 release 內執行。

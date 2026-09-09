@@ -49,4 +49,4 @@ Derived（rendering 層計算，不存於 Report）:
 
 ## State transitions
 
-無持久狀態。單次執行：locate → stat（size cap）→ read → Validate → render → exit。任何一步失敗都以 ` x <message>` 加 exit 1 結束，且不改變檔案系統。
+無持久狀態。單次執行：locate → open（受 `os.Root` 邊界約束）→ size cap → bounded read → Validate → render → exit。定位或讀取階段失敗以 ` x <message>` 加 exit 1 結束，不印 Results 與 Summary；驗證階段的失敗則走正常的 Results 與 Summary。任何情形都不改變檔案系統。

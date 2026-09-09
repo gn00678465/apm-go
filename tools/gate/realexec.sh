@@ -84,15 +84,9 @@ must_exist demo/plugin.json
 # is fixed HERE rather than by a tools/parity corpus case (ticket 34,
 # .scratch/parity-runner/issues/34-oracle-less-command-output-contract.md),
 # at the corpus's own strength: complete stdout, empty stderr, exact exit
-# code, byte-identical tree before/after. The manifest argument is given as
-# an ABSOLUTE path so displayManifestPath's relativization actually succeeds
-# (relativizing an absolute manifest path against the absolute cwd works); a
-# relative argument (e.g. "demo") hits filepath.Rel's absolute/relative
-# operand mismatch and always falls back to the environment-specific
-# absolute path instead -- a real gap against the contract's stated rule
-# that the fallback is only for cross-drive impossibility, found while
-# writing this step and reported rather than fixed (not in this WP's owned
-# files).
+# code, byte-identical tree before/after. The manifest argument is absolute so
+# the recorded first line stays stable across sandboxes; displayManifestPath
+# relativizes either form against the working directory.
 cp -r demo "$SB/demo.before"
 cat > "$SB/plugin-validate-claude.want.out" <<'EOF'
  > Validating plugin 'demo/plugin.json'...

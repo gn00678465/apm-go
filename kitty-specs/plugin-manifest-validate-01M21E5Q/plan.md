@@ -41,7 +41,7 @@ Charter（`.kittify/charter/charter.md`）與三份 canonical documents 對照�
 | Gate 3：verification-gate 每個 WP 附 evidence 報告 | PASS（WP 完成條件） | `sh tools/gate.sh`，scope `plugin-manifest-validate` |
 | GitNexus `impact` before editing any symbol；`detect_changes` before commit | PASS（流程約束） | 觸及的既有符號只有 `pluginCmd`（加子指令）；新符號無 upstream caller |
 | ARCHITECTURE.md §1 依賴規則：新 import 邊要裁定 | PASS | `cmd/apm-go → pluginjson` 已存在；`pluginjson` 新增程式碼只 import stdlib；測試檔 import `jsonschema/v5`（測試依賴不在 §1 圖內，與 `pack/bundle/schema_sync_test.go` 相同先例） |
-| 每個 mission 走 worktree lane、只經 PR 進 main | PASS | spec-kitty lanes；PR 先以 `feat/marketplace-plugin-parity` 為 base，#18 合併後改 `main` |
+| 每個 mission 走 worktree lane、只經 PR 進 main | **已裁定**（ticket 35） | spec-kitty 無法在此 Windows 主機建立 lane worktree：`_open_confined_parent_fd` 在缺少 `os.supports_dir_fd` 的平台無條件拋錯。使用者裁定改為直接在 `feat/plugin-validate` 實作，僅暫停執行 lane 這一條；PR 仍以 `main` 為 base，審查者仍非實作者。原文見 `.scratch/parity-runner/issues/35-implement-without-lane-worktrees-on-windows.md` |
 | AGENTS.md：未記錄的偏差是 finding | PASS | C-005：`plugin.go` 註記由「exactly one child (AC30)」改為記錄 #13 與本 mission |
 
 Gate 2 對無 Oracle 對應指令的適用方式已依 charter Amendment Process 收進 charter 本文（`.kittify/charter/charter.md` 的 Quality Gates 與 Exception Policy，來源 `interview/answers.yaml`），並同步到 PRODUCT.md 的 Output contract 與 Terminology；ticket 34 保存裁定原文與驗證強度。NFR-005（1 秒）只有理由性論證，沒有可執行的計時檢查，屬有意的 rationale-only 覆蓋（Low priority）。
