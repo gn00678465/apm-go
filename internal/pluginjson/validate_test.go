@@ -408,7 +408,7 @@ func TestValidate(t *testing.T) {
 		// Also guards defect 2's fix: "monitors" now carries IsPath: true,
 		// but the object-array branch has no "./" pattern in the schema, so
 		// this legal object-array value must still produce no Paths finding
-		// (pathValues' ok=false short-circuits checkPathField for it).
+		// (pathValues skips every element here, since none is a string).
 		assertReport(t, Validate([]byte(`{"name":"x","monitors":[{"name":"cpu","command":"echo cpu","description":"CPU monitor"}]}`)), false, []Finding{
 			{Unrecognized, LevelWarning, "'monitors' belongs under 'experimental'"},
 		})

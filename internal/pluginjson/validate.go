@@ -489,22 +489,22 @@ func checkExperimentalPathField(subKey string, sraw json.RawMessage, kind ruleKi
 	return fieldErrs, append(pathErrs, checkPathField(field, sraw)...)
 }
 
-// checkPathField runs the Paths syntax check (T005) on every value of a
-// path-typed field already confirmed (by the caller) to be a JSON string or
-// array of strings; an object-form value (hooks/mcpServers/lspServers) is
-// legal and produces no findings here.
+// checkPathField runs the Paths syntax check (T005) on every string value of
+// a path-typed field already confirmed (by the caller) to be a JSON string
+// or array; an object-form value (hooks/mcpServers/lspServers) is legal and
+// produces no findings here.
 func checkPathField(field string, raw json.RawMessage) []Finding {
-	values, isArray, ok := pathValues(raw)
+	elems, isArray, ok := pathValues(raw)
 	if !ok {
 		return nil
 	}
 	var findings []Finding
-	for i, v := range values {
+	for _, e := range elems {
 		name := field
 		if isArray {
-			name = fmt.Sprintf("%s[%d]", field, i)
+			name = fmt.Sprintf("%s[%d]", field, e.Index)
 		}
-		if msg := pathSyntaxError(name, v); msg != "" {
+		if msg := pathSyntaxError(name, e.Value); msg != "" {
 			findings = append(findings, Finding{Paths, LevelError, msg})
 		}
 	}
@@ -693,19 +693,44 @@ func kindMismatchMessage(field string, kind ruleKind) string {
 	}
 }
 
-// pathValues extracts the string(s) to run the Paths syntax check against.
-// ok is false when raw is neither a JSON string nor an array of strings
-// (an object-form hooks/mcpServers/lspServers value, or a value T004 has
-// already reported a Fields mismatch for) -- callers must not add a Paths
-// finding in that case.
-func pathValues(raw json.RawMessage) (values []string, isArray bool, ok bool) {
+// pathElem pairs a path string extracted by pathValues with its original
+// position in the source array (0 for a bare string, not an array element).
+type pathElem struct {
+	Index int
+	Value string
+}
+
+// pathValues extracts, from raw, every string element to run the Paths
+// syntax check against, paired with its original array index. ok is false
+// only when raw is neither a JSON string nor a JSON array (an object-form
+// hooks/mcpServers/lspServers value, or a value T004 has already reported a
+// Fields mismatch for) -- callers must not add a Paths finding in that case.
+//
+// A non-string array element (the object half of a mixed hooks/mcpServers/
+// lspServers array, or every element of a homogeneous object array like
+// monitors) is skipped in place, never filtered out first: a surviving
+// string's Index stays its position in the ORIGINAL array. Filtering first
+// and renumbering was the bug -- {"hooks":[{},"/outside"]} must report
+// 'hooks[1]', not a renumbered 'hooks[0]', and previously reported nothing
+// at all because requiring every element to be a string made the whole
+// array fail decodeArrayOfStrings as soon as one element was an object.
+func pathValues(raw json.RawMessage) (elems []pathElem, isArray bool, ok bool) {
 	if s, sok := decodeString(raw); sok {
-		return []string{s}, false, true
+		return []pathElem{{0, s}}, false, true
 	}
-	if arr, aok := decodeArrayOfStrings(raw); aok {
-		return arr, true, true
+	if !isJSONArray(raw) {
+		return nil, false, false
 	}
-	return nil, false, false
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return nil, false, false
+	}
+	for i, e := range arr {
+		if s, sok := decodeString(e); sok {
+			elems = append(elems, pathElem{i, s})
+		}
+	}
+	return elems, true, true
 }
 
 // isAbsolutePathValue reports whether v is an absolute path by POSIX (/) or
