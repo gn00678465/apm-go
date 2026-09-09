@@ -132,7 +132,12 @@ var rules = []rule{
 	// plugin.schema.json: "channels": {"type":"array","items":{"type":
 	// "object",...,"required":["server"]}}, no string alternative.
 	{Name: "channels", Kind: kindArrayOfObject, Mismatch: LevelError, Source: sourceSchema},
-	{Name: "commands", Kind: kindStringOrArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
+	// anyOf a "./"-prefixed path string, an array of such paths, or an
+	// object mapping command names to metadata (source/content/etc) --
+	// upstream b75a02b1's vendored tests/fixtures/schemas/claude-code-
+	// plugin.schema.json's third "commands" anyOf branch. kindStringOrArray
+	// wrongly rejected the object form as a Fields error.
+	{Name: "commands", Kind: kindStringArrayOrObject, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "dependencies", Kind: kindDependencyList, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "description", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "homepage", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
@@ -146,13 +151,13 @@ var rules = []rule{
 	// tests/fixtures/schemas/claude-code-plugin.schema.json, "monitors";
 	// never a bare string array like themes/commands/skills. Element field
 	// requirements are out of scope for FR-005 (shape only).
-	{Name: "monitors", Kind: kindStringOrArrayOfObject, Mismatch: LevelError, Source: sourceSchema},
+	{Name: "monitors", Kind: kindStringOrArrayOfObject, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "name", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "outputStyles", Kind: kindStringOrArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "repository", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "settings", Kind: kindObject, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "skills", Kind: kindStringOrArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
-	{Name: "themes", Kind: kindStringOrArray, Mismatch: LevelError, Source: sourceSchema},
+	{Name: "themes", Kind: kindStringOrArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "userConfig", Kind: kindObject, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "version", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "displayName", Kind: kindString, Mismatch: LevelError, Source: sourceDocs},
