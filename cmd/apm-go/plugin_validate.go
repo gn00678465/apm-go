@@ -136,8 +136,21 @@ type manifestFile = io.ReadCloser
 // (fstat on the fd), not a second path-based Stat call, so a link swapped
 // into manifestPath after openManifestFile returns cannot change what size
 // gets checked.
+//
+// The open itself goes through openManifestFileForPlatform
+// (plugin_validate_open_unix.go / plugin_validate_open_windows.go), which
+// is where the check-then-open race (WP03 round-2 review finding 1) is
+// constrained, to a degree that differs by platform: on unix,
+// O_NOFOLLOW|O_NONBLOCK makes the open refuse a symlink swapped into path
+// after the pre-open Lstat below and return immediately rather than block
+// on a FIFO with no writer; on windows there is no such flag and no FIFO
+// type, so a swapped-in symlink IS followed by this open, and the Fstat +
+// os.SameFile comparison against that Lstat, performed below after this
+// call returns, is the only guard on that platform. Neither platform's
+// open result can be trusted alone -- the comparison below is required on
+// both.
 var openManifestFile = func(path string) (manifestFile, os.FileInfo, error) {
-	f, err := os.Open(path)
+	f, err := openManifestFileForPlatform(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -211,20 +224,36 @@ func readAndValidate(manifestPath, boundary string) (pluginjson.Report, error) {
 // directory for the "Validating plugin '<relative manifest path>'..." line
 // (WP03 review finding 4): an absolute path or directory argument must not
 // leak an absolute path into that line. The path actually opened is
-// unaffected -- only this display value is relativized. Falling back to
-// the absolute, slash-converted path when Rel fails (e.g. a different
-// volume on Windows) keeps the line well-formed rather than erroring the
-// command over a display detail.
+// unaffected -- only this display value is relativized.
+//
+// The contract (kitty-specs/plugin-manifest-validate-01M21E5Q/contracts/
+// cli-plugin-validate.md, commit 5097ad2, WP03 round-2 review finding 3)
+// names the one case where an absolute path may appear: filepath.Rel fails
+// whenever manifestPath and cwd sit on different windows volumes, and the
+// sanctioned fallback there is the CLEANED absolute path, still
+// slash-converted -- not the raw manifestPath as given, which could carry
+// an uncleaned "..\" segment through untouched.
 func displayManifestPath(manifestPath string) string {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return filepath.ToSlash(manifestPath)
+		return absoluteSlashPath(manifestPath)
 	}
 	rel, err := filepath.Rel(cwd, manifestPath)
 	if err != nil {
-		return filepath.ToSlash(manifestPath)
+		return absoluteSlashPath(manifestPath)
 	}
 	return filepath.ToSlash(rel)
+}
+
+// absoluteSlashPath renders manifestPath as a cleaned absolute path with
+// '/' separators -- displayManifestPath's sole fallback, per the contract
+// amendment above.
+func absoluteSlashPath(manifestPath string) string {
+	abs, err := filepath.Abs(manifestPath)
+	if err != nil {
+		abs = filepath.Clean(manifestPath)
+	}
+	return filepath.ToSlash(abs)
 }
 
 // checkRenderOrder is the fixed output order (data-model.md, T014 step 4).
