@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -316,11 +317,27 @@ func TestSchemaSync_PathRuleNamesMatchSchemaPatternFields(t *testing.T) {
 	for k := range schemaPathNames {
 		want[k] = true
 	}
-	for _, extra := range []string{"workflows", "experimental.themes", "experimental.monitors"} {
-		want[extra] = true
-	}
+	// data-model.md scopes this invariant to the rule table's top-level fields.
+	// experimental.themes and experimental.monitors are path-checked by
+	// checkExperimentalPathField, which no rules row drives, so they cannot
+	// appear in {r.Name | r.IsPath}; they are pinned by behaviour below.
+	want["workflows"] = true
 	got := rulePathNames()
-	assertFieldSetsEqual(t, "rule table IsPath names vs schema ^\\./-pattern fields ∪ {workflows, experimental.themes, experimental.monitors}", got, want)
+	assertFieldSetsEqual(t, "rule table IsPath names vs schema pattern fields plus workflows", got, want)
+
+	for _, field := range []string{"themes", "monitors"} {
+		manifest := []byte(fmt.Sprintf(`{"name":"x","experimental":{%q:"outside/x"}}`, field))
+		report := Validate(manifest)
+		found := false
+		for _, f := range report.Findings {
+			if f.Check == Paths && strings.Contains(f.Message, "experimental."+field) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("experimental.%s: want a Paths finding for a value missing the './' prefix, got %+v", field, report.Findings)
+		}
+	}
 }
 
 // ruleKindKnownSchemaTypes maps each ruleKind to the set of top-level JSON
