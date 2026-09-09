@@ -1058,3 +1058,178 @@ func TestPluginValidate_Finding5_FullCandidateOrder(t *testing.T) {
 		}
 	}
 }
+
+// ── WP03 round-2 review: findings 1, 2, 3 ───────────────────────────────
+
+// requireFIFOSupport skips the calling test only if this host cannot
+// produce a FIFO that Go's own os.Lstat recognizes as one -- mirroring
+// requireSymlinkSupport's capability-probe style rather than an
+// unconditional platform skip. mkfifo succeeding is not sufficient proof
+// by itself: an MSYS/Git-Bash mkfifo.exe found on PATH creates something
+// Go's native, Win32-backed os.Lstat cannot see at all (confirmed by hand:
+// GetFileAttributesEx reports "cannot find the file"), which is exactly
+// why TestPluginValidate_Finding2_DirectFIFOArgumentRejectedWithoutBlocking
+// above probes with a GOOS check instead -- this probe checks the
+// resulting Mode() bit through Go's own API so the skip reason is the
+// actual missing capability, not an assumption about the OS name.
+func requireFIFOSupport(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	fifoPath := filepath.Join(dir, "probe-fifo")
+	if err := exec.Command("mkfifo", fifoPath).Run(); err != nil {
+		t.Skipf("mkfifo unavailable on this host (%v)", err)
+	}
+	info, err := os.Lstat(fifoPath)
+	if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Skip("mkfifo produced something Go's os.Lstat does not recognize as a named pipe on this host")
+	}
+}
+
+// TestPluginValidate_Finding1_FIFOSwappedInDuringOpenWindowDoesNotBlock
+// covers the round-2 review's check-then-open race: readAndValidate's
+// pre-open Lstat sees an ordinary regular file, then -- simulating the
+// race window between that Lstat and the real open -- the path is removed
+// and replaced with a FIFO that has no writer attached, before
+// openManifestFile actually opens it. A plain os.Open blocks indefinitely
+// reading a FIFO with no writer; the fix's O_NONBLOCK on unix must make
+// this open return promptly instead of hanging, so the goroutine below
+// finishes well inside the timeout regardless of the outcome. Gated by
+// requireFIFOSupport (an actual capability probe), not an unconditional
+// platform skip.
+func TestPluginValidate_Finding1_FIFOSwappedInDuringOpenWindowDoesNotBlock(t *testing.T) {
+	requireFIFOSupport(t)
+	dir := t.TempDir()
+	writeManifest(t, dir, "plugin.json", `{"name":"x"}`)
+	path := filepath.Join(dir, "plugin.json")
+
+	orig := openManifestFile
+	t.Cleanup(func() { openManifestFile = orig })
+	openManifestFile = func(p string) (manifestFile, os.FileInfo, error) {
+		if err := os.Remove(p); err != nil {
+			return nil, nil, err
+		}
+		if err := exec.Command("mkfifo", p).Run(); err != nil {
+			return nil, nil, err
+		}
+		return orig(p)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := readAndValidate(path, "")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want the swapped-in FIFO to be refused, not read")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readAndValidate blocked opening a FIFO swapped in during the check-then-open race window")
+	}
+}
+
+// failReader always errors on Read without ever succeeding, so a caller
+// that reaches Read at all -- rather than refusing beforehand from Stat
+// alone -- fails visibly and differently from the size-cap message.
+type failReader struct{}
+
+func (failReader) Read([]byte) (int, error) {
+	return 0, fmt.Errorf("read must not be called: the pre-read size check should have refused first")
+}
+func (failReader) Close() error { return nil }
+
+// TestPluginValidate_Finding2_PreReadSizeCapRefusesWithoutReading covers
+// the round-2 review's finding that the old oversized-file test could not
+// tell the two size guards apart: it was exactly cap+1 bytes, so removing
+// readAndValidate's pre-read Stat check (openInfo.Size() > maxManifestBytes)
+// still produced the identical message via the bounded io.LimitReader
+// read. Here Stat genuinely reports a size over the cap -- the fixture
+// file is truncated to cap+1 bytes in place, so os.SameFile still
+// recognizes it as the same file the pre-open Lstat saw -- while any Read
+// call fails outright, so the ONLY way to pass is to refuse before ever
+// calling Read. This proves the two guards independently:
+//   - deleting the pre-read Stat check breaks this test (Read gets called,
+//     fails with failReader's own message, not the size-cap message).
+//   - deleting the bounded-read guard
+//     (TestPluginValidate_Finding3_BoundedReadCatchesGrowthAfterStatCheck)
+//     does not affect this test at all, since the Stat check above refuses
+//     before that code path is ever reached.
+func TestPluginValidate_Finding2_PreReadSizeCapRefusesWithoutReading(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, "plugin.json", `{"name":"x"}`)
+	path := filepath.Join(dir, "plugin.json")
+
+	orig := openManifestFile
+	t.Cleanup(func() { openManifestFile = orig })
+	openManifestFile = func(p string) (manifestFile, os.FileInfo, error) {
+		if err := os.Truncate(p, maxManifestBytes+1); err != nil {
+			return nil, nil, err
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			return nil, nil, err
+		}
+		return failReader{}, info, nil
+	}
+
+	out, err := execPluginValidate(t, path)
+	if err == nil {
+		t.Fatal("want the pre-read size check to refuse an oversized Stat report before any Read")
+	}
+	want := fmt.Sprintf("could not read '%s': file exceeds 5 MiB cap (%d bytes)", filepath.ToSlash(path), maxManifestBytes+1)
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q, want %q (the pre-read check's message, not failReader's)", out, want)
+	}
+}
+
+// findAlternateVolume returns a drive root (e.g. "E:\\") that exists on
+// this host and is not cwd's own volume, or skips the calling test with a
+// stated reason when no second volume exists: the cross-volume fallback
+// below cannot be exercised without one.
+func findAlternateVolume(t *testing.T, cwd string) string {
+	t.Helper()
+	excludeVol := strings.ToUpper(filepath.VolumeName(cwd))
+	for _, letter := range "CDEFGHIJKLMNOPQRSTUVWXYZ" {
+		root := string(letter) + `:\`
+		if strings.ToUpper(filepath.VolumeName(root)) == excludeVol {
+			continue
+		}
+		if _, err := os.Stat(root); err == nil {
+			return root
+		}
+	}
+	t.Skip("no second volume available on this host; the cross-volume fallback cannot be exercised")
+	return ""
+}
+
+// TestPluginValidate_Finding3_CrossVolumeFallbackToCleanedAbsolutePath
+// covers the contract amendment recorded in kitty-specs/plugin-manifest-
+// validate-01M21E5Q/contracts/cli-plugin-validate.md (commit 5097ad2):
+// filepath.Rel fails whenever manifestPath and the working directory sit
+// on different windows volumes, and the contract's only sanctioned
+// fallback is the CLEANED absolute path, still slash-converted -- not the
+// raw, possibly-uncleaned absolute path the pre-fix code returned as-is.
+// manifestPath is built with a redundant "foo\..\foo" segment, bypassing
+// filepath.Join's own cleaning, specifically so an uncleaned fallback and a
+// cleaned one produce distinguishable output. Skipped with a stated reason
+// on a non-windows host (filepath.Rel cannot fail this way there) or when
+// this host exposes only one drive letter.
+func TestPluginValidate_Finding3_CrossVolumeFallbackToCleanedAbsolutePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("cross-volume paths are a windows-only concept; filepath.Rel cannot fail this way on unix")
+	}
+	cwd := chdirTemp(t)
+	altRoot := findAlternateVolume(t, cwd)
+
+	manifestPath := altRoot + `foo\..\foo\plugin.json`
+	got := displayManifestPath(manifestPath)
+	want := filepath.ToSlash(filepath.Clean(manifestPath))
+	if got != want {
+		t.Errorf("displayManifestPath(%q) = %q, want the cleaned absolute path %q", manifestPath, got, want)
+	}
+	if strings.Contains(got, "..") {
+		t.Errorf("got = %q, must not leak the uncleaned '..' segment", got)
+	}
+}
