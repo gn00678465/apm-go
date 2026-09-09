@@ -3,10 +3,14 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // runPluginValidate builds a fresh pluginValidateCmd, runs it with args, and
@@ -316,6 +320,11 @@ func TestPluginValidate_US3_AS2_TopLevelNotObject(t *testing.T) {
 	}
 }
 
+// TestPluginValidate_US3_AS3_OversizedFile pins the size-cap failure to
+// contracts/cli-plugin-validate.md's "無法讀取 manifest" row (added after
+// WP03 review finding 6): oversize is a read-boundary failure like a
+// disallowed file type or an escaping symlink, not a Structure finding --
+// it prints after the progress line with no Results/Summary block, exit 1.
 func TestPluginValidate_US3_AS3_OversizedFile(t *testing.T) {
 	dir := t.TempDir()
 	big := make([]byte, 5*1024*1024+1)
@@ -325,10 +334,13 @@ func TestPluginValidate_US3_AS3_OversizedFile(t *testing.T) {
 	writeManifest(t, dir, "plugin.json", string(big))
 	out, err := execPluginValidate(t, dir)
 	if err == nil {
-		t.Fatal("want Structure error for oversized file")
+		t.Fatal("want a read failure for an oversized file")
 	}
-	if !strings.Contains(out, fmt.Sprintf("Structure: file exceeds 5 MiB cap (%d bytes)", len(big))) {
+	if !strings.Contains(out, fmt.Sprintf("could not read '%s': file exceeds 5 MiB cap (%d bytes)", filepath.ToSlash(filepath.Join(dir, "plugin.json")), len(big))) {
 		t.Errorf("output = %q, want the size-cap message", out)
+	}
+	if strings.Contains(out, "Validation Results:") || strings.Contains(out, "Summary:") {
+		t.Errorf("output = %q, must not print Results/Summary for a read failure", out)
 	}
 	if exitCodeOf(err) != 1 {
 		t.Errorf("exit code = %d, want 1", exitCodeOf(err))
@@ -543,5 +555,494 @@ func TestPluginValidate_Edge_ErrorsBeforeWarningsWithinCheck(t *testing.T) {
 	}
 	if errIdx > warnIdx {
 		t.Errorf("output = %q, want the error line before the warning line within Fields", out)
+	}
+}
+
+// ── WP03 review: read-boundary findings 1, 2, 3, 4, 6 ───────────────────
+
+// execPluginValidateFull runs `plugin validate` through the REAL root
+// command (buildRootCmd + ExecuteC + renderRootError), the only path that
+// carries root's SilenceErrors + renderRootError wiring -- a bare
+// pluginValidateCmd().Execute(), as execPluginValidate uses, has no
+// SilenceErrors set and lets cobra's own default error handling print a
+// second "Error: ..." line to the real os.Stderr, which is a test-harness
+// artifact of calling the subcommand directly, never something a real
+// invocation does. Pinning stdout AND stderr (WP03 review finding 5) needs
+// the real path so an empty stderr actually proves what the contract
+// claims: this command writes every status line through
+// cmd.OutOrStdout(), never os.Stderr directly.
+func execPluginValidateFull(t *testing.T, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	root := buildRootCmd()
+	root.SetArgs(append([]string{"plugin", "validate"}, args...))
+	stderr = captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			cmd, err := root.ExecuteC()
+			if err != nil {
+				exitCode = renderRootError(cmd, err)
+			}
+		})
+	})
+	return stdout, stderr, exitCode
+}
+
+// TestPluginValidate_Finding1_ParentSymlinkEscapeRejected covers WP03
+// review finding 1: dir/.claude-plugin is a symlink to a directory OUTSIDE
+// dir, and the plugin.json inside it is an ordinary regular file. The
+// pre-fix containment check only ran when the candidate's own Lstat showed
+// a symlink, so a real file reached through a symlinked PARENT directory
+// was never checked at all and would have been read.
+func TestPluginValidate_Finding1_ParentSymlinkEscapeRejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating a symlink requires elevated privileges on windows; the parent-directory containment check is exercised on unix")
+	}
+	outside := t.TempDir()
+	writeManifest(t, outside, "plugin.json", `{"name":"escaped-content"}`)
+
+	projectRoot := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(projectRoot, ".claude-plugin")); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execPluginValidate(t, projectRoot)
+	if err == nil {
+		t.Fatal("want the escaping .claude-plugin symlink to be rejected, not read")
+	}
+	if exitCodeOf(err) != 1 {
+		t.Errorf("exit code = %d, want 1", exitCodeOf(err))
+	}
+	if strings.Contains(out, "escaped-content") {
+		t.Fatalf("output = %q, must never surface content read from outside projectRoot", out)
+	}
+	wantCandidate := filepath.ToSlash(filepath.Join(projectRoot, ".claude-plugin", "plugin.json"))
+	wantProgress := fmt.Sprintf(" > Validating plugin '%s'...", wantCandidate)
+	wantErr := fmt.Sprintf("could not read '%s': outside the given path", wantCandidate)
+	if !strings.Contains(out, wantProgress) {
+		t.Errorf("output = %q, want the progress line naming the escaping candidate %q", out, wantProgress)
+	}
+	if !strings.Contains(out, wantErr) {
+		t.Errorf("output = %q, want %q", out, wantErr)
+	}
+	if strings.Contains(out, "Validation Results:") || strings.Contains(out, "Summary:") {
+		t.Errorf("output = %q, must not print Results/Summary for a read failure", out)
+	}
+}
+
+// TestPluginValidate_Finding2_DirectSymlinkArgumentRejected covers WP03
+// review finding 2: the pre-fix code trusted a path the caller named
+// directly whenever Lstat showed "not a directory", admitting a symlink
+// with no containment or regular-file check at all. NFR-003 authorizes no
+// such exception.
+func TestPluginValidate_Finding2_DirectSymlinkArgumentRejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating a symlink requires elevated privileges on windows; the regular-file check is exercised on unix")
+	}
+	real := t.TempDir()
+	writeManifest(t, real, "real.json", `{"name":"x"}`)
+	link := filepath.Join(t.TempDir(), "plugin.json")
+	if err := os.Symlink(filepath.Join(real, "real.json"), link); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execPluginValidate(t, link)
+	if err == nil {
+		t.Fatal("want a symlink named directly to be rejected -- NFR-003 grants no exception for an explicit argument")
+	}
+	if exitCodeOf(err) != 1 {
+		t.Errorf("exit code = %d, want 1", exitCodeOf(err))
+	}
+	want := fmt.Sprintf("could not read '%s': not a regular file", filepath.ToSlash(link))
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+// TestPluginValidate_Finding2_ProbedSymlinkCandidateRejectedEvenWithinTree
+// proves the policy has no "stays inside the tree" carve-out either: a
+// directory-probed candidate that is itself a symlink is rejected purely
+// for being a symlink, before the containment check ever runs, even though
+// its target is a sibling file inside the same directory.
+func TestPluginValidate_Finding2_ProbedSymlinkCandidateRejectedEvenWithinTree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating a symlink requires elevated privileges on windows; the regular-file check is exercised on unix")
+	}
+	dir := t.TempDir()
+	writeManifest(t, dir, "real.json", `{"name":"x"}`)
+	if err := os.Symlink(filepath.Join(dir, "real.json"), filepath.Join(dir, "plugin.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execPluginValidate(t, dir)
+	if err == nil {
+		t.Fatal("want a symlinked candidate to be rejected even when its target stays inside dir -- no exception for symlinks, full stop")
+	}
+	want := fmt.Sprintf("could not read '%s': not a regular file", filepath.ToSlash(filepath.Join(dir, "plugin.json")))
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+// TestPluginValidate_Finding2_DirectFIFOArgumentRejectedWithoutBlocking
+// covers the other non-regular type finding 2 calls out: a FIFO opened for
+// reading with no writer attached blocks indefinitely, so the rejection
+// must happen via Lstat, before any call that opens the file. The command
+// runs in a goroutine under a hard timeout so a regression that reaches
+// open() fails this test instead of hanging the suite. mkfifo is POSIX-only;
+// skipped on windows outright (an MSYS/Git-Bash mkfifo.exe found on PATH
+// there does not produce something Go's native os.Lstat recognizes as a
+// file at all, so probing for the binary is not a reliable capability
+// check), matching internal/manifest's TestParseDepString_AbsolutePath
+// convention for a platform-gated case.
+func TestPluginValidate_Finding2_DirectFIFOArgumentRejectedWithoutBlocking(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mkfifo has no native equivalent on windows; FIFO rejection is exercised on unix")
+	}
+	dir := t.TempDir()
+	fifoPath := filepath.Join(dir, "plugin.json")
+	if err := exec.Command("mkfifo", fifoPath).Run(); err != nil {
+		t.Skipf("mkfifo unavailable on %s (%v); FIFO rejection is exercised where mkfifo exists", runtime.GOOS, err)
+	}
+
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		cmd := pluginValidateCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{fifoPath})
+		err := cmd.Execute()
+		done <- result{out: buf.String(), err: err}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err == nil {
+			t.Fatal("want a FIFO named directly to be rejected")
+		}
+		want := fmt.Sprintf("could not read '%s': not a regular file", filepath.ToSlash(fifoPath))
+		if !strings.Contains(r.out, want) {
+			t.Errorf("output = %q, want %q", r.out, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("plugin validate blocked opening a FIFO with no writer -- the regular-file check must reject it via Lstat before any open")
+	}
+}
+
+// growingFile wraps a real, small *os.File so Stat/Close behave exactly
+// like the genuine file the pre-open Lstat already vetted, while Read
+// fabricates far more bytes than that file's true size -- deterministically
+// simulating a manifest that grows between the size check and the read
+// finishing (WP03 review finding 3), which a real filesystem race cannot
+// be made to reproduce reliably across platforms in a test.
+type growingFile struct {
+	io.ReadCloser
+	remaining int
+}
+
+func (g *growingFile) Read(p []byte) (int, error) {
+	if g.remaining <= 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if n > g.remaining {
+		n = g.remaining
+	}
+	for i := range p[:n] {
+		p[i] = ' '
+	}
+	g.remaining -= n
+	return n, nil
+}
+
+// TestPluginValidate_Finding3_BoundedReadCatchesGrowthAfterStatCheck is the
+// review's requested replacement for the old oversized-file test, which
+// proved nothing about the CLI: deleting the CLI's own Stat check let the
+// full (still finite, on-disk) oversized content reach pluginjson.Validate,
+// whose own defensive cap produced the identical message, so the old test
+// could not tell the two apart.
+//
+// Here the fake file's Stat (used for the size check) genuinely reports a
+// small size -- well under the cap, exactly like a real file right before
+// it grows -- while Read is willing to fabricate far more than the cap.
+// Only a caller that BOUNDS the actual read (io.LimitReader, not a full
+// io.ReadAll) stops at maxManifestBytes+1 bytes; a caller that reads
+// everything and delegates to pluginjson.Validate would consume the whole
+// fabricated stream and render a completely different output shape (a
+// Structure finding inside a Results/Summary block, per the pre-review
+// contract, instead of the read-failure line): both the exact byte count
+// and the absence of a Results block are asserted below so either
+// regression fails this test.
+func TestPluginValidate_Finding3_BoundedReadCatchesGrowthAfterStatCheck(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, "plugin.json", `{"name":"x"}`) // genuinely small; passes the regular-file check
+	path := filepath.Join(dir, "plugin.json")
+
+	orig := openManifestFile
+	t.Cleanup(func() { openManifestFile = orig })
+	openManifestFile = func(p string) (manifestFile, os.FileInfo, error) {
+		f, info, err := orig(p)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &growingFile{ReadCloser: f, remaining: maxManifestBytes + 4096}, info, nil
+	}
+
+	out, err := execPluginValidate(t, path)
+	if err == nil {
+		t.Fatal("want the bounded read to refuse a manifest that grows past the cap after the size check")
+	}
+	want := fmt.Sprintf("could not read '%s': file exceeds 5 MiB cap (%d bytes)", filepath.ToSlash(path), maxManifestBytes+1)
+	if !strings.Contains(out, want) {
+		t.Errorf("output = %q, want %q (cap+1 -- the bounded amount, not growingFile's larger fabricated total)", out, want)
+	}
+	if strings.Contains(out, "Validation Results:") || strings.Contains(out, "Summary:") {
+		t.Errorf("output = %q, must not print Results/Summary for a read failure", out)
+	}
+}
+
+// TestPluginValidate_Finding4_FirstLineRelativizesAbsoluteArgument covers
+// WP03 review finding 4: only the path separator was normalized before,
+// so an absolute directory argument produced an absolute first line,
+// violating the contract's "<relative manifest path>".
+func TestPluginValidate_Finding4_FirstLineRelativizesAbsoluteArgument(t *testing.T) {
+	dir := chdirTemp(t)
+	writeManifest(t, dir, "plugin.json", `{"name":"x"}`)
+
+	out, err := execPluginValidate(t, dir) // dir (from t.TempDir()) is absolute
+	if err != nil {
+		t.Fatalf("unexpected error: %v (output: %s)", err, out)
+	}
+	firstLine := strings.SplitN(out, "\n", 2)[0]
+	want := " > Validating plugin 'plugin.json'..."
+	if firstLine != want {
+		t.Errorf("first line = %q, want %q (an absolute directory argument must not leak an absolute path)", firstLine, want)
+	}
+}
+
+// TestPluginValidate_Finding6_ReadFailureWording pins the read-failure
+// template contracts/cli-plugin-validate.md's "無法讀取 manifest" row
+// carries: could not read '<path>': <reason>. manifestPath is removed
+// after locate succeeds so readAndValidate's own Lstat produces a genuine
+// OS error, and the test captures that exact error text itself (Lstat on
+// the same removed path, in the same process) rather than hardcoding
+// platform-specific wording.
+func TestPluginValidate_Finding6_ReadFailureWording(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir, "plugin.json", `{"name":"x"}`)
+	path := filepath.Join(dir, "plugin.json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	_, statErr := os.Lstat(path)
+	if statErr == nil {
+		t.Fatal("want Lstat to fail for a removed file")
+	}
+
+	_, err := readAndValidate(path, "")
+	if err == nil {
+		t.Fatal("want a read error for a removed file")
+	}
+	want := fmt.Sprintf("could not read '%s': %s", filepath.ToSlash(path), statErr)
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+// ── WP03 review finding 5: full stdout/stderr pins ───────────────────────
+
+// TestPluginValidate_Finding5_FullOutput_Clean pins the complete stdout and
+// stderr for a clean manifest, replacing the substring-only assertions the
+// review found insufficient to catch a missing symbol, extra blank line, or
+// stray output.
+func TestPluginValidate_Finding5_FullOutput_Clean(t *testing.T) {
+	dir := chdirTemp(t)
+	if err := runPluginInit(t, "demo", "--yes", "--target", "claude"); err != nil {
+		t.Fatalf("plugin init demo: %v", err)
+	}
+	stdout, stderr, exitCode := execPluginValidateFull(t, filepath.Join(dir, "demo"))
+	if exitCode != 0 {
+		t.Fatalf("plugin validate demo: exit %d (stdout: %s)", exitCode, stdout)
+	}
+	wantStdout := "" +
+		" > Validating plugin 'plugin.json'...\n" +
+		"\n" +
+		" i Validation Results:\n" +
+		" + Structure: passed\n" +
+		" + Name: passed\n" +
+		" + Fields: passed\n" +
+		" + Paths: passed\n" +
+		" + Unrecognized: passed\n" +
+		"\n" +
+		" i Summary: 5 passed, 0 warnings, 0 errors\n"
+	if stdout != wantStdout {
+		t.Errorf("stdout = %q, want %q", stdout, wantStdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+}
+
+// TestPluginValidate_Finding5_FullOutput_Mixed pins the contract's own
+// mixed-findings example (contracts/cli-plugin-validate.md's stdout block)
+// byte for byte.
+func TestPluginValidate_Finding5_FullOutput_Mixed(t *testing.T) {
+	dir := chdirTemp(t)
+	writeManifest(t, dir, "plugin.json", `{"name":"x","metadata":"a","skills":"skills/","descripton":"d"}`)
+	stdout, stderr, exitCode := execPluginValidateFull(t, dir)
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+	wantStdout := "" +
+		" > Validating plugin 'plugin.json'...\n" +
+		"\n" +
+		" i Validation Results:\n" +
+		" + Structure: passed\n" +
+		" + Name: passed\n" +
+		" ! Fields: 'metadata' should be an object; Claude Code ignores other values\n" +
+		" x Paths: 'skills' must start with './'\n" +
+		" ! Unrecognized: unrecognized field 'descripton' (did you mean 'description'?)\n" +
+		"\n" +
+		" i Summary: 2 passed, 2 warnings, 1 errors\n"
+	if stdout != wantStdout {
+		t.Errorf("stdout = %q, want %q", stdout, wantStdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+}
+
+// TestPluginValidate_Finding5_FullOutput_StructureFailure pins the
+// Structure-failure shape: only the Structure line renders, no other
+// check, then the Summary.
+func TestPluginValidate_Finding5_FullOutput_StructureFailure(t *testing.T) {
+	dir := chdirTemp(t)
+	writeManifest(t, dir, "plugin.json", `{`)
+	stdout, stderr, exitCode := execPluginValidateFull(t, dir)
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+	wantStdout := "" +
+		" > Validating plugin 'plugin.json'...\n" +
+		"\n" +
+		" i Validation Results:\n" +
+		" x Structure: invalid JSON: unexpected end of JSON input\n" +
+		"\n" +
+		" i Summary: 0 passed, 0 warnings, 1 errors\n"
+	if stdout != wantStdout {
+		t.Errorf("stdout = %q, want %q", stdout, wantStdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+}
+
+// TestPluginValidate_Finding5_FullOutput_Verbose pins -v's field-listing
+// block: it appears between the progress line and Validation Results:,
+// lists only recognized fields present, in file order, and does not
+// duplicate the unrecognized field the Unrecognized check reports later.
+func TestPluginValidate_Finding5_FullOutput_Verbose(t *testing.T) {
+	dir := chdirTemp(t)
+	writeManifest(t, dir, "plugin.json", `{"name":"x","version":"1.0.0","descripton":"d"}`)
+	stdout, stderr, exitCode := execPluginValidateFull(t, dir, "-v")
+	if exitCode != 0 {
+		t.Fatalf("a warning alone must not fail without --strict: exit %d (stdout: %s)", exitCode, stdout)
+	}
+	wantStdout := "" +
+		" > Validating plugin 'plugin.json'...\n" +
+		" i name\n" +
+		" i version\n" +
+		"\n" +
+		" i Validation Results:\n" +
+		" + Structure: passed\n" +
+		" + Name: passed\n" +
+		" + Fields: passed\n" +
+		" + Paths: passed\n" +
+		" ! Unrecognized: unrecognized field 'descripton' (did you mean 'description'?)\n" +
+		"\n" +
+		" i Summary: 4 passed, 1 warnings, 0 errors\n"
+	if stdout != wantStdout {
+		t.Errorf("stdout = %q, want %q", stdout, wantStdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+}
+
+// TestPluginValidate_Finding5_FullOutput_NotFound pins the not-found line
+// on its own, with no progress line and no Results/Summary block.
+func TestPluginValidate_Finding5_FullOutput_NotFound(t *testing.T) {
+	chdirTemp(t)
+	stdout, stderr, exitCode := execPluginValidateFull(t, ".")
+	if exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", exitCode)
+	}
+	wantStdout := " x no plugin.json found in . (looked in plugin.json, .github/plugin/plugin.json, .claude-plugin/plugin.json, .cursor-plugin/plugin.json)\n"
+	if stdout != wantStdout {
+		t.Errorf("stdout = %q, want %q", stdout, wantStdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty", stderr)
+	}
+}
+
+// TestPluginValidate_Finding5_StrictVsNonStrict_SameStdout compares
+// --strict's stdout against the same invocation without it directly: the
+// contract requires the printed counts (and everything else) to be
+// unchanged, only the exit code differs.
+func TestPluginValidate_Finding5_StrictVsNonStrict_SameStdout(t *testing.T) {
+	dir := chdirTemp(t)
+	writeManifest(t, dir, "plugin.json", `{"name":"x","descripton":"d"}`)
+
+	nonStrictOut, err := execPluginValidate(t, dir)
+	if err != nil {
+		t.Fatalf("unexpected error without --strict: %v", err)
+	}
+	strictOut, strictErr := execPluginValidate(t, dir, "--strict")
+	if strictErr == nil {
+		t.Fatal("want --strict to fail on a warning")
+	}
+	if exitCodeOf(strictErr) != 1 {
+		t.Errorf("exit code = %d, want 1", exitCodeOf(strictErr))
+	}
+	if nonStrictOut != strictOut {
+		t.Errorf("--strict changed the printed output:\nnon-strict = %q\nstrict     = %q", nonStrictOut, strictOut)
+	}
+}
+
+// TestPluginValidate_Finding5_FullCandidateOrder covers the full probe
+// order end to end, not only root beating .claude-plugin: with all four
+// candidates present, root wins; removing the winner in turn exposes each
+// next candidate, down to .cursor-plugin/plugin.json alone.
+func TestPluginValidate_Finding5_FullCandidateOrder(t *testing.T) {
+	dir := chdirTemp(t)
+	candidates := []struct {
+		rel  string
+		name string
+	}{
+		{"plugin.json", "root"},
+		{".github/plugin/plugin.json", "github"},
+		{".claude-plugin/plugin.json", "claude-plugin"},
+		{".cursor-plugin/plugin.json", "cursor-plugin"},
+	}
+	for _, c := range candidates {
+		writeManifest(t, dir, c.rel, fmt.Sprintf(`{"name":%q}`, c.name))
+	}
+
+	for i, c := range candidates {
+		out, err := execPluginValidate(t, dir)
+		if err != nil {
+			t.Fatalf("round %d (%s should win): unexpected error: %v (output: %s)", i, c.name, err, out)
+		}
+		wantFirstLine := fmt.Sprintf(" > Validating plugin '%s'...", filepath.ToSlash(c.rel))
+		firstLine := strings.SplitN(out, "\n", 2)[0]
+		if firstLine != wantFirstLine {
+			t.Errorf("round %d: first line = %q, want %q", i, firstLine, wantFirstLine)
+		}
+		if err := os.Remove(filepath.Join(dir, c.rel)); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
