@@ -19,5 +19,5 @@ bin/apm-go plugin validate broken
 # 4. 測試與閘門
 go test ./internal/pluginjson/ ./cmd/apm-go/
 go test ./internal/pluginjson/ -run '^$' -fuzz FuzzValidateBytes -fuzztime 30s
-sh tools/gate.sh            # evidence under .gate/plugin-manifest-validate/
+sh tools/gate.sh -scope plugin-manifest-validate   # evidence under .gate/plugin-manifest-validate/
 ```
