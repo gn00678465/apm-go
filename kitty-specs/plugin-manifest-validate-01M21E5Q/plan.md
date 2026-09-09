@@ -37,14 +37,14 @@ Charter（`.kittify/charter/charter.md`）與三份 canonical documents 對照�
 | 測試用 `t.TempDir()`、inline fixture、注入 seam、不全域 mock | PASS | 驗證器是純函式 `Validate(bytes) Report`；檔案定位與讀取用 `os` 直接對 TempDir 操作，不需 seam |
 | `cmd/apm-go` 的 `TestMain` 已 pin CI 變數 | PASS | 新測試落在既有套件；`internal/pluginjson` 不讀 CI 變數 |
 | Gate 1：`go build ./...`、`go test ./...` 綠 | PASS（WP 完成條件） | |
-| Gate 2：輸出契約；任何使用者可見輸出／exit code／產生檔的變更要加或改 corpus case | **已裁定**（ticket 34） | 這是 apm-go 獨有指令，Oracle 沒有對應命令，`tools/parity` 無法產生 Oracle 側輸出。使用者裁定（2026-09-09，選項 A，原文見 `.scratch/parity-runner/issues/34-oracle-less-command-output-contract.md`）：不加 parity case；以 `tools/gate/realexec.sh` 固定 stdout / exit code 為輸出契約，`cmd/apm-go/plugin.go` 的偏差註記引用 ticket 34，PR 描述引用裁定原文。既有 96 case 必須維持 0 unwaived。 |
+| Gate 2：輸出契約；任何使用者可見輸出／exit code／產生檔的變更要加或改 corpus case | **PASS（charter 例外條款）** | 這是 apm-go 獨有指令，Oracle 沒有對應命令，`tools/parity` 無法產生 Oracle 側輸出。使用者裁定（2026-09-09，選項 A，原文見 `.scratch/parity-runner/issues/34-oracle-less-command-output-contract.md`）：不加 parity case；以 `tools/gate/realexec.sh` 固定 stdout / exit code 為輸出契約，`cmd/apm-go/plugin.go` 的偏差註記引用 ticket 34，PR 描述引用裁定原文。既有 96 case 必須維持 0 unwaived。裁定已寫入 charter：Quality Gate 2 與 Exception Policy 新增「釘住 Oracle 沒有的 apm-go 獨有指令」這一類例外，限定於 ticket 指名的指令，並要求 realexec 的驗證強度與 corpus 相同（完整 stdout、stderr、exit code、檔案樹）。 |
 | Gate 3：verification-gate 每個 WP 附 evidence 報告 | PASS（WP 完成條件） | `sh tools/gate.sh`，scope `plugin-manifest-validate` |
 | GitNexus `impact` before editing any symbol；`detect_changes` before commit | PASS（流程約束） | 觸及的既有符號只有 `pluginCmd`（加子指令）；新符號無 upstream caller |
 | ARCHITECTURE.md §1 依賴規則：新 import 邊要裁定 | PASS | `cmd/apm-go → pluginjson` 已存在；`pluginjson` 新增程式碼只 import stdlib；測試檔 import `jsonschema/v5`（測試依賴不在 §1 圖內，與 `pack/bundle/schema_sync_test.go` 相同先例） |
 | 每個 mission 走 worktree lane、只經 PR 進 main | PASS | spec-kitty lanes；PR 先以 `feat/marketplace-plugin-parity` 為 base，#18 合併後改 `main` |
 | AGENTS.md：未記錄的偏差是 finding | PASS | C-005：`plugin.go` 註記由「exactly one child (AC30)」改為記錄 #13 與本 mission |
 
-Gate 2 對無 Oracle 對應指令的適用方式已由使用者裁定（ticket 34）：realexec 固定契約 + 偏差註記 + PR 引用裁定。NFR-005（1 秒）只有理由性論證，沒有可執行的計時檢查，屬有意的 rationale-only 覆蓋（Low priority）。
+Gate 2 對無 Oracle 對應指令的適用方式已依 charter Amendment Process 收進 charter 本文（`.kittify/charter/charter.md` 的 Quality Gates 與 Exception Policy，來源 `interview/answers.yaml`），並同步到 PRODUCT.md 的 Output contract 與 Terminology；ticket 34 保存裁定原文與驗證強度。NFR-005（1 秒）只有理由性論證，沒有可執行的計時檢查，屬有意的 rationale-only 覆蓋（Low priority）。
 
 ## Project Structure
 

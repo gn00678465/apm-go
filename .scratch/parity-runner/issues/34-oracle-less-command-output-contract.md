@@ -36,11 +36,29 @@ apm-go's own stated contract (`kitty-specs/plugin-manifest-validate-01M21E5Q/con
 read-only `cmp` for the plugin/marketplace commands; extending it is the
 mechanism that actually executes the binary on the contract's inputs.
 
+## Verification strength
+
+Substring matching is not a contract. The corpus compares four surfaces
+byte-for-byte, and the realexec steps that replace it for this command must
+compare the same four, or the exemption becomes a quality downgrade rather than
+a different mechanism:
+
+- **stdout** - the complete output compared line for line against a recorded
+  expectation, not a substring or `grep` containment check.
+- **stderr** - asserted empty, or compared in full where the contract specifies
+  content.
+- **exit code** - the exact value for each scenario the contract names (0 clean,
+  1 errors or `--strict` warnings, 2 usage).
+- **file tree** - the fixture directory compared recursively before and after
+  the run (`cmp -r` or an equivalent digest), proving the command is read-only.
+
+A step that checks fewer than these four does not satisfy this ticket.
+
 ## Acceptance criteria
 
 - [ ] `cmd/apm-go/plugin.go` records the deviation at the command site: no
   Oracle counterpart, contract pinned by `tools/gate/realexec.sh`, this ticket.
 - [ ] `tools/gate/realexec.sh` gains the `plugin validate` happy and adversarial
-  steps listed in WP04 (stdout substrings, exit codes, `cmp` before/after).
+  steps listed in WP04, at the verification strength recorded above.
 - [ ] The PR description quotes this ruling.
 - [ ] Existing parity corpus stays at 96 cases / 0 unwaived.

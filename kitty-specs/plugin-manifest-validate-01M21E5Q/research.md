@@ -49,7 +49,7 @@ Date: 2026-09-09. Sources: upstream microsoft/apm（GitNexus index `apm` @ 3aa03
 - **Decision**: 不加 parity case；輸出契約由 `tools/gate/realexec.sh` 的固定步驟（stdout 子字串 + exit code + `cmp` 只讀）承擔，並在 `cmd/apm-go/plugin.go` 的偏差註記寫明。
 - **Rationale**: parity runner 需要 Oracle 側輸出；waiver 只允許 rendering 差異；pending case 是「Oracle 有、apm-go 未對齊」的語意。
 - **Alternatives considered**: 見 plan.md Complexity Tracking。
-- **Ruling**: 使用者於 2026-09-09 裁定選項 A；原文與適用範圍記錄在 `.scratch/parity-runner/issues/34-oracle-less-command-output-contract.md`。
+- **Ruling**: 使用者於 2026-09-09 裁定選項 A；原文與適用範圍記錄在 `.scratch/parity-runner/issues/34-oracle-less-command-output-contract.md`，並依 charter Amendment Process 收進 charter 的 Quality Gate 2 與 Exception Policy（來源 `.kittify/charter/interview/answers.yaml`）與 PRODUCT.md。realexec 的驗證強度與 corpus 對齊：完整 stdout、stderr、exit code、遞迴檔案樹，不用子字串。
 
 ## Supply-chain check
 
