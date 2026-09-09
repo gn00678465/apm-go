@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -31,7 +30,11 @@ func assertReport(t *testing.T, got Report, wantStructureFailed bool, want []Fin
 	}
 }
 
-func assertStructureError(t *testing.T, got Report, wantPrefix string) {
+// assertStructureError requires the exact decoder-detail message (not just a
+// prefix): contracts/cli-plugin-validate.md's Structure row specifies
+// `invalid JSON: <decoder message>` in full, and a prefix-only comparison
+// would still pass if the decoder detail were dropped or corrupted.
+func assertStructureError(t *testing.T, got Report, wantMessage string) {
 	t.Helper()
 	if !got.StructureFailed {
 		t.Errorf("StructureFailed = false, want true")
@@ -43,8 +46,8 @@ func assertStructureError(t *testing.T, got Report, wantPrefix string) {
 	if f.Check != Structure || f.Level != LevelError {
 		t.Errorf("Findings[0] = %+v, want Check=Structure Level=LevelError", f)
 	}
-	if !strings.HasPrefix(f.Message, wantPrefix) {
-		t.Errorf("Findings[0].Message = %q, want prefix %q", f.Message, wantPrefix)
+	if f.Message != wantMessage {
+		t.Errorf("Findings[0].Message = %q, want %q", f.Message, wantMessage)
 	}
 }
 
@@ -116,17 +119,6 @@ func TestValidate(t *testing.T) {
 		})
 	})
 
-	t.Run("US2-AS2-strict-does-not-change-report", func(t *testing.T) {
-		// Validate has no --strict concept (FR-008: the printed counts do
-		// not change under --strict, only the exit code does) -- this pins
-		// that invariant WP03's CLI layer depends on: the same input
-		// produces the identical Report as AS1.
-		data := []byte(`{"name":"x","descripton":"d"}`)
-		assertReport(t, Validate(data), false, []Finding{
-			{Unrecognized, LevelWarning, "unrecognized field 'descripton' (did you mean 'description'?)"},
-		})
-	})
-
 	t.Run("US2-AS3-publisher-no-suggestion", func(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","publisher":"p"}`)), false, []Finding{
 			{Unrecognized, LevelWarning, "unrecognized field 'publisher'"},
@@ -150,7 +142,7 @@ func TestValidate(t *testing.T) {
 	// -- US3: hostile/broken input gets one diagnosis, never a crash --
 
 	t.Run("US3-AS1-invalid-json-unbalanced-brace", func(t *testing.T) {
-		assertStructureError(t, Validate([]byte(`{`)), "invalid JSON: ")
+		assertStructureError(t, Validate([]byte(`{`)), "invalid JSON: unexpected end of JSON input")
 	})
 
 	t.Run("US3-AS2-top-level-not-object", func(t *testing.T) {
@@ -167,8 +159,12 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("US3-AS4-duplicate-key-last-value-wins", func(t *testing.T) {
-		assertReport(t, Validate([]byte(`{"name":"a","name":"b"}`)), false, []Finding{
+		// The second "name" value (123) is not a legal name value; only a
+		// last-value-wins decode surfaces the resulting Name error, so this
+		// (unlike two-legal-values) fails a first-value-wins implementation.
+		assertReport(t, Validate([]byte(`{"name":"a","name":123}`)), false, []Finding{
 			{Structure, LevelWarning, "duplicate key 'name' (last value wins)"},
+			{Name, LevelError, "'name' must be a string"},
 		})
 	})
 
@@ -222,6 +218,29 @@ func TestValidate(t *testing.T) {
 		})
 	})
 
+	t.Run("EdgeCase-dependencies-name-wrong-type", func(t *testing.T) {
+		// {"name":123} has a present "name" key that is not a string --
+		// presence alone must not satisfy the check (T004: "a name field
+		// that is itself a string").
+		assertReport(t, Validate([]byte(`{"name":"x","dependencies":[{"name":123}]}`)), false, []Finding{
+			{Fields, LevelError, "'dependencies[0]' is missing 'name'"},
+		})
+	})
+
+	t.Run("EdgeCase-dependencies-name-null", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","dependencies":[{"name":null}]}`)), false, []Finding{
+			{Fields, LevelError, "'dependencies[0]' is missing 'name'"},
+		})
+	})
+
+	t.Run("EdgeCase-dependencies-string-entry-legal", func(t *testing.T) {
+		// contracts/cli-plugin-validate.md's own message ("must be a string
+		// or object") and Claude Code's documented dependency shape both
+		// treat a bare string entry as legal; only a non-string,
+		// non-object element is an error.
+		assertReport(t, Validate([]byte(`{"name":"x","dependencies":["some-pkg"]}`)), false, nil)
+	})
+
 	t.Run("EdgeCase-dependencies-version-not-string", func(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","dependencies":[{"name":"foo","version":1}]}`)), false, []Finding{
 			{Fields, LevelError, "'dependencies[0].version' must be a string"},
@@ -230,6 +249,16 @@ func TestValidate(t *testing.T) {
 
 	t.Run("EdgeCase-author-name-not-string", func(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","author":{"name":123}}`)), false, []Finding{
+			{Fields, LevelError, "'author.name' must be a string"},
+		})
+	})
+
+	t.Run("EdgeCase-author-two-bad-keys-reverse-order", func(t *testing.T) {
+		// "url" appears before "name" in the manifest text; same-level
+		// findings must keep that file order, not a fixed name/email/url
+		// sequence.
+		assertReport(t, Validate([]byte(`{"name":"x","author":{"url":1,"name":2}}`)), false, []Finding{
+			{Fields, LevelError, "'author.url' must be a string"},
 			{Fields, LevelError, "'author.name' must be a string"},
 		})
 	})
@@ -264,12 +293,17 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("EdgeCase-fields-error-before-warning-in-same-check", func(t *testing.T) {
-		// metadata (warning-tier) appears before keywords (error-tier) in
-		// the manifest text; the Fields check must still emit the error
-		// first (data-model.md: errors precede warnings within a check).
-		assertReport(t, Validate([]byte(`{"name":"x","metadata":"z","keywords":"a"}`)), false, []Finding{
+		// Two warning-tier and two error-tier Fields mismatches interleaved
+		// in file order (metadata, keywords, experimental, license): the
+		// Fields check must still emit both errors first (in their own file
+		// order), then both warnings (in their own file order) -- a single
+		// error/warning pair cannot distinguish "grouped by level" from
+		// "wrong order preserved as-is".
+		assertReport(t, Validate([]byte(`{"name":"x","metadata":"z","keywords":"a","experimental":[],"license":123}`)), false, []Finding{
 			{Fields, LevelError, "'keywords' must be an array of strings"},
+			{Fields, LevelError, "'license' must be a string"},
 			{Fields, LevelWarning, "'metadata' should be an object; Claude Code ignores other values"},
+			{Fields, LevelWarning, "'experimental' should be an object; Claude Code ignores other values"},
 		})
 	})
 
@@ -280,12 +314,12 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("EdgeCase-empty-file", func(t *testing.T) {
-		assertStructureError(t, Validate([]byte("")), "invalid JSON: ")
+		assertStructureError(t, Validate([]byte("")), "invalid JSON: unexpected end of JSON input")
 	})
 
 	t.Run("EdgeCase-deep-nesting-1MiB", func(t *testing.T) {
 		data := bytes.Repeat([]byte("["), 1024*1024)
-		assertStructureError(t, Validate(data), "invalid JSON: ")
+		assertStructureError(t, Validate(data), "invalid JSON: exceeded max depth")
 	})
 
 	t.Run("EdgeCase-paths-dotdot-segment", func(t *testing.T) {
@@ -297,6 +331,16 @@ func TestValidate(t *testing.T) {
 	t.Run("EdgeCase-paths-array-index-field", func(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","skills":["./a.md","bad"]}`)), false, []Finding{
 			{Paths, LevelError, "'skills[1]' must start with './'"},
+		})
+	})
+
+	t.Run("EdgeCase-key-order-scan-survives-unrepresentable-number", func(t *testing.T) {
+		// metadata.n (1e1000) cannot be decoded as float64 by the default
+		// json.Decoder token stream; the key-order scan must still reach
+		// 'skills' afterwards instead of silently truncating the manifest's
+		// known-field/duplicate-key scan at "metadata".
+		assertReport(t, Validate([]byte(`{"name":"x","metadata":{"n":1e1000},"skills":"/outside"}`)), false, []Finding{
+			{Paths, LevelError, "'skills' must not be an absolute path"},
 		})
 	})
 }
