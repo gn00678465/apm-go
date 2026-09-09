@@ -168,29 +168,20 @@ var openManifestFile = func(path string) (manifestFile, os.FileInfo, error) {
 // manifestPath was the caller's own path argument (WP03 review finding 2:
 // an explicit argument gets no containment check, only the same
 // regular-file requirement -- there is no directory to escape).
-//
-// The boundary closes two gaps found in WP03 review:
-//   - finding 1/2: a symlink is rejected outright (errNotRegularFile),
-//     never resolved-and-checked-for-escape; a directory-probed candidate
-//     whose real location (parent symlinks included) falls outside
-//     boundary is rejected as errEscapesPath. The file actually opened is
-//     held to the same constraint via a post-open os.SameFile comparison
-//     against the pre-open Lstat, so a link swapped into manifestPath
-//     between the two calls cannot substitute a different file.
-//   - finding 3: the actual read is bounded to maxManifestBytes+1 via
-//     io.LimitReader regardless of what Stat/Fstat reported, so a file
-//     grown after the size check is refused here instead of being read in
-//     full and handed to pluginjson.Validate.
 func readAndValidate(manifestPath, boundary string) (pluginjson.Report, error) {
+	if boundary != "" {
+		return readManifestInRoot(manifestPath, boundary)
+	}
+
+	// No directory to escape (WP03 finding 2): the regular-file check plus
+	// the post-open os.SameFile comparison in finishRead is the full
+	// policy here.
 	checkInfo, err := os.Lstat(manifestPath)
 	if err != nil {
 		return pluginjson.Report{}, readError(manifestPath, err)
 	}
 	if !checkInfo.Mode().IsRegular() {
 		return pluginjson.Report{}, readError(manifestPath, errNotRegularFile)
-	}
-	if boundary != "" && !pathStaysWithin(boundary, manifestPath) {
-		return pluginjson.Report{}, readError(manifestPath, errEscapesPath)
 	}
 
 	f, openInfo, err := openManifestFile(manifestPath)
@@ -199,10 +190,92 @@ func readAndValidate(manifestPath, boundary string) (pluginjson.Report, error) {
 	}
 	defer f.Close()
 
-	if !openInfo.Mode().IsRegular() || !os.SameFile(checkInfo, openInfo) {
+	return finishRead(manifestPath, checkInfo, openInfo, f)
+}
+
+// readManifestInRoot is the boundary!="" half of readAndValidate (WP03
+// round-3 review, HIGH finding): the pre-fix code resolved manifestPath's
+// containment with filepath.EvalSymlinks and then reopened it by path --
+// two more independent lookups on top of the leading Lstat, each re-walking
+// dir/.claude-plugin from scratch. A parent symlink flipped outside, then
+// inside, then back to the SAME outside target across those lookups could
+// pass the containment check (which observed the transient "inside" state)
+// and the os.SameFile comparison (Lstat and Open observed the same outside
+// file) without the escaping state ever being what containment examined --
+// proven by TestPluginValidate_Finding_ParentSymlinkRaceAcrossLookups.
+//
+// os.OpenRoot(boundary) pins one directory handle; Lstat and Open below
+// both resolve rel against that SAME handle, and each resolves and
+// escape-checks every component of the walk fresh, at the moment of that
+// specific call -- there is no separate containment step whose verdict can
+// go stale before the open it was meant to gate. This closes the parent
+// case; the leaf-level race between Lstat and Open (a symlink or a
+// different file swapped in between the two) is unaffected by this and
+// remains os.SameFile's job, exactly as on the no-boundary path above.
+func readManifestInRoot(manifestPath, boundary string) (pluginjson.Report, error) {
+	rel, err := filepath.Rel(boundary, manifestPath)
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, errEscapesPath)
+	}
+
+	root, err := os.OpenRoot(boundary)
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, err)
+	}
+	defer root.Close()
+
+	checkInfo, err := root.Lstat(rel)
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, rootEscapeErr(err))
+	}
+	// Symlink candidates are rejected outright, never resolved-and-checked
+	// (WP03 review finding 1/2): os.Root permits a symlink that stays
+	// within the root, so this check is what still enforces apm-go's
+	// stricter no-symlink-candidate policy.
+	if !checkInfo.Mode().IsRegular() {
 		return pluginjson.Report{}, readError(manifestPath, errNotRegularFile)
 	}
 
+	f, err := root.Open(rel)
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, rootEscapeErr(err))
+	}
+	defer f.Close()
+
+	openInfo, err := f.Stat()
+	if err != nil {
+		return pluginjson.Report{}, readError(manifestPath, err)
+	}
+
+	return finishRead(manifestPath, checkInfo, openInfo, f)
+}
+
+// rootEscapeErr maps an os.Root containment failure to errEscapesPath so
+// the read-failure message stays "outside the given path" (matching the
+// pre-fix wording) regardless of which os.Root method detected the escape;
+// any other os.Root error (the candidate no longer exists, a permission
+// error) passes through unchanged.
+//
+// os.Root does not export its escape sentinel outside the os package
+// (go1.27, os/file.go's unexported errPathEscapes) -- detection is by the
+// one message text os.Root has used since the feature shipped, "path
+// escapes from parent", which internal/rootfs/rootwriter.go's own doc
+// comment already cites verbatim for this exact os.Root behavior.
+func rootEscapeErr(err error) error {
+	if strings.Contains(err.Error(), "path escapes from parent") {
+		return errEscapesPath
+	}
+	return err
+}
+
+// finishRead applies the shared regular-file / os.SameFile / size-cap /
+// bounded-read policy (T013 steps 6-7) to an already Lstat-checked, opened
+// handle, then hands the bytes to WP01's pure Validate. Shared by both
+// readAndValidate paths so this policy exists in exactly one place.
+func finishRead(manifestPath string, checkInfo, openInfo os.FileInfo, f manifestFile) (pluginjson.Report, error) {
+	if !openInfo.Mode().IsRegular() || !os.SameFile(checkInfo, openInfo) {
+		return pluginjson.Report{}, readError(manifestPath, errNotRegularFile)
+	}
 	if openInfo.Size() > maxManifestBytes {
 		return pluginjson.Report{}, readError(manifestPath, fmt.Errorf("file exceeds 5 MiB cap (%d bytes)", openInfo.Size()))
 	}
@@ -357,36 +430,6 @@ func locateInDir(dir string) (manifestLocation, error) {
 		}
 	}
 	return manifestLocation{}, notFoundError(dir)
-}
-
-// pathStaysWithin resolves candPath's real location BEFORE any read --
-// following every symlink in the chain, parent directory components
-// included -- and reports whether it stays inside dir's tree (NFR-003:
-// never follow a symlink to outside path). This runs unconditionally, not
-// only when candPath's own Lstat shows a symlink: a symlinked PARENT
-// directory (e.g. dir/.claude-plugin -> /outside) escapes the boundary just
-// as surely as a symlinked leaf, and checking only the leaf's mode bit, as
-// the pre-fix code did, missed it entirely (WP03 review finding 1). A
-// target that cannot be resolved (broken link, permission error) is treated
-// as escaping -- there is nothing safe to read through it either way.
-func pathStaysWithin(dir, candPath string) bool {
-	resolved, err := filepath.EvalSymlinks(candPath)
-	if err != nil {
-		return false
-	}
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return false
-	}
-	absResolved, err := filepath.Abs(resolved)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(absDir, absResolved)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // notFoundError renders the exact "no plugin.json found" message
