@@ -430,6 +430,12 @@ func checkDependencyElement(i int, elem json.RawMessage) []Finding {
 // T006: themes/monitors get the same Fields+Paths treatment as any other
 // IsPath rule (but at Fields error level even though the parent field is
 // warning-tier); every other sub-key is Unrecognized's concern.
+//
+// experimental.monitors shares kindStringOrArrayOfObject with top-level
+// "monitors" (same anyOf in upstream's vendored schema, and the Claude Code
+// plugins-reference Monitors section documents the same inline object-array
+// shape at both nesting levels) -- unlike experimental.themes, which has no
+// such object-array form and stays on kindStringOrArray.
 func checkExperimental(raw json.RawMessage) (fieldErrs, pathErrs, unrec []Finding) {
 	subOrder, subCounts := scanObjectKeys(raw)
 	subOrder = dedupeKeepFirst(subOrder)
@@ -440,19 +446,27 @@ func checkExperimental(raw json.RawMessage) (fieldErrs, pathErrs, unrec []Findin
 	}
 	for _, sk := range subOrder {
 		switch sk {
-		case "themes", "monitors":
-			sraw := sub[sk]
-			field := "experimental." + sk
-			if !checkKind(sraw, kindStringOrArray) {
-				fieldErrs = append(fieldErrs, Finding{Fields, LevelError, fmt.Sprintf("'%s' must be a string or array", field)})
-				continue
-			}
-			pathErrs = append(pathErrs, checkPathField(field, sraw)...)
+		case "themes":
+			fieldErrs, pathErrs = checkExperimentalPathField(sk, sub[sk], kindStringOrArray, fieldErrs, pathErrs)
+		case "monitors":
+			fieldErrs, pathErrs = checkExperimentalPathField(sk, sub[sk], kindStringOrArrayOfObject, fieldErrs, pathErrs)
 		default:
 			unrec = append(unrec, unrecognizedExperimentalFinding(sk))
 		}
 	}
 	return fieldErrs, pathErrs, unrec
+}
+
+// checkExperimentalPathField applies kind's Fields check to one
+// experimental.<subKey> value and, only when it matches, the Paths check
+// (which is itself a no-op for the object-array form -- pathValues rejects
+// anything that isn't a string or array of strings, per checkPathField).
+func checkExperimentalPathField(subKey string, sraw json.RawMessage, kind ruleKind, fieldErrs, pathErrs []Finding) ([]Finding, []Finding) {
+	field := "experimental." + subKey
+	if !checkKind(sraw, kind) {
+		return append(fieldErrs, Finding{Fields, LevelError, kindMismatchMessage(field, kind)}), pathErrs
+	}
+	return fieldErrs, append(pathErrs, checkPathField(field, sraw)...)
 }
 
 // checkPathField runs the Paths syntax check (T005) on every value of a
