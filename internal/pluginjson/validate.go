@@ -324,14 +324,21 @@ func checkName(m map[string]json.RawMessage) []Finding {
 }
 
 // checkAuthor implements T004 step 3: only sub-fields that are present and
-// not strings are reported; author has no required sub-fields here.
+// not strings are reported, walked in the sub-object's own file order
+// (data-model.md: same-level findings keep file order) rather than a fixed
+// name/email/url sequence; author has no required sub-fields here.
 func checkAuthor(raw json.RawMessage) []Finding {
+	subOrder, _ := scanObjectKeys(raw)
+	subOrder = dedupeKeepFirst(subOrder)
 	var sub map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &sub); err != nil {
 		return nil
 	}
 	var findings []Finding
-	for _, k := range []string{"name", "email", "url"} {
+	for _, k := range subOrder {
+		if k != "name" && k != "email" && k != "url" {
+			continue
+		}
 		if v, present := sub[k]; present && !isJSONString(v) {
 			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'author.%s' must be a string", k)})
 		}
@@ -342,6 +349,15 @@ func checkAuthor(raw json.RawMessage) []Finding {
 // checkDependencies implements T004 step 4. The whole-field-not-an-array
 // shape has no scenario in the contract's Messages table; "must be an
 // array" follows the table's own naming convention for an unlisted case.
+//
+// A bare string element is accepted with no further checks: the contract's
+// own message for the reject case ("must be a string or object") asserts
+// that a string is a legal shape, and Claude Code's own dependency docs
+// describe a plain-string dependency form -- rejecting every non-object
+// element here (as the previous code did) contradicted that message's own
+// wording. What (if anything) should additionally be validated on a bare
+// string entry is not specified by contracts/cli-plugin-validate.md or
+// data-model.md; this is left unchecked pending that ruling.
 func checkDependencies(raw json.RawMessage) []Finding {
 	if !isJSONArray(raw) {
 		return []Finding{{Fields, LevelError, "'dependencies' must be an array"}}
@@ -352,6 +368,9 @@ func checkDependencies(raw json.RawMessage) []Finding {
 	}
 	var findings []Finding
 	for i, elem := range elems {
+		if isJSONString(elem) {
+			continue
+		}
 		if !isJSONObject(elem) {
 			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d]' must be a string or object", i)})
 			continue
@@ -360,7 +379,11 @@ func checkDependencies(raw json.RawMessage) []Finding {
 		if err := json.Unmarshal(elem, &sub); err != nil {
 			continue
 		}
-		if _, hasName := sub["name"]; !hasName {
+		// "name" must be present AND a string (T004: "a name field that is
+		// itself a string") -- presence alone let {"name":123}/{"name":null}
+		// through; the contract has no distinct message for a wrong-typed
+		// name, so it is reported the same as a missing one.
+		if name, hasName := sub["name"]; !hasName || !isJSONString(name) {
 			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d]' is missing 'name'", i)})
 		}
 		if v, hasVersion := sub["version"]; hasVersion && !isJSONString(v) {
@@ -600,54 +623,49 @@ func pathSyntaxError(field, v string) string {
 }
 
 // scanObjectKeys walks data's outermost JSON object (data must already be
-// known-valid JSON) and returns its top-level keys in file order (with
-// repeats, for duplicate-key detection) plus an occurrence count per key.
-// Reused for both the manifest's own top-level keys (Structure/duplicate-
-// key detection, KnownFieldsPresent) and, given one field's raw value, that
-// field's own nested keys (experimental.* file order).
+// known-valid JSON -- Validate's Structure check decodes it before this is
+// ever called) and returns its top-level keys in file order (with repeats,
+// for duplicate-key detection) plus an occurrence count per key.
+//
+// Each value is skipped by decoding it into a json.RawMessage rather than
+// hand-tracking a nesting stack of delimiters: RawMessage capture never
+// inspects a value's content, so a number encoding/json's default decoder
+// cannot represent as float64 (e.g. 1e1000, nested arbitrarily deep inside
+// the value) never reaches a numeric conversion. The previous stack-based
+// Token() walker called Token() on every nested token including numbers,
+// so that failure aborted the walk (dec.Token() returns an error) and the
+// keys found so far were silently returned as if the scan were complete --
+// dropping any sibling key that came after the offending value (e.g.
+// 'skills' after a 'metadata' containing 1e1000) from KnownFieldsPresent and
+// from every check that iterates the returned key list. Reused for both the
+// manifest's own top-level keys (Structure/duplicate-key detection,
+// KnownFieldsPresent) and, given one field's raw value, that field's own
+// nested keys (experimental.* file order).
 func scanObjectKeys(data []byte) (order []string, counts map[string]int) {
 	counts = map[string]int{}
 	dec := json.NewDecoder(bytes.NewReader(data))
-	type frame struct {
-		isObject    bool
-		awaitingKey bool
+	tok, err := dec.Token()
+	if err != nil {
+		return order, counts
 	}
-	var stack []frame
-	for {
-		tok, err := dec.Token()
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return order, counts
+	}
+	for dec.More() {
+		keyTok, err := dec.Token()
 		if err != nil {
-			break
+			return order, counts
 		}
-		switch t := tok.(type) {
-		case json.Delim:
-			switch t {
-			case '{', '[':
-				stack = append(stack, frame{isObject: t == '{', awaitingKey: t == '{'})
-			case '}', ']':
-				stack = stack[:len(stack)-1]
-				if len(stack) > 0 && stack[len(stack)-1].isObject {
-					stack[len(stack)-1].awaitingKey = true
-				}
-			}
-		default:
-			if len(stack) == 0 {
-				continue
-			}
-			top := &stack[len(stack)-1]
-			if !top.isObject {
-				continue
-			}
-			if top.awaitingKey {
-				key, _ := t.(string)
-				if len(stack) == 1 {
-					order = append(order, key)
-					counts[key]++
-				}
-				top.awaitingKey = false
-			} else {
-				top.awaitingKey = true
-			}
+		key, ok := keyTok.(string)
+		if !ok {
+			return order, counts
 		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return order, counts
+		}
+		order = append(order, key)
+		counts[key]++
 	}
 	return order, counts
 }
