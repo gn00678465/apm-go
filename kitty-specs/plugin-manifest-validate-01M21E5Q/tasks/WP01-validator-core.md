@@ -142,7 +142,7 @@ Path-typed fields (`IsPath = true`, per data-model.md): `skills`, `commands`, `a
 
 - **Purpose**: One check that must run before all others and, on failure, suppresses every other check (data-model.md: `StructureFailed`).
 - **Steps**:
-  1. `Validate` first checks `len(data) > 5*1024*1024` -- wait, per data-model.md the 5 MiB cap is enforced by the CLI layer (WP03) via `Stat` before the file is even read; `Validate` itself receives already-capped bytes. Still add a defensive length check here as the last line of defense (`file exceeds 5 MiB cap (<n> bytes)`) in case a caller passes oversized bytes directly (this keeps `Validate` safe to fuzz standalone in WP02, per NFR-002).
+  1. Per data-model.md the 5 MiB cap is enforced by the CLI layer (WP03) via `Stat` before the file is even read, so `Validate` receives already-capped bytes. Add a defensive `len(data) > 5*1024*1024` check here anyway, as the last line of defense (`file exceeds 5 MiB cap (<n> bytes)`) in case a caller passes oversized bytes directly (this keeps `Validate` safe to fuzz standalone in WP02, per NFR-002).
   2. `utf8.Valid(data)` -- if false, one Structure error: `invalid UTF-8`.
   3. Decode with `json.Unmarshal(data, &map[string]json.RawMessage{})` inside a `defer recover()`-free path -- `encoding/json` does not panic on deep nesting, it returns an error; if `Unmarshal` errors, one Structure error: `invalid JSON: <decoder message>` (use the underlying error's `.Error()` text verbatim after the prefix).
   4. If decode succeeds but the top-level JSON value was not an object (detect via a preliminary `json.RawMessage` peek, or by checking the raw bytes' first non-whitespace byte is `{`), one Structure error: `top-level value must be an object`.
