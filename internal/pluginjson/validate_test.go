@@ -111,6 +111,21 @@ func TestValidate(t *testing.T) {
 		})
 	})
 
+	t.Run("EdgeCase-commands-object-form-legal", func(t *testing.T) {
+		// Schema's third anyOf branch for "commands": an object mapping
+		// command names to metadata (propertyNames string, additionalProperties
+		// an object with "source"/"content"/etc) -- distinct from the string
+		// and array-of-string path forms AS6a/AS6b exercise. kindStringOrArray
+		// wrongly rejected this shape as a Fields error (defect 1).
+		assertReport(t, Validate([]byte(`{"name":"x","commands":{"about":{"source":"./about.md"}}}`)), false, nil)
+	})
+
+	t.Run("EdgeCase-commands-wrong-type-rejected", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","commands":42}`)), false, []Finding{
+			{Fields, LevelError, "'commands' must be a string, array, or object"},
+		})
+	})
+
 	// -- US2: CI --strict catches typos and stray non-object fields --
 
 	t.Run("US2-AS1-descripton-did-you-mean", func(t *testing.T) {
@@ -322,7 +337,12 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("EdgeCase-top-level-themes-belongs-under-experimental", func(t *testing.T) {
+		// "dark" is missing the schema's required "./" prefix. Top-level
+		// "themes" carries the same ^\./ pattern as its experimental.themes
+		// counterpart, so it must be path-checked too (defect 2) -- the
+		// top-level-placement warning does not exempt it from Paths.
 		assertReport(t, Validate([]byte(`{"name":"x","themes":["dark"]}`)), false, []Finding{
+			{Paths, LevelError, "'themes[0]' must start with './'"},
 			{Unrecognized, LevelWarning, "'themes' belongs under 'experimental'"},
 		})
 	})
@@ -336,6 +356,11 @@ func TestValidate(t *testing.T) {
 		// warning this test pins (round-3 review: the previous fixture
 		// ["cpu"] was invalid shape that happened to pass the old kind
 		// check, so it pinned nothing about a legal monitors value).
+		//
+		// Also guards defect 2's fix: "monitors" now carries IsPath: true,
+		// but the object-array branch has no "./" pattern in the schema, so
+		// this legal object-array value must still produce no Paths finding
+		// (pathValues' ok=false short-circuits checkPathField for it).
 		assertReport(t, Validate([]byte(`{"name":"x","monitors":[{"name":"cpu","command":"echo cpu","description":"CPU monitor"}]}`)), false, []Finding{
 			{Unrecognized, LevelWarning, "'monitors' belongs under 'experimental'"},
 		})
