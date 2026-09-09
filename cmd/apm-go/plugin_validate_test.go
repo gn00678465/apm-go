@@ -792,10 +792,10 @@ func TestPluginValidate_Finding3_BoundedReadCatchesGrowthAfterStatCheck(t *testi
 	writeManifest(t, dir, "plugin.json", `{"name":"x"}`) // genuinely small; passes the regular-file check
 	path := filepath.Join(dir, "plugin.json")
 
-	orig := openManifestFile
-	t.Cleanup(func() { openManifestFile = orig })
-	openManifestFile = func(p string) (manifestFile, os.FileInfo, error) {
-		f, info, err := orig(p)
+	orig := openRootFile
+	t.Cleanup(func() { openRootFile = orig })
+	openRootFile = func(root *os.Root, rel string) (manifestFile, os.FileInfo, error) {
+		f, info, err := orig(root, rel)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1102,16 +1102,16 @@ func TestPluginValidate_Finding1_FIFOSwappedInDuringOpenWindowDoesNotBlock(t *te
 	writeManifest(t, dir, "plugin.json", `{"name":"x"}`)
 	path := filepath.Join(dir, "plugin.json")
 
-	orig := openManifestFile
-	t.Cleanup(func() { openManifestFile = orig })
-	openManifestFile = func(p string) (manifestFile, os.FileInfo, error) {
-		if err := os.Remove(p); err != nil {
+	orig := openRootFile
+	t.Cleanup(func() { openRootFile = orig })
+	openRootFile = func(root *os.Root, rel string) (manifestFile, os.FileInfo, error) {
+		if err := os.Remove(path); err != nil {
 			return nil, nil, err
 		}
-		if err := exec.Command("mkfifo", p).Run(); err != nil {
+		if err := exec.Command("mkfifo", path).Run(); err != nil {
 			return nil, nil, err
 		}
-		return orig(p)
+		return orig(root, rel)
 	}
 
 	done := make(chan error, 1)
@@ -1127,6 +1127,50 @@ func TestPluginValidate_Finding1_FIFOSwappedInDuringOpenWindowDoesNotBlock(t *te
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("readAndValidate blocked opening a FIFO swapped in during the check-then-open race window")
+	}
+}
+
+// TestPluginValidate_Finding1_DirectoryProbedFIFOSwapDoesNotBlock is the
+// round-4 review's counterpart to the test above for the OTHER branch: a
+// directory-probed candidate (readManifestInRoot). Before the round-4 fix,
+// that branch opened through root.Open -- plain O_RDONLY, no O_NONBLOCK --
+// so a candidate swapped to a FIFO with no writer after root.Lstat's
+// containment check would block that Open forever, before Fstat and
+// os.SameFile ever got a chance to run. The test above cannot catch this:
+// it calls readAndValidate with an empty boundary, which never reaches
+// readManifestInRoot at all. Gated by requireFIFOSupport like the test
+// above.
+func TestPluginValidate_Finding1_DirectoryProbedFIFOSwapDoesNotBlock(t *testing.T) {
+	requireFIFOSupport(t)
+	dir := t.TempDir()
+	writeManifest(t, dir, "plugin.json", `{"name":"x"}`)
+	path := filepath.Join(dir, "plugin.json")
+
+	orig := openRootFile
+	t.Cleanup(func() { openRootFile = orig })
+	openRootFile = func(root *os.Root, rel string) (manifestFile, os.FileInfo, error) {
+		if err := os.Remove(path); err != nil {
+			return nil, nil, err
+		}
+		if err := exec.Command("mkfifo", path).Run(); err != nil {
+			return nil, nil, err
+		}
+		return orig(root, rel)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := readAndValidate(path, dir)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want the swapped-in FIFO to be refused, not read")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readManifestInRoot blocked opening a FIFO swapped in during the check-then-open race window")
 	}
 }
 
@@ -1161,13 +1205,13 @@ func TestPluginValidate_Finding2_PreReadSizeCapRefusesWithoutReading(t *testing.
 	writeManifest(t, dir, "plugin.json", `{"name":"x"}`)
 	path := filepath.Join(dir, "plugin.json")
 
-	orig := openManifestFile
-	t.Cleanup(func() { openManifestFile = orig })
-	openManifestFile = func(p string) (manifestFile, os.FileInfo, error) {
-		if err := os.Truncate(p, maxManifestBytes+1); err != nil {
+	orig := openRootFile
+	t.Cleanup(func() { openRootFile = orig })
+	openRootFile = func(root *os.Root, rel string) (manifestFile, os.FileInfo, error) {
+		if err := os.Truncate(path, maxManifestBytes+1); err != nil {
 			return nil, nil, err
 		}
-		info, err := os.Stat(p)
+		info, err := os.Stat(path)
 		if err != nil {
 			return nil, nil, err
 		}
