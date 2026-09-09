@@ -89,6 +89,7 @@ const (
 	kindStringOrArray
 	kindStringArrayOrObject
 	kindDependencyList
+	kindArrayOfObject
 )
 
 // ruleSource records where a known field comes from (research.md R-03),
@@ -125,7 +126,11 @@ var rules = []rule{
 	{Name: "$schema", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "agents", Kind: kindStringOrArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "author", Kind: kindObject, Mismatch: LevelError, Source: sourceSchema},
-	{Name: "channels", Kind: kindArrayOfString, Mismatch: LevelError, Source: sourceSchema},
+	// Elements are objects (each carries "server"), never bare strings --
+	// upstream b75a02b1's vendored tests/fixtures/schemas/claude-code-
+	// plugin.schema.json: "channels": {"type":"array","items":{"type":
+	// "object",...,"required":["server"]}}, no string alternative.
+	{Name: "channels", Kind: kindArrayOfObject, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "commands", Kind: kindStringOrArray, Mismatch: LevelError, IsPath: true, Source: sourceSchema},
 	{Name: "dependencies", Kind: kindDependencyList, Mismatch: LevelError, Source: sourceSchema},
 	{Name: "description", Kind: kindString, Mismatch: LevelError, Source: sourceSchema},
@@ -375,20 +380,42 @@ func checkDependencies(raw json.RawMessage) []Finding {
 			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d]' must be a string or object", i)})
 			continue
 		}
-		var sub map[string]json.RawMessage
-		if err := json.Unmarshal(elem, &sub); err != nil {
-			continue
+		findings = append(findings, checkDependencyElement(i, elem)...)
+	}
+	return findings
+}
+
+// checkDependencyElement walks one dependency object's own keys in file
+// order (data-model.md: same-level findings keep file order), the same
+// rule checkAuthor applies to author.<k>, so a mistyped "version" preceding
+// a mistyped "name" in the manifest reports in that order. A present but
+// wrong-typed "name" is a type mismatch ("must be a string"), distinct from
+// an absent "name" key ("is missing 'name'") -- presence alone must not
+// mask a wrong type, and a wrong type must not be misreported as absence.
+func checkDependencyElement(i int, elem json.RawMessage) []Finding {
+	subOrder, _ := scanObjectKeys(elem)
+	subOrder = dedupeKeepFirst(subOrder)
+	var sub map[string]json.RawMessage
+	if err := json.Unmarshal(elem, &sub); err != nil {
+		return nil
+	}
+	var findings []Finding
+	hasName := false
+	for _, k := range subOrder {
+		switch k {
+		case "name":
+			hasName = true
+			if !isJSONString(sub[k]) {
+				findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d].name' must be a string", i)})
+			}
+		case "version":
+			if !isJSONString(sub[k]) {
+				findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d].version' must be a string", i)})
+			}
 		}
-		// "name" must be present AND a string (T004: "a name field that is
-		// itself a string") -- presence alone let {"name":123}/{"name":null}
-		// through; the contract has no distinct message for a wrong-typed
-		// name, so it is reported the same as a missing one.
-		if name, hasName := sub["name"]; !hasName || !isJSONString(name) {
-			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d]' is missing 'name'", i)})
-		}
-		if v, hasVersion := sub["version"]; hasVersion && !isJSONString(v) {
-			findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d].version' must be a string", i)})
-		}
+	}
+	if !hasName {
+		findings = append(findings, Finding{Fields, LevelError, fmt.Sprintf("'dependencies[%d]' is missing 'name'", i)})
 	}
 	return findings
 }
@@ -547,9 +574,29 @@ func checkKind(raw json.RawMessage, kind ruleKind) bool {
 		return ok
 	case kindDependencyList:
 		return isJSONArray(raw)
+	case kindArrayOfObject:
+		return isArrayOfObjects(raw)
 	default:
 		return false
 	}
+}
+
+// isArrayOfObjects reports whether raw is a JSON array whose every element
+// is a JSON object (kindArrayOfObject, e.g. "channels").
+func isArrayOfObjects(raw json.RawMessage) bool {
+	if !isJSONArray(raw) {
+		return false
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return false
+	}
+	for _, e := range arr {
+		if !isJSONObject(e) {
+			return false
+		}
+	}
+	return true
 }
 
 func kindMismatchMessage(field string, kind ruleKind) string {
@@ -568,6 +615,8 @@ func kindMismatchMessage(field string, kind ruleKind) string {
 		return fmt.Sprintf("'%s' must be a string, array, or object", field)
 	case kindDependencyList:
 		return fmt.Sprintf("'%s' must be an array", field)
+	case kindArrayOfObject:
+		return fmt.Sprintf("'%s' must be an array of objects", field)
 	default:
 		return fmt.Sprintf("'%s' has an unrecognized type", field)
 	}
@@ -623,24 +672,11 @@ func pathSyntaxError(field, v string) string {
 }
 
 // scanObjectKeys walks data's outermost JSON object (data must already be
-// known-valid JSON -- Validate's Structure check decodes it before this is
-// ever called) and returns its top-level keys in file order (with repeats,
-// for duplicate-key detection) plus an occurrence count per key.
-//
-// Each value is skipped by decoding it into a json.RawMessage rather than
-// hand-tracking a nesting stack of delimiters: RawMessage capture never
-// inspects a value's content, so a number encoding/json's default decoder
-// cannot represent as float64 (e.g. 1e1000, nested arbitrarily deep inside
-// the value) never reaches a numeric conversion. The previous stack-based
-// Token() walker called Token() on every nested token including numbers,
-// so that failure aborted the walk (dec.Token() returns an error) and the
-// keys found so far were silently returned as if the scan were complete --
-// dropping any sibling key that came after the offending value (e.g.
-// 'skills' after a 'metadata' containing 1e1000) from KnownFieldsPresent and
-// from every check that iterates the returned key list. Reused for both the
-// manifest's own top-level keys (Structure/duplicate-key detection,
-// KnownFieldsPresent) and, given one field's raw value, that field's own
-// nested keys (experimental.* file order).
+// known-valid JSON) and returns its top-level keys in file order, with
+// repeats and a per-key occurrence count for duplicate-key detection. Each
+// value is skipped as json.RawMessage rather than tokenized, so a number
+// encoding/json's decoder cannot parse as float64 (e.g. 1e1000) never
+// aborts the scan before later sibling keys are read.
 func scanObjectKeys(data []byte) (order []string, counts map[string]int) {
 	counts = map[string]int{}
 	dec := json.NewDecoder(bytes.NewReader(data))
