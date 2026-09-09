@@ -445,15 +445,17 @@ func ruleKindKnownSchemaTypes(k ruleKind) map[string]bool {
 }
 
 // ruleKindArrayItemCommitment returns the exact array-item type set a
-// ruleKind's OWN semantics commit to (nil when the kind's shape/message
-// makes no claim about item type -- kindStringArrayOrObject's message is
-// "must be a string, array, or object", naming no item shape, and
-// kindDependencyList's array-element shape is validated by dedicated code
-// (checkDependencies), not by checkKind at all). Only kinds that DO commit
-// to a single item type are checked against the schema's actual item-type
-// set below -- this is exactly the class of bug that let channels/monitors
-// through before (a Kind claiming "array of string" against a schema
-// property whose array items are objects).
+// ruleKind's OWN semantics commit to. Every kind whose array branch's
+// element shape checkKind actually enforces must have a case here -- a
+// case returning nil is an assertion that no such commitment exists, and
+// must be justified by the CODE PATH, never by what the mismatch message
+// happens to say (WP02 finding 1: kindStringArrayOrObject used to fall to
+// the default nil case reasoning from its own message text, "must be a
+// string, array, or object", which hid a real bug -- commands' array items
+// really are string-only, so the commitment is knowable and checkable).
+// kindDependencyList is the one legitimate nil: Validate special-cases
+// "dependencies" before ever calling checkKind on it, so checkDependencies
+// -- not checkKind -- owns and validates its element shape.
 func ruleKindArrayItemCommitment(k ruleKind) map[string]bool {
 	switch k {
 	case kindArrayOfString:
@@ -464,6 +466,8 @@ func ruleKindArrayItemCommitment(k ruleKind) map[string]bool {
 		return stringSet("object")
 	case kindStringOrArrayOfObject:
 		return stringSet("object")
+	case kindStringArrayOrObject:
+		return stringSet("string")
 	default:
 		return nil
 	}

@@ -307,6 +307,31 @@ func TestValidate(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","hooks":{"a":1},"mcpServers":{"b":2},"lspServers":{"c":3}}`)), false, nil)
 	})
 
+	t.Run("EdgeCase-hooks-array-mixes-string-and-object-legal", func(t *testing.T) {
+		// Pinned source: upstream b75a02b1's vendored schema's "hooks" array
+		// branch has items anyOf a "./"-suffixed .json path string OR an
+		// inline hooks object, in the very same array -- kindStringArrayOrObject
+		// wrongly required every array element to be a string (defect,
+		// WP02 finding 1).
+		assertReport(t, Validate([]byte(`{"name":"x","hooks":["./hooks/extra.json",{"PreToolUse":[]}]}`)), false, nil)
+	})
+
+	t.Run("EdgeCase-mcpServers-array-mixes-string-and-object-legal", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","mcpServers":["./mcp/extra.json",{"demo":{"command":"foo"}}]}`)), false, nil)
+	})
+
+	t.Run("EdgeCase-lspServers-array-mixes-string-and-object-legal", func(t *testing.T) {
+		assertReport(t, Validate([]byte(`{"name":"x","lspServers":["./lsp/extra.json",{"ts":{"command":"tsserver","extensionToLanguage":{}}}]}`)), false, nil)
+	})
+
+	t.Run("EdgeCase-hooks-array-element-wrong-type-rejected", func(t *testing.T) {
+		// A number is neither a path string nor an inline hooks object --
+		// mixed-array support must not widen acceptance past string/object.
+		assertReport(t, Validate([]byte(`{"name":"x","hooks":[42]}`)), false, []Finding{
+			{Fields, LevelError, "'hooks' must be a string, array, or object"},
+		})
+	})
+
 	t.Run("EdgeCase-channels-array-of-object-legal", func(t *testing.T) {
 		// Pinned source: upstream b75a02b1's vendored
 		// tests/fixtures/schemas/claude-code-plugin.schema.json declares
