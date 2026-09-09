@@ -38,7 +38,7 @@ Invariants（由 `validate_schema_sync_test.go` 保證）:
 
 | Field | Type | Notes |
 |---|---|---|
-| `Findings` | `[]Finding` | 依 Check 順序、同 Check 內依檔案順序 |
+| `Findings` | `[]Finding` | 依 Check 順序；同一 Check 內 errors 先、warnings 後，各自依檔案順序（與 `marketplace validate` 的渲染順序一致，儲存順序即渲染順序） |
 | `KnownFieldsPresent` | `[]string` | 依檔案順序的已知欄位（`-v`） |
 | `StructureFailed` | bool | 為 true 時只有 Structure 的 findings，其餘 check 不列出也不計 passed |
 
