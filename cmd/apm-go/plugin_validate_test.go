@@ -1233,3 +1233,83 @@ func TestPluginValidate_Finding3_CrossVolumeFallbackToCleanedAbsolutePath(t *tes
 		t.Errorf("got = %q, must not leak the uncleaned '..' segment", got)
 	}
 }
+
+// ── WP03 round-3 review: HIGH -- parent-directory symlink race ──────────
+
+// TestPluginValidate_Finding_ParentSymlinkRaceAcrossLookups is the
+// counterexample for the still-open HIGH finding: readAndValidate's Lstat,
+// containment check (pathStaysWithin), and Open are three INDEPENDENT path
+// lookups, each re-walking dir/.claude-plugin from scratch. A parent link
+// that is OUTSIDE projectRoot during the Lstat, flips INSIDE for
+// pathStaysWithin's own EvalSymlinks call, then flips back to the SAME
+// outside target before Open, can pass the containment check (which
+// observes "inside") and the os.SameFile comparison (checkInfo and openInfo
+// are the identical outside file both times) without the escaping state
+// ever being the one pathStaysWithin evaluated.
+//
+// A background goroutine drives the flip continuously (Remove+Symlink,
+// not claimed atomic) while the foreground repeatedly calls readAndValidate
+// for up to raceWindow -- this does not depend on hitting one exact instant,
+// only on the window being hit at all within that time. The two candidate
+// targets are distinguishable through the returned Report alone (an
+// Unrecognized-field marker only the outside file carries), independent of
+// readAndValidate's error return: that error reports only a read-boundary
+// failure, not a validation outcome, so a nil error is unremarkable by
+// itself -- reading the legitimately-inside target is supposed to succeed.
+// Only a nil error whose Report carries the outside marker proves content
+// from outside projectRoot was read after a containment check that had
+// reported "inside".
+func TestPluginValidate_Finding_ParentSymlinkRaceAcrossLookups(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	const outsideMarkerField = "zzz-outside-marker"
+
+	outside := t.TempDir()
+	writeManifest(t, outside, "plugin.json", fmt.Sprintf(`{"name":"x","%s":"1"}`, outsideMarkerField))
+
+	projectRoot := t.TempDir()
+	insideTarget := filepath.Join(projectRoot, "safe-inside")
+	writeManifest(t, insideTarget, "plugin.json", `{"name":"x"}`)
+
+	link := filepath.Join(projectRoot, ".claude-plugin")
+	manifestPath := filepath.Join(link, "plugin.json")
+
+	flip := func(target string) {
+		_ = os.Remove(link)
+		_ = os.Symlink(target, link)
+	}
+	flip(outside)
+
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			flip(insideTarget)
+			flip(outside)
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		<-stopped
+	})
+
+	const raceWindow = 5 * time.Second
+	deadline := time.Now().Add(raceWindow)
+	for time.Now().Before(deadline) {
+		report, err := readAndValidate(manifestPath, projectRoot)
+		if err != nil {
+			continue
+		}
+		for _, f := range report.Findings {
+			if strings.Contains(f.Message, outsideMarkerField) {
+				t.Fatalf("read outside projectRoot's content after the containment check reported \"inside\": %+v", report.Findings)
+			}
+		}
+	}
+}
