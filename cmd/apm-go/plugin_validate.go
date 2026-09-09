@@ -150,10 +150,14 @@ type manifestFile = io.ReadCloser
 // (plugin_validate_open_unix.go / plugin_validate_open_windows.go) supplies
 // O_NONBLOCK on unix so a candidate swapped to a FIFO with no writer between
 // the pre-open Lstat and this Open returns immediately instead of blocking
-// forever; windows has no such flag and no FIFO type. Neither platform's
-// open result can be trusted alone for the symlink case -- the Fstat +
-// os.SameFile comparison performed by the caller after this returns is the
-// guard both platforms still rely on for that.
+// forever; windows has no such flag and no FIFO type.
+//
+// The caller's Fstat + os.SameFile comparison establishes file identity: the
+// bytes read come from the file the pre-open Lstat inspected. It does not
+// prove no symlink was followed, since a link resolving to that same file is
+// indistinguishable from it. The pre-open regular-file check is what enforces
+// the no-symlink policy, and it can be raced; identity is the guarantee that
+// survives.
 var openRootFile = func(root *os.Root, rel string) (manifestFile, os.FileInfo, error) {
 	f, err := root.OpenFile(rel, os.O_RDONLY|rootOpenExtraFlags, 0)
 	if err != nil {
