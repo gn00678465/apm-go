@@ -7,7 +7,7 @@ All types live in `internal/pluginjson`（validator）or `cmd/apm-go`（renderin
 | Field | Type | Notes |
 |---|---|---|
 | `Path` | string | 被選中的 plugin.json 的路徑（相對於使用者給的 `path`，用於首行輸出） |
-| `Data` | `[]byte` | 原始位元組，≤ 5 MiB（超過時不讀取，直接 Structure error） |
+| `Data` | `[]byte` | 原始位元組，≤ 5 MiB。上限由 CLI 在讀取前以 `could not read` 拒絕，驗證器收到的一律是已通過上限的位元組 |
 
 Decoded shape: `map[string]json.RawMessage`（頂層鍵 → 原始值），加一次 token 流掃描取得鍵的**檔案順序**（`-v` 列表用）與重複鍵。
 

@@ -4,18 +4,22 @@ Status: OPEN (2026-09-09)
 
 ## What
 
-`apm.lock.yaml` still records two deployed files and their hashes:
+`apm.lock.yaml` records a deployed file that no longer exists:
 
 ```
 local_deployed_files:
 - .claude/agents/research.md
-- .github/agents/research.agent.md
 ```
 
-Neither path exists in the working tree. Both were removed by `e6c9afe`
-("chore(trellis): 移除 trellis 工作流框架"), 2026-08-23, which is an ancestor of
-`f3683e9` — so this is a pre-existing inconsistency on `main`, not something the
-`plugin-manifest-validate-01M21E5Q` mission introduced.
+That path was removed by `e6c9afe` ("chore(trellis): 移除 trellis 工作流框架"),
+2026-08-23, an ancestor of `f3683e9` — a pre-existing inconsistency on `main`,
+not something the `plugin-manifest-validate-01M21E5Q` mission introduced.
+
+An earlier draft of this ticket also claimed `.github/agents/research.agent.md`
+for the same reason. That was wrong: it still existed at `f3683e9` and was
+deleted by `0efb9e8` on this very branch, so its lockfile entry was this
+branch's to clean up and has been removed here. Only the `.claude/agents`
+entry remains open.
 
 ## Why it is not fixed here
 

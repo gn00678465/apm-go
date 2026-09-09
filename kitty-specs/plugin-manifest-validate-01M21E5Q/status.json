@@ -1,12 +1,12 @@
 {
-  "event_count": 0,
-  "last_event_id": null,
-  "materialized_at": "",
+  "event_count": 8,
+  "last_event_id": "01M22XDCEFA91RNY2QQWCBQ550",
+  "materialized_at": "2026-09-09T11:03:55.087345+00:00",
   "mission_number": "",
-  "mission_slug": "",
-  "mission_type": "software-dev",
+  "mission_slug": "plugin-manifest-validate-01M21E5Q",
+  "mission_type": "",
   "summary": {
-    "approved": 0,
+    "approved": 4,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
@@ -16,5 +16,98 @@
     "in_review": 0,
     "planned": 0
   },
-  "work_packages": {}
+  "work_packages": {
+    "WP01": {
+      "actor": "user",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 1,
+      "lane": "approved",
+      "last_event_id": "01M22XD0PYZ9RG5S2PAN30PFMS",
+      "last_transition_at": "2026-09-09T11:03:43.070447+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "codex-astra ponytail-review 通過；gate 全綠（mutation 11/11、changed-line coverage 337/337）；依 ticket 35 未使用 lane worktree"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "role": "reviewer",
+      "subtasks": {
+        "T001": "done",
+        "T002": "done",
+        "T003": "done",
+        "T004": "done",
+        "T005": "done",
+        "T006": "done",
+        "T007": "done"
+      }
+    },
+    "WP02": {
+      "actor": "user",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 1,
+      "lane": "approved",
+      "last_event_id": "01M22XD4NMYGF3HTHPRRGMVCSE",
+      "last_transition_at": "2026-09-09T11:03:47.124296+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "codex-astra ponytail-review 通過；gate 全綠（mutation 11/11、changed-line coverage 337/337）；依 ticket 35 未使用 lane worktree"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "role": "reviewer",
+      "subtasks": {
+        "T008": "done",
+        "T009": "done",
+        "T010": "done",
+        "T011": "done",
+        "T012": "done"
+      }
+    },
+    "WP03": {
+      "actor": "user",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 1,
+      "lane": "approved",
+      "last_event_id": "01M22XD8CPHMJ1WVBJQVVYFDP3",
+      "last_transition_at": "2026-09-09T11:03:50.934368+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "codex-astra ponytail-review 通過；gate 全綠（mutation 11/11、changed-line coverage 337/337）；依 ticket 35 未使用 lane worktree"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "role": "reviewer",
+      "subtasks": {
+        "T013": "done",
+        "T014": "done",
+        "T015": "done",
+        "T016": "done",
+        "T017": "done"
+      }
+    },
+    "WP04": {
+      "actor": "user",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
+      "force_count": 1,
+      "lane": "approved",
+      "last_event_id": "01M22XDCEFA91RNY2QQWCBQ550",
+      "last_transition_at": "2026-09-09T11:03:55.087345+00:00",
+      "model": "__resolved_model_absent__",
+      "notes": [
+        "codex-astra ponytail-review 通過；gate 全綠（mutation 11/11、changed-line coverage 337/337）；依 ticket 35 未使用 lane worktree"
+      ],
+      "provider": "__resolved_provider_absent__",
+      "role": "reviewer",
+      "subtasks": {
+        "T018": "done",
+        "T019": "done",
+        "T020": "done",
+        "T021": "done",
+        "T022": "done",
+        "T023": "done",
+        "T024": "done"
+      }
+    }
+  }
 }

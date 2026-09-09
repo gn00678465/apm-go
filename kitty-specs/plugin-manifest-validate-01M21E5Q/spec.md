@@ -66,7 +66,7 @@ CI 對 plugin 倉庫執行 `apm-go plugin validate --strict`，把「Claude Code
 
 1. **Given** 內容為 `{`，**When** 執行驗證，**Then** Structure 類別印出 `invalid JSON: …`，Name / Fields / Paths / Unrecognized 不出現，Summary 0 passed、0 warnings、1 error，exit 1。
 2. **Given** 內容為 `[]`，**When** 執行驗證，**Then** Structure 印出 `top-level value must be an object`，exit 1。
-3. **Given** 檔案超過 5 MiB，**When** 執行驗證，**Then** Structure 印出檔案超過大小上限，不讀取內容，exit 1。
+3. **Given** 檔案超過 5 MiB，**When** 執行驗證，**Then** CLI 在讀取內容前拒絕，印出 `could not read` 一族的單行訊息，不印 Results 與 Summary，exit 1。
 4. **Given** 內容為 `{"name":"a","name":"b"}`，**When** 執行驗證，**Then** Structure 印出 `duplicate key 'name' (last value wins)` 為 warning，exit 0。
 5. **Given** 任一上述輸入，**When** 驗證結束，**Then** 目標目錄的檔案樹與每個檔案的位元組與驗證前相同。
 
