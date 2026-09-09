@@ -23,7 +23,7 @@ Decoded shape: `map[string]json.RawMessage`（頂層鍵 → 原始值），加�
 
 Invariants（由 `validate_schema_sync_test.go` 保證）:
 - `{r.Name | r.Source == schema}` ⊇ schema `properties` 的鍵。
-- `{r.Name | r.IsPath}` = schema 中帶 `^\./` pattern（string 分支）的欄位 ∪ 文件新增的 `workflows`、`experimental.themes`、`experimental.monitors`。
+- `{r.Name | r.IsPath}` = schema 中帶 `^\./` pattern（string 分支）的欄位 ∪ 文件新增的 `workflows`。此不變式只涵蓋規則表中的頂層欄位；`experimental.themes` 與 `experimental.monitors` 的路徑檢查由 `checkExperimentalPathField` 專責處理，不是規則表的列，因此不列入這個集合。
 - schema `required` = `["name"]`。
 
 ## Finding
