@@ -30,6 +30,7 @@ apm-go plugin validate [path] [--strict] [-v|--verbose]
 - 每個 check 一行 `passed`，或每個 finding 一行（errors 先、warnings 後）。
 - Structure 有 error 時：只印 Structure 的行，其餘 check 不出現，`Summary: 0 passed, 0 warnings, 1 errors`。
 - 找不到 manifest：` x no plugin.json found in <dir> (looked in plugin.json, .github/plugin/plugin.json, .claude-plugin/plugin.json, .cursor-plugin/plugin.json)`，exit 1，無 Results／Summary。
+- 無法讀取 manifest：` x could not read '<path>': <reason>`，exit 1，無 Results／Summary。此列涵蓋定位成功之後的所有讀取失敗：不是普通檔案（symlink、FIFO、裝置）、解析後落在指定路徑之外、超過 5 MiB 上限、以及作業系統回報的讀取錯誤。`<reason>` 為簡短原因，不得回傳完整系統路徑以外的內部細節。
 
 ## Messages（exact）
 
