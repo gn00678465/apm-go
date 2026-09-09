@@ -295,8 +295,13 @@ func TestValidate(t *testing.T) {
 	t.Run("EdgeCase-experimental-subscan-survives-unrepresentable-number", func(t *testing.T) {
 		// Mirrors EdgeCase-key-order-scan-survives-unrepresentable-number but
 		// exercises checkExperimental's own scanObjectKeys call on the
-		// nested experimental object, not just Validate's top-level scan.
-		assertReport(t, Validate([]byte(`{"name":"x","experimental":{"foo":{"n":1e1000},"themes":"./t.md"}}`)), false, []Finding{
+		// nested experimental object, not just Validate's top-level scan. The
+		// trailing value is an absolute path (not a legal "./t.md") so a scan
+		// truncated right after "foo" (never reaching "themes") produces a
+		// different result than a complete one -- a legal trailing value
+		// made this test pass identically either way (round-3 review).
+		assertReport(t, Validate([]byte(`{"name":"x","experimental":{"foo":{"n":1e1000},"themes":"/outside"}}`)), false, []Finding{
+			{Paths, LevelError, "'experimental.themes' must not be an absolute path"},
 			{Unrecognized, LevelWarning, "unrecognized field 'experimental.foo'"},
 		})
 	})
@@ -308,7 +313,22 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("EdgeCase-top-level-monitors-belongs-under-experimental", func(t *testing.T) {
+		// Pinned source: upstream b75a02b1's vendored tests/fixtures/schemas/
+		// claude-code-plugin.schema.json declares "monitors" as anyOf a
+		// "./"-prefixed .json path string or an array of objects (each
+		// requiring name/command/description) -- never a bare string array.
+		// A legal monitor object still triggers the top-level-placement
+		// warning this test pins (round-3 review: the previous fixture
+		// ["cpu"] was invalid shape that happened to pass the old kind
+		// check, so it pinned nothing about a legal monitors value).
+		assertReport(t, Validate([]byte(`{"name":"x","monitors":[{"name":"cpu","command":"echo cpu","description":"CPU monitor"}]}`)), false, []Finding{
+			{Unrecognized, LevelWarning, "'monitors' belongs under 'experimental'"},
+		})
+	})
+
+	t.Run("EdgeCase-top-level-monitors-array-of-string-rejected", func(t *testing.T) {
 		assertReport(t, Validate([]byte(`{"name":"x","monitors":["cpu"]}`)), false, []Finding{
+			{Fields, LevelError, "'monitors' must be a string or array of objects"},
 			{Unrecognized, LevelWarning, "'monitors' belongs under 'experimental'"},
 		})
 	})
