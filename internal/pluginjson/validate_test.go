@@ -54,6 +54,39 @@ func assertStructureError(t *testing.T, got Report, wantMessage string) {
 	}
 }
 
+// assertStructureErrorWithDecoderDetail is assertStructureError's
+// counterpart for a Structure message whose text after "invalid JSON: " is
+// encoding/json's own decoder detail, not ours: contracts/cli-plugin-
+// validate.md says that prefix is contractual and the detail is
+// reproduced verbatim, deliberately unpinned, because the same input can
+// decode through more than one encoding/json implementation (the classic
+// scanner vs. the jsonv2-based one a Go toolchain may select) and the two
+// report different wording for the identical fault -- e.g. "exceeded max
+// depth" vs. "invalid character '[' exceeded max depth" for a manifest
+// that overruns the nesting-depth limit. This still asserts everything
+// this package owns -- the check, the level, and the exact "invalid
+// JSON: " prefix -- plus that a detail actually followed it, just not
+// that detail's wording.
+func assertStructureErrorWithDecoderDetail(t *testing.T, got Report, wantPrefix string) {
+	t.Helper()
+	if !got.StructureFailed {
+		t.Errorf("StructureFailed = false, want true")
+	}
+	if len(got.Findings) != 1 {
+		t.Fatalf("Findings = %+v, want exactly one Structure error", got.Findings)
+	}
+	f := got.Findings[0]
+	if f.Check != Structure || f.Level != LevelError {
+		t.Errorf("Findings[0] = %+v, want Check=Structure Level=LevelError", f)
+	}
+	if !strings.HasPrefix(f.Message, wantPrefix) {
+		t.Fatalf("Findings[0].Message = %q, want prefix %q", f.Message, wantPrefix)
+	}
+	if strings.TrimPrefix(f.Message, wantPrefix) == "" {
+		t.Errorf("Findings[0].Message = %q, want a non-empty decoder detail after %q", f.Message, wantPrefix)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	// -- US1: pre-pack / pre-publish manifest checks --
 
@@ -474,7 +507,7 @@ func TestValidate(t *testing.T) {
 
 	t.Run("EdgeCase-deep-nesting-1MiB", func(t *testing.T) {
 		data := bytes.Repeat([]byte("["), 1024*1024)
-		assertStructureError(t, Validate(data), "invalid JSON: exceeded max depth")
+		assertStructureErrorWithDecoderDetail(t, Validate(data), "invalid JSON: ")
 	})
 
 	t.Run("EdgeCase-paths-dotdot-segment", func(t *testing.T) {

@@ -43,6 +43,8 @@ apm-go plugin validate [path] [--strict] [-v|--verbose]
 | Paths | `'<field>' must start with './'` / `'<field>' must not be an absolute path` / `'<field>' must not contain '..'`；array 元素以 `'<field>[<i>]'` 命名 |
 | Unrecognized | `unrecognized field '<k>'` [+ ` (did you mean '<known>'?)` when Damerau-Levenshtein ≤ 2] / `unrecognized field 'experimental.<k>'` / `'themes' belongs under 'experimental'`（warning）/ `'monitors' belongs under 'experimental'`（warning） |
 
+- `invalid JSON: <decoder message>`：`invalid JSON: ` 前綴屬於契約內容，逐字比對。`<decoder message>` 是 `encoding/json` 解碼器自身產生的文字，原樣接上，刻意不鎖定其確切用字 —— 同一輸入下，Go 版本或 build 設定不同（例如經典 scanner 與 jsonv2 實作）可能回報不同措辭，該文字不受本專案程式碼控制。測試只驗證 check、level、`invalid JSON: ` 前綴，以及前綴後有非空字串；不比對 `<decoder message>` 的確切內容。
+
 ## exit codes
 
 | Condition | exit |

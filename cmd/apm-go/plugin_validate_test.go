@@ -615,7 +615,16 @@ func TestPluginValidate_Finding1_ParentSymlinkEscapeRejected(t *testing.T) {
 	outside := t.TempDir()
 	writeManifest(t, outside, "plugin.json", `{"name":"escaped-content"}`)
 
-	projectRoot := t.TempDir()
+	// chdirTemp (not t.TempDir directly) so the working directory is
+	// projectRoot itself: displayManifestPath then relativizes the
+	// escaping candidate to the short, deterministic ".claude-plugin/
+	// plugin.json" on every platform. Passing the bare t.TempDir() result
+	// as the CLI argument left the printed path a function of whether the
+	// OS temp dir and the test binary's cwd share a volume -- true on the
+	// Linux CI runner (relativization succeeds, yielding a long "../../.."
+	// form) but not reliably true on Windows, where a cross-volume temp
+	// dir falls back to the absolute path this test used to hardcode.
+	projectRoot := chdirTemp(t)
 	if err := os.Symlink(outside, filepath.Join(projectRoot, ".claude-plugin")); err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +640,7 @@ func TestPluginValidate_Finding1_ParentSymlinkEscapeRejected(t *testing.T) {
 		t.Fatalf("output = %q, must never surface content read from outside projectRoot", out)
 	}
 	wantCandidate := filepath.ToSlash(filepath.Join(projectRoot, ".claude-plugin", "plugin.json"))
-	wantProgress := fmt.Sprintf(" > Validating plugin '%s'...", wantCandidate)
+	wantProgress := " > Validating plugin '.claude-plugin/plugin.json'..."
 	wantErr := fmt.Sprintf("could not read '%s': outside the given path", wantCandidate)
 	if !strings.Contains(out, wantProgress) {
 		t.Errorf("output = %q, want the progress line naming the escaping candidate %q", out, wantProgress)
