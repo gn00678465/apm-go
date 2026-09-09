@@ -834,6 +834,77 @@ func TestPluginValidate_Finding4_FirstLineRelativizesAbsoluteArgument(t *testing
 	}
 }
 
+// TestPluginValidate_Finding_RelativeArgumentsProduceRelativeFirstLine
+// covers a real contract violation WP04's gate work found: displayManifestPath
+// called filepath.Rel(cwd, manifestPath) with manifestPath left exactly as
+// given. Rel requires both operands to be either absolute or relative, and
+// cwd from os.Getwd() is always absolute, so Rel always errored for a
+// relative manifestPath -- every ordinary relative argument a user types --
+// and fell through to the cross-volume absolute-path fallback the contract
+// reserves for the "different Windows volume" case only. The existing tests
+// never caught this because they only ever passed an absolute manifest
+// argument (e.g. Finding4 above uses dir from t.TempDir()), for which
+// Rel(absolute, absolute) happens to succeed.
+func TestPluginValidate_Finding_RelativeArgumentsProduceRelativeFirstLine(t *testing.T) {
+	t.Run("relative directory argument", func(t *testing.T) {
+		chdirTemp(t)
+		writeManifest(t, "demo", "plugin.json", `{"name":"x"}`)
+		out, err := execPluginValidate(t, "demo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v (output: %s)", err, out)
+		}
+		want := " > Validating plugin 'demo/plugin.json'..."
+		if firstLine := strings.SplitN(out, "\n", 2)[0]; firstLine != want {
+			t.Errorf("first line = %q, want %q", firstLine, want)
+		}
+	})
+
+	t.Run("relative file argument", func(t *testing.T) {
+		chdirTemp(t)
+		writeManifest(t, "demo", "plugin.json", `{"name":"x"}`)
+		out, err := execPluginValidate(t, filepath.Join("demo", "plugin.json"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v (output: %s)", err, out)
+		}
+		want := " > Validating plugin 'demo/plugin.json'..."
+		if firstLine := strings.SplitN(out, "\n", 2)[0]; firstLine != want {
+			t.Errorf("first line = %q, want %q", firstLine, want)
+		}
+	})
+
+	t.Run("dot", func(t *testing.T) {
+		chdirTemp(t)
+		writeManifest(t, ".", "plugin.json", `{"name":"x"}`)
+		out, err := execPluginValidate(t, ".")
+		if err != nil {
+			t.Fatalf("unexpected error: %v (output: %s)", err, out)
+		}
+		want := " > Validating plugin 'plugin.json'..."
+		if firstLine := strings.SplitN(out, "\n", 2)[0]; firstLine != want {
+			t.Errorf("first line = %q, want %q", firstLine, want)
+		}
+	})
+
+	// A '..' segment that still resolves inside the working directory must
+	// not survive into the display path either -- filepath.Abs's own Clean
+	// removes it once manifestPath is made absolute before relativising.
+	t.Run("dot-dot segment resolving inside the working directory", func(t *testing.T) {
+		dir := chdirTemp(t)
+		writeManifest(t, ".", "plugin.json", `{"name":"x"}`)
+		if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		out, err := execPluginValidate(t, filepath.FromSlash("sub/../plugin.json"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v (output: %s)", err, out)
+		}
+		want := " > Validating plugin 'plugin.json'..."
+		if firstLine := strings.SplitN(out, "\n", 2)[0]; firstLine != want {
+			t.Errorf("first line = %q, want %q", firstLine, want)
+		}
+	})
+}
+
 // TestPluginValidate_Finding6_ReadFailureWording pins the read-failure
 // template contracts/cli-plugin-validate.md's "無法讀取 manifest" row
 // carries: could not read '<path>': <reason>. manifestPath is removed
