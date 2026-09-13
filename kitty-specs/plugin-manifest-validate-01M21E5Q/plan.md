@@ -107,7 +107,7 @@ PRODUCT.md / ARCHITECTURE.md / README.md / README.zh-TW.md   # C-005 文件更�
 ### IC-01 — Validator core（規則表、五類檢查、Report 模型）
 
 - **Purpose**: 一個純函式 `Validate(data []byte) Report`，輸入 manifest 位元組、輸出 findings 與 summary；所有規則集中在一張表，讓每條規則可被單元測試與 mutant 逐一命中。
-- **Relevant requirements**: FR-003、FR-004、FR-005、FR-006、FR-007、NFR-002、NFR-004、C-004、SC-002
+- **Relevant requirements**: FR-003、FR-004、FR-005、FR-006、FR-007、NFR-002、NFR-004、C-004、SC-002、SC-003
 - **Affected surfaces**: `internal/pluginjson/validate.go`、`validate_test.go`、`validate_fuzz_test.go`
 - **Sequencing/depends-on**: none
 - **Risks**: Structure 階段需處理非 UTF-8（`utf8.Valid`）、重複鍵（`json.Decoder` token 流掃描一次；值本身用 `map[string]json.RawMessage` 解）與深巢狀（`encoding/json` 自身有 10000 層上限，回傳 error 不 panic，fuzz 驗證）；5 MiB 上限在讀檔前以 `Stat` 判斷（屬 IC-02）。已知欄位集合 = schema ∪ 文件 ∪ `extensions`，要在規則表旁註明每個欄位的來源。

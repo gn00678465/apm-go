@@ -129,6 +129,38 @@ must_match_file plugin-validate-agent-stderr "$SB/plugin-validate-agent.err" "$S
 steps=$((steps + 1))
 if diff -rq demo-agent "$SB/demo-agent.before" >/dev/null 2>&1; then echo "ok    plugin-validate-agent left demo-agent/ byte-identical"; else echo "FAIL  plugin-validate-agent modified demo-agent/"; failures=$((failures + 1)); fi
 
+# plugin validate -v: the verbose block lists the manifest's recognized
+# fields in file order and omits the unrecognized one, which appears only in
+# the Unrecognized finding below. Without this step -v is the one plugin
+# validate output branch no case pins, leaving ticket 34's "same strength"
+# claim untrue for it.
+mkdir v
+# version before name so the -v block proves FILE order -- neither the schema's
+# property order nor an alphabetical sort would put it first.
+printf '{"version":"1.0.0","name":"x","skills":"./skills/","descripton":"d"}' > v/plugin.json
+cp -r v "$SB/v.before"
+cat > "$SB/plugin-validate-verbose.want.out" <<'EOF'
+ > Validating plugin 'v/plugin.json'...
+ i version
+ i name
+ i skills
+
+ i Validation Results:
+ + Structure: passed
+ + Name: passed
+ + Fields: passed
+ + Paths: passed
+ ! Unrecognized: unrecognized field 'descripton' (did you mean 'description'?)
+
+ i Summary: 4 passed, 1 warnings, 0 errors
+EOF
+: > "$SB/plugin-validate-verbose.want.err"
+step_streams plugin-validate-verbose 0 "$BIN" plugin validate "$SB/work/v" -v
+must_match_file plugin-validate-verbose-stdout "$SB/plugin-validate-verbose.out" "$SB/plugin-validate-verbose.want.out"
+must_match_file plugin-validate-verbose-stderr "$SB/plugin-validate-verbose.err" "$SB/plugin-validate-verbose.want.err"
+steps=$((steps + 1))
+if diff -rq v "$SB/v.before" >/dev/null 2>&1; then echo "ok    plugin-validate-verbose left v/ byte-identical"; else echo "FAIL  plugin-validate-verbose modified v/"; failures=$((failures + 1)); fi
+
 cd demo
 step pack 0 "$BIN" pack
 must_exist build/demo-0.1.0/plugin.json
@@ -177,7 +209,7 @@ must_grep mk-list-empty "No marketplaces registered"
 # recorded transcript stays a literal, portable string; "empty" stays
 # relative on purpose -- the missing-manifest message never relativizes,
 # it prints the directory argument exactly as given.
-mkdir x y z v empty
+mkdir x y z empty
 printf '{' > x/plugin.json
 # "./../outside/x.md" -- '..' after a leading './' -- so the check actually
 # reaches "must not contain '..'"; a bare "../outside/x.md" (no leading
@@ -185,9 +217,6 @@ printf '{' > x/plugin.json
 # what the WP04 task prompt's own illustrative fixture would have hit.
 printf '{"name":"x","commands":"./../outside/x.md"}' > y/plugin.json
 printf '{"name":"x","descripton":"d"}' > z/plugin.json
-# version before name so the -v block below proves FILE order -- neither the
-# schema's property order nor an alphabetical sort would put it first.
-printf '{"version":"1.0.0","name":"x","skills":"./skills/","descripton":"d"}' > v/plugin.json
 
 cp -r x "$SB/x.before"
 cat > "$SB/plugin-validate-invalid-json.want.out" <<'EOF'
@@ -244,34 +273,6 @@ must_match_file plugin-validate-strict-typo-stdout "$SB/plugin-validate-strict-t
 must_match_file plugin-validate-strict-typo-stderr "$SB/plugin-validate-strict-typo.err" "$SB/plugin-validate-strict-typo.want.err"
 steps=$((steps + 1))
 if diff -rq z "$SB/z.before" >/dev/null 2>&1; then echo "ok    plugin-validate-strict-typo left z/ byte-identical"; else echo "FAIL  plugin-validate-strict-typo modified z/"; failures=$((failures + 1)); fi
-
-# plugin validate -v: the verbose block lists the manifest's recognized
-# fields in file order and omits the unrecognized one, which appears only in
-# the Unrecognized finding below. Without this step -v is the one plugin
-# validate output branch no case pins, leaving ticket 34's "same strength"
-# claim untrue for it.
-cp -r v "$SB/v.before"
-cat > "$SB/plugin-validate-verbose.want.out" <<'EOF'
- > Validating plugin 'v/plugin.json'...
- i version
- i name
- i skills
-
- i Validation Results:
- + Structure: passed
- + Name: passed
- + Fields: passed
- + Paths: passed
- ! Unrecognized: unrecognized field 'descripton' (did you mean 'description'?)
-
- i Summary: 4 passed, 1 warnings, 0 errors
-EOF
-: > "$SB/plugin-validate-verbose.want.err"
-step_streams plugin-validate-verbose 0 "$BIN" plugin validate "$SB/work/v" -v
-must_match_file plugin-validate-verbose-stdout "$SB/plugin-validate-verbose.out" "$SB/plugin-validate-verbose.want.out"
-must_match_file plugin-validate-verbose-stderr "$SB/plugin-validate-verbose.err" "$SB/plugin-validate-verbose.want.err"
-steps=$((steps + 1))
-if diff -rq v "$SB/v.before" >/dev/null 2>&1; then echo "ok    plugin-validate-verbose left v/ byte-identical"; else echo "FAIL  plugin-validate-verbose modified v/"; failures=$((failures + 1)); fi
 
 cp -r empty "$SB/empty.before"
 cat > "$SB/plugin-validate-missing.want.out" <<'EOF'
