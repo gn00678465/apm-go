@@ -107,7 +107,7 @@ PRODUCT.md / ARCHITECTURE.md / README.md / README.zh-TW.md   # C-005 文件更�
 ### IC-01 — Validator core（規則表、五類檢查、Report 模型）
 
 - **Purpose**: 一個純函式 `Validate(data []byte) Report`，輸入 manifest 位元組、輸出 findings 與 summary；所有規則集中在一張表，讓每條規則可被單元測試與 mutant 逐一命中。
-- **Relevant requirements**: FR-003、FR-004、FR-005、FR-006、FR-007、NFR-002、NFR-004、C-004
+- **Relevant requirements**: FR-003、FR-004、FR-005、FR-006、FR-007、NFR-002、NFR-004、C-004、SC-002
 - **Affected surfaces**: `internal/pluginjson/validate.go`、`validate_test.go`、`validate_fuzz_test.go`
 - **Sequencing/depends-on**: none
 - **Risks**: Structure 階段需處理非 UTF-8（`utf8.Valid`）、重複鍵（`json.Decoder` token 流掃描一次；值本身用 `map[string]json.RawMessage` 解）與深巢狀（`encoding/json` 自身有 10000 層上限，回傳 error 不 panic，fuzz 驗證）；5 MiB 上限在讀檔前以 `Stat` 判斷（屬 IC-02）。已知欄位集合 = schema ∪ 文件 ∪ `extensions`，要在規則表旁註明每個欄位的來源。
@@ -115,7 +115,7 @@ PRODUCT.md / ARCHITECTURE.md / README.md / README.zh-TW.md   # C-005 文件更�
 ### IC-02 — CLI 子指令（定位、輸出、exit code、flags）
 
 - **Purpose**: 把 Report 渲染成與 `marketplace validate` 同構、但使用 PRODUCT.md 符號的輸出，並實作 manifest 定位順序、`--strict`、`-v`、exit 0/1/2。
-- **Relevant requirements**: FR-001、FR-002、FR-008、FR-009、FR-010、FR-011、FR-012、NFR-001、NFR-003、NFR-005、C-003
+- **Relevant requirements**: FR-001、FR-002、FR-008、FR-009、FR-010、FR-011、FR-012、NFR-001、NFR-003、NFR-005、C-003、SC-002、SC-004
 - **Affected surfaces**: `cmd/apm-go/plugin_validate.go`、`plugin_validate_test.go`、`cmd/apm-go/plugin.go`（AddCommand + 偏差註記）
 - **Sequencing/depends-on**: IC-01（需要 Report 型別）
 - **Risks**: 定位順序必須與 `internal/pack/bundle/producer.go:493-496` 的候選清單一致（同一來源：上游 `find_plugin_json`），建議直接重用該清單而非再抄一份；`path` 為 symlink 指向 `path` 之外時只讀不跟隨（NFR-003）需在 `Lstat` 層決定；exit 1 走 `withSilentExitCode`，usage 走 `withUsageError`（`cobra.MaximumNArgs(1)` 的錯誤要對映到 exit 2）。
@@ -123,7 +123,7 @@ PRODUCT.md / ARCHITECTURE.md / README.md / README.zh-TW.md   # C-005 文件更�
 ### IC-03 — Schema 同步與規則來源證據
 
 - **Purpose**: 把 C-004「規則來源」變成可執行的反漂移測試：規則表的已知欄位 ⊇ vendored schema 的 `properties`，路徑欄位集合 = schema 中帶 `^\./` pattern 的欄位，`required` = `["name"]`。
-- **Relevant requirements**: C-004、SC-002
+- **Relevant requirements**: C-004
 - **Affected surfaces**: `internal/pluginjson/validate_schema_sync_test.go`、`internal/pluginjson/testdata/claude-code-plugin.schema.json`
 - **Sequencing/depends-on**: IC-01
 - **Risks**: schema 副本的來源與日期要寫在檔頭註解（schemastore `claude-code-plugin.json`，與上游 `tests/fixtures/schemas/` 同源）；`jsonschema/v5` 只能出現在 `_test.go`。
@@ -131,7 +131,7 @@ PRODUCT.md / ARCHITECTURE.md / README.md / README.zh-TW.md   # C-005 文件更�
 ### IC-04 — 驗證閘門與文件
 
 - **Purpose**: 讓 charter gate 3 與 C-005 可交付：realexec 新步驟、mutants、`tools/gate.sh` 跑出 evidence 報告；四份文件與偏差註記同變更更新。
-- **Relevant requirements**: C-001、C-005、SC-001、SC-004、SC-005、SC-006
+- **Relevant requirements**: C-001、C-005、SC-001、SC-005、SC-006
 - **Affected surfaces**: `tools/gate/realexec.sh`、`tools/gate/mutants.txt`、`PRODUCT.md`（Capabilities 指令面）、`ARCHITECTURE.md`（§2 `pluginjson` 入口列、§3.5 補一句）、`README.md`、`README.zh-TW.md`、`.gate/report-plugin-manifest-validate/`（本機產物，不入 git）
 - **Sequencing/depends-on**: IC-01、IC-02、IC-03
 - **Risks**: realexec 的 read-only 檢查要用 `cmp` 比對驗證前後的 plugin.json；mutant 錨點必須是唯一字串（`gatetool replace` 要求恰好一處）；文件更新是 reviewer 檢查 C-005 的唯一證據。
