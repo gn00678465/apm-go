@@ -75,8 +75,7 @@ comm -13 /tmp/py26.txt /tmp/py27.txt      # → 空
 
 ⇒ install 的缺口旗標**在 v0.26.0 就全部存在**，v0.26→v0.27 新增 0 個。
 本表記錄的是 **apm-go 整體 parity 程度**，不是版本位移造成的新缺口。
-（v0.26→v0.27 真正新增且已處理的是 `source.tag_pattern`；未處理的見
-`.trellis/tasks/07-28-marketplace-plugin-parity/upstream-v0.27.0-delta.md`。）
+（v0.26→v0.27 新增且已處理的是 `source.tag_pattern`。）
 
 ## 4. 已知量測誤差（記錄以免下次重犯）
 

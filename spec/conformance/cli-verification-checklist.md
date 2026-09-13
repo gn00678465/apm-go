@@ -219,7 +219,7 @@ bin\apm-go.exe install --mcp a --url ftp://x --transport http  # 已實測:exit 
 
 ## 2. apm-go uninstall(8 項)
 
-> 本指令已有任務級深度清單(`.trellis/tasks/07-05-uninstall/uninstall-checklist.md`,40+ un-0xx 項)。本節為釋出級複驗面;已知接受的限制:**un-054**(共用部署檔 Phase-2 復原,刻意不做)、**un-090/091**(-g 明確拒絕,定案 A)。
+> 本節為釋出級複驗面；已知接受的限制：**un-054**（共用部署檔 Phase-2 復原，刻意不做）、**un-090/091**（-g 明確拒絕，定案 A）。
 >
 > **(已實測 2026-07-09,本地批次)**:零 args → exit 1(C8 落定);not-found → exit 0 + 'No packages found';無 apm.yml → exit 1;`-g` 空目錄 → exit 1 'not supported yet'(先於 manifest 讀取,UN-04 核心);flow 部分移除 → `apm: [acme/bar]` 保持 flow;flow 清空 → `apm: []`;block 部分移除 → 註解(`# top comment`、行內 `# keep me`)逐字存活;--dry-run → md5 零差異 + '[dry-run] no changes made'(UN-02/07 本地面全過)。
 

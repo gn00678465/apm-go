@@ -113,8 +113,8 @@ func TestInstall_LegacySingularTargetKey_StillDeploys(t *testing.T) {
 // lenientReadTargets (init.go:303-441) has five distinct early-return
 // branches, but before this task only two of them (the "no target/targets
 // key" shape, indirectly, and the CSV/alias/both-keys shapes) had direct
-// test coverage. Per .trellis/spec/guides/loop-graph-engineering.md model 9
-// (verification granularity must match claim granularity), each branch gets
+// test coverage. 驗證範圍必須符合宣稱範圍。
+// Each branch gets
 // its own test naming the exact init.go lines it exercises, and each was
 // confirmed to actually exercise that branch by a manual mutation pass
 // (temporarily breaking the guarded condition and re-running -run for that

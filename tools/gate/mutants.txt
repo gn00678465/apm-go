@@ -10,3 +10,5 @@ plugin-format-inverted	cmd/apm-go/plugin.go	if pm == pluginModeAgent {	if pm != 
 stage-rollback-skipped	internal/pluginjson/stage.go	for _, name := range committed {	for _, name := range []string(nil) {
 pack-json-error-code	cmd/apm-go/pack.go	packJSONError{Code: "version_misaligned", Message: msg}	packJSONError{Code: "version_misalignment", Message: msg}
 json-number-sign-only-accepted	internal/marketplace/models.go	if sc.pos == intStart {	if sc.pos == intStart && false {
+fields-kind-check-inverted	internal/pluginjson/validate.go	if !checkKind(raw, r.Kind) {	if checkKind(raw, r.Kind) {
+strict-warning-gate-disabled	cmd/apm-go/plugin_validate.go	if strict && warnings > 0 {	if false {

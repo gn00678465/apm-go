@@ -10,10 +10,6 @@
 > 的 `properties` 鍵集合做雙向比對。**修改這裡的欄位表，必須同時修改對應 schema 檔，否則測試會轉紅**——
 > 這是本檔案存在的第一目的，不是事後補充的檢查。
 >
-> **來源素材**（是素材不是本檔的權威版本，衝突時以下方逐欄位表 + Go 型別本身為準）：
-> `.trellis/tasks/07-28-marketplace-plugin-parity/research/agent-schema-support-matrix.md` §2、§3、§4，
-> `.trellis/tasks/07-28-marketplace-plugin-parity/research/eval-real-run-20260728.md` §D。
->
 > **事實來源裁定**：現有 Go 型別（`internal/marketplace/build/mapper.go`、`internal/marketplace/build/codexmapper.go`、
 > `internal/pack/bundle/pluginjson.go`）是 apm-go 實際行為的事實來源。本檔與可執行 schema 若與 Go 型別不一致，
 > 錯的是本檔或 schema，不是 Go 型別。
@@ -306,7 +302,7 @@ apm-go **刻意照做對齊**（不「修正」它），因為 codex 端本來�
 | 產物家族 | schema 檔 | golden（正向） | 對應 Go 型別 | SHA-256（schema 檔原始 bytes） |
 |---|---|---|---|---|
 | Claude marketplace.json | `internal/marketplace/build/testdata/apm-claude-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-claude-marketplace.golden.json` | `ClaudeDocument`/`ClaudeOwner`/`ClaudePlugin`/`RemoteSource` | `b1d7dadba78bff781585354374236a36e6c8fb4bfed81928ea284cca78ed9444` |
-| Codex marketplace.json | `internal/marketplace/build/testdata/apm-codex-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-codex-marketplace.golden.json` | `CodexDocument`/`CodexInterface`/`CodexPlugin`/`CodexPolicy`/`CodexLocalSource`/`RemoteSource` | `4a2730f21302e44c50826b47955fdf5ecaa2e60c6c088b3cd24aa87d4b3f8abc` |
+| Codex marketplace.json | `internal/marketplace/build/testdata/apm-codex-marketplace.schema.json` | `internal/marketplace/build/testdata/apm-codex-marketplace.golden.json` | `CodexDocument`/`CodexInterface`/`CodexPlugin`/`CodexPolicy`/`CodexLocalSource`/`RemoteSource` | `c311712b5974cf860c3c907eccfa959d65c4a7ee9f4accf17dd85ba1db3f8754` |
 | plugin.json（claude） | `internal/pack/bundle/testdata/apm-plugin-claude.schema.json` | `internal/pack/bundle/testdata/apm-plugin-claude.golden.json` | `PluginManifest`/`Author` | `3d815c47be218a51e53c473e441ddc60ab8109bbc7ebae1a16bc2858fde28e35` |
 | plugin.json（copilot） | `internal/pack/bundle/testdata/apm-plugin-copilot.schema.json` | `internal/pack/bundle/testdata/apm-plugin-copilot.golden.json` | `PluginManifest`/`Author`（`mcpServers` 恆不出現） | `45970197c017188fd995154a36c9ca9d8620abcbee42d376c028c3cd3161f3ef` |
 

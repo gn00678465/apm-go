@@ -1,0 +1,101 @@
+{
+  "entries": [
+    {
+      "created_at": "2026-09-08T21:18:38.514021Z",
+      "decision_id": "01M21E68DHDZ4FMFWEPQYMTJ10",
+      "final_answer": "manual + CI --strict (upstream has no auto hook)",
+      "input_key": "primary_trigger",
+      "mission_id": "01M21E5QYY67PBDKTATX7HG6F1",
+      "mission_slug": "plugin-manifest-validate-01M21E5Q",
+      "opened_by": "claude",
+      "options": [
+        "manual + CI --strict (upstream has no auto hook)",
+        "also auto-run before pack",
+        "Other"
+      ],
+      "origin_flow": "specify",
+      "other_answer": false,
+      "question": "Primary scenario: is plugin validate a manual pre-pack/CI check, or should it also run automatically before pack?",
+      "rationale": null,
+      "resolved_at": "2026-09-08T21:19:05.795416Z",
+      "resolved_by": null,
+      "slot_key": "specify.scenario.trigger",
+      "status": "resolved",
+      "step_id": null,
+      "summary_json": null
+    },
+    {
+      "created_at": "2026-09-08T21:18:44.666663Z",
+      "decision_id": "01M21E6EDTC2XTS74G4XE8KE1C",
+      "final_answer": "confirm all four",
+      "input_key": "invariants",
+      "mission_id": "01M21E5QYY67PBDKTATX7HG6F1",
+      "mission_slug": "plugin-manifest-validate-01M21E5Q",
+      "opened_by": "claude",
+      "options": [
+        "confirm all four",
+        "Other"
+      ],
+      "origin_flow": "specify",
+      "other_answer": false,
+      "question": "Invariants: read-only, upstream find_plugin_json lookup order, apm-go scaffolds pass with zero warnings, 5 MiB cap?",
+      "rationale": null,
+      "resolved_at": "2026-09-08T21:19:11.417410Z",
+      "resolved_by": null,
+      "slot_key": "specify.rules.invariants",
+      "status": "resolved",
+      "step_id": null,
+      "summary_json": null
+    },
+    {
+      "created_at": "2026-09-08T21:18:51.114287Z",
+      "decision_id": "01M21E6MQAA03V370AMCSPATK9",
+      "final_answer": "syntax only (matches official schema + upstream GHSA guard)",
+      "input_key": "path_field_scope",
+      "mission_id": "01M21E5QYY67PBDKTATX7HG6F1",
+      "mission_slug": "plugin-manifest-validate-01M21E5Q",
+      "opened_by": "claude",
+      "options": [
+        "syntax only (matches official schema + upstream GHSA guard)",
+        "syntax + existence",
+        "Other"
+      ],
+      "origin_flow": "specify",
+      "other_answer": false,
+      "question": "Path fields (skills/commands/agents/hooks/...): syntax check only (./ prefix, no absolute, no ..) or also existence check?",
+      "rationale": null,
+      "resolved_at": "2026-09-08T21:19:17.080738Z",
+      "resolved_by": null,
+      "slot_key": "specify.scope.path-fields",
+      "status": "resolved",
+      "step_id": null,
+      "summary_json": null
+    },
+    {
+      "created_at": "2026-09-08T21:36:11.907180Z",
+      "decision_id": "01M21F6D43J15FE2DFRW3F4QEP",
+      "final_answer": "hand-coded rule table + schema sync test (recommended)",
+      "input_key": "rule_representation",
+      "mission_id": "01M21E5QYY67PBDKTATX7HG6F1",
+      "mission_slug": "plugin-manifest-validate-01M21E5Q",
+      "opened_by": "claude",
+      "options": [
+        "hand-coded rule table + schema sync test (recommended)",
+        "runtime jsonschema validation against vendored schema",
+        "Other"
+      ],
+      "origin_flow": "plan",
+      "other_answer": false,
+      "question": "How should the manifest field rules be represented: a hand-coded rule table in internal/pluginjson (stdlib only) with a test that keeps it in sync with the vendored official schema, or runtime JSON-schema validation using the jsonschema module already in go.mod?",
+      "rationale": null,
+      "resolved_at": "2026-09-08T21:46:20.000984Z",
+      "resolved_by": null,
+      "slot_key": "plan.architecture.rule-source",
+      "status": "resolved",
+      "step_id": null,
+      "summary_json": null
+    }
+  ],
+  "mission_id": "01M21E5QYY67PBDKTATX7HG6F1",
+  "version": 1
+}

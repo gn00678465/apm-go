@@ -2,8 +2,7 @@
 // Python oracle's `apm compile`: it reads local + dependency
 // *.instructions.md primitives and compiles them into a single project-root
 // AGENTS.md, for targets whose Python compile_family is "agents"
-// (antigravity, codex, opencode). See
-// .trellis/tasks/07-11-agents-md-compile/design.md for the full contract.
+// (antigravity, codex, opencode).
 package compile
 
 import (

@@ -95,6 +95,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 |---|---|
 | `init` | 初始化新的 APM 專案 |
 | `plugin init` | 初始化 plugin 作者專案（`--format`、`--claude-plugin`） |
+| `plugin validate` | 以 Claude Code plugin schema 驗證 `plugin.json` manifest（`--strict`、`-v`） |
 | `install` | 依 `apm.yml` 或 URL/shorthand 安裝相依；`--mcp` 可新增 MCP 伺服器 |
 | `uninstall` | 移除 APM 套件、其整合檔案與 `apm.yml` 條目 |
 | `update` | 重新解析相依至最新符合版本 |

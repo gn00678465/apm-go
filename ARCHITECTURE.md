@@ -64,7 +64,7 @@ Leaves (import nothing in-module): `archive`, `credsec`, `experimental`, `pack`,
 | `pack` | which of the three outputs a manifest triggers | `DetectOutputs` `internal/pack/detect.go:36` |
 | `pack/bundle` | plugin bundle production, JSON value model, MCP sanitizing, lockfile pack section | `Produce` `internal/pack/bundle/producer.go:110`; `MarshalIndent` `jsonvalue.go:195`; `DeepMerge` `:312`; `SanitizeServers` `mcpjson.go:154`; `EnrichLockfileForPack` `lockfile_pack.go:137` |
 | `pack/pluginmanifest` | standalone plugin.json | `Produce` `internal/pack/pluginmanifest/producer.go:32`; `Write` `write.go:41` |
-| `pluginjson` | init-time plugin.json / .mcp.json scaffold, staged atomic commit | `Scaffold` / `ScaffoldAgent` `internal/pluginjson/pluginjson.go:28,55`; `NewStagedScaffold` `stage.go:27` |
+| `pluginjson` | init-time plugin.json / .mcp.json scaffold, staged atomic commit; plugin.json validation | `Scaffold` / `ScaffoldAgent` `internal/pluginjson/pluginjson.go:28,55`; `NewStagedScaffold` `stage.go:27`; `Validate` `validate.go:218` |
 | `localbundle` | local bundle detection, integrity check, integration | `DetectLocalBundle` `internal/localbundle/detect.go:76`; `VerifyBundleIntegrity` `verify.go:49`; `IntegrateLocalBundle` `integrate.go:96` |
 | `ux` | all terminal output and interaction | `Init` `internal/ux/ux.go:33`; `CanPrompt` `:52`; printers `printer.go:21-92`; `Table` / `List` / `Tree` `output.go:74,144,201`; `Spinner` `spinner.go:42`; `NewClack` `clack.go:130`; `Confirm` / `InputForm` / `MultiSelect` `interactive.go:77,194,146` |
 | `semver` | range matching, max-satisfying | `Satisfies` / `MaxSatisfying` / `CompareVersions` `internal/semver/semver.go:16,75,67` |
@@ -155,6 +155,8 @@ flowchart LR
 3. Interactive path: `ux.NewClack(os.Stderr)` (`:168`) → `Intro` (`:171`) → `Step` / `Form` / `MultiSelect` (`interactiveTargetSelect` `:630`) → `Note("About to create")` (`:345`) → file creation → `Note("Initializing")` holding the success content (`clackRenderer` `:510,542`) → `Outro` (`:415`). `Clack` methods: `internal/ux/clack.go:144-343`. Frame rules: [PRODUCT.md § Terminal UI design](PRODUCT.md#terminal-ui-design).
 4. Non-interactive (`--yes`, no TTY, CI): `renderSuccessBlock` (`:479`) prints the same content as plain status lines.
 5. Plugin mode writes through `pluginjson.NewStagedScaffold` (`:575`; `internal/pluginjson/stage.go:27`): files are staged in a project-local temp dir and committed in one move; any failure rolls back.
+
+`plugin validate` (`cmd/apm-go/plugin_validate.go`) is a read-only sibling command in the same package that does not join `runInitCore`'s flow; it has no Oracle equivalent and its output contract is fixed by `tools/gate/realexec.sh` (§5) rather than the parity gate.
 
 ### 3.6 Errors and exit codes
 

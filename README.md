@@ -95,6 +95,7 @@ apm-go compile               # compile installed instructions into AGENTS.md
 |---|---|
 | `init` | Initialize a new APM project |
 | `plugin init` | Initialize a plugin-author project (`--format`, `--claude-plugin`) |
+| `plugin validate` | Validate a `plugin.json` manifest against the Claude Code plugin schema (`--strict`, `-v`) |
 | `install` | Install dependencies from `apm.yml` or by URL/shorthand; also adds MCP servers via `--mcp` |
 | `uninstall` | Remove APM packages, their integrated files, and `apm.yml` entries |
 | `update` | Re-resolve dependencies to their newest matching version |

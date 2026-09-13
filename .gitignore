@@ -61,7 +61,6 @@ CLAUDE.local.md
 .opencode/
 .windsurf/
 .gemini/
-.cursor/
 .qwen/
 .kilocode/
 .augment/
@@ -102,3 +101,9 @@ kitty-ops/ops-index.jsonl
 
 # verification-gate artifacts (tools/gate.sh)
 .gate/
+.kittify/.kitty.env
+.kittify/lint-report.json
+.cursor/rules/spec-kitty.mdc
+.cursor/commands/
+.cursor/skills/
+.worktrees/

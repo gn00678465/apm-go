@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "mission_slug": "plugin-manifest-validate-01M21E5Q",
+  "mission_id": "01M21E5QYY67PBDKTATX7HG6F1",
+  "mission_branch": "kitty/mission-plugin-manifest-validate-01M21E5Q",
+  "target_branch": "feat/plugin-validate",
+  "lanes": [
+    {
+      "lane_id": "lane-a",
+      "wp_ids": [
+        "WP01"
+      ],
+      "write_scope": [
+        "internal/pluginjson/validate.go",
+        "internal/pluginjson/validate_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-b",
+      "wp_ids": [
+        "WP02"
+      ],
+      "write_scope": [
+        "internal/pluginjson/testdata/claude-code-plugin.schema.json",
+        "internal/pluginjson/validate_fuzz_test.go",
+        "internal/pluginjson/validate_property_test.go",
+        "internal/pluginjson/validate_schema_sync_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-c",
+      "wp_ids": [
+        "WP03"
+      ],
+      "write_scope": [
+        "cmd/apm-go/plugin.go",
+        "cmd/apm-go/plugin_validate.go",
+        "cmd/apm-go/plugin_validate_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "app-shell",
+        "artifact-rendering",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-d",
+      "wp_ids": [
+        "WP04"
+      ],
+      "write_scope": [
+        "ARCHITECTURE.md",
+        "PRODUCT.md",
+        "README.md",
+        "README.zh-TW.md",
+        "tools/gate/mutants.txt",
+        "tools/gate/realexec.sh"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tests"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b",
+        "lane-c"
+      ],
+      "parallel_group": 2
+    }
+  ],
+  "computed_at": "2026-09-09T02:13:30.785110+00:00",
+  "computed_from": "dependency_graph+ownership",
+  "planning_artifact_wps": [],
+  "planning_commit_sha": "61dfa9b45ebbb8edde422bcc2293c8fef6bd7f64"
+}

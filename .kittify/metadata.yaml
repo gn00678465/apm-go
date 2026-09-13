@@ -3,18 +3,107 @@
 # DO NOT EDIT MANUALLY
 
 spec_kitty:
-  schema_version: 3
-  version: 3.2.5
+  version: 3.2.6
   initialized_at: '2026-08-25T10:08:24.030156'
-  last_upgraded_at:
-  schema_capabilities:
-    canonical_context: true
-    event_log_authority: true
-    ownership_manifest: true
-    thin_shims: true
+  last_upgraded_at: '2026-09-08T21:29:55.206940+00:00'
+  schema_version: 3
 environment:
   python_version: 3.13.15
   platform: linux
   platform_version: Linux-5.15.153.1-microsoft-standard-WSL2-x86_64-with-glibc2.36
 migrations:
-  applied: []
+  applied:
+  - id: 3.2.6_decisions_event_log_merge_driver
+    applied_at: '2026-09-08T21:29:52.006112+00:00'
+    result: success
+    notes: 'Added .gitattributes entry: kitty-specs/**/decisions.events.jsonl merge=spec-kitty-event-log;
+      Configured git merge.spec-kitty-event-log.name; Configured git merge.spec-kitty-event-log.driver'
+  - id: 3.2.6_gate_artifact_merge_drivers
+    applied_at: '2026-09-08T21:29:52.329531+00:00'
+    result: success
+    notes: 'Added .gitattributes entry: kitty-specs/**/acceptance-matrix.json merge=spec-kitty-acceptance-matrix;
+      Configured git merge.spec-kitty-acceptance-matrix.name; Configured git merge.spec-kitty-acceptance-matrix.driver;
+      Added .gitattributes entry: kitty-specs/**/issue-matrix.md merge=spec-kitty-issue-matrix;
+      Configured git merge.spec-kitty-issue-matrix.name; Configured git merge.spec-kitty-issue-matrix.driver'
+  - id: 3.2.6_issue_matrix_driver_repoint
+    applied_at: '2026-09-08T21:29:52.479240+00:00'
+    result: success
+    notes: 'Added .gitattributes entry: kitty-specs/**/issue-matrix.json merge=spec-kitty-issue-matrix;
+      Configured git merge.spec-kitty-issue-matrix.name'
+  - id: 3.2.6_meta_traces_merge_drivers
+    applied_at: '2026-09-08T21:29:52.912348+00:00'
+    result: success
+    notes: 'Added .gitattributes entry: kitty-specs/**/meta.json merge=spec-kitty-meta;
+      Configured git merge.spec-kitty-meta.name; Configured git merge.spec-kitty-meta.driver;
+      Added .gitattributes entry: kitty-specs/**/traces/*.md merge=spec-kitty-traces;
+      Configured git merge.spec-kitty-traces.name; Configured git merge.spec-kitty-traces.driver'
+  - id: 3.2.6_retire_rtk_search_tooling
+    applied_at: '2026-09-08T21:29:52.923504+00:00'
+    result: skipped
+    notes: Not applicable
+  - id: 3.2.7_review_cycle_merge_driver
+    applied_at: '2026-09-08T21:29:53.142779+00:00'
+    result: success
+    notes: 'Added .gitattributes entry: kitty-specs/**/tasks/*/review-cycle-*.md merge=spec-kitty-review-cycle;
+      Configured git merge.spec-kitty-review-cycle.name; Configured git merge.spec-kitty-review-cycle.driver'
+  - id: normalize_activation_absence
+    applied_at: '2026-09-08T21:29:53.162092+00:00'
+    result: success
+    notes: 'Normalized absent activation keys to [] in D:\Projects\apm-dev\apm-go\.kittify\config.yaml:
+      [''activated_agent_profiles'', ''activated_directives'', ''activated_glossary_packs'',
+      ''activated_mission_step_contracts'', ''activated_paradigms'', ''activated_procedures'',
+      ''activated_styleguides'', ''activated_tactics'', ''activated_toolguides'']'
+  - id: unify_charter_activation_promote_answers
+    applied_at: '2026-09-08T21:29:54.530674+00:00'
+    result: success
+    notes: Promoted ['034-test-first-development', '030-test-and-typecheck-quality-gate',
+      '010-specification-fidelity-requirement', '024-locality-of-change', '033-targeted-staging-policy',
+      '044-canonical-sources-and-unification', '045-prs-only-and-read-intent', '003-decision-documentation-requirement',
+      '037-living-documentation-sync'] into activated_directives; Promoted ['tdd-red-green-refactor',
+      'acceptance-test-first', 'review-intent-and-risk-first', 'reviewer-implementer-role-separation',
+      'quality-gate-verification', 'change-apply-smallest-viable-diff', 'input-validation-fail-fast']
+      into activated_tactics; Promoted ['execution-lanes', 'specification-by-example']
+      into activated_paradigms
+  - id: consolidate_charter_bundle_fold
+    applied_at: '2026-09-08T21:29:54.591623+00:00'
+    result: success
+    notes: 'Composed D:\Projects\apm-dev\apm-go\.kittify\charter\charter.yaml from
+      legacy bundle + config activation; Deleted D:\Projects\apm-dev\apm-go\.kittify\charter\governance.yaml;
+      Deleted D:\Projects\apm-dev\apm-go\.kittify\charter\directives.yaml; Deleted
+      D:\Projects\apm-dev\apm-go\.kittify\charter\metadata.yaml; Updated .kittify/config.yaml:
+      removed activated_* keys, added charter: pointer'
+  - id: runtime_state_backfill
+    applied_at: '2026-09-08T21:29:54.605535+00:00'
+    result: skipped
+    notes: Not applicable
+  - id: verdict_provenance_backfill
+    applied_at: '2026-09-08T21:29:54.616722+00:00'
+    result: skipped
+    notes: Not applicable
+  - id: 3.2.8_provision_kitty_env
+    applied_at: '2026-09-08T21:29:54.647695+00:00'
+    result: success
+    notes: 'Created .kittify/.kitty.env; Registered env_file: ${SPEC_KITTY_HOME}/.kitty.env
+      in config.yaml; Added .kittify/.kitty.env to .gitignore; Added .kittify/.kitty.env
+      to .claudeignore'
+  - id: 3.2.7_heal_provenance_paths
+    applied_at: '2026-09-08T21:29:54.692341+00:00'
+    result: skipped
+    notes: Not applicable
+  - id: 3.2.6rc3_lint_report_gitignore_backfill
+    applied_at: '2026-09-08T21:29:54.713686+00:00'
+    result: success
+    notes: 'Added gitignore entry: .kittify/lint-report.json'
+  - id: 3.2.6rc3_narrow_cursor_gitignore
+    applied_at: '2026-09-08T21:29:54.734141+00:00'
+    result: success
+    notes: 'Removed managed blanket line: ''.cursor/''; Added gitignore entry: .cursor/rules/spec-kitty.mdc;
+      Added gitignore entry: .cursor/commands/; Added gitignore entry: .cursor/skills/'
+  - id: 3.2.6rc3_worktrees_gitignore_backfill
+    applied_at: '2026-09-08T21:29:55.057875+00:00'
+    result: success
+    notes: 'Added gitignore entry: .worktrees/'
+  - id: 3_3_1_context_sources_consolidation
+    applied_at: '2026-09-08T21:29:55.193132+00:00'
+    result: skipped
+    notes: Not applicable
