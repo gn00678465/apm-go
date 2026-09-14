@@ -1002,37 +1002,65 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 		row.Current = current
 	}
 
+	// apm-go-only (SPEC marketplace-check-outdated SC-C1..C6, C11): a
+	// lowercase 40-hex SHA pin is compared against the remote when it has
+	// no version (default-branch tip) or a display version (release tags).
+	// Every other ref pin -- tag/branch names, uppercase or abbreviated
+	// SHAs, a SHA with a range version (D-b) -- keeps the Oracle's skip
+	// (outdated.py:44-53).
+	shaPin := shaRefPattern.MatchString(pkg.Ref) && (pkg.Version == "" || IsDisplayVersion(pkg.Version))
+
+	// Note texts are the Oracle's own (outdated.py:53, 68, 101) except the
+	// apm-go-only local skip: the Oracle runs ls-remote against a local
+	// path and reports [x]; never touching the network for a "./" source is
+	// mkt-046's rule applied here.
 	switch {
 	case isLocalPackageSource(pkg.Source):
 		row.Status, row.Note = "[i]", "local package; skipped"
 		return row
-	case pkg.Ref != "":
-		row.Status, row.Note = "[i]", "pinned to ref; skipped"
+	case pkg.Ref != "" && !shaPin:
+		row.Status, row.Note = "[i]", "Pinned to ref; skipped"
 		return row
-	case pkg.Version == "":
-		row.Status, row.Note = "[i]", "no version range"
+	case pkg.Ref == "" && pkg.Version == "":
+		row.Status, row.Note = "[i]", "No version range"
 		return row
 	}
 
 	if offline {
-		row.Status, row.Note = "[x]", "--offline has no cached refs to check against"
+		// OfflineMissError's text (marketplace/errors.py:119-120), cut to
+		// 60 like every exception text outdated.py:73-84 puts in a row.
+		row.Status = "[x]"
+		row.Note = truncateRunes(fmt.Sprintf("Offline mode: no cached refs for '%s' (package '%s'). Run a build online first.", pkg.Source, pkg.Name), 60)
 		return row
 	}
 
 	refs, err := lister.ListRefs(pkg.Source)
 	if err != nil {
-		row.Status, row.Note = "[x]", err.Error()
+		row.Status, row.Note = "[x]", truncateRunes(err.Error(), 60)
 		return row
+	}
+
+	if shaPin && pkg.Version == "" {
+		return outdatedShaAgainstTip(row, pkg, refs)
 	}
 
 	pattern := pkg.TagPattern
 	if pattern == "" {
 		pattern = cfg.Build.TagPattern
 	}
-	candidates := versionTagCandidates(refs, pattern, pkg.Name, includePrerelease || pkg.IncludePrerelease)
+	candidates, usedPattern := versionTagCandidatesWithPattern(refs, pattern, pkg.Name, includePrerelease || pkg.IncludePrerelease)
+	if shaPin {
+		// SC-C1..C3: Current is the display version rendered into the tag
+		// layout that produced the candidates; the SHA itself is never
+		// reverse-mapped to a tag (that is check's manifest comparison).
+		row.Current = tagpattern.RenderTag(usedPattern, pkg.Name, strings.TrimSpace(pkg.Version))
+	}
 	if len(candidates) == 0 {
-		row.Status, row.Note = "[!]", "no matching tags found"
+		row.Status, row.Note = "[!]", "No matching tags found"
 		return row
+	}
+	if shaPin {
+		return outdatedShaAgainstTags(row, pkg, candidates)
 	}
 
 	overall := candidates[0]
@@ -1070,6 +1098,57 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 	return row
 }
 
+// outdatedShaAgainstTip implements SC-C4..C6: a SHA pin with no version is
+// current when it is the remote's default-branch tip (ListRefs' synthetic
+// HEAD entry) and upgradable when the tip has moved.
+func outdatedShaAgainstTip(row OutdatedRow, pkg PackageEntry, refs []semver.TagInfo) OutdatedRow {
+	tip := ""
+	for _, r := range refs {
+		if r.Name == "HEAD" {
+			tip = r.Commit
+			break
+		}
+	}
+	if tip == "" {
+		row.Status, row.Note = "[x]", "Remote advertised no HEAD"
+		return row
+	}
+	row.Current = pkg.Ref[:12]
+	row.LatestOverall = tip[:12]
+	if tip == pkg.Ref {
+		row.Status = "[+]"
+		return row
+	}
+	row.Status, row.Note, row.Upgradable = "[!]", "Default branch tip moved", true
+	return row
+}
+
+// outdatedShaAgainstTags implements SC-C1..C2: a SHA pin with a display
+// version is upgradable when any tag in the layout carries a higher
+// version than the declared one. LatestInRange is the declared version's
+// own tag when the remote has it.
+func outdatedShaAgainstTags(row OutdatedRow, pkg PackageEntry, candidates []outdatedCandidate) OutdatedRow {
+	overall := candidates[0]
+	for _, c := range candidates[1:] {
+		if semver.CompareVersions(c.version, overall.version) > 0 {
+			overall = c
+		}
+	}
+	row.LatestOverall = overall.tag
+	for _, c := range candidates {
+		if c.tag == row.Current {
+			row.LatestInRange = c.tag
+			break
+		}
+	}
+	if semver.CompareVersions(overall.version, strings.TrimSpace(pkg.Version)) > 0 {
+		row.Status, row.Upgradable = "[!]", true
+		return row
+	}
+	row.Status = "[+]"
+	return row
+}
+
 // outdatedCandidate is one remote ref that matched a package's tag pattern:
 // tag is the full original ref name (e.g. "v1.1.0", used for Current/
 // LatestInRange/LatestOverall display and comparison against a package's
@@ -1089,6 +1168,18 @@ type outdatedCandidate struct {
 // matches nothing the common layouts are inferred (tag_pattern.py
 // infer_tag_pattern_from_refs, #1504).
 func versionTagCandidates(refs []semver.TagInfo, pattern, name string, includePrerelease bool) []outdatedCandidate {
+	out, _ := versionTagCandidatesWithPattern(refs, pattern, name, includePrerelease)
+	return out
+}
+
+// versionTagCandidatesWithPattern is versionTagCandidates plus the pattern
+// that actually produced the candidates (the configured one, or the
+// inferred layout), so a caller can render a version back into that
+// layout's tag name.
+func versionTagCandidatesWithPattern(refs []semver.TagInfo, pattern, name string, includePrerelease bool) ([]outdatedCandidate, string) {
+	if pattern == "" {
+		pattern = tagpattern.DefaultPattern
+	}
 	collect := func(pattern string) []outdatedCandidate {
 		re := tagpattern.Compile(pattern, name)
 		var out []outdatedCandidate
@@ -1110,8 +1201,21 @@ func versionTagCandidates(refs []semver.TagInfo, pattern, name string, includePr
 	out := collect(pattern)
 	if len(out) == 0 {
 		if inferred := tagpattern.Infer(refs, name); inferred != "" && inferred != pattern {
-			out = collect(inferred)
+			if out = collect(inferred); len(out) > 0 {
+				return out, inferred
+			}
 		}
 	}
-	return out
+	return out, pattern
+}
+
+// truncateRunes mirrors Python's str[:n] on a note or error text: the
+// Oracle's outdated.py and check.py cap every exception text at 60 code
+// points before it lands in a table cell.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }

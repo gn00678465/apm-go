@@ -450,11 +450,14 @@ func marketplaceOutdatedCmd() *cobra.Command {
 				ux.Info(w, "All packages are up to date")
 			}
 			if verbose {
-				ux.List(w, []ux.Item{{Text: fmt.Sprintf("%d upgradable entries", upgradable)}})
+				// outdated.py:153: logger.verbose_detail(f"    {upgradable}
+				// upgradable entries") -- four spaces, no status symbol.
+				ux.Plain(w, "    %d upgradable entries", upgradable)
 			}
 
 			if upgradable > 0 {
-				return fmt.Errorf("outdated: %d package(s) have an available upgrade", upgradable)
+				// outdated.py:155-156: a bare sys.exit(1) after the summary.
+				return withSilentExitCode(1, fmt.Errorf("%d package(s) can be updated", upgradable))
 			}
 			return nil
 		},
