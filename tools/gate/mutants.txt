@@ -12,3 +12,10 @@ pack-json-error-code	cmd/apm-go/pack.go	packJSONError{Code: "version_misaligned"
 json-number-sign-only-accepted	internal/marketplace/models.go	if sc.pos == intStart {	if sc.pos == intStart && false {
 fields-kind-check-inverted	internal/pluginjson/validate.go	if !checkKind(raw, r.Kind) {	if checkKind(raw, r.Kind) {
 strict-warning-gate-disabled	cmd/apm-go/plugin_validate.go	if strict && warnings > 0 {	if false {
+sha-match-by-name-only	internal/marketplace/authoring/refcheck.go	(isSHA && r.Commit == ref)	(isSHA && false)
+probe-skipped	internal/marketplace/authoring/refcheck.go	found, err := deps.Prober.HasCommit(pkg.Source, pkg.Ref)	found, err := true, error(nil)
+dup-name-case-sensitive	internal/marketplace/authoring/schema.go	lowerName := strings.ToLower(name)	lowerName := name
+tip-compare-inverted	internal/marketplace/authoring/refcheck.go	if tip == pkg.Ref {	if tip != pkg.Ref {
+current-render-ignores-pattern	internal/marketplace/authoring/refcheck.go	tagpattern.RenderTag(usedPattern, pkg.Name, strings.TrimSpace(pkg.Version))	tagpattern.RenderTag(usedPattern[:0]+"v{version}", pkg.Name, strings.TrimSpace(pkg.Version))
+version-mismatch-ignored	internal/marketplace/authoring/refcheck.go	if manifestVersion != "" && semver.StripVPrefix(manifestVersion) != semver.StripVPrefix(strings.TrimSpace(pkg.Version)) {	if false {
+probe-error-unsanitized	internal/marketplace/authoring/refcheck_sha.go	gitops.SanitizeGitOutput(strings.TrimSpace(string(out)))	strings.TrimSpace(string(out))
