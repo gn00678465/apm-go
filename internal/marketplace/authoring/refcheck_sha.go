@@ -164,12 +164,22 @@ func newProbeFetchCmd(ctx context.Context, dir, cloneURL, ref string) *exec.Cmd 
 	// block until that grandchild closes the pipe. WaitDelay bounds that so an
 	// unresponsive remote surfaces as "timed out" instead of a hang.
 	cmd.WaitDelay = subprocessWaitDelay
+	pinGitLocale(cmd)
 	return cmd
 }
 
 // subprocessWaitDelay is how long exec waits for inherited pipes to close
 // after a context-killed git exits.
 const subprocessWaitDelay = 2 * time.Second
+
+// pinGitLocale forces the C locale on a scratch git subprocess: this file
+// classifies outcomes on git's English messages ("not our ref", "does not
+// exist in"), and a translated message would turn a clean "not found" into
+// a transport error (SPEC marketplace-check-outdated SC-B20). Applied after
+// the gitops env helpers so it wins over an inherited LANG/LC_ALL.
+func pinGitLocale(cmd *exec.Cmd) {
+	cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=C")
+}
 
 // fetchRefIntoScratch fetches ref (a SHA, tag, branch, or full ref name)
 // from source into a fresh bare scratch repository whose FETCH_HEAD then
@@ -200,6 +210,7 @@ func fetchRefIntoScratch(source, ref string) (dir string, cleanup func(), err er
 	initCmd := exec.CommandContext(ctx, "git", "init", "-q", "--bare", "--", dir)
 	gitops.ApplySecureGitEnv(initCmd)
 	initCmd.WaitDelay = subprocessWaitDelay
+	pinGitLocale(initCmd)
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		if timedOut, terr := fetchTimedOut(ctx, safeURL); timedOut {
 			return "", cleanup, terr
@@ -278,6 +289,7 @@ func showAtFetchHead(dir, relPath string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "show", "FETCH_HEAD:"+relPath)
 	gitops.ApplySecureGitEnv(cmd)
 	cmd.WaitDelay = subprocessWaitDelay
+	pinGitLocale(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -300,10 +312,14 @@ func showAtFetchHead(dir, relPath string) ([]byte, error) {
 // marketplace.json) and check (which only compares a display version
 // against the plugin manifest) share this definition.
 func IsDisplayVersion(value string) bool {
-	if value == "" {
+	// A blank value is no version at all (SC-B21): the Oracle's
+	// _is_display_version only short-circuits the empty string, so "  "
+	// would otherwise read as a display version and trigger a manifest
+	// comparison against nothing.
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return false
 	}
-	trimmed := strings.TrimSpace(value)
 	for _, prefix := range []string{"^", "~", ">", "<", "="} {
 		if strings.HasPrefix(trimmed, prefix) {
 			return false

@@ -1008,7 +1008,9 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 	// Every other ref pin -- tag/branch names, uppercase or abbreviated
 	// SHAs, a SHA with a range version (D-b) -- keeps the Oracle's skip
 	// (outdated.py:44-53).
-	shaPin := shaRefPattern.MatchString(pkg.Ref) && (pkg.Version == "" || IsDisplayVersion(pkg.Version))
+	// A blank version is no version (SC-B21), so normalize once here.
+	version := strings.TrimSpace(pkg.Version)
+	shaPin := shaRefPattern.MatchString(pkg.Ref) && (version == "" || IsDisplayVersion(version))
 
 	// Note texts are the Oracle's own (outdated.py:53, 68, 101) except the
 	// apm-go-only local skip: the Oracle runs ls-remote against a local
@@ -1021,7 +1023,7 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 	case pkg.Ref != "" && !shaPin:
 		row.Status, row.Note = "[i]", "Pinned to ref; skipped"
 		return row
-	case pkg.Ref == "" && pkg.Version == "":
+	case pkg.Ref == "" && version == "":
 		row.Status, row.Note = "[i]", "No version range"
 		return row
 	}
@@ -1040,7 +1042,7 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 		return row
 	}
 
-	if shaPin && pkg.Version == "" {
+	if shaPin && version == "" {
 		return outdatedShaAgainstTip(row, pkg, refs)
 	}
 
@@ -1049,17 +1051,16 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 		pattern = cfg.Build.TagPattern
 	}
 	candidates, usedPattern := versionTagCandidatesWithPattern(refs, pattern, pkg.Name, includePrerelease || pkg.IncludePrerelease)
-	if shaPin {
-		// SC-C1..C3: Current is the display version rendered into the tag
-		// layout that produced the candidates; the SHA itself is never
-		// reverse-mapped to a tag (that is check's manifest comparison).
-		row.Current = tagpattern.RenderTag(usedPattern, pkg.Name, strings.TrimSpace(pkg.Version))
-	}
 	if len(candidates) == 0 {
 		row.Status, row.Note = "[!]", "No matching tags found"
 		return row
 	}
 	if shaPin {
+		// SC-C1..C3: Current is the display version rendered into the tag
+		// layout that produced the candidates (D-f: only once a candidate
+		// exists); the SHA itself is never reverse-mapped to a tag (that is
+		// check's manifest comparison).
+		row.Current = tagpattern.RenderTag(usedPattern, pkg.Name, version)
 		return outdatedShaAgainstTags(row, pkg, candidates)
 	}
 
