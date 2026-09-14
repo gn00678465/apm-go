@@ -4,14 +4,14 @@
 - `command`: `evidence`
 - `contract`: applied
 - `scope`: marketplace-check-outdated
-- `change_set`: main...HEAD（bf18093...3cff0ed）
+- `change_set`: main...HEAD（bf18093...f300338）
 - `base`: main (bf18093)
 - `report_language`: zh-TW
 - `intent_status`: confirmed
-- `intent_source`: specs/marketplace-check-outdated/SPEC.md，`spec_version: v3`，status approved（Approval 段：v2「核准 v2」、v3「核准 v3」）
-- `ordering`: tests-first（每個行為一個 RED commit 先於 GREEN commit：c702abb→ea1894c、452cfe7→8611a82、f9f16c5→dc50c78、067d734→3e9ef67、63ad196→a3ce3b1、fdf5eca→10d68c3；fixture 補值與 coverage 補測為獨立 commit；RED commit 內含編譯用 stub，commit message 自陳）
+- `intent_source`: specs/marketplace-check-outdated/SPEC.md，`spec_version: v4`，status approved（Approval 段：v2「核准 v2」、v3「核准 v3」、v4「核准 v4」）
+- `ordering`: tests-first（每個行為一個 RED commit 先於 GREEN commit：c702abb→ea1894c、452cfe7→8611a82、f9f16c5→dc50c78、067d734→3e9ef67、63ad196→a3ce3b1、fdf5eca→10d68c3、c2fbdd6→a29a562；fixture 補值、coverage 補測與 gate.sh 修正為獨立 commit；RED commit 內含編譯用 stub，commit message 自陳）
 - `git_facts`: complete
-- `source_state`: commit=3cff0ed0cfd208800720c8aaedacef868b5f9b35 tree=cdfa4230bb6b196d361199d93df789ed9530fb55（`tools/gate/source_state.sh`，final run 前後相同）
+- `source_state`: commit=f300338d96281d91dd488e27e289f8e662a2d06b tree=fcb05acde6308f8a66a7745fc9a48ee3db6e67dc（`tools/gate/source_state.sh`，final run 前後相同）
 - `source_state_exclusions`: `GATE_UNTRACKED_OK=".gate/"`（tools/gate.sh:32）；verifier 本身已提交
 - `toolchain`: tools/gate/versions.env（STATICCHECK_VERSION=2026.2.1、GOVULNCHECK_VERSION=v1.7.0）；go.mod 的 go 指令；觀測到 go1.27.0 windows/amd64、git 2.53.0.windows.2
 - `entry_point`: `sh tools/gate.sh -base main -scope marketplace-check-outdated`
@@ -25,7 +25,7 @@ none — base was green：在 `main`（bf18093）的獨立 worktree 跑 `go test
 
 ## Changed unit → Test
 
-58 個單元（symbol 粒度）。型別、常數、變數與檔案層級宣告（`CommitProber`、`ManifestVersionFetcher`、`CheckDeps`、`DefaultCommitProber`、`DefaultManifestVersionFetcher`、`scratchTempRoot`、`scratchTempPrefix`、`manifestReadMaxBytes`、`errRefNotOnRemote`、`subprocessWaitDelay`、`ConfigValidationError` 型別、`DefaultPatterns`、六個 file-level 列）無可執行行，合併為一列 n-a。
+59 個單元（symbol 粒度；v4 新增 `optionalNonEmptyString`，由 schema_validation_test.go::TestLoadAuthoringConfig_EmptyVersionOrRef_Rejected 覆蓋）。型別、常數、變數與檔案層級宣告（`CommitProber`、`ManifestVersionFetcher`、`CheckDeps`、`DefaultCommitProber`、`DefaultManifestVersionFetcher`、`scratchTempRoot`、`scratchTempPrefix`、`manifestReadMaxBytes`、`errRefNotOnRemote`、`subprocessWaitDelay`、`ConfigValidationError` 型別、`DefaultPatterns`、六個 file-level 列）無可執行行，合併為一列 n-a。
 
 | Changed unit | Test | Status |
 |---|---|---|
@@ -71,6 +71,9 @@ none — base was green：在 `main`（bf18093）的獨立 worktree 跑 `go test
 | SC-A1..A4 schema 四規則、oracle 原文 | schema_validation_test.go（同名） | pass |
 | SC-A5 `marketplace config error:` exit 2 | marketplace_check_config_test.go（同名）; realexec `mkt-check-schema-{name,source,verref,dup}`, `mkt-outdated-schema-verref` | pass |
 | SC-A6 / SC-A7 | schema_validation_test.go::TestLoadAuthoringConfig_IsConfigValidationError; doctor_test.go（同名） | pass |
+| SC-A8 顯式空字串 version/ref 拒絕、有值去空白、null 為未設定 | schema_validation_test.go::TestLoadAuthoringConfig_EmptyVersionOrRef_Rejected（含 BlankRef、PaddedValuesStripped、NullIsUnset） | pass |
+| SC-B22 manifest 端 version 去空白 | refcheck_sha_edges_test.go::TestGitManifestVersionFetcher_PaddedVersionInPluginJSON_Trimmed（一次性突變證明） | pass |
+| SC-D5 staticcheck 顯式 checks、缺設定檔 fail-closed | gate final run 印出 `staticcheck -checks all,-ST1000,…,-ST1018` 且 0 findings；Temp 路徑副本以顯式 -checks 重跑 rc=0；負向控制見下 | pass |
 | SC-B1..B9, B12..B19 | refcheck_sha_test.go（同名） | pass |
 | SC-B10 / SC-B11 | marketplace_check_wording_test.go（同名）; realexec `mkt-check-local-verbose`, `mkt-check-offline` | pass |
 | SC-B20 語系鎖定 | refcheck_sha_edges_test.go::TestScratchGit_LocalePinnedToC | pass |
@@ -111,34 +114,35 @@ none — base was green：在 `main`（bf18093）的獨立 worktree 跑 `go test
 | internal/marketplace/authoring/refcheck_outdated_sha_test.go | failed (collection) | TagInfo.Ref 不存在（weaker RED） |
 | internal/marketplace/authoring/refcheck_sha_edges_test.go / schema_validation_edges_test.go | failed (collection) | coverage 補測；13 + 1 個測試各以一次性突變在隔離副本證明會失敗（`.scratch/marketplace-check-outdated/throwaway-mutants.txt`） |
 
-補強（git 可重現，非 base）：在各 RED commit 的樹上重放新測試，全部為斷言失敗、0 編譯錯誤：c702abb 5、452cfe7 18、067d734 10、fdf5eca 5。`TestOutdatedPackages_VersionRange_TagPatternFallback` 於 RED 時已通過（推斷邏輯隨 group B 先落地），保留為回歸保護；`TestOutdatedPackages_ShaPinWithVersion_DeclaredTagMissing` 為既有行為的補測，以一次性突變證明。修改而非新增的測試（斷言改為 oracle 措辭者）無法重放，SPEC Must NOT 逐一列出。
+補強（git 可重現，非 base）：在各 RED commit 的樹上重放新測試，全部為斷言失敗、0 編譯錯誤：c702abb 5、452cfe7 18、067d734 10、fdf5eca 5、c2fbdd6 1（SC-A8）。`TestOutdatedPackages_VersionRange_TagPatternFallback` 於 RED 時已通過（推斷邏輯隨 group B 先落地），保留為回歸保護；`TestOutdatedPackages_ShaPinWithVersion_DeclaredTagMissing` 為既有行為的補測，以一次性突變證明。修改而非新增的測試（斷言改為 oracle 措辭者）無法重放，SPEC Must NOT 逐一列出。
 
 ## Gate (final fresh run)
 
-`sh tools/gate.sh -base main -scope marketplace-check-outdated`，2026-09-14，source state 3cff0ed（前後相同）。
+`sh tools/gate.sh -base main -scope marketplace-check-outdated`，2026-09-14，source state f300338（前後相同）。
 
 | Layer | Command | Threshold | Result |
 |---|---|---|---|
 | Tests | `go test -count=1 ./...` | 0 new failures vs baseline | 26 packages ok, 0 failed（baseline 0 pre-existing） |
 | Types / vet | `go vet ./...` | 0 findings | 0 |
 | Lint / format | gofmt on changed .go（gate lint-format 層） | 0 drift | 0 |
-| Static | `staticcheck@2026.2.1 ./...` | 0 findings | 0 findings |
-| Suite health | `go test -count=1 -shuffle=1789375648 ./...` | randomized order, 0 failures — 先於 mutation 與 coverage | 26 packages ok (seed 1789375648) |
+| Static | `staticcheck@2026.2.1 -checks all,-ST1000,-ST1003,-ST1016,-ST1020,-ST1021,-ST1022,-ST1005,-ST1018 ./...` | 0 findings | 0 findings |
+| Suite health | `go test -count=1 -shuffle=1789381129 ./...` | randomized order, 0 failures — 先於 mutation 與 coverage | 26 packages ok (seed 1789381129) |
 | Property-based | `go test -run Property -v ./internal/marketplace/... ./internal/rootfs/...` | all pass, ≥1 ran | 5 properties passed |
 | Supply chain | `govulncheck@v1.7.0 ./...` + go.mod delta + imports diff | 0 vulns; new deps justified | No vulnerabilities found; go.mod 無變更；新 import 皆為 stdlib 或既有內部套件（net/url, encoding/json, path, time, gitops, yamlcore, go.yaml.in/yaml/v4） |
 | Real execution | `tools/gate/realexec.sh` | 0 FAIL | 120/120 checks passed（含 8 個 mkt-* 步驟） |
 | Mutation | `tools/gate/mutate.sh`（manual, sequential, isolated copy） | 0 survived, 0 broken | 19/19 killed（8 個本 SPEC 新增） |
-| Changed units | gatetool coverage | symbol granularity | 58 units |
-| Changed-line coverage | gatetool coverage | 100%, 0 unmapped | 305/305 executable lines; 448 non-executable; 0 unmapped; 0 platform-excluded |
+| Changed units | gatetool coverage | symbol granularity | 59 units |
+| Changed-line coverage | gatetool coverage | 100%, 0 unmapped | 316/316 executable lines; 458 non-executable; 0 unmapped; 0 platform-excluded |
 | Source state | `tools/gate/source_state.sh` before/after | identical | identical |
 
 ## Negative controls
 
 - gate selftest（tools/gate.sh 自檢）：缺層、未知層、重複層、失敗 rc、gatetool 非唯一 anchor、空 coverage subject 皆在每輪開頭驗證會失敗；本輪通過。
 - source-state 檢查：第一輪誤把 log 放在產品樹根，selftest 立即以「untracked product path」失敗（非 final run），證明 fail-closed。
-- 一次性突變證明：coverage 補測 13 個 + DeclaredTagMissing + UnresponsiveRemote，各在全新隔離副本套用一個 mutant，15/15 觀察到失敗。
+- 一次性突變證明：coverage 補測 13 個 + DeclaredTagMissing + UnresponsiveRemote + PaddedVersionInPluginJSON，各在全新隔離副本套用一個 mutant，16/16 觀察到失敗。
+- SC-D5 staticcheck 設定：在使用者 Temp 目錄的樹副本上，依賴自動發現的舊呼叫報出 ST1018（rc=1，設定被忽略）；改為顯式 `-checks` 後 rc=0；移除 `staticcheck.conf` 時該層依 `[ -f staticcheck.conf ] || return 2` 失敗。
 - Mutation baseline：mutate.sh 在隔離副本先跑未突變基線，通過後才逐一（sequential，無並行 job）套用；無並行競爭來源。
-- Mutation kill sample：final state 上單獨重套 4 個 caught mutant（sha-match-by-name-only、dup-name-case-sensitive、version-mismatch-ignored、locale-not-pinned），4/4 被殺，失敗測試皆可由該 mutant 解釋；樣本 4/19，只能佐證前兩項控制。
+- Mutation kill sample：在 3cff0ed（v3 final state，v4 未改動這些函式）上單獨重套 4 個 caught mutant（sha-match-by-name-only、dup-name-case-sensitive、version-mismatch-ignored、locale-not-pinned），4/4 被殺，失敗測試皆可由該 mutant 解釋；樣本 4/19，只能佐證前兩項控制。Verifier round 1 在 3cff0ed 另行手動套用 8 個 SPEC mutant 全數被殺。
 - Kill attribution 核對：final run 每個 killed 行的失敗測試都與 mutant 所在函式有因果關係（例如 sha-match-by-name-only → BlankVersion_NoManifestFetch 的 panicProber）。
 
 ## Layers not run as specified
@@ -162,6 +166,7 @@ none — base was green：在 `main`（bf18093）的獨立 worktree 跑 `go test
 
 ## Honest notes
 
+- Verifier round 1（3cff0ed，verdict failed）：finding 1 staticcheck 層在使用者 Temp 目錄的 worktree 上失敗（設定檔未被讀取，main 上同樣重現）→ SC-D5 修正 gate.sh；finding 3 manifest 端 TrimSpace 無殺傷測試 → SC-B22；finding 4 顯式空字串 version/ref 未比照 oracle 拒絕 → SC-A8；finding 5 描述更正（探測與 manifest 讀取只在 SHA 已被 ls-remote 列出時共用一次 fetch，需探測且有精確 version 時各一次）已寫入 SPEC Revisions；finding 2 為下列既有 flaky。第六輪 gate 於 f300338 全綠。紀錄：`.scratch/marketplace-check-outdated/verification.md`。
 - 第一輪 gate 於 changed-line-coverage 停下（273/294）；補 13 個行為測試與一個 refactor 後 297/298；補「無回應遠端」測試時發現真實缺陷：deadline 殺掉 git fetch 後 `Wait` 因 git-remote-https 孫程序握住管線而無限等待，以 `WaitDelay` 修正（63ad196→a3ce3b1）。第二輪 mutation 因 refactor 移動 anchor 而以「anchor 不存在」失敗（fail-closed），修 anchor 後重跑。第四輪全綠於 a3ce3b1；squad after-implement 後新增 v3 三項並重跑，第五輪全綠於 3cff0ed。
 - 既有測試 `TestFetchGit_CleansUpTempCloneOnFailure`（internal/marketplace）讀全域 temp 目錄計數，並行套件執行時會 flaky；base 與 HEAD 在乾淨 temp 下皆 8/8 通過。本變更之外。
 - 既有 `ListRefs` 的 `git ls-remote` 未設 `WaitDelay`，與本變更新增的三個子程序不一致。本變更之外。
