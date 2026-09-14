@@ -1033,7 +1033,7 @@ func TestSetPackage_MutableRef_ResolvesToConcreteSHA(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
-		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n")
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n      ref: main\n")
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: "develop", Commit: testResolvedSHA}}}
 	ref := "develop"
 
@@ -1057,7 +1057,7 @@ func TestSetPackage_ShaRef_StoredVerbatim_NoListerCall(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
-		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n")
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n      ref: main\n")
 	ref := testResolvedSHA
 
 	// Act: panicLister proves an already-concrete SHA never triggers a
@@ -1081,7 +1081,7 @@ func TestSetPackage_UnresolvableRef_Errors(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	original := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
-		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n"
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n      ref: main\n"
 	writeFile(t, dir, "apm.yml", original)
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: "main", Commit: testResolvedSHA}}}
 	ref := "does-not-exist"
@@ -1114,7 +1114,7 @@ func TestSetPackage_ExplicitRefHead_InvokesOnExplicitHeadWillResolve(t *testing.
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
-		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n")
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n      ref: main\n")
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: "HEAD", Commit: testResolvedSHA}}}
 	ref := "HEAD"
 	called := 0
@@ -1138,7 +1138,7 @@ func TestSetPackage_NonHeadRef_DoesNotInvokeOnExplicitHeadWillResolve(t *testing
 	// Arrange
 	dir := t.TempDir()
 	writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
-		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n")
+		"  owner:\n    name: acme\n  packages:\n    - name: foo\n      source: owner/repo\n      ref: main\n")
 	lister := mapRefLister{refs: []semver.TagInfo{{Name: "v1.0.0", Commit: testResolvedSHA}}}
 	ref := "v1.0.0"
 	called := 0
