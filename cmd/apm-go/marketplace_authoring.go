@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -296,8 +297,25 @@ func marketplaceCheckCmd() *cobra.Command {
 				// Upstream check.py:69-73's offline-mode notice.
 				ux.Info(w, "Offline mode -- only schema and cached-ref checks")
 			}
+			if verbose {
+				// check.py:138-139 / 158-159: one verbose_detail line per
+				// entry as it is resolved; the Oracle's table is rendered
+				// after the loop, so every line precedes the table.
+				for _, p := range cfg.Packages {
+					if strings.HasPrefix(p.Source, "./") {
+						ux.Plain(w, "Skipping %s -- local path, no network check", p.Name)
+						continue
+					}
+					host, label := resolvingLabel(p.Source)
+					ux.Plain(w, "Resolving %s via %s: %s", p.Name, host, label)
+				}
+			}
 
-			results := authoring.CheckPackages(".", cfg, authoring.DefaultRefLister, offline)
+			results := authoring.CheckPackagesWith(".", cfg, authoring.CheckDeps{
+				Lister:   authoring.DefaultRefLister,
+				Prober:   authoring.DefaultCommitProber,
+				Manifest: authoring.DefaultManifestVersionFetcher,
+			}, offline)
 			failed := 0
 			// Upstream's Entry Health Check table (__init__.py:1246-1287):
 			// one row per entry -- passing entries included -- with the
@@ -308,6 +326,12 @@ func marketplaceCheckCmd() *cobra.Command {
 				if r.Err != nil {
 					failed++
 					detail = r.Err.Error()
+					// check.py:220-233 renders a transport failure as
+					// exc.summary_text[:60] / str(exc)[:60]; a ref or range
+					// verdict (check.py:183, 195) is never truncated.
+					if !r.Reachable {
+						detail = truncate(detail, 60)
+					}
 				}
 				tableRows[i] = []string{
 					checkBoolSymbol(r.RefOK), r.Package.Name,
@@ -317,11 +341,13 @@ func marketplaceCheckCmd() *cobra.Command {
 			}
 			ux.Table(w, []string{"STATUS", "PACKAGE", "REACHABLE", "VERSION FOUND", "REF OK", "DETAIL"}, tableRows)
 			if failed > 0 {
-				return fmt.Errorf("check failed: %d/%d package(s) have an unverifiable pin", failed, len(results))
+				// check.py:257-259: logger.error("<N> entries have issues")
+				// then a bare sys.exit(1) -- nothing else is printed.
+				ux.Error(w, "%d entries have issues", failed)
+				return withSilentExitCode(1, fmt.Errorf("%d entries have issues", failed))
 			}
-			// Oracle commands/marketplace/audit.py:105 uses symbol="check"
-			// for an all-clean summary.
-			ux.Check(w, "all %d package(s) verified", len(results))
+			// check.py:262: logger.success("All <N> entries OK", symbol="check").
+			ux.Check(w, "All %d entries OK", len(results))
 			return nil
 		},
 	}
@@ -329,6 +355,23 @@ func marketplaceCheckCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&offline, "offline", false, "fail packages with a pinned ref/version instead of contacting the network")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print a line for every package, not just failures")
 	return cmd
+}
+
+// resolvingLabel mirrors check.py:130-139's host/remote_label pair for the
+// verbose "Resolving <name> via <host>: <label>" line: a full URL keeps its
+// own host and text, a host-prefixed shorthand expands to its clone URL,
+// and a bare owner/repo resolves via "default host".
+func resolvingLabel(source string) (host, label string) {
+	if strings.Contains(source, "://") {
+		if u, err := url.Parse(source); err == nil && u.Host != "" {
+			return u.Host, source
+		}
+		return "default host", source
+	}
+	if h, repoPath := authoring.SplitHostFromSource(source); h != "" {
+		return h, "https://" + h + "/" + repoPath + ".git"
+	}
+	return "default host", source
 }
 
 // configLoadError maps LoadAuthoringConfig's outcomes onto the Oracle's
