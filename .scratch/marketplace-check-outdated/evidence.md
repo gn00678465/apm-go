@@ -4,14 +4,14 @@
 - `command`: `evidence`
 - `contract`: applied
 - `scope`: marketplace-check-outdated
-- `change_set`: main...HEAD（bf18093...f300338）
+- `change_set`: main...HEAD（bf18093...40e9e7c）
 - `base`: main (bf18093)
 - `report_language`: zh-TW
 - `intent_status`: confirmed
 - `intent_source`: specs/marketplace-check-outdated/SPEC.md，`spec_version: v4`，status approved（Approval 段：v2「核准 v2」、v3「核准 v3」、v4「核准 v4」）
 - `ordering`: tests-first（每個行為一個 RED commit 先於 GREEN commit：c702abb→ea1894c、452cfe7→8611a82、f9f16c5→dc50c78、067d734→3e9ef67、63ad196→a3ce3b1、fdf5eca→10d68c3、c2fbdd6→a29a562；fixture 補值、coverage 補測與 gate.sh 修正為獨立 commit；RED commit 內含編譯用 stub，commit message 自陳。例外：452cfe7 另在 semver.go 新增 `TagInfo.Ref` 欄位，未列入 stub 清單；63ad196 另追加 `.scratch/.../throwaway-mutants.txt`；c2fbdd6 中的 SC-B22 測試在 RED 時不會失敗（既有行為的回歸保護，GREEN 後以一次性突變證明，只在 commit message 揭露））
 - `git_facts`: complete
-- `source_state`: commit=f300338d96281d91dd488e27e289f8e662a2d06b tree=fcb05acde6308f8a66a7745fc9a48ee3db6e67dc（`tools/gate/source_state.sh`，final run 前後相同）
+- `source_state`: commit=40e9e7c036a4f0545989a95792a63bff8822073b tree=03200721394373392af93fa6bdb37896d28da38a（`tools/gate/source_state.sh`，final run 前後相同）。Verifier round 2 驗證的是 f300338；兩者之間的產品差異只有 internal/semver/semver.go 的 doc comment 位置（f2b2e0b）與 ARCHITECTURE.md 行號錨點（fed0d84），其餘為 .scratch 紀錄
 - `source_state_exclusions`: `GATE_UNTRACKED_OK=".gate/"`（tools/gate.sh:32）；verifier 本身已提交
 - `toolchain`: tools/gate/versions.env（STATICCHECK_VERSION=2026.2.1、GOVULNCHECK_VERSION=v1.7.0）；go.mod 的 go 指令；觀測到 go1.27.0 windows/amd64、git 2.53.0.windows.2
 - `entry_point`: `sh tools/gate.sh -base main -scope marketplace-check-outdated`
@@ -119,7 +119,7 @@ none — base was green：在 `main`（bf18093）的獨立 worktree 跑 `go test
 
 ## Gate (final fresh run)
 
-`sh tools/gate.sh -base main -scope marketplace-check-outdated`，2026-09-14，source state f300338（前後相同）。
+`sh tools/gate.sh -base main -scope marketplace-check-outdated`，2026-09-14，source state 40e9e7c（前後相同；gate 第七輪，第六輪在 f300338 的數字與此相同）。
 
 | Layer | Command | Threshold | Result |
 |---|---|---|---|
@@ -127,7 +127,7 @@ none — base was green：在 `main`（bf18093）的獨立 worktree 跑 `go test
 | Types / vet | `go vet ./...` | 0 findings | 0 |
 | Lint / format | gofmt on changed .go（gate lint-format 層） | 0 drift | 0 |
 | Static | `staticcheck@2026.2.1 -checks all,-ST1000,-ST1003,-ST1016,-ST1020,-ST1021,-ST1022,-ST1005,-ST1018 ./...` | 0 findings | 0 findings |
-| Suite health | `go test -count=1 -shuffle=1789381129 ./...` | randomized order, 0 failures — 先於 mutation 與 coverage | 26 packages ok (seed 1789381129) |
+| Suite health | `go test -count=1 -shuffle=1789398394 ./...` | randomized order, 0 failures — 先於 mutation 與 coverage | 26 packages ok (seed 1789398394) |
 | Property-based | `go test -run Property -v ./internal/marketplace/... ./internal/rootfs/...` | all pass, ≥1 ran | 5 properties passed |
 | Supply chain | `govulncheck@v1.7.0 ./...` + go.mod delta + imports diff | 0 vulns; new deps justified | No vulnerabilities found; go.mod 無變更；新 import 皆為 stdlib 或既有內部套件（net/url, encoding/json, path, time, gitops, yamlcore, go.yaml.in/yaml/v4） |
 | Real execution | `tools/gate/realexec.sh` | 0 FAIL | 120/120 checks passed（含 8 個 mkt-* 步驟） |
