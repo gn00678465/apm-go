@@ -2,6 +2,7 @@ package authoring
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -111,6 +112,40 @@ func TestFetchRefIntoScratch_MissingScratchRoot_Errors(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "create scratch repository") {
 		t.Fatalf("err = %v, want a create scratch repository error", err)
+	}
+}
+
+// An unresponsive remote (TCP accepts, never speaks) must trip the fetch
+// deadline itself -- the scratch init succeeds locally, so this is the
+// timeout branch a fake git that sleeps on every subcommand can never reach.
+func TestFetchRefIntoScratch_UnresponsiveRemote_TimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
+	orig := listRefsTimeout
+	listRefsTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { listRefsTimeout = orig })
+
+	start := time.Now()
+	_, cleanup, err := fetchRefIntoScratch("https://"+ln.Addr().String()+"/owner/repo.git", strings.Repeat("a", 40))
+	cleanup()
+
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want a timed-out error from the fetch deadline", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Errorf("fetch took %s; the deadline did not cut it short", time.Since(start))
 	}
 }
 
