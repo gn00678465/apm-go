@@ -1,6 +1,6 @@
 # SPEC — marketplace check / outdated review 缺陷修正 (Tier 3)
 
-- `spec_version`: v1
+- `spec_version`: v2
 - `status`: draft
 - `tier`: 3
 - `scope`: marketplace-check-outdated-fixes
@@ -41,9 +41,9 @@
 - D-a（設計，隨核准確認）：oracle 版本文法實作在 `internal/marketplace/tagpattern`（新增匯出函式 `IsOracleVersion(s string) bool`），`Infer` 與 `versionTagCandidatesWithPattern` 改呼叫它；刪除本 branch 新增、只有這兩個呼叫者的 `semver.IsValid`。理由：tagpattern 已在 gate scope（`tools/gate.sh:38-39`），不需要修改 gate；`internal/semver` 其他匯出函式不動。
 - D-b（設計）：Go regex 只接受 ASCII 數字，且不接受結尾換行。oracle 的 Python `\d` 接受 Unicode 數字、`$` 可停在結尾換行前（實跑 `parse_semver("١.٢.٣")`、`parse_semver("1.2.3\n")` 為接受）。記為 apm-go 偏離：git tag 名稱不會含結尾換行，Unicode 數字 tag 不是版本。
 - D-c（設計）：`readCapped(r io.Reader, max int) ([]byte, error)` 讀到 `max+1` 位元組即停止並回錯誤；`showAtFetchHead` 以 `StdoutPipe` 串流，超限時取消 context 結束 git，再 `Wait`。錯誤文字沿用現有 `"%s at the pinned ref exceeds %d bytes"`。`git show` 命令建構抽成 `newShowCmd`，比照 `newProbeFetchCmd` 可斷言。
-- D-1（待使用者決定）：`name`、`source` 的「字串」判準。建議：以 go.yaml.in/yaml/v4 解析後的 tag 判定，`ShortTag() == "!!str"` 才算字串。與 oracle（PyYAML，YAML 1.1）的差異記為偏離：`yes`/`on`/`off` 在 apm-go 是字串（接受）、oracle 是 bool（拒絕）；`0o17`、`1e3` 在 apm-go 是數字（拒絕）、oracle 是字串（接受）。理由：editor 寫出 `name: yes` 不加引號（editor.go:285-286），改用 YAML 1.1 語意需同時改 editor 的引號策略。
-- D-2（待使用者決定）：無 version 的 SHA 釘選（tip 路徑）在 offline、ListRefs 失敗、`Remote advertised no HEAD` 三條路徑的 Current。建議：`--`，與 D-f 同一原則（Current 只來自與遠端的比較結果），不再顯示 current map 的 40 字元 SHA。
-- D-3（待使用者決定）：`v` 前綴規則。建議：只去除一個小寫 `v`（`semver.StripVPrefix`），與 check 的 manifest 比對一致；`V1.0.0`、`vv1.0.0` 行為不變，列入明確排除。
+- D-1（使用者裁定 2026-09-15，原話「依 YAML 1.2 的 !!str (Recommended)」）：`name`、`source` 的「字串」判準：以 go.yaml.in/yaml/v4 解析後的 tag 判定，`ShortTag() == "!!str"` 才算字串。與 oracle（PyYAML，YAML 1.1）的差異記為偏離：`yes`/`on`/`off` 在 apm-go 是字串（接受）、oracle 是 bool（拒絕）；`0o17`、`1e3` 在 apm-go 是數字（拒絕）、oracle 是字串（接受）。理由：editor 寫出 `name: yes` 不加引號（editor.go:285-286），改用 YAML 1.1 語意需同時改 editor 的引號策略。
+- D-2（使用者裁定 2026-09-15，原話「顯示 -- (Recommended)」）：無 version 的 SHA 釘選（tip 路徑）在 offline、ListRefs 失敗、`Remote advertised no HEAD` 三條路徑的 Current 為 `--`，與 D-f 同一原則（Current 只來自與遠端的比較結果），不再顯示 current map 的 40 字元 SHA。
+- D-3（使用者裁定 2026-09-15，原話「只去掉一個小寫 v (Recommended)」）：`v` 前綴規則：只去除一個小寫 `v`（`semver.StripVPrefix`），與 check 的 manifest 比對一致；`V1.0.0`、`vv1.0.0` 行為不變，列入明確排除。
 
 ## Scenarios
 
@@ -166,3 +166,4 @@
 
 - 2026-09-15 — v0.1 草稿（3bf13db）。
 - 2026-09-15 — v0.1 → v1：after-spec squad 四個 lens（scope、input space、repo reality、test mapping）的 findings 折入，紀錄 `.scratch/marketplace-check-outdated-fixes/squad/after-spec.md`。更正：SC-F13 期望值與 oracle 相反（改為兩個子測試）；使用者原話的編號（「第 3 項」而非「第 6 項」，加對照表）；SC-F3 改用有限 reader 並命名函式；SC-F4、SC-F5 重新設計或標回歸；D-f 補 offline 與 ListRefs 失敗路徑；source 型別檢查保留空字串既有訊息；沿用原 SPEC Must NOT；既有 mutant 錨點更新規則；SC-F15 加 `--offline`；測試檔配置配合 red.sh；每個情境標 RED／回歸。新增 SC-F16..F19。v0.1 的 D-1（gate scope）以 D-a 設計解消除。新增待決定 D-1（字串判準）、D-2（tip 路徑 Current）、D-3（v 前綴規則）。
+- 2026-09-15 — v1 → v2：寫入使用者對 D-1、D-2、D-3 的裁定（皆為建議項，原話見各決定）。使用者對 v1 的核准回覆為「不核准，先修改」，未附修改內容；本版只記錄三項裁定，情境、Must NOT、Setup plan 未改。
