@@ -128,6 +128,48 @@ func RenderTag(pattern, name, version string) string {
 	return result
 }
 
+// DefaultPatterns mirrors tag_pattern.py's DEFAULT_TAG_PATTERNS: the common
+// tag layouts tried, in this order, when the configured pattern matches no
+// tag at all (#1504, `_extract_tag_versions` in commands/marketplace/
+// __init__.py).
+var DefaultPatterns = []string{
+	"v{version}",
+	"{version}",
+	"{name}_v{version}",
+	"{name}--v{version}",
+	"{name}-v{version}",
+}
+
+// Infer mirrors infer_tag_pattern_from_refs (tag_pattern.py): the first
+// DefaultPatterns entry that matches the first tag it fits, or "" when no
+// tag matches any layout. Only entries that are tags (Ref empty or under
+// refs/tags/) are considered, and a match must capture a valid semver --
+// Compile's "{version}" capture is greedy, so "{version}" alone would
+// otherwise claim every tag.
+func Infer(tags []semver.TagInfo, name string) string {
+	for _, t := range tags {
+		if !IsTagRef(t) {
+			continue
+		}
+		for _, pattern := range DefaultPatterns {
+			if name == "" && strings.Contains(pattern, "{name}") {
+				continue
+			}
+			if v, ok := ExtractVersion(Compile(pattern, name), t.Name); ok && semver.IsValid(v) {
+				return pattern
+			}
+		}
+	}
+	return ""
+}
+
+// IsTagRef reports whether t was advertised under refs/tags/. A TagInfo
+// built from a bare name (Ref == "") counts as a tag so callers that only
+// ever knew tag names keep working.
+func IsTagRef(t semver.TagInfo) bool {
+	return t.Ref == "" || strings.HasPrefix(t.Ref, "refs/tags/")
+}
+
 // FilterTags compiles pattern (for name) and returns only the tags in tags
 // that match it, with each result's Name replaced by the *extracted
 // version* (ready for internal/semver.MaxSatisfying/Satisfies) while

@@ -122,6 +122,14 @@ func StripVPrefix(tag string) string {
 // (a separate concern from MaxSatisfying's own npm-style range matching,
 // which already excludes most prereleases from non-prerelease ranges on its
 // own). A version that fails to parse is reported as not a prerelease.
+// IsValid reports whether version (with or without a leading "v") parses as
+// a semver version. Used by tag-pattern inference to reject a pattern whose
+// "{version}" capture swallowed a non-version tag name.
+func IsValid(version string) bool {
+	_, err := depsdev.NPM.Parse(StripVPrefix(version))
+	return err == nil
+}
+
 func IsPrerelease(version string) bool {
 	v, err := depsdev.NPM.Parse(StripVPrefix(version))
 	if err != nil {

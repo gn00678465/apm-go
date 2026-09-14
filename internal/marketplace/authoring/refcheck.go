@@ -738,10 +738,13 @@ func parseRefsOutput(output string) []semver.TagInfo {
 			continue
 		}
 		sha := parts[0]
-		name := parts[1]
-		name = strings.TrimPrefix(name, "refs/tags/")
+		full := parts[1]
+		name := strings.TrimPrefix(full, "refs/tags/")
 		name = strings.TrimPrefix(name, "refs/heads/")
-		refs = append(refs, semver.TagInfo{Name: name, Commit: sha})
+		// Ref keeps the advertised name so a "refs/tags/x" pin (check.py:
+		// 157's `r.name == entry.ref` branch) can match, and so tag-pattern
+		// code can tell a tag from a branch head named like a version.
+		refs = append(refs, semver.TagInfo{Name: name, Commit: sha, Ref: full})
 	}
 	return refs
 }
@@ -783,14 +786,14 @@ func isLocalPackageSource(source string) bool {
 // resolved against -- CheckPackages' only caller (marketplaceCheckCmd)
 // passes ".", matching the LoadAuthoringConfig(".") call that produced cfg.
 func CheckPackages(dir string, cfg *AuthoringConfig, lister RefLister, offline bool) []CheckResult {
-	results := make([]CheckResult, 0, len(cfg.Packages))
-	for _, pkg := range cfg.Packages {
-		results = append(results, checkPackage(dir, cfg, pkg, lister, offline))
-	}
-	return results
+	return CheckPackagesWith(dir, cfg, CheckDeps{
+		Lister:   lister,
+		Prober:   DefaultCommitProber,
+		Manifest: DefaultManifestVersionFetcher,
+	}, offline)
 }
 
-func checkPackage(dir string, cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offline bool) CheckResult {
+func checkPackage(dir string, cfg *AuthoringConfig, pkg PackageEntry, deps CheckDeps, offline bool) CheckResult {
 	pass := CheckResult{Package: pkg, Reachable: true, VersionFound: true, RefOK: true}
 	fail := func(reachable, versionFound bool, err error) CheckResult {
 		return CheckResult{Package: pkg, Err: err, Reachable: reachable, VersionFound: versionFound}
@@ -826,35 +829,93 @@ func checkPackage(dir string, cfg *AuthoringConfig, pkg PackageEntry, lister Ref
 	if pkg.Ref == "" && pkg.Version == "" {
 		return pass
 	}
+	// Every error text below is the Oracle's own Detail cell (check.py:
+	// 183, 195, 206) unless marked apm-go-only; the cmd layer prints
+	// Err.Error() verbatim.
 	if offline {
-		return fail(false, false, fmt.Errorf("package %q: --offline has no cached refs to verify %q against", pkg.Name, pkg.Source))
+		return fail(false, false, errors.New("No cached refs (offline)"))
 	}
 
-	refs, err := lister.ListRefs(pkg.Source)
+	refs, err := deps.Lister.ListRefs(pkg.Source)
 	if err != nil {
-		return fail(false, false, fmt.Errorf("package %q: %w", pkg.Name, err))
+		return fail(false, false, err)
 	}
 
 	if pkg.Ref != "" {
-		if !hasRefNamed(refs, pkg.Ref) {
-			return fail(true, false, fmt.Errorf("package %q: pinned ref %q not found on %q", pkg.Name, pkg.Ref, pkg.Source))
+		// ListRefs synthesizes a "HEAD" entry for `package set --ref HEAD`;
+		// the Oracle's `--tags --heads` listing never has one, so its check
+		// reports HEAD as not found (and pack rejects it via
+		// HeadNotAllowedError). The parenthesized hint is apm-go-only.
+		if strings.EqualFold(pkg.Ref, "HEAD") {
+			return fail(true, false, fmt.Errorf("Ref 'HEAD' not found (run 'apm-go marketplace package set %s --ref HEAD' to pin a SHA)", pkg.Name))
+		}
+		if !refMatches(refs, pkg.Ref) {
+			if !shaRefPattern.MatchString(pkg.Ref) {
+				return fail(true, false, fmt.Errorf("Ref '%s' not found", pkg.Ref))
+			}
+			// apm-go-only (SPEC marketplace-check-outdated SC-B2/B3): a SHA
+			// that is no ref's tip is invisible to ls-remote; ask the remote
+			// for the object itself before calling it missing.
+			found, err := deps.Prober.HasCommit(pkg.Source, pkg.Ref)
+			if err != nil {
+				return fail(false, false, err)
+			}
+			if !found {
+				return fail(true, false, fmt.Errorf("Ref '%s' not found", pkg.Ref))
+			}
+		}
+		// apm-go-only (SC-B13..B19): Claude Code refuses to install a plugin
+		// whose marketplace.json version differs from the manifest version at
+		// the pinned ref, so a display version is checked here, before pack
+		// would publish it.
+		if IsDisplayVersion(pkg.Version) {
+			manifestVersion, err := deps.Manifest.FetchManifestVersion(pkg.Source, pkg.Ref, pkg.Subdir)
+			if err != nil {
+				return fail(false, false, err)
+			}
+			if manifestVersion != "" && semver.StripVPrefix(manifestVersion) != semver.StripVPrefix(strings.TrimSpace(pkg.Version)) {
+				return fail(true, true, fmt.Errorf("Version '%s' does not match plugin manifest version '%s' at ref '%s'", pkg.Version, manifestVersion, pkg.Ref))
+			}
 		}
 		return pass
 	}
 
-	pattern := pkg.TagPattern
-	if pattern == "" {
-		pattern = cfg.Build.TagPattern
+	candidates := versionTagCandidates(refs, effectiveTagPattern(cfg, pkg), pkg.Name, pkg.IncludePrerelease)
+	rangeTags := make([]semver.TagInfo, len(candidates))
+	for i, c := range candidates {
+		rangeTags[i] = semver.TagInfo{Name: c.version, Commit: c.commit}
 	}
-	versionTags := tagpattern.FilterTags(refs, pattern, pkg.Name)
-	_, ok, err := semver.MaxSatisfying(versionTags, pkg.Version)
+	_, ok, err := semver.MaxSatisfying(rangeTags, pkg.Version)
 	if err != nil {
-		return fail(true, len(versionTags) > 0, fmt.Errorf("package %q: %w", pkg.Name, err))
+		return fail(true, len(candidates) > 0, err)
 	}
 	if !ok {
-		return fail(true, len(versionTags) > 0, fmt.Errorf("package %q: no tag on %q matches version range %q", pkg.Name, pkg.Source, pkg.Version))
+		return fail(true, len(candidates) > 0, fmt.Errorf("No tag matching '%s'", pkg.Version))
 	}
 	return pass
+}
+
+// refMatches mirrors check.py:151-157 -- a pin matches an advertised ref by
+// stripped name or by full ref name -- plus the apm-go-only commit-column
+// match that lets a tag/tip SHA pass without a probe.
+func refMatches(refs []semver.TagInfo, ref string) bool {
+	isSHA := shaRefPattern.MatchString(ref)
+	for _, r := range refs {
+		if r.Name == ref || (r.Ref != "" && r.Ref == ref) || (isSHA && r.Commit == ref) {
+			return true
+		}
+	}
+	return false
+}
+
+// effectiveTagPattern is a package's own tag_pattern, else the marketplace's
+// build.tagPattern (tagpattern.Compile applies "v{version}" when both are
+// empty).
+func effectiveTagPattern(cfg *AuthoringConfig, pkg PackageEntry) string {
+	if pkg.TagPattern != "" {
+		return pkg.TagPattern
+	}
+	return cfg.Build.TagPattern
 }
 
 // DuplicatePackageNames implements mkt-041's non-fatal duplicate-package-
@@ -968,7 +1029,7 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 	if pattern == "" {
 		pattern = cfg.Build.TagPattern
 	}
-	candidates := extractOutdatedCandidates(refs, pattern, pkg.Name, includePrerelease || pkg.IncludePrerelease)
+	candidates := versionTagCandidates(refs, pattern, pkg.Name, includePrerelease || pkg.IncludePrerelease)
 	if len(candidates) == 0 {
 		row.Status, row.Note = "[!]", "no matching tags found"
 		return row
@@ -1020,25 +1081,37 @@ type outdatedCandidate struct {
 	commit  string
 }
 
-// extractOutdatedCandidates mirrors Python's iter_semver_tags +
-// _extract_tag_versions: it keeps only refs matching pattern (branch heads
-// among refs are filtered out in practice by simply never matching a
-// version-shaped pattern like "v{version}" -- RefLister's own ListRefs, per
-// mkt-041's design, does not distinguish tags from heads, since a `check`
-// pin may legitimately name a branch), and drops prerelease-tagged
-// candidates unless includePrerelease is set.
-func extractOutdatedCandidates(refs []semver.TagInfo, pattern, name string, includePrerelease bool) []outdatedCandidate {
-	re := tagpattern.Compile(pattern, name)
-	var out []outdatedCandidate
-	for _, r := range refs {
-		version, ok := tagpattern.ExtractVersion(re, r.Name)
-		if !ok {
-			continue
+// versionTagCandidates mirrors iter_semver_tags + _extract_tag_versions
+// (commands/marketplace/__init__.py, shared by check and outdated): only
+// refs/tags/ entries are considered (a branch named like a version is not
+// a release), a capture must parse as semver, prerelease captures are
+// dropped unless includePrerelease, and when the configured pattern
+// matches nothing the common layouts are inferred (tag_pattern.py
+// infer_tag_pattern_from_refs, #1504).
+func versionTagCandidates(refs []semver.TagInfo, pattern, name string, includePrerelease bool) []outdatedCandidate {
+	collect := func(pattern string) []outdatedCandidate {
+		re := tagpattern.Compile(pattern, name)
+		var out []outdatedCandidate
+		for _, r := range refs {
+			if !tagpattern.IsTagRef(r) {
+				continue
+			}
+			version, ok := tagpattern.ExtractVersion(re, r.Name)
+			if !ok || !semver.IsValid(version) {
+				continue
+			}
+			if !includePrerelease && semver.IsPrerelease(version) {
+				continue
+			}
+			out = append(out, outdatedCandidate{tag: r.Name, version: version, commit: r.Commit})
 		}
-		if !includePrerelease && semver.IsPrerelease(version) {
-			continue
+		return out
+	}
+	out := collect(pattern)
+	if len(out) == 0 {
+		if inferred := tagpattern.Infer(refs, name); inferred != "" && inferred != pattern {
+			out = collect(inferred)
 		}
-		out = append(out, outdatedCandidate{tag: r.Name, version: version, commit: r.Commit})
 	}
 	return out
 }

@@ -382,19 +382,10 @@ func enrichLocalMetadata(entry authoring.PackageEntry, projectRoot string) (desc
 // rather than a semver range/pattern -- it doesn't start with a range
 // operator, contains no whitespace or wildcard "*", and its final
 // dot-separated segment is not the literal "x" wildcard (case-insensitive).
+// isDisplayVersion delegates to authoring.IsDisplayVersion: the same
+// definition decides both what pack echoes into marketplace.json and what
+// `check` compares against the plugin manifest (SPEC
+// marketplace-check-outdated, decision 5), so the two can never drift.
 func isDisplayVersion(value string) bool {
-	if value == "" {
-		return false
-	}
-	trimmed := strings.TrimSpace(value)
-	for _, prefix := range []string{"^", "~", ">", "<", "="} {
-		if strings.HasPrefix(trimmed, prefix) {
-			return false
-		}
-	}
-	if strings.Contains(trimmed, " ") || strings.Contains(trimmed, "*") {
-		return false
-	}
-	segments := strings.Split(strings.ToLower(trimmed), ".")
-	return segments[len(segments)-1] != "x"
+	return authoring.IsDisplayVersion(value)
 }
