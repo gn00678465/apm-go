@@ -191,29 +191,47 @@ func fetchRefIntoScratch(source, ref string) (dir string, cleanup func(), err er
 	initCmd := exec.CommandContext(ctx, "git", "init", "-q", "--bare", "--", dir)
 	gitops.ApplySecureGitEnv(initCmd)
 	if out, err := initCmd.CombinedOutput(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", cleanup, fmt.Errorf("git fetch %s: timed out after %s", safeURL, listRefsTimeout)
+		if timedOut, terr := fetchTimedOut(ctx, safeURL); timedOut {
+			return "", cleanup, terr
 		}
-		return "", cleanup, fmt.Errorf("git init scratch repository: %s", gitops.SanitizeGitOutput(strings.TrimSpace(string(out))))
+		return "", cleanup, fmt.Errorf("git init scratch repository: %s", gitops.SanitizeGitOutput(gitFailureText(string(out), err)))
 	}
 
 	fetchCmd := newProbeFetchCmd(ctx, dir, cloneURL, ref)
 	var stderr bytes.Buffer
 	fetchCmd.Stderr = &stderr
 	if err := fetchCmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", cleanup, fmt.Errorf("git fetch %s: timed out after %s", safeURL, listRefsTimeout)
+		if timedOut, terr := fetchTimedOut(ctx, safeURL); timedOut {
+			return "", cleanup, terr
 		}
-		msg := strings.TrimSpace(stderr.String())
+		msg := gitFailureText(stderr.String(), err)
 		if isRefNotOnRemote(msg) {
 			return "", cleanup, errRefNotOnRemote
-		}
-		if msg == "" {
-			msg = err.Error()
 		}
 		return "", cleanup, fmt.Errorf("git fetch %s: %s", safeURL, gitops.SanitizeGitOutput(msg))
 	}
 	return dir, cleanup, nil
+}
+
+// fetchTimedOut reports whether ctx hit listRefsTimeout, and the error a
+// caller returns for it. Both the scratch init and the fetch itself run
+// under the same deadline, so a fake git that sleeps on every subcommand
+// trips it at init -- the message is the same either way.
+func fetchTimedOut(ctx context.Context, safeURL string) (bool, error) {
+	if ctx.Err() != context.DeadlineExceeded {
+		return false, nil
+	}
+	return true, fmt.Errorf("git fetch %s: timed out after %s", safeURL, listRefsTimeout)
+}
+
+// gitFailureText is the text a failed git subprocess is reported with: its
+// trimmed stderr, or the exec error when git printed nothing (a killed
+// process, a missing binary).
+func gitFailureText(stderr string, err error) string {
+	if msg := strings.TrimSpace(stderr); msg != "" {
+		return msg
+	}
+	return err.Error()
 }
 
 // removeScratch removes a scratch repository, retrying briefly: git marks
