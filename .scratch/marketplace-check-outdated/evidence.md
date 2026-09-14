@@ -166,6 +166,7 @@ none — base was green：在 `main`（bf18093）的獨立 worktree 跑 `go test
 
 ## Honest notes
 
+- Verifier round 2（f300338，新 context，worktree 位於使用者 Temp 路徑，verdict passed）：從該 worktree 完整重跑 gate 全綠，證實 SC-D5 讓 gate 不再依賴樹的位置。唯一發現為描述層級：SC-B20 測試中「真 git 在 zh_TW 語系下」的行為半段在本機無法獨立失敗，因 git-for-windows 未安裝翻譯檔，git 永遠輸出英文；對 `locale-not-pinned` mutant 的殺傷實際來自同一測試的 Env 檢查半段。CI 的 git 是否帶翻譯檔未驗證。此測試證明的是「子程序帶 `LC_ALL=C`」，不是「非英文 git 下分類正確」。
 - Verifier round 1（3cff0ed，verdict failed）：finding 1 staticcheck 層在使用者 Temp 目錄的 worktree 上失敗（設定檔未被讀取，main 上同樣重現）→ SC-D5 修正 gate.sh；finding 3 manifest 端 TrimSpace 無殺傷測試 → SC-B22；finding 4 顯式空字串 version/ref 未比照 oracle 拒絕 → SC-A8；finding 5 描述更正（探測與 manifest 讀取只在 SHA 已被 ls-remote 列出時共用一次 fetch，需探測且有精確 version 時各一次）已寫入 SPEC Revisions；finding 2 為下列既有 flaky。第六輪 gate 於 f300338 全綠。紀錄：`.scratch/marketplace-check-outdated/verification.md`。
 - 第一輪 gate 於 changed-line-coverage 停下（273/294）；補 13 個行為測試與一個 refactor 後 297/298；補「無回應遠端」測試時發現真實缺陷：deadline 殺掉 git fetch 後 `Wait` 因 git-remote-https 孫程序握住管線而無限等待，以 `WaitDelay` 修正（63ad196→a3ce3b1）。第二輪 mutation 因 refactor 移動 anchor 而以「anchor 不存在」失敗（fail-closed），修 anchor 後重跑。第四輪全綠於 a3ce3b1；squad after-implement 後新增 v3 三項並重跑，第五輪全綠於 3cff0ed。
 - 既有測試 `TestFetchGit_CleansUpTempCloneOnFailure`（internal/marketplace）讀全域 temp 目錄計數，並行套件執行時會 flaky；base 與 HEAD 在乾淨 temp 下皆 8/8 通過。本變更之外。
