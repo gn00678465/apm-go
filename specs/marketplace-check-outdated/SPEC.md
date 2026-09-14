@@ -1,6 +1,6 @@
 # SPEC — marketplace check / outdated 缺口修正與 SHA 釘選支援 (Tier 3)
 
-- `spec_version`: v1
+- `spec_version`: v2
 - `status`: draft
 - `tier`: 3
 - `scope`: marketplace-check-outdated
@@ -17,10 +17,12 @@
 3. 輸出措辭對齊 oracle；`outdated` exit 1 改為靜默離開；config 驗證錯誤 exit 2。
 4. `ref: HEAD` 在 `check` 報錯，與 `pack` 同樣拒絕（訊息不同）。
 
-squad after-spec 折入後的三項預設決策（送審時一併裁定，見 Revisions round 2）：
-- D-a：伺服器拒絕任意 SHA fetch（`uploadpack.allowAnySHA1InWant` 關閉）時 git 回 `not our ref`，與不存在無法區分。預設：歸為 `Ref '<sha>' not found`，限制記入 failure model。
-- D-b：SHA 釘選且 `version` 為 range（含 `^ ~ < > = x *` 或空白）時，預設維持 `Pinned to ref; skipped`；只有精確 semver 的 `version` 走 SC-C1。
+squad after-spec 折入後的三項決策（使用者裁定，見 Revisions round 2、3）：
+- D-a：伺服器拒絕任意 SHA fetch（`uploadpack.allowAnySHA1InWant` 關閉）時 git 回 `not our ref`，與不存在無法區分。裁定：歸為 `Ref '<sha>' not found`，限制記入 failure model。
+- D-b：SHA 釘選且 `version` 為 range（`isDisplayVersion` 為 false：以 `^ ~ < > =` 開頭、含空白或 `*`）時維持 `Pinned to ref; skipped`；只有精確 semver 的 `version` 走 SC-C1。
 - D-c：schema 四規則在 `LoadAuthoringConfig` 一律生效（oracle 的 `load_marketplace_config` 對 check、outdated、pack、doctor、package set 都嚴格，doctor.py:240 把驗證錯誤報為 config error）。既有測試中違反規則的 fixture 補 `ref` 或 `version`，斷言不放寬。
+
+使用者補充裁定 5（2026-09-14，round 3）：Claude Code 安裝 plugin 時會比對 marketplace.json 的 plugin `version` 與 plugin 在該 ref 上的 manifest version，不一致拒絕安裝。`pack` 只在 `version` 是精確 semver 時把它寫進 marketplace.json（build/metadata.go `isDisplayVersion`；range 不輸出，改用遠端 apm.yml 的版本）。因此 `check` 對「有 `ref` 且 `version` 為精確 semver」的條目，取得該 ref 上的 manifest version，不相等即失敗（SC-B13 到 B19，apm-go-only）。
 
 本 SPEC 有兩類變更：**補齊 parity**（oracle 已有、apm-go 缺）與**刻意偏離**（oracle 缺陷，apm-go 超越）。偏離處在程式碼註解標記 `apm-go-only` 並引 oracle file:line。SC-B12 的 `include_prerelease` 覆蓋屬補齊 parity（check.py:190 呼叫 `_extract_tag_versions`，__init__.py 讀 `entry.include_prerelease`）。
 
@@ -45,15 +47,25 @@ SHA 偵測沿用既有 `shaRefPattern`（editor.go）與 `sha40LowerRe`（build/
 - SC-B1 `CheckPackages_ShaPin_MatchesListedCommit_NoProbe`（偏離）：RG 有 tag `v1.0.0` 指向 commit C；`ref: <C>`，expect OK，且 CommitProber 為 panic fake（證明未探測）。子測試：SHA 恰為分支 tip 而非任何 tag，同樣 OK 且不探測。
 - SC-B2 `CheckPackages_ShaPin_NotAtAnyRef_ProbeSucceeds`（偏離）：RG 有兩個 commit，`ref: <第一個 commit>`（無 ref 指向），expect OK，且探測子程序為 `git fetch --depth 1 -- <url> <sha>` 進入暫存 bare repo。
 - SC-B3 `CheckPackages_ShaPin_Missing_ProbeFails_NotFound`（偏離）：`ref: 0000…0001`，git 回 `not our ref`，expect `Ref '0000…0001' not found`，Reachable=true、VersionFound=false、RefOK=false，exit 1。伺服器拒絕任意 SHA fetch 時結果相同（D-a）。
-- SC-B4 `CheckPackages_ShaProbe_TempDirAlwaysRemoved`：SC-B2 與 SC-B3 之後暫存目錄不存在。
+- SC-B4 `CheckPackages_ShaProbe_TempDirAlwaysRemoved`：SC-B2、SC-B3 與 SC-B13、SC-B19 之後暫存目錄不存在。
 - SC-B5 `CheckPackages_ShaProbe_NetworkError_Unreachable`：探測子程序回傳非 `not our ref` 的錯誤（fake git），expect Reachable=false，detail 為經 `SanitizeGitOutput` 的錯誤摘要，截斷 60 字元。
-- SC-B6 `CheckPackages_ShaProbe_TimesOut`：探測逾時（`listRefsTimeout` 縮短），expect error 含 `timed out`，Reachable=false。
+- SC-B6 `CheckPackages_ShaProbe_TimesOut`：探測逾時（`listRefsTimeout` 縮短），expect error 含 `timed out`，Reachable=false。子測試：manifest clone 逾時同樣。
 - SC-B7 `CheckPackages_FullRefName_Accepted`（parity）：`ref: refs/tags/v1.0.0` 與 `ref: refs/heads/main`，expect OK。
 - SC-B8 `CheckPackages_HeadRef_Rejected`（parity 拒絕 + apm-go-only 提示）：`ref: HEAD`，expect detail `Ref 'HEAD' not found (run 'apm-go marketplace package set <name> --ref HEAD' to pin a SHA)`，exit 1。括號提示是 apm-go-only；oracle check.py:183 只有 `Ref 'HEAD' not found`，pack 的拒絕訊息另為 `HeadNotAllowedError`。合成 HEAD 條目仍存在於 `ListRefs`（`set --ref HEAD` 依賴）。
 - SC-B9 `CheckPackages_VersionRange_TagPatternFallback`（parity）：RG tag `tool_v1.2.0` 與分支 `v9.9.9`，`version: ^1.0.0`、`tag_pattern` 未設（預設 `v{version}`），expect OK 且 `v9.9.9` 不被視為版本。推斷順序 `v{version}`、`{version}`、`{name}_v{version}`、`{name}--v{version}`、`{name}-v{version}`，僅在設定 pattern 零匹配時啟用，只看 `refs/tags/`。
 - SC-B10 `MarketplaceCheck_Verbose_PrintsResolvingLines`（parity）：`-v` 對遠端條目印 `Resolving <name> via <host>: <url>`（host 為 `github.com` 等；shorthand 顯示 `default host`），對本地條目印 `Skipping <name> -- local path, no network check`，皆在表格之前、stdout。
 - SC-B11 `MarketplaceCheck_Wording_MatchesOracle`（parity）：detail 文字 `Ref '<ref>' not found`、`No tag matching '<range>'`、`No cached refs (offline)`；失敗摘要 ` x <N> entries have issues` 後 exit 1 靜默（不再印 `check failed: …`）；成功摘要 ` + All <N> entries OK`。表格欄名、標題與框線不在本 SPEC 範圍。
 - SC-B12 `CheckPackages_VersionRange_ExcludesPrerelease_UnlessOptIn`（parity）：RG tag `v2.0.0-rc.1` 與 `v1.0.0`，`version: >=1.0.0`，expect 匹配 `v1.0.0`；`include_prerelease: true` 時 `v2.0.0-rc.1` 參與。
+
+manifest version 比對（裁定 5，apm-go-only）：條目同時有 `ref`（任何形式）與精確 semver 的 `version` 時，在 ref 驗證通過後，以 `ManifestVersionFetcher` 取得該 ref 上的 manifest version：先讀 `<subdir>/.claude-plugin/plugin.json` 的 `version`，沒有該檔再讀 `<subdir>/apm.yml` 的 `version`（與 `pack` 補 metadata 讀的同一檔）。production fetcher 是一次 clone（SHA 用完整 clone 加 checkout，具名 ref 用 `--depth 1 --branch`，同 build/metadata.go `cloneAtRef`），共用 `listRefsTimeout`，暫存目錄必移除。比對為字串相等，兩邊各去除前導 `v`。
+
+- SC-B13 `CheckPackages_RefWithDisplayVersion_ManifestMatches_OK`：RG commit C 含 `.claude-plugin/plugin.json` `{"version":"1.0.0"}`；`ref: <C>`、`version: 1.0.0`，expect OK。子測試：`ref: v1.0.0`（tag 名稱）同樣比對並 OK。
+- SC-B14 `CheckPackages_RefWithDisplayVersion_ManifestMismatch_Fails`：plugin.json version `1.1.0`，expect detail `Version '1.0.0' does not match plugin manifest version '1.1.0' at ref '<C>'`，Reachable=true、VersionFound=true、RefOK=false，exit 1。
+- SC-B15 `CheckPackages_RefWithDisplayVersion_FallsBackToApmYML`：無 plugin.json，`apm.yml` `version: 1.0.0` expect OK；`version: 2.0.0` expect SC-B14 的 mismatch detail（manifest 值 `2.0.0`）。
+- SC-B16 `CheckPackages_RefWithDisplayVersion_NoManifest_SkipsComparison`：兩檔皆無，expect OK（無法比對不視為失敗）。
+- SC-B17 `CheckPackages_RefWithDisplayVersion_SubdirRespected`：`subdir: plugins/x`，manifest 只放在 `plugins/x/.claude-plugin/plugin.json`，expect 讀到並比對。
+- SC-B18 `CheckPackages_RefWithRangeVersion_NoManifestFetch`：`ref: <C>`、`version: ^1.0.0`，fetcher 為 panic fake，expect OK 且未取 manifest。無 `ref` 的條目同樣不取。
+- SC-B19 `CheckPackages_ManifestFetch_CloneFailure_Unreachable`：fake git 使 clone 失敗，expect Reachable=false，detail 為 `SanitizeGitOutput` 後的摘要截斷 60 字元；逾時與暫存目錄清除納入 SC-B4、SC-B6 的斷言範圍。
 
 ### C. `outdated` SHA 釘選
 
@@ -76,7 +88,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 - SC-D1 realexec 步驟 `mkt-check-schema-{name,source,verref,dup}`：四種 schema 錯誤各一，assert rc=2 與 stdout 含 oracle 訊息。
 - SC-D2 realexec 步驟 `mkt-check-offline`（遠端 SHA 釘選 + `--offline`，assert rc=1、stdout 含 `No cached refs (offline)`）與 `mkt-outdated-offline`（assert rc=0、stdout 含 `Offline mode: no cached refs`）。
 - SC-D3 realexec 步驟 `mkt-check-local-verbose`：全本地套件 `check -v`，assert rc=0、stdout 含 `Skipping <name> -- local path, no network check` 與 `All 1 entries OK`。
-- SC-D4 `tools/gate/mutants.txt` 新增五個 mutant：`sha-match-by-name-only`（移除 commit 比對）、`probe-skipped`（探測恆回 true）、`dup-name-case-sensitive`、`tip-compare-inverted`、`current-render-ignores-pattern`。確切 `old`/`new` 字串在對應 GREEN commit 內寫入，並以 `tools/gate/mutate.sh` 驗證 `old` 唯一。
+- SC-D4 `tools/gate/mutants.txt` 新增六個 mutant：`sha-match-by-name-only`（移除 commit 比對）、`probe-skipped`（探測恆回 true）、`dup-name-case-sensitive`、`tip-compare-inverted`、`current-render-ignores-pattern`、`version-mismatch-ignored`（manifest 比對恆相等）。確切 `old`/`new` 字串在對應 GREEN commit 內寫入，並以 `tools/gate/mutate.sh` 驗證 `old` 唯一。
 
 ## Must NOT
 
@@ -84,7 +96,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 - Must NOT：`marketplace package add/set --ref HEAD` 解析為 SHA 的行為改變（`TestGitRefLister_ListRefs_IncludesHEAD` 與 editor 測試的斷言不變）。
 - Must NOT：`pack`、`doctor`、`marketplace package` 對合法設定的行為與 exit code 改變；它們對本 SPEC 新拒絕的設定回傳與 oracle 相同的錯誤訊息，exit code 維持各自現有對應。
 - Must NOT：測試或 gate 連網；所有 git 操作對 `t.TempDir()` repo。
-- Must NOT：每個遠端套件超過一次 `git ls-remote`；fetch 探測只在「小寫 40-hex 且 ls-remote 無 commit 命中」時發生，且每次探測後暫存目錄被移除。
+- Must NOT：每個遠端套件超過一次 `git ls-remote`；fetch 探測只在「小寫 40-hex 且 ls-remote 無 commit 命中」時發生；manifest clone 只在「有 `ref` 且 `version` 為精確 semver 且 ref 驗證已通過」時發生，每個條目至多一次；`outdated` 永不取 manifest；每次探測或 clone 後暫存目錄被移除。
 - Must NOT：新的 git 子程序未經 `gitops.ApplyCloneEnv` / `ApplySecureGitEnv`；錯誤文字未經 `SanitizeGitOutput`。
 - Must NOT：`tools/parity/cases/` 任何現有 case 出現新的未 waive 差異。
 - Must NOT：`include_prerelease` 旗標與條目層級覆蓋的既有語意改變。
@@ -106,6 +118,8 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 | 推斷 fallback 把分支名當 tag | SC-B9：RG 建立分支 `v9.9.9`，斷言不被視為版本 |
 | 重複名稱檢查大小寫敏感回歸 | mutant `dup-name-case-sensitive` |
 | Current 渲染忽略 tag_pattern | SC-C1 子測試 + mutant `current-render-ignores-pattern` |
+| manifest version 不一致被放行，cc 安裝時才拒絕 | SC-B14、SC-B15 + mutant `version-mismatch-ignored` |
+| manifest clone 對大型 repo 耗時，SHA 需完整 clone | 共用 `listRefsTimeout`（SC-B6 子測試）；成本記入 evidence honest notes |
 
 ## Setup plan
 
@@ -113,15 +127,16 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 - Git isolation: 現有 worktree `.claude/worktree/fix-marketplace-outdated`，分支 `fix/markteplace-outdated`，base `main`。Cadence：SPEC 核准 commit → 每個行為一個 RED commit（僅測試）+ 一個 GREEN commit（僅實作）→ refactor 獨立 commit → gate/evidence commit。fixture 補值的 commit 與對應 GREEN 分開。
 - Files the gate will add/modify, by path: 無新檔；修改 `tools/gate/realexec.sh`（SC-D1 到 D3 步驟）、`tools/gate/mutants.txt`（SC-D4）。Evidence 落在 `.scratch/marketplace-check-outdated/evidence.md`，squad 紀錄在 `.scratch/marketplace-check-outdated/squad/`（`.scratch/` 在 .gitignore，以 `git add -f` 追蹤，與 `.scratch/parity-runner/issues/` 相同）。
 - New dependencies: none。
-- 新增內部 seam：`authoring.CommitProber` 介面與 `DefaultCommitProber`（`git fetch --depth 1`），與 `RefLister` 同一注入模式；`cmd` 層測試透過 `withFixtureRemoteLister` 現有 hook 加 prober 版本。
+- 新增內部 seam：`authoring.CommitProber` 介面與 `DefaultCommitProber`（`git fetch --depth 1`）、`authoring.ManifestVersionFetcher` 介面與 `DefaultManifestVersionFetcher`（clone at ref 後讀 plugin.json / apm.yml），皆與 `RefLister` 同一注入模式；`cmd` 層測試透過 `withFixtureRemoteLister` 現有 hook 加 prober 與 fetcher 版本。`isDisplayVersion` 由 build/metadata.go 移到 authoring 匯出為 `IsDisplayVersion`，build 改呼叫它（build 已 import authoring，方向合法）。clone 邏輯與 build/metadata.go `cloneAtRef` 重複，因 ARCHITECTURE §1 禁止 authoring → build，下沉共用是另案。
 - 文件：README 未描述這兩個指令，不需更新。`ARCHITECTURE.md` §2 的 `marketplace/authoring` 條目補 `CommitProber` 入口；`AGENTS.md` 無變更。
 - 明確排除：表格欄名與框線（展示層）；`No marketplace config found` 訊息（跨六個指令共用）；parity corpus case（結構上無法離線）；ADO / sourceBase 解析（apm-go 未支援 sourceBase，另案）；subdir 感知（oracle check.py、outdated.py 不讀 `subdir` 欄位，`ls-remote` 也無檔案層級資訊）。
 
 ## Approval
 
-（待 v1 送審）
+（待 v2 送審）
 
 ## Revisions
 
 - 2026-09-14 — exploration round 1：四項設計決策由使用者裁定（見背景）。其餘缺口採補齊 oracle 行為之預設，未另詢問。
 - 2026-09-14 — v0.1 → v1：evidence-squad after-spec 十六項 finding 折入（紀錄：`.scratch/marketplace-check-outdated/squad/after-spec.md`）。新增 SC-A7、SC-C11、SC-B1 子情境、SC-A1 子情境、第五個 mutant；SC-B8 更正「與 pack 一致」為「同樣拒絕、訊息不同」並標記提示句 apm-go-only；SC-C1 明定 Current 來源；SC-C9 明定靜默 exit 只限 upgradable 路徑；Must NOT 補列 fixture 需補值的測試；三項預設決策 D-a、D-b、D-c 隨本版送審。
+- 2026-09-14 — v1 → v2（round 3）：使用者裁定 D-a「報 not found，記錄限制」、D-b「維持 Pinned to ref; skipped」、D-c「loader 一律嚴格」；並補充「當同時設定 version 與 ref 時，cc 安裝 plugin 會比對，不相同會拒絕安裝」，選擇「新增，作為 check 的失敗條件」。新增 SC-B13 到 B19、第六個 mutant、兩列 failure model、`ManifestVersionFetcher` seam。v1 未取得核准即被本輪資訊取代。
