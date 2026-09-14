@@ -61,6 +61,15 @@ func IsNoConfigError(err error) bool {
 	return errors.Is(err, errNoMarketplaceConfig)
 }
 
+// IsConfigValidationError reports whether err is a LoadAuthoringConfig
+// validation failure -- the Oracle's MarketplaceYmlError family that
+// _load_config_or_exit (commands/marketplace/__init__.py:148-172) exits 2
+// for, as opposed to the two exit-1 outcomes (no config, both files).
+// RED stub: returns false until SPEC marketplace-check-outdated SC-A6 lands.
+func IsConfigValidationError(err error) bool {
+	return false
+}
+
 // IsConfigsMutuallyExclusiveError reports whether err is LoadAuthoringConfig's
 // "both files exist" outcome (upstream detect_config_source raising
 // MarketplaceYmlError, marketplace/migration.py:98-103).

@@ -868,7 +868,12 @@ func TestMarketplaceCheck_OfflinePrintsModeNotice(t *testing.T) {
 // commands/marketplace/check.py:_warn_duplicate_names, which runs
 // unconditionally before the resolution loop and never touches
 // failure_count.
-func TestMarketplaceCheck_DuplicatePackageNames_WarnsButExitsZero(t *testing.T) {
+// SPEC marketplace-check-outdated SC-A4/SC-A5: the Oracle's yml_schema.py
+// rejects duplicate names at load time (exit 2), so check.py's own
+// _warn_duplicate_names is unreachable defence-in-depth -- and so is
+// authoring.DuplicatePackageNames here. This used to assert exit 0 plus a
+// warning; the assertion change is listed in the SPEC's Must NOT.
+func TestMarketplaceCheck_DuplicatePackageNames_ExitsTwo(t *testing.T) {
 	// Arrange
 	chdirTemp(t)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
@@ -890,11 +895,15 @@ func TestMarketplaceCheck_DuplicatePackageNames_WarnsButExitsZero(t *testing.T) 
 	out, err := runMarketplaceCmd(t, "check")
 
 	// Assert
-	if err != nil {
-		t.Fatalf("marketplace check returned an error for a duplicate-name-only issue, want exit 0: %v (output: %s)", err, out)
+	if err == nil {
+		t.Fatalf("marketplace check accepted duplicate package names, want exit 2 (output: %s)", out)
 	}
-	if !strings.Contains(strings.ToLower(out), "duplicate package name") {
-		t.Errorf("output = %q, want a duplicate package name warning", out)
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+	want := "marketplace config error: Duplicate package name 'foo-tool' (packages[0] and packages[1])"
+	if got := err.Error(); got != want {
+		t.Errorf("err = %q, want %q", got, want)
 	}
 }
 
