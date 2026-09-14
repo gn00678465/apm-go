@@ -1,7 +1,7 @@
 # SPEC — marketplace check / outdated 缺口修正與 SHA 釘選支援 (Tier 3)
 
-- `spec_version`: v3
-- `status`: approved
+- `spec_version`: v4
+- `status`: revised-pending-approval
 - `tier`: 3
 - `scope`: marketplace-check-outdated
 - `base_ref`: main (bf18093)
@@ -40,6 +40,7 @@ SHA 偵測沿用既有 `shaRefPattern`（editor.go）與 `sha40LowerRe`（build/
 - SC-A4 `LoadAuthoringConfig_DuplicateNameCaseInsensitive_Rejected`：`Dup` 與 `dup`，expect `Duplicate package name 'dup' (packages[0] and packages[1])`。`authoring.DuplicatePackageNames` 與 doctor 的 `checkDuplicateNames` 保留為防禦層，與 oracle 的 `_warn_duplicate_names` 及 doctor check 6 同樣在嚴格 loader 下不可達。
 - SC-A5 `MarketplaceCheck_ConfigError_ExitsTwo` / `MarketplaceOutdated_ConfigError_ExitsTwo`：SC-A1 到 A4 任一，`check` 與 `outdated` 印 ` x marketplace config error: <msg>` 到 stdout，exit 2。
 - SC-A6 `LoadAuthoringConfig_IsConfigValidationError`：新增判定函式，區分「缺設定檔」（exit 1，訊息不變）與「驗證錯誤」（exit 2）。
+- SC-A8 `LoadAuthoringConfig_EmptyVersionOrRef_Rejected`（verifier round 1 finding 4，納入 D-c）：`version: ""` expect `'packages[0].version' must be a non-empty string`；`ref: "  "` expect `'packages[0].ref' must be a non-empty string`（yml_schema.py:853-862，鍵存在但去空白後為空）；鍵不存在或 null 維持「未設定」；`version: " 1.0.0 "` 讀入後為 `1.0.0`（oracle `.strip()`）。
 - SC-A7 `Doctor_MarketplaceConfig_ValidationError_ReportsConfigError`：doctor 對 SC-A3/A4 的設定回報 `apm.yml marketplace block has errors: <msg 截斷 60>`（oracle doctor.py:240），`passed=false`；既有 `TestDoctor_MarketplaceConfig_ApmYml` 的 fixture 與斷言依此改寫。
 
 ### B. `check` 釘選驗證
@@ -67,6 +68,7 @@ manifest version 比對（裁定 5，apm-go-only）：條目同時有 `ref`（�
 - SC-B18 `CheckPackages_RefWithRangeVersion_NoManifestFetch`：`ref: <C>`、`version: ^1.0.0`，fetcher 為 panic fake，expect OK 且未取 manifest。無 `ref` 的條目同樣不取。
 - SC-B19 `CheckPackages_ManifestFetch_CloneFailure_Unreachable`：fake git 使 clone 失敗，expect Reachable=false，detail 為 `SanitizeGitOutput` 後的摘要截斷 60 字元；逾時與暫存目錄清除納入 SC-B4、SC-B6 的斷言範圍。
 - SC-B20 `ScratchGit_LocalePinnedToC`（D-d，squad after-implement）：探測、manifest 讀取的三個 git 子程序環境加 `LC_ALL=C`、`LANGUAGE=C`。測試在 `LANG`/`LC_ALL`/`LANGUAGE` 設為 `zh_TW.UTF-8` 下，缺 manifest 仍回 `""` 且無錯（SC-B16 行為不變），缺 SHA 仍回 `Ref '<sha>' not found`（SC-B3 行為不變），且 `newProbeFetchCmd` 的 Env 含這兩個鍵。`gitops.SecureGitEnv` 共用環境不變。
+- SC-B22 `GitManifestVersionFetcher_PaddedVersionInPluginJSON_Trimmed`（verifier round 1 finding 3）：plugin.json `{"version":" 1.0.0 "}` 或 apm.yml `version: " 1.0.0 "` 與宣告 `1.0.0` 比對為相等。既有行為的回歸保護，以一次性突變（移除 manifest 端 TrimSpace）證明。
 - SC-B21 `IsDisplayVersion_BlankIsNotDisplay`（D-e）：`IsDisplayVersion(" ")`、`("\t")` 回 false；`("1.0.0")`、`(" 1.0.0 ")` 回 true；range、`*`、含空白、尾段 `x` 維持 false。`check` 對 `version: " "` 的 SHA 釘選不取 manifest（panic fake），`outdated` 對同條目走「無 version」的 tip 比對。
 
 ### C. `outdated` SHA 釘選
@@ -90,6 +92,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 - SC-D1 realexec 步驟 `mkt-check-schema-{name,source,verref,dup}`：四種 schema 錯誤各一，assert rc=2 與 stdout 含 oracle 訊息。
 - SC-D2 realexec 步驟 `mkt-check-offline`（遠端 SHA 釘選 + `--offline`，assert rc=1、stdout 含 `No cached refs (offline)`）與 `mkt-outdated-offline`（assert rc=0、stdout 含 `Offline mode: no cached refs`）。
 - SC-D3 realexec 步驟 `mkt-check-local-verbose`：全本地套件 `check -v`，assert rc=0、stdout 含 `Skipping <name> -- local path, no network check` 與 `All 1 entries OK`。
+- SC-D5 `tools/gate.sh` staticcheck 層（verifier round 1 finding 1）：從 `staticcheck.conf` 讀出 `checks` 清單並以 `-checks` 顯式傳入，不再依賴 staticcheck 的設定檔自動發現（實測同一棵樹在使用者 Temp 目錄下設定被忽略、在 `D:` 下正常，根因未明）；設定檔不存在或清單為空時該層失敗（fail-closed）。負向控制：在隔離副本移除設定檔，該層必須失敗。
 - SC-D4 `tools/gate/mutants.txt` 新增八個 mutant：`sha-match-by-name-only`（移除 commit 比對）、`probe-skipped`（探測恆回 true）、`dup-name-case-sensitive`、`tip-compare-inverted`、`current-render-ignores-pattern`、`version-mismatch-ignored`（manifest 比對恆相等）、`probe-error-unsanitized`（token 未遮罩）、`locale-not-pinned`（移除 `LC_ALL=C`，由 SC-B20 殺）。確切 `old`/`new` 字串在對應 GREEN commit 內寫入，並以 `tools/gate/mutate.sh` 驗證 `old` 唯一。
 
 ## Must NOT
@@ -127,7 +130,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 
 - Tools to install: none（git、go 已存在）。
 - Git isolation: 現有 worktree `.claude/worktree/fix-marketplace-outdated`，分支 `fix/markteplace-outdated`，base `main`。Cadence：SPEC 核准 commit → 每個行為一個 RED commit（僅測試）+ 一個 GREEN commit（僅實作）→ refactor 獨立 commit → gate/evidence commit。fixture 補值的 commit 與對應 GREEN 分開。
-- Files the gate will add/modify, by path: 無新檔；修改 `tools/gate/realexec.sh`（SC-D1 到 D3 步驟）、`tools/gate/mutants.txt`（SC-D4）。Evidence 落在 `.scratch/marketplace-check-outdated/evidence.md`，squad 紀錄在 `.scratch/marketplace-check-outdated/squad/`（`.scratch/` 在 .gitignore，以 `git add -f` 追蹤，與 `.scratch/parity-runner/issues/` 相同）。
+- Files the gate will add/modify, by path: 無新檔；修改 `tools/gate/realexec.sh`（SC-D1 到 D3 步驟）、`tools/gate/mutants.txt`（SC-D4）、`tools/gate.sh`（SC-D5，v4 授權）。Evidence 落在 `.scratch/marketplace-check-outdated/evidence.md`，squad 紀錄在 `.scratch/marketplace-check-outdated/squad/`（`.scratch/` 在 .gitignore，以 `git add -f` 追蹤，與 `.scratch/parity-runner/issues/` 相同）。
 - New dependencies: none。
 - 新增內部 seam：`authoring.CommitProber` 介面與 `DefaultCommitProber`（`git fetch --depth 1`）、`authoring.ManifestVersionFetcher` 介面與 `DefaultManifestVersionFetcher`（clone at ref 後讀 plugin.json / apm.yml），皆與 `RefLister` 同一注入模式；`cmd` 層測試透過 `withFixtureRemoteLister` 現有 hook 加 prober 與 fetcher 版本。`isDisplayVersion` 由 build/metadata.go 移到 authoring 匯出為 `IsDisplayVersion`，build 改呼叫它（build 已 import authoring，方向合法）。clone 邏輯與 build/metadata.go `cloneAtRef` 重複，因 ARCHITECTURE §1 禁止 authoring → build，下沉共用是另案。
 - 文件：README 未描述這兩個指令，不需更新。`ARCHITECTURE.md` §2 的 `marketplace/authoring` 條目補 `CommitProber` 入口；`AGENTS.md` 無變更。
@@ -137,6 +140,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 
 - 2026-09-14 — approves v2 — "核准 v2"（AskUserQuestion 結構化回覆，問題明示 commit 98fd72c 與 Setup plan 授權範圍）
 - 2026-09-14 — approves v3 — "核准 v3"（AskUserQuestion 結構化回覆，問題明示 commit 416638e）
+- （v4 待核准）
 
 ## Revisions
 
@@ -148,3 +152,4 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 - 2026-09-14 — gate 第一輪在 changed-line-coverage 停下（273/294）：21 行未覆蓋皆為錯誤分支（manifest 解析、size cap、hostile subdir、scratch root 缺失、fetch 逾時與空 stderr、range 無法解析、legacy 驗證、resolvingLabel 的 host 簡寫）。處置：fetch 逾時與失敗文字抽成 `fetchTimedOut` / `gitFailureText`（refactor，行為不變），其餘各補一個行為測試；13 個新測試各以一次性突變在隔離副本證明會失敗（`.scratch/marketplace-check-outdated/throwaway-mutants.txt`）。`truncateRunes` 短路徑、`asConfigValidationError(nil)`、apm.yml 非 mapping 三個測試屬 trivial armor，未做突變證明。gate 的 mutation 層另揭露既有測試 `TestFetchGit_CleansUpTempCloneOnFailure` 讀全域 temp 目錄計數、在並行套件下 flaky（base 與 HEAD 在乾淨 temp 下皆 8/8 通過），屬本變更之外，記入 evidence honest notes。
 - 2026-09-14 — gate 第三輪 coverage 剩 fetch 逾時分支一行。補「遠端接受 TCP 但永不回應」的真實情境測試，該測試在 HEAD 掛住（超過 300 秒）：deadline 殺掉 `git fetch` 後，`git-remote-https` 孫程序仍握著繼承的 stderr 管線，`exec.Cmd.Wait` 無限等待。修正：三個子程序設定 `WaitDelay` 2 秒。這是 SC-B6 失敗模型「探測對無回應遠端無限等待」在真 git 下的實例，原本的假 git 測試無法觸發。既有 `ListRefs` 的 `git ls-remote` 同樣未設 `WaitDelay`，屬本變更之外，記入 honest notes。
 - 2026-09-14 — v2 → v3（round 4，squad after-implement 於 a3ce3b1）：紀錄 `.scratch/marketplace-check-outdated/squad/after-implement.md`。class 1 已修（測試改為情境同名；補 SC-C1 宣告 tag 消失的測試）。class 2 三項由使用者裁定，原話：D-d「三個子程序加 LC_ALL=C」、D-e「全空白視為非 display version」、D-f「無候選 tag 時 Current 維持 --」。新增 SC-B20、SC-B21，SC-C3 補 Current 斷言，SC-D4 增第八個 mutant。parsePackages 順序疑慮以 oracle yml_schema.py:1303-1310 駁回。v2 的核准不涵蓋本輪新增，v3 重新送審。
+- 2026-09-14 — v3 → v4（round 5，verifier round 1 於 3cff0ed，verdict failed）：finding 1 staticcheck 設定檔在使用者 Temp 路徑下被忽略 → SC-D5，使用者授權原話「授權，現在改」；finding 2 既有 flaky 測試，已在 honest notes；finding 3 manifest 端 TrimSpace 無殺傷測試 → SC-B22；finding 4 顯式空字串 version/ref → SC-A8，使用者原話「納入 D-c，現在修」；finding 5 更正描述：「探測與 manifest 讀取共用一次 fetch」只在 SHA 已被 ls-remote 列出時成立，需探測且有精確 version 的條目會各做一次 fetch（Must NOT 只限制各至多一次，行為不變）。v3 的核准不涵蓋本輪新增，v4 重新送審；verifier 第二輪在新 context、以 v4 GREEN 後的 source state 進行。
