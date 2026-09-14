@@ -159,8 +159,17 @@ func newProbeFetchCmd(ctx context.Context, dir, cloneURL, ref string) *exec.Cmd 
 	cmd := exec.CommandContext(ctx, "git", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
 		"-C", dir, "fetch", "--depth", "1", "--", cloneURL, ref)
 	gitops.ApplyCloneEnv(cmd, cloneURL)
+	// git fetch hands the transport to a git-remote-https child that inherits
+	// our stderr pipe; when the deadline kills git itself, Wait would still
+	// block until that grandchild closes the pipe. WaitDelay bounds that so an
+	// unresponsive remote surfaces as "timed out" instead of a hang.
+	cmd.WaitDelay = subprocessWaitDelay
 	return cmd
 }
+
+// subprocessWaitDelay is how long exec waits for inherited pipes to close
+// after a context-killed git exits.
+const subprocessWaitDelay = 2 * time.Second
 
 // fetchRefIntoScratch fetches ref (a SHA, tag, branch, or full ref name)
 // from source into a fresh bare scratch repository whose FETCH_HEAD then
@@ -190,6 +199,7 @@ func fetchRefIntoScratch(source, ref string) (dir string, cleanup func(), err er
 
 	initCmd := exec.CommandContext(ctx, "git", "init", "-q", "--bare", "--", dir)
 	gitops.ApplySecureGitEnv(initCmd)
+	initCmd.WaitDelay = subprocessWaitDelay
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		if timedOut, terr := fetchTimedOut(ctx, safeURL); timedOut {
 			return "", cleanup, terr
@@ -267,6 +277,7 @@ func showAtFetchHead(dir, relPath string) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "show", "FETCH_HEAD:"+relPath)
 	gitops.ApplySecureGitEnv(cmd)
+	cmd.WaitDelay = subprocessWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
