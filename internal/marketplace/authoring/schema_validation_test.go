@@ -73,6 +73,43 @@ func TestLoadAuthoringConfig_DuplicateNameCaseInsensitive_Rejected(t *testing.T)
 	}
 }
 
+// SC-A8 (yml_schema.py:853-862): a present-but-blank version or ref is an
+// error, an absent one is "not set", and a padded value is stripped.
+func TestLoadAuthoringConfig_EmptyVersionOrRef_Rejected(t *testing.T) {
+	err := loadExpectingError(t, "    - name: tool\n      source: owner/repo\n      version: \"\"\n      ref: main\n")
+	if got, want := err.Error(), "'packages[0].version' must be a non-empty string"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+
+	t.Run("BlankRef", func(t *testing.T) {
+		err := loadExpectingError(t, "    - name: tool\n      source: owner/repo\n      version: \"1.0.0\"\n      ref: \"  \"\n")
+		if got, want := err.Error(), "'packages[0].ref' must be a non-empty string"; got != want {
+			t.Errorf("error = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("PaddedValuesStripped", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "apm.yml", schemaTestHeader+"    - name: tool\n      source: owner/repo\n      version: \" 1.0.0 \"\n      ref: \" main \"\n")
+		cfg, _, err := LoadAuthoringConfig(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Packages[0].Version != "1.0.0" || cfg.Packages[0].Ref != "main" {
+			t.Errorf("version=%q ref=%q, want both stripped", cfg.Packages[0].Version, cfg.Packages[0].Ref)
+		}
+	})
+
+	t.Run("NullIsUnset", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "apm.yml", schemaTestHeader+"    - name: tool\n      source: owner/repo\n      version: null\n      ref: main\n")
+		cfg, _, err := LoadAuthoringConfig(dir)
+		if err != nil || cfg.Packages[0].Version != "" {
+			t.Errorf("(%v, version=%q), want a null version treated as unset", err, cfg.Packages[0].Version)
+		}
+	})
+}
+
 // SC-A6
 func TestLoadAuthoringConfig_IsConfigValidationError(t *testing.T) {
 	cases := map[string]string{

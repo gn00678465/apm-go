@@ -70,6 +70,20 @@ func TestGitManifestVersionFetcher_ApmYML_NotAMapping_NoVersion(t *testing.T) {
 	}
 }
 
+// Verifier round 1 finding 3: a hand-edited plugin.json with a padded
+// version (" 1.0.0") must still compare equal to the declared 1.0.0 -- the
+// TrimSpace on the manifest side is load-bearing.
+func TestGitManifestVersionFetcher_PaddedVersionInPluginJSON_Trimmed(t *testing.T) {
+	dir, sha := manifestRepo(t, `{"version":" 1.0.0 "}`, "")
+
+	wantPass(t, singleResult(t, dir, PackageEntry{Name: "tool", Source: dir, Ref: sha, Version: "1.0.0"}, realDeps()))
+
+	t.Run("ApmYML", func(t *testing.T) {
+		dir, sha := manifestRepo(t, "", "name: tool\nversion: \" 1.0.0 \"\n")
+		wantPass(t, singleResult(t, dir, PackageEntry{Name: "tool", Source: dir, Ref: sha, Version: "1.0.0"}, realDeps()))
+	})
+}
+
 func TestGitManifestVersionFetcher_OversizedManifest_Errors(t *testing.T) {
 	big := `{"version":"1.0.0","pad":"` + strings.Repeat("x", manifestReadMaxBytes) + `"}`
 	dir, sha := manifestRepo(t, big, "")
