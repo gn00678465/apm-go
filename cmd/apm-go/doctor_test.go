@@ -248,7 +248,7 @@ func TestDoctor_MarketplaceConfig_ValidationError_ReportsConfigError(t *testing.
 
 func TestDoctor_MarketplaceConfig_Legacy_PointsAtMigrate(t *testing.T) {
 	chdirTemp(t)
-	os.WriteFile("marketplace.yml", []byte("name: m\npackages:\n  - name: a\n    source: owner/a\n"), 0o644)
+	os.WriteFile("marketplace.yml", []byte("name: m\npackages:\n  - name: a\n    source: owner/a\n    ref: main\n"), 0o644)
 	out, err := runDoctorWith(t, healthyGit(), nil)
 	if err != nil {
 		t.Fatal(err)
