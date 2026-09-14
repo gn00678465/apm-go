@@ -92,9 +92,20 @@ func TestOutdatedPackages_ShaPinWithVersion_NoMatchingTags(t *testing.T) {
 
 	r := outdatedRow(t, nil, PackageEntry{Name: "tool", Source: "owner/repo", Ref: shaA, Version: "1.0.0"}, lister, false)
 
-	if r.Status != "[!]" || r.Note != "No matching tags found" || r.Upgradable {
-		t.Errorf("row = %+v, want [!] \"No matching tags found\" not upgradable", r)
+	// D-f: Current is rendered only when a candidate tag exists.
+	if r.Status != "[!]" || r.Note != "No matching tags found" || r.Upgradable || r.Current != "--" {
+		t.Errorf("row = %+v, want [!] \"No matching tags found\" not upgradable, Current --", r)
 	}
+}
+
+// SC-B21 at the outdated side: a blank version is treated as no version,
+// so a SHA pin with `version: " "` is compared against the branch tip.
+func TestOutdatedPackages_BlankVersion_TreatedAsNoVersion(t *testing.T) {
+	lister := mapRefLister{refs: []semver.TagInfo{headRef(shaB)}}
+
+	r := outdatedRow(t, nil, PackageEntry{Name: "tool", Source: "owner/repo", Ref: shaA, Version: " "}, lister, false)
+
+	assertRow(t, r, shaA[:12], "--", shaB[:12], "[!]", "Default branch tip moved", true)
 }
 
 // ── SC-C4 / SC-C5 / SC-C6 ────────────────────────────────────────────────

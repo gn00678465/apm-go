@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -147,6 +148,56 @@ func TestFetchRefIntoScratch_UnresponsiveRemote_TimesOut(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("fetch took %s; the deadline did not cut it short", time.Since(start))
 	}
+}
+
+// SC-B20 (D-d): the scratch git subprocesses pin LC_ALL=C / LANGUAGE=C so
+// the English messages the code classifies on ("not our ref", "does not
+// exist in") are what git prints whatever the user's locale is.
+func TestScratchGit_LocalePinnedToC(t *testing.T) {
+	for _, k := range []string{"LANG", "LC_ALL", "LANGUAGE", "LC_MESSAGES"} {
+		t.Setenv(k, "zh_TW.UTF-8")
+	}
+
+	cmd := newProbeFetchCmd(context.Background(), t.TempDir(), "https://example.invalid/o/r.git", strings.Repeat("a", 40))
+	for _, want := range []string{"LC_ALL=C", "LANGUAGE=C"} {
+		found := false
+		for _, e := range cmd.Env {
+			if e == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("probe cmd env lacks %q under a zh_TW locale", want)
+		}
+	}
+
+	dir, sha := manifestRepo(t, "", "")
+	if v, err := (gitManifestVersionFetcher{}).FetchManifestVersion(dir, sha, ""); err != nil || v != "" {
+		t.Errorf("no manifest under zh_TW locale: (%q, %v), want (\"\", nil)", v, err)
+	}
+	found, err := gitCommitProber{}.HasCommit(dir, strings.Repeat("0", 39)+"1")
+	if found || err != nil {
+		t.Errorf("missing SHA under zh_TW locale: (%v, %v), want (false, nil) -- a translated 'not our ref' must not become a transport error", found, err)
+	}
+}
+
+// SC-B21 (D-e): a blank version is no version at all.
+func TestIsDisplayVersion_BlankIsNotDisplay(t *testing.T) {
+	cases := map[string]bool{
+		"": false, " ": false, "\t": false,
+		"1.0.0": true, " 1.0.0 ": true, "v1.0.0": true, "1.0.0-rc.1": true,
+		"^1.0.0": false, ">=1.0.0": false, "1.0.x": false, "1.0.*": false, "1.0.0 || 2.0.0": false,
+	}
+	for in, want := range cases {
+		if got := IsDisplayVersion(in); got != want {
+			t.Errorf("IsDisplayVersion(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestCheckPackages_BlankVersion_NoManifestFetch(t *testing.T) {
+	dir, sha := manifestRepo(t, `{"version":"9.9.9"}`, "")
+	wantPass(t, singleResult(t, dir, PackageEntry{Name: "tool", Source: dir, Ref: sha, Version: " "}, noProbeDeps()))
 }
 
 func TestGitFailureText_PrefersStderrThenExecError(t *testing.T) {
