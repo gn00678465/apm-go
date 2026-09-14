@@ -1,7 +1,7 @@
 # SPEC — marketplace check / outdated 缺口修正與 SHA 釘選支援 (Tier 3)
 
-- `spec_version`: v2
-- `status`: approved
+- `spec_version`: v3
+- `status`: revised-pending-approval
 - `tier`: 3
 - `scope`: marketplace-check-outdated
 - `base_ref`: main (bf18093)
@@ -66,6 +66,8 @@ manifest version 比對（裁定 5，apm-go-only）：條目同時有 `ref`（�
 - SC-B17 `CheckPackages_RefWithDisplayVersion_SubdirRespected`：`subdir: plugins/x`，manifest 只放在 `plugins/x/.claude-plugin/plugin.json`，expect 讀到並比對。
 - SC-B18 `CheckPackages_RefWithRangeVersion_NoManifestFetch`：`ref: <C>`、`version: ^1.0.0`，fetcher 為 panic fake，expect OK 且未取 manifest。無 `ref` 的條目同樣不取。
 - SC-B19 `CheckPackages_ManifestFetch_CloneFailure_Unreachable`：fake git 使 clone 失敗，expect Reachable=false，detail 為 `SanitizeGitOutput` 後的摘要截斷 60 字元；逾時與暫存目錄清除納入 SC-B4、SC-B6 的斷言範圍。
+- SC-B20 `ScratchGit_LocalePinnedToC`（D-d，squad after-implement）：探測、manifest 讀取的三個 git 子程序環境加 `LC_ALL=C`、`LANGUAGE=C`。測試在 `LANG`/`LC_ALL`/`LANGUAGE` 設為 `zh_TW.UTF-8` 下，缺 manifest 仍回 `""` 且無錯（SC-B16 行為不變），缺 SHA 仍回 `Ref '<sha>' not found`（SC-B3 行為不變），且 `newProbeFetchCmd` 的 Env 含這兩個鍵。`gitops.SecureGitEnv` 共用環境不變。
+- SC-B21 `IsDisplayVersion_BlankIsNotDisplay`（D-e）：`IsDisplayVersion(" ")`、`("\t")` 回 false；`("1.0.0")`、`(" 1.0.0 ")` 回 true；range、`*`、含空白、尾段 `x` 維持 false。`check` 對 `version: " "` 的 SHA 釘選不取 manifest（panic fake），`outdated` 對同條目走「無 version」的 tip 比對。
 
 ### C. `outdated` SHA 釘選
 
@@ -73,7 +75,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 
 - SC-C1 `OutdatedPackages_ShaPinWithVersion_NewerTag_Upgradable`（偏離）：RG tag `v1.0.0`（commit C）與 `v1.1.0`；`ref: <C>`、`version: 1.0.0`，expect Current=`v1.0.0`、Range=`--`、LatestInRange=`v1.0.0`、LatestOverall=`v1.1.0`、Status=`[!]`、Upgradable=true。子測試：`tag_pattern: "{name}_v{version}"` 時 Current=`tool_v1.0.0`。
 - SC-C2 `OutdatedPackages_ShaPinWithVersion_UpToDate`：同上但只有 `v1.0.0`，expect Status=`[+]`、Upgradable=false。
-- SC-C3 `OutdatedPackages_ShaPinWithVersion_NoMatchingTags`：無 tag，expect Status=`[!]`、Note=`No matching tags found`、Upgradable=false（同 oracle 的 version-range 路徑）。
+- SC-C3 `OutdatedPackages_ShaPinWithVersion_NoMatchingTags`：無 tag，expect Status=`[!]`、Note=`No matching tags found`、Upgradable=false（同 oracle 的 version-range 路徑），且 Current=`--`（D-f：只有存在候選 tag 時才渲染 Current，避免與 Note 矛盾）。
 - SC-C4 `OutdatedPackages_ShaPinWithoutVersion_TipMoved_Upgradable`（偏離）：`ref: <舊 commit>`，default branch tip 為新 commit，expect Current=`<sha12>`、LatestOverall=`<tip sha12>`、Note=`Default branch tip moved`、Status=`[!]`、Upgradable=true。
 - SC-C5 `OutdatedPackages_ShaPinWithoutVersion_AtTip_UpToDate`：`ref` 等於 tip，expect `[+]`。
 - SC-C6 `OutdatedPackages_ShaPinWithoutVersion_NoHeadEntry_IconX`：`ListRefs` 無 `HEAD` 條目，expect `[x]`、Note=`Remote advertised no HEAD`。
@@ -88,7 +90,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 - SC-D1 realexec 步驟 `mkt-check-schema-{name,source,verref,dup}`：四種 schema 錯誤各一，assert rc=2 與 stdout 含 oracle 訊息。
 - SC-D2 realexec 步驟 `mkt-check-offline`（遠端 SHA 釘選 + `--offline`，assert rc=1、stdout 含 `No cached refs (offline)`）與 `mkt-outdated-offline`（assert rc=0、stdout 含 `Offline mode: no cached refs`）。
 - SC-D3 realexec 步驟 `mkt-check-local-verbose`：全本地套件 `check -v`，assert rc=0、stdout 含 `Skipping <name> -- local path, no network check` 與 `All 1 entries OK`。
-- SC-D4 `tools/gate/mutants.txt` 新增六個 mutant：`sha-match-by-name-only`（移除 commit 比對）、`probe-skipped`（探測恆回 true）、`dup-name-case-sensitive`、`tip-compare-inverted`、`current-render-ignores-pattern`、`version-mismatch-ignored`（manifest 比對恆相等）。確切 `old`/`new` 字串在對應 GREEN commit 內寫入，並以 `tools/gate/mutate.sh` 驗證 `old` 唯一。
+- SC-D4 `tools/gate/mutants.txt` 新增八個 mutant：`sha-match-by-name-only`（移除 commit 比對）、`probe-skipped`（探測恆回 true）、`dup-name-case-sensitive`、`tip-compare-inverted`、`current-render-ignores-pattern`、`version-mismatch-ignored`（manifest 比對恆相等）、`probe-error-unsanitized`（token 未遮罩）、`locale-not-pinned`（移除 `LC_ALL=C`，由 SC-B20 殺）。確切 `old`/`new` 字串在對應 GREEN commit 內寫入，並以 `tools/gate/mutate.sh` 驗證 `old` 唯一。
 
 ## Must NOT
 
@@ -134,6 +136,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 ## Approval
 
 - 2026-09-14 — approves v2 — "核准 v2"（AskUserQuestion 結構化回覆，問題明示 commit 98fd72c 與 Setup plan 授權範圍）
+- （v3 待核准）
 
 ## Revisions
 
@@ -144,3 +147,4 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 - 2026-09-14 — group B/C/D 實作紀錄（行為與 SPEC 相同，機制與描述的差異記於此）：(1) 探測與 manifest 讀取共用一次 `git fetch --depth 1 -- <url> <ref>` 進暫存 bare repo，manifest 以 `git show FETCH_HEAD:<path>` 讀取，不做完整 clone；本地 git 對 fetch 非 tip SHA 預設允許，實測通過。(2) `TestOutdatedPackages_IconI_PinnedRefLocalOrNoRange_NeverTouchesNetwork` 未改 fixture：`no-range` 條目在函式層仍走 `No version range` 分支（oracle outdated.py:56-71 同樣保留該分支），只有 loader 層拒絕，測試在函式層仍有效。(3) `TestOutdatedPackages_VersionRange_TagPatternFallback` 於 RED 時已通過，因推斷邏輯隨 group B 的共用 `versionTagCandidates` 先落地；保留為回歸保護。(4) SC-B4 在 GREEN 首輪抓到真實缺陷：named return 被 closure 捕捉導致錯誤路徑不清除暫存目錄，已修正。(5) mutants 新增第七個 `probe-error-unsanitized`，覆蓋 token 遮罩；`sha-match-by-name-only` 與 `current-render-ignores-pattern` 的替換字串調整為可編譯形式（未使用變數會讓 mutant 變成 broken 而非 killed）。(6) realexec 另加 `mkt-outdated-schema-verref`，證明 outdated 與 check 共用 exit 2 路徑。
 - 2026-09-14 — gate 第一輪在 changed-line-coverage 停下（273/294）：21 行未覆蓋皆為錯誤分支（manifest 解析、size cap、hostile subdir、scratch root 缺失、fetch 逾時與空 stderr、range 無法解析、legacy 驗證、resolvingLabel 的 host 簡寫）。處置：fetch 逾時與失敗文字抽成 `fetchTimedOut` / `gitFailureText`（refactor，行為不變），其餘各補一個行為測試；13 個新測試各以一次性突變在隔離副本證明會失敗（`.scratch/marketplace-check-outdated/throwaway-mutants.txt`）。`truncateRunes` 短路徑、`asConfigValidationError(nil)`、apm.yml 非 mapping 三個測試屬 trivial armor，未做突變證明。gate 的 mutation 層另揭露既有測試 `TestFetchGit_CleansUpTempCloneOnFailure` 讀全域 temp 目錄計數、在並行套件下 flaky（base 與 HEAD 在乾淨 temp 下皆 8/8 通過），屬本變更之外，記入 evidence honest notes。
 - 2026-09-14 — gate 第三輪 coverage 剩 fetch 逾時分支一行。補「遠端接受 TCP 但永不回應」的真實情境測試，該測試在 HEAD 掛住（超過 300 秒）：deadline 殺掉 `git fetch` 後，`git-remote-https` 孫程序仍握著繼承的 stderr 管線，`exec.Cmd.Wait` 無限等待。修正：三個子程序設定 `WaitDelay` 2 秒。這是 SC-B6 失敗模型「探測對無回應遠端無限等待」在真 git 下的實例，原本的假 git 測試無法觸發。既有 `ListRefs` 的 `git ls-remote` 同樣未設 `WaitDelay`，屬本變更之外，記入 honest notes。
+- 2026-09-14 — v2 → v3（round 4，squad after-implement 於 a3ce3b1）：紀錄 `.scratch/marketplace-check-outdated/squad/after-implement.md`。class 1 已修（測試改為情境同名；補 SC-C1 宣告 tag 消失的測試）。class 2 三項由使用者裁定，原話：D-d「三個子程序加 LC_ALL=C」、D-e「全空白視為非 display version」、D-f「無候選 tag 時 Current 維持 --」。新增 SC-B20、SC-B21，SC-C3 補 Current 斷言，SC-D4 增第八個 mutant。parsePackages 順序疑慮以 oracle yml_schema.py:1303-1310 駁回。v2 的核准不涵蓋本輪新增，v3 重新送審。
