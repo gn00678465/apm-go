@@ -276,7 +276,7 @@ func marketplaceCheckCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, src, err := authoring.LoadAuthoringConfig(".")
 			if err != nil {
-				return err
+				return configLoadError(err)
 			}
 			if src == authoring.ConfigSourceLegacy {
 				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
@@ -331,6 +331,19 @@ func marketplaceCheckCmd() *cobra.Command {
 	return cmd
 }
 
+// configLoadError maps LoadAuthoringConfig's outcomes onto the Oracle's
+// _load_config_or_exit exit codes (commands/marketplace/__init__.py:
+// 148-172): "no config" and "both files" keep their bare message and exit
+// 1; every other MarketplaceYmlError is a validation failure, printed as
+// "marketplace config error: <msg>" with exit 2. Shared by check and
+// outdated (the two commands that go through _load_config_or_exit).
+func configLoadError(err error) error {
+	if authoring.IsConfigValidationError(err) {
+		return withExitCode(2, fmt.Errorf("marketplace config error: %w", err))
+	}
+	return err
+}
+
 // checkBoolSymbol renders one Entry Health Check boolean cell.
 func checkBoolSymbol(ok bool) string {
 	if ok {
@@ -363,7 +376,7 @@ func marketplaceOutdatedCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, src, err := authoring.LoadAuthoringConfig(".")
 			if err != nil {
-				return err
+				return configLoadError(err)
 			}
 			if src == authoring.ConfigSourceLegacy {
 				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")

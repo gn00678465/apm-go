@@ -61,13 +61,29 @@ func IsNoConfigError(err error) bool {
 	return errors.Is(err, errNoMarketplaceConfig)
 }
 
-// IsConfigValidationError reports whether err is a LoadAuthoringConfig
-// validation failure -- the Oracle's MarketplaceYmlError family that
-// _load_config_or_exit (commands/marketplace/__init__.py:148-172) exits 2
-// for, as opposed to the two exit-1 outcomes (no config, both files).
-// RED stub: returns false until SPEC marketplace-check-outdated SC-A6 lands.
+// ConfigValidationError marks a LoadAuthoringConfig failure that is the
+// Oracle's MarketplaceYmlError family -- schema/shape violations of the
+// config that was found -- as opposed to the two "which file" sentinels
+// above. Error() is the bare Oracle text: the command layer decides the
+// prefix and exit code (_load_config_or_exit, commands/marketplace/
+// __init__.py:148-172, exits 2 with "marketplace config error: <msg>"),
+// and doctor truncates the bare text (doctor.py:240).
+type ConfigValidationError struct{ Err error }
+
+func (e *ConfigValidationError) Error() string { return e.Err.Error() }
+func (e *ConfigValidationError) Unwrap() error { return e.Err }
+
+// IsConfigValidationError reports whether err carries a ConfigValidationError.
 func IsConfigValidationError(err error) bool {
-	return false
+	var v *ConfigValidationError
+	return errors.As(err, &v)
+}
+
+func asConfigValidationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ConfigValidationError{Err: err}
 }
 
 // IsConfigsMutuallyExclusiveError reports whether err is LoadAuthoringConfig's
@@ -225,7 +241,7 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 
 	apmRoot, apmBlock, err := loadApmMarketplaceBlock(apmPath)
 	if err != nil {
-		return nil, ConfigSourceApmYML, err
+		return nil, ConfigSourceApmYML, asConfigValidationError(err)
 	}
 
 	// On a parse/validation error the returned ConfigSource still names the
@@ -243,17 +259,17 @@ func LoadAuthoringConfig(dir string) (*AuthoringConfig, ConfigSource, error) {
 		}
 		cfg, err := parseAuthoringNode(apmBlock, inherited, false)
 		if err != nil {
-			return nil, ConfigSourceApmYML, err
+			return nil, ConfigSourceApmYML, asConfigValidationError(err)
 		}
 		return cfg, ConfigSourceApmYML, nil
 	case legacyExists:
 		root, err := loadYAMLRoot(legacyPath)
 		if err != nil {
-			return nil, ConfigSourceLegacy, err
+			return nil, ConfigSourceLegacy, asConfigValidationError(err)
 		}
 		cfg, err := parseAuthoringNode(root, topLevelFields{}, true)
 		if err != nil {
-			return nil, ConfigSourceLegacy, err
+			return nil, ConfigSourceLegacy, asConfigValidationError(err)
 		}
 		return cfg, ConfigSourceLegacy, nil
 	default:
@@ -593,9 +609,25 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 	}
 
 	entries := make([]PackageEntry, 0, len(v.Content))
+	// seenNames: yml_schema.py:1303-1310 rejects a case-insensitive duplicate
+	// as each entry is parsed, so a duplicate at index 1 is reported before a
+	// schema error at index 2. authoring.DuplicatePackageNames and doctor's
+	// own duplicate check stay as defence-in-depth behind this, exactly as
+	// the Oracle's _warn_duplicate_names does behind its loader.
+	seenNames := make(map[string]int, len(v.Content))
 	for i, item := range v.Content {
 		if item.Kind != yaml.MappingNode {
 			return nil, fmt.Errorf("marketplace.packages[%d] must be a mapping", i)
+		}
+		// yml_schema.py:443-456 _require_str: an absent (or null) key is
+		// "is required"; a present but empty value is "must be a non-empty
+		// string". name and source are the two required keys (:840-845).
+		name, err := requireNonEmptyString(item, "name", i)
+		if err != nil {
+			return nil, err
+		}
+		if sourceNode := mappingValue(item, "source"); sourceNode == nil || isNullNode(sourceNode) {
+			return nil, fmt.Errorf("'packages[%d].source' is required", i)
 		}
 		source := scalarString(item, "source")
 		// B-BLOCKING (2026-07-31): this used to only validate a non-empty
@@ -613,6 +645,15 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 		if err := manifest.ValidateMarketplaceSource(source); err != nil {
 			return nil, fmt.Errorf("marketplace.packages[%d]: %w", i, err)
 		}
+		version := scalarString(item, "version")
+		ref := scalarString(item, "ref")
+		// yml_schema.py:866-873: a remote package must pin something; a
+		// local ("./") package skips git resolution so the rule does not
+		// apply. Without this, check/outdated silently passed an entry
+		// that pack would emit with neither ref nor sha.
+		if !isLocalPackageSource(source) && version == "" && ref == "" {
+			return nil, fmt.Errorf("packages[%d] ('%s'): remote packages require at least one of 'version' or 'ref'", i, name)
+		}
 		// Upstream v0.27.0 yml_schema.py:863 validates a present
 		// packages[N].tag_pattern; an absent key stays "" and inherits
 		// build.tagPattern (or tagpattern.Compile's default) downstream.
@@ -627,12 +668,17 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 			}
 			tagPattern = validated
 		}
+		lowerName := strings.ToLower(name)
+		if first, dup := seenNames[lowerName]; dup {
+			return nil, fmt.Errorf("Duplicate package name '%s' (packages[%d] and packages[%d])", name, first, i)
+		}
+		seenNames[lowerName] = i
 		entries = append(entries, PackageEntry{
-			Name:              scalarString(item, "name"),
+			Name:              name,
 			Description:       scalarString(item, "description"),
 			Source:            source,
-			Version:           scalarString(item, "version"),
-			Ref:               scalarString(item, "ref"),
+			Version:           version,
+			Ref:               ref,
 			Subdir:            scalarString(item, "subdir"),
 			TagPattern:        tagPattern,
 			Tags:              mergeTagsKeywords(item),
@@ -645,6 +691,22 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 		})
 	}
 	return entries, nil
+}
+
+// requireNonEmptyString mirrors yml_schema.py:443-456 _require_str for a
+// packages[i] key: absent or null -> "is required"; present but not a
+// non-empty scalar -> "must be a non-empty string". The value is trimmed
+// like the Oracle's .strip().
+func requireNonEmptyString(item *yaml.Node, key string, i int) (string, error) {
+	v := mappingValue(item, key)
+	if v == nil || isNullNode(v) {
+		return "", fmt.Errorf("'packages[%d].%s' is required", i, key)
+	}
+	s := strings.TrimSpace(scalarString(item, key))
+	if v.Kind != yaml.ScalarNode || s == "" {
+		return "", fmt.Errorf("'packages[%d].%s' must be a non-empty string", i, key)
+	}
+	return s, nil
 }
 
 // mergeTagsKeywords implements the tags+keywords merge rule documented on
