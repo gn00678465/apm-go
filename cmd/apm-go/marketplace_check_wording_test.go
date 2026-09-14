@@ -61,7 +61,7 @@ func TestMarketplaceCheck_Verbose_PrintsResolvingLines(t *testing.T) {
 	})
 }
 
-func TestMarketplaceCheck_Offline_DetailWording(t *testing.T) {
+func TestMarketplaceCheck_Wording_MatchesOracle(t *testing.T) {
 	chdirTemp(t)
 	writeCheckFixture(t, "    - name: tool\n      source: owner/repo\n      ref: "+strings.Repeat("a", 40)+"\n")
 

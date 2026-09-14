@@ -82,7 +82,7 @@ func TestMarketplaceOutdated_ShaPinWithVersion_RowThroughCLI(t *testing.T) {
 	}
 }
 
-func TestMarketplaceOutdated_NoteWording_MatchesOracle(t *testing.T) {
+func TestMarketplaceOutdated_Wording_MatchesOracle(t *testing.T) {
 	chdirTemp(t)
 	writeOutdatedFixture(t, "    - name: tool\n      source: owner/repo\n      ref: v1.0.0\n")
 

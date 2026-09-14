@@ -64,6 +64,17 @@ func TestOutdatedPackages_ShaPinWithVersion_NewerTag_Upgradable(t *testing.T) {
 	})
 }
 
+// SC-C1 design text: LatestInRange is the declared version's own tag only
+// when the remote still has it; a retagged remote leaves it "--" while the
+// upgrade verdict still comes from the highest tag.
+func TestOutdatedPackages_ShaPinWithVersion_DeclaredTagMissing(t *testing.T) {
+	lister := mapRefLister{refs: []semver.TagInfo{headRef(shaC), tagRef("v1.1.0", shaB), tagRef("v1.2.0", shaC)}}
+
+	r := outdatedRow(t, nil, PackageEntry{Name: "tool", Source: "owner/repo", Ref: shaA, Version: "1.0.0"}, lister, false)
+
+	assertRow(t, r, "v1.0.0", "--", "v1.2.0", "[!]", "", true)
+}
+
 // ── SC-C2 ────────────────────────────────────────────────────────────────
 
 func TestOutdatedPackages_ShaPinWithVersion_UpToDate(t *testing.T) {

@@ -13,3 +13,4 @@ internal/marketplace/authoring/refcheck.go	return fail(true, len(candidates) > 0
 internal/marketplace/tagpattern/tagpattern.go	if name == "" && strings.Contains(pattern, "{name}") {	if false {	TestInfer_WithoutPackageName_SkipsNameLayouts	./internal/marketplace/authoring/
 cmd/apm-go/marketplace_authoring.go	if h, repoPath := authoring.SplitHostFromSource(source); h != "" {	if h, repoPath := authoring.SplitHostFromSource(source); h == "" {	TestResolvingLabel	./cmd/apm-go/
 # 2026-09-14 addendum (multi-line anchor, proved 1/1): refcheck_sha.go fetch-timeout branch removed -> TestFetchRefIntoScratch_UnresponsiveRemote_TimesOut fails ('exit status 1' instead of 'timed out')
+# addendum: refcheck.go 'if c.tag == row.Current {' -> 'if true {' -> TestOutdatedPackages_ShaPinWithVersion_DeclaredTagMissing fails (proved 1/1)
