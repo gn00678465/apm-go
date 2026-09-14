@@ -44,7 +44,7 @@ $env:APM_GO_VERSION = "0.2.1"; irm https://raw.githubusercontent.com/gn00678465/
 curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | sh
 ```
 
-Installs to `~/.local/bin` (appends to `~/.profile` if that directory is not on PATH). To pin a version:
+Installs to `~/.local/bin` and, if that directory is not on PATH, appends it to your login shell's profile file (`~/.zprofile` for zsh, `~/.bash_profile` when bash already has one, `~/.profile` otherwise). To pin a version:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | APM_GO_VERSION=0.2.1 sh

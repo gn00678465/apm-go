@@ -44,7 +44,7 @@ $env:APM_GO_VERSION = "0.2.1"; irm https://raw.githubusercontent.com/gn00678465/
 curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | sh
 ```
 
-安裝到 `~/.local/bin`（若該目錄不在 PATH，會附加至 `~/.profile`）。指定版本：
+安裝到 `~/.local/bin`。若該目錄不在 PATH，會附加至登入 shell 的 profile 檔（zsh 為 `~/.zprofile`；bash 已有 `~/.bash_profile` 時用該檔；其餘為 `~/.profile`）。指定版本：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | APM_GO_VERSION=0.2.1 sh

@@ -6,7 +6,8 @@ set -e
 # Downloads the apm-go binary for this platform from GitHub Releases,
 # verifies its SHA256 checksum, installs it to ~/.local/bin, and
 # ensures that directory is on PATH (idempotently appends to the login
-# shell's profile file: ~/.zprofile for zsh, ~/.profile otherwise).
+# shell's profile file: ~/.zprofile for zsh; for bash the first existing
+# of ~/.bash_profile / ~/.bash_login / ~/.profile; ~/.profile otherwise).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | sh
@@ -112,10 +113,24 @@ chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
 # Pick the profile file the user's login shell actually reads (issue #17):
 # zsh (macOS default, and zsh-on-Linux/WSL) never reads ~/.profile -- it
-# reads ~/.zprofile for login shells. bash/sh keep ~/.profile.
+# reads ~/.zprofile for login shells. A bash login shell reads only the
+# FIRST existing file of ~/.bash_profile, ~/.bash_login, ~/.profile, and
+# Arch Linux's /etc/skel ships ~/.bash_profile for every new user, so a
+# line appended to ~/.profile there is never read. Other shells (sh/dash,
+# Debian's default) read ~/.profile.
+PROFILE_FILE="$HOME/.profile"
 case "${SHELL:-}" in
-    */zsh) PROFILE_FILE="$HOME/.zprofile" ;;
-    *)     PROFILE_FILE="$HOME/.profile" ;;
+    */zsh)
+        PROFILE_FILE="$HOME/.zprofile"
+        ;;
+    */bash)
+        for f in "$HOME/.bash_profile" "$HOME/.bash_login"; do
+            if [ -f "$f" ]; then
+                PROFILE_FILE="$f"
+                break
+            fi
+        done
+        ;;
 esac
 PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
 
