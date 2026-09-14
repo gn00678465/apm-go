@@ -18,4 +18,4 @@ dup-name-case-sensitive	internal/marketplace/authoring/schema.go	lowerName := st
 tip-compare-inverted	internal/marketplace/authoring/refcheck.go	if tip == pkg.Ref {	if tip != pkg.Ref {
 current-render-ignores-pattern	internal/marketplace/authoring/refcheck.go	tagpattern.RenderTag(usedPattern, pkg.Name, strings.TrimSpace(pkg.Version))	tagpattern.RenderTag(usedPattern[:0]+"v{version}", pkg.Name, strings.TrimSpace(pkg.Version))
 version-mismatch-ignored	internal/marketplace/authoring/refcheck.go	if manifestVersion != "" && semver.StripVPrefix(manifestVersion) != semver.StripVPrefix(strings.TrimSpace(pkg.Version)) {	if false {
-probe-error-unsanitized	internal/marketplace/authoring/refcheck_sha.go	gitops.SanitizeGitOutput(strings.TrimSpace(string(out)))	strings.TrimSpace(string(out))
+probe-error-unsanitized	internal/marketplace/authoring/refcheck_sha.go	gitops.SanitizeGitOutput(gitFailureText(string(out), err))	gitFailureText(string(out), err)
