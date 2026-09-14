@@ -3,7 +3,8 @@
 - `scope`: marketplace-check-outdated
 - `spec`: specs/marketplace-check-outdated/SPEC.md
 - `cap`: two rounds（預設）
-- `verdict`: passed（round 2）
+- `final_verdict`: passed
+- `final_verdict_source_state`: f300338d96281d91dd488e27e289f8e662a2d06b（round 2）。之後唯一的產品變更是 internal/semver/semver.go 的 doc comment 位置（before-archive squad 的描述性修正，`git diff f300338 HEAD -- internal/` 只移動註解，不改程式碼）；該最終狀態由 gate 重跑覆蓋，未由 verifier 再驗證。
 
 ## Round 1
 
