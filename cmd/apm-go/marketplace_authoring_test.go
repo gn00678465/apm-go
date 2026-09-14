@@ -1086,7 +1086,7 @@ func TestMarketplaceOutdated_NoMatchingTags_DoesNotExitNonZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace outdated returned error for \"no matching tags found\": %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "tool") || !strings.Contains(out, ux.SymbolWarn) || !strings.Contains(out, "no matching tags") {
+	if !strings.Contains(out, "tool") || !strings.Contains(out, ux.SymbolWarn) || !strings.Contains(out, "No matching tags found") {
 		t.Errorf("output = %q, want a %s row noting no matching tags", out, ux.SymbolWarn)
 	}
 }

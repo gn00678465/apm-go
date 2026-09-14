@@ -1112,8 +1112,10 @@ func TestOutdatedPackages_IconBang_NoMatchingTagsFound_DoesNotCountTowardExit1(t
 	if rows[0].Upgradable {
 		t.Error("Upgradable = true, want false: \"no matching tags found\" must NOT count toward exit 1 (mkt-042 修訂版)")
 	}
-	if !strings.Contains(rows[0].Note, "no matching tags") {
-		t.Errorf("Note = %q, want it to mention no matching tags", rows[0].Note)
+	// SPEC marketplace-check-outdated SC-C9: the Oracle's note text
+	// (outdated.py:101) verbatim.
+	if rows[0].Note != "No matching tags found" {
+		t.Errorf("Note = %q, want \"No matching tags found\"", rows[0].Note)
 	}
 }
 
