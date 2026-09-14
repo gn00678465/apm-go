@@ -1,7 +1,7 @@
 # SPEC — marketplace check / outdated 缺口修正與 SHA 釘選支援 (Tier 3)
 
 - `spec_version`: v4
-- `status`: approved
+- `status`: shipped
 - `tier`: 3
 - `scope`: marketplace-check-outdated
 - `base_ref`: main (bf18093)
