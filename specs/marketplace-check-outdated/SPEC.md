@@ -1,7 +1,7 @@
 # SPEC — marketplace check / outdated 缺口修正與 SHA 釘選支援 (Tier 3)
 
 - `spec_version`: v2
-- `status`: draft
+- `status`: approved
 - `tier`: 3
 - `scope`: marketplace-check-outdated
 - `base_ref`: main (bf18093)
@@ -133,7 +133,7 @@ Current 欄的來源：以有效 tag_pattern（設定值，零匹配時套 SC-B9
 
 ## Approval
 
-（待 v2 送審）
+- 2026-09-14 — approves v2 — "核准 v2"（AskUserQuestion 結構化回覆，問題明示 commit 98fd72c 與 Setup plan 授權範圍）
 
 ## Revisions
 
