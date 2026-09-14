@@ -645,8 +645,14 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 		if err := manifest.ValidateMarketplaceSource(source); err != nil {
 			return nil, fmt.Errorf("marketplace.packages[%d]: %w", i, err)
 		}
-		version := scalarString(item, "version")
-		ref := scalarString(item, "ref")
+		version, err := optionalNonEmptyString(item, "version", i)
+		if err != nil {
+			return nil, err
+		}
+		ref, err := optionalNonEmptyString(item, "ref", i)
+		if err != nil {
+			return nil, err
+		}
 		// yml_schema.py:866-873: a remote package must pin something; a
 		// local ("./") package skips git resolution so the rule does not
 		// apply. Without this, check/outdated silently passed an entry
@@ -704,6 +710,21 @@ func requireNonEmptyString(item *yaml.Node, key string, i int) (string, error) {
 	}
 	s := strings.TrimSpace(scalarString(item, key))
 	if v.Kind != yaml.ScalarNode || s == "" {
+		return "", fmt.Errorf("'packages[%d].%s' must be a non-empty string", i, key)
+	}
+	return s, nil
+}
+
+// optionalNonEmptyString mirrors yml_schema.py:853-862 for version and ref:
+// an absent or null key is unset (""), a present value is stripped, and a
+// present value that strips to nothing is rejected.
+func optionalNonEmptyString(item *yaml.Node, key string, i int) (string, error) {
+	v := mappingValue(item, key)
+	if v == nil || isNullNode(v) {
+		return "", nil
+	}
+	s := strings.TrimSpace(scalarString(item, key))
+	if s == "" {
 		return "", fmt.Errorf("'packages[%d].%s' must be a non-empty string", i, key)
 	}
 	return s, nil
