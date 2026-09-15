@@ -60,3 +60,9 @@ Each row is a run observed before the corresponding GREEN commit. Commands ran w
 - scenario: apm.yml with `name: 123`, `source: owner/repo`, `ref: main`; `marketplace check --offline`.
 - binary built from 8d0e288 (before GREEN D): printed the table with `No cached refs (offline)` and ` x 1 entries have issues`, exit 1 — the new step (expects exit 2) would fail.
 - binary built from f7cd029: ` x marketplace config error: 'packages[0].name' must be a non-empty string`, exit 2.
+
+## Gate follow-up — changed-line coverage (gate run 2 at eb59560: 41/45)
+
+- uncovered: refcheck_sha.go:295 (StdoutPipe error return; unreachable — Stdout unset and not started), :298 (Start error return; reachable), :319 (non-cap read error after a clean Wait; unreachable with a real git), :341 (readCapped read error return).
+- refactor (no behaviour change for callers, which check err before data): the StdoutPipe and Start errors share one return; `showAtFetchHead` returns `data, readErr`; `readCapped` returns `data, err` and only reports the cap when the read succeeded.
+- new edge test `TestShowAtFetchHead_GitNotStartable_Errors` (fixes_read_capped_edges_test.go): PASS against the implementation. Observed failing against a throwaway mutant in a scratch copy — `return nil, fmt.Errorf("git show %s: %w", relPath, err)` → `return nil, nil` — output `showAtFetchHead = "", <nil>; want a git show error and no data`. Mutant recorded in throwaway-mutants.txt; not added to tools/gate/mutants.txt.
