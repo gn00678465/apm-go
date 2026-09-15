@@ -61,7 +61,7 @@
 ### B. manifest 讀取上限
 
 - SC-F3 `ReadCapped_StopsAtLimit`（RED，函式不存在，編譯失敗）：有限計數 reader 可交出 N+1000 位元組。`readCapped(r, N)` 在 goroutine 內執行，測試以 `time.After(5s)` 設期限。expect 回錯誤、reader 被讀取的位元組數 ≤ N+1。子測試：恰為 N 位元組 → 回傳完整內容、無錯誤。
-- SC-F4 `ShowAtFetchHead_Oversized_StopsBeforeTimeout`（RED）：`listRefsTimeout` 設為 3s；RG commit 的 `.claude-plugin/plugin.json` 大小為 `manifestReadMaxBytes` 的 8 倍。expect 錯誤含 `exceeds`、不含 `timed out`，耗時 < 3s，暫存目錄已移除。子測試 apm-yml：無 plugin.json、`apm.yml` 超限，結果相同。
+- SC-F4 `ShowAtFetchHead_Oversized_StopsBeforeTimeout`（回歸；依下方註改標，見 Revisions）：`listRefsTimeout` 設為 3s；RG commit 的 `.claude-plugin/plugin.json` 大小為 `manifestReadMaxBytes` 的 8 倍。expect 錯誤含 `exceeds`、不含 `timed out`，耗時 < 3s，暫存目錄已移除。子測試 apm-yml：無 plugin.json、`apm.yml` 超限，結果相同。
   - 註：在 3bf13db，此測試的斷言可能因整檔讀完仍 < 3s 而通過。若 RED 階段觀察到通過，改以 `manifestReadMaxBytes` 的 64 倍檔案重試並記錄；仍通過則把 SC-F4 改標回歸，RED 由 SC-F3 承擔，記入 Revisions。
 - SC-F5 `FetchManifestVersion_ManifestAtLimit_Reads`（回歸）：大小恰為上限的合法 JSON 可讀出 version。與既有 `TestGitManifestVersionFetcher_OversizedManifest_Errors` 合起來固定 `>` 的邊界。
 - SC-F16 `NewShowCmd_ShapeAndSecureEnv`（RED，函式不存在）：斷言命令為 `git -C <dir> show FETCH_HEAD:<path>`，Env 含 `GIT_TERMINAL_PROMPT=0` 等 `ApplySecureGitEnv` 鍵與 `LC_ALL=C`，`WaitDelay == subprocessWaitDelay`。
@@ -168,3 +168,4 @@
 - 2026-09-15 — v0.1 → v1：after-spec squad 四個 lens（scope、input space、repo reality、test mapping）的 findings 折入，紀錄 `.scratch/marketplace-check-outdated-fixes/squad/after-spec.md`。更正：SC-F13 期望值與 oracle 相反（改為兩個子測試）；使用者原話的編號（「第 3 項」而非「第 6 項」，加對照表）；SC-F3 改用有限 reader 並命名函式；SC-F4、SC-F5 重新設計或標回歸；D-f 補 offline 與 ListRefs 失敗路徑；source 型別檢查保留空字串既有訊息；沿用原 SPEC Must NOT；既有 mutant 錨點更新規則；SC-F15 加 `--offline`；測試檔配置配合 red.sh；每個情境標 RED／回歸。新增 SC-F16..F19。v0.1 的 D-1（gate scope）以 D-a 設計解消除。新增待決定 D-1（字串判準）、D-2（tip 路徑 Current）、D-3（v 前綴規則）。
 - 2026-09-15 — v1 → v2：寫入使用者對 D-1、D-2、D-3 的裁定（皆為建議項，原話見各決定）。使用者對 v1 的核准回覆為「不核准，先修改」，未附修改內容；本版只記錄三項裁定，情境、Must NOT、Setup plan 未改。
 - 2026-09-15 — 版本編號更正：7112da6 在 D-1..D-3 未定案時標為「v1」，7abf1e5 在未核准時升為「v2」，兩者都違反 evidence-first 規則（`~/.agents/workflows/evidence-first.md:56-63,109-110`：核准前草稿為 v0.N，v1 是待決定事項清空後第一個送核准的版本，只有推翻已核准內容才升版）。兩個 commit 皆為未核准草稿。本 commit 起的內容才是 v1；核准紀錄以 commit hash 綁定。內容與 7abf1e5 相同，只改編號。
+- 2026-09-15 — 依 SC-F4 註執行（非 SPEC 變更，SPEC 已預先授權）：在修正前的程式碼（e02bf35 的暫存 worktree）執行 SC-F4，上限 8 倍（2.00s）與 64 倍（6.22s）皆 PASS，因為修正前的讀取在 3s 期限內讀完整檔後仍報 `exceeds`。SC-F4 改標回歸，移到 `fixes_read_capped_regression_test.go`；讀取上限的 RED 由 SC-F3（`readCapped` 不存在，編譯失敗）承擔。SC-F5 在同一 worktree PASS（回歸，符合預期）。
