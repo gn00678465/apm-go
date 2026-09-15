@@ -173,7 +173,7 @@
 ## Approval
 
 - 2026-09-15 — approves v1 — "核准 v1"（AskUserQuestion 結構化回覆，問題明示 commit 5760b0c 與內容來源 7abf1e5）
-- （v2 待核准）
+- 2026-09-16 — v2 approval: not obtained — 使用者對核准問題的回覆原話：「用戶之前已經說得很清楚功能要什麼, 為什麼還有一堆問題????」。未核准也未否決；orchestrator 依原始要求（修 Codex 找到的缺陷、其他行為不變）繼續實作 v2，記為流程降級。
 
 ## Revisions
 
