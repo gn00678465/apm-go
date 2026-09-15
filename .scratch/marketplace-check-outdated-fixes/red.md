@@ -24,3 +24,13 @@ Each row is a run observed before the corresponding GREEN commit. Commands ran w
 - SC-F4 and SC-F5 observed separately in a throwaway worktree at e02bf35 with only those test bodies added:
   - SC-F5: PASS 0.73s (regression, as planned).
   - SC-F4 at 8× cap: PASS 2.00s. Retried at 64× cap per the SPEC note: PASS 6.22s. The pre-fix read finishes the whole file inside the 3s deadline and still reports `exceeds`, so SC-F4 cannot show RED. Relabelled regression per the SPEC note; RED for the cap is SC-F3.
+- GREEN 2d4671b: `go test -count=1 ./internal/marketplace/authoring/` ok 56.5s.
+
+## Group C — outdated Current and leading v
+
+- command (worktree, tests added on top of 2d4671b): `go test -count=1 -v -run 'TestOutdatedPackages_ShaPinWithVersion_NoCandidates_CurrentDashes|TestOutdatedPackages_ShaPinWithoutVersion_ErrorRows_CurrentDashes|TestOutdatedPackages_ShaPinWithVersion_LeadingV_SameAsBare' ./internal/marketplace/authoring/`
+- SC-F6 NoTags, Offline, ListRefsError: FAIL (Current is the 40-hex SHA from the current map).
+- SC-F6 RangeEntryKeepsMap (regression file): PASS.
+- SC-F17 Offline, ListRefsError, NoHEAD: FAIL (Current is the SHA).
+- SC-F8 NewerTag: FAIL `Current:"vv1.0.0" LatestInRange:"--"`; UpToDate: FAIL `Current:"vv1.0.0" LatestInRange:"--"`; NamePattern: FAIL `Current:"tool_vv1.0.0" LatestInRange:"--"`. LatestOverall, Status, Upgradable already matched the bare version.
+- SC-F7 (`go test -count=1 -v -run TestMarketplaceOutdated_ShaPin_NoTags_MarketplaceJson_OmitsSha ./cmd/apm-go/`): FAIL, the table row contains the SHA.
