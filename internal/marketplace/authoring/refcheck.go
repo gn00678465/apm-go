@@ -1018,12 +1018,13 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 	// A blank version is no version (SC-B21), so normalize once here.
 	version := strings.TrimSpace(pkg.Version)
 	shaPin := shaRefPattern.MatchString(pkg.Ref) && (version == "" || IsDisplayVersion(version))
-	// A SHA pin's Current comes only from comparing it with the remote, so a
-	// row that never got that far (offline, ls-remote error, no HEAD, no
-	// tags) shows "--" rather than the published SHA (SPEC
-	// marketplace-check-outdated-fixes D-f, D-2). Every other row keeps the
+	// A remote SHA pin's Current comes only from comparing it with the
+	// remote, so a row that never got that far (offline, ls-remote error, no
+	// HEAD, no tags) shows "--" rather than the published SHA (SPEC
+	// marketplace-check-outdated D-f; marketplace-check-outdated-fixes D-2).
+	// Every other row, a local package included (fixes D-4), keeps the
 	// published version, as outdated.py:92-103 does.
-	if current != "" && !shaPin {
+	if current != "" && (!shaPin || isLocalPackageSource(pkg.Source)) {
 		row.Current = current
 	}
 
@@ -1157,7 +1158,7 @@ func outdatedShaAgainstTags(row OutdatedRow, pkg PackageEntry, candidates []outd
 			break
 		}
 	}
-	if semver.CompareVersions(overall.version, strings.TrimSpace(pkg.Version)) > 0 {
+	if semver.CompareVersions(overall.version, semver.StripVPrefix(strings.TrimSpace(pkg.Version))) > 0 {
 		row.Status, row.Upgradable = "[!]", true
 		return row
 	}
@@ -1179,7 +1180,8 @@ type outdatedCandidate struct {
 // versionTagCandidates mirrors iter_semver_tags + _extract_tag_versions
 // (commands/marketplace/__init__.py, shared by check and outdated): only
 // refs/tags/ entries are considered (a branch named like a version is not
-// a release), a capture must parse as semver, prerelease captures are
+// a release), a capture must be an Oracle x.y.z version
+// (tagpattern.IsOracleVersion), prerelease captures are
 // dropped unless includePrerelease, and when the configured pattern
 // matches nothing the common layouts are inferred (tag_pattern.py
 // infer_tag_pattern_from_refs, #1504).

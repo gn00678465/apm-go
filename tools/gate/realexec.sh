@@ -241,6 +241,8 @@ mkt_yml '    - name: 123
 '
 step mkt-check-schema-name-type 2 "$BIN" marketplace check --offline
 must_grep mkt-check-schema-name-type "marketplace config error: 'packages\[0\].name' must be a non-empty string"
+step mkt-outdated-schema-name-type 2 "$BIN" marketplace outdated --offline
+must_grep mkt-outdated-schema-name-type "marketplace config error: 'packages\[0\].name' must be a non-empty string"
 mkt_yml '    - name: tool
       source: owner/repo
       ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
