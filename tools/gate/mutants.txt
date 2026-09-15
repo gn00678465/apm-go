@@ -21,3 +21,4 @@ current-render-ignores-pattern	internal/marketplace/authoring/refcheck.go	tagpat
 version-mismatch-ignored	internal/marketplace/authoring/refcheck.go	if manifestVersion != "" && semver.StripVPrefix(manifestVersion) != semver.StripVPrefix(strings.TrimSpace(pkg.Version)) {	if false {
 probe-error-unsanitized	internal/marketplace/authoring/refcheck_sha.go	gitops.SanitizeGitOutput(gitFailureText(string(out), err))	gitFailureText(string(out), err)
 locale-not-pinned	internal/marketplace/authoring/refcheck_sha.go	cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=C")	cmd.Env = append(cmd.Env, "LANGUAGE=C")
+manifest-read-uncapped	internal/marketplace/authoring/refcheck_sha.go	data, err := io.ReadAll(io.LimitReader(r, int64(max)+1))	data, err := io.ReadAll(r)

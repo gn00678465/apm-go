@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -286,24 +287,63 @@ func isRefNotOnRemote(stderr string) bool {
 func showAtFetchHead(dir, relPath string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), listRefsTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "show", "FETCH_HEAD:"+relPath)
-	gitops.ApplySecureGitEnv(cmd)
-	cmd.WaitDelay = subprocessWaitDelay
-	pinGitLocale(cmd)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	cmd := newShowCmd(ctx, dir, relPath)
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("git show %s: %w", relPath, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("git show %s: %w", relPath, err)
+	}
+	// The blob comes from the remote, so it is capped while it streams
+	// rather than after git has written all of it into memory (SPEC
+	// marketplace-check-outdated-fixes SC-F3).
+	data, readErr := readCapped(stdout, manifestReadMaxBytes)
+	if errors.Is(readErr, errReadCapExceeded) {
+		// Nothing drains the pipe any more, so git would block on a full
+		// pipe until the deadline; stop it before waiting.
+		cancel()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("%s at the pinned ref exceeds %d bytes", relPath, manifestReadMaxBytes)
+	}
+	if err := cmd.Wait(); err != nil {
 		msg := stderr.String()
 		if strings.Contains(msg, "does not exist in") || strings.Contains(msg, "exists on disk, but not in") {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("git show %s: %s", relPath, gitops.SanitizeGitOutput(strings.TrimSpace(msg)))
 	}
-	if stdout.Len() > manifestReadMaxBytes {
-		return nil, fmt.Errorf("%s at the pinned ref exceeds %d bytes", relPath, manifestReadMaxBytes)
+	if readErr != nil {
+		return nil, fmt.Errorf("git show %s: %w", relPath, readErr)
 	}
-	return stdout.Bytes(), nil
+	return data, nil
+}
+
+// newShowCmd builds `git -C <dir> show FETCH_HEAD:<relPath>` under the
+// secure environment, pinned to the C locale.
+func newShowCmd(ctx context.Context, dir, relPath string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "show", "FETCH_HEAD:"+relPath)
+	gitops.ApplySecureGitEnv(cmd)
+	cmd.WaitDelay = subprocessWaitDelay
+	pinGitLocale(cmd)
+	return cmd
+}
+
+var errReadCapExceeded = errors.New("read cap exceeded")
+
+// readCapped reads r to EOF but never more than max+1 bytes; one byte past
+// max is enough to know the input is over the cap.
+func readCapped(r io.Reader, max int) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, int64(max)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > max {
+		return nil, errReadCapExceeded
+	}
+	return data, nil
 }
 
 // IsDisplayVersion mirrors the Oracle's _is_display_version (builder.py /
