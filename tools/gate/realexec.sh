@@ -233,6 +233,14 @@ mkt_yml '    - name: Dup
 '
 step mkt-check-schema-dup 2 "$BIN" marketplace check
 must_grep mkt-check-schema-dup "Duplicate package name 'dup' (packages\[0\] and packages\[1\])"
+# SPEC marketplace-check-outdated-fixes SC-F15: a non-string name is a
+# schema error; --offline keeps a regression from reaching the network.
+mkt_yml '    - name: 123
+      source: owner/repo
+      ref: main
+'
+step mkt-check-schema-name-type 2 "$BIN" marketplace check --offline
+must_grep mkt-check-schema-name-type "marketplace config error: 'packages\[0\].name' must be a non-empty string"
 mkt_yml '    - name: tool
       source: owner/repo
       ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

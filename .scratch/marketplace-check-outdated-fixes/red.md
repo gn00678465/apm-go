@@ -53,3 +53,10 @@ Each row is a run observed before the corresponding GREEN commit. Commands ran w
 - SC-F12: FAIL — check did not pass (inference picked `{version}` from tag `1`).
 - SC-F13 CaptureRejected: FAIL — candidates `1.0.0` and `v1.2.0` (version `v1.2.0`) via `{version}`.
 - SC-F13 FallbackInfers: FAIL — `[{tag:v1.2.0 version:v1.2.0}] via "{version}"`. The SPEC labelled this subtest regression; it is RED. Label corrected in SPEC Revisions and the subtest placed in the RED file.
+- GREEN f7cd029: `go vet ./internal/marketplace/... ./internal/semver/...` clean; `go test -count=1 ./internal/marketplace/... ./internal/semver/... ./cmd/apm-go/...` all ok.
+
+## SC-F15 — realexec step
+
+- scenario: apm.yml with `name: 123`, `source: owner/repo`, `ref: main`; `marketplace check --offline`.
+- binary built from 8d0e288 (before GREEN D): printed the table with `No cached refs (offline)` and ` x 1 entries have issues`, exit 1 — the new step (expects exit 2) would fail.
+- binary built from f7cd029: ` x marketplace config error: 'packages[0].name' must be a non-empty string`, exit 2.
