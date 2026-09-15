@@ -43,3 +43,13 @@ Each row is a run observed before the corresponding GREEN commit. Commands ran w
 - SC-F9 Sequence (`name: [a]`): PASS before the fix. The existing ScalarNode check already rejected it with the same message. Listed under SC-F9 in the SPEC; it is a regression subtest, not RED.
 - SC-F18 Int: FAIL — message was `marketplace source "123" must be one of ...`; Sequence and Mapping: FAIL — message was `marketplace source is empty`.
 - SC-F19 (5 subtests) and SC-F10: PASS (regression).
+- GREEN 889cb92: `go test -count=1 ./internal/marketplace/authoring/` ok 49.3s; `go test -count=1 ./cmd/apm-go/... ./internal/marketplace/build/... ./internal/pack/...` all ok.
+
+## Group E — version grammar
+
+- oracle table check: `D:/Projects2/apm` at 8c2e0d9c, `git diff --quiet b75a02b1 HEAD -- src/apm_cli/marketplace/semver.py` → identical. `parse_semver` via importlib (with `sys.modules` registration, `PYTHONIOENCODING=utf-8`) returned the SC-F11 expectations for all 15 rows, including True for `'\u0661.\u0662.\u0663'` and `'1.2.3\n'` (the D-b deviation rows).
+- SC-F11 (`go test -count=1 ./internal/marketplace/tagpattern/`): build failed — `undefined: IsOracleVersion` (oracle_version_test.go:40).
+- command (worktree, tests added on top of 889cb92): `go test -count=1 -v -run 'TestCheckPackages_TagInference_RejectsShortVersions|TestVersionTagCandidates_VPrefixedCapture' ./internal/marketplace/authoring/`
+- SC-F12: FAIL — check did not pass (inference picked `{version}` from tag `1`).
+- SC-F13 CaptureRejected: FAIL — candidates `1.0.0` and `v1.2.0` (version `v1.2.0`) via `{version}`.
+- SC-F13 FallbackInfers: FAIL — `[{tag:v1.2.0 version:v1.2.0}] via "{version}"`. The SPEC labelled this subtest regression; it is RED. Label corrected in SPEC Revisions and the subtest placed in the RED file.
