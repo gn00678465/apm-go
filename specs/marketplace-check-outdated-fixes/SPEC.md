@@ -1,6 +1,6 @@
 # SPEC — marketplace check / outdated review 缺陷修正 (Tier 3)
 
-- `spec_version`: v2
+- `spec_version`: v1
 - `status`: draft
 - `tier`: 3
 - `scope`: marketplace-check-outdated-fixes
@@ -167,3 +167,4 @@
 - 2026-09-15 — v0.1 草稿（3bf13db）。
 - 2026-09-15 — v0.1 → v1：after-spec squad 四個 lens（scope、input space、repo reality、test mapping）的 findings 折入，紀錄 `.scratch/marketplace-check-outdated-fixes/squad/after-spec.md`。更正：SC-F13 期望值與 oracle 相反（改為兩個子測試）；使用者原話的編號（「第 3 項」而非「第 6 項」，加對照表）；SC-F3 改用有限 reader 並命名函式；SC-F4、SC-F5 重新設計或標回歸；D-f 補 offline 與 ListRefs 失敗路徑；source 型別檢查保留空字串既有訊息；沿用原 SPEC Must NOT；既有 mutant 錨點更新規則；SC-F15 加 `--offline`；測試檔配置配合 red.sh；每個情境標 RED／回歸。新增 SC-F16..F19。v0.1 的 D-1（gate scope）以 D-a 設計解消除。新增待決定 D-1（字串判準）、D-2（tip 路徑 Current）、D-3（v 前綴規則）。
 - 2026-09-15 — v1 → v2：寫入使用者對 D-1、D-2、D-3 的裁定（皆為建議項，原話見各決定）。使用者對 v1 的核准回覆為「不核准，先修改」，未附修改內容；本版只記錄三項裁定，情境、Must NOT、Setup plan 未改。
+- 2026-09-15 — 版本編號更正：7112da6 在 D-1..D-3 未定案時標為「v1」，7abf1e5 在未核准時升為「v2」，兩者都違反 evidence-first 規則（`~/.agents/workflows/evidence-first.md:56-63,109-110`：核准前草稿為 v0.N，v1 是待決定事項清空後第一個送核准的版本，只有推翻已核准內容才升版）。兩個 commit 皆為未核准草稿。本 commit 起的內容才是 v1；核准紀錄以 commit hash 綁定。內容與 7abf1e5 相同，只改編號。
