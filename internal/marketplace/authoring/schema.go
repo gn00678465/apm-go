@@ -626,8 +626,14 @@ func parsePackages(node *yaml.Node) ([]PackageEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		if sourceNode := mappingValue(item, "source"); sourceNode == nil || isNullNode(sourceNode) {
+		sourceNode := mappingValue(item, "source")
+		if sourceNode == nil || isNullNode(sourceNode) {
 			return nil, fmt.Errorf("'packages[%d].source' is required", i)
+		}
+		// Only the type is checked here: an empty string still gets
+		// ValidateMarketplaceSource's own message below.
+		if !isStringNode(sourceNode) {
+			return nil, fmt.Errorf("'packages[%d].source' must be a non-empty string", i)
 		}
 		source := scalarString(item, "source")
 		// B-BLOCKING (2026-07-31): this used to only validate a non-empty
@@ -709,10 +715,20 @@ func requireNonEmptyString(item *yaml.Node, key string, i int) (string, error) {
 		return "", fmt.Errorf("'packages[%d].%s' is required", i, key)
 	}
 	s := strings.TrimSpace(scalarString(item, key))
-	if v.Kind != yaml.ScalarNode || s == "" {
+	if !isStringNode(v) || s == "" {
 		return "", fmt.Errorf("'packages[%d].%s' must be a non-empty string", i, key)
 	}
 	return s, nil
+}
+
+// isStringNode reports whether v is a scalar the YAML 1.2 resolver types as
+// a string -- the stand-in for the Oracle's isinstance(value, str). PyYAML
+// resolves YAML 1.1, so `yes` (a string here, a bool there) and `0o17` (an
+// int here, a string there) differ; apm-go keeps its own loader's typing
+// because the editor writes `name: yes` unquoted (SPEC
+// marketplace-check-outdated-fixes decision D-1).
+func isStringNode(v *yaml.Node) bool {
+	return v.Kind == yaml.ScalarNode && v.ShortTag() == "!!str"
 }
 
 // optionalNonEmptyString mirrors yml_schema.py:853-862 for version and ref:
