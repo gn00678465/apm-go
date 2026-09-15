@@ -895,13 +895,23 @@ func checkPackage(dir string, cfg *AuthoringConfig, pkg PackageEntry, deps Check
 	return pass
 }
 
-// refMatches mirrors check.py:151-157 -- a pin matches an advertised ref by
-// stripped name or by full ref name -- plus the apm-go-only commit-column
-// match that lets a tag/tip SHA pass without a probe.
+// refMatches mirrors check.py:166-174 (b75a02b1) -- a pin matches an
+// advertised ref by stripped name or by full ref name -- except for a
+// lowercase 40-hex pin, which apm-go-only matches on the commit column
+// alone: a branch or tag merely *named* like the SHA says nothing about
+// whether that commit exists, so it must not spare the probe (SPEC
+// marketplace-check-outdated-fixes SC-F1).
 func refMatches(refs []semver.TagInfo, ref string) bool {
-	isSHA := shaRefPattern.MatchString(ref)
+	if shaRefPattern.MatchString(ref) {
+		for _, r := range refs {
+			if r.Commit == ref {
+				return true
+			}
+		}
+		return false
+	}
 	for _, r := range refs {
-		if r.Name == ref || (r.Ref != "" && r.Ref == ref) || (isSHA && r.Commit == ref) {
+		if r.Name == ref || (r.Ref != "" && r.Ref == ref) {
 			return true
 		}
 	}
