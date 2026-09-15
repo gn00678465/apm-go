@@ -25,3 +25,4 @@ manifest-read-uncapped	internal/marketplace/authoring/refcheck_sha.go	data, err 
 current-map-kept-on-no-candidates	internal/marketplace/authoring/refcheck.go	if current != "" && !shaPin {	if current != "" {
 leading-v-not-stripped	internal/marketplace/authoring/refcheck.go	tagpattern.RenderTag(usedPattern, pkg.Name, semver.StripVPrefix(version))	tagpattern.RenderTag(usedPattern, pkg.Name, version)
 name-tag-unchecked	internal/marketplace/authoring/schema.go	return v.Kind == yaml.ScalarNode && v.ShortTag() == "!!str"	return v.Kind == yaml.ScalarNode
+oracle-grammar-loosened	internal/marketplace/tagpattern/tagpattern.go	return oracleVersionRe.MatchString(s)	return s != ""

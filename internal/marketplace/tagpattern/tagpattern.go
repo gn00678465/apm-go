@@ -140,10 +140,24 @@ var DefaultPatterns = []string{
 	"{name}-v{version}",
 }
 
+// oracleVersionRe is the Oracle's _SEMVER_RE (marketplace/semver.py:34-38),
+// the grammar tag_pattern.py's version capture and iter_semver_tags accept.
+// Digits are ASCII and $ is end of text: Python's \d and $ would also accept
+// Unicode digits and a trailing newline, which no release tag carries (SPEC
+// marketplace-check-outdated-fixes decision D-b).
+var oracleVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+
+// IsOracleVersion reports whether a captured "{version}" is one the Oracle
+// would treat as a release: x.y.z with optional prerelease and build, no
+// leading "v".
+func IsOracleVersion(s string) bool {
+	return oracleVersionRe.MatchString(s)
+}
+
 // Infer mirrors infer_tag_pattern_from_refs (tag_pattern.py): the first
 // DefaultPatterns entry that matches the first tag it fits, or "" when no
 // tag matches any layout. Only entries that are tags (Ref empty or under
-// refs/tags/) are considered, and a match must capture a valid semver --
+// refs/tags/) are considered, and a match must capture an Oracle version --
 // Compile's "{version}" capture is greedy, so "{version}" alone would
 // otherwise claim every tag.
 func Infer(tags []semver.TagInfo, name string) string {
@@ -155,7 +169,7 @@ func Infer(tags []semver.TagInfo, name string) string {
 			if name == "" && strings.Contains(pattern, "{name}") {
 				continue
 			}
-			if v, ok := ExtractVersion(Compile(pattern, name), t.Name); ok && semver.IsValid(v) {
+			if v, ok := ExtractVersion(Compile(pattern, name), t.Name); ok && IsOracleVersion(v) {
 				return pattern
 			}
 		}

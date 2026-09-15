@@ -1204,7 +1204,7 @@ func versionTagCandidatesWithPattern(refs []semver.TagInfo, pattern, name string
 				continue
 			}
 			version, ok := tagpattern.ExtractVersion(re, r.Name)
-			if !ok || !semver.IsValid(version) {
+			if !ok || !tagpattern.IsOracleVersion(version) {
 				continue
 			}
 			if !includePrerelease && semver.IsPrerelease(version) {

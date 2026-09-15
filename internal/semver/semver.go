@@ -115,14 +115,6 @@ func StripVPrefix(tag string) string {
 	return tag
 }
 
-// IsValid reports whether version (with or without a leading "v") parses as
-// a semver version. Used by tag-pattern inference to reject a pattern whose
-// "{version}" capture swallowed a non-version tag name.
-func IsValid(version string) bool {
-	_, err := depsdev.NPM.Parse(StripVPrefix(version))
-	return err == nil
-}
-
 // IsPrerelease reports whether version (parsed under the NPM dialect, after
 // stripping an optional leading "v") carries a prerelease tag -- used by
 // `apm marketplace outdated`'s --include-prerelease filter (mkt-042 修訂版)
