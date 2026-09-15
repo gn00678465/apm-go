@@ -1,7 +1,7 @@
 # SPEC — marketplace check / outdated review 缺陷修正 (Tier 3)
 
-- `spec_version`: v1
-- `status`: approved
+- `spec_version`: v2
+- `status`: revised-pending-approval
 - `tier`: 3
 - `scope`: marketplace-check-outdated-fixes
 - `base_ref`: fix/markteplace-outdated (3d59291)
@@ -44,6 +44,9 @@
 - D-1（使用者裁定 2026-09-15，原話「依 YAML 1.2 的 !!str (Recommended)」）：`name`、`source` 的「字串」判準：以 go.yaml.in/yaml/v4 解析後的 tag 判定，`ShortTag() == "!!str"` 才算字串。與 oracle（PyYAML，YAML 1.1）的差異記為偏離：`yes`/`on`/`off` 在 apm-go 是字串（接受）、oracle 是 bool（拒絕）；`0o17`、`1e3` 在 apm-go 是數字（拒絕）、oracle 是字串（接受）。理由：editor 寫出 `name: yes` 不加引號（editor.go:285-286），改用 YAML 1.1 語意需同時改 editor 的引號策略。
 - D-2（使用者裁定 2026-09-15，原話「顯示 -- (Recommended)」）：無 version 的 SHA 釘選（tip 路徑）在 offline、ListRefs 失敗、`Remote advertised no HEAD` 三條路徑的 Current 為 `--`，與 D-f 同一原則（Current 只來自與遠端的比較結果），不再顯示 current map 的 40 字元 SHA。
 - D-3（使用者裁定 2026-09-15，原話「只去掉一個小寫 v (Recommended)」）：`v` 前綴規則：只去除一個小寫 `v`（`semver.StripVPrefix`），與 check 的 manifest 比對一致；`V1.0.0`、`vv1.0.0` 行為不變，列入明確排除。
+- D-4（使用者裁定 2026-09-16，原話「還原為原本的值 (Recommended)」）：本機來源（`./…`）的列不和遠端比較，即使 ref 是小寫 40-hex，Current 仍取 current map 的值（與修正前相同）。D-f、D-2 的 `--` 只適用於會和遠端比較的 SHA 釘選列。
+- D-5（orchestrator 預設，v2 核准時可推翻）：`IsOracleVersion` 接受超出 uint64 的數字；`semver.IsPrerelease` 以 NPM 解析失敗時回 false，因此 `v99999999999999999999.0.0-rc.1` 在未開 include-prerelease 時仍成為候選，oracle 會以 prerelease 過濾。記為 apm-go 偏離，不改程式。
+- D-6（orchestrator 預設，v2 核准時可推翻）：`showAtFetchHead` 在 git 正常結束後又出現非超限讀取錯誤的路徑（真實 git 下到不了），回傳的錯誤沒有 `git show <path>:` 前綴、附帶部分資料，且 Wait 前未 cancel（6178686 為覆蓋率合併分支所致）。不改程式，於 evidence 記錄。
 
 ## Scenarios
 
@@ -74,12 +77,13 @@
   - 子測試 listrefs-error（RED）：lister 回錯誤。expect Current=`--`、Status=`[x]`。
   - 子測試 range-entry-keeps-map（回歸）：`version: ^1.0.0`、無 ref、無 tag，current map 含 `tool: v0.9.0`。expect Current=`v0.9.0`（oracle `outdated.py:92-103`）。
 - SC-F17 `OutdatedPackages_ShaPinWithoutVersion_ErrorRows_CurrentDashes`（依 D-2，RED）：current map 含該 SHA。子測試 offline、listrefs-error、no-HEAD。expect Current=`--`。
+- SC-F20 `OutdatedPackages_LocalShaPin_KeepsCurrentMap`（依 D-4，RED at 3fedb17）：`source: ./pkgs/tool`、`ref: <小寫 40-hex>`，current map 含 `tool: <值>`；子測試無 version 與 `version: 1.0.0`。expect Status=`[i]`、Note=`local package; skipped`、Current=該值、lister 為 panic fake。
 - SC-F7 `MarketplaceOutdated_ShaPin_NoTags_MarketplaceJson_OmitsSha`（cmd 層，RED）：`chdirTemp` 內寫入 `marketplace.json`，`plugins[].source.ref` 為 SHA；`withFixtureRemoteLister` 提供無 tag 的 refs。expect stdout 不含該 SHA 的 40 字元與 12 字元前綴。
-- SC-F8 `OutdatedPackages_ShaPinWithVersion_LeadingV_SameAsBare`：SC-C1、SC-C2 的 fixture，`version: v1.0.0`。expect Current=`v1.0.0`、LatestInRange 與 `version: 1.0.0` 相同（RED）；LatestOverall、Status、Upgradable 相同（回歸）。子測試：`tag_pattern: "{name}_v{version}"` 時 Current=`tool_v1.0.0`（RED）。
+- SC-F8 `OutdatedPackages_ShaPinWithVersion_LeadingV_SameAsBare`：SC-C1、SC-C2 的 fixture，`version: v1.0.0`。expect Current=`v1.0.0`、LatestInRange 與 `version: 1.0.0` 相同（RED）；LatestOverall、Status、Upgradable 相同（回歸）。子測試：`tag_pattern: "{name}_v{version}"` 時 Current=`tool_v1.0.0`（RED）。 子測試 build-tag（RED at 3fedb17，after-implement squad）：tags `v1.0.0`、`v1.0.0+build`，`version: v1.0.0` 與 `version: 1.0.0` 的 Status、Upgradable 相同（比較也去除一個小寫 `v`，D-3）。
 
 ### D. schema 型別（依 D-1）
 
-- SC-F9 `LoadAuthoringConfig_NonStringName_Rejected`（RED）：`name: 123`、`name: true`、`name: 1.0`、`name: 0o17`、`name: [a]` 各自 expect `'packages[0].name' must be a non-empty string`；`check` 與 `outdated` exit 2。
+- SC-F9 `LoadAuthoringConfig_NonStringName_Rejected`（RED）：`name: 123`、`name: true`、`name: 1.0`、`name: 0o17`、`name: [a]` 各自 expect `'packages[0].name' must be a non-empty string`；`check` 與 `outdated` exit 2。 其中 `name: [a]` 在修正前已被拒（回歸，見 Revisions）。`outdated` 的 exit 2 由 SC-F15 的 `outdated --offline` 步驟端到端驗證。
 - SC-F18 `LoadAuthoringConfig_NonStringSource_OracleMessage`：`source: 123`、`source: [a/b]`、`source: {a: b}` expect `'packages[0].source' must be a non-empty string`（RED，訊息改變；exit 2 為回歸）。
 - SC-F19 `LoadAuthoringConfig_StringLikeScalars_Accepted`（回歸）：`name: "123"`、`name: yes`（D-1 偏離）通過；`source: ""` 仍為 `marketplace source is empty`（原 SC-A2，`TestLoadAuthoringConfig_EmptySource_Rejected`）；`name: ""` 仍為 `must be a non-empty string`；缺 `name` 仍為 `is required`。
 - SC-F10 `LoadAuthoringConfig_NumericVersionOrRef_Accepted`（回歸）：`version: 1.10` 讀入 `"1.10"`、`ref: 123` 讀入 `"123"`，不報錯（apm-go 保留原文，見明確排除）。
@@ -97,8 +101,8 @@
 
 - SC-F14 `tools/gate/mutants.txt`：
   - 新增：`sha-name-match-restored`（SC-F1 殺）、`manifest-read-uncapped`（SC-F3 殺）、`current-map-kept-on-no-candidates`（SC-F6 殺）、`leading-v-not-stripped`（作用在 Current 渲染，SC-F8 殺）、`name-tag-unchecked`（SC-F9 殺）、`oracle-grammar-loosened`（SC-F11、SC-F12 殺）。錨點取含函式特有 token 的整行，以 `gatetool replace` 驗證唯一。
-  - 更新：`sha-match-by-name-only` 與 `current-render-ignores-pattern` 的錨點隨實作更新；語意不變（移除 commit 比對／忽略 pattern），仍分別由 SC-B1、SC-C1 子測試殺死。
-- SC-F15 `tools/gate/realexec.sh` 新增離線步驟：`name: 123` 執行 `marketplace check --offline`，expect exit 2 並印 `'packages[0].name' must be a non-empty string`。
+  - 更新：`sha-match-by-name-only` 改名為 `sha-commit-match-removed`（SHA 釘選不再以 commit 命中，SC-B1 殺）；`sha-name-match-restored` 改為保留 commit 比對、只恢復名稱比對（SC-F1 殺，SC-B1 殺不死）；`current-render-ignores-pattern` 錨點隨實作更新，語意不變（SC-C1 子測試殺）。
+- SC-F15 `tools/gate/realexec.sh` 新增離線步驟：`name: 123` 執行 `marketplace check --offline`，expect exit 2 並印 `'packages[0].name' must be a non-empty string`。 另加 `marketplace outdated --offline` 同一設定的步驟，expect exit 2 與同一訊息。
 
 ## Must NOT
 
@@ -106,7 +110,7 @@
 - Must NOT：修改 `specs/archive/marketplace-check-outdated/` 下任何檔案。
 - Must NOT：改變 `tagpattern.Compile`、`ExtractVersion`、`RenderTag`、`FilterTags`、`Validate` 的行為；改變 `authoring.IsDisplayVersion` 的行為；改變 `internal/semver` 中 `IsValid` 以外的匯出函式。
 - Must NOT：既有測試被刪除或斷言放寬。本 SPEC 明列要改的斷言：無。既有 mutant 只允許更新錨點（SC-F14）。
-- Must NOT：非 SHA 列（version range 條目）的 Current 來源改變（仍取自 current map）。
+- Must NOT：非 SHA 列（version range 條目）與本機來源列（D-4）的 Current 來源改變（仍取自 current map）。
 - Must NOT：`version`、`ref` 的數字 scalar 被拒絕。
 - Must NOT：非小寫 40-hex 的 ref 比對行為改變。
 - Must NOT：新增 git 子程序；`fetch`、`init`、`show` 失去 `ApplyCloneEnv`／`ApplySecureGitEnv`、`WaitDelay`、`pinGitLocale`；錯誤文字未經 `SanitizeGitOutput`。
@@ -123,6 +127,8 @@
 | 串流改寫漏掉安全環境、WaitDelay、語系 | SC-F16 |
 | 上限邊界差一位元組 | SC-F3 恰為 N 子測試、SC-F5 |
 | Current 顯示 SHA，與 Note 或狀態矛盾 | SC-F6、SC-F17、SC-F7 + mutant `current-map-kept-on-no-candidates` |
+| 清 Current 時連本機列也清掉 | SC-F20 |
+| `v` 前綴在比較時未去除，同一版本兩種寫法結果不同 | SC-F8 build-tag |
 | 修 Current 時誤清 range 條目的 Current | SC-F6 range-entry-keeps-map |
 | `v` 前綴造成 Current 錯誤 | SC-F8 + mutant `leading-v-not-stripped` |
 | 非字串 name 流入 marketplace.json | SC-F9 + mutant `name-tag-unchecked` |
@@ -139,6 +145,8 @@
   - `internal/marketplace/authoring/fixes_sha_match_test.go`（SC-F1）、`fixes_sha_match_regression_test.go`（SC-F2）
   - `fixes_read_capped_test.go`（SC-F3、SC-F4、SC-F16）、`fixes_read_capped_regression_test.go`（SC-F5）
   - `fixes_current_test.go`（SC-F6 RED 子測試、SC-F17、SC-F8）、`fixes_current_regression_test.go`（SC-F6 range-entry-keeps-map）
+  - `fixes_after_implement_test.go`（SC-F20、SC-F8 build-tag、SC-F16 加強；v2 新增）
+  - `fixes_read_capped_edges_test.go`（git 無法啟動時的錯誤；gate 覆蓋率後補，見 Revisions）
   - `fixes_schema_type_test.go`（SC-F9、SC-F18）、`fixes_schema_type_regression_test.go`（SC-F19、SC-F10）
   - `fixes_tag_inference_test.go`（SC-F12、SC-F13 capture-rejected）、`fixes_tag_inference_regression_test.go`（SC-F13 fallback-infers）
   - `internal/marketplace/tagpattern/oracle_version_test.go`（SC-F11）
@@ -152,6 +160,10 @@
   - oracle 以 `str(value)` 正規化 `version`、`ref` 的數值（`1.10`→`1.1`、`0x1F`→`31`、`true`→`True`）與接受 list；apm-go 保留原始 scalar 文字、拒絕非 scalar，行為不變。
   - oracle 同一字串規則的其他欄位：`subdir`、`tag_pattern`（yml_schema.py:836-838、878-880）、`owner.name`（:609）、marketplace 的 `name`／`description`／`version`（:1108-1125）。
   - `V1.0.0`、`vv1.0.0`（D-3）。
+  - 超出 uint64 的版本數字（D-5）。
+  - 真實 git 下到不了的非超限讀取錯誤路徑的錯誤文字與 cancel（D-6）。
+  - `git show` 逾時時錯誤文字為空（修正前即如此）。
+  - Git for Windows 啟動器（`Git\cmd\git.exe`）在超限時要等 `WaitDelay`（約 2s）才返回；gate 使用 mingw64 git。
   - 未設 package name 時 oracle 以 `[^/]+` 取代 `{name}` 的推斷差異。
   - SHA 釘選與 `+build` tag 並存時 `CompareVersions` 字串 tie-break 誤報。
   - fetch 的 stderr 與 ls-remote 的 stdout 無上限緩衝。
@@ -161,6 +173,7 @@
 ## Approval
 
 - 2026-09-15 — approves v1 — "核准 v1"（AskUserQuestion 結構化回覆，問題明示 commit 5760b0c 與內容來源 7abf1e5）
+- （v2 待核准）
 
 ## Revisions
 
@@ -171,3 +184,4 @@
 - 2026-09-15 — 依 SC-F4 註執行（非 SPEC 變更，SPEC 已預先授權）：在修正前的程式碼（e02bf35 的暫存 worktree）執行 SC-F4，上限 8 倍（2.00s）與 64 倍（6.22s）皆 PASS，因為修正前的讀取在 3s 期限內讀完整檔後仍報 `exceeds`。SC-F4 改標回歸，移到 `fixes_read_capped_regression_test.go`；讀取上限的 RED 由 SC-F3（`readCapped` 不存在，編譯失敗）承擔。SC-F5 在同一 worktree PASS（回歸，符合預期）。
 - 2026-09-15 — 情境標註更正（非行為變更）：SC-F13 fallback-infers 在修正前（889cb92 加測試）FAIL：`{version}` 的擷取 `v1.2.0` 經 NPM 判定為有效版本，fallback 不觸發，得 usedPattern `{version}`、version `v1.2.0`。原標「回歸」有誤，改標 RED，併入 `fixes_tag_inference_test.go` 的 `TestVersionTagCandidates_VPrefixedCapture/FallbackInfers`；Setup plan 列的 `fixes_tag_inference_regression_test.go` 不建立。
 - 2026-09-15 — 引用更正（非行為變更）：`__init__.py:942` 與 `:979-990` 是本機 v0.30.0 的行號；pin b75a02b1 對應 `:1139-1141`（`_load_current_versions`）與 `:1178-1190`（推斷 fallback），已更正。
+- 2026-09-16 — v1 → v2（after-implement squad，紀錄 `.scratch/marketplace-check-outdated-fixes/squad/after-implement.md`，source state 3fedb17）：class 2 三項：D-4 使用者裁定（本機 SHA 列保留 current map）、D-5 與 D-6 為 orchestrator 預設，隨本版送審可推翻；新增 SC-F20。class 1（不需新決定，隨本版一併修）：SC-F16 斷言加強為完整命令與 `gitops.SecureGitEnv()` 全部鍵；SC-F8 補 build-tag 子測試並在比較時去 `v`；SC-F15 補 `outdated` 步驟；兩個 mutant 改名與改寫；兩處註解更正。標註更正：SC-F9 `name: [a]` 為回歸。檔案補記：`fixes_read_capped_edges_test.go` 為 gate 第二輪覆蓋率 41/45 後補的測試（5680959，晚於實作 2d4671b），以一次性 mutant 證明會失敗。D-1 的偏離例子不是完整清單：apm-go 另接受 `1:20`、`190:20:30`、`=`（PyYAML 為 int、int、ConstructorError），另拒絕 `09`、`+.5`、`1.0e3`（PyYAML 為 str），判準不變。本 v2 與 7abf1e5 誤標的「v2」無關。
