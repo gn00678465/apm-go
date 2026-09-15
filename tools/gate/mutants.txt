@@ -12,7 +12,7 @@ pack-json-error-code	cmd/apm-go/pack.go	packJSONError{Code: "version_misaligned"
 json-number-sign-only-accepted	internal/marketplace/models.go	if sc.pos == intStart {	if sc.pos == intStart && false {
 fields-kind-check-inverted	internal/pluginjson/validate.go	if !checkKind(raw, r.Kind) {	if checkKind(raw, r.Kind) {
 strict-warning-gate-disabled	cmd/apm-go/plugin_validate.go	if strict && warnings > 0 {	if false {
-sha-match-by-name-only	internal/marketplace/authoring/refcheck.go	if r.Commit == ref {	if false {
+sha-match-by-name-only	internal/marketplace/authoring/refcheck.go	if r.Commit == ref {	if r.Commit == ref && false {
 sha-name-match-restored	internal/marketplace/authoring/refcheck.go	if shaRefPattern.MatchString(ref) {	if false {
 probe-skipped	internal/marketplace/authoring/refcheck.go	found, err := deps.Prober.HasCommit(pkg.Source, pkg.Ref)	found, err := true, error(nil)
 dup-name-case-sensitive	internal/marketplace/authoring/schema.go	lowerName := strings.ToLower(name)	lowerName := name
