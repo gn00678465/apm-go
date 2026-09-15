@@ -66,3 +66,11 @@ Each row is a run observed before the corresponding GREEN commit. Commands ran w
 - uncovered: refcheck_sha.go:295 (StdoutPipe error return; unreachable — Stdout unset and not started), :298 (Start error return; reachable), :319 (non-cap read error after a clean Wait; unreachable with a real git), :341 (readCapped read error return).
 - refactor (no behaviour change for callers, which check err before data): the StdoutPipe and Start errors share one return; `showAtFetchHead` returns `data, readErr`; `readCapped` returns `data, err` and only reports the cap when the read succeeded.
 - new edge test `TestShowAtFetchHead_GitNotStartable_Errors` (fixes_read_capped_edges_test.go): PASS against the implementation. Observed failing against a throwaway mutant in a scratch copy — `return nil, fmt.Errorf("git show %s: %w", relPath, err)` → `return nil, nil` — output `showAtFetchHead = "", <nil>; want a git show error and no data`. Mutant recorded in throwaway-mutants.txt; not added to tools/gate/mutants.txt.
+- after refactor 6178686 and 3fedb17: gate run 3 all layers green (changed-line coverage 41/41).
+
+## v2 follow-up (after-implement squad) — tests added on top of d71e0a4 (product code = 3fedb17)
+
+- command: `go test -count=1 -v -run 'TestOutdatedPackages_LocalShaPin_KeepsCurrentMap|TestOutdatedPackages_ShaPinWithVersion_LeadingV_SameAsBare_BuildTag|TestNewShowCmd_ExactCommandAndSecureEnv' ./internal/marketplace/authoring/`
+- SC-F20 Version= and Version=1.0.0: FAIL — Current `--` instead of `v0.9.0`.
+- SC-F8 build-tag: FAIL — `version 1.0.0 -> [!] upgradable=true, v1.0.0 -> [+] upgradable=false`.
+- SC-F16 strengthened (`TestNewShowCmd_ExactCommandAndSecureEnv`): PASS against the product code, which already builds the exact command; the old test was the weak part. Observed failing against the squad's mutant in a scratch copy (`-c core.sshCommand=evil` added, ApplySecureGitEnv replaced by `append(os.Environ(), "GIT_TERMINAL_PROMPT=0")`): `args = ["git" "-c" "core.sshCommand=evil" …]`, `env lacks "GIT_ALLOW_PROTOCOL=https:ssh:git"`, `env lacks "GIT_PROTOCOL_FROM_USER=0"`; the old `TestNewShowCmd_ShapeAndSecureEnv` still PASSED under that mutant.
