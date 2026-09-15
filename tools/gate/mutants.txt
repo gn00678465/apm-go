@@ -17,8 +17,10 @@ sha-name-match-restored	internal/marketplace/authoring/refcheck.go	if shaRefPatt
 probe-skipped	internal/marketplace/authoring/refcheck.go	found, err := deps.Prober.HasCommit(pkg.Source, pkg.Ref)	found, err := true, error(nil)
 dup-name-case-sensitive	internal/marketplace/authoring/schema.go	lowerName := strings.ToLower(name)	lowerName := name
 tip-compare-inverted	internal/marketplace/authoring/refcheck.go	if tip == pkg.Ref {	if tip != pkg.Ref {
-current-render-ignores-pattern	internal/marketplace/authoring/refcheck.go	tagpattern.RenderTag(usedPattern, pkg.Name, version)	tagpattern.RenderTag(usedPattern[:0]+"v{version}", pkg.Name, version)
+current-render-ignores-pattern	internal/marketplace/authoring/refcheck.go	tagpattern.RenderTag(usedPattern, pkg.Name, semver.StripVPrefix(version))	tagpattern.RenderTag(usedPattern[:0]+"v{version}", pkg.Name, semver.StripVPrefix(version))
 version-mismatch-ignored	internal/marketplace/authoring/refcheck.go	if manifestVersion != "" && semver.StripVPrefix(manifestVersion) != semver.StripVPrefix(strings.TrimSpace(pkg.Version)) {	if false {
 probe-error-unsanitized	internal/marketplace/authoring/refcheck_sha.go	gitops.SanitizeGitOutput(gitFailureText(string(out), err))	gitFailureText(string(out), err)
 locale-not-pinned	internal/marketplace/authoring/refcheck_sha.go	cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=C")	cmd.Env = append(cmd.Env, "LANGUAGE=C")
 manifest-read-uncapped	internal/marketplace/authoring/refcheck_sha.go	data, err := io.ReadAll(io.LimitReader(r, int64(max)+1))	data, err := io.ReadAll(r)
+current-map-kept-on-no-candidates	internal/marketplace/authoring/refcheck.go	if current != "" && !shaPin {	if current != "" {
+leading-v-not-stripped	internal/marketplace/authoring/refcheck.go	tagpattern.RenderTag(usedPattern, pkg.Name, semver.StripVPrefix(version))	tagpattern.RenderTag(usedPattern, pkg.Name, version)

@@ -1008,9 +1008,6 @@ func OutdatedPackages(cfg *AuthoringConfig, lister RefLister, offline, includePr
 
 func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offline, includePrerelease bool, current string) OutdatedRow {
 	row := OutdatedRow{Package: pkg, Current: "--", LatestInRange: "--", LatestOverall: "--"}
-	if current != "" {
-		row.Current = current
-	}
 
 	// apm-go-only (SPEC marketplace-check-outdated SC-C1..C6, C11): a
 	// lowercase 40-hex SHA pin is compared against the remote when it has
@@ -1021,6 +1018,14 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 	// A blank version is no version (SC-B21), so normalize once here.
 	version := strings.TrimSpace(pkg.Version)
 	shaPin := shaRefPattern.MatchString(pkg.Ref) && (version == "" || IsDisplayVersion(version))
+	// A SHA pin's Current comes only from comparing it with the remote, so a
+	// row that never got that far (offline, ls-remote error, no HEAD, no
+	// tags) shows "--" rather than the published SHA (SPEC
+	// marketplace-check-outdated-fixes D-f, D-2). Every other row keeps the
+	// published version, as outdated.py:92-103 does.
+	if current != "" && !shaPin {
+		row.Current = current
+	}
 
 	// Note texts are the Oracle's own (outdated.py:53, 68, 101) except the
 	// apm-go-only local skip: the Oracle runs ls-remote against a local
@@ -1070,7 +1075,7 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 		// layout that produced the candidates (D-f: only once a candidate
 		// exists); the SHA itself is never reverse-mapped to a tag (that is
 		// check's manifest comparison).
-		row.Current = tagpattern.RenderTag(usedPattern, pkg.Name, version)
+		row.Current = tagpattern.RenderTag(usedPattern, pkg.Name, semver.StripVPrefix(version))
 		return outdatedShaAgainstTags(row, pkg, candidates)
 	}
 
