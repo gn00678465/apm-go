@@ -1,7 +1,7 @@
 # SPEC — marketplace check / outdated review 缺陷修正 (Tier 3)
 
 - `spec_version`: v1
-- `status`: draft
+- `status`: approved
 - `tier`: 3
 - `scope`: marketplace-check-outdated-fixes
 - `base_ref`: fix/markteplace-outdated (3d59291)
@@ -160,7 +160,7 @@
 
 ## Approval
 
-- （待核准）
+- 2026-09-15 — approves v1 — "核准 v1"（AskUserQuestion 結構化回覆，問題明示 commit 5760b0c 與內容來源 7abf1e5）
 
 ## Revisions
 
