@@ -291,10 +291,10 @@ func showAtFetchHead(dir, relPath string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("git show %s: %w", relPath, err)
+	if err == nil {
+		err = cmd.Start()
 	}
-	if err := cmd.Start(); err != nil {
+	if err != nil {
 		return nil, fmt.Errorf("git show %s: %w", relPath, err)
 	}
 	// The blob comes from the remote, so it is capped while it streams
@@ -315,10 +315,7 @@ func showAtFetchHead(dir, relPath string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("git show %s: %s", relPath, gitops.SanitizeGitOutput(strings.TrimSpace(msg)))
 	}
-	if readErr != nil {
-		return nil, fmt.Errorf("git show %s: %w", relPath, readErr)
-	}
-	return data, nil
+	return data, readErr
 }
 
 // newShowCmd builds `git -C <dir> show FETCH_HEAD:<relPath>` under the
@@ -334,16 +331,14 @@ func newShowCmd(ctx context.Context, dir, relPath string) *exec.Cmd {
 var errReadCapExceeded = errors.New("read cap exceeded")
 
 // readCapped reads r to EOF but never more than max+1 bytes; one byte past
-// max is enough to know the input is over the cap.
+// max is enough to know the input is over the cap. A read error is returned
+// with whatever was read, as io.ReadAll does.
 func readCapped(r io.Reader, max int) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, int64(max)+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > max {
+	if err == nil && len(data) > max {
 		return nil, errReadCapExceeded
 	}
-	return data, nil
+	return data, err
 }
 
 // IsDisplayVersion mirrors the Oracle's _is_display_version (builder.py /
