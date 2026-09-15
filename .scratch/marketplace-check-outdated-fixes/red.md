@@ -34,3 +34,12 @@ Each row is a run observed before the corresponding GREEN commit. Commands ran w
 - SC-F17 Offline, ListRefsError, NoHEAD: FAIL (Current is the SHA).
 - SC-F8 NewerTag: FAIL `Current:"vv1.0.0" LatestInRange:"--"`; UpToDate: FAIL `Current:"vv1.0.0" LatestInRange:"--"`; NamePattern: FAIL `Current:"tool_vv1.0.0" LatestInRange:"--"`. LatestOverall, Status, Upgradable already matched the bare version.
 - SC-F7 (`go test -count=1 -v -run TestMarketplaceOutdated_ShaPin_NoTags_MarketplaceJson_OmitsSha ./cmd/apm-go/`): FAIL, the table row contains the SHA.
+- GREEN 8d0e288: `go test -count=1 ./internal/marketplace/authoring/` ok 52.6s; `go test -count=1 -run 'Outdated|Check' ./cmd/apm-go/` ok 17.2s.
+
+## Group D — name and source type
+
+- command (worktree, tests added on top of 8d0e288): `go test -count=1 -v -run 'TestLoadAuthoringConfig_NonStringName_Rejected|TestLoadAuthoringConfig_NonStringSource_OracleMessage|TestLoadAuthoringConfig_StringLikeScalars_Accepted|TestLoadAuthoringConfig_NumericVersionOrRef_Accepted' ./internal/marketplace/authoring/`
+- SC-F9 Int, Bool, Float, OctalInt: FAIL — `LoadAuthoringConfig accepted an invalid config`.
+- SC-F9 Sequence (`name: [a]`): PASS before the fix. The existing ScalarNode check already rejected it with the same message. Listed under SC-F9 in the SPEC; it is a regression subtest, not RED.
+- SC-F18 Int: FAIL — message was `marketplace source "123" must be one of ...`; Sequence and Mapping: FAIL — message was `marketplace source is empty`.
+- SC-F19 (5 subtests) and SC-F10: PASS (regression).
