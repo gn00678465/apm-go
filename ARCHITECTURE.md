@@ -67,7 +67,7 @@ Leaves (import nothing in-module): `archive`, `credsec`, `experimental`, `pack`,
 | `pluginjson` | init-time plugin.json / .mcp.json scaffold, staged atomic commit; plugin.json validation | `Scaffold` / `ScaffoldAgent` `internal/pluginjson/pluginjson.go:28,55`; `NewStagedScaffold` `stage.go:27`; `Validate` `validate.go:218` |
 | `localbundle` | local bundle detection, integrity check, integration | `DetectLocalBundle` `internal/localbundle/detect.go:76`; `VerifyBundleIntegrity` `verify.go:49`; `IntegrateLocalBundle` `integrate.go:96` |
 | `ux` | all terminal output and interaction | `Init` `internal/ux/ux.go:33`; `CanPrompt` `:52`; printers `printer.go:21-92`; `Table` / `List` / `Tree` `output.go:74,144,201`; `Spinner` `spinner.go:42`; `NewClack` `clack.go:130`; `Confirm` / `InputForm` / `MultiSelect` `interactive.go:77,194,146` |
-| `semver` | range matching, max-satisfying | `Satisfies` / `MaxSatisfying` / `CompareVersions` `internal/semver/semver.go:16,75,67` |
+| `semver` | range matching, max-satisfying | `Satisfies` / `MaxSatisfying` / `CompareVersions` `internal/semver/semver.go:20,79,71` |
 | `experimental` | opt-in feature flags persisted in the user config | `Known` / `IsEnabled` / `RequireEnabled` `internal/experimental/experimental.go:37,100,128` |
 | `version` | the release version, injected from the git tag at release link time (`dev` locally) | `Version` `internal/version/version.go:14` |
 

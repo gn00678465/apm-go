@@ -135,7 +135,7 @@
 | 型別檢查誤拒合法值或改變既有訊息 | SC-F19、SC-F10、原 SC-A2 |
 | 文法收緊後誤拒合法 tag | SC-F11 表格 + 原 SC-B9、SC-B12、SC-C1..C3 + SC-F13 fallback-infers |
 | 文法未收緊，推斷選錯 layout | SC-F12、SC-F13 capture-rejected + mutant `oracle-grammar-loosened` |
-| 新拒絕規則使 pack／doctor／package 行為改變 | 原 SPEC:102 Must NOT；既有 pack、doctor、package 測試與 realexec 全綠 |
+| 新拒絕規則使 pack／doctor／package 行為改變 | 原 SPEC:102 Must NOT；realexec `mkt-pack-schema-name-type`（`name: 123` 的 `pack --dry-run` exit 1、oracle 訊息，verifier round 1 後補）；既有 pack、doctor、package 測試全綠 |
 
 ## Setup plan
 
@@ -158,7 +158,7 @@
 - New dependencies: none。
 - 明確排除：
   - oracle 以 `str(value)` 正規化 `version`、`ref` 的數值（`1.10`→`1.1`、`0x1F`→`31`、`true`→`True`）與接受 list；apm-go 保留原始 scalar 文字、拒絕非 scalar，行為不變。
-  - oracle 同一字串規則的其他欄位：`subdir`、`tag_pattern`（yml_schema.py:836-838、878-880）、`owner.name`（:609）、marketplace 的 `name`／`description`／`version`（:1108-1125）。
+  - oracle 同一字串規則的其他欄位：`subdir`、`tag_pattern`（yml_schema.py:842-846、878-880）、`owner.name`（:609）、marketplace 的 `name`／`description`／`version`（:1108-1125）。
   - `V1.0.0`、`vv1.0.0`（D-3）。
   - 超出 uint64 的版本數字（D-5）。
   - 真實 git 下到不了的非超限讀取錯誤路徑的錯誤文字與 cancel（D-6）。
@@ -186,3 +186,4 @@
 - 2026-09-15 — 引用更正（非行為變更）：`__init__.py:942` 與 `:979-990` 是本機 v0.30.0 的行號；pin b75a02b1 對應 `:1139-1141`（`_load_current_versions`）與 `:1178-1190`（推斷 fallback），已更正。
 - 2026-09-16 — v1 → v2（after-implement squad，紀錄 `.scratch/marketplace-check-outdated-fixes/squad/after-implement.md`，source state 3fedb17）：class 2 三項：D-4 使用者裁定（本機 SHA 列保留 current map）、D-5 與 D-6 為 orchestrator 預設，隨本版送審可推翻；新增 SC-F20。class 1（不需新決定，隨本版一併修）：SC-F16 斷言加強為完整命令與 `gitops.SecureGitEnv()` 全部鍵；SC-F8 補 build-tag 子測試並在比較時去 `v`；SC-F15 補 `outdated` 步驟；兩個 mutant 改名與改寫；兩處註解更正。標註更正：SC-F9 `name: [a]` 為回歸。檔案補記：`fixes_read_capped_edges_test.go` 為 gate 第二輪覆蓋率 41/45 後補的測試（5680959，晚於實作 2d4671b），以一次性 mutant 證明會失敗。D-1 的偏離例子不是完整清單：apm-go 另接受 `1:20`、`190:20:30`、`=`（PyYAML 為 int、int、ConstructorError），另拒絕 `09`、`+.5`、`1.0e3`（PyYAML 為 str），判準不變。本 v2 與 7abf1e5 誤標的「v2」無關。
 - 2026-09-16 — v2 實作補記（非行為變更）：SC-F14 另新增 mutant `leading-v-compare-not-stripped`（比較時不去 `v`，SC-F8 build-tag 殺）。
+- 2026-09-17 — verifier round 1（source state fb76028／ded0995，verdict passed，無 behavioural finding；紀錄 `.scratch/marketplace-check-outdated-fixes/verification.md`）的 description 更正：failure model 最後一列改為可證偽的 realexec 步驟 `mkt-pack-schema-name-type`（verifier 實測 3d59291 的 `pack` 對 `name: 123` 成功產出、fb76028 拒絕）；明確排除的 subdir 引用改為 yml_schema.py:842-846；Must NOT「測試或 gate 連網」的範圍：`tools/gate.sh` supply-chain 層的 govulncheck 讀 https://vuln.go.dev，屬既有例外，測試與 realexec 不連網；evidence 的 `sha-commit-match-removed` 殺手歸因改為第五輪實際觀測（`TestCheckPackages_BlankVersion_NoManifestFetch`）。
