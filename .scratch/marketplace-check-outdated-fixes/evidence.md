@@ -143,7 +143,7 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 
 - SHA 探測、manifest 讀取上限、tip 比對無法在 built binary 上離線重現（CLI 把 `owner/repo` 解析到 github.com）；只由函式層測試（真 git 對 t.TempDir() repo）與 cmd 層 fixture seam 證明。realexec 只釘離線契約。
 - SC-F4 的 3s 耗時餘裕在 Git for Windows 啟動器（`Git\cmd\git.exe`）下為約 2s（WaitDelay），gate 使用 mingw64 git（約 24ms）；超限後孫程序是否殘留未量測（squad contract lens）。
-- 真實遠端（GitHub/GitLab）對 40-hex 分支名與 SHA fetch 的行為未驗證。
+- 真實遠端實跑（2026-09-17，封存後、使用者詢問後補做；gate 建出的 binary，產品碼 fb76028；對一個有 tag 與 apm.yml 的公開 GitHub repo，10 個套件，check 18 秒、outdated 7 秒）：SHA=HEAD 無 version → check OK（commit 欄位命中，不探測）、outdated 最新；SHA 未列於 ls-remote → check OK（`git fetch --depth 1` 探測成功）、outdated「Default branch tip moved」；SHA + version 與 manifest 相同 → check OK（串流讀 manifest）、outdated Current 顯示該版本並列出較新 tag；SHA + version 與 manifest 不同 → check 報 `Version … does not match plugin manifest version … at ref …`；全 0 SHA → check `Ref … not found`；`version: 0.20.0` 與 `v0.20.0` → 兩列結果相同，Current `--`（無 marketplace.json）；`ref: main` → outdated「Pinned to ref; skipped」。exit code：check 1（2 筆問題）、outdated 1（7 筆可升級）。全部與 SPEC 情境一致。仍未在真實遠端驗證：同名 40-hex 分支繞過 SHA（需在真實 repo 建以 40 個 hex 為名的分支）、超過 1 MiB 的 manifest；兩者只有本機 repo 測試與 mutant 證明。本次實跑不在 gate 內，不改變 Gate 表的任何數字。
 - parity gate 未在本機執行。
 
 ## Honest notes
