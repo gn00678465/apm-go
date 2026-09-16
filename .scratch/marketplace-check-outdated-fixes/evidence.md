@@ -7,8 +7,8 @@
 - `change_set`: 3d59291...HEAD（3d59291...3a1cedd；產品 Go 碼最後變更於 fb76028，之後只有 realexec 步驟、SPEC／ARCHITECTURE 文字與 .scratch 紀錄）
 - `base`: fix/markteplace-outdated @ 3d59291（前一 scope 封存 commit）
 - `report_language`: zh-TW
-- `intent_status`: confirmed（v1）；v2 `approval: not obtained`
-- `intent_source`: specs/marketplace-check-outdated-fixes/SPEC.md，`spec_version: v2`，status revised-pending-approval。Approval 段：v1「核准 v1」（AskUserQuestion，commit 5760b0c，記於 674ec98）；v2 核准問題的回覆原話「用戶之前已經說得很清楚功能要什麼, 為什麼還有一堆問題????」，未核准也未否決，記為降級（d71e0a4）。v2 相對 v1 的差異：D-4（使用者裁定「還原為原本的值 (Recommended)」）、D-5 與 D-6（orchestrator 預設，只記錄不改程式）、SC-F20、after-implement squad 的 class 1 修正清單
+- `intent_status`: confirmed（v1、v2）；v2 為事後核准（2026-09-17，晚於實作與本報告首版）
+- `intent_source`: specs/marketplace-check-outdated-fixes/SPEC.md，`spec_version: v2`，status approved。Approval 段：v1「核准 v1」（AskUserQuestion，commit 5760b0c，記於 674ec98）；v2 核准問題當時的回覆原話「用戶之前已經說得很清楚功能要什麼, 為什麼還有一堆問題????」，未核准也未否決，記為降級（d71e0a4）；2026-09-17 使用者看過封存被拒的報告後回覆「核准 -> 封存 -> 更新 PR」，記為 v2 事後核准。v2 相對 v1 的差異：D-4（使用者裁定「還原為原本的值 (Recommended)」）、D-5 與 D-6（orchestrator 預設，只記錄不改程式）、SC-F20、after-implement squad 的 class 1 修正清單
 - `ordering`: tests-first（每組行為一個 RED commit 先於 GREEN commit：4378e23→e02bf35、0bd463b→2d4671b、19bb45f→8d0e288、7fa09ef→889cb92、c07ce7e→f7cd029、1cd635b→fe28b5d；RED commit 只含 `_test.go`、red.md 與 throwaway-mutants.txt（1cd635b、5680959），GREEN 只含產品碼與 mutants.txt／realexec.sh（fe28b5d 另含 SPEC Revisions 1 行）。例外：`TestNewShowCmd_ExactCommandAndSecureEnv`（1cd635b）對產品碼從未 FAIL，只對 squad 手作 mutant FAIL，屬回歸測試，其有效性由常設 mutant `locale-not-pinned` 證明（第六輪 mutation.log:21）；5680959 `fixes_read_capped_edges_test.go` 是 gate 第二輪覆蓋率 41/45 之後補的測試，晚於它覆蓋的實作 2d4671b，以一次性 mutant 證明會失敗；6178686 為覆蓋率合併不可達分支的 refactor）
 - `git_facts`: complete（base 存在、非 shallow、baseline 於隔離 worktree 執行）
 - `source_state`: commit=3a1ceddf851cacfe3afdeded3e747577140eb30f tree=3e0a645c0eba22fd5895ef3c30b1405f1bc4e9d2（`tools/gate/source_state.sh`，gate 第六輪前後相同）
@@ -148,7 +148,7 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 
 ## Honest notes
 
-- **v2 核准未取得。** after-implement squad 的 class 2 三項（D-4 使用者裁定、D-5、D-6 預設）與 class 1 修正寫成 v2（102f282）送審，使用者回覆「用戶之前已經說得很清楚功能要什麼, 為什麼還有一堆問題????」並要求不再提問。orchestrator 依原始要求（修 Codex findings、其他行為不變）與 v1 已核准的內容完成 v2 實作；D-5、D-6 未改程式，符合「其他行為不變」。`spec-archive` 對 status 非 `approved` 的 SPEC 會拒絕封存；本報告不繞過該檢查。
+- **v2 核准為事後取得。** 2026-09-17 使用者以「核准 -> 封存 -> 更新 PR」核准，晚於 v2 實作、gate 與 verifier；以下為核准前的紀錄： after-implement squad 的 class 2 三項（D-4 使用者裁定、D-5、D-6 預設）與 class 1 修正寫成 v2（102f282）送審，使用者回覆「用戶之前已經說得很清楚功能要什麼, 為什麼還有一堆問題????」並要求不再提問。orchestrator 依原始要求（修 Codex findings、其他行為不變）與 v1 已核准的內容完成 v2 實作；D-5、D-6 未改程式，符合「其他行為不變」。`spec-archive` 對 status 非 `approved` 的 SPEC 會拒絕封存；本報告不繞過該檢查。
 - 版本編號曾標錯：7112da6 在待決定未清空時標「v1」，7abf1e5 未核准時標「v2」；5760b0c 更正為 v1 並記於 Revisions。現行 v2（102f282）與 7abf1e5 的「v2」無關。
 - SPEC 標註更正三處（皆記於 Revisions）：SC-F4 改標回歸（修正前 8×、64× 皆 PASS）；SC-F13 FallbackInfers 改標 RED；SC-F9 `name: [a]` 為回歸。oracle `__init__.py` 引用行號由本機 v0.30.0 改為 pin b75a02b1（`:1139-1141`、`:1178-1190`）。
 - D-6：refactor 6178686 讓一條真實 git 下到不了的路徑（git 正常結束後非超限讀取錯誤）少了 `git show <path>:` 前綴、附帶部分資料、Wait 前未 cancel；呼叫者先檢查 err，部分資料不外流。commit 說明「no behaviour change for callers」的範圍應為「只在不可達路徑改變錯誤形狀」。

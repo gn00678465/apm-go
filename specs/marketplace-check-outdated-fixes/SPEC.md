@@ -1,7 +1,7 @@
 # SPEC — marketplace check / outdated review 缺陷修正 (Tier 3)
 
 - `spec_version`: v2
-- `status`: revised-pending-approval
+- `status`: approved
 - `tier`: 3
 - `scope`: marketplace-check-outdated-fixes
 - `base_ref`: fix/markteplace-outdated (3d59291)
@@ -174,6 +174,7 @@
 
 - 2026-09-15 — approves v1 — "核准 v1"（AskUserQuestion 結構化回覆，問題明示 commit 5760b0c 與內容來源 7abf1e5）
 - 2026-09-16 — v2 approval: not obtained — 使用者對核准問題的回覆原話：「用戶之前已經說得很清楚功能要什麼, 為什麼還有一堆問題????」。未核准也未否決；orchestrator 依原始要求（修 Codex 找到的缺陷、其他行為不變）繼續實作 v2，記為流程降級。
+- 2026-09-17 — approves v2 — 「核准 -> 封存 -> 更新 PR」（使用者在看過封存被拒的報告後的回覆；核准時 v2 已實作、gate 第六輪全綠、verifier round 1 passed、三個 squad 紀錄已提交，屬事後核准；核准對象為 35090e3 的 SPEC 內容）
 
 ## Revisions
 
@@ -188,3 +189,4 @@
 - 2026-09-16 — v2 實作補記（非行為變更）：SC-F14 另新增 mutant `leading-v-compare-not-stripped`（比較時不去 `v`，SC-F8 build-tag 殺）。
 - 2026-09-17 — verifier round 1（source state fb76028／ded0995，verdict passed，無 behavioural finding；紀錄 `.scratch/marketplace-check-outdated-fixes/verification.md`）的 description 更正：failure model 最後一列改為可證偽的 realexec 步驟 `mkt-pack-schema-name-type`（verifier 實測 3d59291 的 `pack` 對 `name: 123` 成功產出、fb76028 拒絕）；明確排除的 subdir 引用改為 yml_schema.py:842-846；Must NOT「測試或 gate 連網」的範圍：`tools/gate.sh` supply-chain 層的 govulncheck 讀 https://vuln.go.dev，屬既有例外，測試與 realexec 不連網；evidence 的 `sha-commit-match-removed` 殺手歸因改為第五輪實際觀測（`TestCheckPackages_BlankVersion_NoManifestFetch`）。
 - 2026-09-17 — before-archive squad（紀錄 `.scratch/marketplace-check-outdated-fixes/squad/before-archive.md`，source state 6615b9d，16 項皆描述類）：引用更正——缺陷表第 6 列的裁定原話補回「(Recommended)」；Setup plan 補記——本變更對 `ARCHITECTURE.md` 的更動除 §2 tagpattern／authoring／semver 列外，另含 §3.4 `marketplace check / outdated` 流程敘述與 §4 gitops 呼叫點行號（AGENTS.md 要求事實變更同一變更內更新），授權範圍以此為準。非行為變更，版本不變。
+- 2026-09-17 — v2 核准取得（事後）：status revised-pending-approval → approved；內容不變，版本不變。
