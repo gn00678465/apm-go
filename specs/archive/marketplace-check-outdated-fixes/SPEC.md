@@ -1,7 +1,7 @@
 # SPEC — marketplace check / outdated review 缺陷修正 (Tier 3)
 
 - `spec_version`: v2
-- `status`: approved
+- `status`: shipped
 - `tier`: 3
 - `scope`: marketplace-check-outdated-fixes
 - `base_ref`: fix/markteplace-outdated (3d59291)
