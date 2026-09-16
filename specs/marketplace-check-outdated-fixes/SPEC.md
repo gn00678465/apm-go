@@ -23,7 +23,7 @@
 | 3 | 摘要不符第 4 點 | refcheck.go:1001 | 無（orchestrator 依原 SPEC:80 分類） | class 1 |
 | 4 | 4 | schema.go:712 | 「第 2、4、5 項: fix it」 | class 2 |
 | 5 | 5 | refcheck.go:1063 | 「第 2、4、5 項: fix it」 | class 2 |
-| 6 | 3 | tagpattern.go:158 | 「第 3 項：算是 spec 缺口」；問「第 6 項（tag 推斷接受 `1`、`1.2`，oracle 要求 x.y.z）要怎麼處理？」時選「修，對齊 oracle」 | class 2 |
+| 6 | 3 | tagpattern.go:158 | 「第 3 項：算是 spec 缺口」；問「第 6 項（tag 推斷接受 `1`、`1.2`，oracle 要求 x.y.z）要怎麼處理？」時選「修，對齊 oracle (Recommended)」 | class 2 |
 
 ## 缺陷與證據
 
@@ -187,3 +187,4 @@
 - 2026-09-16 — v1 → v2（after-implement squad，紀錄 `.scratch/marketplace-check-outdated-fixes/squad/after-implement.md`，source state 3fedb17）：class 2 三項：D-4 使用者裁定（本機 SHA 列保留 current map）、D-5 與 D-6 為 orchestrator 預設，隨本版送審可推翻；新增 SC-F20。class 1（不需新決定，隨本版一併修）：SC-F16 斷言加強為完整命令與 `gitops.SecureGitEnv()` 全部鍵；SC-F8 補 build-tag 子測試並在比較時去 `v`；SC-F15 補 `outdated` 步驟；兩個 mutant 改名與改寫；兩處註解更正。標註更正：SC-F9 `name: [a]` 為回歸。檔案補記：`fixes_read_capped_edges_test.go` 為 gate 第二輪覆蓋率 41/45 後補的測試（5680959，晚於實作 2d4671b），以一次性 mutant 證明會失敗。D-1 的偏離例子不是完整清單：apm-go 另接受 `1:20`、`190:20:30`、`=`（PyYAML 為 int、int、ConstructorError），另拒絕 `09`、`+.5`、`1.0e3`（PyYAML 為 str），判準不變。本 v2 與 7abf1e5 誤標的「v2」無關。
 - 2026-09-16 — v2 實作補記（非行為變更）：SC-F14 另新增 mutant `leading-v-compare-not-stripped`（比較時不去 `v`，SC-F8 build-tag 殺）。
 - 2026-09-17 — verifier round 1（source state fb76028／ded0995，verdict passed，無 behavioural finding；紀錄 `.scratch/marketplace-check-outdated-fixes/verification.md`）的 description 更正：failure model 最後一列改為可證偽的 realexec 步驟 `mkt-pack-schema-name-type`（verifier 實測 3d59291 的 `pack` 對 `name: 123` 成功產出、fb76028 拒絕）；明確排除的 subdir 引用改為 yml_schema.py:842-846；Must NOT「測試或 gate 連網」的範圍：`tools/gate.sh` supply-chain 層的 govulncheck 讀 https://vuln.go.dev，屬既有例外，測試與 realexec 不連網；evidence 的 `sha-commit-match-removed` 殺手歸因改為第五輪實際觀測（`TestCheckPackages_BlankVersion_NoManifestFetch`）。
+- 2026-09-17 — before-archive squad（紀錄 `.scratch/marketplace-check-outdated-fixes/squad/before-archive.md`，source state 6615b9d，16 項皆描述類）：引用更正——缺陷表第 6 列的裁定原話補回「(Recommended)」；Setup plan 補記——本變更對 `ARCHITECTURE.md` 的更動除 §2 tagpattern／authoring／semver 列外，另含 §3.4 `marketplace check / outdated` 流程敘述與 §4 gitops 呼叫點行號（AGENTS.md 要求事實變更同一變更內更新），授權範圍以此為準。非行為變更，版本不變。

@@ -9,7 +9,7 @@
 - `report_language`: zh-TW
 - `intent_status`: confirmed（v1）；v2 `approval: not obtained`
 - `intent_source`: specs/marketplace-check-outdated-fixes/SPEC.md，`spec_version: v2`，status revised-pending-approval。Approval 段：v1「核准 v1」（AskUserQuestion，commit 5760b0c，記於 674ec98）；v2 核准問題的回覆原話「用戶之前已經說得很清楚功能要什麼, 為什麼還有一堆問題????」，未核准也未否決，記為降級（d71e0a4）。v2 相對 v1 的差異：D-4（使用者裁定「還原為原本的值 (Recommended)」）、D-5 與 D-6（orchestrator 預設，只記錄不改程式）、SC-F20、after-implement squad 的 class 1 修正清單
-- `ordering`: tests-first（每組行為一個 RED commit 先於 GREEN commit：4378e23→e02bf35、0bd463b→2d4671b、19bb45f→8d0e288、7fa09ef→889cb92、c07ce7e→f7cd029、1cd635b→fe28b5d；RED commit 只含 `_test.go` 與 red.md，GREEN 只含產品碼與 mutants.txt／realexec.sh。例外：5680959 `fixes_read_capped_edges_test.go` 是 gate 第二輪覆蓋率 41/45 之後補的測試，晚於它覆蓋的實作 2d4671b，以一次性 mutant 證明會失敗；6178686 為覆蓋率合併不可達分支的 refactor）
+- `ordering`: tests-first（每組行為一個 RED commit 先於 GREEN commit：4378e23→e02bf35、0bd463b→2d4671b、19bb45f→8d0e288、7fa09ef→889cb92、c07ce7e→f7cd029、1cd635b→fe28b5d；RED commit 只含 `_test.go`、red.md 與 throwaway-mutants.txt（1cd635b、5680959），GREEN 只含產品碼與 mutants.txt／realexec.sh（fe28b5d 另含 SPEC Revisions 1 行）。例外：`TestNewShowCmd_ExactCommandAndSecureEnv`（1cd635b）對產品碼從未 FAIL，只對 squad 手作 mutant FAIL，屬回歸測試，其有效性由常設 mutant `locale-not-pinned` 證明（第六輪 mutation.log:21）；5680959 `fixes_read_capped_edges_test.go` 是 gate 第二輪覆蓋率 41/45 之後補的測試，晚於它覆蓋的實作 2d4671b，以一次性 mutant 證明會失敗；6178686 為覆蓋率合併不可達分支的 refactor）
 - `git_facts`: complete（base 存在、非 shallow、baseline 於隔離 worktree 執行）
 - `source_state`: commit=3a1ceddf851cacfe3afdeded3e747577140eb30f tree=3e0a645c0eba22fd5895ef3c30b1405f1bc4e9d2（`tools/gate/source_state.sh`，gate 第六輪前後相同）
 - `source_state_exclusions`: `GATE_UNTRACKED_OK=".gate/"`（tools/gate.sh:32）
@@ -25,7 +25,7 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 
 ## Changed unit → Test
 
-18 個單元（symbol 粒度）。宣告類（3 個 file-level、`var errReadCapExceeded`、`var oracleVersionRe`）無可執行行，合併為一列 n-a。
+18 個單元（symbol 粒度）：4 個 file-level（refcheck.go、refcheck_sha.go、schema.go、tagpattern.go）、2 個 var（`errReadCapExceeded`、`oracleVersionRe`）、12 個符號。宣告類無可執行行，合併為一列 n-a。`semver.go::IsValid` 只有刪除行，不是 units.tsv 的單元，下表另列為刪除佐證。
 
 | Changed unit | Test | Status |
 |---|---|---|
@@ -39,7 +39,7 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 | schema.go::parsePackages / requireNonEmptyString / isStringNode | fixes_schema_type_test.go::TestLoadAuthoringConfig_NonStringName_Rejected（5）, ::TestLoadAuthoringConfig_NonStringSource_OracleMessage（3）; fixes_schema_type_regression_test.go::TestLoadAuthoringConfig_StringLikeScalars_Accepted（5）, ::TestLoadAuthoringConfig_NumericVersionOrRef_Accepted; 既有 schema_test.go::TestLoadAuthoringConfig_EmptySource_Rejected | pass |
 | tagpattern.go::IsOracleVersion | tagpattern/oracle_version_test.go::TestIsOracleVersion_Table（15 列） | pass |
 | tagpattern.go::Infer | fixes_tag_inference_test.go::TestCheckPackages_TagInference_RejectsShortVersions（經 versionTagCandidatesWithPattern 的 fallback） | pass |
-| deleted: semver.go::IsValid | 呼叫者只有 tagpattern.go 與 refcheck.go，皆改呼叫 IsOracleVersion；build 與全套件綠；`git grep IsValid` 在程式碼中無殘留（squad diff lens） | pass |
+| deleted: semver.go::IsValid（非 units.tsv 單元） | 呼叫者只有 tagpattern.go 與 refcheck.go，皆改呼叫 IsOracleVersion；build 與全套件綠；`git grep IsValid` 在程式碼中無殘留（squad diff lens） | pass |
 | 宣告類（3 file-level、2 var） | — | n-a |
 
 ## Stated claim → Test
@@ -53,7 +53,7 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 | SC-F3 readCapped 讀到 N+1 即停 | fixes_read_capped_test.go::TestReadCapped_StopsAtLimit | pass |
 | SC-F4 超限在期限內停止、暫存目錄移除（回歸） | fixes_read_capped_regression_test.go（同名） | pass |
 | SC-F5 恰為上限可讀 | fixes_read_capped_regression_test.go（同名） | pass |
-| SC-F16 show 命令為 `git -C <dir> show FETCH_HEAD:<path>`、完整安全環境、LC_ALL=C、WaitDelay | fixes_after_implement_test.go::TestNewShowCmd_ExactCommandAndSecureEnv（完整 Args 與 `gitops.SecureGitEnv()` 全部鍵）; fixes_read_capped_test.go::TestNewShowCmd_ShapeAndSecureEnv（WaitDelay） | pass |
+| SC-F16 show 命令為 `git -C <dir> show FETCH_HEAD:<path>`、完整安全環境、LC_ALL=C、WaitDelay | fixes_after_implement_test.go::TestNewShowCmd_ExactCommandAndSecureEnv（完整 Args 與 `gitops.SecureGitEnv()` 全部鍵）; fixes_read_capped_test.go::TestNewShowCmd_ShapeAndSecureEnv（WaitDelay）。ExactCommand 測試對產品碼未曾 FAIL（回歸；見 ordering） | pass |
 | SC-F6 SHA 加 display version 無候選／offline／ListRefs 錯誤時 Current `--`；range 條目保留 map | fixes_current_test.go、fixes_current_regression_test.go（同名） | pass |
 | SC-F17 無 version 的 SHA 在錯誤列 Current `--`（D-2） | fixes_current_test.go（同名，3 子測試） | pass |
 | SC-F7 CLI 讀 marketplace.json 時 SHA 不出現 | cmd marketplace_outdated_current_test.go（同名；斷言 sha[:12] 不出現，40 字元必含其前綴） | pass |
@@ -76,9 +76,9 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 | Must NOT：version/ref 數字不拒絕 | SC-F10 | pass |
 | Must NOT：非小寫 40-hex 比對不變 | SC-F2 | pass |
 | Must NOT：無新增 git 子程序；fetch/init/show 保留安全環境、WaitDelay、pinGitLocale；錯誤經 SanitizeGitOutput | SC-F16（show）; 既有 TestNewProbeFetchCmd_ShapeAndSecureEnv（fetch）; init 的 `ApplySecureGitEnv`／`pinGitLocale` 無斷言（同原 scope 的 SC-B20 partial）; mutants `locale-not-pinned`、`probe-error-unsanitized` killed | partial：init 無斷言 |
-| Must NOT：測試與 gate 不連網 | 所有新測試用 t.TempDir() repo 或 fake lister；realexec 新步驟皆 `--offline`；供應鏈層無新 capability import。既有例外兩處（皆非本變更引入，Honest notes）：供應鏈層 govulncheck 讀 vuln.go.dev；既有 `TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen` 在 Windows 實際執行真 git 的 `ls-remote origin` | partial：兩處既有連網 |
+| Must NOT：測試與 gate 不連網 | 所有新測試用 t.TempDir() repo 或 fake lister；realexec 新步驟 check／outdated 兩步為 `--offline`，pack 步驟（`pack --dry-run`，無此旗標）在 LoadAuthoringConfig 即失敗、未達網路；供應鏈層無新 capability import。既有例外兩處（皆非本變更引入，Honest notes）：供應鏈層 govulncheck 讀 vuln.go.dev；既有 `TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen` 在 Windows 實際執行真 git 的 `ls-remote origin` | partial：兩處既有連網 |
 | Failure model：SHA 被同名 ref 繞過 | SC-F1 + mutant `sha-name-match-restored` | pass |
-| Failure model：記憶體耗盡／超限後 git 未結束 | SC-F3 + mutant `manifest-read-uncapped`；SC-F4 耗時斷言 | pass |
+| Failure model：記憶體耗盡／超限後 git 未結束 | SC-F3 + mutant `manifest-read-uncapped`；SC-F4 耗時斷言（回歸；對現行實作仍為活檢查：去掉超限分支的 `cancel()` 會撐到 3s 逾時而失敗，但無常設 mutant 釘此害，見 Honest notes） | pass |
 | Failure model：Current 顯示 SHA／誤清本機列 | SC-F6、F17、F7、F20 + mutant `current-map-kept-on-no-candidates` | pass |
 | Failure model：`v` 前綴誤判 | SC-F8 + mutants `leading-v-not-stripped`、`leading-v-compare-not-stripped` | pass |
 | Failure model：非字串 name 流入／誤拒合法值 | SC-F9、F18、F19、F10 + mutant `name-tag-unchecked` | pass |
@@ -114,10 +114,10 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 | Types / vet | `go vet ./...` | 0 findings | 0 |
 | Lint / format | gofmt on changed .go | 0 drift | 0 |
 | Static | `staticcheck@2026.2.1 -checks all,-ST1000,-ST1003,-ST1016,-ST1020,-ST1021,-ST1022,-ST1005,-ST1018 ./...` | 0 findings | 0 |
-| Suite health | `go test -count=1 -shuffle=1789576153 ./...` | 0 failures，先於 mutation 與 coverage | 26 packages ok |
+| Suite health | `go test -count=1 -shuffle=1789580294 ./...` | 0 failures，先於 mutation 與 coverage | 26 packages ok |
 | Property-based | `go test -run Property -v ./internal/marketplace/... ./internal/rootfs/...` | all pass, ≥1 ran | 5 properties passed |
 | Supply chain | `govulncheck@v1.7.0 ./...` + go.mod delta + imports diff | 0 vulns; new deps justified | No vulnerabilities found；go.mod 無變更；無新 capability-bearing import（產品碼新 import 只有 `io`；`imports-added.txt`） |
-| Real execution | `tools/gate/realexec.sh` | 0 FAIL | 126/126（含 3 個本 SPEC 新增的 mkt-*-schema-name-type 步驟：check、outdated 各 1 個檢查，pack 2 個檢查） |
+| Real execution | `tools/gate/realexec.sh` | 0 FAIL | 126/126（含 3 個本 SPEC 新增的 mkt-*-schema-name-type 步驟，各 2 個檢查——exit code 與訊息——共 6 個；124→126 的差是第六輪才加入的 pack 步驟） |
 | Mutation | `tools/gate/mutate.sh`（manual, sequential, isolated copy） | 0 survived, 0 broken | 26/26 killed（7 個本 SPEC 新增，2 個更新） |
 | Changed units | gatetool coverage | symbol granularity | 18 units |
 | Changed-line coverage | gatetool coverage | 100%, 0 unmapped | 42/42 executable lines; 66 non-executable; 0 unmapped; 0 platform-excluded; files=4 |
@@ -161,6 +161,10 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 - 供應鏈層 govulncheck 讀 https://vuln.go.dev，與「gate 不連網」Must NOT 不符；前一 scope 即如此，記為既有例外（verifier round 1 finding 3）。
 - 既有 `TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen`（cmd/apm-go/doctor_test.go:382）在 Windows 是 vacuous：它寫入的假 `git` 無副檔名，`exec.LookPath` 找不到，真 git 執行；cwd 在 git repo 內時 `ls-remote origin` 連網約 660ms 超過 200ms 而「通過」，cwd 在 repo 外則 20ms 失敗。每輪 gate 的 tests、suite-health、mutation baseline 與每個 mutant 都因此各連網一次。本變更之外（class 3），未改。
 - 獨立驗證（verifier round 1，`.scratch/marketplace-check-outdated-fixes/verification.md`）：verdict passed，0 個 behavioural finding，6 個 description finding；處置於 3a1cedd（realexec pack 步驟、SPEC 引用與 Revisions、ARCHITECTURE 錨點、本報告歸因更正）。最終狀態 3a1cedd 的產品碼與 verifier 驗過的 fb76028 相同，未再送 verifier。
+- 「每個遠端套件至多一次 ls-remote」（SPEC 明確排除段）無計數測試，未量測；沿前一 scope。
+- after-spec squad 的三項 class 3（SHA 釘選與 `+build` tag 並存時 `CompareVersions` tie-break 誤報；fetch stderr 與 ls-remote stdout 無上限緩衝；annotated tag 的 tag object SHA 命中 commit 欄位而不探測）只記於 SPEC 明確排除段（SPEC.md:168-170），未修。
+- 無常設 mutant 覆蓋 `showAtFetchHead` 超限分支的 `cancel()`（refcheck_sha.go:303-307）；只由 SC-F4 的 3s 耗時斷言承擔。`TestShowAtFetchHead_GitNotStartable_Errors` 的失敗證據只有一次性 mutant `git-show-start-error-swallowed`（throwaway-mutants.txt），未併入 mutants.txt。SC-F8 build-tag 斷言為關係式（兩邊相等），不釘絕對值。三者依 before-archive 的處置規則（不新增 mutant、不重跑 gate）記錄不改。
+- before-archive squad（`.scratch/marketplace-check-outdated-fixes/squad/before-archive.md`，三 lens，source state 6615b9d）：16 項，全為描述類，文字處置；三 lens 一致認定證據對 git 為真，結案唯一阻礙為 v2 核准未取得。
 - gate 共跑六輪，其中第四輪因 session 中斷白跑，第六輪只因 realexec 新增一步（description finding 的處置選擇）而完整重跑；產品碼自 fb76028 起未變。
 - 既有 flaky `TestFetchGit_*`（internal/marketplace，讀全域 temp 目錄計數）與 `ListRefs` 無 WaitDelay：本變更之外，沿前一 scope 記錄。
 - squad 紀錄：`.scratch/marketplace-check-outdated-fixes/squad/after-spec.md`（四 lens，全部 class 1 已修）、`squad/after-implement.md`（三 lens，class 1 全部 status: fixed，class 2 依 D-4..D-6 處置，class 3 記於本節）。

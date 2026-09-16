@@ -47,7 +47,7 @@ Each row is a run observed before the corresponding GREEN commit. Commands ran w
 
 ## Group E — version grammar
 
-- oracle table check: `D:/Projects2/apm` at 8c2e0d9c, `git diff --quiet b75a02b1 HEAD -- src/apm_cli/marketplace/semver.py` → identical. `parse_semver` via importlib (with `sys.modules` registration, `PYTHONIOENCODING=utf-8`) returned the SC-F11 expectations for all 15 rows, including True for `'\u0661.\u0662.\u0663'` and `'1.2.3\n'` (the D-b deviation rows).
+- oracle table check: `D:/Projects2/apm` at 8c2e0d9c, `git diff --quiet b75a02b1 HEAD -- src/apm_cli/marketplace/semver.py` → identical. `parse_semver` via importlib (with `sys.modules` registration, `PYTHONIOENCODING=utf-8`) returned the SC-F11 expectations for 13 of the 15 rows; for `'\u0661.\u0662.\u0663'` and `'1.2.3\n'` it returned True while the test expects false — those two rows are the D-b deviation, not oracle output.
 - SC-F11 (`go test -count=1 ./internal/marketplace/tagpattern/`): build failed — `undefined: IsOracleVersion` (oracle_version_test.go:40).
 - command (worktree, tests added on top of 889cb92): `go test -count=1 -v -run 'TestCheckPackages_TagInference_RejectsShortVersions|TestVersionTagCandidates_VPrefixedCapture' ./internal/marketplace/authoring/`
 - SC-F12: FAIL — check did not pass (inference picked `{version}` from tag `1`).
