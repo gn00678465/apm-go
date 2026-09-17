@@ -302,9 +302,7 @@ func showAtFetchHead(dir, relPath string) ([]byte, error) {
 	// marketplace-check-outdated-fixes SC-F3).
 	data, readErr := readCapped(stdout, manifestReadMaxBytes)
 	if errors.Is(readErr, errReadCapExceeded) {
-		// Nothing drains the pipe any more, so git would block on a full
-		// pipe until the deadline; stop it before waiting.
-		cancel()
+		cancel() // nothing drains the pipe any more, so git would block on a full pipe until the deadline
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("%s at the pinned ref exceeds %d bytes", relPath, manifestReadMaxBytes)
 	}

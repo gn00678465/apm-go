@@ -66,7 +66,7 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 | SC-F11 oracle 文法表格（含 D-b 兩列偏離） | tagpattern/oracle_version_test.go::TestIsOracleVersion_Table；期望值由本機 Python 載入 oracle `semver.py`（對 pin 無差異）實跑 15 列取得（red.md Group E） | pass |
 | SC-F12 推斷拒絕短版本 | fixes_tag_inference_test.go（同名） | pass |
 | SC-F13 `{version}` 擷取拒絕 `v1.2.0`；零匹配時 fallback 推斷 `v{version}` | fixes_tag_inference_test.go::TestVersionTagCandidates_VPrefixedCapture（2 子測試） | pass |
-| SC-F14 mutants：6 個新增 + `leading-v-compare-not-stripped` + 2 個更新 | tools/gate/mutants.txt；gate 第五、六輪皆 26/26 killed（`sha-name-match-restored` 由 SC-F1 殺；`sha-commit-match-removed` 由 `TestCheckPackages_BlankVersion_NoManifestFetch` 殺——其 panicProber 讓套件中止，SC-B1 未執行到，但該 mutant 在隔離副本另由 SC-B1 單獨殺過，見 Negative controls） | pass |
+| SC-F14 mutants：6 個新增 + `leading-v-compare-not-stripped` + 2 個更新；封存後補 `show-cap-cancel-removed`（見 Honest notes） | tools/gate/mutants.txt；gate 第五、六輪皆 26/26 killed（`sha-name-match-restored` 由 SC-F1 殺；`sha-commit-match-removed` 由 `TestCheckPackages_BlankVersion_NoManifestFetch` 殺——其 panicProber 讓套件中止，SC-B1 未執行到，但該 mutant 在隔離副本另由 SC-B1 單獨殺過，見 Negative controls） | pass |
 | SC-F15 realexec `name: 123` check 與 outdated `--offline` exit 2 | tools/gate/realexec.sh；gate 第六輪 126/126 | pass |
 | Must NOT：原 SPEC v4 Must NOT 全部仍有效 | 原 scope 全部測試與 realexec 步驟在第五、六輪通過；`git diff 3d59291..HEAD -- '*_test.go' \| grep '^-[^-]'` 為空 | pass |
 | Must NOT：不修改 specs/archive/marketplace-check-outdated/ | `git diff --name-only 3d59291..HEAD -- specs/archive/marketplace-check-outdated/` 為空 | pass |
@@ -78,7 +78,7 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 | Must NOT：無新增 git 子程序；fetch/init/show 保留安全環境、WaitDelay、pinGitLocale；錯誤經 SanitizeGitOutput | SC-F16（show）; 既有 TestNewProbeFetchCmd_ShapeAndSecureEnv（fetch）; init 的 `ApplySecureGitEnv`／`pinGitLocale` 無斷言（同原 scope 的 SC-B20 partial）; mutants `locale-not-pinned`、`probe-error-unsanitized` killed | partial：init 無斷言 |
 | Must NOT：測試與 gate 不連網 | 所有新測試用 t.TempDir() repo 或 fake lister；realexec 新步驟 check／outdated 兩步為 `--offline`，pack 步驟（`pack --dry-run`，無此旗標）在 LoadAuthoringConfig 即失敗、未達網路；供應鏈層無新 capability import。既有例外兩處（皆非本變更引入，Honest notes）：供應鏈層 govulncheck 讀 vuln.go.dev；既有 `TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen` 在 Windows 實際執行真 git 的 `ls-remote origin` | partial：兩處既有連網 |
 | Failure model：SHA 被同名 ref 繞過 | SC-F1 + mutant `sha-name-match-restored` | pass |
-| Failure model：記憶體耗盡／超限後 git 未結束 | SC-F3 + mutant `manifest-read-uncapped`；SC-F4 耗時斷言（回歸；對現行實作仍為活檢查：去掉超限分支的 `cancel()` 會撐到 3s 逾時而失敗，但無常設 mutant 釘此害，見 Honest notes） | pass |
+| Failure model：記憶體耗盡／超限後 git 未結束 | SC-F3 + mutant `manifest-read-uncapped`；SC-F4 耗時斷言（回歸；對現行實作仍為活檢查：去掉超限分支的 `cancel()` 會撐到 3s 逾時而失敗，封存後補常設 mutant `show-cap-cancel-removed`，單獨驗證由本測試殺，見 Honest notes） | pass |
 | Failure model：Current 顯示 SHA／誤清本機列 | SC-F6、F17、F7、F20 + mutant `current-map-kept-on-no-candidates` | pass |
 | Failure model：`v` 前綴誤判 | SC-F8 + mutants `leading-v-not-stripped`、`leading-v-compare-not-stripped` | pass |
 | Failure model：非字串 name 流入／誤拒合法值 | SC-F9、F18、F19、F10 + mutant `name-tag-unchecked` | pass |
@@ -157,13 +157,13 @@ none — base was green：在 674ec98（產品碼與 3d59291 相同）的隔離 
 - `git show` 逾時時錯誤文字為空（`git show <path>: `），修正前即如此；本變更之外。
 - 原 scope 的 SC-B20 partial 仍在：`git init` 子程序的 `pinGitLocale` 無斷言；本變更新增的 SC-F16 補上了 show 的斷言。
 - ARCHITECTURE.md §2 `semver` 列的行號錨點曾為前一 scope 留下的舊值（`semver.go:16,75,67`），verifier round 1 指出後於 3a1cedd 更正為 `:20,79,71`。
-- `cmd/apm-go/marketplace_authoring.go:475` 註解引用 `__init__.py:1133-1148`，pin b75a02b1 的對應段落起於 1139；該檔不在本變更 diff 內，未改（verifier round 1 finding 6）。
+- `cmd/apm-go/marketplace_authoring.go:409,475` 註解曾引用 `__init__.py:1133-1148`；pin b75a02b1 的 `_load_current_versions` 在 `:1139-1154`。verifier round 1 finding 6 指出後原本以「該檔不在本變更 diff」為由未改；2026-09-17 使用者詢問後更正（該檔在本 branch 上改了 68 行，理由不成立）。
 - 供應鏈層 govulncheck 讀 https://vuln.go.dev，與「gate 不連網」Must NOT 不符；前一 scope 即如此，記為既有例外（verifier round 1 finding 3）。
 - 既有 `TestDoctor_ExecGit_TimesOutDespiteOrphanedGrandchildHoldingPipesOpen`（cmd/apm-go/doctor_test.go:382）在 Windows 是 vacuous：它寫入的假 `git` 無副檔名，`exec.LookPath` 找不到，真 git 執行；cwd 在 git repo 內時 `ls-remote origin` 連網約 660ms 超過 200ms 而「通過」，cwd 在 repo 外則 20ms 失敗。每輪 gate 的 tests、suite-health、mutation baseline 與每個 mutant 都因此各連網一次。本變更之外（class 3），未改。
 - 獨立驗證（verifier round 1，`.scratch/marketplace-check-outdated-fixes/verification.md`）：verdict passed，0 個 behavioural finding，6 個 description finding；處置於 3a1cedd（realexec pack 步驟、SPEC 引用與 Revisions、ARCHITECTURE 錨點、本報告歸因更正）。最終狀態 3a1cedd 的產品碼與 verifier 驗過的 fb76028 相同，未再送 verifier。
 - 「每個遠端套件至多一次 ls-remote」（SPEC 明確排除段）無計數測試，未量測；沿前一 scope。
 - after-spec squad 的三項 class 3（SHA 釘選與 `+build` tag 並存時 `CompareVersions` tie-break 誤報；fetch stderr 與 ls-remote stdout 無上限緩衝；annotated tag 的 tag object SHA 命中 commit 欄位而不探測）只記於 SPEC 明確排除段（SPEC.md:168-170），未修。
-- 無常設 mutant 覆蓋 `showAtFetchHead` 超限分支的 `cancel()`（refcheck_sha.go:303-307）；只由 SC-F4 的 3s 耗時斷言承擔。`TestShowAtFetchHead_GitNotStartable_Errors` 的失敗證據只有一次性 mutant `git-show-start-error-swallowed`（throwaway-mutants.txt），未併入 mutants.txt。SC-F8 build-tag 斷言為關係式（兩邊相等），不釘絕對值。三者依 before-archive 的處置規則（不新增 mutant、不重跑 gate）記錄不改。
+- `showAtFetchHead` 超限分支的 `cancel()` 原本無常設 mutant；2026-09-17 使用者詢問後補 `show-cap-cancel-removed`（`_ = cancel` 取代呼叫）。為了讓錨點唯一，該行的說明併成行尾註解（產品碼只動註解位置，無行為變更）。單獨以 mutate.sh 在隔離副本驗證（baseline 通過；mutant 由 `TestShowAtFetchHead_Oversized_StopsBeforeTimeout` 殺：兩個子測試各 took 3.22s ≥ 3s deadline；記錄檔 scratchpad `fixes-mutant-show-cap-cancel-removed.log`）。mutants.txt 現為 27 個；Gate 表的 26/26 是第六輪、此 commit 之前的數字，此 commit 之後未重跑整輪 gate。第一次嘗試的替換文字以 `//` 開頭，被 MSYS 路徑轉換成 `/`，編譯失敗（BROKEN）；改為 `_ = cancel // …` 後通過——mutants.txt 的 `new` 欄不可以 `/` 開頭，這是 Git Bash 執行 gate 的限制。`TestShowAtFetchHead_GitNotStartable_Errors` 的失敗證據只有一次性 mutant `git-show-start-error-swallowed`（throwaway-mutants.txt），未併入 mutants.txt。SC-F8 build-tag 斷言為關係式（兩邊相等），不釘絕對值。三者依 before-archive 的處置規則（不新增 mutant、不重跑 gate）記錄不改。
 - before-archive squad（`.scratch/marketplace-check-outdated-fixes/squad/before-archive.md`，三 lens，source state 6615b9d）：16 項，全為描述類，文字處置；三 lens 一致認定證據對 git 為真，結案唯一阻礙為 v2 核准未取得。
 - gate 共跑六輪，其中第四輪因 session 中斷白跑，第六輪只因 realexec 新增一步（description finding 的處置選擇）而完整重跑；產品碼自 fb76028 起未變。
 - 既有 flaky `TestFetchGit_*`（internal/marketplace，讀全域 temp 目錄計數）與 `ListRefs` 無 WaitDelay：本變更之外，沿前一 scope 記錄。

@@ -406,7 +406,7 @@ func checkBoolSymbol(ok bool) string {
 //
 // The Current column comes from ./marketplace.json in the working directory
 // (loadCurrentMarketplaceVersions), mirroring upstream's
-// _load_current_versions (__init__.py:1133-1148): a missing or unparsable
+// _load_current_versions (__init__.py:1139-1154, pin b75a02b1): a missing or unparsable
 // file degrades to "--" for every row, never an error.
 func marketplaceOutdatedCmd() *cobra.Command {
 	var offline, includePrerelease, verbose bool
@@ -472,7 +472,7 @@ func marketplaceOutdatedCmd() *cobra.Command {
 // loadCurrentMarketplaceVersions reads ./marketplace.json (the working
 // directory's published manifest) and returns each plugin's pinned
 // source.ref by name, for outdated's Current column -- mirroring upstream's
-// _load_current_versions (__init__.py:1133-1148). Best-effort: a missing,
+// _load_current_versions (__init__.py:1139-1154, pin b75a02b1). Best-effort: a missing,
 // unreadable, or unparsable file returns an empty map (every Current cell
 // degrades to "--"), never an error.
 func loadCurrentMarketplaceVersions() map[string]string {

@@ -27,3 +27,4 @@ leading-v-not-stripped	internal/marketplace/authoring/refcheck.go	tagpattern.Ren
 name-tag-unchecked	internal/marketplace/authoring/schema.go	return v.Kind == yaml.ScalarNode && v.ShortTag() == "!!str"	return v.Kind == yaml.ScalarNode
 oracle-grammar-loosened	internal/marketplace/tagpattern/tagpattern.go	return oracleVersionRe.MatchString(s)	return s != ""
 leading-v-compare-not-stripped	internal/marketplace/authoring/refcheck.go	semver.StripVPrefix(strings.TrimSpace(pkg.Version))) > 0 {	strings.TrimSpace(pkg.Version)) > 0 {
+show-cap-cancel-removed	internal/marketplace/authoring/refcheck_sha.go	cancel() // nothing drains the pipe any more, so git would block on a full pipe until the deadline	_ = cancel // mutant: cancel not called, git left running after the cap so Wait blocks until the deadline
