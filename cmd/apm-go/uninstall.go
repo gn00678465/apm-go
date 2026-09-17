@@ -40,7 +40,7 @@ func uninstallCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "preview what would be removed without changing anything")
 	cmd.Flags().BoolVarP(&opts.Verbose, "verbose", "v", false, "print detailed removal information")
-	cmd.Flags().BoolVarP(&opts.Global, "global", "g", false, "user-scope (~/.apm/) uninstall -- not supported yet")
+	cmd.Flags().BoolVarP(&opts.Global, "global", "g", false, "user-scope uninstall: remove packages from ~/.apm/ instead of the project directory")
 	return cmd
 }
 
@@ -53,11 +53,9 @@ func uninstallCmd() *cobra.Command {
 // --dry-run and the real run) and applyUninstallPlan (every actual write).
 func runUninstall(args []string, opts uninstallOptions) error {
 	if opts.Global {
-		// un-090/091, definite A: apm-go has no InstallScope/user-scope
-		// concept at all (install/update always operate on cwd-relative
-		// apm.yml/apm.lock.yaml/apm_modules) -- report clearly rather than
-		// silently ignoring -g or doing something unintended.
-		return fmt.Errorf("user scope (-g/--global) is not supported yet; run apm-go uninstall from within the project directory")
+		if err := enterGlobalScope(); err != nil {
+			return err
+		}
 	}
 
 	data, node, m, err := readUninstallManifest()

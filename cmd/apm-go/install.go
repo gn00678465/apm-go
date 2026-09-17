@@ -74,11 +74,21 @@ func installCmd() *cobra.Command {
 	var mcpForce bool
 	var allowInsecure bool
 	var dev bool
+	var globalFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "install [packages...]",
 		Short: "Install dependencies from apm.yml or by URL/shorthand",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if globalFlag {
+				if err := enterGlobalScope(); err != nil {
+					return err
+				}
+				if err := ensureGlobalManifest(); err != nil {
+					return err
+				}
+			}
+
 			// Validate --target/-t up front, before any other flag routing
 			// (mirrors Python's TargetParamType, which validates at CLI
 			// argument-parsing time before the command body runs): a
@@ -200,6 +210,7 @@ func installCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&mcpForce, "force", false, "overwrite a conflicting existing --mcp entry non-interactively")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "permit direct http:// (non-TLS) dependencies")
 	cmd.Flags().BoolVar(&dev, "dev", false, "install positional packages into devDependencies.apm instead of dependencies.apm")
+	cmd.Flags().BoolVarP(&globalFlag, "global", "g", false, "user-scope install: manage packages under ~/.apm/ instead of the project directory")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
 		"print extra diagnostics (currently: list every pinned dependency after a successful --frozen install)")
 
