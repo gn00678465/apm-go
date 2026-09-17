@@ -206,26 +206,49 @@ func TestDoctor_TokenDetected_NeverPrinted(t *testing.T) {
 	}
 }
 
+// SPEC marketplace-check-outdated SC-A7 / D-c: the loader is strict for
+// every command, as the Oracle's load_marketplace_from_apm_yml is. This
+// fixture used to carry duplicate names and remote entries without
+// version/ref and asserted the "duplicate names" check fired; that config
+// is now rejected at load (see TestDoctor_MarketplaceConfig_ValidationError_
+// ReportsConfigError), so the valid-config path gets a valid fixture.
 func TestDoctor_MarketplaceConfig_ApmYml(t *testing.T) {
 	chdirTemp(t)
-	os.WriteFile("apm.yml", []byte("name: m\nversion: 1.0.0\nmarketplace:\n  name: m\n  packages:\n    - name: a\n      source: owner/a\n    - name: A\n      source: owner/b\n"), 0o644)
+	os.WriteFile("apm.yml", []byte("name: m\nversion: 1.0.0\nmarketplace:\n  name: m\n  packages:\n    - name: a\n      source: owner/a\n      ref: main\n    - name: b\n      source: owner/b\n      ref: main\n"), 0o644)
 	out, err := runDoctorWith(t, healthyGit(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
 		"marketplace config", "apm.yml 'marketplace:' block found and valid",
-		"duplicate names", "Duplicate names: 'A' (packages[0] and packages[1])",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "Duplicate names") {
+		t.Errorf("unique names must not produce a duplicate-names check:\n%s", out)
+	}
+}
+
+// SC-A7: doctor.py:240 reports a load-time MarketplaceYmlError as
+// "apm.yml marketplace block has errors: <str(exc)[:60]>" with passed=False.
+func TestDoctor_MarketplaceConfig_ValidationError_ReportsConfigError(t *testing.T) {
+	chdirTemp(t)
+	os.WriteFile("apm.yml", []byte("name: m\nversion: 1.0.0\nmarketplace:\n  name: m\n  packages:\n    - name: a\n      source: owner/a\n      ref: main\n    - name: A\n      source: owner/b\n      ref: main\n"), 0o644)
+	out, _ := runDoctorWith(t, healthyGit(), nil)
+	want := "apm.yml marketplace block has errors: Duplicate package name 'A' (packages[0] and packages[1"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q (the Oracle's 60-char truncation of the load error) in:\n%s", want, out)
+	}
+	if strings.Contains(out, "block found and valid") {
+		t.Errorf("a rejected config must not be reported as valid:\n%s", out)
+	}
 }
 
 func TestDoctor_MarketplaceConfig_Legacy_PointsAtMigrate(t *testing.T) {
 	chdirTemp(t)
-	os.WriteFile("marketplace.yml", []byte("name: m\npackages:\n  - name: a\n    source: owner/a\n"), 0o644)
+	os.WriteFile("marketplace.yml", []byte("name: m\npackages:\n  - name: a\n    source: owner/a\n    ref: main\n"), 0o644)
 	out, err := runDoctorWith(t, healthyGit(), nil)
 	if err != nil {
 		t.Fatal(err)

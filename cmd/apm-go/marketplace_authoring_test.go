@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -576,9 +577,60 @@ func (f fixtureRemoteLister) ListRefs(string) ([]semver.TagInfo, error) {
 // afterward.
 func withFixtureRemoteLister(t *testing.T, dir string) {
 	t.Helper()
-	orig := authoring.DefaultRefLister
+	origLister, origProber, origManifest := authoring.DefaultRefLister, authoring.DefaultCommitProber, authoring.DefaultManifestVersionFetcher
 	authoring.DefaultRefLister = fixtureRemoteLister{dir: dir}
-	t.Cleanup(func() { authoring.DefaultRefLister = orig })
+	authoring.DefaultCommitProber = fixtureCommitProber{dir: dir}
+	authoring.DefaultManifestVersionFetcher = fixtureManifestFetcher{dir: dir}
+	t.Cleanup(func() {
+		authoring.DefaultRefLister, authoring.DefaultCommitProber, authoring.DefaultManifestVersionFetcher = origLister, origProber, origManifest
+	})
+}
+
+// fixtureCommitProber answers `check`'s SHA probe (SPEC
+// marketplace-check-outdated SC-B2) against the fixture repository: the
+// production prober would resolve "owner/repo" to github.com.
+type fixtureCommitProber struct{ dir string }
+
+func (f fixtureCommitProber) HasCommit(_ string, sha string) (bool, error) {
+	cmd := exec.Command("git", "-C", f.dir, "cat-file", "-e", sha+"^{commit}")
+	if err := cmd.Run(); err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+// fixtureManifestFetcher answers `check`'s manifest-version read (SC-B13)
+// against the fixture repository: plugin.json first, then apm.yml.
+type fixtureManifestFetcher struct{ dir string }
+
+func (f fixtureManifestFetcher) FetchManifestVersion(_ string, ref, subdir string) (string, error) {
+	show := func(rel string) []byte {
+		out, err := exec.Command("git", "-C", f.dir, "show", ref+":"+rel).Output()
+		if err != nil {
+			return nil
+		}
+		return out
+	}
+	base := strings.TrimSuffix(subdir, "/")
+	if base != "" {
+		base += "/"
+	}
+	if data := show(base + ".claude-plugin/plugin.json"); data != nil {
+		var m struct {
+			Version string `json:"version"`
+		}
+		if err := json.Unmarshal(data, &m); err == nil && m.Version != "" {
+			return m.Version, nil
+		}
+	}
+	if data := show(base + "apm.yml"); data != nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "version:") {
+				return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "version:")), `"'`), nil
+			}
+		}
+	}
+	return "", nil
 }
 
 func TestMarketplaceCheckCmd_FlagsWired(t *testing.T) {
@@ -639,8 +691,10 @@ func TestMarketplaceCheck_AllLocalPackages_SucceedsWithoutNetwork(t *testing.T) 
 	if err != nil {
 		t.Fatalf("marketplace check returned error for an all-local marketplace: %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "2 package(s) verified") {
-		t.Errorf("output = %q, want it to report both packages verified", out)
+	// SPEC marketplace-check-outdated SC-B11: check.py:262's all-clean
+	// summary is "All <N> entries OK".
+	if !strings.Contains(out, "All 2 entries OK") {
+		t.Errorf("output = %q, want the Oracle's \"All 2 entries OK\" summary", out)
 	}
 }
 
@@ -698,9 +752,18 @@ func TestMarketplaceCheck_RemotePackagePinnedRefMissing_ExitsNonZero(t *testing.
 		t.Fatal("marketplace check with a missing pinned ref returned no error, want exit 1 (mkt-041)")
 	}
 	// The Entry Health Check table row must name the package with a failed
-	// STATUS cell and carry the pin failure in DETAIL.
-	if !strings.Contains(out, "tool") || !strings.Contains(out, `pinned ref "v9.9.9" not found`) {
-		t.Errorf("output = %q, want a table row naming the package and its missing-pin detail", out)
+	// STATUS cell and carry the pin failure in DETAIL -- the Oracle's own
+	// text (check.py:183), SPEC marketplace-check-outdated SC-B11.
+	if !strings.Contains(out, "tool") || !strings.Contains(out, "Ref 'v9.9.9' not found") {
+		t.Errorf("output = %q, want a table row naming the package and the Oracle's missing-ref detail", out)
+	}
+	// check.py:257-259: logger.error("<N> entries have issues") then a bare
+	// sys.exit(1) -- nothing else is printed.
+	if !strings.Contains(out, "1 entries have issues") || strings.Contains(out, "check failed") {
+		t.Errorf("output = %q, want the Oracle's \"1 entries have issues\" summary and no apm-go-only trailer", out)
+	}
+	if got := exitCodeOf(err); got != 1 || !isSilentExit(err) {
+		t.Errorf("exit = %d silent=%v, want a silent exit 1", got, isSilentExit(err))
 	}
 }
 
@@ -868,7 +931,12 @@ func TestMarketplaceCheck_OfflinePrintsModeNotice(t *testing.T) {
 // commands/marketplace/check.py:_warn_duplicate_names, which runs
 // unconditionally before the resolution loop and never touches
 // failure_count.
-func TestMarketplaceCheck_DuplicatePackageNames_WarnsButExitsZero(t *testing.T) {
+// SPEC marketplace-check-outdated SC-A4/SC-A5: the Oracle's yml_schema.py
+// rejects duplicate names at load time (exit 2), so check.py's own
+// _warn_duplicate_names is unreachable defence-in-depth -- and so is
+// authoring.DuplicatePackageNames here. This used to assert exit 0 plus a
+// warning; the assertion change is listed in the SPEC's Must NOT.
+func TestMarketplaceCheck_DuplicatePackageNames_ExitsTwo(t *testing.T) {
 	// Arrange
 	chdirTemp(t)
 	apmYML := "name: demo\nversion: 1.0.0\nmarketplace:\n" +
@@ -890,11 +958,15 @@ func TestMarketplaceCheck_DuplicatePackageNames_WarnsButExitsZero(t *testing.T) 
 	out, err := runMarketplaceCmd(t, "check")
 
 	// Assert
-	if err != nil {
-		t.Fatalf("marketplace check returned an error for a duplicate-name-only issue, want exit 0: %v (output: %s)", err, out)
+	if err == nil {
+		t.Fatalf("marketplace check accepted duplicate package names, want exit 2 (output: %s)", out)
 	}
-	if !strings.Contains(strings.ToLower(out), "duplicate package name") {
-		t.Errorf("output = %q, want a duplicate package name warning", out)
+	if got := exitCodeOf(err); got != 2 {
+		t.Errorf("exitCodeOf(err) = %d, want 2", got)
+	}
+	want := "marketplace config error: Duplicate package name 'foo-tool' (packages[0] and packages[1])"
+	if got := err.Error(); got != want {
+		t.Errorf("err = %q, want %q", got, want)
 	}
 }
 
@@ -1014,7 +1086,7 @@ func TestMarketplaceOutdated_NoMatchingTags_DoesNotExitNonZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marketplace outdated returned error for \"no matching tags found\": %v (output: %s)", err, out)
 	}
-	if !strings.Contains(out, "tool") || !strings.Contains(out, ux.SymbolWarn) || !strings.Contains(out, "no matching tags") {
+	if !strings.Contains(out, "tool") || !strings.Contains(out, ux.SymbolWarn) || !strings.Contains(out, "No matching tags found") {
 		t.Errorf("output = %q, want a %s row noting no matching tags", out, ux.SymbolWarn)
 	}
 }

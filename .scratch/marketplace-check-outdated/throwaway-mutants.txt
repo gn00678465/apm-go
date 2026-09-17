@@ -1,0 +1,17 @@
+# Throwaway-mutant proof for coverage-driven tests (2026-09-14), fresh isolated copy per row: file<TAB>old<TAB>new<TAB>test<TAB>pkg; result 13/13 proved
+internal/marketplace/authoring/refcheck_sha.go	return "", fmt.Errorf("ref %q vanished from %q while reading its plugin manifest", ref, source)	return "", nil	TestGitManifestVersionFetcher_RefVanished_Errors	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	return nil, fmt.Errorf("git show %s: %s", relPath, gitops.SanitizeGitOutput(strings.TrimSpace(msg)))	return nil, nil	TestGitManifestVersionFetcher_HostileSubdir_ErrorsInsteadOfEscaping	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	return "", fmt.Errorf("parse plugin.json at ref %q: %w", ref, err)	return "", nil	TestGitManifestVersionFetcher_MalformedPluginJSON_Errors	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	return "", fmt.Errorf("parse apm.yml at ref %q: %w", ref, err)	return "", nil	TestGitManifestVersionFetcher_ApmYML_UnsafeYAML_Errors	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	if stdout.Len() > manifestReadMaxBytes {	if false {	TestGitManifestVersionFetcher_OversizedManifest_Errors	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	return "", cleanup, fmt.Errorf("git fetch %s: %s", safeURL, gitops.SanitizeGitOutput(msg))	return "", cleanup, errRefNotOnRemote	TestGitCommitProber_RemoteNotARepository_Unreachable	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	cloneURL, err := resolveCloneURL(source)	cloneURL, err := source, error(nil)	TestGitCommitProber_LocalSourceOutsideRoot_Errors	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	return "", cleanup, fmt.Errorf("create scratch repository: %w", err)	return "", cleanup, nil	TestFetchRefIntoScratch_MissingScratchRoot_Errors	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	if msg := strings.TrimSpace(stderr); msg != "" {	if msg := stderr; msg != "" {	TestGitFailureText_PrefersStderrThenExecError	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck_sha.go	for attempt := 0; attempt < 10; attempt++ {	for attempt := 0; attempt < 1; attempt++ {	TestRemoveScratch_RetriesWhileAFileIsHeldOpen	./internal/marketplace/authoring/
+internal/marketplace/authoring/refcheck.go	return fail(true, len(candidates) > 0, err)	return pass	TestCheckPackages_VersionRange_Unparsable_FailsWithParseError	./internal/marketplace/authoring/
+internal/marketplace/tagpattern/tagpattern.go	if name == "" && strings.Contains(pattern, "{name}") {	if false {	TestInfer_WithoutPackageName_SkipsNameLayouts	./internal/marketplace/authoring/
+cmd/apm-go/marketplace_authoring.go	if h, repoPath := authoring.SplitHostFromSource(source); h != "" {	if h, repoPath := authoring.SplitHostFromSource(source); h == "" {	TestResolvingLabel	./cmd/apm-go/
+# 2026-09-14 addendum (multi-line anchor, proved 1/1): refcheck_sha.go fetch-timeout branch removed -> TestFetchRefIntoScratch_UnresponsiveRemote_TimesOut fails ('exit status 1' instead of 'timed out')
+# addendum: refcheck.go 'if c.tag == row.Current {' -> 'if true {' -> TestOutdatedPackages_ShaPinWithVersion_DeclaredTagMissing fails (proved 1/1)
+# addendum (v4): refcheck_sha.go manifest-side TrimSpace removed -> TestGitManifestVersionFetcher_PaddedVersionInPluginJSON_Trimmed fails (proved 1/1)

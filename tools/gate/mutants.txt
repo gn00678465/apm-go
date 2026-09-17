@@ -12,3 +12,19 @@ pack-json-error-code	cmd/apm-go/pack.go	packJSONError{Code: "version_misaligned"
 json-number-sign-only-accepted	internal/marketplace/models.go	if sc.pos == intStart {	if sc.pos == intStart && false {
 fields-kind-check-inverted	internal/pluginjson/validate.go	if !checkKind(raw, r.Kind) {	if checkKind(raw, r.Kind) {
 strict-warning-gate-disabled	cmd/apm-go/plugin_validate.go	if strict && warnings > 0 {	if false {
+sha-commit-match-removed	internal/marketplace/authoring/refcheck.go	if r.Commit == ref {	if r.Commit == ref && false {
+sha-name-match-restored	internal/marketplace/authoring/refcheck.go	if r.Commit == ref {	if r.Commit == ref || r.Name == ref {
+probe-skipped	internal/marketplace/authoring/refcheck.go	found, err := deps.Prober.HasCommit(pkg.Source, pkg.Ref)	found, err := true, error(nil)
+dup-name-case-sensitive	internal/marketplace/authoring/schema.go	lowerName := strings.ToLower(name)	lowerName := name
+tip-compare-inverted	internal/marketplace/authoring/refcheck.go	if tip == pkg.Ref {	if tip != pkg.Ref {
+current-render-ignores-pattern	internal/marketplace/authoring/refcheck.go	tagpattern.RenderTag(usedPattern, pkg.Name, semver.StripVPrefix(version))	tagpattern.RenderTag(usedPattern[:0]+"v{version}", pkg.Name, semver.StripVPrefix(version))
+version-mismatch-ignored	internal/marketplace/authoring/refcheck.go	if manifestVersion != "" && semver.StripVPrefix(manifestVersion) != semver.StripVPrefix(strings.TrimSpace(pkg.Version)) {	if false {
+probe-error-unsanitized	internal/marketplace/authoring/refcheck_sha.go	gitops.SanitizeGitOutput(gitFailureText(string(out), err))	gitFailureText(string(out), err)
+locale-not-pinned	internal/marketplace/authoring/refcheck_sha.go	cmd.Env = append(cmd.Env, "LC_ALL=C", "LANGUAGE=C")	cmd.Env = append(cmd.Env, "LANGUAGE=C")
+manifest-read-uncapped	internal/marketplace/authoring/refcheck_sha.go	data, err := io.ReadAll(io.LimitReader(r, int64(max)+1))	data, err := io.ReadAll(r)
+current-map-kept-on-no-candidates	internal/marketplace/authoring/refcheck.go	if current != "" && (!shaPin || isLocalPackageSource(pkg.Source)) {	if current != "" {
+leading-v-not-stripped	internal/marketplace/authoring/refcheck.go	tagpattern.RenderTag(usedPattern, pkg.Name, semver.StripVPrefix(version))	tagpattern.RenderTag(usedPattern, pkg.Name, version)
+name-tag-unchecked	internal/marketplace/authoring/schema.go	return v.Kind == yaml.ScalarNode && v.ShortTag() == "!!str"	return v.Kind == yaml.ScalarNode
+oracle-grammar-loosened	internal/marketplace/tagpattern/tagpattern.go	return oracleVersionRe.MatchString(s)	return s != ""
+leading-v-compare-not-stripped	internal/marketplace/authoring/refcheck.go	semver.StripVPrefix(strings.TrimSpace(pkg.Version))) > 0 {	strings.TrimSpace(pkg.Version)) > 0 {
+show-cap-cancel-removed	internal/marketplace/authoring/refcheck_sha.go	cancel() // nothing drains the pipe any more, so git would block on a full pipe until the deadline	_ = cancel // mutant: cancel not called, git left running after the cap so Wait blocks until the deadline

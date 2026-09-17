@@ -1,0 +1,3 @@
+# Baseline at main (bf18093), isolated worktree, go test -count=1 ./...
+
+none — base was green: 26 packages ok, 0 failed

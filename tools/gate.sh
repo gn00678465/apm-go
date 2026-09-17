@@ -119,7 +119,17 @@ layer_lint_format() {
 }
 
 layer_staticcheck() {
-  go run "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION" ./... 2>&1 | tee "$GATE_ART/staticcheck.log"
+  # The checks list is passed explicitly from staticcheck.conf instead of
+  # relying on staticcheck's own config discovery: the same tree under the
+  # user's Temp directory had the file silently ignored (SPEC
+  # marketplace-check-outdated SC-D5, root cause not established), which
+  # made the layer location-dependent. Fail closed when the file or the
+  # list is missing rather than running with staticcheck's defaults.
+  [ -f staticcheck.conf ] || { echo "staticcheck.conf missing"; return 2; }
+  checks=$(sed -n 's/^checks *= *\[\(.*\)\].*/\1/p' staticcheck.conf | tr -d ' "' )
+  [ -n "$checks" ] || { echo "staticcheck.conf has no checks list"; return 2; }
+  echo "staticcheck -checks $checks"
+  go run "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION" -checks "$checks" ./... 2>&1 | tee "$GATE_ART/staticcheck.log"
   if grep -q . "$GATE_ART/staticcheck.log"; then return 1; fi
   echo "staticcheck: 0 findings"
 }

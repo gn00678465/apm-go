@@ -325,7 +325,7 @@ func TestLoadAuthoringConfig_SourceValidation_AcceptsValidShapes(t *testing.T) {
 			// Arrange
 			dir := t.TempDir()
 			writeFile(t, dir, "apm.yml", "name: demo\nversion: 1.0.0\nmarketplace:\n"+
-				"  owner:\n    name: Acme\n  packages:\n    - name: tool-a\n      source: "+source+"\n")
+				"  owner:\n    name: Acme\n  packages:\n    - name: tool-a\n      source: "+source+"\n      ref: main\n")
 
 			// Act
 			_, _, err := LoadAuthoringConfig(dir)
@@ -936,6 +936,7 @@ func TestLoadAuthoringConfig_TagPatternValidatedAtLoad(t *testing.T) {
 			block: `  packages:
     - name: a
       source: acme/a
+      version: "^1.0.0"
       tag_pattern: "{foo}-v{version}"
 `,
 			wantErr: "unsupported placeholder",
@@ -946,8 +947,10 @@ func TestLoadAuthoringConfig_TagPatternValidatedAtLoad(t *testing.T) {
 			block: `  packages:
     - name: a
       source: acme/a
+      version: "^1.0.0"
     - name: b
       source: acme/b
+      version: "^1.0.0"
       tag_pattern: "v{version}-{version}"
 `,
 			wantErr: "exactly one",
@@ -984,9 +987,11 @@ marketplace:
   packages:
     - name: a
       source: acme/a
+      version: "^1.0.0"
       tag_pattern: "v{version}"
     - name: b
       source: acme/b
+      version: "^1.0.0"
 `)
 	cfg, _, err := LoadAuthoringConfig(dir)
 	if err != nil {

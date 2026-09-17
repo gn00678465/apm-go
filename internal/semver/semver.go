@@ -11,6 +11,10 @@ import (
 type TagInfo struct {
 	Name   string // full tag string, e.g. "v1.2.3+build.1"
 	Commit string // SHA
+	// Ref is the full advertised ref name ("refs/tags/v1.2.3",
+	// "refs/heads/main", "HEAD") when the producer knows it; "" when a
+	// caller built the TagInfo from a bare tag name.
+	Ref string
 }
 
 func Satisfies(version, rangeExpr string) (bool, error) {

@@ -200,6 +200,72 @@ step mk-remove 0 "$BIN" marketplace remove mk --yes
 step mk-list-empty 0 "$BIN" marketplace list
 must_grep mk-list-empty "No marketplaces registered"
 
+# --- marketplace check / outdated: the network-free contract ------------------
+# SPEC specs/marketplace-check-outdated SC-D1..D3. No step here can reach the
+# network: a schema error and --offline both return before any git
+# subprocess, and a local ("./") package never touches git. Expected texts are
+# the Oracle's own (yml_schema.py, check.py, outdated.py, errors.py).
+mkdir mktchk && cd mktchk
+mkt_yml() { printf 'name: mktchk\nversion: 1.0.0\nmarketplace:\n  owner:\n    name: me\n  packages:\n%s' "$1" > apm.yml; }
+mkt_yml '    - source: owner/repo
+      ref: main
+'
+step mkt-check-schema-name 2 "$BIN" marketplace check
+must_grep mkt-check-schema-name "marketplace config error: 'packages\[0\].name' is required"
+mkt_yml '    - name: nosrc
+      ref: main
+'
+step mkt-check-schema-source 2 "$BIN" marketplace check
+must_grep mkt-check-schema-source "marketplace config error: 'packages\[0\].source' is required"
+mkt_yml '    - name: bare
+      source: owner/repo
+'
+step mkt-check-schema-verref 2 "$BIN" marketplace check
+must_grep mkt-check-schema-verref "remote packages require at least one of 'version' or 'ref'"
+step mkt-outdated-schema-verref 2 "$BIN" marketplace outdated
+must_grep mkt-outdated-schema-verref "marketplace config error: packages\[0\] ('bare')"
+mkt_yml '    - name: Dup
+      source: owner/a
+      ref: main
+    - name: dup
+      source: owner/b
+      ref: main
+'
+step mkt-check-schema-dup 2 "$BIN" marketplace check
+must_grep mkt-check-schema-dup "Duplicate package name 'dup' (packages\[0\] and packages\[1\])"
+# SPEC marketplace-check-outdated-fixes SC-F15: a non-string name is a
+# schema error; --offline keeps a regression from reaching the network.
+mkt_yml '    - name: 123
+      source: owner/repo
+      ref: main
+'
+step mkt-check-schema-name-type 2 "$BIN" marketplace check --offline
+must_grep mkt-check-schema-name-type "marketplace config error: 'packages\[0\].name' must be a non-empty string"
+step mkt-outdated-schema-name-type 2 "$BIN" marketplace outdated --offline
+must_grep mkt-outdated-schema-name-type "marketplace config error: 'packages\[0\].name' must be a non-empty string"
+# pack shares LoadAuthoringConfig: the same config is refused with the
+# Oracle's text and pack's own exit code (archived SPEC Must NOT :102).
+step mkt-pack-schema-name-type 1 "$BIN" pack --dry-run
+must_grep mkt-pack-schema-name-type "'packages\[0\].name' must be a non-empty string"
+mkt_yml '    - name: tool
+      source: owner/repo
+      ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+'
+step mkt-check-offline 1 "$BIN" marketplace check --offline
+must_grep mkt-check-offline "No cached refs (offline)"
+must_grep mkt-check-offline "1 entries have issues"
+step mkt-outdated-offline 0 "$BIN" marketplace outdated --offline
+must_grep mkt-outdated-offline "Offline mode: no cached refs for 'owner/repo' (package 'tool"
+must_grep mkt-outdated-offline "All packages are up to date"
+mkdir -p pkgs/a
+mkt_yml '    - name: local-a
+      source: ./pkgs/a
+'
+step mkt-check-local-verbose 0 "$BIN" marketplace check -v
+must_grep mkt-check-local-verbose "Skipping local-a -- local path, no network check"
+must_grep mkt-check-local-verbose "All 1 entries OK"
+cd ..
+
 # --- adversarial: hostile inputs must be refused and must not escape ----------
 
 # plugin validate: the four sharpest failure modes (spec.md US1/US2,
