@@ -91,22 +91,16 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if err != nil {
 		return err
 	}
-	if status == "unchanged" || status == "skipped" {
-		// unchanged: identical entry. skipped: the user declined the replace
-		// prompt -- both leave apm.yml untouched and deploy nothing. A stale
-		// or missing deployed target file for an unchanged entry is a
-		// pre-existing limitation of --mcp itself (present in the Python
-		// original too, per source reading during design): re-run `apm
-		// install` (the full pipeline) or delete+re-add the entry to force
-		// redeployment.
+	if status == "skipped" {
 		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
 		return nil
 	}
 
-	// Only now -- once we know this call actually changes something --
-	// resolve the deployable dep. A registry lookup failure here still
-	// leaves apm.yml on disk untouched (AC6): entryNode has only been
-	// applied to the in-memory node, not yet serialized/written.
+	if status == "unchanged" && opts.Registry != "" {
+		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
+		return nil
+	}
+
 	deployDep, diags, err := buildDeployDep(opts)
 	if err != nil {
 		return err
@@ -115,23 +109,20 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		ux.Warn(os.Stderr, "%s", d)
 	}
 
-	// This edit only ever touches dependencies.mcp: prefer a surgical patch
-	// that preserves every other byte of the original apm.yml (including
-	// hand-formatted multi-line flow content a full SafeDump re-encode
-	// cannot reproduce). Fall back to a full re-encode if the document's
-	// shape doesn't fit the patcher's assumptions.
-	manifestBytes, patched, err := yamlcore.PatchMappingPath(data, node, []string{"dependencies", "mcp"})
-	if err != nil {
-		return fmt.Errorf("serialize apm.yml: %w", err)
-	}
-	if !patched {
-		manifestBytes, err = yamlcore.SafeDump(node)
+	if status != "unchanged" {
+		manifestBytes, patched, err := yamlcore.PatchMappingPath(data, node, []string{"dependencies", "mcp"})
 		if err != nil {
 			return fmt.Errorf("serialize apm.yml: %w", err)
 		}
-	}
-	if err := os.WriteFile("apm.yml", manifestBytes, 0644); err != nil {
-		return fmt.Errorf("write apm.yml: %w", err)
+		if !patched {
+			manifestBytes, err = yamlcore.SafeDump(node)
+			if err != nil {
+				return fmt.Errorf("serialize apm.yml: %w", err)
+			}
+		}
+		if err := os.WriteFile("apm.yml", manifestBytes, 0644); err != nil {
+			return fmt.Errorf("write apm.yml: %w", err)
+		}
 	}
 
 	// Print target source (--target > apm.yml targets: > auto-detect) before
@@ -158,8 +149,11 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	}
 
 	verb := "Added"
-	if status == "replaced" {
+	switch status {
+	case "replaced":
 		verb = "Replaced"
+	case "unchanged":
+		verb = "Deployed"
 	}
 	if len(skipped) > 0 {
 		ux.Info(os.Stdout, "Skipped MCP config for %s  (active targets: %s)",
