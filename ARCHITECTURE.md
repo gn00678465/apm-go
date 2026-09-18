@@ -10,7 +10,7 @@ The in-module import graph, from `go list -f '{{.ImportPath}} {{.Imports}}' ./..
 
 ```mermaid
 graph TD
-  cmd[cmd/apm-go] --> compile & deploy & resolver & registry & gitops & localbundle & pack & bundle & pluginmanifest & pluginjson & marketplace & authoring & build & mcpregistry & rootfs & security & ux & yamlcore & experimental
+  cmd[cmd/apm-go] --> compile & deploy & resolver & registry & gitops & localbundle & pack & bundle & pluginmanifest & pluginjson & marketplace & authoring & build & mcpregistry & rootfs & security & selfupdate & ux & yamlcore & experimental
   compile --> deploy & lockfile & manifest & version & yamlcore
   deploy --> archive & lockfile & manifest & mcpregistry & resolver & rootfs & yamlcore
   gitops --> archive & lockfile & manifest & semver & yamlcore
@@ -27,6 +27,7 @@ graph TD
   pluginjson --> bundle
   registry --> archive & credsec & lockfile & manifest & resolver & yamlcore
   resolver --> lockfile & manifest & semver
+  selfupdate --> semver & version
   parity[tools/parity] --> gitops & ux
 ```
 
@@ -69,6 +70,7 @@ Leaves (import nothing in-module): `archive`, `credsec`, `experimental`, `pack`,
 | `ux` | all terminal output and interaction | `Init` `internal/ux/ux.go:33`; `CanPrompt` `:52`; printers `printer.go:21-92`; `Table` / `List` / `Tree` `output.go:74,144,201`; `Spinner` `spinner.go:42`; `NewClack` `clack.go:130`; `Confirm` / `InputForm` / `MultiSelect` `interactive.go:77,194,146` |
 | `semver` | range matching, max-satisfying | `Satisfies` / `MaxSatisfying` / `CompareVersions` `internal/semver/semver.go:20,79,71` |
 | `experimental` | opt-in feature flags persisted in the user config | `Known` / `IsEnabled` / `RequireEnabled` `internal/experimental/experimental.go:37,100,128` |
+| `selfupdate` | binary self-update from GitHub Releases: version check, download with progress, SHA256 verification, binary replacement | `Updater.CheckLatest` `internal/selfupdate/selfupdate.go:62`; `Updater.Apply` `:79`; `PlatformAssetName` `:175`; `replaceBinary` `replace.go:18` |
 | `version` | the release version, injected from the git tag at release link time (`dev` locally) | `Version` `internal/version/version.go:14` |
 
 ## 3. Data flows
@@ -160,7 +162,18 @@ flowchart LR
 
 `plugin validate` (`cmd/apm-go/plugin_validate.go`) is a read-only sibling command in the same package that does not join `runInitCore`'s flow; it has no Oracle equivalent and its output contract is fixed by `tools/gate/realexec.sh` (§5) rather than the parity gate.
 
-### 3.6 Errors and exit codes
+### 3.6 `apm-go self-update`
+
+1. `selfUpdateCmd` (`cmd/apm-go/self_update.go:23`) creates the cobra command with `--check`.
+2. `runSelfUpdate` (`:40`) creates a `selfupdate.Updater` and calls `CheckLatest` with a 30s context timeout.
+3. `CheckLatest` (`internal/selfupdate/selfupdate.go:62`) guards `version.Version == "dev"`, then queries `https://api.github.com/repos/{repo}/releases/latest` (excludes pre-releases by API design) and compares versions via `semver.CompareVersions`.
+4. If `--check` is set, the command prints the result and exits.
+5. Otherwise, `Apply` (`:79`) downloads `SHA256SUMS`, fetches the platform asset (`PlatformAssetName` `:175`), verifies the hash, and calls `replaceBinary` (`replace.go:18`). On Windows, the running binary is renamed to `.old` before the new one is written; on Unix, `os.Rename` replaces the inode directly. The download timeout is 5 minutes.
+6. Progress is reported through `Updater.OnProgress`, which the command wires to `ux.Spinner.Update` with a human-readable byte counter.
+
+This is an apm-go-only command with no Oracle equivalent.
+
+### 3.7 Errors and exit codes
 
 ```mermaid
 flowchart TD
