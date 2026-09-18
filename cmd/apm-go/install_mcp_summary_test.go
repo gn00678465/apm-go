@@ -40,7 +40,7 @@ dependencies:
 	r, w, _ := os.Pipe()
 	origStdout := os.Stdout
 	os.Stdout = w
-	err := runInstall(deps, false, true, "", nil, nil)
+	err := runInstall(deps, false, true, "", "", nil, nil)
 	os.Stdout = origStdout
 	w.Close()
 	var buf bytes.Buffer
@@ -80,7 +80,7 @@ func TestInstall_MCPSummary_NoMCPServersOmitsMention(t *testing.T) {
 	r, w, _ := os.Pipe()
 	origStdout := os.Stdout
 	os.Stdout = w
-	err := runInstall(deps, false, true, "", nil, nil)
+	err := runInstall(deps, false, true, "", "", nil, nil)
 	os.Stdout = origStdout
 	w.Close()
 	var buf bytes.Buffer

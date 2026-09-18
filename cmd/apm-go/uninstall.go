@@ -52,8 +52,11 @@ func uninstallCmd() *cobra.Command {
 // Split into prepareUninstallPlan (pure computation, safe to reuse for both
 // --dry-run and the real run) and applyUninstallPlan (every actual write).
 func runUninstall(args []string, opts uninstallOptions) error {
+	var deployDir string
 	if opts.Global {
-		if err := enterGlobalScope(); err != nil {
+		var err error
+		deployDir, err = enterGlobalScope()
+		if err != nil {
 			return err
 		}
 	}
@@ -85,7 +88,7 @@ func runUninstall(args []string, opts uninstallOptions) error {
 		return nil
 	}
 
-	return applyUninstallPlan(plan, data, node, m, lock, lockNode, opts.Verbose)
+	return applyUninstallPlan(plan, data, node, m, lock, lockNode, opts.Verbose, deployDir)
 }
 
 // uninstallPlan is prepareUninstallPlan's pure-computation result: everything
@@ -195,7 +198,7 @@ func uninstallRemovalKey(identity string) string {
 // standalone-MCP reversal, transitive MCP stale-diff, and the lockfile
 // update -- in that order (un-050's "collect deployed_files before mutating
 // anything" already happened inside prepareUninstallPlan).
-func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m *manifest.Manifest, lock *lockfile.Lockfile, lockNode *yamllib.Node, verbose bool) error {
+func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m *manifest.Manifest, lock *lockfile.Lockfile, lockNode *yamllib.Node, verbose bool, deployDir string) error {
 	// un-061: capture the pre-uninstall MCP server name set before anything
 	// below mutates it (removeUninstallStandaloneMCP re-slices
 	// lock.MCPServers in place further down, so this must be a real copy
@@ -242,7 +245,11 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		return err
 	}
 
-	removedFiles, keptFiles, diags := deploy.RemoveDeployedFiles(".", deployedFiles, deployedHashes)
+	removeRoot := "."
+	if deployDir != "" {
+		removeRoot = deployDir
+	}
+	removedFiles, keptFiles, diags := deploy.RemoveDeployedFiles(removeRoot, deployedFiles, deployedHashes)
 	for _, d := range diags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
@@ -254,7 +261,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		ux.List(os.Stdout, items)
 	}
 
-	removeUninstallStandaloneMCP(plan.mcpNames, lock)
+	removeUninstallStandaloneMCP(plan.mcpNames, lock, deployDir)
 
 	// un-061: transitive MCP stale-diff. removeUninstallStandaloneMCP above
 	// only reverse-removes MCP servers the user named directly on the
@@ -275,7 +282,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		}
 		if len(stale) > 0 {
 			sort.Strings(stale)
-			for _, d := range deploy.RemoveMCPServersFromTargets(".", stale) {
+			for _, d := range deploy.RemoveMCPServersFromTargets(removeRoot, stale) {
 				ux.Warn(os.Stderr, "%s", d)
 			}
 		}
@@ -510,12 +517,16 @@ func removeUninstallModuleDirs(removalKeys map[string]bool, verbose bool) (remov
 // file, and drops its name from lock.MCPServers so a later uninstall's
 // transitive-stale diff (un-061, deferred to 8b) doesn't see a stale name
 // that's already gone from every target.
-func removeUninstallStandaloneMCP(mcpNames map[string]bool, lock *lockfile.Lockfile) {
+func removeUninstallStandaloneMCP(mcpNames map[string]bool, lock *lockfile.Lockfile, deployDir string) {
 	if len(mcpNames) == 0 {
 		return
 	}
+	root := "."
+	if deployDir != "" {
+		root = deployDir
+	}
 	names := sortedStringSet(mcpNames)
-	diags := deploy.RemoveMCPServersFromTargets(".", names)
+	diags := deploy.RemoveMCPServersFromTargets(root, names)
 	for _, d := range diags {
 		ux.Warn(os.Stderr, "%s", d)
 	}

@@ -78,7 +78,7 @@ func TestRunInstall_MarketplaceDictDep_RootResolvedIntoLockfile(t *testing.T) {
 	// positional package argument. --target claude is only here to satisfy
 	// the "dependencies present but no deployment target" exit-2 guard
 	// (F2) -- this test's actual subject is lockfile resolution, not deploy.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestRunInstall_MarketplaceDictDep_TransitiveResolvedIntoLockfile(t *testing
 	// Act -- --target claude only satisfies the "dependencies present but no
 	// deployment target" exit-2 guard (F2); this test's subject is
 	// transitive marketplace-dict lockfile resolution, not deploy.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 

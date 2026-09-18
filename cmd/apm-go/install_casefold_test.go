@@ -145,7 +145,7 @@ func TestInstall_CaseFoldDedup(t *testing.T) {
 
 	var installErr error
 	out := captureInstallCombined(t, func() {
-		installErr = runInstall(deps, false, true, "claude", nil, []string{"Owner/Repo", "owner/repo"})
+		installErr = runInstall(deps, false, true, "claude", "", nil, []string{"Owner/Repo", "owner/repo"})
 	})
 	if installErr != nil {
 		t.Fatalf("runInstall: %v\noutput:\n%s", installErr, out)
@@ -194,7 +194,7 @@ func TestInstall_CaseFoldDedup(t *testing.T) {
 	// V1-2: a subsequent bare install and update must keep the dedup single
 	// -- not re-split into two entries the next time the full manifest is
 	// re-resolved.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("bare re-install: %v", err)
 	}
 	m2 := readManifestParsed(t)
@@ -240,7 +240,7 @@ func TestInstall_CaseFoldDedup_DifferentReposNotMerged(t *testing.T) {
 	}
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/one", "acme/two"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/one", "acme/two"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -279,7 +279,7 @@ func TestInstall_CaseFoldDedup_SelectorConflictNotSilentlyMerged(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 	var installErr error
 	out := captureInstallCombined(t, func() {
-		installErr = runInstall(deps, false, true, "claude", nil, []string{"Owner/Repo#branch-a", "owner/repo#branch-b"})
+		installErr = runInstall(deps, false, true, "claude", "", nil, []string{"Owner/Repo#branch-a", "owner/repo#branch-b"})
 	})
 	if installErr != nil {
 		t.Fatalf("runInstall: %v\noutput:\n%s", installErr, out)
@@ -329,10 +329,10 @@ func TestInstall_CaseFoldWildcardReset(t *testing.T) {
 		loader: &fixtureLoader{modulesDir: "apm_modules", fixtureDir: repoDir},
 	}
 
-	if err := runInstall(deps, false, true, "claude", []string{"skillA"}, []string{"RepoA/x"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillA"}, []string{"RepoA/x"}); err != nil {
 		t.Fatalf("step 1 (RepoA/x --skill skillA): %v", err)
 	}
-	if err := runInstall(deps, false, true, "claude", []string{"skillB"}, []string{"repoa/x"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillB"}, []string{"repoa/x"}); err != nil {
 		t.Fatalf("step 2 (repoa/x --skill skillB): %v", err)
 	}
 
@@ -344,7 +344,7 @@ func TestInstall_CaseFoldWildcardReset(t *testing.T) {
 		t.Errorf("step2: apm.yml skills: = %v, want union [skillA skillB]", got)
 	}
 
-	if err := runInstall(deps, false, true, "claude", []string{"*"}, []string{"REPOA/x"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"*"}, []string{"REPOA/x"}); err != nil {
 		t.Fatalf("step 3 (REPOA/x --skill '*'): %v", err)
 	}
 
@@ -411,7 +411,7 @@ func TestInstall_CaseFoldDedup_LockfileUpgradeCompat(t *testing.T) {
 	}
 
 	// Baseline install to get a legitimate, real lockfile for "Owner/Repo".
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("baseline install: %v", err)
 	}
 	baseline := readLockfile(t)
@@ -459,7 +459,7 @@ func TestInstall_CaseFoldDedup_LockfileUpgradeCompat(t *testing.T) {
 	// ACTUALLY declared) still has only ONE entry, so re-resolving from it
 	// must rebuild the lockfile back down to one dependency -- not persist
 	// or grow the polluted duplicate.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("upgrade-compat install: %v", err)
 	}
 

@@ -52,7 +52,7 @@ func TestRunInstall_NoDeps(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, false, false, "", nil, nil)
+	err := runInstall(deps, false, false, "", "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRunInstall_NoDeps_LocalOnlyWithTargetStillDeploys(t *testing.T) {
 	}
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -115,7 +115,7 @@ func TestRunInstall_WithDeps(t *testing.T) {
 	// tree_sha256 requires a git repo at apm_modules/acme/foo — skip by making it fail gracefully
 	// For unit test: we test that the install pipeline runs; tree_sha256 will error
 	// since there's no real git repo. That's expected — integration tests handle the full flow.
-	err := runInstall(deps, false, true, "", nil, nil) // --no-provenance to simplify
+	err := runInstall(deps, false, true, "", "", nil, nil) // --no-provenance to simplify
 	// Expected: tree_sha256 error since there's no git repo in temp dir
 	if err == nil || !strings.Contains(err.Error(), "tree_sha256") {
 		// If it somehow succeeds or has a different error, that's also informative
@@ -160,7 +160,7 @@ func TestRunInstall_DevDependency_ResolvedDeployedAndLocked(t *testing.T) {
 		loader: &mockInstallLoader{},
 	}
 
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -205,7 +205,7 @@ func TestRunInstall_DevDependency_SecondBareInstallIsNoOp(t *testing.T) {
 		loader: &mockInstallLoader{},
 	}
 
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("first runInstall: %v", err)
 	}
 	firstManifest, err := os.ReadFile("apm.yml")
@@ -217,7 +217,7 @@ func TestRunInstall_DevDependency_SecondBareInstallIsNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("second runInstall: %v", err)
 	}
 	secondManifest, err := os.ReadFile("apm.yml")
@@ -254,7 +254,7 @@ func TestRunInstall_Frozen_DevOnlyManifest_StillMaterializes(t *testing.T) {
 
 	spy := &spyLoader{}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
-	if err := runInstall(deps, true, false, "", nil, nil); err != nil {
+	if err := runInstall(deps, true, false, "", "", nil, nil); err != nil {
 		t.Fatalf("expected frozen install to succeed with a dev-only manifest: %v", err)
 	}
 	if len(spy.calls) == 0 {
@@ -279,7 +279,7 @@ func TestRunInstall_FrozenMissingPin_DevDependency(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for frozen install with missing dev dependency pin")
 	}
@@ -302,7 +302,7 @@ func TestRunInstall_RefusesHTTPDependency_FromDevManifest(t *testing.T) {
 
 	spy := &spyLoader{}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
-	err := runInstall(deps, false, true, "", nil, nil)
+	err := runInstall(deps, false, true, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for http:// devDependency without --allow-insecure, got nil")
 	}
@@ -358,7 +358,7 @@ func TestRunInstall_PositionalDedup_KeysByVirtualPath(t *testing.T) {
 	// --target claude only satisfies the "dependencies present but no
 	// deployment target" exit-2 guard (F2); this test's subject is
 	// positional-package dedup, not deploy.
-	err := runInstall(deps, false, true, "claude", nil, []string{"org/monorepo/skills/b"})
+	err := runInstall(deps, false, true, "claude", "", nil, []string{"org/monorepo/skills/b"})
 	if err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
@@ -395,7 +395,7 @@ func TestRunInstall_PositionalDedup_TrueDuplicateStillSkipped(t *testing.T) {
 	// --target claude only satisfies the "dependencies present but no
 	// deployment target" exit-2 guard (F2); this test's subject is
 	// duplicate-dedup, not deploy.
-	err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"})
+	err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"})
 	if err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestRunInstall_RefusesHTTPDependency_Positional(t *testing.T) {
 
 	spy := &spyLoader{}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
-	err := runInstall(deps, false, true, "", nil, []string{"http://example.com/owner/repo.git"})
+	err := runInstall(deps, false, true, "", "", nil, []string{"http://example.com/owner/repo.git"})
 	if err == nil {
 		t.Fatal("expected error for http:// dependency without --allow-insecure, got nil")
 	}
@@ -455,7 +455,7 @@ func TestRunInstall_RefusesHTTPDependency_FromManifest(t *testing.T) {
 
 	spy := &spyLoader{}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
-	err := runInstall(deps, false, true, "", nil, nil)
+	err := runInstall(deps, false, true, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for http:// dependency declared in apm.yml without --allow-insecure, got nil")
 	}
@@ -480,7 +480,7 @@ func TestRunInstall_AllowInsecureFlag_PermitsHTTPDependency(t *testing.T) {
 
 	spy := &spyLoader{}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy, allowInsecure: true}
-	err := runInstall(deps, false, true, "", nil, []string{"http://example.com/owner/repo.git"})
+	err := runInstall(deps, false, true, "", "", nil, []string{"http://example.com/owner/repo.git"})
 	if err != nil && strings.Contains(err.Error(), "HTTP dependency (unencrypted)") {
 		t.Fatalf("--allow-insecure should have permitted the http:// dependency, got refusal: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestRunInstall_LoopbackHTTPDependency_AlsoRefusedWithoutFlag(t *testing.T) 
 
 	spy := &spyLoader{}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
-	err := runInstall(deps, false, true, "", nil, []string{"http://127.0.0.1/owner/repo.git"})
+	err := runInstall(deps, false, true, "", "", nil, []string{"http://127.0.0.1/owner/repo.git"})
 	if err == nil {
 		t.Fatal("expected refusal for loopback http:// dependency without --allow-insecure (no host exemption, Python parity)")
 	}
@@ -517,7 +517,7 @@ func TestRunInstall_LoopbackHTTPDependency_AlsoRefusedWithoutFlag(t *testing.T) 
 	// With --allow-insecure the same loopback dependency proceeds to clone.
 	spy2 := &spyLoader{}
 	deps2 := &installDeps{tags: &mockInstallTagLister{}, loader: spy2, allowInsecure: true}
-	err = runInstall(deps2, false, true, "", nil, []string{"http://127.0.0.1/owner/repo.git"})
+	err = runInstall(deps2, false, true, "", "", nil, []string{"http://127.0.0.1/owner/repo.git"})
 	if err != nil && strings.Contains(err.Error(), "HTTP dependency (unencrypted)") {
 		t.Fatalf("--allow-insecure should have permitted the loopback http:// dependency, got refusal: %v", err)
 	}
@@ -622,7 +622,7 @@ func TestRunInstall_SkillWithoutPackages_Errors(t *testing.T) {
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, false, true, "", []string{"x"}, nil)
+	err := runInstall(deps, false, true, "", "", []string{"x"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "--skill") {
 		t.Fatalf("expected a --skill error, got %v", err)
 	}
@@ -642,7 +642,7 @@ func TestRunInstall_SkillWithFrozen_Errors(t *testing.T) {
 	os.WriteFile("apm.lock.yaml", []byte("version: \"1\"\ndependencies: []\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, true, true, "", []string{"x"}, []string{"acme/foo"})
+	err := runInstall(deps, true, true, "", "", []string{"x"}, []string{"acme/foo"})
 	if err == nil || !strings.Contains(err.Error(), "--skill") || !strings.Contains(err.Error(), "frozen") {
 		t.Fatalf("expected a --skill+frozen error, got %v", err)
 	}
@@ -662,7 +662,7 @@ func TestRunInstall_SkillWildcardWithoutPackages_Errors(t *testing.T) {
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, false, true, "", []string{"*"}, nil)
+	err := runInstall(deps, false, true, "", "", []string{"*"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "--skill") {
 		t.Fatalf("expected a --skill error for --skill '*' with no positional package, got %v", err)
 	}
@@ -681,7 +681,7 @@ func TestRunInstall_SkillWildcardWithFrozen_Errors(t *testing.T) {
 	os.WriteFile("apm.lock.yaml", []byte("version: \"1\"\ndependencies: []\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, true, true, "", []string{"*"}, []string{"acme/foo"})
+	err := runInstall(deps, true, true, "", "", []string{"*"}, []string{"acme/foo"})
 	if err == nil || !strings.Contains(err.Error(), "--skill") || !strings.Contains(err.Error(), "frozen") {
 		t.Fatalf("expected a --skill+frozen error for --skill '*', got %v", err)
 	}
@@ -699,7 +699,7 @@ func TestRunInstall_FrozenMissingLockfile(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for frozen install without lockfile")
 	}
@@ -721,7 +721,7 @@ func TestRunInstall_FrozenMissingPin(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for frozen install with missing pin")
 	}
@@ -763,7 +763,7 @@ func TestRunInstall_Frozen_PrefersResolvedCommitOverResolvedRef(t *testing.T) {
 	// Expected to fail later at tree_sha256 verification (mock does not
 	// materialize a real checkout) -- this test only cares about what was
 	// passed to LoadPackage before that point.
-	runInstall(deps, true, false, "", nil, nil)
+	runInstall(deps, true, false, "", "", nil, nil)
 
 	if len(spy.calls) != 1 {
 		t.Fatalf("expected exactly 1 LoadPackage call, got %d: %v", len(spy.calls), spy.calls)
@@ -791,7 +791,7 @@ func TestRunInstall_Frozen_PreservesVirtualPath(t *testing.T) {
 
 	spy := &spyLoader{}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
-	runInstall(deps, true, false, "", nil, nil)
+	runInstall(deps, true, false, "", "", nil, nil)
 
 	if len(spy.refs) != 1 {
 		t.Fatalf("expected exactly 1 LoadPackage call, got %d", len(spy.refs))
@@ -813,7 +813,7 @@ func TestRunInstall_NoProvenance(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, false, true, "", nil, nil)
+	err := runInstall(deps, false, true, "", "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -976,7 +976,7 @@ func TestRunInstall_TargetCommaSplit_DeploysToBothTargets(t *testing.T) {
 	os.WriteFile(filepath.Join(".apm", "agents", "demo.md"), []byte("# demo agent"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "claude,codex", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude,codex", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -1033,7 +1033,7 @@ func TestRunInstall_DepsPresentZeroTarget_ExitsWithTeachingMessage(t *testing.T)
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, false, true, "", nil, nil)
+	err := runInstall(deps, false, true, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected an error when dependencies are present but no deployment target resolves")
 	}
@@ -1063,7 +1063,7 @@ func TestRunInstall_NoDepsZeroTarget_StillExitsZero(t *testing.T) {
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("expected no error for a zero-dependency install with no target, got: %v", err)
 	}
 }
@@ -1098,7 +1098,7 @@ func TestRunInstall_LocalPrimitivesZeroTarget_ExitsWithTeachingMessage(t *testin
 			os.WriteFile(filepath.Join(".apm", tt.subdir, tt.file), []byte("# x"), 0644)
 
 			deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-			err := runInstall(deps, false, true, "", nil, nil)
+			err := runInstall(deps, false, true, "", "", nil, nil)
 			if err == nil {
 				t.Fatal("expected an error when local primitives are present but no deployment target resolves")
 			}
@@ -1213,7 +1213,7 @@ func TestRunInstall_LocalPrimitivesWithTargetSignal_StillDeploys(t *testing.T) {
 	os.MkdirAll(".claude", 0755) // auto-detect signal for the claude target
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("runInstall with a detectable target: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude", "rules", "x.md")); err != nil {
@@ -1237,7 +1237,7 @@ func TestRunInstall_FrozenMissingTreeSHA256(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for frozen install with missing tree_sha256")
 	}
@@ -1408,7 +1408,7 @@ func TestRunInstall_SkillWildcardDeploysAllSkills(t *testing.T) {
 		tags:   &mockInstallTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	if err := runInstall(deps, false, true, "claude", []string{"*"}, []string{"./remote"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"*"}, []string{"./remote"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -1538,7 +1538,7 @@ func TestInstall_SkillSubsetPollution(t *testing.T) {
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
 
-	if err := runInstall(deps, false, true, "claude", []string{"skillA1"}, []string{repoA}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillA1"}, []string{repoA}); err != nil {
 		t.Fatalf("first install (repo-a --skill skillA1): %v", err)
 	}
 	for _, p := range expectedSkillDeployPaths("skillA1", []string{"SKILL.md", "notes.md"}) {
@@ -1552,7 +1552,7 @@ func TestInstall_SkillSubsetPollution(t *testing.T) {
 		}
 	}
 
-	if err := runInstall(deps, false, true, "claude", []string{"skillB1"}, []string{repoB}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillB1"}, []string{repoB}); err != nil {
 		t.Fatalf("second install (repo-b --skill skillB1): %v", err)
 	}
 
@@ -1667,13 +1667,13 @@ func TestInstall_SkillSubsetThreeRepos(t *testing.T) {
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
 
-	if err := runInstall(deps, false, true, "claude", []string{"skillA1"}, []string{repoA}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillA1"}, []string{repoA}); err != nil {
 		t.Fatalf("install repo-a --skill skillA1: %v", err)
 	}
-	if err := runInstall(deps, false, true, "claude", []string{"skillB1"}, []string{repoB}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillB1"}, []string{repoB}); err != nil {
 		t.Fatalf("install repo-b --skill skillB1: %v", err)
 	}
-	if err := runInstall(deps, false, true, "claude", []string{"skillC1"}, []string{repoC}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillC1"}, []string{repoC}); err != nil {
 		t.Fatalf("install repo-c --skill skillC1: %v", err)
 	}
 
@@ -1791,13 +1791,13 @@ func TestInstall_SkillSubsetSameRepoUnion(t *testing.T) {
 	}
 
 	// Step 1: install repo-r --skill skillX.
-	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repoR}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillX"}, []string{repoR}); err != nil {
 		t.Fatalf("step 1 (install repo-r --skill skillX): %v", err)
 	}
 	assertSelected("step1", "skillX")
 
 	// Step 2: SAME repo, different --skill -- must UNION, not replace.
-	if err := runInstall(deps, false, true, "claude", []string{"skillY"}, []string{repoR}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillY"}, []string{repoR}); err != nil {
 		t.Fatalf("step 2 (install repo-r --skill skillY): %v", err)
 	}
 	assertSelected("step2", "skillX", "skillY")
@@ -1824,7 +1824,7 @@ func TestInstall_SkillSubsetSameRepoUnion(t *testing.T) {
 	// Step 3: bare re-install (no positional package, no --skill) must keep
 	// deploying the union -- not silently reset to full, not silently reset
 	// to empty.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("step 3 (bare install): %v", err)
 	}
 	assertSelected("step3", "skillX", "skillY")
@@ -1889,7 +1889,7 @@ func TestInstall_UnknownSkill_NewNameErrorsAtomically(t *testing.T) {
 			}
 
 			deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
-			err := runInstall(deps, false, true, "claude", tc.skills, []string{repo})
+			err := runInstall(deps, false, true, "claude", "", tc.skills, []string{repo})
 			if err == nil {
 				t.Fatal("expected an error for an unknown --skill name, got nil")
 			}
@@ -1944,7 +1944,7 @@ func TestInstall_UnknownSkill_PersistedNameDisappearsWarnsAndKeeps(t *testing.T)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 
-	if err := runInstall(deps, false, true, "claude", []string{"onlySkill"}, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"onlySkill"}, []string{repo}); err != nil {
 		t.Fatalf("initial install: %v", err)
 	}
 
@@ -1958,7 +1958,7 @@ func TestInstall_UnknownSkill_PersistedNameDisappearsWarnsAndKeeps(t *testing.T)
 	}
 
 	stdout := captureUninstallStdout(t, func() {
-		if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 			t.Fatalf("bare re-install after upstream skill removal: %v", err)
 		}
 	})
@@ -2005,7 +2005,7 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 
 	// Step 1: full install, no --skill -- deploys BOTH skills.
-	if err := runInstall(deps, false, true, "claude", nil, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{repo}); err != nil {
 		t.Fatalf("step 1 (full install): %v", err)
 	}
 	for _, skill := range []string{"skillA1", "skillA2"} {
@@ -2030,7 +2030,7 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 	// Step 2: narrow to --skill skillA1 (same repo) -- must deploy ONLY
 	// skillA1 files, and clean up skillA2's now-stale, untouched files.
 	stdout := captureUninstallStdout(t, func() {
-		if err := runInstall(deps, false, true, "claude", []string{"skillA1"}, []string{repo}); err != nil {
+		if err := runInstall(deps, false, true, "claude", "", []string{"skillA1"}, []string{repo}); err != nil {
 			t.Fatalf("step 2 (narrow to skillA1): %v", err)
 		}
 	})
@@ -2115,7 +2115,7 @@ func TestInstall_StaleSkillReconciliation_TargetChangeWithoutSkillSubsetKeepsFil
 
 	// Step 1: full install (no --skill) targeting claude -- deploys to
 	// claude's native .claude/skills/skillT/.
-	if err := runInstall(deps, false, true, "claude", nil, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{repo}); err != nil {
 		t.Fatalf("step 1 (install --target claude): %v", err)
 	}
 	claudeOnlyPath := filepath.Join(dir, ".claude", "skills", "skillT", "SKILL.md")
@@ -2126,7 +2126,7 @@ func TestInstall_StaleSkillReconciliation_TargetChangeWithoutSkillSubsetKeepsFil
 	// Step 2: full install (still no --skill) but this time targeting codex
 	// only -- codex's skill deploy root is the shared .agents/skills/, so
 	// .claude/skills/skillT/ is no longer claimed by this run's lockfile.
-	if err := runInstall(deps, false, true, "codex", nil, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "codex", "", nil, []string{repo}); err != nil {
 		t.Fatalf("step 2 (install --target codex): %v", err)
 	}
 
@@ -2171,7 +2171,7 @@ func TestInstall_StaleSkillReconciliation_StillSelectedSkillSurvivesTargetChange
 
 	// Step 1: narrow to --skill skillX, targeting claude -- deploys skillX
 	// to claude's native .claude/skills/skillX/.
-	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillX"}, []string{repo}); err != nil {
 		t.Fatalf("step 1 (install --skill skillX --target claude): %v", err)
 	}
 	claudeOnlyPath := filepath.Join(dir, ".claude", "skills", "skillX", "SKILL.md")
@@ -2182,7 +2182,7 @@ func TestInstall_StaleSkillReconciliation_StillSelectedSkillSurvivesTargetChange
 	// Step 2: SAME --skill skillX (still selected, no narrowing), but this
 	// time targeting codex only -- codex's skill deploy root is the shared
 	// .agents/skills/, so .claude/skills/skillX/ is not claimed this run.
-	if err := runInstall(deps, false, true, "codex", []string{"skillX"}, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "codex", "", []string{"skillX"}, []string{repo}); err != nil {
 		t.Fatalf("step 2 (install --skill skillX --target codex): %v", err)
 	}
 
@@ -2227,7 +2227,7 @@ func TestRunInstall_SkillMixedWildcardResetsToFull(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 
 	// Step 1: narrow to skillX only.
-	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillX"}, []string{repo}); err != nil {
 		t.Fatalf("step1: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillY", "SKILL.md")); err == nil {
@@ -2235,7 +2235,7 @@ func TestRunInstall_SkillMixedWildcardResetsToFull(t *testing.T) {
 	}
 
 	// Step 2: mixed wildcard (a concrete name PLUS '*') resets to full.
-	if err := runInstall(deps, false, true, "claude", []string{"skillX", "*"}, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillX", "*"}, []string{repo}); err != nil {
 		t.Fatalf("step2: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "skillY", "SKILL.md")); err != nil {
@@ -2286,7 +2286,7 @@ func TestRunInstall_DevDependency_SkillSubsetHonored(t *testing.T) {
 	// skillX -- persistPackagesToManifest handles the git-value quoting
 	// correctly (avoids hand-authoring YAML containing a raw Windows
 	// absolute path, which has its own quoting pitfalls).
-	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repo}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillX"}, []string{repo}); err != nil {
 		t.Fatalf("initial install: %v", err)
 	}
 
@@ -2313,7 +2313,7 @@ func TestRunInstall_DevDependency_SkillSubsetHonored(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("bare install after moving to devDependencies: %v", err)
 	}
 
@@ -2369,7 +2369,7 @@ func TestRunInstall_MultiplePositionalPackages_SharedSkillFlag(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 
 	stdout := captureUninstallStdout(t, func() {
-		err := runInstall(deps, false, true, "claude", []string{"nameA", "nameB"}, []string{repoA, repoB})
+		err := runInstall(deps, false, true, "claude", "", []string{"nameA", "nameB"}, []string{repoA, repoB})
 		if err != nil {
 			t.Fatalf("runInstall: %v", err)
 		}
@@ -2440,7 +2440,7 @@ func TestRunInstall_PlainAbsoluteLocalPathPackage_PersistsAndRoundTrips(t *testi
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
 	// Act (a): first install, plain absolute positional package.
-	if err := runInstall(deps, false, true, "claude", nil, []string{pkgDir}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{pkgDir}); err != nil {
 		t.Fatalf("(a) runInstall: %v", err)
 	}
 
@@ -2457,7 +2457,7 @@ func TestRunInstall_PlainAbsoluteLocalPathPackage_PersistsAndRoundTrips(t *testi
 	}
 
 	// Act + Assert (b): round-trip.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
 	}
 }
@@ -2501,7 +2501,7 @@ func TestRunInstall_AllowExecutablesWarning(t *testing.T) {
 
 		deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 		stderr = captureUninstallStderr(t, func() {
-			if err := runInstall(deps, false, false, "", nil, nil); err != nil {
+			if err := runInstall(deps, false, false, "", "", nil, nil); err != nil {
 				t.Fatalf("runInstall failed: %v", err)
 			}
 		})

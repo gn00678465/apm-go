@@ -40,7 +40,7 @@ dependencies:
 	}
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -128,7 +128,7 @@ dependencies:
 	}
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "antigravity", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "antigravity", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -181,7 +181,7 @@ dependencies:
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
 	writeManifest("my-mcp-server")
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("first runInstall: %v", err)
 	}
 	firstHash, err := lockfile.HashFileBytes(filepath.Join(dir, ".mcp.json"))
@@ -192,7 +192,7 @@ dependencies:
 	// Change only the MCP server command. There are no apm dependencies, so
 	// the lockfile rewrite must be driven by local_deployed_file_hashes.
 	writeManifest("my-mcp-server-v2")
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("second runInstall: %v", err)
 	}
 	secondHash, err := lockfile.HashFileBytes(filepath.Join(dir, ".mcp.json"))
@@ -255,7 +255,7 @@ dependencies:
 	}
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 

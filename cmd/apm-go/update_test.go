@@ -453,7 +453,7 @@ func TestUpdate_RespectsSkillSubset(t *testing.T) {
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
 
-	if err := runInstall(deps, false, true, "claude", []string{"skillX"}, []string{repoR}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"skillX"}, []string{repoR}); err != nil {
 		t.Fatalf("install repo-r --skill skillX: %v", err)
 	}
 	for _, p := range expectedSkillDeployPaths("skillX", []string{"SKILL.md", "notes.md"}) {

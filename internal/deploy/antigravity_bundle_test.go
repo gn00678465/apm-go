@@ -38,7 +38,7 @@ func TestRun_AntigravityBundlePaths(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestRun_AntigravityLocalPathsUnchanged(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestRun_AntigravityPluginManifestProvenance(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestRun_AntigravityPluginManifestReinstall(t *testing.T) {
 
 	manifestRel := ".agents/plugins/tool/plugin.json"
 
-	first, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	first, err := Run([]string{"antigravity"}, dir, m, nil, nil, "")
 	if err != nil {
 		t.Fatalf("first Run: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestRun_AntigravityPluginManifestReinstall(t *testing.T) {
 		t.Fatal("expected manifest hash after first Run")
 	}
 
-	second, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	second, err := Run([]string{"antigravity"}, dir, m, nil, nil, "")
 	if err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestRun_AntigravityBundleNameCollision(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "")
 	if err == nil {
 		t.Fatal("expected a bundle name collision error")
 	}
@@ -304,7 +304,7 @@ func TestRun_AntigravityTwoDependencyHooksIsolated(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestRun_AntigravitySameDependencyHooksOverwriteDiagnostic(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

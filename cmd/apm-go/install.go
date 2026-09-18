@@ -80,8 +80,11 @@ func installCmd() *cobra.Command {
 		Use:   "install [packages...]",
 		Short: "Install dependencies from apm.yml or by URL/shorthand",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var deployDir string
 			if globalFlag {
-				if err := enterGlobalScope(); err != nil {
+				var err error
+				deployDir, err = enterGlobalScope()
+				if err != nil {
 					return err
 				}
 				if err := ensureGlobalManifest(); err != nil {
@@ -176,18 +179,17 @@ func installCmd() *cobra.Command {
 				verbose:         verbose,
 				dev:             dev,
 			}
-			err := runInstall(deps, frozen, noProvenance, targetFlag, skillFlags, args)
+			err := runInstall(deps, frozen, noProvenance, targetFlag, deployDir, skillFlags, args)
 			// R17 (codex H8): suppress cobra's default usage dump for JUST
 			// the no-deployment-target diagnostic -- it is a structured,
 			// self-contained teaching message (scanned markers + concrete
 			// fixes), not a flag/argument mistake the 14-line flag usage
-			// dump would help with. Every OTHER install error (bad --target
-			// token, --skill validation, resolve/deploy failures, ...) must
-			// keep showing usage exactly as before, so this only flips
-			// SilenceUsage for THIS specific typed error, never for the
-			// command as a whole.
+			// dump would help with. unknownSkillError is the same class:
+			// the flag syntax is correct, the named skill just doesn't
+			// exist in the resolved package.
 			var ndt *noDeployTargetError
-			if errors.As(err, &ndt) {
+			var usk *unknownSkillError
+			if errors.As(err, &ndt) || errors.As(err, &usk) {
 				cmd.SilenceUsage = true
 			}
 			return err
@@ -217,7 +219,7 @@ func installCmd() *cobra.Command {
 	return cmd
 }
 
-func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string, skillSubset []string, packages []string) error {
+func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deployDir string, skillSubset []string, packages []string) error {
 	// Local-bundle early-exit (research/pack-parity-findings.md §6; design.md
 	// "install <bundle-path> 消費回路"), mirroring Python's install.py:1260's
 	// placement: checked before EVERYTHING else in this function -- before
@@ -902,7 +904,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node)
 }
 
 // printFrozenVerifiedDeps lists every dependency a successful --frozen
@@ -934,6 +936,11 @@ type noDeployTargetError struct {
 
 func (e *noDeployTargetError) Error() string { return e.err.Error() }
 func (e *noDeployTargetError) Unwrap() error { return e.err }
+
+type unknownSkillError struct{ err error }
+
+func (e *unknownSkillError) Error() string { return e.err.Error() }
+func (e *unknownSkillError) Unwrap() error { return e.err }
 
 // errNoDeployTarget is the exit-2 teaching error shared by runInstall's two
 // zero-target gates (deps present, and local-primitives-only), so their
@@ -1347,7 +1354,7 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return fmt.Errorf("--skill %s: unknown skill(s) %s", strings.Join(cliSubset, ", "), strings.Join(unknown, ", "))
+		return &unknownSkillError{fmt.Errorf("--skill %s: unknown skill(s) %s", strings.Join(cliSubset, ", "), strings.Join(unknown, ", "))}
 	}
 	return nil
 }
@@ -1714,8 +1721,12 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // already-persisted subset, not just the one this call's --skill flag named.
 // dev (R9/AC42) selects which apm.yml section packages is persisted into --
 // always false for `update`, which never persists positional packages.
-func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
+func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+	detectRoot := "."
+	if deployDir != "" {
+		detectRoot = deployDir
+	}
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, detectRoot)
 	// localProjectDeployed is R16's post-deploy decision point (design.md
 	// §3, codex M2): whether THIS run's deploy.Run actually deployed at
 	// least one file from the project's own .apm/ tree (deployResult.
@@ -1748,7 +1759,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 			ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
 		}
 
-		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter)
+		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir)
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}

@@ -118,7 +118,7 @@ dependencies:
 	t.Setenv("APM_REGISTRY_TOKEN_LOCAL", "e2e-secret-token")
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("fresh install: %v", err)
 	}
 
@@ -150,7 +150,7 @@ dependencies:
 	srv.versionsHits, srv.downloadHits = 0, 0
 	srv.mu.Unlock()
 
-	if err := runInstall(deps, true, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, true, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("frozen replay install: %v", err)
 	}
 	srv.mu.Lock()
@@ -183,7 +183,7 @@ func TestRegistryInstall_RequiresExperimentalFlag(t *testing.T) {
 	os.WriteFile("apm.yml", []byte(apmYML), 0o644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, false, true, "claude", nil, nil)
+	err := runInstall(deps, false, true, "claude", "", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "apm-go experimental enable registries") {
 		t.Fatalf("want experimental-flag refusal, got %v", err)
 	}
@@ -207,7 +207,7 @@ func TestFrozen_RegistryNetwork_RequiresExperimentalFlag(t *testing.T) {
 	os.WriteFile("apm.lock.yaml", []byte(lock), 0o644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "apm-go experimental enable registries") {
 		t.Fatalf("want experimental-flag refusal on frozen network replay, got %v", err)
 	}
@@ -237,7 +237,7 @@ func TestFrozen_Network_401_NamesEnvVar(t *testing.T) {
 	t.Setenv("APM_REGISTRY_TOKEN_LOCAL", "hidden-tok")
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "APM_REGISTRY_TOKEN_LOCAL") {
 		t.Fatalf("want 401 remediation naming the env var, got %v", err)
 	}
@@ -268,7 +268,7 @@ func TestFrozen_Network_HashMismatch_NamesEntry(t *testing.T) {
 	os.WriteFile("apm.lock.yaml", []byte(lock), 0o644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("want hash-mismatch failure on frozen network replay")
 	}
@@ -327,7 +327,7 @@ func TestFrozen_RegistryMissingHash_FailsClosed(t *testing.T) {
 	os.WriteFile("apm.lock.yaml", []byte(lock), 0o644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "no resolved_hash") {
 		t.Fatalf("want fail-closed on missing resolved_hash, got %v", err)
 	}
@@ -348,7 +348,7 @@ func TestFrozen_RegistryNoURLNoArchive_FailsClosed(t *testing.T) {
 	os.WriteFile("apm.lock.yaml", []byte(lock), 0o644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, true, false, "", nil, nil)
+	err := runInstall(deps, true, false, "", "", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "cannot materialize") {
 		t.Fatalf("want fail-closed when no url and no archive, got %v", err)
 	}
@@ -380,7 +380,7 @@ func TestFrozen_RegistryReplacesStaleMaterializedTree(t *testing.T) {
 	os.WriteFile(filepath.Join(staleDir, "STALE.txt"), []byte("tampered"), 0o644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, true, false, "", nil, nil); err != nil {
+	if err := runInstall(deps, true, false, "", "", nil, nil); err != nil {
 		t.Fatalf("frozen replace: %v", err)
 	}
 	srv.mu.Lock()

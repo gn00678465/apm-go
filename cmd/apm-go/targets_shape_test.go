@@ -96,7 +96,7 @@ func TestInstall_LegacySingularTargetKey_StillDeploys(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 	// No --target flag: the deploy target must resolve from the manifest's
 	// singular target: key alone.
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 

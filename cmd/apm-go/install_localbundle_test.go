@@ -86,7 +86,7 @@ func TestRunInstall_LocalBundle_NestedSkill_DeploysVerbatim(t *testing.T) {
 	chdirTemp(t)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, false, "claude", nil, []string{bundleDir}); err != nil {
+	if err := runInstall(deps, false, false, "claude", "", nil, []string{bundleDir}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -115,7 +115,7 @@ func TestRunInstall_LocalBundle_NestedSkill_CopilotUsesAgentsRoot(t *testing.T) 
 	chdirTemp(t)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, false, "copilot", nil, []string{bundleDir}); err != nil {
+	if err := runInstall(deps, false, false, "copilot", "", nil, []string{bundleDir}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestRunInstall_LocalBundle_DeploysAndWritesLockfile(t *testing.T) {
 	chdirTemp(t)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, false, "claude", nil, []string{bundleDir}); err != nil {
+	if err := runInstall(deps, false, false, "claude", "", nil, []string{bundleDir}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestRunInstall_LocalBundle_SummaryAggregatesDeployedFilesByKind(t *testing.
 	r, w, _ := os.Pipe()
 	origStdout := os.Stdout
 	os.Stdout = w
-	err := runInstall(deps, false, false, "claude", nil, []string{bundleDir})
+	err := runInstall(deps, false, false, "claude", "", nil, []string{bundleDir})
 	os.Stdout = origStdout
 	w.Close()
 	var buf bytes.Buffer
@@ -216,7 +216,7 @@ func TestRunInstall_LocalBundle_TamperedFile_Errors(t *testing.T) {
 	chdirTemp(t)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, false, false, "claude", nil, []string{bundleDir})
+	err := runInstall(deps, false, false, "claude", "", nil, []string{bundleDir})
 	if err == nil {
 		t.Fatal("expected an integrity-check error for a tampered bundle")
 	}
@@ -236,7 +236,7 @@ func TestRunInstall_LocalBundle_SkillFlagConflict_Errors(t *testing.T) {
 	chdirTemp(t)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, false, false, "claude", []string{"bar"}, []string{bundleDir})
+	err := runInstall(deps, false, false, "claude", "", []string{"bar"}, []string{bundleDir})
 	if err == nil {
 		t.Fatal("expected a flag-conflict usage error")
 	}
@@ -250,7 +250,7 @@ func TestRunInstall_LocalBundle_AllowInsecureFlagConflict_Errors(t *testing.T) {
 	chdirTemp(t)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}, allowInsecure: true}
-	err := runInstall(deps, false, false, "claude", nil, []string{bundleDir})
+	err := runInstall(deps, false, false, "claude", "", nil, []string{bundleDir})
 	if err == nil {
 		t.Fatal("expected a flag-conflict usage error")
 	}
@@ -266,7 +266,7 @@ func TestRunInstall_LocalBundle_ZeroTargets_NoOpNoError(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 	// No --target, and the fresh temp consumer dir has no harness signal to
 	// auto-detect from -- targets resolves empty.
-	if err := runInstall(deps, false, false, "", nil, []string{bundleDir}); err != nil {
+	if err := runInstall(deps, false, false, "", "", nil, []string{bundleDir}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, statErr := os.Stat("apm.lock.yaml"); !os.IsNotExist(statErr) {
@@ -284,7 +284,7 @@ func TestRunInstall_LocalBundle_TargetMismatch_WarnsButStillDeploys(t *testing.T
 	chdirTemp(t)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, false, "codex", nil, []string{bundleDir}); err != nil {
+	if err := runInstall(deps, false, false, "codex", "", nil, []string{bundleDir}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Verbatim deploy: the bundle's "agents/foo.md" is copied byte-for-byte
@@ -304,7 +304,7 @@ func TestRunInstall_LocalBundle_ArchiveExtensionNotABundle_UsageError(t *testing
 	}
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runInstall(deps, false, false, "", nil, []string{notABundle})
+	err := runInstall(deps, false, false, "", "", nil, []string{notABundle})
 	if err == nil {
 		t.Fatal("expected an error for an invalid .zip archive")
 	}
@@ -324,7 +324,7 @@ func TestRunInstall_LocalPathDependency_StillFallsThrough(t *testing.T) {
 	writeInstallFixtureFile(t, filepath.Join(consumerDir, "apm.yml"), "name: consumer\nversion: \"1.0.0\"\n")
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	if err := runInstall(deps, false, true, "claude", nil, []string{pkgDir}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{pkgDir}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	lockData, err := os.ReadFile("apm.lock.yaml")
