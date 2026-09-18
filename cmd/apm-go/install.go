@@ -1373,6 +1373,40 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 // would silently fail to normalize a legacy Windows-authored lockfile path
 // read on Linux (a second codex final-gate finding) -- replace explicitly
 // instead, unconditionally, regardless of the host OS.
+// mergeDeployedFiles combines the existing lockfile's deployed_files with
+// this run's deploy output, keeping old entries only when the file still
+// exists on disk under deployRoot. This handles re-install with a different
+// --target (old target's files survive and stay tracked) without preserving
+// files that were deliberately removed (e.g. stale-skill reconciliation).
+func mergeDeployedFiles(oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string, deployRoot string) ([]string, map[string]string) {
+	seen := make(map[string]bool, len(newFiles))
+	merged := make(map[string]string, len(oldHashes)+len(newHashes))
+	for _, f := range newFiles {
+		seen[f] = true
+	}
+	for k, v := range newHashes {
+		merged[k] = v
+	}
+	for _, f := range oldFiles {
+		if seen[f] {
+			continue
+		}
+		abs := filepath.Join(deployRoot, filepath.FromSlash(f))
+		if _, err := os.Stat(abs); err != nil {
+			continue
+		}
+		newFiles = append(newFiles, f)
+		seen[f] = true
+	}
+	for k, v := range oldHashes {
+		if _, ok := merged[k]; !ok && seen[k] {
+			merged[k] = v
+		}
+	}
+	sort.Strings(newFiles)
+	return newFiles, merged
+}
+
 func normalizeDeployPath(p string) string {
 	return path.Clean(strings.ReplaceAll(p, "\\", "/"))
 }
@@ -1888,6 +1922,31 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// all left untouched and reported via a warning instead.
 		for _, d := range reconcileStaleSkillDeployments(existingLock, newLock, ".") {
 			ux.Warn(os.Stderr, "%s", d)
+		}
+	}
+
+	// 6b. Merge surviving deployed files from the existing lockfile when
+	// deploying to a separate deployDir (--global). A re-install with a
+	// different --target writes files the previous target's run did not
+	// redeploy; without this merge those paths drop out of the lockfile
+	// and uninstall can't clean them. Scoped to deployDir != "" because
+	// local installs always use the same auto-detected targets and the
+	// merge would interfere with stale-skill reconciliation (step 6a).
+	if deployDir != "" && existingLock != nil {
+		for i := range newLock.Dependencies {
+			dep := &newLock.Dependencies[i]
+			if old := existingLock.FindByKey(dep.UniqueKey()); old != nil {
+				dep.DeployedFiles, dep.DeployedHashes = mergeDeployedFiles(
+					old.DeployedFiles, old.DeployedHashes,
+					dep.DeployedFiles, dep.DeployedHashes,
+					deployDir)
+			}
+		}
+		if len(existingLock.LocalDeployedFiles) > 0 {
+			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = mergeDeployedFiles(
+				existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes,
+				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes,
+				deployDir)
 		}
 	}
 
