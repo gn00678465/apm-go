@@ -54,8 +54,54 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 	if err := validateCloneURL(cloneURL); err != nil {
 		return nil, err
 	}
+
+	if ref.VirtualPath != "" && ref.VirtualType == "subdirectory" {
+		return r.cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, ref.VirtualPath)
+	}
+
 	if err := r.cloneRepo(cloneURL, installDir, resolvedRef); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
+	}
+
+	return r.parseSubManifest(installDir)
+}
+
+// cloneAndExtractSubdir clones the full repo into a temp directory, then
+// moves only the VirtualPath subdirectory into installDir. This mirrors the
+// Oracle's download_subdirectory_package (github_downloader.py:1363):
+// clone to temp, locate subdir, copy contents to target, delete temp.
+func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, virtualPath string) (*manifest.Manifest, error) {
+	tmpDir, err := os.MkdirTemp("", "apm-subdir-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir for subdirectory clone: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tmpClone := filepath.Join(tmpDir, "repo")
+	if err := r.cloneRepo(cloneURL, tmpClone, resolvedRef); err != nil {
+		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
+	}
+
+	subdir := filepath.Join(tmpClone, filepath.FromSlash(virtualPath))
+	info, err := os.Stat(subdir)
+	if err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("subdirectory %q not found in cloned repository", virtualPath)
+	}
+
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		return nil, fmt.Errorf("create install dir: %w", err)
+	}
+
+	entries, err := os.ReadDir(subdir)
+	if err != nil {
+		return nil, fmt.Errorf("read subdirectory %q: %w", virtualPath, err)
+	}
+	for _, e := range entries {
+		src := filepath.Join(subdir, e.Name())
+		dst := filepath.Join(installDir, e.Name())
+		if err := os.Rename(src, dst); err != nil {
+			return nil, fmt.Errorf("move %s to install dir: %w", e.Name(), err)
+		}
 	}
 
 	return r.parseSubManifest(installDir)
