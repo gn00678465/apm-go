@@ -92,19 +92,32 @@ func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolved
 		return nil, fmt.Errorf("create install dir: %w", err)
 	}
 
-	entries, err := os.ReadDir(subdir)
-	if err != nil {
-		return nil, fmt.Errorf("read subdirectory %q: %w", virtualPath, err)
-	}
-	for _, e := range entries {
-		src := filepath.Join(subdir, e.Name())
-		dst := filepath.Join(installDir, e.Name())
-		if err := os.Rename(src, dst); err != nil {
-			return nil, fmt.Errorf("move %s to install dir: %w", e.Name(), err)
-		}
+	if err := copyDirContents(subdir, installDir); err != nil {
+		return nil, fmt.Errorf("extract subdirectory %q: %w", virtualPath, err)
 	}
 
 	return r.parseSubManifest(installDir)
+}
+
+func copyDirContents(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0644)
+	})
 }
 
 // checkoutMatchesRef reports whether installDir's current HEAD already
