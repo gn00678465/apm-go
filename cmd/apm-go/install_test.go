@@ -2076,8 +2076,11 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 	if got := lock.Dependencies[0].SkillSubset; len(got) != 1 || got[0] != "skillA1" {
 		t.Errorf("apm.lock.yaml skill_subset must be [skillA1], got %v", got)
 	}
-	if len(lock.Dependencies[0].DeployedFiles) != 2 {
-		t.Errorf("apm.lock.yaml deployed_files must be exactly 2 paths (skillA1, 2 files, native .claude/skills/ root only), got %v", lock.Dependencies[0].DeployedFiles)
+	// 3 paths: skillA1's 2 files + the hand-edited skillA2/notes.md that
+	// reconciliation kept. Tracking it in the lockfile ensures uninstall
+	// can clean it up.
+	if len(lock.Dependencies[0].DeployedFiles) != 3 {
+		t.Errorf("apm.lock.yaml deployed_files must be exactly 3 paths (skillA1 2 files + kept hand-edited skillA2/notes.md), got %v", lock.Dependencies[0].DeployedFiles)
 	}
 }
 

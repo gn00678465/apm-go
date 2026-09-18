@@ -1925,28 +1925,31 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 	}
 
-	// 6b. Merge surviving deployed files from the existing lockfile when
-	// deploying to a separate deployDir (--global). A re-install with a
-	// different --target writes files the previous target's run did not
-	// redeploy; without this merge those paths drop out of the lockfile
-	// and uninstall can't clean them. Scoped to deployDir != "" because
-	// local installs always use the same auto-detected targets and the
-	// merge would interfere with stale-skill reconciliation (step 6a).
-	if deployDir != "" && existingLock != nil {
+	// 6b. Merge surviving deployed files from the existing lockfile.
+	// A re-install with a different --target (or stale-skill reconciliation
+	// that kept a hand-edited file) may leave files on disk that this run's
+	// deploy did not produce. mergeDeployedFiles checks os.Stat and only
+	// re-adds entries whose files still exist, so files reconciliation
+	// removed in step 6a stay out.
+	if existingLock != nil {
+		effectiveDeployRoot := "."
+		if deployDir != "" {
+			effectiveDeployRoot = deployDir
+		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
 			if old := existingLock.FindByKey(dep.UniqueKey()); old != nil {
 				dep.DeployedFiles, dep.DeployedHashes = mergeDeployedFiles(
 					old.DeployedFiles, old.DeployedHashes,
 					dep.DeployedFiles, dep.DeployedHashes,
-					deployDir)
+					effectiveDeployRoot)
 			}
 		}
 		if len(existingLock.LocalDeployedFiles) > 0 {
 			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = mergeDeployedFiles(
 				existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes,
 				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes,
-				deployDir)
+				effectiveDeployRoot)
 		}
 	}
 
