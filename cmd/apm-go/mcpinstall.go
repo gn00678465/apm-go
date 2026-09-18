@@ -32,12 +32,18 @@ type mcpInstallOpts struct {
 	PrePackages []string // positional args before `--` (must be empty with --mcp)
 	SkillSubset []string
 	TargetFlag  string
+	DeployDir   string
 }
 
 // runMCPInstall handles `apm install --mcp NAME [flags]`: a standalone
 // "declare + deploy this one MCP server" operation, independent of the
 // normal apm-package resolve/lockfile pipeline (apm.lock.yaml is untouched).
 func runMCPInstall(opts mcpInstallOpts) error {
+	deployRoot := "."
+	if opts.DeployDir != "" {
+		deployRoot = opts.DeployDir
+	}
+
 	if err := validateMCPConflicts(opts); err != nil {
 		return err
 	}
@@ -132,7 +138,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	// deploying, matching runInstall's existing convention (deployAndFinalize)
 	// and design.md §8 -- R7 requires the resolved target source be
 	// verifiable in stdout, not just the deploy/skip outcome (codex review).
-	targets, targetDiags := deploy.ResolveTargets(opts.TargetFlag, m.Target, ".")
+	targets, targetDiags := deploy.ResolveTargets(opts.TargetFlag, m.Target, deployRoot)
 	for _, d := range targetDiags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
@@ -146,7 +152,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
 	}
 
-	deployed, skipped, err := deployMCPEntry(m, opts.TargetFlag, deployDep)
+	deployed, skipped, err := deployMCPEntry(m, opts.TargetFlag, deployDep, deployRoot)
 	if err != nil {
 		return err
 	}
@@ -631,8 +637,8 @@ func nodeToValue(n *yamllib.Node) any {
 // MCP, reusing the existing per-target writers (internal/deploy/mcp_*.go)
 // unmodified -- this is not a new deploy path, just a single-Primitive call
 // into the same one regular `apm install` uses.
-func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDependency) (deployedTargets, skippedTargets []string, err error) {
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
+func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDependency, deployRoot string) (deployedTargets, skippedTargets []string, err error) {
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, deployRoot)
 	for _, d := range targetDiags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
@@ -648,7 +654,7 @@ func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDe
 			skippedTargets = append(skippedTargets, t)
 			continue
 		}
-		_, written, diags, werr := mcpAdapter.WriteMCP(prims, ".")
+		_, written, diags, werr := mcpAdapter.WriteMCP(prims, deployRoot)
 		for _, d := range diags {
 			ux.Warn(os.Stderr, "%s", d)
 		}

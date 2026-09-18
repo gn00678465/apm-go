@@ -165,6 +165,7 @@ func installCmd() *cobra.Command {
 					Version: mcpVersion, Registry: mcpRegistry, Force: mcpForce,
 					Command: stdioCommand, PrePackages: prePackages,
 					SkillSubset: skillFlags, TargetFlag: targetFlag,
+					DeployDir: deployDir,
 				})
 			}
 
