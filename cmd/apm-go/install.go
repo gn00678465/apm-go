@@ -1759,7 +1759,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
 		}
 
-		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir)
+		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir, deployDir != "")
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}

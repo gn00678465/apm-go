@@ -84,10 +84,15 @@ func skillNameInSubset(subset []string, name string) bool {
 // FinalizeBundles and their post-write hashes). When empty it defaults to
 // projectDir, preserving the existing single-root behavior. projectDir is
 // always used for reading primitives and apm_modules.
-func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string) (*DeployResult, error) {
+// symlink makes per-primitive deploys create symlinks to apm_modules sources
+// instead of copying files. Merged outputs (WriteMCP, FinalizeBundles) always
+// write regardless of this flag.
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string, symlink bool) (*DeployResult, error) {
 	if deployDir == "" {
 		deployDir = projectDir
 	}
+	activeDeployMode.symlink = symlink
+	defer func() { activeDeployMode.symlink = false }()
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
 	var mcpDiags []string

@@ -584,7 +584,7 @@ func TestRun_MCP_MultiSourceProvenanceAndSingleHash(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "")
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -742,7 +742,7 @@ func TestRun_MCP_AntigravityExplicitTargetEndToEnd(t *testing.T) {
 		t.Fatalf("ResolveTargets with explicit flag = %v", targets)
 	}
 
-	result, err := Run(targets, dir, m, nil, nil, "")
+	result, err := Run(targets, dir, m, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

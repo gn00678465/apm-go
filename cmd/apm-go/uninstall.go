@@ -240,16 +240,16 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	}
 	deployedFiles, deployedHashes := collectUninstallDeployedProvenance(lock, allRemovalKeys)
 
-	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys, verbose)
-	if err != nil {
-		return err
-	}
-
 	removeRoot := "."
 	if deployDir != "" {
 		removeRoot = deployDir
 	}
 	removedFiles, keptFiles, diags := deploy.RemoveDeployedFiles(removeRoot, deployedFiles, deployedHashes)
+
+	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys, verbose)
+	if err != nil {
+		return err
+	}
 	for _, d := range diags {
 		ux.Warn(os.Stderr, "%s", d)
 	}

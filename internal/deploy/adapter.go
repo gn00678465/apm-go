@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -9,6 +10,13 @@ import (
 
 	"github.com/apm-go/apm/internal/manifest"
 )
+
+// activeDeployMode is set by Run() for the duration of a deploy pipeline.
+// symlink=true makes per-primitive deploys create symlinks to apm_modules
+// sources instead of copying.
+var activeDeployMode struct {
+	symlink bool
+}
 
 type TargetAdapter interface {
 	Name() string
@@ -203,15 +211,43 @@ func deploySkill(p Primitive, projectDir string) ([]string, error) {
 func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	destDir := path.Join(root, p.Name)
 	absDestDir := filepath.Join(projectDir, filepath.FromSlash(destDir))
+
+	if activeDeployMode.symlink {
+		return symlinkSkillTo(p.SrcPath, absDestDir, destDir)
+	}
+
 	if err := os.MkdirAll(absDestDir, 0755); err != nil {
 		return nil, fmt.Errorf("create skill dir: %w", err)
 	}
-
 	var deployed []string
 	err := copyDirRecursive(p.SrcPath, absDestDir, destDir, &deployed)
 	if err != nil {
 		return nil, fmt.Errorf("deploy skill %s: %w", p.Name, err)
 	}
+	return deployed, nil
+}
+
+func symlinkSkillTo(srcDir, absDestDir, destDir string) ([]string, error) {
+	absSrc, err := filepath.Abs(srcDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve source: %w", err)
+	}
+	os.RemoveAll(absDestDir)
+	if err := os.MkdirAll(filepath.Dir(absDestDir), 0755); err != nil {
+		return nil, fmt.Errorf("create parent dir: %w", err)
+	}
+	if err := os.Symlink(absSrc, absDestDir); err != nil {
+		return nil, fmt.Errorf("symlink skill: %w", err)
+	}
+	var deployed []string
+	_ = filepath.WalkDir(srcDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(srcDir, p)
+		deployed = append(deployed, path.Join(destDir, filepath.ToSlash(rel)))
+		return nil
+	})
 	return deployed, nil
 }
 
@@ -261,6 +297,17 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
 	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
 		return nil, err
+	}
+	if activeDeployMode.symlink {
+		absSrc, err := filepath.Abs(p.SrcPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve source: %w", err)
+		}
+		os.Remove(absDest)
+		if err := os.Symlink(absSrc, absDest); err != nil {
+			return nil, fmt.Errorf("symlink %s %s: %w", p.Type, p.Name, err)
+		}
+		return []string{destPath}, nil
 	}
 	if err := copyFile(p.SrcPath, absDest); err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
