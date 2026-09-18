@@ -99,6 +99,7 @@ apm-go compile               # compile installed instructions into AGENTS.md
 | `install` | Install dependencies from `apm.yml` or by URL/shorthand; also adds MCP servers via `--mcp` |
 | `uninstall` | Remove APM packages, their integrated files, and `apm.yml` entries |
 | `update` | Re-resolve dependencies to their newest matching version |
+| `self-update` | Update the apm-go binary to the latest stable release |
 | `compile` | Compile installed instructions into a project `AGENTS.md` |
 | `audit` | Re-verify deployed-file integrity against `apm.lock.yaml` |
 | `search` | Search plugins in a marketplace (`QUERY@MARKETPLACE`) |
@@ -129,6 +130,7 @@ These commands and flags exist only in apm-go. Their defaults keep the standard 
 | `update` | `--frozen` / `--no-frozen` | Refuse a scoped update against a frozen install (auto-enabled in CI) / override the CI detection |
 | `marketplace package add` | `--category` | Package category, required for Codex output at `pack` time |
 | `marketplace package` | command name | The authoring subcommands live under `package` (`add`, `set`, `remove`) |
+| `self-update` | whole command | Update the binary in place from GitHub Releases; `--check` reports availability without applying |
 
 <img src="./assets/readme/section-develop.svg" width="100%" alt="Development — build, test, release">
 

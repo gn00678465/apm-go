@@ -70,6 +70,7 @@ internal/
   registry/          package registry operations
   resolver/          dependency resolution, diamond detection, updates
   security/          security scanning gate (block/warn/ignore policy)
+  selfupdate/        binary self-update from GitHub Releases
   semver/            SemVer parsing and comparison
   ux/                terminal output — spinners, tables, clack prompts, theming
   version/           single source of truth for release version

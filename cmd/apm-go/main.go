@@ -43,6 +43,7 @@ func buildRootCmd() *cobra.Command {
 	root.AddCommand(compileCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(searchCmd())
+	root.AddCommand(selfUpdateCmd())
 	return root
 }
 

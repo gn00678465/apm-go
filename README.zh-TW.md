@@ -99,6 +99,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | `install` | 依 `apm.yml` 或 URL/shorthand 安裝相依；`--mcp` 可新增 MCP 伺服器 |
 | `uninstall` | 移除 APM 套件、其整合檔案與 `apm.yml` 條目 |
 | `update` | 重新解析相依至最新符合版本 |
+| `self-update` | 將 apm-go 二進位檔更新至最新穩定版本 |
 | `compile` | 將已安裝的 instructions 編譯為專案 `AGENTS.md` |
 | `audit` | 依 `apm.lock.yaml` 重新驗證已部署檔案完整性 |
 | `search` | 在 marketplace 搜尋 plugin（`QUERY@MARKETPLACE`） |
@@ -129,6 +130,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | `update` | `--frozen` / `--no-frozen` | 對 frozen 安裝拒絕範圍更新（CI 自動開啟）／覆寫 CI 自動偵測 |
 | `marketplace package add` | `--category` | 套件分類，Codex 輸出在 `pack` 時必填 |
 | `marketplace package` | 指令名稱 | 作者側子指令位於 `package` 之下（`add`、`set`、`remove`） |
+| `self-update` | 整個指令 | 從 GitHub Releases 原地更新二進位檔；`--check` 僅回報可用版本，不套用 |
 
 <img src="./assets/readme/section-develop.zh-TW.svg" width="100%" alt="開發 — build、test、release">
 

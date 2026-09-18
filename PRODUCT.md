@@ -64,7 +64,7 @@ Call sites never choose a glyph; they call the `ux` printer for the class (`ux.S
 
 ## Capabilities and Constraints
 
-Command surface (`apm-go --help`): `audit`, `compile`, `completion`, `doctor`, `experimental`, `init`, `install`, `marketplace` (add/list/browse/update/remove/validate/init/package/audit), `normalize`, `pack`, `plugin` (init/validate), `search`, `uninstall`, `update`, `validate`.
+Command surface (`apm-go --help`): `audit`, `compile`, `completion`, `doctor`, `experimental`, `init`, `install`, `marketplace` (add/list/browse/update/remove/validate/init/package/audit), `normalize`, `pack`, `plugin` (init/validate), `search`, `self-update`, `uninstall`, `update`, `validate`.
 
 Constraints future work must preserve:
 
