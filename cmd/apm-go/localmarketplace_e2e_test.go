@@ -68,7 +68,7 @@ func TestRunInstall_LocalMarketplacePlugin_E2E_InTree(t *testing.T) {
 
 	// (a) first install: real loader must copy the plugin dir into apm_modules
 	// and deploy the skill.
-	if err := runInstall(deps, false, true, "claude", nil, []string{"hello@acme"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"hello@acme"}); err != nil {
 		t.Fatalf("(a) runInstall: %v", err)
 	}
 	deployed := filepath.Join(dir, ".claude", "skills", "hello", "SKILL.md")
@@ -81,7 +81,7 @@ func TestRunInstall_LocalMarketplacePlugin_E2E_InTree(t *testing.T) {
 
 	// (b) round-trip: bare install re-reads the persisted relative apm.yml path
 	// and re-deploys with no error.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
 	}
 	if _, err := os.Stat(deployed); err != nil {
@@ -116,7 +116,7 @@ func TestRunInstall_LocalMarketplacePlugin_E2E_OutOfTree(t *testing.T) {
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
 
-	if err := runInstall(deps, false, true, "claude", nil, []string{"hello@acme"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"hello@acme"}); err != nil {
 		t.Fatalf("(a) runInstall: %v", err)
 	}
 	deployed := filepath.Join(dir, ".claude", "skills", "hello", "SKILL.md")
@@ -128,7 +128,7 @@ func TestRunInstall_LocalMarketplacePlugin_E2E_OutOfTree(t *testing.T) {
 	}
 
 	// Round-trip re-reads the persisted absolute apm.yml path.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
 	}
 	if _, err := os.Stat(deployed); err != nil {

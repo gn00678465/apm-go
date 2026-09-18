@@ -27,7 +27,7 @@ func TestRunInstall_Dev_WritesDevDependenciesNotDependencies(t *testing.T) {
 		loader: &mockInstallLoader{},
 		dev:    true,
 	}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -81,7 +81,7 @@ func TestRunInstall_NoDev_StillWritesDependenciesNotDevDependencies(t *testing.T
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestRunInstall_Dev_ExistingDevDependency_BareInstall_MovesToNonDev(t *testi
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -253,7 +253,7 @@ func TestRunInstall_Dev_ExistingDependency_DevInstall_MovesToDev(t *testing.T) {
 		loader: &mockInstallLoader{},
 		dev:    true,
 	}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -330,7 +330,7 @@ func TestRunInstall_Dev_CrossSectionMove_PreservesEntryMetadata(t *testing.T) {
 		loader: &mockInstallLoader{},
 		dev:    true,
 	}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -387,7 +387,7 @@ func TestRunInstall_Dev_MoveOutOfDevWithLegacyLock_StillPersistsManifestMove(t *
 		loader: &mockInstallLoader{},
 		dev:    true,
 	}
-	if err := runInstall(seedDeps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(seedDeps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
 		t.Fatalf("seed runInstall: %v", err)
 	}
 
@@ -410,7 +410,7 @@ func TestRunInstall_Dev_MoveOutOfDevWithLegacyLock_StillPersistsManifestMove(t *
 		tags:   &mockInstallTagLister{},
 		loader: &mockInstallLoader{},
 	}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
 		t.Fatalf("second runInstall: %v", err)
 	}
 
@@ -456,7 +456,7 @@ func TestRunInstall_DevWithFrozen_Errors(t *testing.T) {
 	os.WriteFile("apm.lock.yaml", []byte("version: \"1\"\ndependencies: []\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}, dev: true}
-	err := runInstall(deps, true, true, "", nil, []string{"acme/foo"})
+	err := runInstall(deps, true, true, "", "", nil, []string{"acme/foo"})
 	if err == nil || !strings.Contains(err.Error(), "--dev") || !strings.Contains(err.Error(), "frozen") {
 		t.Fatalf("expected a --dev+frozen error, got %v", err)
 	}
@@ -515,7 +515,7 @@ func TestRunInstall_Dev_NameDictEntry_CrossSectionMove_NotDuplicated(t *testing.
 		loader: &mockInstallLoader{},
 		dev:    true,
 	}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -557,7 +557,7 @@ func TestRunInstall_DevWithoutPackages_Errors(t *testing.T) {
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}, dev: true}
-	err := runInstall(deps, false, true, "", nil, nil)
+	err := runInstall(deps, false, true, "", "", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "--dev") {
 		t.Fatalf("expected a --dev error for --dev with no positional package, got %v", err)
 	}

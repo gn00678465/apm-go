@@ -19,7 +19,7 @@ func runInstallCapturingStdout(t *testing.T, deps *installDeps, frozen, noProven
 	}
 	origStdout := os.Stdout
 	os.Stdout = w
-	installErr := runInstall(deps, frozen, noProvenance, targetFlag, skillSubset, packages)
+	installErr := runInstall(deps, frozen, noProvenance, targetFlag, "", skillSubset, packages)
 	os.Stdout = origStdout
 	w.Close()
 	var buf bytes.Buffer

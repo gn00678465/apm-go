@@ -516,7 +516,7 @@ func TestRun_AgentSameNameCollision_FirstDeclaredWins(t *testing.T) {
 				},
 			}
 
-			result, err := Run([]string{tt.target}, dir, m, nil, nil)
+			result, err := Run([]string{tt.target}, dir, m, nil, nil, "", false)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -826,7 +826,7 @@ func TestRun_FullPipeline(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -900,7 +900,7 @@ func TestRun_ConflictResolution(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -954,7 +954,7 @@ func TestRun_SkillFilterScopedToDepKey(t *testing.T) {
 		},
 	}
 
-	_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: map[string][]string{depA: {"a1"}}})
+	_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: map[string][]string{depA: {"a1"}}}, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1015,7 +1015,7 @@ func TestRun_SkillFilterAbsentKeyDeploysAll(t *testing.T) {
 				},
 			}
 
-			_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: tt.subsets})
+			_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: tt.subsets}, "", false)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -1037,7 +1037,7 @@ func TestRun_SkillDeduplication(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"claude", "codex", "copilot"}, dir, m, nil, nil)
+	result, err := Run([]string{"claude", "codex", "copilot"}, dir, m, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1073,7 +1073,7 @@ func TestRun_SkillDeduplication_ClaudeExtraCopySurvivesTargetOrder(t *testing.T)
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
 	// codex runs before claude -- this ordering used to trigger the bug.
-	result, err := Run([]string{"codex", "claude"}, dir, m, nil, nil)
+	result, err := Run([]string{"codex", "claude"}, dir, m, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1154,7 +1154,7 @@ func TestRun_NoTargets(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run(nil, dir, m, nil, nil)
+	result, err := Run(nil, dir, m, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1201,7 +1201,7 @@ func TestRun_DeployedFilesKeyMatch(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1265,7 +1265,7 @@ func TestRun_MultipleHooksOverwriteDiagnostic(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil, nil)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "", false)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

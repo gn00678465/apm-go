@@ -54,7 +54,7 @@ func TestRunInstall_SummaryDistinguishesNewFromExisting(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
 	out := captureInstallStdout(t, func() {
-		if err := runInstall(deps, false, true, "claude", nil, []string{"org/monorepo/skills/b"}); err != nil {
+		if err := runInstall(deps, false, true, "claude", "", nil, []string{"org/monorepo/skills/b"}); err != nil {
 			t.Fatalf("runInstall: %v", err)
 		}
 	})
@@ -105,7 +105,7 @@ func TestRunInstall_SummaryBareInstall_AllExistingDepsMuted(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
 	out := captureInstallStdout(t, func() {
-		if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 			t.Fatalf("runInstall: %v", err)
 		}
 	})
@@ -244,7 +244,7 @@ func TestRunInstall_LocalDeployTreeLabel(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
 	out := captureInstallStdout(t, func() {
-		if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+		if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 			t.Fatalf("runInstall: %v", err)
 		}
 	})

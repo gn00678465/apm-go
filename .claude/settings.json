@@ -1,24 +1,2 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "spec-kitty session-start"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "spec-kitty session-stop"
-          }
-        ]
-      }
-    ]
-  }
 }

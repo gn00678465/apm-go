@@ -32,12 +32,18 @@ type mcpInstallOpts struct {
 	PrePackages []string // positional args before `--` (must be empty with --mcp)
 	SkillSubset []string
 	TargetFlag  string
+	DeployDir   string
 }
 
 // runMCPInstall handles `apm install --mcp NAME [flags]`: a standalone
 // "declare + deploy this one MCP server" operation, independent of the
 // normal apm-package resolve/lockfile pipeline (apm.lock.yaml is untouched).
 func runMCPInstall(opts mcpInstallOpts) error {
+	deployRoot := "."
+	if opts.DeployDir != "" {
+		deployRoot = opts.DeployDir
+	}
+
 	if err := validateMCPConflicts(opts); err != nil {
 		return err
 	}
@@ -85,22 +91,16 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if err != nil {
 		return err
 	}
-	if status == "unchanged" || status == "skipped" {
-		// unchanged: identical entry. skipped: the user declined the replace
-		// prompt -- both leave apm.yml untouched and deploy nothing. A stale
-		// or missing deployed target file for an unchanged entry is a
-		// pre-existing limitation of --mcp itself (present in the Python
-		// original too, per source reading during design): re-run `apm
-		// install` (the full pipeline) or delete+re-add the entry to force
-		// redeployment.
+	if status == "skipped" {
 		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
 		return nil
 	}
 
-	// Only now -- once we know this call actually changes something --
-	// resolve the deployable dep. A registry lookup failure here still
-	// leaves apm.yml on disk untouched (AC6): entryNode has only been
-	// applied to the in-memory node, not yet serialized/written.
+	if status == "unchanged" && opts.Registry != "" {
+		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
+		return nil
+	}
+
 	deployDep, diags, err := buildDeployDep(opts)
 	if err != nil {
 		return err
@@ -109,30 +109,27 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		ux.Warn(os.Stderr, "%s", d)
 	}
 
-	// This edit only ever touches dependencies.mcp: prefer a surgical patch
-	// that preserves every other byte of the original apm.yml (including
-	// hand-formatted multi-line flow content a full SafeDump re-encode
-	// cannot reproduce). Fall back to a full re-encode if the document's
-	// shape doesn't fit the patcher's assumptions.
-	manifestBytes, patched, err := yamlcore.PatchMappingPath(data, node, []string{"dependencies", "mcp"})
-	if err != nil {
-		return fmt.Errorf("serialize apm.yml: %w", err)
-	}
-	if !patched {
-		manifestBytes, err = yamlcore.SafeDump(node)
+	if status != "unchanged" {
+		manifestBytes, patched, err := yamlcore.PatchMappingPath(data, node, []string{"dependencies", "mcp"})
 		if err != nil {
 			return fmt.Errorf("serialize apm.yml: %w", err)
 		}
-	}
-	if err := os.WriteFile("apm.yml", manifestBytes, 0644); err != nil {
-		return fmt.Errorf("write apm.yml: %w", err)
+		if !patched {
+			manifestBytes, err = yamlcore.SafeDump(node)
+			if err != nil {
+				return fmt.Errorf("serialize apm.yml: %w", err)
+			}
+		}
+		if err := os.WriteFile("apm.yml", manifestBytes, 0644); err != nil {
+			return fmt.Errorf("write apm.yml: %w", err)
+		}
 	}
 
 	// Print target source (--target > apm.yml targets: > auto-detect) before
 	// deploying, matching runInstall's existing convention (deployAndFinalize)
 	// and design.md §8 -- R7 requires the resolved target source be
 	// verifiable in stdout, not just the deploy/skip outcome (codex review).
-	targets, targetDiags := deploy.ResolveTargets(opts.TargetFlag, m.Target, ".")
+	targets, targetDiags := deploy.ResolveTargets(opts.TargetFlag, m.Target, deployRoot)
 	for _, d := range targetDiags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
@@ -146,14 +143,17 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
 	}
 
-	deployed, skipped, err := deployMCPEntry(m, opts.TargetFlag, deployDep)
+	deployed, skipped, err := deployMCPEntry(m, opts.TargetFlag, deployDep, deployRoot)
 	if err != nil {
 		return err
 	}
 
 	verb := "Added"
-	if status == "replaced" {
+	switch status {
+	case "replaced":
 		verb = "Replaced"
+	case "unchanged":
+		verb = "Deployed"
 	}
 	if len(skipped) > 0 {
 		ux.Info(os.Stdout, "Skipped MCP config for %s  (active targets: %s)",
@@ -631,8 +631,8 @@ func nodeToValue(n *yamllib.Node) any {
 // MCP, reusing the existing per-target writers (internal/deploy/mcp_*.go)
 // unmodified -- this is not a new deploy path, just a single-Primitive call
 // into the same one regular `apm install` uses.
-func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDependency) (deployedTargets, skippedTargets []string, err error) {
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
+func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDependency, deployRoot string) (deployedTargets, skippedTargets []string, err error) {
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, deployRoot)
 	for _, d := range targetDiags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
@@ -648,7 +648,7 @@ func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDe
 			skippedTargets = append(skippedTargets, t)
 			continue
 		}
-		_, written, diags, werr := mcpAdapter.WriteMCP(prims, ".")
+		_, written, diags, werr := mcpAdapter.WriteMCP(prims, deployRoot)
 		for _, d := range diags {
 			ux.Warn(os.Stderr, "%s", d)
 		}

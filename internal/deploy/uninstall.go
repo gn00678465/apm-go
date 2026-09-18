@@ -42,7 +42,8 @@ func RemoveDeployedFiles(projectDir string, files []string, hashes map[string]st
 		target := filepath.Join(projectDir, filepath.FromSlash(f))
 		if _, err := os.Stat(target); err != nil {
 			if os.IsNotExist(err) {
-				continue // already gone / never deployed here -- not an error
+				cleanupDanglingSymlinks(projectDir, filepath.Dir(target))
+				continue
 			}
 			kept = append(kept, f)
 			diags = append(diags, fmt.Sprintf("keeping %q: %v", f, err))
@@ -128,6 +129,39 @@ func SafeRemoveModuleDir(projectDir, identityKey string) (removed bool, err erro
 	}
 	cleanupEmptyParents(projectDir, filepath.Dir(target))
 	return true, nil
+}
+
+// cleanupDanglingSymlinks walks from dir up toward projectDir, removing any
+// directory that is a dangling symlink (target no longer exists). Stops at
+// projectDir. This handles the case where a symlink deploy's target was
+// deleted (e.g. apm_modules removed), leaving a dangling directory symlink
+// in the deploy tree.
+func cleanupDanglingSymlinks(projectDir, dir string) {
+	root := filepath.Clean(projectDir)
+	for {
+		dir = filepath.Clean(dir)
+		if dir == root || !archive.Contained(root, dir) {
+			return
+		}
+		info, err := os.Lstat(dir)
+		if err != nil {
+			return
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if _, statErr := os.Stat(dir); statErr != nil && os.IsNotExist(statErr) {
+				os.Remove(dir)
+				dir = filepath.Dir(dir)
+				continue
+			}
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			return
+		}
+		os.Remove(dir)
+		dir = filepath.Dir(dir)
+	}
 }
 
 // cleanupEmptyParents removes dir and, walking upward, each ancestor that has

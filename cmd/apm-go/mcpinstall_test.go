@@ -665,7 +665,7 @@ func TestDeployMCPEntry_ClaudeWritesConfig(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	dep := &manifest.MCPDependency{Name: "fetch", Transport: "http", URL: "https://example.com/mcp"}
-	deployed, skipped, err := deployMCPEntry(&manifest.Manifest{}, "claude", dep)
+	deployed, skipped, err := deployMCPEntry(&manifest.Manifest{}, "claude", dep, ".")
 	if err != nil {
 		t.Fatalf("deployMCPEntry: %v", err)
 	}
@@ -687,7 +687,7 @@ func TestDeployMCPEntry_NonMCPTargetIsSkippedNotErrored(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	dep := &manifest.MCPDependency{Name: "fetch", Transport: "http", URL: "https://example.com/mcp"}
-	_, skipped, err := deployMCPEntry(&manifest.Manifest{}, "agent-skills", dep)
+	_, skipped, err := deployMCPEntry(&manifest.Manifest{}, "agent-skills", dep, ".")
 	if err != nil {
 		t.Fatalf("deployMCPEntry: %v", err)
 	}

@@ -83,7 +83,7 @@ func TestFrozen_DeployedFileMismatch(t *testing.T) {
 	copyInto(t, wsFile, filepath.Join(target, "demo.instructions.md"))
 	copyInto(t, abs, filepath.Join(dir, "apm.lock.yaml"))
 
-	err := runInstall(newDeps(), true, false, "", nil, nil)
+	err := runInstall(newDeps(), true, false, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected fail-closed on deployed-file mismatch")
 	}
@@ -132,7 +132,7 @@ func TestFrozen_HashMismatch_NoExtract(t *testing.T) {
 	copyInto(t, lock, filepath.Join(dir, "apm.lock.yaml"))
 	copyInto(t, good, filepath.Join(dir, "good.tar.gz")) // repo_url .../demo/good -> good.tar.gz
 
-	err := runInstall(newDeps(), true, false, "", nil, nil)
+	err := runInstall(newDeps(), true, false, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected fail-closed on archive hash mismatch")
 	}
@@ -152,7 +152,7 @@ func TestFrozen_Good_VerifiesAndExtracts(t *testing.T) {
 	copyInto(t, lock, filepath.Join(dir, "apm.lock.yaml"))
 	copyInto(t, good, filepath.Join(dir, "good.tar.gz"))
 
-	if err := runInstall(newDeps(), true, false, "", nil, nil); err != nil {
+	if err := runInstall(newDeps(), true, false, "", "", nil, nil); err != nil {
 		t.Fatalf("good registry frozen install should succeed: %v", err)
 	}
 	extracted := filepath.Join(dir, "apm_modules", "registry.example.com", "demo", "good", "skill", "SKILL.md")
@@ -191,7 +191,7 @@ func TestFrozen_RegistryExtract_EndToEnd(t *testing.T) {
 			deps := newDeps()
 			deps.maxEntries = tc.maxEntries
 
-			err := runInstall(deps, true, false, "", nil, nil)
+			err := runInstall(deps, true, false, "", "", nil, nil)
 			if err == nil {
 				t.Fatalf("%s must fail closed through the install extract path", tc.name)
 			}
@@ -222,7 +222,7 @@ func TestFrozen_RepoURLTraversal_FailsClosed(t *testing.T) {
 	lock := fmt.Sprintf("lockfile_version: \"2\"\ndependencies:\n  - repo_url: ../../escape\n    source: registry\n    resolved_url: https://r.example/escape.tar.gz\n    resolved_hash: %q\n    version: \"1.0.0\"\n    depth: 1\n", hash)
 	os.WriteFile(filepath.Join(project, "apm.lock.yaml"), []byte(lock), 0o644)
 
-	err := runInstall(newDeps(), true, false, "", nil, nil)
+	err := runInstall(newDeps(), true, false, "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected fail-closed on repo_url path traversal")
 	}

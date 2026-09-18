@@ -89,11 +89,23 @@ func TestRunUninstall_HelpFlagSetIsExact(t *testing.T) {
 	}
 }
 
-func TestRunUninstall_GlobalFlagUnsupported(t *testing.T) {
-	chdirTemp(t) // no apm.yml at all -- proves -g is checked before anything else
+func TestRunUninstall_GlobalFlagChdirsToGlobalDir(t *testing.T) {
+	chdirTemp(t)
+	globalDir := t.TempDir()
+	old := globalDirOverride
+	globalDirOverride = globalDir
+	t.Cleanup(func() { globalDirOverride = old })
+
 	err := runUninstall([]string{"acme/foo"}, uninstallOptions{Global: true})
 	if err == nil {
-		t.Fatal("expected an error for -g/--global")
+		t.Fatal("expected an error (no apm.yml in global dir)")
+	}
+	if !strings.Contains(err.Error(), "apm.yml not found") {
+		t.Fatalf("expected apm.yml-not-found error in global dir, got: %v", err)
+	}
+	cwd, _ := os.Getwd()
+	if cwd != globalDir {
+		t.Errorf("expected cwd to be global dir %s, got %s", globalDir, cwd)
 	}
 }
 

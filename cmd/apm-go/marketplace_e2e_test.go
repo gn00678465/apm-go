@@ -1727,10 +1727,10 @@ func TestMarketplaceValidate_TagPatternDeferral(t *testing.T) {
 	}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	if err := runInstall(deps, false, true, "claude", nil, []string{"good-plugin@broken"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"good-plugin@broken"}); err != nil {
 		t.Errorf("install of the valid plugin failed: %v", err)
 	}
-	if err := runInstall(deps, false, true, "claude", nil, []string{"bad-plugin@broken"}); err == nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"bad-plugin@broken"}); err == nil {
 		t.Error("install of the tag_pattern-malformed plugin succeeded, want a not-found error")
 	}
 

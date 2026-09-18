@@ -33,7 +33,7 @@ func setupLocalDepUpdateFixture(t *testing.T) (dir, localKey string) {
 	}
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("baseline runInstall: %v", err)
 	}
 
@@ -176,7 +176,7 @@ func TestRunUpdate_LocalDep_MatchesFreshInstallDeployedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	freshDeps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
-	if err := runInstall(freshDeps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(freshDeps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("fresh-install-side runInstall: %v", err)
 	}
 

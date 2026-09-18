@@ -74,7 +74,7 @@ func TestRunUpdate_RealGitSemver_ResolvesToNewTag(t *testing.T) {
 		tags:   &gitops.RealTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 
@@ -153,7 +153,7 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 		tags:   &gitops.RealTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestRunUpdate_DryRunPlanNoSideEffects(t *testing.T) {
 		tags:   &gitops.RealTagLister{},
 		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
 	}
-	if err := runInstall(deps, false, true, "", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "demo", "SKILL.md")); err != nil {

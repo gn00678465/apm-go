@@ -79,7 +79,7 @@ func TestRunInstall_StaleCheckoutIsRepaired(t *testing.T) {
 	// --target claude only satisfies the "dependencies present but no
 	// deployment target" exit-2 guard (F2); this test's subject is stale
 	// checkout repair, not deploy.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("first runInstall: %v", err)
 	}
 
@@ -100,7 +100,7 @@ func TestRunInstall_StaleCheckoutIsRepaired(t *testing.T) {
 	// --target claude only satisfies the "dependencies present but no
 	// deployment target" exit-2 guard (F2); this test's subject is stale
 	// checkout repair, not deploy.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("second runInstall: %v", err)
 	}
 

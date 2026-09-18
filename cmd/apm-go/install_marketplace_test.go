@@ -328,7 +328,7 @@ func TestRunInstall_MarketplacePackage_LockfileProvenanceAndPersistedCanonical(t
 	// claude only satisfies the "dependencies present but no deployment
 	// target" exit-2 guard (F2); this test's subject is lockfile/apm.yml
 	// persistence, not deploy.
-	if err := runInstall(deps, false, true, "claude", nil, []string{"p@acme"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"p@acme"}); err != nil {
 		t.Fatalf("first runInstall: %v", err)
 	}
 
@@ -361,7 +361,7 @@ func TestRunInstall_MarketplacePackage_LockfileProvenanceAndPersistedCanonical(t
 	// Act -- second, bare `apm install` (no positional args): re-parses the
 	// now-persisted apm.yml. Must succeed -- proving the persisted string
 	// round-trips. --target claude again only satisfies the exit-2 guard.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("second (bare) runInstall failed to re-parse the persisted apm.yml: %v", err)
 	}
 }
@@ -549,7 +549,7 @@ func TestRunInstall_MarketplaceProvenance_CarriesForwardAcrossNoTargetBareAndTar
 	// (a) install with the marketplace CLI reference, --target claude ->
 	// lockfile carries provenance and the local instructions primitive
 	// deploys.
-	if err := runInstall(deps, false, true, "claude", nil, []string{"p@acme"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"p@acme"}); err != nil {
 		t.Fatalf("(a) runInstall: %v", err)
 	}
 	readLockAssertProvenance("(a)")
@@ -561,14 +561,14 @@ func TestRunInstall_MarketplaceProvenance_CarriesForwardAcrossNoTargetBareAndTar
 	// no fresh marketplaceProvenance for this call. Must succeed (proving
 	// apm.yml round-trips the persisted canonical) AND must carry
 	// provenance forward unchanged.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("(b) bare runInstall: %v", err)
 	}
 	readLockAssertProvenance("(b)")
 
 	// (c) a third `apm install --target claude` -- deploy and provenance
 	// both still hold in the rebuilt lockfile.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("(c) targeted runInstall: %v", err)
 	}
 	readLockAssertProvenance("(c)")
@@ -621,7 +621,7 @@ func TestRunInstall_MarketplacePackage_LocalPathInProjectTree_PersistsRelative(t
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
 	// Act (a): first install, CLI marketplace reference.
-	if err := runInstall(deps, false, true, "claude", nil, []string{"p@acme"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"p@acme"}); err != nil {
 		t.Fatalf("(a) runInstall: %v", err)
 	}
 
@@ -646,7 +646,7 @@ func TestRunInstall_MarketplacePackage_LocalPathInProjectTree_PersistsRelative(t
 	// positional packages) re-reads the persisted relative apm.yml entry
 	// and the lockfile's absolute repo_url (mkt-025's canonical is always
 	// absolute regardless of how it's persisted) without erroring.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
 	}
 }
@@ -684,7 +684,7 @@ func TestRunInstall_MarketplacePackage_LocalPathOutsideProjectTree_PersistsAbsol
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
 	// Act (a)
-	if err := runInstall(deps, false, true, "claude", nil, []string{"p@acme"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"p@acme"}); err != nil {
 		t.Fatalf("(a) runInstall: %v", err)
 	}
 
@@ -704,7 +704,7 @@ func TestRunInstall_MarketplacePackage_LocalPathOutsideProjectTree_PersistsAbsol
 	// Act + Assert (b): round-trip -- a second, bare `apm install` re-reads
 	// the persisted absolute apm.yml entry AND the lockfile's absolute
 	// repo_url without erroring.
-	if err := runInstall(deps, false, true, "claude", nil, nil); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
 		t.Fatalf("(b) bare runInstall (round-trip): %v", err)
 	}
 }

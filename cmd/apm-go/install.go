@@ -74,11 +74,24 @@ func installCmd() *cobra.Command {
 	var mcpForce bool
 	var allowInsecure bool
 	var dev bool
+	var globalFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "install [packages...]",
 		Short: "Install dependencies from apm.yml or by URL/shorthand",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var deployDir string
+			if globalFlag {
+				var err error
+				deployDir, err = enterGlobalScope()
+				if err != nil {
+					return err
+				}
+				if err := ensureGlobalManifest(); err != nil {
+					return err
+				}
+			}
+
 			// Validate --target/-t up front, before any other flag routing
 			// (mirrors Python's TargetParamType, which validates at CLI
 			// argument-parsing time before the command body runs): a
@@ -152,6 +165,7 @@ func installCmd() *cobra.Command {
 					Version: mcpVersion, Registry: mcpRegistry, Force: mcpForce,
 					Command: stdioCommand, PrePackages: prePackages,
 					SkillSubset: skillFlags, TargetFlag: targetFlag,
+					DeployDir: deployDir,
 				})
 			}
 
@@ -166,18 +180,17 @@ func installCmd() *cobra.Command {
 				verbose:         verbose,
 				dev:             dev,
 			}
-			err := runInstall(deps, frozen, noProvenance, targetFlag, skillFlags, args)
+			err := runInstall(deps, frozen, noProvenance, targetFlag, deployDir, skillFlags, args)
 			// R17 (codex H8): suppress cobra's default usage dump for JUST
 			// the no-deployment-target diagnostic -- it is a structured,
 			// self-contained teaching message (scanned markers + concrete
 			// fixes), not a flag/argument mistake the 14-line flag usage
-			// dump would help with. Every OTHER install error (bad --target
-			// token, --skill validation, resolve/deploy failures, ...) must
-			// keep showing usage exactly as before, so this only flips
-			// SilenceUsage for THIS specific typed error, never for the
-			// command as a whole.
+			// dump would help with. unknownSkillError is the same class:
+			// the flag syntax is correct, the named skill just doesn't
+			// exist in the resolved package.
 			var ndt *noDeployTargetError
-			if errors.As(err, &ndt) {
+			var usk *unknownSkillError
+			if errors.As(err, &ndt) || errors.As(err, &usk) {
 				cmd.SilenceUsage = true
 			}
 			return err
@@ -200,13 +213,14 @@ func installCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&mcpForce, "force", false, "overwrite a conflicting existing --mcp entry non-interactively")
 	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "permit direct http:// (non-TLS) dependencies")
 	cmd.Flags().BoolVar(&dev, "dev", false, "install positional packages into devDependencies.apm instead of dependencies.apm")
+	cmd.Flags().BoolVarP(&globalFlag, "global", "g", false, "user-scope install: manage packages under ~/.apm/ instead of the project directory")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
 		"print extra diagnostics (currently: list every pinned dependency after a successful --frozen install)")
 
 	return cmd
 }
 
-func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string, skillSubset []string, packages []string) error {
+func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deployDir string, skillSubset []string, packages []string) error {
 	// Local-bundle early-exit (research/pack-parity-findings.md §6; design.md
 	// "install <bundle-path> 消費回路"), mirroring Python's install.py:1260's
 	// placement: checked before EVERYTHING else in this function -- before
@@ -891,7 +905,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag string,
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node)
 }
 
 // printFrozenVerifiedDeps lists every dependency a successful --frozen
@@ -923,6 +937,11 @@ type noDeployTargetError struct {
 
 func (e *noDeployTargetError) Error() string { return e.err.Error() }
 func (e *noDeployTargetError) Unwrap() error { return e.err }
+
+type unknownSkillError struct{ err error }
+
+func (e *unknownSkillError) Error() string { return e.err.Error() }
+func (e *unknownSkillError) Unwrap() error { return e.err }
 
 // errNoDeployTarget is the exit-2 teaching error shared by runInstall's two
 // zero-target gates (deps present, and local-primitives-only), so their
@@ -1336,7 +1355,7 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return fmt.Errorf("--skill %s: unknown skill(s) %s", strings.Join(cliSubset, ", "), strings.Join(unknown, ", "))
+		return &unknownSkillError{fmt.Errorf("--skill %s: unknown skill(s) %s", strings.Join(cliSubset, ", "), strings.Join(unknown, ", "))}
 	}
 	return nil
 }
@@ -1355,6 +1374,40 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 // would silently fail to normalize a legacy Windows-authored lockfile path
 // read on Linux (a second codex final-gate finding) -- replace explicitly
 // instead, unconditionally, regardless of the host OS.
+// mergeDeployedFiles combines the existing lockfile's deployed_files with
+// this run's deploy output, keeping old entries only when the file still
+// exists on disk under deployRoot. This handles re-install with a different
+// --target (old target's files survive and stay tracked) without preserving
+// files that were deliberately removed (e.g. stale-skill reconciliation).
+func mergeDeployedFiles(oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string, deployRoot string) ([]string, map[string]string) {
+	seen := make(map[string]bool, len(newFiles))
+	merged := make(map[string]string, len(oldHashes)+len(newHashes))
+	for _, f := range newFiles {
+		seen[f] = true
+	}
+	for k, v := range newHashes {
+		merged[k] = v
+	}
+	for _, f := range oldFiles {
+		if seen[f] {
+			continue
+		}
+		abs := filepath.Join(deployRoot, filepath.FromSlash(f))
+		if _, err := os.Stat(abs); err != nil {
+			continue
+		}
+		newFiles = append(newFiles, f)
+		seen[f] = true
+	}
+	for k, v := range oldHashes {
+		if _, ok := merged[k]; !ok && seen[k] {
+			merged[k] = v
+		}
+	}
+	sort.Strings(newFiles)
+	return newFiles, merged
+}
+
 func normalizeDeployPath(p string) string {
 	return path.Clean(strings.ReplaceAll(p, "\\", "/"))
 }
@@ -1703,8 +1756,12 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // already-persisted subset, not just the one this call's --skill flag named.
 // dev (R9/AC42) selects which apm.yml section packages is persisted into --
 // always false for `update`, which never persists positional packages.
-func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
+func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+	detectRoot := "."
+	if deployDir != "" {
+		detectRoot = deployDir
+	}
+	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, detectRoot)
 	// localProjectDeployed is R16's post-deploy decision point (design.md
 	// §3, codex M2): whether THIS run's deploy.Run actually deployed at
 	// least one file from the project's own .apm/ tree (deployResult.
@@ -1737,7 +1794,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 			ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
 		}
 
-		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter)
+		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir, deployDir != "")
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}
@@ -1866,6 +1923,34 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag string, effectiveSubsets
 		// all left untouched and reported via a warning instead.
 		for _, d := range reconcileStaleSkillDeployments(existingLock, newLock, ".") {
 			ux.Warn(os.Stderr, "%s", d)
+		}
+	}
+
+	// 6b. Merge surviving deployed files from the existing lockfile.
+	// A re-install with a different --target (or stale-skill reconciliation
+	// that kept a hand-edited file) may leave files on disk that this run's
+	// deploy did not produce. mergeDeployedFiles checks os.Stat and only
+	// re-adds entries whose files still exist, so files reconciliation
+	// removed in step 6a stay out.
+	if existingLock != nil {
+		effectiveDeployRoot := "."
+		if deployDir != "" {
+			effectiveDeployRoot = deployDir
+		}
+		for i := range newLock.Dependencies {
+			dep := &newLock.Dependencies[i]
+			if old := existingLock.FindByKey(dep.UniqueKey()); old != nil {
+				dep.DeployedFiles, dep.DeployedHashes = mergeDeployedFiles(
+					old.DeployedFiles, old.DeployedHashes,
+					dep.DeployedFiles, dep.DeployedHashes,
+					effectiveDeployRoot)
+			}
+		}
+		if len(existingLock.LocalDeployedFiles) > 0 {
+			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = mergeDeployedFiles(
+				existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes,
+				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes,
+				effectiveDeployRoot)
 		}
 	}
 

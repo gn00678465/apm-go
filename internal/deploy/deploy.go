@@ -80,7 +80,19 @@ func skillNameInSubset(subset []string, name string) bool {
 }
 
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
-func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter) (*DeployResult, error) {
+// deployDir controls where target files are written (DeployPrimitive, WriteMCP,
+// FinalizeBundles and their post-write hashes). When empty it defaults to
+// projectDir, preserving the existing single-root behavior. projectDir is
+// always used for reading primitives and apm_modules.
+// symlink makes per-primitive deploys create symlinks to apm_modules sources
+// instead of copying files. Merged outputs (WriteMCP, FinalizeBundles) always
+// write regardless of this flag.
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string, symlink bool) (*DeployResult, error) {
+	if deployDir == "" {
+		deployDir = projectDir
+	}
+	activeDeployMode.symlink = symlink
+	defer func() { activeDeployMode.symlink = false }()
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
 	var mcpDiags []string
@@ -262,7 +274,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				continue
 			}
 
-			files, err := adapter.DeployPrimitive(p, projectDir)
+			files, err := adapter.DeployPrimitive(p, deployDir)
 			if err != nil {
 				result.Diags = append(result.Diags,
 					fmt.Sprintf("deploy %s to %s failed: %v", p.Name, target, err))
@@ -310,7 +322,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				depResult.Files = append(depResult.Files, files...)
 
 				for _, f := range files {
-					absPath := filepath.Join(projectDir, f)
+					absPath := filepath.Join(deployDir, f)
 					hash, err := lockfile.HashFileBytes(absPath)
 					if err != nil {
 						return nil, fmt.Errorf("hash deployed file %s: %w", f, err)
@@ -348,7 +360,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		if len(depKeys) == 0 {
 			continue
 		}
-		filesByDep, err := bundleAdapter.FinalizeBundles(depKeys, projectDir)
+		filesByDep, err := bundleAdapter.FinalizeBundles(depKeys, deployDir)
 		if err != nil {
 			return nil, fmt.Errorf("finalize %s bundles: %w", target, err)
 		}
@@ -359,7 +371,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				result.PerDep[depKey] = depResult
 			}
 			for _, f := range files {
-				hash, err := lockfile.HashFileBytes(filepath.Join(projectDir, f))
+				hash, err := lockfile.HashFileBytes(filepath.Join(deployDir, f))
 				if err != nil {
 					return nil, fmt.Errorf("hash bundle manifest %s: %w", f, err)
 				}
@@ -389,14 +401,14 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			if !ok {
 				continue
 			}
-			files, written, mcpWriteDiags, err := mcpAdapter.WriteMCP(mcpWinners, projectDir)
+			files, written, mcpWriteDiags, err := mcpAdapter.WriteMCP(mcpWinners, deployDir)
 			if err != nil {
 				result.Diags = append(result.Diags, fmt.Sprintf("write mcp config for %s failed: %v", target, err))
 				continue
 			}
 			result.Diags = append(result.Diags, mcpWriteDiags...)
 			for _, f := range files {
-				hash, err := lockfile.HashFileBytes(filepath.Join(projectDir, f))
+				hash, err := lockfile.HashFileBytes(filepath.Join(deployDir, f))
 				if err != nil {
 					return nil, fmt.Errorf("hash mcp file %s: %w", f, err)
 				}

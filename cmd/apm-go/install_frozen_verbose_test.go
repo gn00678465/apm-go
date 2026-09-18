@@ -23,7 +23,7 @@ func TestRunInstall_Frozen_VerboseListsDependencies(t *testing.T) {
 	deps.verbose = true
 
 	out := captureInstallStdout(t, func() {
-		if err := runInstall(deps, true, false, "", nil, nil); err != nil {
+		if err := runInstall(deps, true, false, "", "", nil, nil); err != nil {
 			t.Fatalf("verbose frozen install should succeed: %v", err)
 		}
 	})
@@ -49,7 +49,7 @@ func TestRunInstall_Frozen_DefaultOutputStaysSummaryOnly(t *testing.T) {
 	copyInto(t, good, filepath.Join(dir, "good.tar.gz"))
 
 	out := captureInstallStdout(t, func() {
-		if err := runInstall(newDeps(), true, false, "", nil, nil); err != nil {
+		if err := runInstall(newDeps(), true, false, "", "", nil, nil); err != nil {
 			t.Fatalf("frozen install should succeed: %v", err)
 		}
 	})
