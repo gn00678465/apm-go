@@ -494,3 +494,59 @@ func TestCopyTreeNoSymlinks_SkipsSymlinks(t *testing.T) {
 		t.Errorf("secret bytes changed unexpectedly: got %q want %q", gotSecret, secretContent)
 	}
 }
+
+func TestCopyDirContents_CopiesFilesAndDirs(t *testing.T) {
+	src := t.TempDir()
+	os.MkdirAll(filepath.Join(src, "sub", "deep"), 0755)
+	os.WriteFile(filepath.Join(src, "root.txt"), []byte("root"), 0644)
+	os.WriteFile(filepath.Join(src, "sub", "mid.txt"), []byte("mid"), 0644)
+	os.WriteFile(filepath.Join(src, "sub", "deep", "leaf.txt"), []byte("leaf"), 0644)
+
+	dst := filepath.Join(t.TempDir(), "out")
+	os.MkdirAll(dst, 0755)
+	if err := copyDirContents(src, dst); err != nil {
+		t.Fatalf("copyDirContents: %v", err)
+	}
+
+	for _, tc := range []struct {
+		rel, want string
+	}{
+		{"root.txt", "root"},
+		{filepath.Join("sub", "mid.txt"), "mid"},
+		{filepath.Join("sub", "deep", "leaf.txt"), "leaf"},
+	} {
+		got, err := os.ReadFile(filepath.Join(dst, tc.rel))
+		if err != nil {
+			t.Errorf("expected %s to exist: %v", tc.rel, err)
+		} else if string(got) != tc.want {
+			t.Errorf("%s = %q, want %q", tc.rel, got, tc.want)
+		}
+	}
+}
+
+func TestCopyDirContents_EmptyDir(t *testing.T) {
+	src := t.TempDir()
+	dst := filepath.Join(t.TempDir(), "out")
+	os.MkdirAll(dst, 0755)
+
+	if err := copyDirContents(src, dst); err != nil {
+		t.Fatalf("copyDirContents on empty dir: %v", err)
+	}
+	entries, err := os.ReadDir(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected empty dst, got %d entries", len(entries))
+	}
+}
+
+func TestCopyDirContents_MissingSource(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "out")
+	os.MkdirAll(dst, 0755)
+
+	err := copyDirContents(filepath.Join(t.TempDir(), "nonexistent"), dst)
+	if err == nil {
+		t.Fatal("expected error for missing source")
+	}
+}

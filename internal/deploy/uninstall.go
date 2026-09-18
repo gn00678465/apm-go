@@ -148,9 +148,12 @@ func cleanupDanglingSymlinks(projectDir, dir string) {
 			return
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			os.Remove(dir)
-			dir = filepath.Dir(dir)
-			continue
+			if _, statErr := os.Stat(dir); statErr != nil && os.IsNotExist(statErr) {
+				os.Remove(dir)
+				dir = filepath.Dir(dir)
+				continue
+			}
+			return
 		}
 		entries, err := os.ReadDir(dir)
 		if err != nil || len(entries) > 0 {
