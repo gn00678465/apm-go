@@ -364,6 +364,32 @@ func TestResolvePlugin_InMarketplaceRootSource_PropagatesRegisteredRef(t *testin
 	}
 }
 
+func TestResolvePlugin_InMarketplaceRootSource_RejectsInvalidRegisteredGitURL(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	withGitLabAPIBase(t, srv.URL)
+	if err := AddSource(MarketplaceSource{
+		Name: "acme", URL: "https://gitlab.com/acme-owner/../acme-repo", Ref: "main",
+		Path: "marketplace.json", Owner: "acme-owner", Repo: "acme-repo", Host: "gitlab.com",
+	}); err != nil {
+		t.Fatalf("AddSource(): %v", err)
+	}
+
+	got, err := ResolvePlugin(context.Background(), "p", "acme", ResolveOptions{})
+	if err == nil {
+		t.Fatalf("ResolvePlugin() = %+v, nil; want an invalid repository path error", got)
+	}
+	if !strings.Contains(err.Error(), "segment '..' is a traversal sequence") {
+		t.Errorf("ResolvePlugin() error = %q, want traversal-sequence error", err)
+	}
+	if got != nil {
+		t.Errorf("ResolvePlugin() Resolution = %+v, want nil", got)
+	}
+}
+
 // TestResolvePlugin_StructuredDepRef_InMarketplaceDictSource covers
 // mkt-027's dict-source variant: a git-subdir dict source whose "repo"
 // field matches the marketplace's own project is still in-marketplace, and
