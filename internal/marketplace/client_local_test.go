@@ -3,6 +3,7 @@ package marketplace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,7 +117,8 @@ func TestFetchLocal_PrefersEarlierCandidate(t *testing.T) {
 }
 
 // TestFetchLocal_NoManifestFound covers the miss case: none of the three
-// candidate paths exist under the source directory.
+// candidate paths exist under the source directory, and the error names the
+// directory and every candidate tried.
 func TestFetchLocal_NoManifestFound(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
@@ -126,8 +128,9 @@ func TestFetchLocal_NoManifestFound(t *testing.T) {
 	_, err := fetchLocal(context.Background(), src)
 
 	// Assert
-	if err == nil {
-		t.Fatal("fetchLocal() returned no error, want one for a directory with no manifest")
+	want := fmt.Sprintf("no marketplace manifest found under %q (tried marketplace.json, .github/plugin/marketplace.json, .claude-plugin/marketplace.json)", dir)
+	if err == nil || err.Error() != want {
+		t.Errorf("fetchLocal() error = %v, want %q", err, want)
 	}
 }
 
@@ -257,5 +260,56 @@ func TestFetchLocal_TolerantOfRegistryKey(t *testing.T) {
 	}
 	if len(got.Plugins) != 1 || got.Plugins[0].Registry != "custom" {
 		t.Errorf("fetchLocal() Plugins = %+v, want one plugin with Registry=%q", got.Plugins, "custom")
+	}
+}
+
+// TestFetchLocal_FirstCandidateFailureIsFinal pins the fail-fast rule: a
+// candidate that exists but cannot be read or parsed ends the probe with its
+// own error, even when a later candidate in mkt-003's order is valid.
+func TestFetchLocal_FirstCandidateFailureIsFinal(t *testing.T) {
+	tests := []struct {
+		name    string
+		arrange func(t *testing.T, first string)
+		wantErr string
+	}{
+		{
+			name: "malformed JSON",
+			arrange: func(t *testing.T, first string) {
+				if err := os.WriteFile(first, []byte("{not json"), 0o644); err != nil {
+					t.Fatalf("WriteFile: %v", err)
+				}
+			},
+			wantErr: `parse local marketplace manifest "%s": invalid character 'n' looking for beginning of object key string`,
+		},
+		{
+			name: "unreadable because it is a directory",
+			arrange: func(t *testing.T, first string) {
+				if err := os.Mkdir(first, 0o755); err != nil {
+					t.Fatalf("Mkdir: %v", err)
+				}
+			},
+			wantErr: `read local marketplace manifest "%[1]s": read %[1]s: is a directory`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			dir := t.TempDir()
+			first := filepath.Join(dir, "marketplace.json")
+			tt.arrange(t, first)
+			writeLocalManifest(t, dir, ".github/plugin/marketplace.json", MarketplaceManifest{Name: "later-candidate"})
+			src := &MarketplaceSource{URL: dir, Path: defaultManifestPath}
+
+			// Act
+			got, err := fetchLocal(context.Background(), src)
+
+			// Assert
+			if err == nil {
+				t.Fatalf("fetchLocal() = %+v, want the first candidate's error", got)
+			}
+			if want := fmt.Sprintf(tt.wantErr, first); err.Error() != want {
+				t.Errorf("fetchLocal() error = %q, want %q", err.Error(), want)
+			}
+		})
 	}
 }
