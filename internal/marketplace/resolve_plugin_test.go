@@ -299,68 +299,48 @@ func TestResolvePlugin_StructuredDepRef_InMarketplaceStringSource(t *testing.T) 
 // host, not to a bare "owner/repo" that the dependency parser then routes
 // to github.com.
 func TestResolvePlugin_InMarketplaceRootSource_KeepsMarketplaceHost(t *testing.T) {
-	// Arrange
-	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./"}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	withGitLabAPIBase(t, srv.URL)
-	if err := AddSource(MarketplaceSource{
-		Name: "acme", URL: "https://gitlab.com/acme-owner/acme-repo", Ref: "main",
-		Path: "marketplace.json", Owner: "acme-owner", Repo: "acme-repo", Host: "gitlab.com",
-	}); err != nil {
-		t.Fatalf("AddSource(): %v", err)
-	}
+	for _, tc := range []struct {
+		ref           string
+		wantCanonical string
+		wantReference string
+	}{
+		{ref: "main", wantCanonical: "gitlab.com/acme-owner/acme-repo"},
+		{ref: "release/x", wantCanonical: "gitlab.com/acme-owner/acme-repo#release/x", wantReference: "release/x"},
+	} {
+		t.Run(tc.ref, func(t *testing.T) {
+			t.Setenv("APM_CONFIG_DIR", t.TempDir())
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./"}]}`))
+			}))
+			t.Cleanup(srv.Close)
+			withGitLabAPIBase(t, srv.URL)
+			if err := AddSource(MarketplaceSource{
+				Name: "acme", URL: "https://gitlab.com/acme-owner/acme-repo", Ref: tc.ref,
+				Path: "marketplace.json", Owner: "acme-owner", Repo: "acme-repo", Host: "gitlab.com",
+			}); err != nil {
+				t.Fatalf("AddSource(): %v", err)
+			}
 
-	// Act
-	got, err := ResolvePlugin(context.Background(), "p", "acme", ResolveOptions{})
-
-	// Assert
-	if err != nil {
-		t.Fatalf("ResolvePlugin() returned unexpected error: %v", err)
-	}
-	wantCanonical := "gitlab.com/acme-owner/acme-repo"
-	if got.Canonical != wantCanonical {
-		t.Errorf("ResolvePlugin() Canonical = %q, want %q", got.Canonical, wantCanonical)
-	}
-	if got.DepRef == nil {
-		t.Fatal("ResolvePlugin() DepRef = nil, want a structured git reference")
-	}
-	if got.DepRef.Host != "gitlab.com" || got.DepRef.VirtualPath != "" {
-		t.Errorf("ResolvePlugin() DepRef Host/VirtualPath = %q/%q, want gitlab.com and an empty path", got.DepRef.Host, got.DepRef.VirtualPath)
-	}
-	if got.DepRef.VirtualType != "" {
-		t.Errorf("ResolvePlugin() DepRef.VirtualType = %q, want empty", got.DepRef.VirtualType)
-	}
-}
-
-func TestResolvePlugin_InMarketplaceRootSource_PropagatesRegisteredRef(t *testing.T) {
-	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./"}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	withGitLabAPIBase(t, srv.URL)
-	if err := AddSource(MarketplaceSource{
-		Name: "acme", URL: "https://gitlab.com/acme-owner/acme-repo", Ref: "release/x",
-		Path: "marketplace.json", Owner: "acme-owner", Repo: "acme-repo", Host: "gitlab.com",
-	}); err != nil {
-		t.Fatalf("AddSource(): %v", err)
-	}
-
-	got, err := ResolvePlugin(context.Background(), "p", "acme", ResolveOptions{})
-	if err != nil {
-		t.Fatalf("ResolvePlugin() returned unexpected error: %v", err)
-	}
-	if got.Canonical != "gitlab.com/acme-owner/acme-repo#release/x" {
-		t.Errorf("ResolvePlugin() Canonical = %q, want %q", got.Canonical, "gitlab.com/acme-owner/acme-repo#release/x")
-	}
-	if got.DepRef == nil {
-		t.Fatal("ResolvePlugin() DepRef = nil, want a structured git reference")
-	}
-	if got.DepRef.Reference != "release/x" {
-		t.Errorf("ResolvePlugin() DepRef.Reference = %q, want %q", got.DepRef.Reference, "release/x")
+			got, err := ResolvePlugin(context.Background(), "p", "acme", ResolveOptions{})
+			if err != nil {
+				t.Fatalf("ResolvePlugin() returned unexpected error: %v", err)
+			}
+			if got.Canonical != tc.wantCanonical {
+				t.Errorf("ResolvePlugin() Canonical = %q, want %q", got.Canonical, tc.wantCanonical)
+			}
+			if got.DepRef == nil {
+				t.Fatal("ResolvePlugin() DepRef = nil, want a structured git reference")
+			}
+			if got.DepRef.Host != "gitlab.com" || got.DepRef.VirtualPath != "" {
+				t.Errorf("ResolvePlugin() DepRef Host/VirtualPath = %q/%q, want gitlab.com and an empty path", got.DepRef.Host, got.DepRef.VirtualPath)
+			}
+			if got.DepRef.VirtualType != "" {
+				t.Errorf("ResolvePlugin() DepRef.VirtualType = %q, want empty", got.DepRef.VirtualType)
+			}
+			if got.DepRef.Reference != tc.wantReference {
+				t.Errorf("ResolvePlugin() DepRef.Reference = %q, want %q", got.DepRef.Reference, tc.wantReference)
+			}
+		})
 	}
 }
 
