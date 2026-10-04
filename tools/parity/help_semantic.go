@@ -167,25 +167,12 @@ func appendHelpContinuation(description, continuation string) string {
 	return strings.TrimSpace(strings.Join([]string{description, continuation}, " "))
 }
 
-// parseFlagLine splits one --help line into its short alias (if any), long
-// flag name, and description, or reports ok=false if line isn't a
-// flag-definition line at all. The description is whatever follows the
-// first 2+-space gap after the long flag name -- everything between the
-// flag name and that gap (a metavar like "int" or "TEXT") is intentionally
-// discarded, since it varies by CLI framework and isn't part of the
-// semantic surface this comparison cares about.
-func parseFlagLine(line string) (short, long, desc string, ok bool) {
-	short, long, desc, hasDescription, ok := parseFlagSpecLine(line)
-	if !ok || !hasDescription {
-		return "", "", "", false
-	}
-	return short, long, desc, true
-}
-
 // parseFlagSpecLine parses the flag name and optional inline description.
 // A flag spec with no inline description is still useful to parseHelpFlags:
 // Click emits that shape for a long-metavar option before placing its prose
-// on the following indented line.
+// on the following indented line. Everything between the flag name and the
+// first 2+-space gap (a metavar like "int" or "TEXT") is discarded: it
+// varies by CLI framework and isn't part of the compared surface.
 func parseFlagSpecLine(line string) (short, long, desc string, hasDescription, ok bool) {
 	trimmed := strings.TrimLeft(line, " \t")
 	if len(line)-len(trimmed) > 8 {
