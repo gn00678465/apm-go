@@ -117,7 +117,8 @@ func TestFetchLocal_PrefersEarlierCandidate(t *testing.T) {
 }
 
 // TestFetchLocal_NoManifestFound covers the miss case: none of the three
-// candidate paths exist under the source directory.
+// candidate paths exist under the source directory, and the error names the
+// directory and every candidate tried.
 func TestFetchLocal_NoManifestFound(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
@@ -127,8 +128,9 @@ func TestFetchLocal_NoManifestFound(t *testing.T) {
 	_, err := fetchLocal(context.Background(), src)
 
 	// Assert
-	if err == nil {
-		t.Fatal("fetchLocal() returned no error, want one for a directory with no manifest")
+	want := fmt.Sprintf("no marketplace manifest found under %q (tried marketplace.json, .github/plugin/marketplace.json, .claude-plugin/marketplace.json)", dir)
+	if err == nil || err.Error() != want {
+		t.Errorf("fetchLocal() error = %v, want %q", err, want)
 	}
 }
 
@@ -309,22 +311,5 @@ func TestFetchLocal_FirstCandidateFailureIsFinal(t *testing.T) {
 				t.Errorf("fetchLocal() error = %q, want %q", err.Error(), want)
 			}
 		})
-	}
-}
-
-// TestFetchLocal_NoManifestFound_ErrorText pins the miss message, which
-// names the directory and every candidate tried.
-func TestFetchLocal_NoManifestFound_ErrorText(t *testing.T) {
-	// Arrange
-	dir := t.TempDir()
-	src := &MarketplaceSource{URL: dir, Path: defaultManifestPath}
-
-	// Act
-	_, err := fetchLocal(context.Background(), src)
-
-	// Assert
-	want := fmt.Sprintf("no marketplace manifest found under %q (tried marketplace.json, .github/plugin/marketplace.json, .claude-plugin/marketplace.json)", dir)
-	if err == nil || err.Error() != want {
-		t.Errorf("fetchLocal() error = %v, want %q", err, want)
 	}
 }
