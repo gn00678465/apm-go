@@ -31,8 +31,8 @@ type Resolution struct {
 	// Canonical is "owner/repo[/path][#ref]", or an absolute local
 	// filesystem path for the mkt-025 local-marketplace fast path.
 	Canonical string
-	// DepRef is non-nil only for mkt-027's structured-git-reference case (a
-	// non-GitHub-family host's in-marketplace subdirectory plugin);
+	// DepRef is non-nil for mkt-027's structured-git-reference case (a
+	// non-GitHub-family host's in-marketplace plugin);
 	// callers must prefer it over parsing Canonical when it is set.
 	DepRef *manifest.DependencyReference
 	// Provenance is always non-nil.
@@ -117,7 +117,7 @@ func ResolvePlugin(ctx context.Context, pluginName, mktName string, opts Resolve
 		return nil, err
 	}
 
-	// mkt-027: non-GitHub-family host + in-marketplace subdirectory plugin
+	// mkt-027: non-GitHub-family host + in-marketplace plugin
 	// -> structured {git, path, ref} DepRef, avoiding the nested-group path
 	// ambiguity a bare "owner/repo/subdir" canonical would carry on hosts
 	// like self-managed GitLab.
@@ -127,17 +127,18 @@ func ResolvePlugin(ctx context.Context, pluginName, mktName string, opts Resolve
 		if err != nil {
 			return nil, err
 		}
-		if inRepoPath != "" {
-			effectiveRef := pathRef
-			if effectiveRef == "" && isPropagatableRef(src.Ref) {
-				effectiveRef = src.Ref
-			}
-			depRef, err = gitLabInMarketplaceDependencyReference(src, inRepoPath, effectiveRef)
-			if err != nil {
-				return nil, err
-			}
-			canonical = depRef.ToCanonical(defaultCanonicalHost())
+		// Oracle src/apm_cli/marketplace/resolver.py:924-939 skips an empty
+		// in_repo_path. Root plugins still need the registered host, so apm-go
+		// builds a git DepRef for them.
+		effectiveRef := pathRef
+		if effectiveRef == "" && isPropagatableRef(src.Ref) {
+			effectiveRef = src.Ref
 		}
+		depRef, err = gitLabInMarketplaceDependencyReference(src, inRepoPath, effectiveRef)
+		if err != nil {
+			return nil, err
+		}
+		canonical = depRef.ToCanonical(defaultCanonicalHost())
 	}
 
 	// mkt-028: cross-repo dependency-confusion fail-closed gate. Computed
@@ -384,7 +385,7 @@ func normalizeOwnerRepoSlug(repo string) string {
 // mkt-027's structured DepRef -- mirrors _extract_in_repo_path_and_ref
 // (resolver.py:406-460). path=="" means the plugin IS the marketplace
 // repository root (no subdirectory package, equivalent to Python's None);
-// ref is only meaningful when path is non-empty.
+// ref can also apply to the repository root.
 func extractInRepoPathAndRef(plugin *MarketplacePlugin, pluginRoot string) (path, ref string, err error) {
 	switch src := plugin.Source.(type) {
 	case string:
@@ -485,8 +486,10 @@ func gitLabInMarketplaceDependencyReference(src *MarketplaceSource, inRepoPath, 
 		d.LocalPath = ""
 	}
 	d.Source = "git"
-	d.VirtualPath = inRepoPath
-	d.VirtualType = virtualPathKind(inRepoPath)
+	if inRepoPath != "" {
+		d.VirtualPath = inRepoPath
+		d.VirtualType = virtualPathKind(inRepoPath)
+	}
 	if ref != "" {
 		d.Reference = ref
 	}

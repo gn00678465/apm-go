@@ -2719,7 +2719,7 @@ func resolvePositionalPackage(pkg string) (*manifest.DependencyReference, *marke
 	}
 
 	// mkt-027: a structured DepRef (a non-GitHub-family host's
-	// in-marketplace subdirectory plugin) always wins over parsing
+	// in-marketplace plugin) always wins over parsing
 	// Canonical -- it already carries the decisions Canonical alone
 	// couldn't represent unambiguously.
 	if res.DepRef != nil {

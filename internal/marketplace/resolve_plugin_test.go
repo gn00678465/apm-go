@@ -293,6 +293,83 @@ func TestResolvePlugin_StructuredDepRef_InMarketplaceStringSource(t *testing.T) 
 	}
 }
 
+// TestResolvePlugin_InMarketplaceRootSource_KeepsMarketplaceHost covers
+// issue #24: a plugin whose source is the marketplace repository root
+// ("./") on a non-GitHub-family host must resolve to the marketplace's own
+// host, not to a bare "owner/repo" that the dependency parser then routes
+// to github.com.
+func TestResolvePlugin_InMarketplaceRootSource_KeepsMarketplaceHost(t *testing.T) {
+	for _, tc := range []struct {
+		ref           string
+		wantCanonical string
+		wantReference string
+	}{
+		{ref: "main", wantCanonical: "gitlab.com/acme-owner/acme-repo"},
+		{ref: "release/x", wantCanonical: "gitlab.com/acme-owner/acme-repo#release/x", wantReference: "release/x"},
+	} {
+		t.Run(tc.ref, func(t *testing.T) {
+			t.Setenv("APM_CONFIG_DIR", t.TempDir())
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./"}]}`))
+			}))
+			t.Cleanup(srv.Close)
+			withGitLabAPIBase(t, srv.URL)
+			if err := AddSource(MarketplaceSource{
+				Name: "acme", URL: "https://gitlab.com/acme-owner/acme-repo", Ref: tc.ref,
+				Path: "marketplace.json", Owner: "acme-owner", Repo: "acme-repo", Host: "gitlab.com",
+			}); err != nil {
+				t.Fatalf("AddSource(): %v", err)
+			}
+
+			got, err := ResolvePlugin(context.Background(), "p", "acme", ResolveOptions{})
+			if err != nil {
+				t.Fatalf("ResolvePlugin() returned unexpected error: %v", err)
+			}
+			if got.Canonical != tc.wantCanonical {
+				t.Errorf("ResolvePlugin() Canonical = %q, want %q", got.Canonical, tc.wantCanonical)
+			}
+			if got.DepRef == nil {
+				t.Fatal("ResolvePlugin() DepRef = nil, want a structured git reference")
+			}
+			if got.DepRef.Host != "gitlab.com" || got.DepRef.VirtualPath != "" {
+				t.Errorf("ResolvePlugin() DepRef Host/VirtualPath = %q/%q, want gitlab.com and an empty path", got.DepRef.Host, got.DepRef.VirtualPath)
+			}
+			if got.DepRef.VirtualType != "" {
+				t.Errorf("ResolvePlugin() DepRef.VirtualType = %q, want empty", got.DepRef.VirtualType)
+			}
+			if got.DepRef.Reference != tc.wantReference {
+				t.Errorf("ResolvePlugin() DepRef.Reference = %q, want %q", got.DepRef.Reference, tc.wantReference)
+			}
+		})
+	}
+}
+
+func TestResolvePlugin_InMarketplaceRootSource_RejectsInvalidRegisteredGitURL(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	withGitLabAPIBase(t, srv.URL)
+	if err := AddSource(MarketplaceSource{
+		Name: "acme", URL: "https://gitlab.com/acme-owner/../acme-repo", Ref: "main",
+		Path: "marketplace.json", Owner: "acme-owner", Repo: "acme-repo", Host: "gitlab.com",
+	}); err != nil {
+		t.Fatalf("AddSource(): %v", err)
+	}
+
+	got, err := ResolvePlugin(context.Background(), "p", "acme", ResolveOptions{})
+	if err == nil {
+		t.Fatalf("ResolvePlugin() = %+v, nil; want an invalid repository path error", got)
+	}
+	if !strings.Contains(err.Error(), "segment '..' is a traversal sequence") {
+		t.Errorf("ResolvePlugin() error = %q, want traversal-sequence error", err)
+	}
+	if got != nil {
+		t.Errorf("ResolvePlugin() Resolution = %+v, want nil", got)
+	}
+}
+
 // TestResolvePlugin_StructuredDepRef_InMarketplaceDictSource covers
 // mkt-027's dict-source variant: a git-subdir dict source whose "repo"
 // field matches the marketplace's own project is still in-marketplace, and
