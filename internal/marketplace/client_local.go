@@ -3,7 +3,9 @@ package marketplace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,18 +44,11 @@ func fetchLocal(ctx context.Context, s *MarketplaceSource) (*MarketplaceManifest
 	candidates := localManifestCandidates(s.Path)
 	for _, rel := range candidates {
 		p := filepath.Join(root, filepath.FromSlash(rel))
-		data, err := os.ReadFile(p)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("read local marketplace manifest %q: %w", p, err)
+		manifest, err := readLocalManifestFile(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
-		var manifest MarketplaceManifest
-		if err := json.Unmarshal(data, &manifest); err != nil {
-			return nil, fmt.Errorf("parse local marketplace manifest %q: %w", p, err)
-		}
-		return &manifest, nil
+		return manifest, err
 	}
 	return nil, fmt.Errorf("no marketplace manifest found under %q (tried %s)", root, strings.Join(candidates, ", "))
 }
