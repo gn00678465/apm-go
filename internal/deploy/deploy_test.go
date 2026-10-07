@@ -1493,3 +1493,203 @@ func TestAntigravityHooksDeploy(t *testing.T) {
 		t.Errorf("hooks.json content = %q, want %q", string(got), hookContent)
 	}
 }
+
+func TestRun_FailedBucketsRecordsBucketOfFailedPrimitive(t *testing.T) {
+	const depKey = "acme/foo"
+	m := &manifest.Manifest{
+		Name:       "test",
+		Version:    "1.0.0",
+		ParsedDeps: []*manifest.DependencyReference{{RepoURL: depKey, Owner: "acme", Repo: "foo", Source: "git"}},
+	}
+	resolved := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
+	}
+	// A directory at a file's destination makes that primitive's deploy fail.
+	tests := []struct {
+		name      string
+		blockDest string
+		want      []string
+	}{
+		{"no failure", "", nil},
+		{"local primitive fails", ".claude/skills/demo/SKILL.md", []string{""}},
+		{"dependency primitive fails", ".claude/skills/extra/SKILL.md", []string{depKey}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body\n")
+			mkFile(t, filepath.Join(dir, "apm_modules", depKey), ".apm/skills/extra/SKILL.md", "extra skill\n")
+			if tt.blockDest != "" {
+				if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(tt.blockDest)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			var got []string
+			for key := range result.FailedBuckets {
+				got = append(got, key)
+			}
+			if len(got) != len(tt.want) || (len(got) == 1 && got[0] != tt.want[0]) {
+				t.Errorf("FailedBuckets keys = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An unreadable source directory yields no primitives, exactly like a missing
+// one. Run must tell them apart so the bucket's deployed files are not taken
+// for stale.
+func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not restrict root")
+	}
+	const depKey = "acme/foo"
+	const module = "apm_modules/" + depKey
+	m := &manifest.Manifest{
+		Name:       "test",
+		Version:    "1.0.0",
+		ParsedDeps: []*manifest.DependencyReference{{RepoURL: depKey, Owner: "acme", Repo: "foo", Source: "git"}},
+	}
+	resolved := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
+	}
+	tests := []struct {
+		name       string
+		files      []string // created before the run
+		unreadable string   // chmod 000; "" for none
+		wantBucket string
+		wantFailed bool
+		wantDiag   string
+	}{
+		{name: "no source directories at all"},
+		{name: "readable sources", files: []string{".apm/skills/demo/SKILL.md", module + "/skills/s/SKILL.md"}},
+		{"local instructions", []string{".apm/instructions/a.instructions.md"}, ".apm/instructions", "", true, "<local .apm/>: read .apm/instructions failed: permission denied"},
+		{"local agents", []string{".apm/agents/a.agent.md"}, ".apm/agents", "", true, "<local .apm/>: read .apm/agents failed: permission denied"},
+		{"local commands", []string{".apm/commands/a.md"}, ".apm/commands", "", true, "<local .apm/>: read .apm/commands failed: permission denied"},
+		{"local hooks", []string{".apm/hooks/a.json"}, ".apm/hooks", "", true, "<local .apm/>: read .apm/hooks failed: permission denied"},
+		{"local prompts", []string{".apm/prompts/a.prompt.md"}, ".apm/prompts", "", true, "<local .apm/>: read .apm/prompts failed: permission denied"},
+		{"local skills", []string{".apm/skills/demo/SKILL.md"}, ".apm/skills", "", true, "<local .apm/>: read .apm/skills failed: permission denied"},
+		{"local skill directory hides its SKILL.md", []string{".apm/skills/demo/SKILL.md"}, ".apm/skills/demo", "", true, "<local .apm/>: read .apm/skills/demo/SKILL.md failed: permission denied"},
+		{"local .apm itself", []string{".apm/skills/demo/SKILL.md"}, ".apm", "", true, "<local .apm/>: read .apm/instructions failed: permission denied"},
+		{"dependency .apm skills", []string{module + "/.apm/skills/s/SKILL.md"}, module + "/.apm/skills", depKey, true, depKey + ": read " + module + "/.apm/skills failed: permission denied"},
+		{"dependency .apm agents", []string{module + "/.apm/agents/a.md"}, module + "/.apm/agents", depKey, true, depKey + ": read " + module + "/.apm/agents failed: permission denied"},
+		{"dependency root skills", []string{module + "/skills/s/SKILL.md"}, module + "/skills", depKey, true, depKey + ": read " + module + "/skills failed: permission denied"},
+		{"dependency root skill directory hides its SKILL.md", []string{module + "/skills/s/SKILL.md"}, module + "/skills/s", depKey, true, depKey + ": read " + module + "/skills/s/SKILL.md failed: permission denied"},
+		{"dependency plugin manifest directory", []string{module + "/.claude-plugin/plugin.json"}, module + "/.claude-plugin", depKey, true, depKey + ": read " + module + "/.claude-plugin/plugin.json failed: permission denied"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				mkFile(t, dir, f, "x\n")
+			}
+			if tt.unreadable != "" {
+				full := filepath.Join(dir, filepath.FromSlash(tt.unreadable))
+				if err := os.Chmod(full, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { os.Chmod(full, 0o755) })
+			}
+
+			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			if !tt.wantFailed {
+				if len(result.FailedBuckets) != 0 {
+					t.Errorf("FailedBuckets = %v, want empty; diags: %q", result.FailedBuckets, result.Diags)
+				}
+				return
+			}
+			if len(result.FailedBuckets) != 1 || !result.FailedBuckets[tt.wantBucket] {
+				t.Errorf("FailedBuckets = %v, want only %q", result.FailedBuckets, tt.wantBucket)
+			}
+			found := false
+			for _, d := range result.Diags {
+				if d == tt.wantDiag {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("Diags = %q, want one equal to %q", result.Diags, tt.wantDiag)
+			}
+		})
+	}
+}
+
+// The directories a plugin manifest declares are read only through the
+// manifest, so each kind of declared entry needs its own case.
+func TestRun_FailedBucketsRecordsUnreadablePluginComponent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not restrict root")
+	}
+	const depKey = "acme/foo"
+	const module = "apm_modules/" + depKey
+	m := &manifest.Manifest{
+		Name:       "test",
+		Version:    "1.0.0",
+		ParsedDeps: []*manifest.DependencyReference{{RepoURL: depKey, Owner: "acme", Repo: "foo", Source: "git"}},
+	}
+	const pluginJSON = `{"name":"p","skills":["./kits/one"],"agents":["./helpers"],"commands":["./cmds/run.md"]}`
+	tests := []struct {
+		name       string
+		unreadable string
+		wantFailed bool
+		wantPath   string
+	}{
+		{name: "readable components"},
+		{"declared skill directory", module + "/kits/one", true, module + "/kits/one/SKILL.md"},
+		{"parent of a declared skill", module + "/kits", true, module + "/kits/one"},
+		{"declared agents directory", module + "/helpers", true, module + "/helpers"},
+		{"parent of a declared command file", module + "/cmds", true, module + "/cmds/run.md"},
+		{"undeclared legacy skills directory is not read", module + "/skills", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mkFile(t, dir, module+"/.claude-plugin/plugin.json", pluginJSON)
+			mkFile(t, dir, module+"/kits/one/SKILL.md", "x\n")
+			mkFile(t, dir, module+"/helpers/a.md", "x\n")
+			mkFile(t, dir, module+"/cmds/run.md", "x\n")
+			mkFile(t, dir, module+"/skills/legacy/SKILL.md", "x\n")
+			if tt.unreadable != "" {
+				full := filepath.Join(dir, filepath.FromSlash(tt.unreadable))
+				if err := os.Chmod(full, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { os.Chmod(full, 0o755) })
+			}
+
+			result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			if !tt.wantFailed {
+				if len(result.FailedBuckets) != 0 {
+					t.Errorf("FailedBuckets = %v, want empty; diags: %q", result.FailedBuckets, result.Diags)
+				}
+				return
+			}
+			if len(result.FailedBuckets) != 1 || !result.FailedBuckets[depKey] {
+				t.Errorf("FailedBuckets = %v, want only %q", result.FailedBuckets, depKey)
+			}
+			want := depKey + ": read " + tt.wantPath + " failed: permission denied"
+			found := false
+			for _, d := range result.Diags {
+				if d == want {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("Diags = %q, want one equal to %q", result.Diags, want)
+			}
+		})
+	}
+}

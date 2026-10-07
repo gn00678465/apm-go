@@ -1924,6 +1924,37 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		for _, d := range reconcileStaleSkillDeployments(existingLock, newLock, ".") {
 			ux.Warn(os.Stderr, "%s", d)
 		}
+
+		// Stale-file cleanup (issue #30). Skipped for --global: it deploys
+		// symlinks into apm_modules, so a delete through one would remove the
+		// source file.
+		if existingLock != nil && deployDir == "" {
+			for _, c := range cleanStaleDeployedFiles(existingLock, newLock, deployResult.FailedBuckets, targets, ".") {
+				if n := len(c.removed); n > 0 {
+					noun := "files"
+					if n == 1 {
+						noun = "file"
+					}
+					// Oracle sentence: core/command_logger.py:482-496. The
+					// oracle prints the count only; apm-go also lists the
+					// paths, because issue #30 asks for them and the deleted
+					// files are in the user's workspace.
+					ux.Info(os.Stdout, "Cleaned %d stale %s from %s", n, noun, c.label)
+					items := make([]ux.Item, 0, n)
+					for _, f := range c.removed {
+						items = append(items, ux.Item{Text: f})
+					}
+					ux.List(os.Stdout, items)
+				}
+				// The oracle says "Kept user-edited file ..."
+				// (command_logger.py:518-529). apm-go prints the diag of
+				// deploy.RemoveDeployedFiles, the one delete path install and
+				// uninstall share, whose strings are existing output.
+				for _, d := range c.diags {
+					ux.Warn(os.Stderr, "%s", d)
+				}
+			}
+		}
 	}
 
 	// 6b. Merge surviving deployed files from the existing lockfile.
