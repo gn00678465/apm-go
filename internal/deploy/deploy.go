@@ -33,9 +33,10 @@ type DeployResult struct {
 	Diags         []string
 	MCPFiles      map[string]string // relative path -> sha256 hash, for merged (multi-source) MCP config files
 	MCPProvenance []MCPProv
-	// FailedBuckets holds the PerDep key of each bucket with a primitive
-	// that failed to deploy. Such a bucket's file list is incomplete, so a
-	// path missing from it is not evidence that the source is gone.
+	// FailedBuckets holds the PerDep key of each bucket with a source that
+	// could not be read or a primitive that failed to deploy. Such a bucket's
+	// file list is incomplete, so a path missing from it is not evidence that
+	// the source is gone.
 	FailedBuckets map[string]bool
 }
 
@@ -101,9 +102,27 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	var ordered []Primitive
 	var mcpDiags []string
 
+	var failedBuckets map[string]bool
+	var sourceDiags []string
+	noteSourceReadFailure := func(key, label string, f *sourceReadFailure) {
+		if f == nil {
+			return
+		}
+		if failedBuckets == nil {
+			failedBuckets = make(map[string]bool)
+		}
+		failedBuckets[key] = true
+		shown := f.path
+		if rel, err := filepath.Rel(projectDir, f.path); err == nil {
+			shown = filepath.ToSlash(rel)
+		}
+		sourceDiags = append(sourceDiags, fmt.Sprintf("%s: read %s failed: %v", label, shown, f.err))
+	}
+
 	// Local primitives first (req-pr-002: always win)
 	locals := CollectLocalPrimitives(projectDir)
 	ordered = append(ordered, locals...)
+	noteSourceReadFailure("", "<local .apm/>", localSourceReadFailure(projectDir))
 
 	localMCP, localMCPDiags := collectMCPPrimitives(m.MCPServers, "local", "")
 	ordered = append(ordered, localMCP...)
@@ -135,6 +154,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		modulePath := filepath.Join(projectDir, "apm_modules", key)
 		prims := CollectDependencyPrimitives(key, modulePath)
 		ordered = append(ordered, prims...)
+		noteSourceReadFailure(key, key, dependencySourceReadFailure(modulePath))
 
 		// direct (depth==1) self-defined MCP servers are auto-trusted.
 		depServers, loadDiags := loadDependencyMCP(key, modulePath)
@@ -151,6 +171,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
 			prims := CollectDependencyPrimitives(dep.Key, modulePath)
 			ordered = append(ordered, prims...)
+			noteSourceReadFailure(dep.Key, dep.Key, dependencySourceReadFailure(modulePath))
 
 			// transitive (depth>1) MCP servers are never auto-trusted (design §4).
 			transitiveServers, loadDiags := loadDependencyMCP(dep.Key, modulePath)
@@ -248,13 +269,15 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 
 	// 4. Deploy to each target
-	allDiags := make([]string, 0, len(mcpDiags)+len(conflictDiags)+len(skillSubsetDiags))
+	allDiags := make([]string, 0, len(sourceDiags)+len(mcpDiags)+len(conflictDiags)+len(skillSubsetDiags))
+	allDiags = append(allDiags, sourceDiags...)
 	allDiags = append(allDiags, mcpDiags...)
 	allDiags = append(allDiags, conflictDiags...)
 	allDiags = append(allDiags, skillSubsetDiags...)
 	result := &DeployResult{
-		PerDep: make(map[string]*DepDeployResult),
-		Diags:  allDiags,
+		PerDep:        make(map[string]*DepDeployResult),
+		Diags:         allDiags,
+		FailedBuckets: failedBuckets,
 	}
 
 	deployedSkills := make(map[string]bool)

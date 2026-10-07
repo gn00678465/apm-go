@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/gitops"
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 // Issue #30: a file deleted from the source must lose its deployed copy and
@@ -573,5 +574,121 @@ func TestInstall_StaleCleanup_DeployFailureInOneBucketDoesNotStopAnother(t *test
 	}
 	if strings.Contains(stdout, "<local .apm/>") {
 		t.Errorf("the failed local bucket must not be cleaned, got:\n%s", stdout)
+	}
+}
+
+// makeUnreadable removes every permission from rel until the test ends.
+// root ignores permission bits, so the test is skipped for root.
+func makeUnreadable(t *testing.T, rel string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not restrict root")
+	}
+	full := filepath.FromSlash(rel)
+	if err := os.Chmod(full, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(full, 0o755) })
+}
+
+// An unreadable source directory yields no primitives, exactly like a deleted
+// one; its deployed copies must not be taken for stale.
+func TestInstall_StaleCleanup_UnreadableLocalSourceKeepsDeployedFiles(t *testing.T) {
+	staleCleanupProject(t, staleCleanupClaudeManifest, map[string]string{
+		".apm/skills/demo/SKILL.md":      staleCleanupSkillMD,
+		".apm/skills/demo/extra/keep.md": "k\n",
+	})
+	staleCleanupInstall(t, "")
+	deployed := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/keep.md"}
+	assertStaleCleanupExists(t, true, deployed...)
+
+	makeUnreadable(t, ".apm/skills")
+	stdout := staleCleanupInstall(t, "")
+
+	assertStaleCleanupExists(t, true, deployed...)
+	lock := readLockfile(t)
+	for _, p := range deployed {
+		if !staleCleanupContains(lock.LocalDeployedFiles, p) {
+			t.Errorf("local_deployed_files must still list %s, got %v", p, lock.LocalDeployedFiles)
+		}
+	}
+	if strings.Contains(stdout, "Cleaned") {
+		t.Errorf("an unreadable source must not clean anything, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "<local .apm/>: read .apm/skills failed: permission denied") {
+		t.Errorf("stdout must warn about the unreadable source, got:\n%s", stdout)
+	}
+}
+
+// loadOnceLoader loads each package through inner once and then reuses its
+// module directory, as a loader does for a checkout it already has. The real
+// loader copies a local-path dependency again on every install, and that copy
+// aborts the install when the module directory is unreadable.
+type loadOnceLoader struct {
+	inner  *gitops.RealPackageLoader
+	loaded map[string]*manifest.Manifest
+}
+
+func (l *loadOnceLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
+	if m, ok := l.loaded[ref.RepoURL]; ok {
+		return m, nil
+	}
+	m, err := l.inner.LoadPackage(ref, resolvedRef)
+	if err == nil {
+		l.loaded[ref.RepoURL] = m
+	}
+	return m, err
+}
+
+func TestInstall_StaleCleanup_UnreadableDependencySourceKeepsDeployedFiles(t *testing.T) {
+	depKey := depSkillProject(t, "demo", map[string]string{"SKILL.md": staleCleanupDepSkillMD, "extra/keep.md": "k\n"})
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &loadOnceLoader{
+		inner:  &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+		loaded: map[string]*manifest.Manifest{},
+	}}
+	install := func() string {
+		return captureUninstallStdout(t, func() {
+			if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
+				t.Fatalf("install: %v", err)
+			}
+		})
+	}
+	install()
+	deployed := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/keep.md"}
+	assertStaleCleanupExists(t, true, deployed...)
+
+	makeUnreadable(t, "apm_modules/"+depKey+"/.apm/skills")
+	stdout := install()
+
+	assertStaleCleanupExists(t, true, deployed...)
+	assertDepLockLists(t, depKey, deployed...)
+	if strings.Contains(stdout, "Cleaned") {
+		t.Errorf("an unreadable source must not clean anything, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, depKey+": read apm_modules/"+depKey+"/.apm/skills failed: permission denied") {
+		t.Errorf("stdout must warn about the unreadable source of %s, got:\n%s", depKey, stdout)
+	}
+}
+
+func TestInstall_StaleCleanup_MissingLocalSourceDirectoryIsCleaned(t *testing.T) {
+	staleCleanupProject(t, staleCleanupClaudeManifest, map[string]string{
+		".apm/skills/demo/SKILL.md":      staleCleanupSkillMD,
+		".apm/skills/demo/extra/keep.md": "k\n",
+	})
+	staleCleanupInstall(t, "")
+	deployed := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/keep.md"}
+	assertStaleCleanupExists(t, true, deployed...)
+
+	if err := os.RemoveAll(filepath.FromSlash(".apm/skills")); err != nil {
+		t.Fatal(err)
+	}
+	stdout := staleCleanupInstall(t, "")
+
+	assertStaleCleanupExists(t, false, deployed...)
+	if !strings.Contains(stdout, "Cleaned 2 stale files from <local .apm/>\n  - .claude/skills/demo/SKILL.md\n  - .claude/skills/demo/extra/keep.md\n") {
+		t.Errorf("stdout must report the cleanup, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, " failed: ") {
+		t.Errorf("a missing source directory is not a read failure, got:\n%s", stdout)
 	}
 }
