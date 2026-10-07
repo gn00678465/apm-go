@@ -33,6 +33,10 @@ type DeployResult struct {
 	Diags         []string
 	MCPFiles      map[string]string // relative path -> sha256 hash, for merged (multi-source) MCP config files
 	MCPProvenance []MCPProv
+	// FailedBuckets holds the PerDep key of each bucket with a primitive
+	// that failed to deploy. Such a bucket's file list is incomplete, so a
+	// path missing from it is not evidence that the source is gone.
+	FailedBuckets map[string]bool
 }
 
 // SkillFilter scopes a per-dependency --skill name whitelist (BUG-2, design
@@ -278,6 +282,10 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			if err != nil {
 				result.Diags = append(result.Diags,
 					fmt.Sprintf("deploy %s to %s failed: %v", p.Name, target, err))
+				if result.FailedBuckets == nil {
+					result.FailedBuckets = make(map[string]bool)
+				}
+				result.FailedBuckets[p.DepKey] = true
 				continue
 			}
 

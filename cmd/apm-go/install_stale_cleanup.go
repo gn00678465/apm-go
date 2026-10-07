@@ -1,6 +1,8 @@
 package main
 
 import (
+	"sort"
+
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/lockfile"
 )
@@ -9,7 +11,7 @@ import (
 // content or one dependency.
 type staleCleanup struct {
 	label   string
-	removed int
+	removed []string // lock-relative paths, sorted
 	diags   []string
 }
 
@@ -17,16 +19,22 @@ type staleCleanup struct {
 // the previous lock recorded for a bucket that this run's deploy over targets
 // did not produce again (oracle: install/phases/cleanup.py:144-209 for
 // dependencies, install/phases/post_deps_local.py:105-127 for local content).
+// A dependency that deployed nothing this run is cleaned like any other: the
+// oracle records it with an empty file list (install/template.py:318).
 //
 // A path the run's targets do not govern is kept: it belongs to a target
 // this run did not deploy, for example after a different --target (oracle:
-// install/manifest_reconcile.py:184-191). A dependency with no entry in
-// deployed produced nothing this run, so none of its old files can be told
-// apart from stale ones and all are kept.
+// install/manifest_reconcile.py:184-191).
+//
+// A bucket in failed is skipped whole: a file that failed to re-deploy is
+// missing from this run's list and would look stale (oracle:
+// install/phases/cleanup.py:148-152 for dependencies,
+// install/phases/post_deps_local.py:60-62,125 for local content). failed uses
+// the keys of deploy.DeployResult.FailedBuckets.
 //
 // newLock must already carry this run's deployed files. Results are ordered
 // local bucket first, then newLock.Dependencies order.
-func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, deployed map[string]*deploy.DepDeployResult, targets []string, projectDir string) []staleCleanup {
+func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, targets []string, projectDir string) []staleCleanup {
 	claimed := make(map[string]bool)
 	for _, f := range newLock.LocalDeployedFiles {
 		claimed[normalizeDeployPath(f)] = true
@@ -51,15 +59,18 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, deployed 
 		}
 		removed, _, diags := deploy.RemoveDeployedFiles(projectDir, stale, oldHashes)
 		if len(removed) > 0 || len(diags) > 0 {
-			results = append(results, staleCleanup{label: label, removed: len(removed), diags: diags})
+			sort.Strings(removed)
+			results = append(results, staleCleanup{label: label, removed: removed, diags: diags})
 		}
 	}
 
-	clean("<local .apm/>", deploy.LocalBucket, existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes)
+	if !failed[""] {
+		clean("<local .apm/>", deploy.LocalBucket, existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes)
+	}
 	for i := range newLock.Dependencies {
 		key := newLock.Dependencies[i].UniqueKey()
 		old := existingLock.FindByKey(key)
-		if _, ok := deployed[key]; !ok || old == nil {
+		if old == nil || failed[key] {
 			continue
 		}
 		clean(key, deploy.DependencyBucket, old.DeployedFiles, old.DeployedHashes)

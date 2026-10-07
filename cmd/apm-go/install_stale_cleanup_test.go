@@ -117,6 +117,9 @@ func TestInstall_StaleCleanup_LocalSkillFileRemovedFromSource(t *testing.T) {
 	if !strings.Contains(stdout, "Cleaned 1 stale file from <local .apm/>") {
 		t.Errorf("stdout must report the cleanup, got:\n%s", stdout)
 	}
+	if !strings.Contains(stdout, "Cleaned 1 stale file from <local .apm/>\n  - .claude/skills/demo/extra/remove.md\n") {
+		t.Errorf("stdout must list the removed path under the Cleaned line, got:\n%s", stdout)
+	}
 	if strings.Contains(stdout, "Already up to date") {
 		t.Errorf("stdout must not say Already up to date, got:\n%s", stdout)
 	}
@@ -143,6 +146,9 @@ func TestInstall_StaleCleanup_RemovesCopyFromEveryTarget(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Cleaned 2 stale files from <local .apm/>") {
 		t.Errorf("stdout must report both removed copies, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "Cleaned 2 stale files from <local .apm/>\n  - .agents/skills/demo/extra/remove.md\n  - .claude/skills/demo/extra/remove.md\n") {
+		t.Errorf("stdout must list both removed paths in sorted order under the Cleaned line, got:\n%s", stdout)
 	}
 }
 
@@ -213,6 +219,9 @@ func TestInstall_StaleCleanup_KeepsUserEditedCopy(t *testing.T) {
 	}
 	if strings.Contains(stdout, "Cleaned") {
 		t.Errorf("stdout must not report a cleanup, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "  - "+deployed) {
+		t.Errorf("stdout must not list the kept file as removed, got:\n%s", stdout)
 	}
 }
 
@@ -393,5 +402,176 @@ func TestInstall_StaleCleanup_AntigravityDependencyFileRemovedFromSource(t *test
 	}
 	if !strings.Contains(stdout, "Cleaned 1 stale file from "+depKey) {
 		t.Errorf("stdout must report the cleanup for %s, got:\n%s", depKey, stdout)
+	}
+}
+
+const staleCleanupDepSkillMD = "---\nname: demo\ndescription: d\n---\n# D\n"
+
+func removeDepSkill(t *testing.T, skill string) {
+	t.Helper()
+	if err := os.RemoveAll(filepath.FromSlash("vendor/dep/.apm/skills/" + skill)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A dependency whose last skill is deleted deploys 0 files; the oracle still
+// records it (install/template.py:318) and cleans all of its old files.
+func TestInstall_StaleCleanup_DependencyDeployingNothingIsCleaned(t *testing.T) {
+	depKey := depSkillProject(t, "demo", map[string]string{"SKILL.md": staleCleanupDepSkillMD})
+	const deployed = ".claude/skills/demo/SKILL.md"
+	staleCleanupInstall(t, "claude")
+	assertStaleCleanupExists(t, true, deployed)
+	assertDepLockLists(t, depKey, deployed)
+
+	removeDepSkill(t, "demo")
+	stdout := staleCleanupInstall(t, "claude")
+
+	assertStaleCleanupExists(t, false, deployed)
+	dep := readLockfile(t).FindByKey(depKey)
+	if dep == nil {
+		t.Fatalf("lock entry %s is gone", depKey)
+	}
+	if staleCleanupContains(dep.DeployedFiles, deployed) {
+		t.Errorf("deployed_files still lists %s", deployed)
+	}
+	if _, ok := dep.DeployedHashes[deployed]; ok {
+		t.Errorf("deployed_file_hashes still lists %s", deployed)
+	}
+	if !strings.Contains(stdout, "Cleaned 1 stale file from "+depKey+"\n  - "+deployed+"\n") {
+		t.Errorf("stdout must report the cleanup of %s and list %s, got:\n%s", depKey, deployed, stdout)
+	}
+	if strings.Contains(stdout, "Already up to date") {
+		t.Errorf("stdout must not say Already up to date, got:\n%s", stdout)
+	}
+}
+
+func TestInstall_StaleCleanup_DependencyDeployingNothingKeepsUserEditedCopy(t *testing.T) {
+	depKey := depSkillProject(t, "demo", map[string]string{"SKILL.md": staleCleanupDepSkillMD})
+	const deployed = ".claude/skills/demo/SKILL.md"
+	staleCleanupInstall(t, "claude")
+
+	const edited = "edited by the user\n"
+	writeStaleCleanupFile(t, deployed, edited)
+	removeDepSkill(t, "demo")
+	stdout := staleCleanupInstall(t, "claude")
+
+	data, err := os.ReadFile(filepath.FromSlash(deployed))
+	if err != nil {
+		t.Fatalf("user-edited copy must be kept: %v", err)
+	}
+	if string(data) != edited {
+		t.Errorf("user-edited copy content = %q, want %q", data, edited)
+	}
+	assertDepLockLists(t, depKey, deployed)
+	if !strings.Contains(stdout, `keeping ".claude/skills/demo/SKILL.md": modified since deploy (hash mismatch)`) {
+		t.Errorf("stdout must warn about the kept file, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Cleaned") {
+		t.Errorf("stdout must not report a cleanup, got:\n%s", stdout)
+	}
+}
+
+func TestInstall_StaleCleanup_DependencyDeployingNothingKeepsOtherTargetFiles(t *testing.T) {
+	depKey := depSkillProject(t, "demo", map[string]string{"SKILL.md": staleCleanupDepSkillMD})
+	const deployed = ".claude/skills/demo/SKILL.md"
+	staleCleanupInstall(t, "claude")
+
+	removeDepSkill(t, "demo")
+	stdout := staleCleanupInstall(t, "codex")
+
+	assertStaleCleanupExists(t, true, deployed)
+	assertDepLockLists(t, depKey, deployed)
+	if strings.Contains(stdout, "Cleaned") {
+		t.Errorf("a different target must not clean claude's files, got:\n%s", stdout)
+	}
+}
+
+// blockDeployOf makes the next deploy of rel fail inside DeployPrimitive: a
+// directory already sits at the destination, so the file cannot be written.
+func blockDeployOf(t *testing.T, rel string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.FromSlash(rel), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A primitive that fails to re-deploy is missing from this run's file list
+// and would look stale (oracle: install/phases/post_deps_local.py:60-62).
+func TestInstall_StaleCleanup_LocalDeployFailureKeepsDeployedFiles(t *testing.T) {
+	staleCleanupProject(t, staleCleanupClaudeManifest, map[string]string{
+		".apm/skills/demo/SKILL.md":   staleCleanupSkillMD,
+		".apm/skills/demo/extra/a.md": "one\n",
+	})
+	staleCleanupInstall(t, "")
+	deployed := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/a.md"}
+	assertStaleCleanupExists(t, true, deployed...)
+
+	writeStaleCleanupFile(t, ".apm/skills/demo/extra/new.md", "two\n")
+	blockDeployOf(t, ".claude/skills/demo/extra/new.md")
+	stdout := staleCleanupInstall(t, "")
+
+	assertStaleCleanupExists(t, true, deployed...)
+	lock := readLockfile(t)
+	for _, p := range deployed {
+		if !staleCleanupContains(lock.LocalDeployedFiles, p) {
+			t.Errorf("local_deployed_files must still list %s, got %v", p, lock.LocalDeployedFiles)
+		}
+	}
+	if strings.Contains(stdout, "Cleaned") {
+		t.Errorf("a failed deploy must not clean anything, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "deploy demo to claude failed") {
+		t.Errorf("stdout must warn about the failed deploy, got:\n%s", stdout)
+	}
+}
+
+// Oracle: install/phases/cleanup.py:148-152.
+func TestInstall_StaleCleanup_DependencyDeployFailureKeepsDeployedFiles(t *testing.T) {
+	depKey := depSkillProject(t, "demo", map[string]string{"SKILL.md": staleCleanupDepSkillMD, "extra/a.md": "one\n"})
+	staleCleanupInstall(t, "claude")
+	deployed := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/a.md"}
+	assertStaleCleanupExists(t, true, deployed...)
+
+	writeStaleCleanupFile(t, "vendor/dep/.apm/skills/demo/extra/new.md", "two\n")
+	blockDeployOf(t, ".claude/skills/demo/extra/new.md")
+	stdout := staleCleanupInstall(t, "claude")
+
+	assertStaleCleanupExists(t, true, deployed...)
+	assertDepLockLists(t, depKey, deployed...)
+	if strings.Contains(stdout, "Cleaned") {
+		t.Errorf("a failed deploy must not clean anything, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "deploy demo to claude failed") {
+		t.Errorf("stdout must warn about the failed deploy, got:\n%s", stdout)
+	}
+}
+
+func TestInstall_StaleCleanup_DeployFailureInOneBucketDoesNotStopAnother(t *testing.T) {
+	manifestYAML := "name: p\nversion: 1.0.0\ntargets:\n  - claude\ndependencies:\n  apm:\n    - ./vendor/dep\n  mcp: []\n"
+	staleCleanupProject(t, manifestYAML, map[string]string{
+		".apm/skills/demo/SKILL.md":                 staleCleanupSkillMD,
+		".apm/skills/demo/extra/a.md":               "one\n",
+		"vendor/dep/apm.yml":                        "name: dep\nversion: 1.0.0\n",
+		"vendor/dep/.apm/skills/ds/SKILL.md":        "---\nname: ds\ndescription: d\n---\n# D\n",
+		"vendor/dep/.apm/skills/ds/extra/remove.md": "two\n",
+	})
+	depKey := localModulesKey(resolveLocalSourceAbs("./vendor/dep"))
+	staleCleanupInstall(t, "")
+	local := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/a.md"}
+	const depStale = ".claude/skills/ds/extra/remove.md"
+	assertStaleCleanupExists(t, true, append(local, depStale)...)
+
+	writeStaleCleanupFile(t, ".apm/skills/demo/extra/new.md", "three\n")
+	blockDeployOf(t, ".claude/skills/demo/extra/new.md")
+	staleCleanupRemove(t, "vendor/dep/.apm/skills/ds/extra/remove.md")
+	stdout := staleCleanupInstall(t, "")
+
+	assertStaleCleanupExists(t, true, local...)
+	assertStaleCleanupExists(t, false, depStale)
+	if !strings.Contains(stdout, "Cleaned 1 stale file from "+depKey+"\n  - "+depStale+"\n") {
+		t.Errorf("stdout must report the dependency's cleanup, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "<local .apm/>") {
+		t.Errorf("the failed local bucket must not be cleaned, got:\n%s", stdout)
 	}
 }

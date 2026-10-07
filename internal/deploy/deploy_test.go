@@ -1493,3 +1493,50 @@ func TestAntigravityHooksDeploy(t *testing.T) {
 		t.Errorf("hooks.json content = %q, want %q", string(got), hookContent)
 	}
 }
+
+func TestRun_FailedBucketsRecordsBucketOfFailedPrimitive(t *testing.T) {
+	const depKey = "acme/foo"
+	m := &manifest.Manifest{
+		Name:       "test",
+		Version:    "1.0.0",
+		ParsedDeps: []*manifest.DependencyReference{{RepoURL: depKey, Owner: "acme", Repo: "foo", Source: "git"}},
+	}
+	resolved := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
+	}
+	// A directory at a file's destination makes that primitive's deploy fail.
+	tests := []struct {
+		name      string
+		blockDest string
+		want      []string
+	}{
+		{"no failure", "", nil},
+		{"local primitive fails", ".claude/skills/demo/SKILL.md", []string{""}},
+		{"dependency primitive fails", ".claude/skills/extra/SKILL.md", []string{depKey}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mkFile(t, dir, ".apm/skills/demo/SKILL.md", "skill body\n")
+			mkFile(t, filepath.Join(dir, "apm_modules", depKey), ".apm/skills/extra/SKILL.md", "extra skill\n")
+			if tt.blockDest != "" {
+				if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(tt.blockDest)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			var got []string
+			for key := range result.FailedBuckets {
+				got = append(got, key)
+			}
+			if len(got) != len(tt.want) || (len(got) == 1 && got[0] != tt.want[0]) {
+				t.Errorf("FailedBuckets keys = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
