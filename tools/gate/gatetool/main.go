@@ -6,13 +6,16 @@
 //	gatetool coverage -base REF -module PATH -profile cover.out ROOT...
 //	gatetool replace  -file F -old S -new T
 //
-// Both diff commands read "git diff -U0 <base>...HEAD" over the whole tree
-// for the added-line ranges (new side) and removed-line ranges (old side).
-// ROOT... are the measured roots: they classify the changed subject .go
-// files and never narrow the diff. A file under a root is measured; a file
-// under none is listed as unmeasured, so a change the gate did not measure
-// is always visible in its output. An empty diff exits 2 (wrong base, or run
-// on the base itself); a diff with no measured file exits 0 and says so. The
+// Both diff commands take the changed files from "git diff --name-status
+// <base>...HEAD" over the whole tree, and the added-line ranges (new side)
+// and removed-line ranges (old side) from "git diff -U0". ROOT... are the
+// measured roots: they classify the changed subject .go files and never
+// narrow the diff. A file under a root is measured; one that is deleted or
+// has no changed line (pure rename, mode change) is listed as having no line
+// to measure; a file under no root is listed as unmeasured. Every changed
+// subject file is therefore in the output. An empty diff exits 2 (wrong
+// base, or run on the base itself); a diff with no measured file exits 0 and
+// says so. The
 // coverage classifier is deliberately conservative: a line is
 // non-executable only when the AST shows no statement on it (blank,
 // comment, package/import clause, declaration-only line, bare delimiter).
@@ -93,16 +96,15 @@ type fileDiff struct {
 
 var hunkRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
-// gitDiff returns the per-file line ranges and the number of changed files.
-// The count includes files that carry no text hunk (binary, pure rename,
-// mode change), which the map does not hold.
-func gitDiff(base string) (map[string]*fileDiff, int, error) {
+// gitDiff returns the line ranges of each file that has a text hunk. It is
+// not the list of changed files: a pure rename, a mode change and a binary
+// file have no hunk. changedFiles is that list.
+func gitDiff(base string) (map[string]*fileDiff, error) {
 	out, err := exec.Command("git", "diff", "-U0", "--no-color", "--no-ext-diff", base+"...HEAD").Output()
 	if err != nil {
-		return nil, 0, fmt.Errorf("git diff: %w", err)
+		return nil, fmt.Errorf("git diff: %w", err)
 	}
 	files := map[string]*fileDiff{}
-	changed := 0
 	var cur *fileDiff
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(make([]byte, 1<<20), 1<<26)
@@ -111,7 +113,6 @@ func gitDiff(base string) (map[string]*fileDiff, int, error) {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			cur = &fileDiff{}
-			changed++
 		case strings.HasPrefix(line, "--- a/"):
 			cur.path = strings.TrimPrefix(line, "--- a/")
 		case strings.HasPrefix(line, "+++ "):
@@ -124,7 +125,7 @@ func gitDiff(base string) (map[string]*fileDiff, int, error) {
 		case strings.HasPrefix(line, "@@"):
 			m := hunkRe.FindStringSubmatch(line)
 			if m == nil || cur == nil {
-				return nil, 0, fmt.Errorf("unparseable hunk header: %s", line)
+				return nil, fmt.Errorf("unparseable hunk header: %s", line)
 			}
 			os, oc := atoi(m[1]), 1
 			if m[2] != "" {
@@ -142,40 +143,95 @@ func gitDiff(base string) (map[string]*fileDiff, int, error) {
 			}
 		}
 	}
-	return files, changed, sc.Err()
+	return files, sc.Err()
 }
 
-// change is the diff split by the measured roots. measured and unmeasured
-// hold the changed subject .go files, sorted.
+type changedFile struct {
+	status  byte   // first letter of the git status: A, M, D, R, C, T
+	path    string // new path for a rename or copy
+	oldPath string // set for a rename or copy
+}
+
+func changedFiles(base string) ([]changedFile, error) {
+	out, err := exec.Command("git", "diff", "--name-status", "-z", base+"...HEAD").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-status: %w", err)
+	}
+	fields := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	var files []changedFile
+	for i := 0; i < len(fields) && fields[i] != ""; i++ {
+		cf := changedFile{status: fields[i][0]}
+		paths := 1
+		if cf.status == 'R' || cf.status == 'C' {
+			paths = 2
+		}
+		if i+paths >= len(fields) {
+			return nil, fmt.Errorf("git diff --name-status: truncated record %q", fields[i])
+		}
+		if paths == 2 {
+			cf.oldPath = fields[i+1]
+		}
+		cf.path = fields[i+paths]
+		i += paths
+		files = append(files, cf)
+	}
+	return files, nil
+}
+
+// change is the diff split by the measured roots. Each changed subject .go
+// file is in exactly one of the three sorted lists.
 type change struct {
-	diffs      map[string]*fileDiff
-	roots      []string
-	measured   []string
+	diffs map[string]*fileDiff
+	roots []string
+	// measured: under a root, deleted or with changed lines.
+	measured []string
+	// lineless: under a root, not deleted, no changed line. Each entry is
+	// the path followed by the reason in parentheses.
+	lineless []string
+	// unmeasured: under no root.
 	unmeasured []string
 }
 
 func loadChange(sub, base string, roots []string) (*change, error) {
-	diffs, changed, err := gitDiff(base)
+	changed, err := changedFiles(base)
 	if err != nil {
 		return nil, err
 	}
-	if changed == 0 {
+	if len(changed) == 0 {
 		return nil, gateErr{2, sub + ": the diff is empty (fail closed)"}
+	}
+	diffs, err := gitDiff(base)
+	if err != nil {
+		return nil, err
 	}
 	c := &change{diffs: diffs}
 	for _, r := range roots {
 		c.roots = append(c.roots, path.Clean(filepath.ToSlash(r)))
 	}
-	for p := range diffs {
+	for _, cf := range changed {
+		p := cf.path
+		if !isSubjectGoFile(p) {
+			continue
+		}
+		d := diffs[p]
+		if d == nil {
+			d = &fileDiff{path: p}
+			diffs[p] = d
+		}
+		d.deleted = cf.status == 'D'
 		switch {
-		case !isSubjectGoFile(p):
-		case underRoot(p, c.roots):
-			c.measured = append(c.measured, p)
-		default:
+		case !underRoot(p, c.roots):
 			c.unmeasured = append(c.unmeasured, p)
+		case d.deleted || len(d.added)+len(d.removed) > 0:
+			c.measured = append(c.measured, p)
+		case cf.oldPath != "":
+			c.lineless = append(c.lineless, fmt.Sprintf("%s (renamed from %s, no changed line)", p, cf.oldPath))
+		default:
+			c.lineless = append(c.lineless, p+" (no changed line)")
 		}
 	}
 	sort.Strings(c.measured)
+	sort.Strings(c.lineless)
 	sort.Strings(c.unmeasured)
 	return c, nil
 }
@@ -548,6 +604,9 @@ func runUnits(args []string) error {
 			fmt.Printf("%s\t%s\t%d/%d\t%s\n", name, p, c[0], c[1], strings.Join(tests, ", "))
 		}
 	}
+	for _, e := range ch.lineless {
+		fmt.Printf("# no line to measure: %s\n", e)
+	}
 	for _, p := range ch.unmeasured {
 		fmt.Printf("# unmeasured: %s\n", p)
 	}
@@ -596,8 +655,11 @@ func runCoverage(args []string) error {
 	}
 	var files, dirs []string
 	dirSeen := map[string]bool{}
+	noLines := append([]string{}, ch.lineless...)
 	for _, p := range ch.measured {
-		if !diffs[p].deleted {
+		if diffs[p].deleted {
+			noLines = append(noLines, p+" (deleted)")
+		} else {
 			files = append(files, p)
 			dir := "./" + filepath.ToSlash(filepath.Dir(p))
 			if !dirSeen[dir] {
@@ -658,11 +720,18 @@ func runCoverage(args []string) error {
 	if execMapped > 0 {
 		pct = 100 * float64(covered) / float64(execMapped)
 	}
-	fmt.Printf("changed-line coverage: covered=%d exec_mapped=%d (%.1f%%) unmapped=%d platform_excluded=%d nonexec=%d files=%d unmeasured=%d\n",
-		covered, execMapped, pct, unmapped, platform, nonexec, len(files), len(ch.unmeasured))
+	fmt.Printf("changed-line coverage: covered=%d exec_mapped=%d (%.1f%%) unmapped=%d platform_excluded=%d nonexec=%d files=%d unmeasured=%d no_lines=%d\n",
+		covered, execMapped, pct, unmapped, platform, nonexec, len(files), len(ch.unmeasured), len(noLines))
 	fmt.Println("classifier: set2 (non-executable) = lines with no ast.Stmt on them (blank, comment, package/import, declaration-only, bare delimiter); set1 = executable lines inside a profile block; set3 (unmapped) = executable lines with no profile block, never folded into set2")
-	if len(files) == 0 {
+	if len(ch.measured)+len(ch.lineless) == 0 {
 		fmt.Printf("no measured file in the diff (measured roots: %s)\n", strings.Join(ch.roots, " "))
+	}
+	if len(noLines) > 0 {
+		sort.Strings(noLines)
+		fmt.Printf("files with no line to measure (%d), inside the measured roots:\n", len(noLines))
+		for _, e := range noLines {
+			fmt.Println("  " + e)
+		}
 	}
 	if len(ch.unmeasured) > 0 {
 		fmt.Printf("UNMEASURED files (%d), outside the measured roots:\n", len(ch.unmeasured))

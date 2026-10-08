@@ -90,6 +90,12 @@ func (r *repo) write(path, content string) {
 	}
 }
 
+// rebase moves the tag "base" to the current commit.
+func (r *repo) rebase() {
+	r.t.Helper()
+	r.git("tag", "-f", "base")
+}
+
 func (r *repo) commit() {
 	r.t.Helper()
 	r.git("add", "-A")
@@ -128,6 +134,13 @@ func wantCode(t *testing.T, got, want int, stdout, stderr string) {
 	}
 }
 
+func wantLacks(t *testing.T, out, unwanted string) {
+	t.Helper()
+	if strings.Contains(out, unwanted) {
+		t.Errorf("output holds %q\noutput:\n%s", unwanted, out)
+	}
+}
+
 func wantContains(t *testing.T, out string, wants ...string) {
 	t.Helper()
 	for _, w := range wants {
@@ -146,7 +159,7 @@ func TestCoverage_OnlyFilesOutsideRoots_PassesAndListsThem(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=1\n",
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=1 no_lines=0\n",
 		"no measured file in the diff (measured roots: cmd internal)\n",
 		"UNMEASURED files (1), outside the measured roots:\n  tools/x/x.go\n",
 	)
@@ -176,7 +189,7 @@ func TestCoverage_FilesInsideAndOutsideRoots_MeasuresInsideListsOutside(t *testi
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=4 files=1 unmeasured=1\n",
+		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=4 files=1 unmeasured=1 no_lines=0\n",
 		"UNMEASURED files (1), outside the measured roots:\n  tools/x/x.go\n",
 	)
 }
@@ -227,7 +240,7 @@ func TestCoverage_UnprofiledExecutableLineInsideRoot_Fails(t *testing.T) {
 
 	wantCode(t, code, 1, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0\n",
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0\n",
 		"UNMAPPED executable lines (1):\n  cmd/a/a.go:4\n",
 	)
 }
@@ -255,7 +268,7 @@ func TestCoverage_RootMatchesOnDirectoryBoundary(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"files=0 unmeasured=1\n",
+		"files=0 unmeasured=1 no_lines=0\n",
 		"UNMEASURED files (1), outside the measured roots:\n  cmdx/y.go\n",
 	)
 }
@@ -280,7 +293,91 @@ func TestCoverage_OnlyNonGoChange_PassesWithNoMeasuredFile(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"files=0 unmeasured=0\n",
+		"files=0 unmeasured=0 no_lines=0\n",
 		"no measured file in the diff (measured roots: cmd internal)\n",
 	)
+}
+
+func renamedInsideRoot(t *testing.T) *repo {
+	t.Helper()
+	r := newRepo(t)
+	r.write("cmd/a/a.go", coveredSrc)
+	r.commit()
+	r.rebase()
+	r.git("mv", "cmd/a/a.go", "cmd/a/b.go")
+	r.commit()
+	return r
+}
+
+func TestCoverage_PureRenameInsideRoot_ListedUnderNewPath(t *testing.T) {
+	r := renamedInsideRoot(t)
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=0 no_lines=1\n",
+		"files with no line to measure (1), inside the measured roots:\n  cmd/a/b.go (renamed from cmd/a/a.go, no changed line)\n",
+	)
+	wantLacks(t, out, "no measured file in the diff")
+}
+
+func TestUnits_PureRenameInsideRoot_ListedUnderNewPath(t *testing.T) {
+	r := renamedInsideRoot(t)
+
+	out, errOut, code := r.run("units", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out, "# no line to measure: cmd/a/b.go (renamed from cmd/a/a.go, no changed line)\n")
+}
+
+func TestCoverage_DeletedFileInsideRoot_Listed(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/keep.go", coveredSrc)
+	r.write("cmd/a/gone.go", "package a\n\nfunc G() int {\n\treturn 2\n}\n")
+	r.commit()
+	r.rebase()
+	r.git("rm", "-q", "cmd/a/gone.go")
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"files=0 unmeasured=0 no_lines=1\n",
+		"files with no line to measure (1), inside the measured roots:\n  cmd/a/gone.go (deleted)\n",
+	)
+	wantLacks(t, out, "no measured file in the diff")
+}
+
+func renamedOutsideRoot(t *testing.T) *repo {
+	t.Helper()
+	r := newRepo(t)
+	r.write("tools/x/x.go", coveredSrc)
+	r.commit()
+	r.rebase()
+	r.git("mv", "tools/x/x.go", "tools/x/y.go")
+	r.commit()
+	return r
+}
+
+func TestCoverage_PureRenameOutsideRoot_Unmeasured(t *testing.T) {
+	r := renamedOutsideRoot(t)
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"files=0 unmeasured=1 no_lines=0\n",
+		"UNMEASURED files (1), outside the measured roots:\n  tools/x/y.go\n",
+	)
+}
+
+func TestUnits_PureRenameOutsideRoot_Unmeasured(t *testing.T) {
+	r := renamedOutsideRoot(t)
+
+	out, errOut, code := r.run("units", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out, "# unmeasured: tools/x/y.go\n", "# units: 0, unmeasured files: 1,")
 }
