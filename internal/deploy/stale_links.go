@@ -15,16 +15,19 @@ import (
 // user-scope install: one symlink per file, or one per skill directory with
 // the lock recording the files below it).
 //
-// A symlink whose target is inside sourceRoot was made by the deploy. The
-// first one on a path, from deployRoot down to the path itself, decides: only
-// that symlink is removed, never anything through it, so no hash is compared.
-// It is kept when claimed (normalized lock paths of the new lock) still has a
-// path at or below it.
+// A deploy symlink is one whose target is inside sourceRoot and that is
+// either the stale path itself or a parent that is a skill directory,
+// skills/<name>. Those are the only places the deploy makes a symlink, so a
+// symlink on any other parent (a target root, a skills directory) is the
+// user's wherever it leads. The first deploy symlink on a path, from
+// deployRoot down to the path itself, decides: only that symlink is removed,
+// never anything through it, so no hash is compared. It is kept when claimed
+// (normalized lock paths of the new lock) still has a path at or below it.
 //
-// A symlink whose target is outside sourceRoot is the user's. As a parent
-// directory (~/.claude linked into a dotfiles directory) it is walked through
-// and never removed, also not when the directory behind it becomes empty. As
-// the path itself it is kept with a diagnostic.
+// Every other symlink is the user's. As a parent directory (~/.claude linked
+// into a dotfiles directory) it is walked through and never removed, also not
+// when the directory behind it becomes empty. As the path itself, with a
+// target outside sourceRoot, it is kept with a diagnostic.
 //
 // A path with no deploy symlink on it that is a file goes to
 // RemoveDeployedFiles, unless a user symlink was walked through and the file
@@ -123,11 +126,17 @@ func locateStalePath(deployRoot, sourceRoot, rel string) (staleLocation, error) 
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(filepath.Dir(full), target)
 		}
+		isPathItself := i == len(segments)-1
+		// The deploy makes a directory symlink in one place only:
+		// symlinkSkillTo, at skills/<name>. When a deploy makes one anywhere
+		// else, this test must follow, or that symlink is taken for the
+		// user's.
+		isSkillDir := i > 0 && segments[i-1] == "skills"
 		switch {
-		case archive.Contained(sourceRoot, target):
+		case archive.Contained(sourceRoot, target) && (isPathItself || isSkillDir):
 			loc.exists, loc.deployLink = true, filepath.ToSlash(prefix)
 			return loc, nil
-		case i == len(segments)-1:
+		case isPathItself:
 			loc.exists, loc.userTarget = true, target
 			return loc, nil
 		}

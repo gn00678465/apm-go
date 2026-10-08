@@ -470,3 +470,85 @@ func TestRemoveStaleLinkedFiles_KeepsSourceFileWhenWorkingDirIsEnteredThroughSym
 	}
 	assertStaleLinkContent(t, source, "demo\n")
 }
+
+// A target root is made by os.MkdirAll, never by a deploy symlink, so a
+// symlink there is the user's also when it leads into sourceRoot.
+func TestRemoveStaleLinkedFiles_TargetRootSymlinkIntoSourceRootIsUsers(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	dotfiles := filepath.Join(sourceRoot, "dotfiles", "claude")
+	staleLink(t, filepath.Join(sourceRoot, "agents", "deleted.md"), filepath.Join(dotfiles, "agents", "gone.md"))
+	staleLink(t, dotfiles, filepath.Join(deployRoot, ".claude"))
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, []string{".claude/agents/gone.md"}, nil, nil)
+
+	assertStaleLinkResult(t, removed, []string{".claude/agents/gone.md"}, diags, 0)
+	assertStaleLinkIsSymlink(t, filepath.Join(deployRoot, ".claude"))
+	assertStaleLinkGone(t, filepath.Join(dotfiles, "agents"))
+	if info, err := os.Stat(dotfiles); err != nil || !info.IsDir() {
+		t.Errorf("the directory behind the user's symlink is gone (err = %v)", err)
+	}
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "keep.md"), "keep\n")
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "gone.md"), "gone\n")
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
+}
+
+func TestRemoveStaleLinkedFiles_NestedTargetRootSymlinkIntoSourceRootIsUsers(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	shared := filepath.Join(sourceRoot, "dotfiles", "skills")
+	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), filepath.Join(shared, "demo"))
+	staleLink(t, shared, filepath.Join(deployRoot, ".agents", "skills"))
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, []string{".agents/skills/demo/SKILL.md"}, nil, nil)
+
+	assertStaleLinkResult(t, removed, []string{".agents/skills/demo"}, diags, 0)
+	assertStaleLinkIsSymlink(t, filepath.Join(deployRoot, ".agents", "skills"))
+	assertStaleLinkGone(t, filepath.Join(shared, "demo"))
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
+}
+
+func TestRemoveStaleLinkedFiles_SkillRootSymlinkIntoSourceRootIsUsers(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	shared := filepath.Join(sourceRoot, "dotfiles", "skills")
+	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), filepath.Join(shared, "demo"))
+	staleLink(t, shared, filepath.Join(deployRoot, ".claude", "skills"))
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, []string{".claude/skills/demo/SKILL.md"}, nil, nil)
+
+	assertStaleLinkResult(t, removed, []string{".claude/skills/demo"}, diags, 0)
+	assertStaleLinkIsSymlink(t, filepath.Join(deployRoot, ".claude", "skills"))
+	assertStaleLinkGone(t, filepath.Join(shared, "demo"))
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "keep.md"), "keep\n")
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "gone.md"), "gone\n")
+}
+
+func TestRemoveStaleLinkedFiles_RemovesSkillSymlinkInBundle(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := filepath.Join(deployRoot, ".agents", "plugins", "pkg", "skills", "demo")
+	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, []string{".agents/plugins/pkg/skills/demo/SKILL.md"}, nil, nil)
+
+	assertStaleLinkResult(t, removed, []string{".agents/plugins/pkg/skills/demo"}, diags, 0)
+	assertStaleLinkGone(t, link)
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
+}
+
+// A parent symlink that is not a skill directory is the user's, also below a
+// target root and with a target inside sourceRoot.
+func TestRemoveStaleLinkedFiles_ParentSymlinkThatIsNotSkillDirIsUsers(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	sub := filepath.Join(deployRoot, ".claude", "agents", "sub")
+	staleLink(t, filepath.Join(sourceRoot, "agents"), sub)
+
+	// sha256sum of "gone\n": the hash check would pass.
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, []string{".claude/agents/sub/gone.md"},
+		map[string]string{".claude/agents/sub/gone.md": "sha256:4b9f2c32577beb1ebc8ab2a1e226faaa9176a81cd4eedbaa22f8a0db919972b5"}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if len(diags) == 1 && diags[0] != `keeping ".claude/agents/sub/gone.md": it is a file in the apm project directory, reached through a symlink` {
+		t.Errorf("diag = %q", diags[0])
+	}
+	assertStaleLinkIsSymlink(t, sub)
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "gone.md"), "gone\n")
+}

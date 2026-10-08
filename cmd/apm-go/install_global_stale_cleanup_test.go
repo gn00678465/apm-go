@@ -391,3 +391,41 @@ func TestInstallGlobal_StaleCleanup_DeployDirIsUsersOwnSymlink(t *testing.T) {
 	assertGlobalStaleLock(t, home, false, ".claude/agents/gone.md")
 	assertGlobalStaleLock(t, home, true, ".claude/agents/keep.md")
 }
+
+func TestInstallGlobal_StaleCleanup_DeployDirIsUsersSymlinkIntoGlobalDir(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/agents/gone.md": globalStaleGoneAgent,
+	})
+	dotfiles := filepath.Join(home, ".apm", "dotfiles", "claude")
+	if err := os.MkdirAll(dotfiles, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dotfiles, filepath.Join(home, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	globalStaleInstall(t, "claude", src)
+	if !globalStaleIsSymlink(t, filepath.Join(dotfiles, "agents", "gone.md")) {
+		t.Fatal("precondition: agents/gone.md is not a symlink behind the user's .claude symlink")
+	}
+
+	if err := os.Remove(filepath.Join(src, ".apm", "agents", "gone.md")); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if !globalStaleIsSymlink(t, filepath.Join(home, ".claude")) {
+		t.Error(".claude is no longer the user's symlink")
+	}
+	if _, err := os.Lstat(filepath.Join(dotfiles, "agents", "gone.md")); !os.IsNotExist(err) {
+		t.Errorf("agents/gone.md still present (Lstat err = %v)", err)
+	}
+	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep-") || strings.Count(out, ".claude/agents/gone.md\n") != 1 {
+		t.Errorf("want one cleaned line listing .claude/agents/gone.md:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasSuffix(line, " .claude") {
+			t.Errorf("the user's .claude symlink is listed as cleaned: %q", line)
+		}
+	}
+	assertGlobalStaleLock(t, home, false, ".claude/agents/gone.md")
+}
