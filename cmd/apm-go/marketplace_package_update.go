@@ -56,10 +56,8 @@ func marketplacePackageUpdateCmd() *cobra.Command {
 			if err != nil {
 				return withExitCode(2, err)
 			}
-			if !dryRun {
-				if err := authoring.ApplyPackageUpdates(".", updates); err != nil {
-					return withExitCode(2, err)
-				}
+			if err := authoring.ApplyPackageUpdates(".", updates, dryRun); err != nil {
+				return withExitCode(2, err)
 			}
 
 			w := cmd.OutOrStdout()

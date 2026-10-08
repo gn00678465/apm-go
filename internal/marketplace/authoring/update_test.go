@@ -58,7 +58,7 @@ func updatePackages(t *testing.T, dir string, names []string, includePrerelease 
 	if err != nil {
 		return nil, err
 	}
-	return updates, ApplyPackageUpdates(dir, updates)
+	return updates, ApplyPackageUpdates(dir, updates, false)
 }
 
 func readFile(t *testing.T, dir, name string) string {
@@ -97,6 +97,7 @@ func assertNotWritten(t *testing.T, dir, name, content string, mtime time.Time) 
 	if !info.ModTime().Equal(mtime) {
 		t.Errorf("%s mtime = %v, want %v (the file was written)", name, info.ModTime(), mtime)
 	}
+	assertNoTempFiles(t, dir)
 }
 
 func TestPackageUpdate_ShaPinWithVersion_ReplacesOnlyTheTwoValues(t *testing.T) {
@@ -496,7 +497,7 @@ func TestPackageUpdate_ConfigChangedAfterThePlan_NothingWritten(t *testing.T) {
 	writeFile(t, dir, "apm.yml", changed)
 	mtime := backdate(t, dir, "apm.yml")
 
-	err = ApplyPackageUpdates(dir, updates)
+	err = ApplyPackageUpdates(dir, updates, false)
 
 	if err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("error = %v, want one that says the config changed", err)
@@ -566,7 +567,7 @@ func TestApplyPackageUpdates_ConfigUnusableSinceThePlan_NothingWritten(t *testin
 				writeFile(t, dir, tc.file, tc.content)
 			}
 
-			err := ApplyPackageUpdates(dir, plan)
+			err := ApplyPackageUpdates(dir, plan, false)
 
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want one that contains %q", err, tc.wantErr)
@@ -588,7 +589,7 @@ func TestApplyPackageUpdates_UnreadableConfig_Error(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := ApplyPackageUpdates(dir, []PackageUpdate{{Action: UpdateApply, NewRef: shaB}})
+	err := ApplyPackageUpdates(dir, []PackageUpdate{{Action: UpdateApply, NewRef: shaB}}, false)
 
 	if err == nil || !strings.Contains(err.Error(), "read ") {
 		t.Fatalf("error = %v, want a read error", err)
@@ -608,10 +609,179 @@ func TestApplyPackageUpdates_ValueDoesNotReadBackAsPlanned_NothingWritten(t *tes
 		Package: PackageEntry{Name: "tool", Source: "owner/tool", Ref: shaA},
 		Action:  UpdateApply,
 		NewRef:  shaB + " ",
-	}})
+	}}, false)
 
 	if err == nil || !strings.Contains(err.Error(), "did not produce exactly the planned values") {
 		t.Fatalf("error = %v, want the planned-values mismatch", err)
 	}
 	assertNotWritten(t, dir, "apm.yml", content, mtime)
+}
+
+func TestPackageUpdate_KeepsTheConfigFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no permission bits for Chmod to set beyond read-only")
+	}
+	for _, mode := range []os.FileMode{0o644, 0o600, 0o664} {
+		t.Run(mode.String(), func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "apm.yml", apmYML("    - name: tool\n      source: owner/tool\n      ref: "+shaA+"\n"))
+			path := filepath.Join(dir, "apm.yml")
+			if err := os.Chmod(path, mode); err != nil {
+				t.Fatal(err)
+			}
+			lister := &sourceLister{refs: map[string][]semver.TagInfo{"owner/tool": {headRef(shaB)}}}
+
+			if _, err := updatePackages(t, dir, nil, false, lister); err != nil {
+				t.Fatalf("update: %v", err)
+			}
+
+			assertFile(t, dir, "apm.yml", apmYML("    - name: tool\n      source: owner/tool\n      ref: "+shaB+"\n"))
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != mode {
+				t.Errorf("mode after the update = %v, want %v", got, mode)
+			}
+			assertNoTempFiles(t, dir)
+		})
+	}
+}
+
+func assertNoTempFiles(t *testing.T, dir string) {
+	t.Helper()
+	left, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Errorf("temp files left in %s: %v", dir, left)
+	}
+}
+
+// A dry run goes through every step of a real run but the write, so it
+// refuses what a real run refuses, with the same message.
+func TestApplyPackageUpdates_DryRun_SameErrorsAsARealRun(t *testing.T) {
+	block := apmYML("    - name: tool\n      source: owner/tool\n      ref: " + shaA + "\n")
+	plan := []PackageUpdate{{
+		Index:   0,
+		Package: PackageEntry{Name: "tool", Source: "owner/tool", Ref: shaA},
+		Action:  UpdateApply,
+		NewRef:  shaB,
+	}}
+	cases := []struct {
+		name, content, wantErr string
+		validate               func([]byte, []string) error
+	}{
+		{
+			name:    "entry cannot be edited in place",
+			content: apmYML("    - {name: tool, source: owner/tool, ref: " + shaA + "}\n"),
+			wantErr: "cannot update package 'tool' in place: its ref is not a single-line value of a block mapping in ",
+		},
+		{
+			name:    "config changed after the plan",
+			content: apmYML("    - name: tool\n      source: owner/tool\n      ref: " + shaC + "\n"),
+			wantErr: "changed while the update was resolved; run the command again",
+		},
+		{
+			name:     "validation fails",
+			content:  block,
+			wantErr:  "edit produced an invalid config, aborting without writing: forced validation failure for test",
+			validate: func([]byte, []string) error { return fmt.Errorf("forced validation failure for test") },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, "apm.yml", tc.content)
+			mtime := backdate(t, dir, "apm.yml")
+			if tc.validate != nil {
+				origValidate := packageEditValidate
+				packageEditValidate = tc.validate
+				t.Cleanup(func() { packageEditValidate = origValidate })
+			}
+
+			dryErr := ApplyPackageUpdates(dir, plan, true)
+			realErr := ApplyPackageUpdates(dir, plan, false)
+
+			if dryErr == nil || !strings.Contains(dryErr.Error(), tc.wantErr) {
+				t.Errorf("dry-run error = %v, want one that contains %q", dryErr, tc.wantErr)
+			}
+			if realErr == nil || dryErr == nil || dryErr.Error() != realErr.Error() {
+				t.Errorf("dry-run error = %v, real-run error = %v; want the same text", dryErr, realErr)
+			}
+			assertNotWritten(t, dir, "apm.yml", tc.content, mtime)
+		})
+	}
+}
+
+func TestApplyPackageUpdates_DryRun_ValidPlan_NothingWritten(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no permission bits for Chmod to set beyond read-only")
+	}
+	dir := t.TempDir()
+	content := apmYML("    - name: tool\n      source: owner/tool\n      ref: " + shaA + "\n")
+	writeFile(t, dir, "apm.yml", content)
+	path := filepath.Join(dir, "apm.yml")
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	mtime := backdate(t, dir, "apm.yml")
+
+	err := ApplyPackageUpdates(dir, []PackageUpdate{{
+		Index:   0,
+		Package: PackageEntry{Name: "tool", Source: "owner/tool", Ref: shaA},
+		Action:  UpdateApply,
+		NewRef:  shaB,
+	}}, true)
+
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	assertNotWritten(t, dir, "apm.yml", content, mtime)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Errorf("mode after the dry run = %v, want -rw-r-----", got)
+	}
+}
+
+func TestWriteConfigKeepingMode_Failures_LeaveNoTempFile(t *testing.T) {
+	t.Run("the target does not exist", func(t *testing.T) {
+		dir := t.TempDir()
+		err := writeConfigKeepingMode(filepath.Join(dir, "apm.yml"), []byte("x"))
+		if err == nil || !strings.HasPrefix(err.Error(), "stat ") {
+			t.Fatalf("error = %v, want a stat error", err)
+		}
+		assertNoTempFiles(t, dir)
+	})
+	t.Run("the temp file cannot be created", func(t *testing.T) {
+		// A name this long exists, but the temp name built from it is past
+		// the 255-byte limit of a file name.
+		dir := t.TempDir()
+		name := strings.Repeat("n", 250)
+		writeFile(t, dir, name, "old")
+		err := writeConfigKeepingMode(filepath.Join(dir, name), []byte("new"))
+		if err == nil || !strings.HasPrefix(err.Error(), "create temp file for ") {
+			t.Fatalf("error = %v, want a create-temp error", err)
+		}
+		assertFile(t, dir, name, "old")
+	})
+	t.Run("the rename fails", func(t *testing.T) {
+		// A directory with an entry cannot be replaced by a file.
+		dir := t.TempDir()
+		target := filepath.Join(dir, "apm.yml")
+		if err := os.Mkdir(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, target, "keep", "x")
+		err := writeConfigKeepingMode(target, []byte("new"))
+		if err == nil || !strings.HasPrefix(err.Error(), "commit write to ") {
+			t.Fatalf("error = %v, want a commit error", err)
+		}
+		assertNoTempFiles(t, dir)
+		assertFile(t, target, "keep", "x")
+	})
 }

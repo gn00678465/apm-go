@@ -45,7 +45,10 @@ does have keeps the waiver / pending-case rule unchanged.
   entries are edited in one in-memory copy, validated, compared with the plan,
   and written once (temp file, fsync, rename). An entry that cannot be edited
   in place is an error, never a redraw.
-- Flags: `--dry-run` (resolve and print, no write), `--include-prerelease`
+- The write keeps the config file's permission bits.
+- Flags: `--dry-run` (every step of a real run but the write: it prints the
+  same values and reports the same errors with the same exit code, and leaves
+  the file's bytes, mtime and permission bits alone), `--include-prerelease`
   (as in `outdated`). No other flag. The command does not run `pack`.
 - Output, on stdout through the `ux` printers, in config order:
   - ` + Updated package '<name>': version <old> -> <new>, ref <old12> -> <new12>`

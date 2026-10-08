@@ -3,6 +3,7 @@ package authoring
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -106,12 +107,16 @@ func PlanPackageUpdates(cfg *AuthoringConfig, names []string, includePrerelease 
 }
 
 // ApplyPackageUpdates writes every UpdateApply in updates to dir's active
-// config file in one atomic write, replacing only the bytes of each entry's
-// `ref` and `version` values. `package set` renders the whole entry again
-// (packageEntryNode), which drops comments and keys it does not know; an
-// entry that cannot be edited in place is an error here, never a redraw.
-// Nothing is written when updates holds no UpdateApply.
-func ApplyPackageUpdates(dir string, updates []PackageUpdate) error {
+// config file in one atomic write that keeps the file's permission bits,
+// replacing only the bytes of each entry's `ref` and `version` values.
+// `package set` renders the whole entry again (packageEntryNode), which
+// drops comments and keys it does not know; an entry that cannot be edited
+// in place is an error here, never a redraw. Nothing is written when
+// updates holds no UpdateApply.
+//
+// dryRun does everything but the write, so it returns the error a real run
+// would return for the same file.
+func ApplyPackageUpdates(dir string, updates []PackageUpdate, dryRun bool) error {
 	planned := make(map[int]PackageUpdate)
 	for _, u := range updates {
 		if u.Action == UpdateApply {
@@ -180,7 +185,46 @@ func ApplyPackageUpdates(dir string, updates []PackageUpdate) error {
 	if !reflect.DeepEqual(after, want) {
 		return fmt.Errorf("edit of %s did not produce exactly the planned values, aborting without writing", path)
 	}
-	return atomicWriteFile(path, out)
+	if dryRun {
+		return nil
+	}
+	return writeConfigKeepingMode(path, out)
+}
+
+// writeConfigKeepingMode replaces path's content the way atomicWriteFile
+// does (temp file in the same directory, fsync, rename), with path's
+// permission bits put on the temp file before the rename. It is separate
+// because atomicWriteFile leaves the file with CreateTemp's 0600, and
+// changing that function for `package add/set/remove` needs an owner
+// ruling.
+func writeConfigKeepingMode(path string, data []byte) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file for %s: %w", path, err)
+	}
+	step := "write temp file for"
+	_, err = tmp.Write(data)
+	if err == nil {
+		step, err = "chmod temp file for", tmp.Chmod(info.Mode().Perm())
+	}
+	if err == nil {
+		step, err = "fsync temp file for", tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		step, err = "close temp file for", closeErr
+	}
+	if err == nil {
+		step, err = "commit write to", os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		return fmt.Errorf("%s %s: %w", step, path, err)
+	}
+	return nil
 }
 
 // parsePackagesForUpdate reads data the way LoadAuthoringConfig reads the

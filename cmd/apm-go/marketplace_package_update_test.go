@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
 	"github.com/apm-go/apm/internal/semver"
@@ -298,5 +299,40 @@ func TestMarketplacePackageUpdate_EntryCannotBeEditedInPlace_ExitsCode2(t *testi
 	}
 	if got := readApmYML(t); got != updateFixtureHeader+fixture {
 		t.Errorf("apm.yml changed:\n%s", got)
+	}
+}
+
+func TestMarketplacePackageUpdate_DryRun_ReportsWhatARealRunWouldRefuse(t *testing.T) {
+	chdirTemp(t)
+	fixture := "    - {name: tip, source: owner/tip, ref: " + updShaA + "}\n"
+	writeOutdatedFixture(t, fixture)
+	old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes("apm.yml", old, old); err != nil {
+		t.Fatal(err)
+	}
+	withCannedRefLister(t, updateRemote())
+
+	out, err := runMarketplaceCmd(t, "package", "update", "--dry-run")
+
+	want := "Error: cannot update package 'tip' in place: its ref is not a single-line value of a block mapping in apm.yml; edit it by hand\n"
+	if out != want {
+		t.Errorf("--dry-run output =\n%s\nwant\n%s", out, want)
+	}
+	if got := exitCodeOf(err); err == nil || got != 2 {
+		t.Errorf("--dry-run err = %v exit = %d, want an error with exit 2", err, got)
+	}
+	realOut, realErr := runMarketplaceCmd(t, "package", "update")
+	if realOut != want || exitCodeOf(realErr) != 2 {
+		t.Errorf("real run output = %q exit = %d, want the same %q and 2", realOut, exitCodeOf(realErr), want)
+	}
+	if got := readApmYML(t); got != updateFixtureHeader+fixture {
+		t.Errorf("apm.yml changed:\n%s", got)
+	}
+	info, statErr := os.Stat("apm.yml")
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if !info.ModTime().Equal(old) {
+		t.Errorf("apm.yml mtime = %v, want %v (the file was written)", info.ModTime(), old)
 	}
 }
