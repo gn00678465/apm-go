@@ -104,7 +104,7 @@ apm-go compile               # compile installed instructions into AGENTS.md
 | `audit` | Re-verify deployed-file integrity against `apm.lock.yaml` |
 | `search` | Search plugins in a marketplace (`QUERY@MARKETPLACE`) |
 | `marketplace` | Consume marketplaces: `add`, `list`, `browse`, `update`, `remove`, `validate`, `check`, `outdated` |
-| `marketplace` (authoring) | Author a marketplace: `init`, `package add/set/remove`, `audit`, `migrate` |
+| `marketplace` (authoring) | Author a marketplace: `init`, `package add/set/remove/update`, `audit`, `migrate` |
 | `pack` | Build `marketplace.json`, a plugin bundle, and/or a standalone `plugin.json` from `apm.yml` |
 | `doctor` | Environment diagnostics (git, network, auth, marketplace config); non-zero exit on a critical failure |
 | `validate` | Validate a YAML file against the OpenAPM safe subset and manifest schema |
@@ -130,6 +130,7 @@ These commands and flags exist only in apm-go. Their defaults keep the standard 
 | `update` | `--frozen` / `--no-frozen` | Refuse a scoped update against a frozen install (auto-enabled in CI) / override the CI detection |
 | `marketplace package add` | `--category` | Package category, required for Codex output at `pack` time |
 | `marketplace package` | command name | The authoring subcommands live under `package` (`add`, `set`, `remove`) |
+| `marketplace package update` | whole command | Write the upgrades `marketplace outdated` reports for SHA-pinned packages back to `apm.yml`: `version` and `ref` for an entry with an exact version, `ref` alone otherwise. `--dry-run` shows the values without writing; `--include-prerelease` as in `outdated` |
 | `self-update` | whole command | Update the binary in place from GitHub Releases; `--check` reports availability without applying |
 
 <img src="./assets/readme/section-develop.svg" width="100%" alt="Development — build, test, release">

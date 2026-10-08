@@ -23,7 +23,7 @@ Success: a user gets deterministic files, output, and exit codes from one binary
 
 ## Positioning
 
-**Single static binary + a verified, extended command surface.** Output bytes, exit codes, and generated file trees are treated as a contract and gated in CI (`tools/parity`), so scripts and agents can depend on them. On that base apm-go ships its own additions — `pack --claude-source-style url`, `pack --json`, `--check-versions` / `--check-clean` release gates, top-level `doctor`, `normalize`, `validate` — each documented at its site in `cmd/apm-go/*.go`.
+**Single static binary + a verified, extended command surface.** Output bytes, exit codes, and generated file trees are treated as a contract and gated in CI (`tools/parity`), so scripts and agents can depend on them. On that base apm-go ships its own additions — `pack --claude-source-style url`, `pack --json`, `--check-versions` / `--check-clean` release gates, top-level `doctor`, `normalize`, `validate`, `marketplace package update` — each documented at its site in `cmd/apm-go/*.go`.
 
 ## Operating Context
 
@@ -68,13 +68,14 @@ Command surface (`apm-go --help`): `audit`, `compile`, `completion`, `doctor`, `
 
 Constraints future work must preserve:
 
-- Output contract: words, exit codes, output bytes, and file trees are gated in CI. Only line-wrap, box-drawing, help layout, status-symbol shape (normalized by the runner), timestamps, and paths may be waived; every waiver is recorded with its reason. An apm-go-only command that the pinned Oracle does not have cannot have a corpus case; its contract is pinned instead by `tools/gate/realexec.sh` at the same strength (full stdout, stderr, exit code, file tree) and recorded in a ticket that quotes the user ruling - ticket 34 covers `plugin validate`, and the exemption never extends by analogy to another command.
+- Output contract: words, exit codes, output bytes, and file trees are gated in CI. Only line-wrap, box-drawing, help layout, status-symbol shape (normalized by the runner), timestamps, and paths may be waived; every waiver is recorded with its reason. An apm-go-only command that the pinned Oracle does not have cannot have a corpus case; its contract is pinned instead by `tools/gate/realexec.sh` at the same strength (full stdout, stderr, exit code, file tree) and recorded in a ticket that quotes the user ruling - ticket 34 covers `plugin validate`, ticket 37 covers `marketplace package update`, and the exemption never extends by analogy to another command.
 - Exit codes: usage errors are 2; specific codes via `withExitCode()`.
 - JSON bytes from pack/scaffold go through `bundle.MarshalIndent` (2-space indent, non-ASCII escaped as `\uXXXX`); the marketplace builder alone emits UTF-8 unescaped.
 - YAML ingestion is restricted to the OpenAPM safe subset (no anchors, merge keys, custom tags) — `spec/conformance/openapm-v0.1.md`.
 - Credential scanning (`internal/security/`) runs in `pack` (warn policy) and `audit` (report); its policy gate is fail-closed (unknown policy = block). It is not part of install/deploy.
 - Deploy targets: claude, codex, copilot, antigravity, opencode, agent-skills (adapter per target).
 - `plugin validate` has no upstream Oracle equivalent (apm-go-only, closing the second half of issue #13); its output contract is fixed by `tools/gate/realexec.sh`, not a `tools/parity` corpus case.
+- `marketplace package update` has no upstream Oracle equivalent (apm-go-only, issue #25): it writes the upgrade `marketplace outdated` reports for a SHA-pinned package back to the authoring config, replacing only the `version` and `ref` values. Its output contract is fixed by `tools/gate/realexec.sh` (ticket 37), not a `tools/parity` corpus case; the steps there are network-free, so the path that writes is covered by `go test` with a canned `RefLister`.
 - Hint text says `apm-go`, not `apm`.
 - No third-party docs/star footer in command output.
 
@@ -93,7 +94,7 @@ Undecided: the lockfile's external interoperability format, and whether MCP serv
 - `README.md`, `README.zh-TW.md` — existing product copy in English and Traditional Chinese.
 - `spec/conformance/` — OpenAPM safe-subset spec, agent/marketplace schema, CLI surface notes, verification checklist, dependency-ref and repr conformance tables.
 - `tools/parity/cases/` — 96 byte-exact output-contract cases (0 unwaived diffs at HEAD); `tools/parity/cases-pending/` — 5 parked cases with README.
-- `.scratch/parity-runner/issues/` — 35 ticket files documenting the output-contract backlog and rulings.
+- `.scratch/parity-runner/issues/` — 37 ticket files documenting the output-contract backlog and rulings.
 - CI: `.github/workflows/parity.yml` (parity gate), `release.yml`.
 - Absent, must not be fabricated: testimonials, user counts, benchmarks, customers, pricing.
 

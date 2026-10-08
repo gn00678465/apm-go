@@ -104,7 +104,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | `audit` | 依 `apm.lock.yaml` 重新驗證已部署檔案完整性 |
 | `search` | 在 marketplace 搜尋 plugin（`QUERY@MARKETPLACE`） |
 | `marketplace` | 使用 marketplace：`add`、`list`、`browse`、`update`、`remove`、`validate`、`check`、`outdated` |
-| `marketplace`（作者側） | 製作 marketplace：`init`、`package add/set/remove`、`audit`、`migrate` |
+| `marketplace`（作者側） | 製作 marketplace：`init`、`package add/set/remove/update`、`audit`、`migrate` |
 | `pack` | 從 `apm.yml` 產出 `marketplace.json`、plugin bundle 或獨立 `plugin.json` |
 | `doctor` | 環境診斷（git、網路、認證、marketplace 設定）；有嚴重失敗時以非零碼結束 |
 | `validate` | 以 OpenAPM 安全子集與 manifest schema 驗證 YAML 檔 |
@@ -130,6 +130,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | `update` | `--frozen` / `--no-frozen` | 對 frozen 安裝拒絕範圍更新（CI 自動開啟）／覆寫 CI 自動偵測 |
 | `marketplace package add` | `--category` | 套件分類，Codex 輸出在 `pack` 時必填 |
 | `marketplace package` | 指令名稱 | 作者側子指令位於 `package` 之下（`add`、`set`、`remove`） |
+| `marketplace package update` | 整個指令 | 把 `marketplace outdated` 回報的升級寫回 `apm.yml`，只處理以 SHA 釘選的套件：有精確版本的條目更新 `version` 與 `ref`，其他條目只更新 `ref`。`--dry-run` 只顯示將寫入的值；`--include-prerelease` 與 `outdated` 相同 |
 | `self-update` | 整個指令 | 從 GitHub Releases 原地更新二進位檔；`--check` 僅回報可用版本，不套用 |
 
 <img src="./assets/readme/section-develop.zh-TW.svg" width="100%" alt="開發 — build、test、release">
