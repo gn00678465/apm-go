@@ -33,11 +33,15 @@ export GATE_UNTRACKED_OK=".gate/"
 MODULE=$(go list -m)
 EXE=$(go env GOEXE)
 export GATETOOL="$PWD/.gate/$SCOPE/gatetool$EXE"
-# The subject: the plugin / marketplace command surface and the packages it
-# owns. Coverage and mutation target these; the suite layers run everything.
-SCOPE_PATHS="cmd/apm-go/plugin.go cmd/apm-go/pluginwarn.go cmd/apm-go/pack.go cmd/apm-go/pack_json.go cmd/apm-go/init.go cmd/apm-go/marketplace.go cmd/apm-go/marketplace_authoring.go cmd/apm-go/marketplace_authoring_audit.go cmd/apm-go/marketplace_authoring_migrate.go cmd/apm-go/marketplace_package.go internal/marketplace internal/pack internal/pluginjson internal/rootfs"
+# changed-units and changed-line-coverage measure every changed product file:
+# gatetool diffs the whole tree, measures what is under MEASURED_ROOTS and
+# lists the rest, and the profile covers COVER_PKGS so no product line is
+# unmapped for lack of instrumentation. GATE_SCOPE_PKGS is the mutation
+# layer's subject only.
+MEASURED_ROOTS="cmd internal"
+COVER_PKGS="./cmd/... ./internal/..."
+COVERPKG=$(printf '%s' "$COVER_PKGS" | tr ' ' ',')
 export GATE_SCOPE_PKGS="./cmd/apm-go/... ./internal/marketplace/... ./internal/pack/... ./internal/pluginjson/... ./internal/rootfs/..."
-COVERPKG=$(printf '%s' "$GATE_SCOPE_PKGS" | tr ' ' ',')
 
 GATE_EXPECTED_LAYERS="selftest source-state-before build tests vet lint-format staticcheck suite-health property supply-chain real-execution mutation changed-units changed-line-coverage source-state-after"
 
@@ -67,9 +71,9 @@ layer_selftest() {
   printf 'a\na\n' > "$tmp/two.txt"
   ( "$GATETOOL" replace -file "$tmp/two.txt" -old a -new b 2>/dev/null; [ $? -eq 2 ] ) || { echo "selftest: replace accepted a non-unique anchor"; return 1; }
   ( "$GATETOOL" replace -file "$tmp/two.txt" -old zzz -new b 2>/dev/null; [ $? -eq 2 ] ) || { echo "selftest: replace accepted a missing anchor"; return 1; }
-  # gatetool coverage: an empty subject must be refused (rc 2)
+  # gatetool coverage: an empty diff must be refused (rc 2)
   printf 'mode: set\n' > "$tmp/empty.out"
-  ( "$GATETOOL" coverage -base "$BASE" -module "$MODULE" -profile "$tmp/empty.out" tools/gate/versions.env >/dev/null 2>&1; [ $? -eq 2 ] ) || { echo "selftest: coverage accepted an empty subject"; return 1; }
+  ( "$GATETOOL" coverage -base HEAD -module "$MODULE" -profile "$tmp/empty.out" $MEASURED_ROOTS >/dev/null 2>&1; [ $? -eq 2 ] ) || { echo "selftest: coverage accepted an empty diff"; return 1; }
   # source-state: an untracked product file must be refused; a whitelisted
   # untracked path must still emit a state; a listed prefix that holds
   # tracked files must be refused even though it is listed.
@@ -170,19 +174,19 @@ layer_mutation() {
 
 produce_profile() {
   if [ ! -s "$GATE_ART/cover.out" ]; then
-    go test -count=1 -coverprofile="$GATE_ART/cover.out" -coverpkg="$COVERPKG" $GATE_SCOPE_PKGS > "$GATE_ART/cover.log" 2>&1 || { cat "$GATE_ART/cover.log"; return 1; }
+    go test -count=1 -coverprofile="$GATE_ART/cover.out" -coverpkg="$COVERPKG" $COVER_PKGS > "$GATE_ART/cover.log" 2>&1 || { cat "$GATE_ART/cover.log"; return 1; }
   fi
 }
 
 layer_changed_units() {
   produce_profile
-  "$GATETOOL" units -base "$BASE" -module "$MODULE" -profile "$GATE_ART/cover.out" $SCOPE_PATHS > "$GATE_ART/units.tsv"
-  tail -1 "$GATE_ART/units.tsv"
+  "$GATETOOL" units -base "$BASE" -module "$MODULE" -profile "$GATE_ART/cover.out" $MEASURED_ROOTS > "$GATE_ART/units.tsv" || return $?
+  grep '^#' "$GATE_ART/units.tsv"
 }
 
 layer_changed_line_coverage() {
   produce_profile
-  "$GATETOOL" coverage -base "$BASE" -module "$MODULE" -profile "$GATE_ART/cover.out" $SCOPE_PATHS > "$GATE_ART/coverage.txt" || { cat "$GATE_ART/coverage.txt"; return 1; }
+  "$GATETOOL" coverage -base "$BASE" -module "$MODULE" -profile "$GATE_ART/cover.out" $MEASURED_ROOTS > "$GATE_ART/coverage.txt" || { cat "$GATE_ART/coverage.txt"; return 1; }
   cat "$GATE_ART/coverage.txt"
 }
 
