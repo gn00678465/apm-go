@@ -107,15 +107,17 @@ func PlanPackageUpdates(cfg *AuthoringConfig, names []string, includePrerelease 
 }
 
 // ApplyPackageUpdates writes every UpdateApply in updates to dir's active
-// config file in one atomic write that keeps the file's permission bits,
+// config file in one atomic write that keeps the file's owner, group and
+// permission bits,
 // replacing only the bytes of each entry's `ref` and `version` values.
 // `package set` renders the whole entry again (packageEntryNode), which
 // drops comments and keys it does not know; an entry that cannot be edited
 // in place is an error here, never a redraw. Nothing is written when
 // updates holds no UpdateApply.
 //
-// dryRun does everything but the write, so it returns the error a real run
-// would return for the same file.
+// dryRun does everything but the write, so it returns the same resolution,
+// in-place replacement and validation errors as a real run; an error of the
+// write itself shows in a real run only.
 func ApplyPackageUpdates(dir string, updates []PackageUpdate, dryRun bool) error {
 	planned := make(map[int]PackageUpdate)
 	for _, u := range updates {
@@ -188,16 +190,17 @@ func ApplyPackageUpdates(dir string, updates []PackageUpdate, dryRun bool) error
 	if dryRun {
 		return nil
 	}
-	return writeConfigKeepingMode(path, out)
+	return writeConfigKeepingModeAndOwner(path, out)
 }
 
-// writeConfigKeepingMode replaces path's content the way atomicWriteFile
-// does (temp file in the same directory, fsync, rename), with path's
-// permission bits put on the temp file before the rename. It is separate
-// because atomicWriteFile leaves the file with CreateTemp's 0600, and
-// changing that function for `package add/set/remove` needs an owner
-// ruling.
-func writeConfigKeepingMode(path string, data []byte) error {
+// writeConfigKeepingModeAndOwner replaces path's content the way
+// atomicWriteFile does (temp file in the same directory, fsync, rename),
+// with path's owner, group and permission bits put on the temp file before
+// the rename; when one of them cannot be kept, nothing is written. It is
+// separate because atomicWriteFile leaves the file with CreateTemp's 0600
+// and the process's own group, and changing that function for `package
+// add/set/remove` needs an owner ruling.
+func writeConfigKeepingModeAndOwner(path string, data []byte) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", path, err)
@@ -208,6 +211,10 @@ func writeConfigKeepingMode(path string, data []byte) error {
 	}
 	step := "write temp file for"
 	_, err = tmp.Write(data)
+	if err == nil {
+		// Before the chmod: a chown clears the setuid and setgid bits.
+		step, err = "keep owner and group of", keepOwner(tmp, info)
+	}
 	if err == nil {
 		step, err = "chmod temp file for", tmp.Chmod(info.Mode().Perm())
 	}

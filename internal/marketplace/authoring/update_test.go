@@ -748,10 +748,10 @@ func TestApplyPackageUpdates_DryRun_ValidPlan_NothingWritten(t *testing.T) {
 	}
 }
 
-func TestWriteConfigKeepingMode_Failures_LeaveNoTempFile(t *testing.T) {
+func TestWriteConfigKeepingModeAndOwner_Failures_LeaveNoTempFile(t *testing.T) {
 	t.Run("the target does not exist", func(t *testing.T) {
 		dir := t.TempDir()
-		err := writeConfigKeepingMode(filepath.Join(dir, "apm.yml"), []byte("x"))
+		err := writeConfigKeepingModeAndOwner(filepath.Join(dir, "apm.yml"), []byte("x"))
 		if err == nil || !strings.HasPrefix(err.Error(), "stat ") {
 			t.Fatalf("error = %v, want a stat error", err)
 		}
@@ -763,7 +763,7 @@ func TestWriteConfigKeepingMode_Failures_LeaveNoTempFile(t *testing.T) {
 		dir := t.TempDir()
 		name := strings.Repeat("n", 250)
 		writeFile(t, dir, name, "old")
-		err := writeConfigKeepingMode(filepath.Join(dir, name), []byte("new"))
+		err := writeConfigKeepingModeAndOwner(filepath.Join(dir, name), []byte("new"))
 		if err == nil || !strings.HasPrefix(err.Error(), "create temp file for ") {
 			t.Fatalf("error = %v, want a create-temp error", err)
 		}
@@ -777,7 +777,7 @@ func TestWriteConfigKeepingMode_Failures_LeaveNoTempFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		writeFile(t, target, "keep", "x")
-		err := writeConfigKeepingMode(target, []byte("new"))
+		err := writeConfigKeepingModeAndOwner(target, []byte("new"))
 		if err == nil || !strings.HasPrefix(err.Error(), "commit write to ") {
 			t.Fatalf("error = %v, want a commit error", err)
 		}
