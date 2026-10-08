@@ -41,6 +41,22 @@ func withCannedRefLister(t *testing.T, lister cannedRefLister) {
 	t.Cleanup(func() { authoring.DefaultRefLister = orig })
 }
 
+// cannedSubdirObjects answers the subdir comparison of issue #39 per commit:
+// an id from ids, and "no such path" for a commit not in it.
+type cannedSubdirObjects struct{ ids map[string]string }
+
+func (c cannedSubdirObjects) SubdirObjectID(_, commit, _ string) (string, bool, error) {
+	id, ok := c.ids[commit]
+	return id, ok, nil
+}
+
+func withCannedSubdirObjects(t *testing.T, ids map[string]string) {
+	t.Helper()
+	orig := authoring.DefaultSubdirObjectReader
+	authoring.DefaultSubdirObjectReader = cannedSubdirObjects{ids: ids}
+	t.Cleanup(func() { authoring.DefaultSubdirObjectReader = orig })
+}
+
 func updTag(name, sha string) semver.TagInfo {
 	return semver.TagInfo{Name: name, Commit: sha, Ref: "refs/tags/" + name}
 }
@@ -368,5 +384,128 @@ func TestMarketplacePackageUpdate_SymlinkedConfig_RefusedByDryRunAndRealRun(t *t
 	}
 	if string(data) != updateFixtureHeader+updateFixture {
 		t.Errorf("shared.yml changed:\n%s", data)
+	}
+}
+
+// Issue #39: a SHA pin with a subdir whose content is the same at the moved
+// tip is not an update.
+const subdirUnchangedFixture = "    - name: mono\n      source: owner/mono\n      ref: " + updShaA + "\n      subdir: plugins/mono\n"
+
+func withUnchangedSubdirRemote(t *testing.T) {
+	t.Helper()
+	withCannedRefLister(t, cannedRefLister{refs: map[string][]semver.TagInfo{"owner/mono": {updHead(updShaC)}}})
+	withCannedSubdirObjects(t, map[string]string{updShaA: "tree1", updShaC: "tree1"})
+}
+
+func TestMarketplacePackageUpdate_SubdirUnchangedAtMovedTip_WritesNothing(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"AllPackages": {[]string{"package", "update"}, " i All packages are up to date\n"},
+		"DryRun":      {[]string{"package", "update", "--dry-run"}, " i All packages are up to date\n"},
+		"Named": {[]string{"package", "update", "mono"},
+			" i Skipped package 'mono': already up to date\n i All packages are up to date\n"},
+		"NamedDryRun": {[]string{"package", "update", "--dry-run", "mono"},
+			" i Skipped package 'mono': already up to date\n i All packages are up to date\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			chdirTemp(t)
+			writeOutdatedFixture(t, subdirUnchangedFixture)
+			withUnchangedSubdirRemote(t)
+
+			out, err := runMarketplaceCmd(t, tc.args...)
+
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if out != tc.want {
+				t.Errorf("output = %q, want %q", out, tc.want)
+			}
+			if got := readApmYML(t); got != updateFixtureHeader+subdirUnchangedFixture {
+				t.Errorf("apm.yml changed:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestMarketplacePackageUpdate_SubdirChangedAtMovedTip_WritesTheTip(t *testing.T) {
+	chdirTemp(t)
+	writeOutdatedFixture(t, subdirUnchangedFixture)
+	withCannedRefLister(t, cannedRefLister{refs: map[string][]semver.TagInfo{"owner/mono": {updHead(updShaC)}}})
+	withCannedSubdirObjects(t, map[string]string{updShaA: "tree1", updShaC: "tree2"})
+
+	out, err := runMarketplaceCmd(t, "package", "update")
+
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if want := " + Updated package 'mono': ref aaaaaaaaaaaa -> cccccccccccc\n i 1 package(s) updated\n"; out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+	want := updateFixtureHeader + "    - name: mono\n      source: owner/mono\n      ref: " + updShaC + "\n      subdir: plugins/mono\n"
+	if got := readApmYML(t); got != want {
+		t.Errorf("apm.yml =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestMarketplacePackageUpdate_SubdirMissingAtTip_ExitsCode2_NothingWritten(t *testing.T) {
+	chdirTemp(t)
+	writeOutdatedFixture(t, subdirUnchangedFixture)
+	withCannedRefLister(t, cannedRefLister{refs: map[string][]semver.TagInfo{"owner/mono": {updHead(updShaC)}}})
+	withCannedSubdirObjects(t, map[string]string{updShaA: "tree1"})
+
+	out, err := runMarketplaceCmd(t, "package", "update")
+
+	if got := exitCodeOf(err); got != 2 || !isSilentExit(err) {
+		t.Errorf("exit = %d silent=%v, want a silent exit 2", got, isSilentExit(err))
+	}
+	// runMarketplaceCmd leaves cobra's own "Error:" echo on; the root command silences it.
+	if want := " x cannot update: package 'mono': Subdir 'plugins/mono' not found at default branch tip\n"; !strings.HasPrefix(out, want) {
+		t.Errorf("output = %q, want it to start with %q", out, want)
+	}
+	if got := readApmYML(t); got != updateFixtureHeader+subdirUnchangedFixture {
+		t.Errorf("apm.yml changed:\n%s", got)
+	}
+}
+
+func TestMarketplaceOutdated_SubdirUnchangedAtMovedTip_UpToDate(t *testing.T) {
+	chdirTemp(t)
+	writeOutdatedFixture(t, subdirUnchangedFixture)
+	withUnchangedSubdirRemote(t)
+
+	out, err := runMarketplaceCmd(t, "outdated")
+
+	if err != nil {
+		t.Fatalf("err = %v, want nil (exit 0)\n%s", err, out)
+	}
+	var cells []string
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "mono") {
+			continue
+		}
+		for _, cell := range strings.Split(strings.Trim(line, "│"), "│") {
+			cells = append(cells, strings.TrimSpace(cell))
+		}
+	}
+	want := []string{"+", "mono", "aaaaaaaaaaaa", "--", "--", "cccccccccccc", "Tip moved; 'plugins/mono' unchanged"}
+	if strings.Join(cells, "|") != strings.Join(want, "|") {
+		t.Errorf("row cells = %q, want %q\n%s", cells, want, out)
+	}
+	if !strings.HasSuffix(out, " i All packages are up to date\n") {
+		t.Errorf("output = %q, want it to end with the up-to-date summary", out)
+	}
+}
+
+func TestMarketplacePackageUpdate_Help_StatesTheSubdirRule(t *testing.T) {
+	out, err := runMarketplaceCmd(t, "package", "update", "--help")
+
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	for _, want := range []string{"subdir", "nothing is written"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--help does not contain %q:\n%s", want, out)
+		}
 	}
 }

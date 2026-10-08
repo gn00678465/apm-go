@@ -61,6 +61,11 @@ func (e *UpdateResolutionError) Error() string { return strings.Join(e.Lines, "\
 // with an *UpdateResolutionError, so the caller never writes part of a
 // batch.
 func PlanPackageUpdates(cfg *AuthoringConfig, names []string, includePrerelease bool, lister RefLister) ([]PackageUpdate, error) {
+	return PlanPackageUpdatesWith(cfg, names, includePrerelease, OutdatedDeps{Lister: lister, Objects: DefaultSubdirObjectReader})
+}
+
+// PlanPackageUpdatesWith is PlanPackageUpdates with every seam injected.
+func PlanPackageUpdatesWith(cfg *AuthoringConfig, names []string, includePrerelease bool, deps OutdatedDeps) ([]PackageUpdate, error) {
 	selected := make([]bool, len(cfg.Packages))
 	for _, name := range names {
 		idx := findPackageIndex(cfg, name)
@@ -84,7 +89,7 @@ func PlanPackageUpdates(cfg *AuthoringConfig, names []string, includePrerelease 
 			updates = append(updates, u)
 			continue
 		}
-		row := outdatedForPackage(cfg, pkg, lister, false, includePrerelease, "")
+		row := outdatedForPackage(cfg, pkg, deps, false, includePrerelease, "")
 		switch {
 		case row.Status == "[x]":
 			failures = append(failures, fmt.Sprintf("cannot update: package '%s': %s", pkg.Name, row.Note))
