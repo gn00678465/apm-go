@@ -311,7 +311,7 @@ func TestInstallGlobal_StaleCleanup_KeepsSymlinkPointingOutsideGlobalDir(t *test
 	if got := globalStaleRead(t, own); got != "the user's own agent\n" {
 		t.Errorf("symlink target = %q, want it unchanged", got)
 	}
-	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target`) {
+	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target "`+own+`" is not in the source of this package`) {
 		t.Errorf("missing warning for the kept symlink:\n%s", out)
 	}
 	if strings.Contains(out, "Cleaned") {
@@ -428,4 +428,202 @@ func TestInstallGlobal_StaleCleanup_DeployDirIsUsersSymlinkIntoGlobalDir(t *test
 		}
 	}
 	assertGlobalStaleLock(t, home, false, ".claude/agents/gone.md")
+}
+
+// globalStaleRelink replaces the deployed entry at link with the user's own
+// symlink to target.
+func globalStaleRelink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertGlobalStaleLinkTarget(t *testing.T, link, want string) {
+	t.Helper()
+	got, err := os.Readlink(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("%s -> %s, want %s", link, got, want)
+	}
+}
+
+func TestInstallGlobal_StaleCleanup_KeepsAgentSymlinkTheUserRepointedInsideGlobalDir(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/agents/gone.md": globalStaleGoneAgent,
+	})
+	globalStaleInstall(t, "claude", src)
+	custom := filepath.Join(home, ".apm", "custom-agent.md")
+	writeGlobalStaleFile(t, custom, "the user's own agent\n")
+	link := filepath.Join(home, ".claude", "agents", "gone.md")
+	globalStaleRelink(t, custom, link)
+
+	if err := os.Remove(filepath.Join(src, ".apm", "agents", "gone.md")); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if !globalStaleIsSymlink(t, link) {
+		t.Fatal("the user's symlink was removed")
+	}
+	assertGlobalStaleLinkTarget(t, link, custom)
+	if got := globalStaleRead(t, custom); got != "the user's own agent\n" {
+		t.Errorf("symlink target = %q, want it unchanged", got)
+	}
+	if strings.Contains(out, "Cleaned") {
+		t.Errorf("nothing was deleted, want no cleaned line:\n%s", out)
+	}
+	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target `) || !strings.Contains(out, "is not in the source of this package") {
+		t.Errorf("missing warning for the kept symlink:\n%s", out)
+	}
+}
+
+func TestInstallGlobal_StaleCleanup_KeepsSkillSymlinkTheUserRepointedInsideGlobalDir(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/skills/demo/SKILL.md": staleCleanupSkillMD,
+	})
+	globalStaleInstall(t, "claude", src)
+	custom := filepath.Join(home, ".apm", "custom-skill")
+	writeGlobalStaleFile(t, filepath.Join(custom, "SKILL.md"), "the user's own skill\n")
+	link := filepath.Join(home, ".claude", "skills", "demo")
+	globalStaleRelink(t, custom, link)
+
+	if err := os.RemoveAll(filepath.Join(src, ".apm", "skills", "demo")); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if !globalStaleIsSymlink(t, link) {
+		t.Fatal("the user's symlink was removed")
+	}
+	assertGlobalStaleLinkTarget(t, link, custom)
+	if got := globalStaleRead(t, filepath.Join(custom, "SKILL.md")); got != "the user's own skill\n" {
+		t.Errorf("file behind the symlink = %q, want it unchanged", got)
+	}
+	if strings.Contains(out, "Cleaned") || strings.Contains(out, ".claude/skills/demo\n") {
+		t.Errorf("the user's symlink is listed as cleaned:\n%s", out)
+	}
+	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target "`+custom+`" is not in the source of this package`) {
+		t.Errorf("missing warning for the kept skill directory:\n%s", out)
+	}
+}
+
+func TestInstallGlobal_StaleCleanup_RemovesSymlinkOfLocalContent(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/agents/keep.md": globalStaleKeepAgent,
+	})
+	mine := filepath.Join(home, ".apm", ".apm", "agents", "mine.md")
+	writeGlobalStaleFile(t, mine, "---\nname: mine\ndescription: mine\n---\nmine\n")
+	globalStaleInstall(t, "claude", src)
+	link := filepath.Join(home, ".claude", "agents", "mine.md")
+	if !globalStaleIsSymlink(t, link) {
+		t.Fatal("precondition: .claude/agents/mine.md is not a symlink after the first install")
+	}
+
+	if err := os.Remove(mine); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Errorf(".claude/agents/mine.md still present (Lstat err = %v)", err)
+	}
+	if !strings.Contains(out, "Cleaned 1 stale file from <local .apm/>") || strings.Count(out, ".claude/agents/mine.md\n") != 1 {
+		t.Errorf("want one cleaned line for the local bucket listing .claude/agents/mine.md:\n%s", out)
+	}
+	if got := globalStaleRead(t, filepath.Join(home, ".claude", "agents", "keep.md")); got != globalStaleKeepAgent {
+		t.Errorf("keep.md through its symlink = %q, want %q", got, globalStaleKeepAgent)
+	}
+}
+
+func TestInstallGlobal_StaleCleanup_KeepsAgentSymlinkTheUserRepointedIntoAnotherModule(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/agents/gone.md": globalStaleGoneAgent,
+	})
+	globalStaleInstall(t, "claude", src)
+	other := filepath.Join(home, ".apm", "apm_modules", "_local", "other", ".apm", "agents", "gone.md")
+	writeGlobalStaleFile(t, other, "another package's agent\n")
+	link := filepath.Join(home, ".claude", "agents", "gone.md")
+	globalStaleRelink(t, other, link)
+
+	if err := os.Remove(filepath.Join(src, ".apm", "agents", "gone.md")); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if !globalStaleIsSymlink(t, link) {
+		t.Fatal("the user's symlink was removed")
+	}
+	assertGlobalStaleLinkTarget(t, link, other)
+	if strings.Contains(out, "Cleaned") {
+		t.Errorf("nothing was deleted, want no cleaned line:\n%s", out)
+	}
+	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target "`+other+`" is not in the source of this package`) {
+		t.Errorf("missing warning for the kept symlink:\n%s", out)
+	}
+}
+
+func TestInstallGlobal_StaleCleanup_KeepsLocalContentSymlinkTheUserRepointed(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/agents/keep.md": globalStaleKeepAgent,
+	})
+	mine := filepath.Join(home, ".apm", ".apm", "agents", "mine.md")
+	writeGlobalStaleFile(t, mine, "---\nname: mine\ndescription: mine\n---\nmine\n")
+	globalStaleInstall(t, "claude", src)
+	custom := filepath.Join(home, ".apm", "custom-agent.md")
+	writeGlobalStaleFile(t, custom, "the user's own agent\n")
+	link := filepath.Join(home, ".claude", "agents", "mine.md")
+	globalStaleRelink(t, custom, link)
+
+	if err := os.Remove(mine); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if !globalStaleIsSymlink(t, link) {
+		t.Fatal("the user's symlink was removed")
+	}
+	assertGlobalStaleLinkTarget(t, link, custom)
+	if strings.Contains(out, "Cleaned") {
+		t.Errorf("nothing was deleted, want no cleaned line:\n%s", out)
+	}
+	if !strings.Contains(out, `keeping ".claude/agents/mine.md": symlink target "`+custom+`" is not in the source of this package`) {
+		t.Errorf("missing warning for the kept symlink:\n%s", out)
+	}
+}
+
+func TestInstallGlobal_StaleCleanup_KeepsFilesOfSkillDirTheUserRepointedOutsideGlobalDir(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/skills/demo/SKILL.md": staleCleanupSkillMD,
+	})
+	globalStaleInstall(t, "claude", src)
+	// The user's copy has the content the lock recorded a hash for.
+	custom := filepath.Join(t.TempDir(), "my-skills", "demo")
+	writeGlobalStaleFile(t, filepath.Join(custom, "SKILL.md"), staleCleanupSkillMD)
+	link := filepath.Join(home, ".claude", "skills", "demo")
+	globalStaleRelink(t, custom, link)
+
+	if err := os.RemoveAll(filepath.Join(src, ".apm", "skills", "demo")); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if got := globalStaleRead(t, filepath.Join(custom, "SKILL.md")); got != staleCleanupSkillMD {
+		t.Errorf("the user's SKILL.md = %q, want it unchanged", got)
+	}
+	if !globalStaleIsSymlink(t, link) {
+		t.Fatal("the user's symlink was removed")
+	}
+	assertGlobalStaleLinkTarget(t, link, custom)
+	if strings.Contains(out, "Cleaned") {
+		t.Errorf("nothing may be deleted, want no cleaned line:\n%s", out)
+	}
+	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target "`+custom+`" is not in the source of this package`) {
+		t.Errorf("missing warning for the kept skill directory:\n%s", out)
+	}
 }

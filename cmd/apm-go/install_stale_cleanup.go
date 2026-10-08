@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"sort"
 
 	"github.com/apm-go/apm/internal/deploy"
@@ -33,9 +34,11 @@ type staleCleanup struct {
 // the keys of deploy.DeployResult.FailedBuckets.
 //
 // deployRoot is the directory lock paths are relative to. A non-empty
-// linkSourceRoot says the deploy made symlinks into that directory (a
+// linkSourceRoot says the deploy made symlinks into that project directory (a
 // --global install): a stale symlink is then removed itself and nothing is
-// deleted through it (deploy.RemoveStaleLinkedFiles).
+// deleted through it (deploy.RemoveStaleLinkedFiles). Only a symlink into the
+// bucket's own source there, .apm or apm_modules/<key>, is the deploy's; one
+// the user pointed anywhere else is kept.
 //
 // newLock must already carry this run's deployed files. Results are ordered
 // local bucket first, then newLock.Dependencies order.
@@ -51,7 +54,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 	}
 
 	var results []staleCleanup
-	clean := func(label string, bucket deploy.DeployBucket, oldFiles []string, oldHashes map[string]string) {
+	clean := func(label string, bucket deploy.DeployBucket, source string, oldFiles []string, oldHashes map[string]string) {
 		var stale []string
 		for _, f := range oldFiles {
 			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(targets, bucket, f) {
@@ -64,7 +67,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		}
 		var removed, diags []string
 		if linkSourceRoot != "" {
-			removed, diags = deploy.RemoveStaleLinkedFiles(deployRoot, linkSourceRoot, stale, oldHashes, claimed)
+			removed, diags = deploy.RemoveStaleLinkedFiles(deployRoot, linkSourceRoot, filepath.Join(linkSourceRoot, source), stale, oldHashes, claimed)
 		} else {
 			removed, _, diags = deploy.RemoveDeployedFiles(deployRoot, stale, oldHashes)
 		}
@@ -75,7 +78,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 	}
 
 	if !failed[""] {
-		clean("<local .apm/>", deploy.LocalBucket, existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes)
+		clean("<local .apm/>", deploy.LocalBucket, ".apm", existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes)
 	}
 	for i := range newLock.Dependencies {
 		key := newLock.Dependencies[i].UniqueKey()
@@ -83,7 +86,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		if old == nil || failed[key] {
 			continue
 		}
-		clean(key, deploy.DependencyBucket, old.DeployedFiles, old.DeployedHashes)
+		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(key)), old.DeployedFiles, old.DeployedHashes)
 	}
 	return results
 }

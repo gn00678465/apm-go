@@ -11,32 +11,40 @@ import (
 )
 
 // RemoveStaleLinkedFiles deletes the stale deployed paths of one lock bucket
-// under deployRoot when the deploy made symlinks into sourceRoot (a
+// under deployRoot when the deploy made symlinks into projectDir (a
 // user-scope install: one symlink per file, or one per skill directory with
 // the lock recording the files below it).
 //
-// A deploy symlink is one whose target is inside sourceRoot and that is
-// either the stale path itself or a parent that is a skill directory,
-// skills/<name>. Those are the only places the deploy makes a symlink, so a
-// symlink on any other parent (a target root, a skills directory) is the
-// user's wherever it leads. The first deploy symlink on a path, from
-// deployRoot down to the path itself, decides: only that symlink is removed,
-// never anything through it, so no hash is compared. It is kept when claimed
-// (normalized lock paths of the new lock) still has a path at or below it.
+// bucketSource is the directory the bucket's content is read from, inside
+// projectDir: apm_modules/<key> for a dependency, .apm for local content. It
+// decides ownership. A deploy symlink is one whose target is inside
+// bucketSource and that is either the stale path itself or a parent that is
+// a skill directory, skills/<name>. Those are the only places the deploy
+// makes a symlink, and it points them nowhere else, so any other symlink is
+// the user's, also one that leads elsewhere into projectDir. The first deploy
+// symlink on a path, from deployRoot down to the path itself, decides: only
+// that symlink is removed, never anything through it, so no hash is compared.
+// It is kept when claimed (normalized lock paths of the new lock) still has a
+// path at or below it.
 //
-// Every other symlink is the user's. As a parent directory (~/.claude linked
-// into a dotfiles directory) it is walked through and never removed, also not
-// when the directory behind it becomes empty. As the path itself, with a
-// target outside sourceRoot, it is kept with a diagnostic.
+// A symlink in one of those two places that leads outside bucketSource is an
+// entry the user took over. It is kept with one diagnostic, and for a skill
+// directory nothing below it is inspected, compared or removed: a user-scope
+// deploy never writes a file below skills/<name>, so what is found there
+// through the user's symlink is the user's.
+//
+// A user's symlink on any other parent (~/.claude linked into a dotfiles
+// directory) is walked through and never removed, also not when the directory
+// behind it becomes empty.
 //
 // A path with no deploy symlink on it that is a file goes to
 // RemoveDeployedFiles, unless a user symlink was walked through and the file
-// is in fact inside sourceRoot: then it is kept with a diagnostic. A path
-// that does not exist is skipped.
+// is in fact anywhere inside projectDir: then it is kept with a diagnostic. A
+// path that does not exist is skipped.
 //
 // removed lists each deleted symlink once by its own lock path, plus the
 // files RemoveDeployedFiles deleted, all relative to deployRoot.
-func RemoveStaleLinkedFiles(deployRoot, sourceRoot string, stale []string, hashes map[string]string, claimed map[string]bool) (removed []string, diags []string) {
+func RemoveStaleLinkedFiles(deployRoot, projectDir, bucketSource string, stale []string, hashes map[string]string, claimed map[string]bool) (removed []string, diags []string) {
 	var plain []string
 	decided := make(map[string]bool)
 	for _, f := range stale {
@@ -44,13 +52,16 @@ func RemoveStaleLinkedFiles(deployRoot, sourceRoot string, stale []string, hashe
 			plain = append(plain, f) // RemoveDeployedFiles refuses and reports it
 			continue
 		}
-		loc, err := locateStalePath(deployRoot, sourceRoot, f)
+		loc, err := locateStalePath(deployRoot, bucketSource, f)
 		switch {
 		case err != nil:
 			diags = append(diags, fmt.Sprintf("keeping %q: %v", f, err))
 		case !loc.exists:
-		case loc.userTarget != "":
-			diags = append(diags, fmt.Sprintf("keeping %q: symlink target %q is outside the apm project directory", f, loc.userTarget))
+		case loc.userLink != "":
+			if !decided[loc.userLink] {
+				decided[loc.userLink] = true
+				diags = append(diags, fmt.Sprintf("keeping %q: symlink target %q is not in the source of this package", loc.userLink, loc.userTarget))
+			}
 		case loc.deployLink != "":
 			if decided[loc.deployLink] {
 				continue
@@ -68,7 +79,7 @@ func RemoveStaleLinkedFiles(deployRoot, sourceRoot string, stale []string, hashe
 			removed = append(removed, loc.deployLink)
 		case loc.cleanupRoot == deployRoot:
 			plain = append(plain, f)
-		case resolvesInside(sourceRoot, filepath.Join(deployRoot, filepath.FromSlash(f))):
+		case resolvesInside(projectDir, filepath.Join(deployRoot, filepath.FromSlash(f))):
 			diags = append(diags, fmt.Sprintf("keeping %q: it is a file in the apm project directory, reached through a symlink", f))
 		default:
 			ok, diag := removeFileBelowUserSymlink(loc, f, hashes)
@@ -87,11 +98,13 @@ func RemoveStaleLinkedFiles(deployRoot, sourceRoot string, stale []string, hashe
 // staleLocation is what a walk down one stale path found.
 type staleLocation struct {
 	exists bool
-	// deployLink is the lock path of the first symlink into sourceRoot.
+	// deployLink is the lock path of the first deploy symlink.
 	deployLink string
-	// userTarget is the target of the path itself when it is a symlink that
-	// leaves sourceRoot.
-	userTarget string
+	// userLink is the lock path of a symlink in a place where the deploy
+	// makes one, the path itself or a skill directory, that leads outside the
+	// bucket's source: the user took the entry over. userTarget is where it
+	// leads.
+	userLink, userTarget string
 	// cleanupRoot is the deepest directory that must survive the removal of
 	// empty parents: deployRoot, or the deepest user symlink walked through.
 	cleanupRoot string
@@ -102,7 +115,7 @@ type staleLocation struct {
 
 // locateStalePath walks rel from deployRoot down. os.Lstat does not follow
 // the last component, so each symlink is seen before anything behind it.
-func locateStalePath(deployRoot, sourceRoot, rel string) (staleLocation, error) {
+func locateStalePath(deployRoot, bucketSource, rel string) (staleLocation, error) {
 	loc := staleLocation{cleanupRoot: deployRoot}
 	segments := strings.Split(filepath.Clean(filepath.FromSlash(rel)), string(filepath.Separator))
 	for i := range segments {
@@ -132,12 +145,13 @@ func locateStalePath(deployRoot, sourceRoot, rel string) (staleLocation, error) 
 		// else, this test must follow, or that symlink is taken for the
 		// user's.
 		isSkillDir := i > 0 && segments[i-1] == "skills"
-		switch {
-		case archive.Contained(sourceRoot, target) && (isPathItself || isSkillDir):
-			loc.exists, loc.deployLink = true, filepath.ToSlash(prefix)
-			return loc, nil
-		case isPathItself:
-			loc.exists, loc.userTarget = true, target
+		if isPathItself || isSkillDir {
+			loc.exists = true
+			if archive.Contained(bucketSource, target) {
+				loc.deployLink = filepath.ToSlash(prefix)
+			} else {
+				loc.userLink, loc.userTarget = filepath.ToSlash(prefix), target
+			}
 			return loc, nil
 		}
 		loc.cleanupRoot = full
