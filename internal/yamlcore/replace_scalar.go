@@ -55,11 +55,8 @@ func ReplaceScalarValue(src []byte, node *yaml.Node, value string) (out []byte, 
 		return nil, false
 	}
 	rendered, err := yaml.Marshal(&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Style: node.Style, Value: value})
-	if err != nil {
-		return nil, false
-	}
 	rendered = bytes.TrimRight(rendered, "\n")
-	if len(rendered) == 0 || bytes.IndexByte(rendered, '\n') >= 0 {
+	if err != nil || bytes.IndexByte(rendered, '\n') >= 0 {
 		return nil, false
 	}
 
@@ -84,15 +81,13 @@ func nodeOffset(src []byte, node *yaml.Node) (int, bool) {
 		_, size := utf8.DecodeRune(src[off:])
 		off += size
 	}
-	return off, off < len(src)
+	return off, off < len(src) && src[off] != '\n'
 }
 
-// quotedWidth returns the byte length of the quoted scalar that line starts
-// with, closing quote included, or 0 when it does not close on this line.
+// quotedWidth returns the byte length of the quoted scalar that line (not
+// empty) starts with, closing quote included, or 0 when it does not close
+// on this line.
 func quotedWidth(line []byte) int {
-	if len(line) == 0 {
-		return 0
-	}
 	quote := line[0]
 	if quote != '\'' && quote != '"' {
 		return 0

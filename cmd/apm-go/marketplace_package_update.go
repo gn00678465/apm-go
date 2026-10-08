@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
@@ -69,21 +70,20 @@ func marketplacePackageUpdateCmd() *cobra.Command {
 			updated := 0
 			for _, u := range updates {
 				name := u.Package.Name
-				switch {
-				case u.Action != authoring.UpdateApply:
+				if u.Action != authoring.UpdateApply {
 					// A skip is reported only for a package the user named;
 					// with no NAME the skipped majority would bury the updates.
 					if len(args) > 0 {
 						ux.Info(w, "Skipped package '%s': %s", name, u.Note)
 					}
-				case u.NewVersion != "":
-					updated++
-					report(w, "%s package '%s': version %s -> %s, ref %s -> %s", verb, name,
-						strings.TrimSpace(u.Package.Version), u.NewVersion, shortSHA(u.Package.Ref), shortSHA(u.NewRef))
-				default:
-					updated++
-					report(w, "%s package '%s': ref %s -> %s", verb, name, shortSHA(u.Package.Ref), shortSHA(u.NewRef))
+					continue
 				}
+				updated++
+				change := fmt.Sprintf("ref %s -> %s", shortSHA(u.Package.Ref), shortSHA(u.NewRef))
+				if u.NewVersion != "" {
+					change = fmt.Sprintf("version %s -> %s, %s", strings.TrimSpace(u.Package.Version), u.NewVersion, change)
+				}
+				report(w, "%s package '%s': %s", verb, name, change)
 			}
 			if updated == 0 {
 				ux.Info(w, "All packages are up to date")

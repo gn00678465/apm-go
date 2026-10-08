@@ -160,54 +160,49 @@ func ApplyPackageUpdates(dir string, updates []PackageUpdate) error {
 		}
 	}
 
-	if err := packageEditValidate(out, prefix); err != nil {
-		return fmt.Errorf("edit produced an invalid config, aborting without writing: %w", err)
-	}
 	after, _, err := parsePackagesForUpdate(out, prefix)
+	if err == nil {
+		err = packageEditValidate(out, prefix)
+	}
 	if err != nil {
 		return fmt.Errorf("edit produced an invalid config, aborting without writing: %w", err)
 	}
-	if len(after) != len(before) {
-		return fmt.Errorf("edit changed the number of packages in %s, aborting without writing", path)
-	}
-	for i, want := range before {
+	want := make([]PackageEntry, len(before))
+	for i, pkg := range before {
 		if u, ok := planned[i]; ok {
-			want.Ref = u.NewRef
+			pkg.Ref = u.NewRef
 			if u.NewVersion != "" {
-				want.Version = u.NewVersion
+				pkg.Version = u.NewVersion
 			}
 		}
-		if !reflect.DeepEqual(after[i], want) {
-			return fmt.Errorf("edit of package '%s' did not produce the planned values in %s, aborting without writing", want.Name, path)
-		}
+		want[i] = pkg
+	}
+	if !reflect.DeepEqual(after, want) {
+		return fmt.Errorf("edit of %s did not produce exactly the planned values, aborting without writing", path)
 	}
 	return atomicWriteFile(path, out)
 }
 
 // parsePackagesForUpdate reads data the way LoadAuthoringConfig reads the
 // file at prefix, returning the parsed packages together with the packages
-// sequence node they came from (same order, same length).
+// sequence node they came from. parsePackages yields one entry per element,
+// so the two have the same order and length.
 func parsePackagesForUpdate(data []byte, prefix []string) ([]PackageEntry, *yaml.Node, error) {
 	doc, err := yamlcore.SafeLoad(data)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(doc.Content) == 0 {
-		return nil, nil, fmt.Errorf("config is empty")
-	}
 	block := doc.Content[0]
 	for _, key := range prefix {
-		if block = mappingValue(block, key); block == nil {
-			return nil, nil, fmt.Errorf("config is missing the expected %q key", key)
-		}
+		block = mappingValue(block, key)
+	}
+	seq := mappingValue(block, "packages")
+	if seq == nil || seq.Kind != yaml.SequenceNode {
+		return nil, nil, fmt.Errorf("config has no packages sequence")
 	}
 	cfg, err := parseAuthoringNode(block, topLevelFields{}, len(prefix) == 0)
 	if err != nil {
 		return nil, nil, err
-	}
-	seq := mappingValue(block, "packages")
-	if seq == nil || seq.Kind != yaml.SequenceNode || len(seq.Content) != len(cfg.Packages) {
-		return nil, nil, fmt.Errorf("config has no packages sequence that matches its entries")
 	}
 	return cfg.Packages, seq, nil
 }

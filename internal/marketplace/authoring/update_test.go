@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -537,4 +538,80 @@ func TestPackageUpdate_RealLsRemoteOutput_AnnotatedTagPeels(t *testing.T) {
 	}
 
 	assertFile(t, dir, "apm.yml", apmYML("    - name: tool\n      source: owner/tool\n      version: 1.1.0\n      ref: eb26e8b300d82f3d0aac062dfa27940ef125440e\n"))
+}
+
+// ApplyPackageUpdates reads the file again; whatever it finds there that it
+// cannot edit safely is an error, and the file stays as it is.
+func TestApplyPackageUpdates_ConfigUnusableSinceThePlan_NothingWritten(t *testing.T) {
+	plan := []PackageUpdate{{
+		Index:   0,
+		Package: PackageEntry{Name: "tool", Source: "owner/tool", Ref: shaA},
+		Action:  UpdateApply,
+		NewRef:  shaB,
+	}}
+	cases := []struct {
+		name, file, content, wantErr string
+	}{
+		{"no config", "", "", "no marketplace"},
+		{"not YAML", "marketplace.yml", "owner: [\n", "parse "},
+		{"empty", "marketplace.yml", "", "parse "},
+		{"not a mapping", "marketplace.yml", "- a\n", "no packages sequence"},
+		{"schema error", "marketplace.yml", "name: demo\nowner:\n  name: me\npackages:\n  - name: tool\n", "source"},
+		{"no packages", "marketplace.yml", "name: demo\nversion: 0.1.0\nowner:\n  name: me\n", "no packages sequence"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.file != "" {
+				writeFile(t, dir, tc.file, tc.content)
+			}
+
+			err := ApplyPackageUpdates(dir, plan)
+
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want one that contains %q", err, tc.wantErr)
+			}
+			if tc.file != "" {
+				assertFile(t, dir, tc.file, tc.content)
+			}
+		})
+	}
+}
+
+func TestApplyPackageUpdates_UnreadableConfig_Error(t *testing.T) {
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("needs a file the process cannot read")
+	}
+	dir := t.TempDir()
+	writeFile(t, dir, "marketplace.yml", "name: demo\n")
+	if err := os.Chmod(filepath.Join(dir, "marketplace.yml"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ApplyPackageUpdates(dir, []PackageUpdate{{Action: UpdateApply, NewRef: shaB}})
+
+	if err == nil || !strings.Contains(err.Error(), "read ") {
+		t.Fatalf("error = %v, want a read error", err)
+	}
+}
+
+// The schema trims a value, so one with outer white space reads back as a
+// different string than the plan holds.
+func TestApplyPackageUpdates_ValueDoesNotReadBackAsPlanned_NothingWritten(t *testing.T) {
+	dir := t.TempDir()
+	content := apmYML("    - name: tool\n      source: owner/tool\n      ref: " + shaA + "\n")
+	writeFile(t, dir, "apm.yml", content)
+	mtime := backdate(t, dir, "apm.yml")
+
+	err := ApplyPackageUpdates(dir, []PackageUpdate{{
+		Index:   0,
+		Package: PackageEntry{Name: "tool", Source: "owner/tool", Ref: shaA},
+		Action:  UpdateApply,
+		NewRef:  shaB + " ",
+	}})
+
+	if err == nil || !strings.Contains(err.Error(), "did not produce exactly the planned values") {
+		t.Fatalf("error = %v, want the planned-values mismatch", err)
+	}
+	assertNotWritten(t, dir, "apm.yml", content, mtime)
 }

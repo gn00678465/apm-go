@@ -281,3 +281,22 @@ func TestMarketplacePackageUpdateCmd_Flags(t *testing.T) {
 		t.Errorf("--include-prerelease usage = %q, want outdated's %q", got["include-prerelease"], want)
 	}
 }
+
+func TestMarketplacePackageUpdate_EntryCannotBeEditedInPlace_ExitsCode2(t *testing.T) {
+	chdirTemp(t)
+	fixture := "    - {name: tip, source: owner/tip, ref: " + updShaA + "}\n"
+	writeOutdatedFixture(t, fixture)
+	withCannedRefLister(t, updateRemote())
+
+	_, err := runMarketplaceCmd(t, "package", "update")
+
+	if err == nil || !strings.Contains(err.Error(), "cannot update package 'tip' in place") {
+		t.Fatalf("err = %v, want the in-place error for 'tip'", err)
+	}
+	if got := exitCodeOf(err); got != 2 || isSilentExit(err) {
+		t.Errorf("exit = %d silent=%v, want a printed exit 2", got, isSilentExit(err))
+	}
+	if got := readApmYML(t); got != updateFixtureHeader+fixture {
+		t.Errorf("apm.yml changed:\n%s", got)
+	}
+}

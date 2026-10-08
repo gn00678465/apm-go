@@ -151,3 +151,39 @@ func TestReplaceScalarValue_DeclinesWhatItCannotReplaceInPlace(t *testing.T) {
 		})
 	}
 }
+
+func TestReplaceScalarValue_EscapedQuoteInsideDoubleQuotes(t *testing.T) {
+	src := []byte("items:\n  - ref: \"a\\\"b\" # note\n")
+	out, ok := ReplaceScalarValue(src, scalarAt(t, src, "ref"), "def0")
+	if want := "items:\n  - ref: \"def0\" # note\n"; !ok || string(out) != want {
+		t.Errorf("ok = %v, out = %q; want %q", ok, out, want)
+	}
+}
+
+func TestReplaceScalarValue_DeclinesAValueThatNeedsMoreThanOneLine(t *testing.T) {
+	src := []byte("items:\n  - ref: 'abc'\n")
+	if out, ok := ReplaceScalarValue(src, scalarAt(t, src, "ref"), "a\nb"); ok {
+		t.Fatalf("ok = true, out = %q; want ok = false", out)
+	}
+}
+
+// A node that does not describe src (built by hand, or from another parse)
+// is declined, never applied at a guessed position.
+func TestReplaceScalarValue_DeclinesANodeThatDoesNotMatchSrc(t *testing.T) {
+	src := []byte("ref: abc\n")
+	cases := map[string]*yaml.Node{
+		"no position":              {Kind: yaml.ScalarNode, Value: "abc"},
+		"column past the line":     {Kind: yaml.ScalarNode, Value: "abc", Line: 1, Column: 40},
+		"column at the line end":   {Kind: yaml.ScalarNode, Value: "abc", Line: 1, Column: 9},
+		"line past the file":       {Kind: yaml.ScalarNode, Value: "abc", Line: 9, Column: 1},
+		"quoted style, plain text": {Kind: yaml.ScalarNode, Value: "abc", Style: yaml.DoubleQuotedStyle, Line: 1, Column: 6},
+		"nil":                      nil,
+	}
+	for name, node := range cases {
+		t.Run(name, func(t *testing.T) {
+			if out, ok := ReplaceScalarValue(src, node, "def0"); ok {
+				t.Fatalf("ok = true, out = %q; want ok = false", out)
+			}
+		})
+	}
+}
