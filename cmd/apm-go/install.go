@@ -1932,10 +1932,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		if existingLock != nil {
 			cleanRoot, linkSourceRoot := ".", ""
 			if deployDir != "" {
-				cleanRoot = deployDir
-				if linkSourceRoot, err = filepath.Abs("."); err != nil {
-					return fmt.Errorf("resolve global project directory: %w", err)
-				}
+				cleanRoot, linkSourceRoot = deployDir, "."
 			}
 			for _, c := range cleanStaleDeployedFiles(existingLock, newLock, deployResult.FailedBuckets, targets, cleanRoot, linkSourceRoot) {
 				if n := len(c.removed); n > 0 {

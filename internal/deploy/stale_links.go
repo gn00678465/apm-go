@@ -47,7 +47,7 @@ func RemoveStaleLinkedFiles(deployRoot, sourceRoot string, stale []string, hashe
 			diags = append(diags, fmt.Sprintf("keeping %q: %v", f, err))
 		case !loc.exists:
 		case loc.userTarget != "":
-			diags = append(diags, fmt.Sprintf("keeping %q: symlink target %q is outside %q", f, loc.userTarget, sourceRoot))
+			diags = append(diags, fmt.Sprintf("keeping %q: symlink target %q is outside the apm project directory", f, loc.userTarget))
 		case loc.deployLink != "":
 			if decided[loc.deployLink] {
 				continue
@@ -66,7 +66,7 @@ func RemoveStaleLinkedFiles(deployRoot, sourceRoot string, stale []string, hashe
 		case loc.cleanupRoot == deployRoot:
 			plain = append(plain, f)
 		case resolvesInside(sourceRoot, filepath.Join(deployRoot, filepath.FromSlash(f))):
-			diags = append(diags, fmt.Sprintf("keeping %q: it is a file in %q, reached through a symlink", f, sourceRoot))
+			diags = append(diags, fmt.Sprintf("keeping %q: it is a file in the apm project directory, reached through a symlink", f))
 		default:
 			ok, diag := removeFileBelowUserSymlink(loc, f, hashes)
 			if ok {
@@ -106,18 +106,19 @@ func locateStalePath(deployRoot, sourceRoot, rel string) (staleLocation, error) 
 		prefix := filepath.Join(segments[:i+1]...)
 		full := filepath.Join(deployRoot, prefix)
 		info, err := os.Lstat(full)
+		isLink := err == nil && info.Mode()&os.ModeSymlink != 0
+		var target string
+		if isLink {
+			target, err = os.Readlink(full)
+		}
 		if os.IsNotExist(err) {
 			return loc, nil
 		}
 		if err != nil {
 			return loc, err
 		}
-		if info.Mode()&os.ModeSymlink == 0 {
+		if !isLink {
 			continue
-		}
-		target, err := os.Readlink(full)
-		if err != nil {
-			return loc, err
 		}
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(filepath.Dir(full), target)
@@ -140,15 +141,14 @@ func locateStalePath(deployRoot, sourceRoot, rel string) (staleLocation, error) 
 // resolvesInside reports whether full, with every symlink followed, is inside
 // root. locateStalePath compares the text of a symlink target, so a deploy
 // symlink written through another name of root (a symlinked home directory)
-// looks like the user's; this check keeps the file behind it. It also reports
-// true when a path cannot be resolved.
+// looks like the user's; this check keeps the file behind it. root is made
+// absolute first because filepath.EvalSymlinks returns "." unresolved. It
+// also reports true when a path cannot be resolved.
 func resolvesInside(root, full string) bool {
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return true
-	}
-	realFull, err := filepath.EvalSymlinks(full)
-	if err != nil {
+	absRoot, absErr := filepath.Abs(root)
+	realRoot, rootErr := filepath.EvalSymlinks(absRoot)
+	realFull, fullErr := filepath.EvalSymlinks(full)
+	if absErr != nil || rootErr != nil || fullErr != nil {
 		return true
 	}
 	return archive.Contained(realRoot, realFull)
@@ -172,11 +172,8 @@ func removeFileBelowUserSymlink(loc staleLocation, lockPath string, hashes map[s
 }
 
 func claimedAtOrBelow(claimed map[string]bool, link string) bool {
-	if claimed[link] {
-		return true
-	}
 	for p := range claimed {
-		if strings.HasPrefix(p, link+"/") {
+		if p == link || strings.HasPrefix(p, link+"/") {
 			return true
 		}
 	}

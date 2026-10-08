@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -344,8 +345,8 @@ func TestRemoveStaleLinkedFiles_UserParentSymlink_SurvivesWhenEmptied(t *testing
 }
 
 func TestRemoveStaleLinkedFiles_ReportsSymlinkThatCannotBeRemovedOnce(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root removes entries from a read-only directory")
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory that refuses a delete: Windows ignores the write bit of a directory and root is not bound by it")
 	}
 	deployRoot, sourceRoot := staleLinkRoots(t)
 	writeStaleLinkFile(t, filepath.Join(sourceRoot, "skills", "demo", "extra.md"), "extra\n")
@@ -386,4 +387,86 @@ func TestRemoveStaleLinkedFiles_KeepsSourceFileBehindSymlinkWrittenThroughAnothe
 	}
 	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
 	assertStaleLinkIsSymlink(t, parent)
+}
+
+func TestRemoveStaleLinkedFiles_KeepsPathItCannotInspect(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory that cannot be read: Windows ignores the permission bits and root is not bound by them")
+	}
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	agents := filepath.Join(deployRoot, ".claude", "agents")
+	staleLink(t, filepath.Join(sourceRoot, "agents", "gone.md"), filepath.Join(agents, "gone.md"))
+	if err := os.Chmod(agents, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(agents, 0o755) })
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, []string{".claude/agents/gone.md"}, nil, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if len(diags) == 1 && (!strings.HasPrefix(diags[0], `keeping ".claude/agents/gone.md": `) || !strings.HasSuffix(diags[0], "permission denied")) {
+		t.Errorf("diag = %q", diags[0])
+	}
+	if err := os.Chmod(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assertStaleLinkIsSymlink(t, filepath.Join(agents, "gone.md"))
+}
+
+func TestRemoveStaleLinkedFiles_KeepsSymlinkThatIsItselfClaimed(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := filepath.Join(deployRoot, ".claude", "skills", "demo")
+	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, []string{".claude/skills/demo/SKILL.md"}, nil,
+		map[string]bool{".claude/skills/demo": true})
+
+	assertStaleLinkResult(t, removed, nil, diags, 0)
+	assertStaleLinkContent(t, filepath.Join(link, "SKILL.md"), "demo\n")
+}
+
+func TestRemoveStaleLinkedFiles_UserParentSymlink_KeepsFileWhenSourceRootCannotBeResolved(t *testing.T) {
+	deployRoot, _ := staleLinkRoots(t)
+	dotfiles := staleLinkUserDir(t, deployRoot)
+	writeStaleLinkFile(t, filepath.Join(dotfiles, "agents", "gone.toml"), "name = \"gone\"\n")
+
+	// sha256sum of the content written above: the hash check would pass.
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, filepath.Join(t.TempDir(), "missing"), []string{".claude/agents/gone.toml"},
+		map[string]string{".claude/agents/gone.toml": "sha256:8201da4eee960804250182dd55436de61f94c2298cdbae62dbb71825cabf3eff"}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if len(diags) == 1 && diags[0] != `keeping ".claude/agents/gone.toml": it is a file in the apm project directory, reached through a symlink` {
+		t.Errorf("diag = %q", diags[0])
+	}
+	assertStaleLinkContent(t, filepath.Join(dotfiles, "agents", "gone.toml"), "name = \"gone\"\n")
+}
+
+// The install command passes "." as sourceRoot. When the working directory
+// was entered through a symlink, filepath.Abs(".") keeps that spelling, and a
+// deploy symlink written with the real spelling looks like the user's.
+func TestRemoveStaleLinkedFiles_KeepsSourceFileWhenWorkingDirIsEnteredThroughSymlink(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(base, "real", "apm", "skills", "demo", "SKILL.md")
+	writeStaleLinkFile(t, source, "demo\n")
+	staleLink(t, filepath.Join(base, "real"), filepath.Join(base, "link"))
+	t.Chdir(filepath.Join(base, "link", "apm"))
+	if abs, err := filepath.Abs("."); err != nil || abs != filepath.Join(base, "link", "apm") {
+		t.Skipf("filepath.Abs(\".\") = %q, %v: this platform does not keep the symlink spelling of the working directory", abs, err)
+	}
+	deployRoot := filepath.Join(base, "home")
+	parent := filepath.Join(deployRoot, ".claude", "skills", "demo")
+	staleLink(t, filepath.Join(base, "real", "apm", "skills", "demo"), parent)
+
+	// sha256sum of "demo\n": the hash check would pass.
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, ".", []string{".claude/skills/demo/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": "sha256:eb9c26baee47f19e4993a77bca936d0ff09e355a82d3db79bf154ebff1a80604"}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if len(diags) == 1 && diags[0] != `keeping ".claude/skills/demo/SKILL.md": it is a file in the apm project directory, reached through a symlink` {
+		t.Errorf("diag = %q", diags[0])
+	}
+	assertStaleLinkContent(t, source, "demo\n")
 }
