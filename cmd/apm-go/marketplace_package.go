@@ -25,6 +25,7 @@ func marketplacePackageCmd() *cobra.Command {
 	cmd.AddCommand(marketplacePackageAddCmd())
 	cmd.AddCommand(marketplacePackageSetCmd())
 	cmd.AddCommand(marketplacePackageRemoveCmd())
+	cmd.AddCommand(marketplacePackageUpdateCmd())
 	return cmd
 }
 

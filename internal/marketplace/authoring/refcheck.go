@@ -984,6 +984,13 @@ type OutdatedRow struct {
 	// field across every row, never by comparing Status strings (mkt-042's
 	// "exit 1 僅由 upgradable 計數驅動").
 	Upgradable bool
+	// TargetVersion and TargetRef are what `marketplace package update`
+	// (apm-go-only, issue #25) writes back for an Upgradable SHA pin: the
+	// highest candidate's version (TargetVersion, "" for a pin with no
+	// version) and the full commit SHA it or the default-branch tip points
+	// at. Both stay "" on every other row.
+	TargetVersion string
+	TargetRef     string
 }
 
 // OutdatedPackages implements mkt-042 修訂版: for every package in cfg,
@@ -1077,7 +1084,19 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 		// exists); the SHA itself is never reverse-mapped to a tag (that is
 		// check's manifest comparison).
 		row.Current = tagpattern.RenderTag(usedPattern, pkg.Name, semver.StripVPrefix(version))
-		return outdatedShaAgainstTags(row, pkg, candidates)
+		row = outdatedShaAgainstTags(row, pkg, candidates)
+		if row.TargetRef != "" {
+			// An annotated tag is advertised twice: the tag object under its
+			// own name and the commit it points at under "<name>^{}". A pin
+			// names a commit, so the peeled entry wins when there is one.
+			for _, r := range refs {
+				if r.Ref == "refs/tags/"+row.LatestOverall+"^{}" {
+					row.TargetRef = r.Commit
+					break
+				}
+			}
+		}
+		return row
 	}
 
 	overall := candidates[0]
@@ -1137,6 +1156,7 @@ func outdatedShaAgainstTip(row OutdatedRow, pkg PackageEntry, refs []semver.TagI
 		return row
 	}
 	row.Status, row.Note, row.Upgradable = "[!]", "Default branch tip moved", true
+	row.TargetRef = tip
 	return row
 }
 
@@ -1160,6 +1180,7 @@ func outdatedShaAgainstTags(row OutdatedRow, pkg PackageEntry, candidates []outd
 	}
 	if semver.CompareVersions(overall.version, semver.StripVPrefix(strings.TrimSpace(pkg.Version))) > 0 {
 		row.Status, row.Upgradable = "[!]", true
+		row.TargetVersion, row.TargetRef = overall.version, overall.commit
 		return row
 	}
 	row.Status = "[+]"

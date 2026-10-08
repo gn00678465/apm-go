@@ -264,6 +264,44 @@ mkt_yml '    - name: local-a
 step mkt-check-local-verbose 0 "$BIN" marketplace check -v
 must_grep mkt-check-local-verbose "Skipping local-a -- local path, no network check"
 must_grep mkt-check-local-verbose "All 1 entries OK"
+
+# --- marketplace package update: the network-free contract --------------------
+# apm-go-only (issue #25): the Oracle has no command that writes an upgrade
+# back, so no tools/parity corpus case can exist and the contract is fixed
+# HERE (ticket 37, .scratch/parity-runner/issues/
+# 37-marketplace-package-update-realexec-contract.md) at ticket 34's
+# strength: complete stdout, empty stderr, exact exit code, byte-identical
+# tree. No step can reach the network: a local package, an unknown NAME and a
+# schema error all return before any git subprocess. The path that writes
+# needs a remote and is covered by go test with a canned RefLister only.
+mkt_update() { # mkt_update NAME EXPECTED_RC EXPECTED_STDOUT ARGS...
+  upd=$1; updrc=$2
+  printf '%s' "$3" > "$SB/$upd.want.out"
+  : > "$SB/$upd.want.err"
+  shift 3
+  cp -r . "$SB/$upd.before"
+  step_streams "$upd" "$updrc" "$BIN" marketplace package update "$@"
+  must_match_file "$upd-stdout" "$SB/$upd.out" "$SB/$upd.want.out"
+  must_match_file "$upd-stderr" "$SB/$upd.err" "$SB/$upd.want.err"
+  steps=$((steps + 1))
+  if diff -rq . "$SB/$upd.before" >/dev/null 2>&1; then echo "ok    $upd left the tree byte-identical"; else echo "FAIL  $upd modified the tree"; failures=$((failures + 1)); fi
+}
+mkt_update mkt-update-local 0 ' i All packages are up to date
+'
+mkt_update mkt-update-local-dry-run 0 ' i All packages are up to date
+' --dry-run
+mkt_update mkt-update-local-named 0 " i Skipped package 'local-a': local package; skipped
+ i All packages are up to date
+" local-a
+mkt_update mkt-update-unknown-name 2 ' x package "no-such-package" not found
+' no-such-package
+mkt_yml '    - name: bare
+      source: owner/repo
+'
+mkt_update mkt-update-schema-verref 2 " x marketplace config error: packages[0] ('bare'): remote packages require at least one of 'version' or 'ref'
+"
+step_streams mkt-update-schema-verref-outdated 2 "$BIN" marketplace outdated
+must_match_file mkt-update-schema-verref-same-as-outdated "$SB/mkt-update-schema-verref.out" "$SB/mkt-update-schema-verref-outdated.out"
 cd ..
 
 # --- adversarial: hostile inputs must be refused and must not escape ----------
