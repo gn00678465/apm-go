@@ -24,9 +24,18 @@ fi
 echo "-- secrets scan of added lines"
 # tools/gate* is the verifier, not the subject: it carries the scan pattern
 # itself and a deliberately bad fixture for the negative control.
+# An empty diff (wrong base, or run on the base itself) is refused. A diff
+# whose added lines are all in the excluded paths has nothing to scan and
+# says so, so a verifier-only branch does not fail by construction.
+if [ -z "$(git diff --name-only "$BASE...HEAD")" ]; then
+  echo "FAIL: the diff $BASE...HEAD is empty (fail closed)"; exit 2
+fi
 git diff "$BASE...HEAD" -- . ':(exclude)*.golden.json' ':(exclude)tools/parity/cases/**' ':(exclude)tools/gate.sh' ':(exclude)tools/gate/**' | grep -E '^\+[^+]' > "$ART/added-lines.txt" || true
-require_file "$ART/added-lines.txt"
-must_not_match 'AKIA[0-9A-Z]{16}|-----BEGIN (RSA|EC|OPENSSH|DSA) PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk-[A-Za-z0-9]{32,}' "$ART/added-lines.txt"
+if [ -s "$ART/added-lines.txt" ]; then
+  must_not_match 'AKIA[0-9A-Z]{16}|-----BEGIN (RSA|EC|OPENSSH|DSA) PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|xox[baprs]-[0-9A-Za-z-]{10,}|sk-[A-Za-z0-9]{32,}' "$ART/added-lines.txt"
+else
+  echo "secrets scan: no added line outside the excluded paths, nothing to scan"
+fi
 
 echo "-- capability diff (imports added on the new side, $BASE...HEAD)"
 git diff "$BASE...HEAD" -- '*.go' ':(exclude)*_test.go' | grep -E '^\+\s+"[a-z0-9/._-]+"$' | sed -E 's/^\+\s+"([^"]+)"$/\1/' | sort -u > "$ART/imports-added.txt" || true
