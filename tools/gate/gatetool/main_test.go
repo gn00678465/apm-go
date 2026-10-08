@@ -381,3 +381,111 @@ func TestUnits_PureRenameOutsideRoot_Unmeasured(t *testing.T) {
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out, "# unmeasured: tools/x/y.go\n", "# units: 0, unmeasured files: 1,")
 }
+
+const nonASCIIPath = "cmd/a/檢查.go"
+
+func TestCoverage_NonASCIIPath_UnprofiledLineFails(t *testing.T) {
+	r := newRepo(t)
+	r.write(nonASCIIPath, coveredSrc)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 1, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0\n",
+		"UNMAPPED executable lines (1):\n  cmd/a/檢查.go:4\n",
+	)
+	wantLacks(t, out, "no line to measure")
+}
+
+func TestCoverage_NonASCIIPath_ProfiledLineCounted(t *testing.T) {
+	r := newRepo(t)
+	r.write(nonASCIIPath, coveredSrc)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", coveredBlock(nonASCIIPath), "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0\n",
+	)
+}
+
+func TestCoverage_PathGitStillQuotes_Refused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows file names cannot hold a double quote")
+	}
+	r := newRepo(t)
+	r.write(`cmd/a/q"x.go`, coveredSrc)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 2, out, errOut)
+	wantContains(t, errOut, `cmd/a/q"x.go`)
+}
+
+const twoFuncSrc = "package a\n\nfunc F() int {\n\treturn 1\n}\n\nfunc G() int {\n\treturn 2\n}\n"
+
+func removedFunction(t *testing.T) *repo {
+	t.Helper()
+	r := newRepo(t)
+	r.write("cmd/a/a.go", twoFuncSrc)
+	r.commit()
+	r.rebase()
+	r.write("cmd/a/a.go", coveredSrc)
+	r.commit()
+	return r
+}
+
+func TestCoverage_OnlyRemovedLines_NoLineToMeasure(t *testing.T) {
+	r := removedFunction(t)
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=0 no_lines=1\n",
+		"files with no line to measure (1), inside the measured roots:\n  cmd/a/a.go (only removed lines)\n",
+	)
+	wantLacks(t, out, "no measured file in the diff")
+}
+
+func TestUnits_RemovedFunction_ListedOnceAsDeletedUnit(t *testing.T) {
+	r := removedFunction(t)
+
+	out, errOut, code := r.run("units", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out, "deleted: G\tcmd/a/a.go\t-\tbuild+suite green (no remaining reference)\n")
+	wantLacks(t, out, "# no line to measure")
+}
+
+func TestUnits_RemovedLineInsideLivingFunction_FileListed(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", "package a\n\nfunc F() int {\n\tprintln(1)\n\treturn 1\n}\n")
+	r.commit()
+	r.rebase()
+	r.write("cmd/a/a.go", coveredSrc)
+	r.commit()
+
+	out, errOut, code := r.run("units", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out, "# no line to measure: cmd/a/a.go (only removed lines)\n")
+}
+
+func TestCoverage_PathWithSpace_UnprofiledLineFails(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/with space.go", coveredSrc)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 1, out, errOut)
+	wantContains(t, out,
+		"unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0\n",
+		"UNMAPPED executable lines (1):\n  cmd/a/with space.go:4\n",
+	)
+}

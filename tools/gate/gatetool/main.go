@@ -11,11 +11,13 @@
 // and removed-line ranges (old side) from "git diff -U0". ROOT... are the
 // measured roots: they classify the changed subject .go files and never
 // narrow the diff. A file under a root is measured; one that is deleted or
-// has no changed line (pure rename, mode change) is listed as having no line
-// to measure; a file under no root is listed as unmeasured. Every changed
-// subject file is therefore in the output. An empty diff exits 2 (wrong
-// base, or run on the base itself); a diff with no measured file exits 0 and
-// says so. The
+// has no added line (pure rename, mode change, only removed lines) is listed
+// as having no line to measure; a file under no root is listed as
+// unmeasured. Every changed subject file is therefore in the output. The
+// parsed patch is checked against "git diff --numstat": a file whose line
+// counts differ (a path git quotes in the patch header) exits 2. An empty
+// diff exits 2 (wrong base, or run on the base itself); a diff with no
+// measured file exits 0 and says so. The
 // coverage classifier is deliberately conservative: a line is
 // non-executable only when the AST shows no statement on it (blank,
 // comment, package/import clause, declaration-only line, bare delimiter).
@@ -99,8 +101,12 @@ var hunkRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 // gitDiff returns the line ranges of each file that has a text hunk. It is
 // not the list of changed files: a pure rename, a mode change and a binary
 // file have no hunk. changedFiles is that list.
+//
+// core.quotePath=false keeps non-ASCII paths literal in the patch header.
+// Git still quotes a path that holds a double quote, backslash or control
+// character; such a header is keyed wrongly here and verifyHunks refuses it.
 func gitDiff(base string) (map[string]*fileDiff, error) {
-	out, err := exec.Command("git", "diff", "-U0", "--no-color", "--no-ext-diff", base+"...HEAD").Output()
+	out, err := exec.Command("git", "-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", base+"...HEAD").Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff: %w", err)
 	}
@@ -114,12 +120,12 @@ func gitDiff(base string) (map[string]*fileDiff, error) {
 		case strings.HasPrefix(line, "diff --git "):
 			cur = &fileDiff{}
 		case strings.HasPrefix(line, "--- a/"):
-			cur.path = strings.TrimPrefix(line, "--- a/")
+			cur.path = headerPath(line, "--- a/")
 		case strings.HasPrefix(line, "+++ "):
 			if line == "+++ /dev/null" {
 				cur.deleted = true
 			} else {
-				cur.path = strings.TrimPrefix(line, "+++ b/")
+				cur.path = headerPath(line, "+++ b/")
 			}
 			files[cur.path] = cur
 		case strings.HasPrefix(line, "@@"):
@@ -144,6 +150,58 @@ func gitDiff(base string) (map[string]*fileDiff, error) {
 		}
 	}
 	return files, sc.Err()
+}
+
+// headerPath strips the tab git appends to a ---/+++ path that holds a space.
+func headerPath(line, prefix string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(line, prefix), "\t")
+}
+
+func rangeLines(rs []lineRange) int {
+	n := 0
+	for _, r := range rs {
+		n += r.end - r.start + 1
+	}
+	return n
+}
+
+// verifyHunks checks the parsed patch against git's own line counts for
+// every subject .go file. gitDiff reads paths out of patch headers, which
+// git may quote; a file whose lines were filed under a wrong key would
+// otherwise be reported as having no changed line and pass unmeasured.
+func verifyHunks(sub, base string, diffs map[string]*fileDiff) error {
+	out, err := exec.Command("git", "diff", "--numstat", "-z", base+"...HEAD").Output()
+	if err != nil {
+		return fmt.Errorf("git diff --numstat: %w", err)
+	}
+	fields := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	for i := 0; i < len(fields) && fields[i] != ""; i++ {
+		rec := strings.SplitN(fields[i], "\t", 3)
+		if len(rec) != 3 {
+			return fmt.Errorf("git diff --numstat: bad record %q", fields[i])
+		}
+		p := rec[2]
+		if p == "" { // rename or copy: old and new path follow as own fields
+			if i+2 >= len(fields) {
+				return fmt.Errorf("git diff --numstat: truncated record %q", fields[i])
+			}
+			p = fields[i+2]
+			i += 2
+		}
+		if !isSubjectGoFile(p) || rec[0] == "-" { // "-" = binary
+			continue
+		}
+		added, removed := atoi(rec[0]), atoi(rec[1])
+		var gotAdded, gotRemoved int
+		if d := diffs[p]; d != nil {
+			gotAdded, gotRemoved = rangeLines(d.added), rangeLines(d.removed)
+		}
+		if gotAdded != added || gotRemoved != removed {
+			return gateErr{2, fmt.Sprintf("%s: git counts +%d -%d lines for %s, the parsed patch holds +%d -%d (fail closed)",
+				sub, added, removed, p, gotAdded, gotRemoved)}
+		}
+	}
+	return nil
 }
 
 type changedFile struct {
@@ -178,16 +236,22 @@ func changedFiles(base string) ([]changedFile, error) {
 	return files, nil
 }
 
+// noLineFile is a changed subject .go file under a measured root that has
+// no added line, with the reason.
+type noLineFile struct{ path, reason string }
+
+func (f noLineFile) String() string { return f.path + " (" + f.reason + ")" }
+
 // change is the diff split by the measured roots. Each changed subject .go
-// file is in exactly one of the three sorted lists.
+// file is in exactly one of the three lists, each sorted by path.
 type change struct {
 	diffs map[string]*fileDiff
 	roots []string
-	// measured: under a root, deleted or with changed lines.
+	// measured: under a root, with added lines.
 	measured []string
-	// lineless: under a root, not deleted, no changed line. Each entry is
-	// the path followed by the reason in parentheses.
-	lineless []string
+	// noLines: under a root, no added line (deleted, pure rename, mode
+	// change, only removed lines).
+	noLines []noLineFile
 	// unmeasured: under no root.
 	unmeasured []string
 }
@@ -202,6 +266,9 @@ func loadChange(sub, base string, roots []string) (*change, error) {
 	}
 	diffs, err := gitDiff(base)
 	if err != nil {
+		return nil, err
+	}
+	if err := verifyHunks(sub, base, diffs); err != nil {
 		return nil, err
 	}
 	c := &change{diffs: diffs}
@@ -222,16 +289,23 @@ func loadChange(sub, base string, roots []string) (*change, error) {
 		switch {
 		case !underRoot(p, c.roots):
 			c.unmeasured = append(c.unmeasured, p)
-		case d.deleted || len(d.added)+len(d.removed) > 0:
+		case d.deleted:
+			c.noLines = append(c.noLines, noLineFile{p, "deleted"})
+		case len(d.added) > 0:
 			c.measured = append(c.measured, p)
-		case cf.oldPath != "":
-			c.lineless = append(c.lineless, fmt.Sprintf("%s (renamed from %s, no changed line)", p, cf.oldPath))
 		default:
-			c.lineless = append(c.lineless, p+" (no changed line)")
+			reason := "no changed line"
+			if len(d.removed) > 0 {
+				reason = "only removed lines"
+			}
+			if cf.oldPath != "" {
+				reason = "renamed from " + cf.oldPath + ", " + reason
+			}
+			c.noLines = append(c.noLines, noLineFile{p, reason})
 		}
 	}
 	sort.Strings(c.measured)
-	sort.Strings(c.lineless)
+	sort.Slice(c.noLines, func(i, j int) bool { return c.noLines[i].path < c.noLines[j].path })
 	sort.Strings(c.unmeasured)
 	return c, nil
 }
@@ -517,7 +591,18 @@ func runUnits(args []string) error {
 	}
 	fmt.Println("unit\tfile\tlines(covered/exec)\tdirect-tests")
 	total := 0
-	for _, p := range ch.measured {
+	// A file with no added line still yields rows for the units it lost; one
+	// that yields none is named in a comment line instead.
+	noLine := map[string]noLineFile{}
+	rooted := append([]string{}, ch.measured...)
+	for _, f := range ch.noLines {
+		noLine[f.path] = f
+		rooted = append(rooted, f.path)
+	}
+	sort.Strings(rooted)
+	var silent []noLineFile
+	for _, p := range rooted {
+		before := total
 		d := ch.diffs[p]
 		if d.deleted {
 			// Removed file: every symbol it held is a deleted unit; the
@@ -533,6 +618,9 @@ func runUnits(args []string) error {
 			for _, s := range fileSymbols(fset, f) {
 				fmt.Printf("deleted: %s\t%s\t-\tbuild+suite green (no remaining reference)\n", s.name, p)
 				total++
+			}
+			if total == before {
+				silent = append(silent, noLine[p])
 			}
 			continue
 		}
@@ -603,9 +691,12 @@ func runUnits(args []string) error {
 			}
 			fmt.Printf("%s\t%s\t%d/%d\t%s\n", name, p, c[0], c[1], strings.Join(tests, ", "))
 		}
+		if f, ok := noLine[p]; ok && total == before {
+			silent = append(silent, f)
+		}
 	}
-	for _, e := range ch.lineless {
-		fmt.Printf("# no line to measure: %s\n", e)
+	for _, f := range silent {
+		fmt.Printf("# no line to measure: %s\n", f)
 	}
 	for _, p := range ch.unmeasured {
 		fmt.Printf("# unmeasured: %s\n", p)
@@ -655,17 +746,12 @@ func runCoverage(args []string) error {
 	}
 	var files, dirs []string
 	dirSeen := map[string]bool{}
-	noLines := append([]string{}, ch.lineless...)
 	for _, p := range ch.measured {
-		if diffs[p].deleted {
-			noLines = append(noLines, p+" (deleted)")
-		} else {
-			files = append(files, p)
-			dir := "./" + filepath.ToSlash(filepath.Dir(p))
-			if !dirSeen[dir] {
-				dirSeen[dir] = true
-				dirs = append(dirs, dir)
-			}
+		files = append(files, p)
+		dir := "./" + filepath.ToSlash(filepath.Dir(p))
+		if !dirSeen[dir] {
+			dirSeen[dir] = true
+			dirs = append(dirs, dir)
 		}
 	}
 	ignored, err := ignoredGoFiles(dirs)
@@ -721,16 +807,15 @@ func runCoverage(args []string) error {
 		pct = 100 * float64(covered) / float64(execMapped)
 	}
 	fmt.Printf("changed-line coverage: covered=%d exec_mapped=%d (%.1f%%) unmapped=%d platform_excluded=%d nonexec=%d files=%d unmeasured=%d no_lines=%d\n",
-		covered, execMapped, pct, unmapped, platform, nonexec, len(files), len(ch.unmeasured), len(noLines))
+		covered, execMapped, pct, unmapped, platform, nonexec, len(files), len(ch.unmeasured), len(ch.noLines))
 	fmt.Println("classifier: set2 (non-executable) = lines with no ast.Stmt on them (blank, comment, package/import, declaration-only, bare delimiter); set1 = executable lines inside a profile block; set3 (unmapped) = executable lines with no profile block, never folded into set2")
-	if len(ch.measured)+len(ch.lineless) == 0 {
+	if len(ch.measured)+len(ch.noLines) == 0 {
 		fmt.Printf("no measured file in the diff (measured roots: %s)\n", strings.Join(ch.roots, " "))
 	}
-	if len(noLines) > 0 {
-		sort.Strings(noLines)
-		fmt.Printf("files with no line to measure (%d), inside the measured roots:\n", len(noLines))
-		for _, e := range noLines {
-			fmt.Println("  " + e)
+	if len(ch.noLines) > 0 {
+		fmt.Printf("files with no line to measure (%d), inside the measured roots:\n", len(ch.noLines))
+		for _, f := range ch.noLines {
+			fmt.Println("  " + f.String())
 		}
 	}
 	if len(ch.unmeasured) > 0 {
