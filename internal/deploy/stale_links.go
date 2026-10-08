@@ -1,13 +1,16 @@
 package deploy
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/apm-go/apm/internal/archive"
+	"github.com/apm-go/apm/internal/lockfile"
 )
 
 // RemoveStaleLinkedFiles deletes the stale deployed paths of one lock bucket
@@ -23,9 +26,15 @@ import (
 // makes a symlink, and it points them nowhere else, so any other symlink is
 // the user's, also one that leads elsewhere into projectDir. The first deploy
 // symlink on a path, from deployRoot down to the path itself, decides: only
-// that symlink is removed, never anything through it, so no hash is compared.
-// It is kept when claimed (normalized lock paths of the new lock) still has a
-// path at or below it.
+// that symlink is removed, never anything through it. It is kept when claimed
+// (normalized lock paths of the new lock) still has a path at or below it.
+//
+// A target inside bucketSource does not prove the deploy made the symlink:
+// the user can point an entry at another file of the same package, and the
+// lock does not record a symlink's target. So the symlink is removed only
+// when it dangles (its source is gone) or when the stale paths at or below it
+// read the content hashes the lock recorded (holdsDeployedContent). Otherwise
+// it is kept with a diagnostic.
 //
 // A symlink in one of those two places that leads outside bucketSource is an
 // entry the user took over. It is kept with one diagnostic, and for a skill
@@ -60,7 +69,7 @@ func RemoveStaleLinkedFiles(deployRoot, projectDir, bucketSource string, stale [
 		case loc.userLink != "":
 			if !decided[loc.userLink] {
 				decided[loc.userLink] = true
-				diags = append(diags, fmt.Sprintf("keeping %q: symlink target %q is not in the source of this package", loc.userLink, loc.userTarget))
+				diags = append(diags, fmt.Sprintf("keeping %q: symlink target %q is not in the source of this package", loc.userLink, loc.linkTarget))
 			}
 		case loc.deployLink != "":
 			if decided[loc.deployLink] {
@@ -71,6 +80,15 @@ func RemoveStaleLinkedFiles(deployRoot, projectDir, bucketSource string, stale [
 				continue
 			}
 			full := filepath.Join(deployRoot, filepath.FromSlash(loc.deployLink))
+			deployed, err := holdsDeployedContent(deployRoot, full, lockPathsAtOrBelow(stale, loc.deployLink), hashes)
+			if err != nil {
+				diags = append(diags, fmt.Sprintf("keeping %q: %v", loc.deployLink, err))
+				continue
+			}
+			if !deployed {
+				diags = append(diags, fmt.Sprintf("keeping %q: symlink target %q does not hold what this package deployed", loc.deployLink, loc.linkTarget))
+				continue
+			}
 			if err := os.Remove(full); err != nil {
 				diags = append(diags, fmt.Sprintf("keeping %q: failed to remove: %v", loc.deployLink, err))
 				continue
@@ -98,13 +116,15 @@ func RemoveStaleLinkedFiles(deployRoot, projectDir, bucketSource string, stale [
 // staleLocation is what a walk down one stale path found.
 type staleLocation struct {
 	exists bool
-	// deployLink is the lock path of the first deploy symlink.
+	// deployLink is the lock path of the first symlink in a place where the
+	// deploy makes one, the path itself or a skill directory, that leads into
+	// the bucket's source.
 	deployLink string
-	// userLink is the lock path of a symlink in a place where the deploy
-	// makes one, the path itself or a skill directory, that leads outside the
-	// bucket's source: the user took the entry over. userTarget is where it
-	// leads.
-	userLink, userTarget string
+	// userLink is the lock path of a symlink in such a place that leads
+	// outside the bucket's source: the user took the entry over.
+	userLink string
+	// linkTarget is where deployLink or userLink leads.
+	linkTarget string
 	// cleanupRoot is the deepest directory that must survive the removal of
 	// empty parents: deployRoot, or the deepest user symlink walked through.
 	cleanupRoot string
@@ -146,11 +166,11 @@ func locateStalePath(deployRoot, bucketSource, rel string) (staleLocation, error
 		// user's.
 		isSkillDir := i > 0 && segments[i-1] == "skills"
 		if isPathItself || isSkillDir {
-			loc.exists = true
+			loc.exists, loc.linkTarget = true, target
 			if archive.Contained(bucketSource, target) {
 				loc.deployLink = filepath.ToSlash(prefix)
 			} else {
-				loc.userLink, loc.userTarget = filepath.ToSlash(prefix), target
+				loc.userLink = filepath.ToSlash(prefix)
 			}
 			return loc, nil
 		}
@@ -159,6 +179,51 @@ func locateStalePath(deployRoot, bucketSource, rel string) (staleLocation, error
 	}
 	loc.exists = true
 	return loc, nil
+}
+
+// lockPathsAtOrBelow returns the entries of stale that are link itself or
+// below it, as the lock spells them.
+func lockPathsAtOrBelow(stale []string, link string) []string {
+	var paths []string
+	for _, f := range stale {
+		p := filepath.ToSlash(filepath.Clean(filepath.FromSlash(f)))
+		if p == link || strings.HasPrefix(p, link+"/") {
+			paths = append(paths, f)
+		}
+	}
+	return paths
+}
+
+// holdsDeployedContent reports whether the symlink at full is the one this
+// bucket's deploy made. The lock does not record a symlink's target, so the
+// proof is what the lock does record: the symlink dangles because its source
+// is gone, or at least one of lockPaths exists and each one that exists reads
+// through the symlink the content hash the lock holds for it. The comparison
+// is the one RemoveDeployedFiles makes.
+func holdsDeployedContent(deployRoot, full string, lockPaths []string, hashes map[string]string) (bool, error) {
+	if _, err := os.Stat(full); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return true, nil
+		}
+		return false, err
+	}
+	found := false
+	for _, f := range lockPaths {
+		actual, err := lockfile.HashFileBytes(filepath.Join(deployRoot, filepath.FromSlash(f)))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		_, wantHex, wantErr := lockfile.ParseHashEnvelope(hashes[f])
+		_, gotHex, _ := lockfile.ParseHashEnvelope(actual)
+		if wantErr != nil || wantHex != gotHex {
+			return false, nil
+		}
+		found = true
+	}
+	return found, nil
 }
 
 // resolvesInside reports whether full, with every symlink followed, is inside

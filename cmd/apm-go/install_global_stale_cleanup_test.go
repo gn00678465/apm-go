@@ -627,3 +627,63 @@ func TestInstallGlobal_StaleCleanup_KeepsFilesOfSkillDirTheUserRepointedOutsideG
 		t.Errorf("missing warning for the kept skill directory:\n%s", out)
 	}
 }
+
+func TestInstallGlobal_StaleCleanup_KeepsAgentSymlinkTheUserRepointedInsideSamePackage(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/agents/keep.md": globalStaleKeepAgent,
+		".apm/agents/gone.md": globalStaleGoneAgent,
+	})
+	globalStaleInstall(t, "claude", src)
+	keepSource, err := os.Readlink(filepath.Join(home, ".claude", "agents", "keep.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, ".claude", "agents", "gone.md")
+	globalStaleRelink(t, keepSource, link)
+
+	if err := os.Remove(filepath.Join(src, ".apm", "agents", "gone.md")); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if !globalStaleIsSymlink(t, link) {
+		t.Fatal("the user's symlink was removed")
+	}
+	assertGlobalStaleLinkTarget(t, link, keepSource)
+	if strings.Contains(out, "Cleaned") {
+		t.Errorf("nothing may be deleted, want no cleaned line:\n%s", out)
+	}
+	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target "`+keepSource+`" does not hold what this package deployed`) {
+		t.Errorf("missing warning for the kept symlink:\n%s", out)
+	}
+}
+
+func TestInstallGlobal_StaleCleanup_KeepsSkillSymlinkTheUserRepointedInsideSamePackage(t *testing.T) {
+	home, src := globalStaleScope(t, map[string]string{
+		".apm/skills/demo/SKILL.md":  staleCleanupSkillMD,
+		".apm/skills/other/SKILL.md": "---\nname: other\ndescription: other skill\n---\n\n# Other\n",
+	})
+	globalStaleInstall(t, "claude", src)
+	otherSource, err := os.Readlink(filepath.Join(home, ".claude", "skills", "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, ".claude", "skills", "demo")
+	globalStaleRelink(t, otherSource, link)
+
+	if err := os.RemoveAll(filepath.Join(src, ".apm", "skills", "demo")); err != nil {
+		t.Fatal(err)
+	}
+	out := globalStaleInstall(t, "claude")
+
+	if !globalStaleIsSymlink(t, link) {
+		t.Fatal("the user's symlink was removed")
+	}
+	assertGlobalStaleLinkTarget(t, link, otherSource)
+	if strings.Contains(out, "Cleaned") {
+		t.Errorf("nothing may be deleted, want no cleaned line:\n%s", out)
+	}
+	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target "`+otherSource+`" does not hold what this package deployed`) {
+		t.Errorf("missing warning for the kept skill directory:\n%s", out)
+	}
+}

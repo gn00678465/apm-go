@@ -9,6 +9,14 @@ import (
 	"testing"
 )
 
+// sha256sum of the three source files staleLinkRoots and the tests write:
+// "gone\n", "demo\n" and "extra\n".
+const (
+	staleLinkGoneHash  = "sha256:4b9f2c32577beb1ebc8ab2a1e226faaa9176a81cd4eedbaa22f8a0db919972b5"
+	staleLinkDemoHash  = "sha256:eb9c26baee47f19e4993a77bca936d0ff09e355a82d3db79bf154ebff1a80604"
+	staleLinkExtraHash = "sha256:65110ea3b8b62b0c09742c368bf1527f0978b06dff7a1371ef7b4c98e244d91a"
+)
+
 // staleLinkRoots returns a deploy root and a source root in one temp
 // directory. The source root holds agents/keep.md, agents/gone.md and
 // skills/demo/SKILL.md.
@@ -80,8 +88,7 @@ func TestRemoveStaleLinkedFiles_PathIsSymlink(t *testing.T) {
 	link := filepath.Join(deployRoot, ".claude", "agents", "gone.md")
 	staleLink(t, filepath.Join(sourceRoot, "agents", "gone.md"), link)
 
-	// No hash is recorded: a symlink is removed without a hash comparison.
-	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"}, nil, nil)
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"}, map[string]string{".claude/agents/gone.md": staleLinkGoneHash}, nil)
 
 	assertStaleLinkResult(t, removed, []string{".claude/agents/gone.md"}, diags, 0)
 	assertStaleLinkGone(t, link)
@@ -113,7 +120,8 @@ func TestRemoveStaleLinkedFiles_ParentSymlinkWithNothingClaimedBelow(t *testing.
 	writeStaleLinkFile(t, filepath.Join(deployRoot, ".claude", "skills", "demo-two", "SKILL.md"), "two\n")
 
 	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
-		[]string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra.md"}, nil, claimed)
+		[]string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash, ".claude/skills/demo/extra.md": staleLinkExtraHash}, claimed)
 
 	assertStaleLinkResult(t, removed, []string{".claude/skills/demo"}, diags, 0)
 	assertStaleLinkGone(t, link)
@@ -219,7 +227,7 @@ func TestRemoveStaleLinkedFiles_KeepsDeployRootAndNonEmptyParents(t *testing.T) 
 	staleLink(t, filepath.Join(sourceRoot, "agents", "gone.md"), filepath.Join(deployRoot, ".claude", "agents", "gone.md"))
 	writeStaleLinkFile(t, filepath.Join(deployRoot, ".claude", "settings.json"), "{}\n")
 
-	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"}, nil, nil)
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"}, map[string]string{".claude/agents/gone.md": staleLinkGoneHash}, nil)
 
 	assertStaleLinkResult(t, removed, []string{".claude/agents/gone.md"}, diags, 0)
 	assertStaleLinkGone(t, filepath.Join(deployRoot, ".claude", "agents"))
@@ -325,7 +333,7 @@ func TestRemoveStaleLinkedFiles_UserParentSymlink_SurvivesWhenEmptied(t *testing
 			staleLink(t, filepath.Join(sourceRoot, "agents", "gone.md"), full)
 		},
 		"regular file": func(t *testing.T, _, full string) {
-			writeStaleLinkFile(t, full, "name = \"gone\"\n")
+			writeStaleLinkFile(t, full, "gone\n")
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -334,7 +342,7 @@ func TestRemoveStaleLinkedFiles_UserParentSymlink_SurvivesWhenEmptied(t *testing
 			deployed(t, sourceRoot, filepath.Join(dotfiles, "agents", "gone.md"))
 
 			removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"},
-				map[string]string{".claude/agents/gone.md": "sha256:8201da4eee960804250182dd55436de61f94c2298cdbae62dbb71825cabf3eff"}, nil)
+				map[string]string{".claude/agents/gone.md": staleLinkGoneHash}, nil)
 
 			assertStaleLinkResult(t, removed, []string{".claude/agents/gone.md"}, diags, 0)
 			assertStaleLinkGone(t, filepath.Join(dotfiles, "agents"))
@@ -360,7 +368,8 @@ func TestRemoveStaleLinkedFiles_ReportsSymlinkThatCannotBeRemovedOnce(t *testing
 	t.Cleanup(func() { os.Chmod(skills, 0o755) })
 
 	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
-		[]string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra.md"}, nil, nil)
+		[]string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash, ".claude/skills/demo/extra.md": staleLinkExtraHash}, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
 	if len(diags) == 1 && !strings.HasPrefix(diags[0], `keeping ".claude/skills/demo": failed to remove: `) {
@@ -503,7 +512,8 @@ func TestRemoveStaleLinkedFiles_NestedTargetRootSymlinkIntoSourceRootIsUsers(t *
 	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), filepath.Join(shared, "demo"))
 	staleLink(t, shared, filepath.Join(deployRoot, ".agents", "skills"))
 
-	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".agents/skills/demo/SKILL.md"}, nil, nil)
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".agents/skills/demo/SKILL.md"},
+		map[string]string{".agents/skills/demo/SKILL.md": staleLinkDemoHash}, nil)
 
 	assertStaleLinkResult(t, removed, []string{".agents/skills/demo"}, diags, 0)
 	assertStaleLinkIsSymlink(t, filepath.Join(deployRoot, ".agents", "skills"))
@@ -517,7 +527,8 @@ func TestRemoveStaleLinkedFiles_SkillRootSymlinkIntoSourceRootIsUsers(t *testing
 	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), filepath.Join(shared, "demo"))
 	staleLink(t, shared, filepath.Join(deployRoot, ".claude", "skills"))
 
-	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/skills/demo/SKILL.md"}, nil, nil)
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/skills/demo/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, nil)
 
 	assertStaleLinkResult(t, removed, []string{".claude/skills/demo"}, diags, 0)
 	assertStaleLinkIsSymlink(t, filepath.Join(deployRoot, ".claude", "skills"))
@@ -532,7 +543,8 @@ func TestRemoveStaleLinkedFiles_RemovesSkillSymlinkInBundle(t *testing.T) {
 	link := filepath.Join(deployRoot, ".agents", "plugins", "pkg", "skills", "demo")
 	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), link)
 
-	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".agents/plugins/pkg/skills/demo/SKILL.md"}, nil, nil)
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".agents/plugins/pkg/skills/demo/SKILL.md"},
+		map[string]string{".agents/plugins/pkg/skills/demo/SKILL.md": staleLinkDemoHash}, nil)
 
 	assertStaleLinkResult(t, removed, []string{".agents/plugins/pkg/skills/demo"}, diags, 0)
 	assertStaleLinkGone(t, link)
@@ -658,4 +670,149 @@ func TestRemoveStaleLinkedFiles_TakenOverSkillDirThatDanglesIsKept(t *testing.T)
 		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
 	assertStaleLinkIsSymlink(t, link)
+}
+
+// staleLinkDemoSkill links .claude/skills/demo to the demo skill in
+// sourceRoot, which then holds SKILL.md ("demo\n") and, when withExtra,
+// extra.md ("extra\n").
+func staleLinkDemoSkill(t *testing.T, deployRoot, sourceRoot string, withExtra bool) (link string) {
+	t.Helper()
+	if withExtra {
+		writeStaleLinkFile(t, filepath.Join(sourceRoot, "skills", "demo", "extra.md"), "extra\n")
+	}
+	link = filepath.Join(deployRoot, ".claude", "skills", "demo")
+	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), link)
+	return link
+}
+
+func assertStaleLinkNotDeployed(t *testing.T, diags []string, lockPath, target string) {
+	t.Helper()
+	want := `keeping "` + lockPath + `": symlink target "` + target + `" does not hold what this package deployed`
+	if len(diags) != 1 || diags[0] != want {
+		t.Errorf("diags = %q, want [%q]", diags, want)
+	}
+}
+
+func TestRemoveStaleLinkedFiles_KeepsPathSymlinkWithNoRecordedHash(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := filepath.Join(deployRoot, ".claude", "agents", "gone.md")
+	target := filepath.Join(sourceRoot, "agents", "gone.md")
+	staleLink(t, target, link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"}, nil, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	assertStaleLinkNotDeployed(t, diags, ".claude/agents/gone.md", target)
+	assertStaleLinkIsSymlink(t, link)
+}
+
+// The user pointed the entry at another file of the same package.
+func TestRemoveStaleLinkedFiles_KeepsPathSymlinkThatReadsOtherContent(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := filepath.Join(deployRoot, ".claude", "agents", "gone.md")
+	target := filepath.Join(sourceRoot, "agents", "keep.md")
+	staleLink(t, target, link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"},
+		map[string]string{".claude/agents/gone.md": staleLinkGoneHash}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	assertStaleLinkNotDeployed(t, diags, ".claude/agents/gone.md", target)
+	assertStaleLinkIsSymlink(t, link)
+	assertStaleLinkContent(t, target, "keep\n")
+}
+
+func TestRemoveStaleLinkedFiles_RemovesSkillSymlinkWhenOneStalePathIsMissing(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := staleLinkDemoSkill(t, deployRoot, sourceRoot, false)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash, ".claude/skills/demo/extra.md": staleLinkExtraHash}, nil)
+
+	assertStaleLinkResult(t, removed, []string{".claude/skills/demo"}, diags, 0)
+	assertStaleLinkGone(t, link)
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
+}
+
+func TestRemoveStaleLinkedFiles_KeepsSkillSymlinkWhenOneStalePathReadsOtherContent(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := staleLinkDemoSkill(t, deployRoot, sourceRoot, true)
+
+	// extra.md is recorded with the hash of "demo\n", not of its content.
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash, ".claude/skills/demo/extra.md": staleLinkDemoHash}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	assertStaleLinkNotDeployed(t, diags, ".claude/skills/demo", filepath.Join(sourceRoot, "skills", "demo"))
+	assertStaleLinkIsSymlink(t, link)
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "extra.md"), "extra\n")
+}
+
+func TestRemoveStaleLinkedFiles_KeepsSkillSymlinkWhenNoStalePathExists(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := staleLinkDemoSkill(t, deployRoot, sourceRoot, false)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo/old.md", ".claude/skills/demo/older.md"},
+		map[string]string{".claude/skills/demo/old.md": staleLinkDemoHash, ".claude/skills/demo/older.md": staleLinkDemoHash}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	assertStaleLinkNotDeployed(t, diags, ".claude/skills/demo", filepath.Join(sourceRoot, "skills", "demo"))
+	assertStaleLinkIsSymlink(t, link)
+}
+
+func TestRemoveStaleLinkedFiles_KeepsSymlinkWhoseTargetCannotBeResolved(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	loop := filepath.Join(sourceRoot, "agents", "loop.md")
+	staleLink(t, loop, loop)
+	link := filepath.Join(deployRoot, ".claude", "agents", "gone.md")
+	staleLink(t, loop, link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"},
+		map[string]string{".claude/agents/gone.md": staleLinkGoneHash}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if len(diags) == 1 && (!strings.HasPrefix(diags[0], `keeping ".claude/agents/gone.md": `) || strings.Contains(diags[0], "does not hold")) {
+		t.Errorf("diag = %q, want the error of resolving the target", diags[0])
+	}
+	assertStaleLinkIsSymlink(t, link)
+}
+
+func TestRemoveStaleLinkedFiles_KeepsSymlinkWhoseContentCannotBeRead(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := filepath.Join(deployRoot, ".claude", "agents", "gone.md")
+	staleLink(t, filepath.Join(sourceRoot, "agents"), link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"},
+		map[string]string{".claude/agents/gone.md": staleLinkGoneHash}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if len(diags) == 1 && (!strings.HasPrefix(diags[0], `keeping ".claude/agents/gone.md": hash file `) || strings.Contains(diags[0], "does not hold")) {
+		t.Errorf("diag = %q, want the error of reading the content", diags[0])
+	}
+	assertStaleLinkIsSymlink(t, link)
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "keep.md"), "keep\n")
+}
+
+// A sibling whose name starts with the skill's name is not below the skill
+// symlink: its content does not count in the proof.
+func TestRemoveStaleLinkedFiles_ProofIgnoresSiblingWithSameNamePrefix(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := staleLinkDemoSkill(t, deployRoot, sourceRoot, false)
+	sibling := filepath.Join(deployRoot, ".claude", "skills", "demo-two", "SKILL.md")
+	writeStaleLinkFile(t, sibling, "edited by the user\n")
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo/SKILL.md", ".claude/skills/demo-two/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash, ".claude/skills/demo-two/SKILL.md": staleLinkDemoHash}, nil)
+
+	assertStaleLinkResult(t, removed, []string{".claude/skills/demo"}, diags, 1)
+	if len(diags) == 1 && diags[0] != `keeping ".claude/skills/demo-two/SKILL.md": modified since deploy (hash mismatch)` {
+		t.Errorf("diag = %q", diags[0])
+	}
+	assertStaleLinkGone(t, link)
+	assertStaleLinkContent(t, sibling, "edited by the user\n")
 }
