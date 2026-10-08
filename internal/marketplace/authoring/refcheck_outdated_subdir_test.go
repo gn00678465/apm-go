@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/apm-go/apm/internal/semver"
 )
@@ -424,6 +425,43 @@ func TestNewRevParseCmd_ShapeAndSecureEnv(t *testing.T) {
 		if !slices.Contains(cmd.Env, want) {
 			t.Errorf("env is missing %q", want)
 		}
+	}
+}
+
+func TestObjectIDAtFetchHead_GitFailure_IsAnErrorNotAMissingPath(t *testing.T) {
+	// A bare repository that never fetched has no FETCH_HEAD to resolve.
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "--bare")
+
+	id, found, err := objectIDAtFetchHead(dir, subdirPath)
+
+	if err == nil || !strings.HasPrefix(err.Error(), "git rev-parse plugins/tool: ") || strings.Contains(err.Error(), "timed out") {
+		t.Errorf("err = %v, want git's own failure behind \"git rev-parse plugins/tool: \"", err)
+	}
+	if id != "" || found {
+		t.Errorf("id = %q found=%v, want \"\" false", id, found)
+	}
+}
+
+func TestObjectIDAtFetchHead_TimesOut(t *testing.T) {
+	fakeGitDir := buildFakeGit(t)
+	t.Setenv("PATH", fakeGitDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKEGIT_SLEEP_MS", "5000")
+	orig := listRefsTimeout
+	listRefsTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { listRefsTimeout = orig })
+
+	start := time.Now()
+	id, found, err := objectIDAtFetchHead(t.TempDir(), subdirPath)
+
+	if err == nil || err.Error() != "git rev-parse plugins/tool: timed out after 200ms" {
+		t.Errorf("err = %v, want \"git rev-parse plugins/tool: timed out after 200ms\"", err)
+	}
+	if id != "" || found {
+		t.Errorf("id = %q found=%v, want \"\" false", id, found)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Errorf("took %s; the timeout did not fire", time.Since(start))
 	}
 }
 
