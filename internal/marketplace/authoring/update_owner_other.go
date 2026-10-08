@@ -24,3 +24,9 @@ func keepOwner(tmp *os.File, orig os.FileInfo) error {
 	}
 	return err
 }
+
+// hasSecondHardLink reports whether the file info describes has another
+// name, which a rename over this one would leave on the old content.
+func hasSecondHardLink(info os.FileInfo) bool {
+	return info.Sys().(*syscall.Stat_t).Nlink > 1
+}

@@ -124,3 +124,24 @@ func TestPackageUpdate_OwnerAndGroupAlreadyMatch_NoChown(t *testing.T) {
 	}
 	assertFile(t, dir, "apm.yml", apmYML("    - name: tool\n      source: owner/tool\n      ref: "+shaB+"\n"))
 }
+
+func TestApplyPackageUpdates_HardLinkedConfig_Refused(t *testing.T) {
+	dir := t.TempDir()
+	content := apmYML(refusedConfig)
+	writeFile(t, dir, "apm.yml", content)
+	path, other := filepath.Join(dir, "apm.yml"), filepath.Join(dir, "hard.yml")
+	if err := os.Link(path, other); err != nil {
+		t.Fatal(err)
+	}
+	mtime := backdate(t, dir, "apm.yml")
+
+	assertBothRunsRefuse(t, dir, "cannot update "+path+" in place: it has more than one hard link; edit it by hand")
+
+	assertNotWritten(t, dir, "apm.yml", content, mtime)
+	assertFile(t, dir, "hard.yml", content)
+	a, errA := os.Stat(path)
+	b, errB := os.Stat(other)
+	if errA != nil || errB != nil || !os.SameFile(a, b) {
+		t.Errorf("apm.yml and hard.yml are no longer the same file (%v, %v)", errA, errB)
+	}
+}

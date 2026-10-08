@@ -336,3 +336,37 @@ func TestMarketplacePackageUpdate_DryRun_ReportsWhatARealRunWouldRefuse(t *testi
 		t.Errorf("apm.yml mtime = %v, want %v (the file was written)", info.ModTime(), old)
 	}
 }
+
+func TestMarketplacePackageUpdate_SymlinkedConfig_RefusedByDryRunAndRealRun(t *testing.T) {
+	chdirTemp(t)
+	writeOutdatedFixture(t, updateFixture)
+	if err := os.Rename("apm.yml", "shared.yml"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("shared.yml", "apm.yml"); err != nil {
+		t.Skipf("cannot create a symbolic link here: %v", err)
+	}
+	withCannedRefLister(t, updateRemote())
+
+	want := "Error: cannot update apm.yml in place: it is a symbolic link; edit the file it points to by hand\n"
+	for _, args := range [][]string{{"package", "update", "--dry-run"}, {"package", "update"}} {
+		out, err := runMarketplaceCmd(t, args...)
+		if out != want {
+			t.Errorf("%v output =\n%s\nwant\n%s", args, out, want)
+		}
+		if got := exitCodeOf(err); err == nil || got != 2 {
+			t.Errorf("%v err = %v exit = %d, want an error with exit 2", args, err, got)
+		}
+	}
+
+	if target, err := os.Readlink("apm.yml"); err != nil || target != "shared.yml" {
+		t.Errorf("Readlink(apm.yml) = %q, %v; want the link left as it was", target, err)
+	}
+	data, err := os.ReadFile("shared.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != updateFixtureHeader+updateFixture {
+		t.Errorf("shared.yml changed:\n%s", data)
+	}
+}

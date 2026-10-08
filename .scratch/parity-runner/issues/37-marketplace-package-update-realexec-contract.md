@@ -45,12 +45,30 @@ does have keeps the waiver / pending-case rule unchanged.
   entries are edited in one in-memory copy, validated, compared with the plan,
   and written once (temp file, fsync, rename). An entry that cannot be edited
   in place is an error, never a redraw.
-- The write keeps the config file's permission bits, owner and group; when
-  one of them cannot be kept, nothing is written.
+- File contract. The write is a rename, which replaces the whole file, so
+  the result equals an edit in place only inside this closed list:
+  - Kept: the config file's permission bits, owner and group; when one of
+    them cannot be kept, nothing is written.
+  - Refused, exit 2, nothing written, when at least one entry would be
+    updated (with nothing to update the file is not checked):
+    - a symbolic link:
+      `cannot update <path> in place: it is a symbolic link; edit the file it points to by hand`
+    - another non-regular file:
+      `cannot update <path> in place: it is not a regular file`
+    - a second hard link (not checked on Windows):
+      `cannot update <path> in place: it has more than one hard link; edit it by hand`
+    - a file the process cannot open for writing:
+      `cannot update <path> in place: <the open error>`
+    The command never follows a symbolic link to write its target.
+  - Not kept and not checked: POSIX ACLs, extended attributes, SELinux and
+    other security labels; timestamps (the mtime is new after a write); a
+    change another process makes to the file between the command's read and
+    the rename; an error of the write itself, such as a directory that
+    cannot be written, which shows in a real run only.
 - Flags: `--dry-run` (every step of a real run but the write: it prints the
-  same values and reports the same resolution, in-place replacement and
-  validation errors with the same exit code, and leaves the file alone; an
-  error of the write itself shows in a real run only), `--include-prerelease`
+  same values and reports the same resolution, refusal, in-place replacement
+  and validation errors with the same exit code, and leaves the file alone;
+  an error of the write itself shows in a real run only), `--include-prerelease`
   (as in `outdated`). No other flag. The command does not run `pack`.
 - Output, on stdout through the `ux` printers, in config order:
   - ` + Updated package '<name>': version <old> -> <new>, ref <old12> -> <new12>`

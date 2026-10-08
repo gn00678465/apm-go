@@ -585,7 +585,7 @@ func TestApplyPackageUpdates_UnreadableConfig_Error(t *testing.T) {
 	}
 	dir := t.TempDir()
 	writeFile(t, dir, "marketplace.yml", "name: demo\n")
-	if err := os.Chmod(filepath.Join(dir, "marketplace.yml"), 0); err != nil {
+	if err := os.Chmod(filepath.Join(dir, "marketplace.yml"), 0o200); err != nil {
 		t.Fatal(err)
 	}
 

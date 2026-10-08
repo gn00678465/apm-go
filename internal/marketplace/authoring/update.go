@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,17 +108,27 @@ func PlanPackageUpdates(cfg *AuthoringConfig, names []string, includePrerelease 
 }
 
 // ApplyPackageUpdates writes every UpdateApply in updates to dir's active
-// config file in one atomic write that keeps the file's owner, group and
-// permission bits,
-// replacing only the bytes of each entry's `ref` and `version` values.
-// `package set` renders the whole entry again (packageEntryNode), which
-// drops comments and keys it does not know; an entry that cannot be edited
-// in place is an error here, never a redraw. Nothing is written when
-// updates holds no UpdateApply.
+// config file, replacing only the bytes of each entry's `ref` and `version`
+// values. `package set` renders the whole entry again (packageEntryNode),
+// which drops comments and keys it does not know; an entry that cannot be
+// edited in place is an error here, never a redraw. Nothing is written, and
+// nothing is checked, when updates holds no UpdateApply.
 //
-// dryRun does everything but the write, so it returns the same resolution,
+// The write is one rename of a temp file over the config file, and a rename
+// replaces the whole file, not its content. The contract that makes the
+// result equal to an edit in place is closed:
+//   - kept: owner, group and permission bits (writeConfigKeepingModeAndOwner);
+//   - refused before anything is replaced: a config file that is a symbolic
+//     link or another non-regular file, that has a second hard link, or that
+//     the process cannot open for writing (checkReplaceableByRename);
+//   - neither kept nor checked: ACLs, extended attributes and security
+//     labels, timestamps, and a change another process makes to the file
+//     between this function's read and the rename.
+//
+// dryRun does everything but the write, so it returns the same refusal,
 // in-place replacement and validation errors as a real run; an error of the
-// write itself shows in a real run only.
+// write itself (a directory that cannot be written) shows in a real run
+// only.
 func ApplyPackageUpdates(dir string, updates []PackageUpdate, dryRun bool) error {
 	planned := make(map[int]PackageUpdate)
 	for _, u := range updates {
@@ -130,6 +141,9 @@ func ApplyPackageUpdates(dir string, updates []PackageUpdate, dryRun bool) error
 	}
 
 	path, prefix, err := locateEditableConfig(dir)
+	if err == nil {
+		err = checkReplaceableByRename(path)
+	}
 	if err != nil {
 		return err
 	}
@@ -193,13 +207,41 @@ func ApplyPackageUpdates(dir string, updates []PackageUpdate, dryRun bool) error
 	return writeConfigKeepingModeAndOwner(path, out)
 }
 
+// checkReplaceableByRename reports why a rename over path would not leave
+// what an edit of path in place leaves: the link itself would be replaced
+// instead of its target, the other names of the file would keep the old
+// content, or a file the user made read-only would be changed. It reads
+// path's metadata and opens the file without writing, so it changes nothing.
+func checkReplaceableByRename(path string) error {
+	info, err := os.Lstat(path)
+	switch {
+	case err != nil:
+	case info.Mode()&os.ModeSymlink != 0:
+		err = errors.New("it is a symbolic link; edit the file it points to by hand")
+	case !info.Mode().IsRegular():
+		err = errors.New("it is not a regular file")
+	case hasSecondHardLink(info):
+		err = errors.New("it has more than one hard link; edit it by hand")
+	default:
+		var f *os.File
+		if f, err = os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+			f.Close()
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("cannot update %s in place: %w", path, err)
+	}
+	return nil
+}
+
 // writeConfigKeepingModeAndOwner replaces path's content the way
 // atomicWriteFile does (temp file in the same directory, fsync, rename),
 // with path's owner, group and permission bits put on the temp file before
 // the rename; when one of them cannot be kept, nothing is written. It is
-// separate because atomicWriteFile leaves the file with CreateTemp's 0600
-// and the process's own group, and changing that function for `package
-// add/set/remove` needs an owner ruling.
+// the "kept" part of ApplyPackageUpdates' contract. It is separate because
+// atomicWriteFile leaves the file with CreateTemp's 0600 and the process's
+// own group, and changing that function for `package add/set/remove` needs
+// an owner ruling.
 func writeConfigKeepingModeAndOwner(path string, data []byte) error {
 	info, err := os.Stat(path)
 	if err != nil {
