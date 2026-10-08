@@ -32,9 +32,14 @@ type staleCleanup struct {
 // install/phases/post_deps_local.py:60-62,125 for local content). failed uses
 // the keys of deploy.DeployResult.FailedBuckets.
 //
+// deployRoot is the directory lock paths are relative to. A non-empty
+// linkSourceRoot says the deploy made symlinks into that directory (a
+// --global install): a stale symlink is then removed itself and nothing is
+// deleted through it (deploy.RemoveStaleLinkedFiles).
+//
 // newLock must already carry this run's deployed files. Results are ordered
 // local bucket first, then newLock.Dependencies order.
-func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, targets []string, projectDir string) []staleCleanup {
+func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
 	claimed := make(map[string]bool)
 	for _, f := range newLock.LocalDeployedFiles {
 		claimed[normalizeDeployPath(f)] = true
@@ -57,7 +62,12 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		if len(stale) == 0 {
 			return
 		}
-		removed, _, diags := deploy.RemoveDeployedFiles(projectDir, stale, oldHashes)
+		var removed, diags []string
+		if linkSourceRoot != "" {
+			removed, diags = deploy.RemoveStaleLinkedFiles(deployRoot, linkSourceRoot, stale, oldHashes, claimed)
+		} else {
+			removed, _, diags = deploy.RemoveDeployedFiles(deployRoot, stale, oldHashes)
+		}
 		if len(removed) > 0 || len(diags) > 0 {
 			sort.Strings(removed)
 			results = append(results, staleCleanup{label: label, removed: removed, diags: diags})

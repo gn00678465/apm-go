@@ -1925,11 +1925,19 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			ux.Warn(os.Stderr, "%s", d)
 		}
 
-		// Stale-file cleanup (issue #30). Skipped for --global: it deploys
-		// symlinks into apm_modules, so a delete through one would remove the
-		// source file.
-		if existingLock != nil && deployDir == "" {
-			for _, c := range cleanStaleDeployedFiles(existingLock, newLock, deployResult.FailedBuckets, targets, ".") {
+		// Stale-file cleanup (issues #30, #32). --global deploys symlinks
+		// from deployDir into this directory, so there a stale symlink is
+		// removed itself and nothing is deleted through it: a delete through
+		// one would remove the source file.
+		if existingLock != nil {
+			cleanRoot, linkSourceRoot := ".", ""
+			if deployDir != "" {
+				cleanRoot = deployDir
+				if linkSourceRoot, err = filepath.Abs("."); err != nil {
+					return fmt.Errorf("resolve global project directory: %w", err)
+				}
+			}
+			for _, c := range cleanStaleDeployedFiles(existingLock, newLock, deployResult.FailedBuckets, targets, cleanRoot, linkSourceRoot) {
 				if n := len(c.removed); n > 0 {
 					noun := "files"
 					if n == 1 {
