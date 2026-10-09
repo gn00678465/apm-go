@@ -1,8 +1,10 @@
 package deploy
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/apm-go/apm/internal/lockfile"
@@ -38,6 +40,11 @@ type DeployResult struct {
 	// file list is incomplete, so a path missing from it is not evidence that
 	// the source is gone.
 	FailedBuckets map[string]bool
+	// KeptDirs holds the deploy-root-relative path of each real skill
+	// directory a symlink deploy left in place because it holds content the
+	// package does not have. Nothing below one is this run's deploy output,
+	// and nothing below one is stale output of an earlier run either.
+	KeptDirs []string
 }
 
 // SkillFilter scopes a per-dependency --skill name whitelist (BUG-2, design
@@ -303,6 +310,16 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 
 			files, err := adapter.DeployPrimitive(p, deployDir)
 			if err != nil {
+				var kept *keptSkillDirError
+				if errors.As(err, &kept) {
+					// Targets that share .agents/skills/<name> report the
+					// same directory once each.
+					if !slices.Contains(result.KeptDirs, kept.dir) {
+						result.KeptDirs = append(result.KeptDirs, kept.dir)
+						result.Diags = append(result.Diags, fmt.Sprintf("%v; skill %q not deployed", kept, p.Name))
+					}
+					continue
+				}
 				result.Diags = append(result.Diags,
 					fmt.Sprintf("deploy %s to %s failed: %v", p.Name, target, err))
 				if result.FailedBuckets == nil {
