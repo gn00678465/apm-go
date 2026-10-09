@@ -245,13 +245,9 @@ func symlinkSkillTo(srcDir, absDestDir, destDir string) ([]string, error) {
 		if mismatch, ok := firstEntryNotInSource(absDestDir, absSrc); !ok {
 			return nil, &keptSkillDirError{dir: destDir, mismatch: mismatch}
 		}
-		if err := os.RemoveAll(absDestDir); err != nil {
-			return nil, fmt.Errorf("replace skill dir: %w", err)
-		}
-	default:
-		if err := os.Remove(absDestDir); err != nil {
-			return nil, fmt.Errorf("replace skill entry: %w", err)
-		}
+	}
+	if err := os.RemoveAll(absDestDir); err != nil {
+		return nil, fmt.Errorf("replace skill destination: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(absDestDir), 0755); err != nil {
 		return nil, fmt.Errorf("create parent dir: %w", err)

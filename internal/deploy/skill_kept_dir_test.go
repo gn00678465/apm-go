@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/manifest"
@@ -86,7 +88,8 @@ func TestSymlinkSkillTo_RealDirectory(t *testing.T) {
 		dest map[string]string
 		// prepare changes the destination or the source after dest is written.
 		prepare      func(t *testing.T, src, dest string)
-		wantMismatch string // "" = the directory is replaced by the symlink
+		wantMismatch string   // "" = the directory is replaced by the symlink
+		wantFiles    []string // when replaced; nil = the files of keptDirSkillSource
 	}{
 		{
 			name: "same content with a file in a subdirectory is replaced",
@@ -141,6 +144,26 @@ func TestSymlinkSkillTo_RealDirectory(t *testing.T) {
 				"SKILL.md": keptDirSkillSource["SKILL.md"] + "my edit\n",
 			},
 			wantMismatch: "SKILL.md",
+		},
+		{
+			name: "file longer than one compare buffer with the same bytes is replaced",
+			dest: keptDirSkillSource,
+			prepare: func(t *testing.T, src, dest string) {
+				big := strings.Repeat("0123456789abcdef", 12*1024)
+				writeKeptDirFiles(t, src, map[string]string{"big.bin": big})
+				writeKeptDirFiles(t, dest, map[string]string{"big.bin": big})
+			},
+			wantFiles: []string{".claude/skills/s1/SKILL.md", ".claude/skills/s1/big.bin", ".claude/skills/s1/refs/detail.md"},
+		},
+		{
+			name: "file that differs only in its last byte after several buffers is kept",
+			dest: keptDirSkillSource,
+			prepare: func(t *testing.T, src, dest string) {
+				big := strings.Repeat("0123456789abcdef", 12*1024)
+				writeKeptDirFiles(t, src, map[string]string{"big.bin": big})
+				writeKeptDirFiles(t, dest, map[string]string{"big.bin": big[:len(big)-1] + "X"})
+			},
+			wantMismatch: "big.bin",
 		},
 		{
 			name: "first mismatch in lexical order is reported",
@@ -205,6 +228,9 @@ func TestSymlinkSkillTo_RealDirectory(t *testing.T) {
 				}
 				sort.Strings(files)
 				want := []string{".claude/skills/s1/SKILL.md", ".claude/skills/s1/refs/detail.md"}
+				if tc.wantFiles != nil {
+					want = tc.wantFiles
+				}
 				if !reflect.DeepEqual(files, want) {
 					t.Errorf("files = %v, want %v", files, want)
 				}
@@ -233,12 +259,12 @@ func TestSymlinkSkillTo_RealDirectory(t *testing.T) {
 }
 
 func TestSymlinkSkillTo_ReplacesSymlinkAndRegularFile(t *testing.T) {
+	other := t.TempDir()
 	tests := []struct {
 		name    string
 		prepare func(t *testing.T, dest string)
 	}{
 		{"symlink the user pointed at another directory", func(t *testing.T, dest string) {
-			other := t.TempDir()
 			writeKeptDirFiles(t, other, map[string]string{"mine.txt": "mine\n"})
 			if err := os.Symlink(other, dest); err != nil {
 				t.Skipf("cannot create a symlink: %v", err)
@@ -270,6 +296,9 @@ func TestSymlinkSkillTo_ReplacesSymlinkAndRegularFile(t *testing.T) {
 			}
 			if target != src {
 				t.Errorf("symlink target = %q, want %q", target, src)
+			}
+			if got, want := keptDirFiles(t, other), map[string]string{"mine.txt": "mine\n"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("directory behind the user's symlink = %v, want %v", got, want)
 			}
 		})
 	}
@@ -377,5 +406,101 @@ func TestUnderKeptDir(t *testing.T) {
 	}
 	if UnderKeptDir(nil, ".claude/skills/s1/SKILL.md") {
 		t.Error("UnderKeptDir(nil, …) = true, want false")
+	}
+}
+
+// keptDirDenyAccess sets mode on full until the test ends, and skips where
+// permission bits do not restrict the process.
+func keptDirDenyAccess(t *testing.T, full string, mode os.FileMode) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows permission bits do not refuse a read or a delete")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not restrict root")
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(full, mode); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(full, info.Mode().Perm()) })
+}
+
+func TestSymlinkSkillTo_KeepsDirectoryWhenAFileCannotBeRead(t *testing.T) {
+	for _, side := range []string{"destination", "source"} {
+		t.Run(side, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "s1")
+			writeKeptDirFiles(t, src, keptDirSkillSource)
+			dest := filepath.Join(t.TempDir(), ".claude", "skills", "s1")
+			writeKeptDirFiles(t, dest, keptDirSkillSource)
+			unreadable := filepath.Join(dest, "SKILL.md")
+			if side == "source" {
+				unreadable = filepath.Join(src, "SKILL.md")
+			}
+			keptDirDenyAccess(t, unreadable, 0)
+
+			_, err := symlinkSkillTo(src, dest, ".claude/skills/s1")
+
+			var kept *keptSkillDirError
+			if !errors.As(err, &kept) {
+				t.Fatalf("err = %v, want a keptSkillDirError", err)
+			}
+			if kept.mismatch != "SKILL.md" {
+				t.Errorf("mismatch = %q, want %q", kept.mismatch, "SKILL.md")
+			}
+			if err := os.Chmod(unreadable, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := keptDirFiles(t, dest); keptDirIsSymlink(t, dest) || !reflect.DeepEqual(got, keptDirSkillSource) {
+				t.Errorf("destination = %v, want the real directory with %v", got, keptDirSkillSource)
+			}
+		})
+	}
+}
+
+func TestSymlinkSkillTo_DestinationThatCannotBeInspectedIsAnError(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "s1")
+	writeKeptDirFiles(t, src, keptDirSkillSource)
+	notADir := filepath.Join(t.TempDir(), "skills")
+	if err := os.WriteFile(notADir, []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := symlinkSkillTo(src, filepath.Join(notADir, "s1"), "skills/s1")
+
+	var kept *keptSkillDirError
+	if err == nil || errors.As(err, &kept) {
+		t.Fatalf("err = %v, want a deploy error", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("files = %v, want none", files)
+	}
+	if data, err := os.ReadFile(notADir); err != nil || string(data) != "mine\n" {
+		t.Errorf("the file in the way = %q, %v; want it unchanged", data, err)
+	}
+}
+
+func TestSymlinkSkillTo_DestinationThatCannotBeRemovedIsAnError(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "s1")
+	writeKeptDirFiles(t, src, keptDirSkillSource)
+	parent := filepath.Join(t.TempDir(), "skills")
+	dest := filepath.Join(parent, "s1")
+	writeKeptDirFiles(t, parent, map[string]string{"s1": "MY OWN NOTES\n"})
+	keptDirDenyAccess(t, parent, 0o555)
+
+	files, err := symlinkSkillTo(src, dest, "skills/s1")
+
+	var kept *keptSkillDirError
+	if err == nil || errors.As(err, &kept) {
+		t.Fatalf("err = %v, want a deploy error", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("files = %v, want none", files)
+	}
+	if data, err := os.ReadFile(dest); err != nil || string(data) != "MY OWN NOTES\n" {
+		t.Errorf("destination = %q, %v; want the file unchanged", data, err)
 	}
 }

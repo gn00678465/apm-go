@@ -43,19 +43,16 @@ func UnderKeptDir(keptDirs []string, relPath string) bool {
 // counts as a mismatch: the caller deletes destDir on ok.
 func firstEntryNotInSource(destDir, srcDir string) (mismatch string, ok bool) {
 	ok = true
-	_ = filepath.WalkDir(destDir, func(p string, d fs.DirEntry, err error) error {
-		rel, relErr := filepath.Rel(destDir, p)
-		if relErr != nil {
-			rel = p
-		}
+	_ = fs.WalkDir(os.DirFS(destDir), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err == nil && d.IsDir() {
 			return nil
 		}
-		if err == nil && d.Type().IsRegular() && sameRegularFile(p, filepath.Join(srcDir, rel)) {
+		name := filepath.FromSlash(rel)
+		if err == nil && sameRegularFile(filepath.Join(destDir, name), filepath.Join(srcDir, name)) {
 			return nil
 		}
-		mismatch, ok = filepath.ToSlash(rel), false
-		return filepath.SkipAll
+		mismatch, ok = rel, false
+		return fs.SkipAll
 	})
 	return mismatch, ok
 }
@@ -63,12 +60,9 @@ func firstEntryNotInSource(destDir, srcDir string) (mismatch string, ok bool) {
 // sameRegularFile reports whether a and b are regular files with the same
 // bytes. Neither path is followed when it is a symlink.
 func sameRegularFile(a, b string) bool {
-	infoA, err := os.Lstat(a)
-	if err != nil || !infoA.Mode().IsRegular() {
-		return false
-	}
-	infoB, err := os.Lstat(b)
-	if err != nil || !infoB.Mode().IsRegular() || infoA.Size() != infoB.Size() {
+	infoA, errA := os.Lstat(a)
+	infoB, errB := os.Lstat(b)
+	if errA != nil || errB != nil || !infoA.Mode().IsRegular() || !infoB.Mode().IsRegular() || infoA.Size() != infoB.Size() {
 		return false
 	}
 	fa, err := os.Open(a)
@@ -84,19 +78,15 @@ func sameRegularFile(a, b string) bool {
 
 	const chunk = 64 * 1024
 	bufA, bufB := make([]byte, chunk), make([]byte, chunk)
+	atEnd := func(err error) bool { return err == io.EOF || err == io.ErrUnexpectedEOF }
 	for {
 		nA, errA := io.ReadFull(fa, bufA)
 		nB, errB := io.ReadFull(fb, bufB)
 		if nA != nB || !bytes.Equal(bufA[:nA], bufB[:nB]) {
 			return false
 		}
-		endA := errA == io.EOF || errA == io.ErrUnexpectedEOF
-		endB := errB == io.EOF || errB == io.ErrUnexpectedEOF
-		if endA && endB {
-			return true
-		}
 		if errA != nil || errB != nil {
-			return false
+			return atEnd(errA) && atEnd(errB)
 		}
 	}
 }
