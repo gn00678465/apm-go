@@ -159,7 +159,7 @@ func TestCoverage_OnlyFilesOutsideRoots_PassesAndListsThem(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=1 no_lines=0\n",
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=1 no_lines=0 pkg_init=0\n",
 		"no measured file in the diff (measured roots: cmd internal)\n",
 		"UNMEASURED files (1), outside the measured roots:\n  tools/x/x.go\n",
 	)
@@ -189,7 +189,7 @@ func TestCoverage_FilesInsideAndOutsideRoots_MeasuresInsideListsOutside(t *testi
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=4 files=1 unmeasured=1 no_lines=0\n",
+		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=4 files=1 unmeasured=1 no_lines=0 pkg_init=0\n",
 		"UNMEASURED files (1), outside the measured roots:\n  tools/x/x.go\n",
 	)
 }
@@ -240,7 +240,7 @@ func TestCoverage_UnprofiledExecutableLineInsideRoot_Fails(t *testing.T) {
 
 	wantCode(t, code, 1, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0\n",
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0 pkg_init=0\n",
 		"UNMAPPED executable lines (1):\n  cmd/a/a.go:4\n",
 	)
 }
@@ -268,7 +268,7 @@ func TestCoverage_RootMatchesOnDirectoryBoundary(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"files=0 unmeasured=1 no_lines=0\n",
+		"files=0 unmeasured=1 no_lines=0 pkg_init=0\n",
 		"UNMEASURED files (1), outside the measured roots:\n  cmdx/y.go\n",
 	)
 }
@@ -293,7 +293,7 @@ func TestCoverage_OnlyNonGoChange_PassesWithNoMeasuredFile(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"files=0 unmeasured=0 no_lines=0\n",
+		"files=0 unmeasured=0 no_lines=0 pkg_init=0\n",
 		"no measured file in the diff (measured roots: cmd internal)\n",
 	)
 }
@@ -316,7 +316,7 @@ func TestCoverage_PureRenameInsideRoot_ListedUnderNewPath(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=0 no_lines=1\n",
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=0 no_lines=1 pkg_init=0\n",
 		"files with no line to measure (1), inside the measured roots:\n  cmd/a/b.go (renamed from cmd/a/a.go, no changed line)\n",
 	)
 	wantLacks(t, out, "no measured file in the diff")
@@ -344,7 +344,7 @@ func TestCoverage_DeletedFileInsideRoot_Listed(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"files=0 unmeasured=0 no_lines=1\n",
+		"files=0 unmeasured=0 no_lines=1 pkg_init=0\n",
 		"files with no line to measure (1), inside the measured roots:\n  cmd/a/gone.go (deleted)\n",
 	)
 	wantLacks(t, out, "no measured file in the diff")
@@ -368,7 +368,7 @@ func TestCoverage_PureRenameOutsideRoot_Unmeasured(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"files=0 unmeasured=1 no_lines=0\n",
+		"files=0 unmeasured=1 no_lines=0 pkg_init=0\n",
 		"UNMEASURED files (1), outside the measured roots:\n  tools/x/y.go\n",
 	)
 }
@@ -393,7 +393,7 @@ func TestCoverage_NonASCIIPath_UnprofiledLineFails(t *testing.T) {
 
 	wantCode(t, code, 1, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0\n",
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0 pkg_init=0\n",
 		"UNMAPPED executable lines (1):\n  cmd/a/檢查.go:4\n",
 	)
 	wantLacks(t, out, "no line to measure")
@@ -408,7 +408,7 @@ func TestCoverage_NonASCIIPath_ProfiledLineCounted(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0\n",
+		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0 pkg_init=0\n",
 	)
 }
 
@@ -446,7 +446,7 @@ func TestCoverage_OnlyRemovedLines_NoLineToMeasure(t *testing.T) {
 
 	wantCode(t, code, 0, out, errOut)
 	wantContains(t, out,
-		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=0 no_lines=1\n",
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=0 files=0 unmeasured=0 no_lines=1 pkg_init=0\n",
 		"files with no line to measure (1), inside the measured roots:\n  cmd/a/a.go (only removed lines)\n",
 	)
 	wantLacks(t, out, "no measured file in the diff")
@@ -485,7 +485,137 @@ func TestCoverage_PathWithSpace_UnprofiledLineFails(t *testing.T) {
 
 	wantCode(t, code, 1, out, errOut)
 	wantContains(t, out,
-		"unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0\n",
+		"unmapped=1 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0 pkg_init=0\n",
 		"UNMAPPED executable lines (1):\n  cmd/a/with space.go:4\n",
 	)
+}
+
+const pkgInitHeader = "package-level initializer lines"
+
+const pkgInitVarCallSrc = "package a\n\nvar V = calc()\n\nfunc calc() int {\n\treturn 1\n}\n"
+
+const pkgInitVarCallBlock = testModule + "/cmd/a/a.go:5.17,7.2 1 1\n"
+
+func TestCoverage_PackageVarCall_ListedAndPasses(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", pkgInitVarCallSrc)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", pkgInitVarCallBlock, "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=5 files=1 unmeasured=0 no_lines=0 pkg_init=1\n",
+		"package-level initializer lines (1), go cover emits no block for them; listed, not a failure:\n"+
+			"  cmd/a/a.go:3  var V  direct-tests: NONE (no direct textual reference)\n",
+	)
+}
+
+func TestCoverage_PackageVarCall_NamesDirectTest(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", pkgInitVarCallSrc)
+	r.write("cmd/a/a_test.go", "package a\n\nimport \"testing\"\n\nfunc TestV(t *testing.T) { _ = V }\n")
+	r.commit()
+
+	out, errOut, code := r.run("coverage", pkgInitVarCallBlock, "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=5 files=1 unmeasured=0 no_lines=0 pkg_init=1\n",
+		"  cmd/a/a.go:3  var V  direct-tests: a_test.go::TestV\n",
+	)
+}
+
+func TestCoverage_PackageVarCall_DoesNotChangeFailureOfUnmappedLine(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", pkgInitVarCallSrc)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 1, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=1 platform_excluded=0 nonexec=5 files=1 unmeasured=0 no_lines=0 pkg_init=1\n",
+		"  cmd/a/a.go:3  var V  direct-tests: NONE (no direct textual reference)\n",
+		"UNMAPPED executable lines (1):\n  cmd/a/a.go:6\n",
+	)
+	section, unmapped := strings.Index(out, pkgInitHeader), strings.Index(out, "UNMAPPED executable lines")
+	if section < 0 || unmapped < 0 || section > unmapped {
+		t.Errorf("the initializer section (at %d) must precede the UNMAPPED section (at %d)\noutput:\n%s", section, unmapped, out)
+	}
+}
+
+func TestCoverage_PackageConst_Listed(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", "package a\n\nconst C = 1 + 2\n")
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=2 files=1 unmeasured=0 no_lines=0 pkg_init=1\n",
+		"package-level initializer lines (1), go cover emits no block for them; listed, not a failure:\n"+
+			"  cmd/a/a.go:3  const C  direct-tests: NONE (no direct textual reference)\n",
+	)
+}
+
+func TestCoverage_PackageCompositeLiteral_ListedAsOneRange(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", "package a\n\nvar M = map[string]int{\n\t\"a\": 1,\n\t\"b\": len(\"xx\"),\n}\n")
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=3 files=1 unmeasured=0 no_lines=0 pkg_init=3\n",
+		"package-level initializer lines (3), go cover emits no block for them; listed, not a failure:\n"+
+			"  cmd/a/a.go:3-5  var M  direct-tests: NONE (no direct textual reference)\n",
+	)
+}
+
+func TestCoverage_PackageVarBlock_ListsOnlySpecWithValue(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", "package a\n\nvar (\n\tA = calc()\n\tB int\n)\n\nfunc calc() int {\n\treturn 1\n}\n")
+	r.commit()
+
+	out, errOut, code := r.run("coverage", testModule+"/cmd/a/a.go:8.17,10.2 1 1\n", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=1 exec_mapped=1 (100.0%) unmapped=0 platform_excluded=0 nonexec=8 files=1 unmeasured=0 no_lines=0 pkg_init=1\n",
+		"package-level initializer lines (1), go cover emits no block for them; listed, not a failure:\n"+
+			"  cmd/a/a.go:4  var A  direct-tests: NONE (no direct textual reference)\n",
+	)
+	wantLacks(t, out, "var B")
+}
+
+func TestCoverage_PackageFuncLiteralBody_StaysUnderCoverage(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", "package a\n\nvar F = func() int {\n\treturn 1\n}\n")
+	r.commit()
+
+	out, errOut, code := r.run("coverage", testModule+"/cmd/a/a.go:3.20,5.2 1 0\n", "cmd", "internal")
+
+	wantCode(t, code, 1, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=0 exec_mapped=1 (0.0%) unmapped=0 platform_excluded=0 nonexec=4 files=1 unmeasured=0 no_lines=0 pkg_init=0\n",
+		"UNCOVERED executable lines (1):\n  cmd/a/a.go:4\n",
+	)
+	wantLacks(t, out, pkgInitHeader)
+}
+
+func TestCoverage_PackageVarWithNoValue_NotListed(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", "package a\n\nvar B int\n")
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out,
+		"changed-line coverage: covered=0 exec_mapped=0 (0.0%) unmapped=0 platform_excluded=0 nonexec=3 files=1 unmeasured=0 no_lines=0 pkg_init=0\n",
+	)
+	wantLacks(t, out, pkgInitHeader)
 }
