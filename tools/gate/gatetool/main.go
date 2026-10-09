@@ -505,11 +505,11 @@ func isDelimiterOrCommentLine(srcLines []string, l int) bool {
 	return strings.Trim(t, "}]),(") == ""
 }
 
-// pkgInitLines marks the lines of each package-level var/const value that lie
-// outside every func literal. A func literal's body holds statements, which
-// go cover does instrument, so its lines keep the ordinary classification.
-func pkgInitLines(fset *token.FileSet, f *ast.File, src []byte) map[int]bool {
-	lines := map[int]bool{}
+// pkgInitLines maps each line of a package-level var/const value to the
+// names its spec declares, without "_", which nothing can refer to. A line
+// two specs share keeps the first, as enclosing does.
+func pkgInitLines(fset *token.FileSet, f *ast.File, src []byte) map[int][]string {
+	lines := map[int][]string{}
 	srcLines := strings.Split(string(src), "\n")
 	for _, d := range f.Decls {
 		gd, ok := d.(*ast.GenDecl)
@@ -521,6 +521,16 @@ func pkgInitLines(fset *token.FileSet, f *ast.File, src []byte) map[int]bool {
 			if !ok || len(vs.Values) == 0 {
 				continue
 			}
+			var names []string
+			for _, n := range vs.Names {
+				if n.Name != "_" {
+					names = append(names, n.Name)
+				}
+			}
+			// A func literal's body holds statements, which go cover does
+			// instrument, so its lines keep the ordinary classification. Its
+			// header and closing lines are excluded with it: the issue #35
+			// ruling keeps them non-executable, not pkg_init.
 			inFuncLit := map[int]bool{}
 			for _, v := range vs.Values {
 				ast.Inspect(v, func(n ast.Node) bool {
@@ -535,8 +545,8 @@ func pkgInitLines(fset *token.FileSet, f *ast.File, src []byte) map[int]bool {
 			from := fset.Position(vs.Values[0].Pos()).Line
 			to := fset.Position(vs.Values[len(vs.Values)-1].End()).Line
 			for l := from; l <= to; l++ {
-				if !inFuncLit[l] && !isDelimiterOrCommentLine(srcLines, l) {
-					lines[l] = true
+				if _, taken := lines[l]; !taken && !inFuncLit[l] && !isDelimiterOrCommentLine(srcLines, l) {
+					lines[l] = names
 				}
 			}
 		}
@@ -588,8 +598,21 @@ func directTests(dir, sym string) []string {
 			bare = bare[:j]
 		}
 	}
+	return testsMentioning(dir, []string{bare})
+}
+
+// testsMentioning lists the test functions in dir whose body mentions any of
+// names as a whole word.
+func testsMentioning(dir string, names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = regexp.QuoteMeta(n)
+	}
 	entries, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
-	wordRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(bare) + `\b`)
+	wordRe := regexp.MustCompile(`\b(?:` + strings.Join(quoted, "|") + `)\b`)
 	var hits []string
 	for _, tf := range entries {
 		src, err := os.ReadFile(tf)
@@ -771,6 +794,7 @@ func mappedAt(bl []block, line int) bool {
 // pkgInitRow is one run of consecutive pkg_init lines of one symbol.
 type pkgInitRow struct {
 	file, sym  string
+	names      []string // what direct-tests searches for; sym is the label
 	start, end int
 }
 
@@ -780,7 +804,7 @@ func (r pkgInitRow) String() string {
 		loc += fmt.Sprintf("-%d", r.end)
 	}
 	tests := "NONE (no direct textual reference)"
-	if hits := directTests(filepath.Dir(r.file), r.sym); len(hits) > 0 {
+	if hits := testsMentioning(filepath.Dir(r.file), r.names); len(hits) > 0 {
 		tests = strings.Join(hits, ", ")
 	}
 	return loc + "  " + r.sym + "  direct-tests: " + tests
@@ -840,7 +864,8 @@ func runCoverage(args []string) error {
 		for _, r := range diffs[p].added {
 			for l := r.start; l <= r.end; l++ {
 				if !execL[l] {
-					if !initL[l] {
+					names, isPkgInit := initL[l]
+					if !isPkgInit {
 						nonexec++
 						continue
 					}
@@ -849,7 +874,7 @@ func runCoverage(args []string) error {
 					if n := len(pkgInitRows); n > 0 && pkgInitRows[n-1].file == p && pkgInitRows[n-1].sym == sym && pkgInitRows[n-1].end == l-1 {
 						pkgInitRows[n-1].end = l
 					} else {
-						pkgInitRows = append(pkgInitRows, pkgInitRow{p, sym, l, l})
+						pkgInitRows = append(pkgInitRows, pkgInitRow{p, sym, names, l, l})
 					}
 					continue
 				}

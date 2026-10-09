@@ -619,3 +619,58 @@ func TestCoverage_PackageVarWithNoValue_NotListed(t *testing.T) {
 	)
 	wantLacks(t, out, pkgInitHeader)
 }
+
+const twoNameVarSrc = "package a\n\nvar A, B = 1, 2\n"
+
+const testReadingB = "package a\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) { _ = B }\n"
+
+const testUsingOnlyBlank = "func TestOther(t *testing.T) {\n\tfor _, x := range []int{1} {\n\t\tprintln(x)\n\t}\n}\n"
+
+func TestCoverage_PackageVarTwoNames_NamesTestOfSecondName(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", twoNameVarSrc)
+	r.write("cmd/a/a_test.go", testReadingB)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out, "  cmd/a/a.go:3  var A,B  direct-tests: a_test.go::TestB\n")
+}
+
+func TestUnits_PackageVarTwoNames_StillSearchesFirstNameOnly(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", twoNameVarSrc)
+	r.write("cmd/a/a_test.go", testReadingB)
+	r.commit()
+
+	out, errOut, code := r.run("units", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out, "var A,B\tcmd/a/a.go\t0/0\t(no direct textual reference; coverage only)\n")
+}
+
+func TestCoverage_PackageBlankVar_HasNoDirectTest(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", "package a\n\ntype I interface{}\n\ntype T struct{}\n\nvar _ I = (*T)(nil)\n")
+	r.write("cmd/a/a_test.go", "package a\n\nimport \"testing\"\n\n"+testUsingOnlyBlank)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out, "  cmd/a/a.go:7  var _  direct-tests: NONE (no direct textual reference)\n")
+}
+
+func TestCoverage_PackageVarBlankAndName_SearchesOnlyTheName(t *testing.T) {
+	r := newRepo(t)
+	r.write("cmd/a/a.go", "package a\n\nvar _, C = 3, 4\n")
+	r.write("cmd/a/a_test.go", "package a\n\nimport \"testing\"\n\nfunc TestC(t *testing.T) { _ = C }\n\n"+testUsingOnlyBlank)
+	r.commit()
+
+	out, errOut, code := r.run("coverage", "", "cmd", "internal")
+
+	wantCode(t, code, 0, out, errOut)
+	wantContains(t, out, "  cmd/a/a.go:3  var _,C  direct-tests: a_test.go::TestC\n")
+	wantLacks(t, out, "TestOther")
+}
