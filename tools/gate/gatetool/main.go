@@ -20,11 +20,14 @@
 // measured file exits 0 and says so. The
 // coverage classifier is deliberately conservative: a line is
 // non-executable only when the AST shows no statement on it (blank,
-// comment, package/import clause, declaration-only line, bare delimiter).
+// comment, package/import clause, declaration with no value, bare delimiter).
 // Any other line with no coverage block is reported as "unmapped" and never
-// folded into non-executable. Files the host GOOS does not compile
-// (go list IgnoredGoFiles) are reported separately as platform-excluded,
-// because their lines can never carry a mapping here.
+// folded into non-executable. A line of a package-level var/const value has
+// no statement either, and go cover emits no block for it, so no test can
+// map it: it is listed as "pkg_init", apart from non-executable so a changed
+// initializer stays visible, and never fails coverage. Files the host GOOS
+// does not compile (go list IgnoredGoFiles) are reported separately as
+// platform-excluded, because their lines can never carry a mapping here.
 //
 // "replace" is the mutation runner's editor: it substitutes exactly one
 // occurrence of -old with -new and exits 2 on zero or many, so a stale
@@ -502,6 +505,55 @@ func isDelimiterOrCommentLine(srcLines []string, l int) bool {
 	return strings.Trim(t, "}]),(") == ""
 }
 
+// pkgInitLines maps each line of a package-level var/const value to the
+// names its spec declares, without "_", which nothing can refer to. A line
+// two specs share keeps the first, as enclosing does.
+func pkgInitLines(fset *token.FileSet, f *ast.File, src []byte) map[int][]string {
+	lines := map[int][]string{}
+	srcLines := strings.Split(string(src), "\n")
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || (gd.Tok != token.VAR && gd.Tok != token.CONST) {
+			continue
+		}
+		for _, s := range gd.Specs {
+			vs, ok := s.(*ast.ValueSpec)
+			if !ok || len(vs.Values) == 0 {
+				continue
+			}
+			var names []string
+			for _, n := range vs.Names {
+				if n.Name != "_" {
+					names = append(names, n.Name)
+				}
+			}
+			// A func literal's body holds statements, which go cover does
+			// instrument, so its lines keep the ordinary classification. Its
+			// header and closing lines are excluded with it: the issue #35
+			// ruling keeps them non-executable, not pkg_init.
+			inFuncLit := map[int]bool{}
+			for _, v := range vs.Values {
+				ast.Inspect(v, func(n ast.Node) bool {
+					if fl, ok := n.(*ast.FuncLit); ok {
+						for l := fset.Position(fl.Pos()).Line; l <= fset.Position(fl.End()).Line; l++ {
+							inFuncLit[l] = true
+						}
+					}
+					return true
+				})
+			}
+			from := fset.Position(vs.Values[0].Pos()).Line
+			to := fset.Position(vs.Values[len(vs.Values)-1].End()).Line
+			for l := from; l <= to; l++ {
+				if _, taken := lines[l]; !taken && !inFuncLit[l] && !isDelimiterOrCommentLine(srcLines, l) {
+					lines[l] = names
+				}
+			}
+		}
+	}
+	return lines
+}
+
 func ignoredGoFiles(dirs []string) (map[string]bool, error) {
 	set := map[string]bool{}
 	if len(dirs) == 0 {
@@ -546,8 +598,21 @@ func directTests(dir, sym string) []string {
 			bare = bare[:j]
 		}
 	}
+	return testsMentioning(dir, []string{bare})
+}
+
+// testsMentioning lists the test functions in dir whose body mentions any of
+// names as a whole word.
+func testsMentioning(dir string, names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = regexp.QuoteMeta(n)
+	}
 	entries, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
-	wordRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(bare) + `\b`)
+	wordRe := regexp.MustCompile(`\b(?:` + strings.Join(quoted, "|") + `)\b`)
 	var hits []string
 	for _, tf := range entries {
 		src, err := os.ReadFile(tf)
@@ -726,6 +791,25 @@ func mappedAt(bl []block, line int) bool {
 
 // ---- coverage --------------------------------------------------------------------
 
+// pkgInitRow is one run of consecutive pkg_init lines of one symbol.
+type pkgInitRow struct {
+	file, sym  string
+	names      []string // what direct-tests searches for; sym is the label
+	start, end int
+}
+
+func (r pkgInitRow) String() string {
+	loc := fmt.Sprintf("%s:%d", r.file, r.start)
+	if r.end > r.start {
+		loc += fmt.Sprintf("-%d", r.end)
+	}
+	tests := "NONE (no direct textual reference)"
+	if hits := testsMentioning(filepath.Dir(r.file), r.names); len(hits) > 0 {
+		tests = strings.Join(hits, ", ")
+	}
+	return loc + "  " + r.sym + "  direct-tests: " + tests
+}
+
 func runCoverage(args []string) error {
 	fs := flag.NewFlagSet("coverage", flag.ExitOnError)
 	base := fs.String("base", "main", "base ref")
@@ -759,8 +843,9 @@ func runCoverage(args []string) error {
 		return err
 	}
 	cwd, _ := os.Getwd()
-	var covered, execMapped, unmapped, nonexec, platform int
+	var covered, execMapped, unmapped, nonexec, platform, pkgInit int
 	var missList, unmappedList, platformFiles []string
+	var pkgInitRows []pkgInitRow
 	for _, p := range files {
 		src, err := os.ReadFile(p)
 		if err != nil {
@@ -771,13 +856,26 @@ func runCoverage(args []string) error {
 			return err
 		}
 		execL := execLines(fset, f, src)
+		initL := pkgInitLines(fset, f, src)
+		syms := fileSymbols(fset, f)
 		abs := filepath.ToSlash(filepath.Join(cwd, p))
 		isPlatformExcluded := ignored[abs]
 		fileLines := 0
 		for _, r := range diffs[p].added {
 			for l := r.start; l <= r.end; l++ {
 				if !execL[l] {
-					nonexec++
+					names, isPkgInit := initL[l]
+					if !isPkgInit {
+						nonexec++
+						continue
+					}
+					pkgInit++
+					sym := enclosing(syms, l)
+					if n := len(pkgInitRows); n > 0 && pkgInitRows[n-1].file == p && pkgInitRows[n-1].sym == sym && pkgInitRows[n-1].end == l-1 {
+						pkgInitRows[n-1].end = l
+					} else {
+						pkgInitRows = append(pkgInitRows, pkgInitRow{p, sym, names, l, l})
+					}
 					continue
 				}
 				if isPlatformExcluded {
@@ -806,9 +904,9 @@ func runCoverage(args []string) error {
 	if execMapped > 0 {
 		pct = 100 * float64(covered) / float64(execMapped)
 	}
-	fmt.Printf("changed-line coverage: covered=%d exec_mapped=%d (%.1f%%) unmapped=%d platform_excluded=%d nonexec=%d files=%d unmeasured=%d no_lines=%d\n",
-		covered, execMapped, pct, unmapped, platform, nonexec, len(files), len(ch.unmeasured), len(ch.noLines))
-	fmt.Println("classifier: set2 (non-executable) = lines with no ast.Stmt on them (blank, comment, package/import, declaration-only, bare delimiter); set1 = executable lines inside a profile block; set3 (unmapped) = executable lines with no profile block, never folded into set2")
+	fmt.Printf("changed-line coverage: covered=%d exec_mapped=%d (%.1f%%) unmapped=%d platform_excluded=%d nonexec=%d files=%d unmeasured=%d no_lines=%d pkg_init=%d\n",
+		covered, execMapped, pct, unmapped, platform, nonexec, len(files), len(ch.unmeasured), len(ch.noLines), pkgInit)
+	fmt.Println("classifier: set2 (non-executable) = lines with no ast.Stmt on them (blank, comment, package/import, declaration with no value, bare delimiter); set1 = executable lines inside a profile block; set3 (unmapped) = executable lines with no profile block, never folded into set2; set4 (pkg_init) = lines of a package-level var/const value outside a func literal, for which go cover emits no block: listed, never a failure")
 	if len(ch.measured)+len(ch.noLines) == 0 {
 		fmt.Printf("no measured file in the diff (measured roots: %s)\n", strings.Join(ch.roots, " "))
 	}
@@ -828,6 +926,12 @@ func runCoverage(args []string) error {
 		fmt.Println("platform-excluded files (not compiled on this GOOS, no mapping possible here):")
 		for _, s := range platformFiles {
 			fmt.Println("  " + s)
+		}
+	}
+	if pkgInit > 0 {
+		fmt.Printf("package-level initializer lines (%d), go cover emits no block for them; listed, not a failure:\n", pkgInit)
+		for _, r := range pkgInitRows {
+			fmt.Printf("  %s\n", r)
 		}
 	}
 	if len(unmappedList) > 0 {
