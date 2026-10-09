@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
+	"os/user"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -577,18 +581,36 @@ func TestInstall_StaleCleanup_DeployFailureInOneBucketDoesNotStopAnother(t *test
 	}
 }
 
-// makeUnreadable removes every permission from rel until the test ends.
-// root ignores permission bits, so the test is skipped for root.
-func makeUnreadable(t *testing.T, rel string) {
+// makeUnreadable makes the directory rel unreadable until the test ends and
+// returns the operating system's text for the refused read. root ignores
+// permission bits, so the test is skipped for root.
+func makeUnreadable(t *testing.T, rel string) string {
 	t.Helper()
+	full := filepath.FromSlash(rel)
+	if runtime.GOOS == "windows" {
+		// Windows has no permission bits that refuse a read; a deny entry
+		// for "list folder" in the directory's ACL does.
+		u, err := user.Current()
+		if err != nil {
+			t.Skipf("cannot determine the current user: %v", err)
+		}
+		if out, err := exec.Command("icacls", full, "/deny", u.Username+":(RD)").CombinedOutput(); err != nil {
+			t.Skipf("icacls could not deny listing %s: %v: %s", full, err, bytes.TrimSpace(out))
+		}
+		t.Cleanup(func() { exec.Command("icacls", full, "/remove:d", u.Username).Run() })
+		if _, err := os.ReadDir(full); err == nil {
+			t.Skip("the deny entry does not stop this process from listing the directory")
+		}
+		return "Access is denied."
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits do not restrict root")
 	}
-	full := filepath.FromSlash(rel)
 	if err := os.Chmod(full, 0); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(full, 0o755) })
+	return "permission denied"
 }
 
 // An unreadable source directory yields no primitives, exactly like a deleted
@@ -602,7 +624,7 @@ func TestInstall_StaleCleanup_UnreadableLocalSourceKeepsDeployedFiles(t *testing
 	deployed := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/keep.md"}
 	assertStaleCleanupExists(t, true, deployed...)
 
-	makeUnreadable(t, ".apm/skills")
+	reason := makeUnreadable(t, ".apm/skills")
 	stdout := staleCleanupInstall(t, "")
 
 	assertStaleCleanupExists(t, true, deployed...)
@@ -615,7 +637,7 @@ func TestInstall_StaleCleanup_UnreadableLocalSourceKeepsDeployedFiles(t *testing
 	if strings.Contains(stdout, "Cleaned") {
 		t.Errorf("an unreadable source must not clean anything, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "<local .apm/>: read .apm/skills failed: permission denied") {
+	if !strings.Contains(stdout, "<local .apm/>: read .apm/skills failed: "+reason) {
 		t.Errorf("stdout must warn about the unreadable source, got:\n%s", stdout)
 	}
 }
@@ -657,7 +679,7 @@ func TestInstall_StaleCleanup_UnreadableDependencySourceKeepsDeployedFiles(t *te
 	deployed := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/keep.md"}
 	assertStaleCleanupExists(t, true, deployed...)
 
-	makeUnreadable(t, "apm_modules/"+depKey+"/.apm/skills")
+	reason := makeUnreadable(t, "apm_modules/"+depKey+"/.apm/skills")
 	stdout := install()
 
 	assertStaleCleanupExists(t, true, deployed...)
@@ -665,7 +687,7 @@ func TestInstall_StaleCleanup_UnreadableDependencySourceKeepsDeployedFiles(t *te
 	if strings.Contains(stdout, "Cleaned") {
 		t.Errorf("an unreadable source must not clean anything, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, depKey+": read apm_modules/"+depKey+"/.apm/skills failed: permission denied") {
+	if !strings.Contains(stdout, depKey+": read apm_modules/"+depKey+"/.apm/skills failed: "+reason) {
 		t.Errorf("stdout must warn about the unreadable source of %s, got:\n%s", depKey, stdout)
 	}
 }
