@@ -425,7 +425,10 @@ func marketplaceOutdatedCmd() *cobra.Command {
 				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
-			rows := authoring.OutdatedPackages(cfg, authoring.DefaultRefLister, offline, includePrerelease, loadCurrentMarketplaceVersions())
+			rows := authoring.OutdatedPackagesWith(cfg, authoring.OutdatedDeps{
+				Lister:  authoring.DefaultRefLister,
+				Objects: authoring.DefaultSubdirObjectReader,
+			}, offline, includePrerelease, loadCurrentMarketplaceVersions())
 
 			w := cmd.OutOrStdout()
 			upgradable := 0

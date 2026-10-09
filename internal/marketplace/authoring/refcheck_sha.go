@@ -1,4 +1,4 @@
-// This file implements the two apm-go-only remote seams `check` gained in
+// This file implements the apm-go-only remote seams. `check` gained two in
 // SPEC specs/marketplace-check-outdated (2026-09-14) on top of mkt-041:
 //
 //   - CommitProber: the Oracle's check.py:157 only ever compares a pinned
@@ -14,7 +14,14 @@
 //     compared against `<subdir>/.claude-plugin/plugin.json`, falling back
 //     to `<subdir>/apm.yml` (the file pack's enrichRemoteMetadata reads).
 //
-// Both share one fetch into a scratch repository: a remote that refuses
+// Issue #39 added a third, used by `outdated` and `package update`:
+//
+//   - SubdirObjectReader: a SHA pin with a subdir and no version is upgradable
+//     only when the subdir's object id at the default-branch tip differs from
+//     the one at the pinned commit, so a commit elsewhere in a monorepo does
+//     not move the pin.
+//
+// All share one fetch into a scratch repository: a remote that refuses
 // arbitrary-SHA fetches (uploadpack.allowAnySHA1InWant off) answers
 // "not our ref" exactly as a missing commit does, so such a pin is
 // reported not found (decision D-a) -- GitHub and GitLab both allow it.
@@ -63,11 +70,27 @@ type CheckDeps struct {
 	Manifest ManifestVersionFetcher
 }
 
-// DefaultCommitProber and DefaultManifestVersionFetcher are the production
-// seams, swappable by cmd-layer tests the way DefaultRefLister is.
+// SubdirObjectReader returns the git object id of subdir at commit on the
+// remote: the tree id for a directory, the blob id for a file. found is
+// false with a nil error when the commit has no such path. A commit the
+// remote does not have is an error that matches errRefNotOnRemote.
+type SubdirObjectReader interface {
+	SubdirObjectID(source, commit, subdir string) (id string, found bool, err error)
+}
+
+// OutdatedDeps bundles the remote seams of `outdated` and `package update`.
+type OutdatedDeps struct {
+	Lister  RefLister
+	Objects SubdirObjectReader
+}
+
+// DefaultCommitProber, DefaultManifestVersionFetcher and
+// DefaultSubdirObjectReader are the production seams, swappable by cmd-layer
+// tests the way DefaultRefLister is.
 var (
 	DefaultCommitProber           CommitProber           = gitCommitProber{}
 	DefaultManifestVersionFetcher ManifestVersionFetcher = gitManifestVersionFetcher{}
+	DefaultSubdirObjectReader     SubdirObjectReader     = gitSubdirObjectReader{}
 )
 
 // scratchTempRoot is the parent directory for the throwaway bare repos a
@@ -149,6 +172,53 @@ func (gitManifestVersionFetcher) FetchManifestVersion(source, ref, subdir string
 		return "", nil
 	}
 	return strings.TrimSpace(scalarString(doc.Content[0], "version")), nil
+}
+
+type gitSubdirObjectReader struct{}
+
+func (gitSubdirObjectReader) SubdirObjectID(source, commit, subdir string) (string, bool, error) {
+	dir, cleanup, err := fetchRefIntoScratch(source, commit)
+	defer cleanup()
+	if err != nil {
+		return "", false, err
+	}
+	return objectIDAtFetchHead(dir, filepath.ToSlash(subdir))
+}
+
+// objectIDAtFetchHead returns the object id of relPath at FETCH_HEAD in the
+// scratch repo dir; found is false when the commit has no such path.
+func objectIDAtFetchHead(dir, relPath string) (id string, found bool, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), listRefsTimeout)
+	defer cancel()
+	cmd := newRevParseCmd(ctx, dir, relPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", false, fmt.Errorf("git rev-parse %s: timed out after %s", relPath, listRefsTimeout)
+		}
+		msg := stderr.String()
+		// The second wording is for a path that names an entry of the bare
+		// scratch repository itself ("hooks", "objects").
+		if strings.Contains(msg, "does not exist in") || strings.Contains(msg, "exists on disk, but not in") {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("git rev-parse %s: %s", relPath, gitops.SanitizeGitOutput(gitFailureText(msg, err)))
+	}
+	return strings.TrimSpace(string(out)), true, nil
+}
+
+// newRevParseCmd builds `git -C <dir> rev-parse FETCH_HEAD:<relPath>` under
+// the secure environment, pinned to the C locale. No --verify: it replaces
+// git's "does not exist in" with "Needed a single revision", which no longer
+// tells a missing path from any other failure.
+func newRevParseCmd(ctx context.Context, dir, relPath string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "FETCH_HEAD:"+relPath)
+	gitops.ApplySecureGitEnv(cmd)
+	cmd.WaitDelay = subprocessWaitDelay
+	pinGitLocale(cmd)
+	return cmd
 }
 
 // newProbeFetchCmd builds `git -C <dir> fetch --depth 1 -- <cloneURL> <ref>`

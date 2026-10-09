@@ -1006,14 +1006,19 @@ type OutdatedRow struct {
 // since `apm pack` (mkt-050+) is a separate, not-yet-landed sub-task, but
 // every other icon ([!]/[*]/[i]/[x]) is still reported correctly without it.
 func OutdatedPackages(cfg *AuthoringConfig, lister RefLister, offline, includePrerelease bool, current map[string]string) []OutdatedRow {
+	return OutdatedPackagesWith(cfg, OutdatedDeps{Lister: lister, Objects: DefaultSubdirObjectReader}, offline, includePrerelease, current)
+}
+
+// OutdatedPackagesWith is OutdatedPackages with every seam injected.
+func OutdatedPackagesWith(cfg *AuthoringConfig, deps OutdatedDeps, offline, includePrerelease bool, current map[string]string) []OutdatedRow {
 	rows := make([]OutdatedRow, 0, len(cfg.Packages))
 	for _, pkg := range cfg.Packages {
-		rows = append(rows, outdatedForPackage(cfg, pkg, lister, offline, includePrerelease, current[pkg.Name]))
+		rows = append(rows, outdatedForPackage(cfg, pkg, deps, offline, includePrerelease, current[pkg.Name]))
 	}
 	return rows
 }
 
-func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister, offline, includePrerelease bool, current string) OutdatedRow {
+func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, deps OutdatedDeps, offline, includePrerelease bool, current string) OutdatedRow {
 	row := OutdatedRow{Package: pkg, Current: "--", LatestInRange: "--", LatestOverall: "--"}
 
 	// apm-go-only (SPEC marketplace-check-outdated SC-C1..C6, C11): a
@@ -1021,7 +1026,10 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 	// no version (default-branch tip) or a display version (release tags).
 	// Every other ref pin -- tag/branch names, uppercase or abbreviated
 	// SHAs, a SHA with a range version (D-b) -- keeps the Oracle's skip
-	// (outdated.py:44-53).
+	// (outdated.py:44-53). A SHA pin with no version and a subdir is
+	// compared on that subdir's content, not on the tip alone (issue #39,
+	// outdatedShaAgainstTip); this is the only place Subdir is read, so
+	// `package update` gets the same verdict.
 	// A blank version is no version (SC-B21), so normalize once here.
 	version := strings.TrimSpace(pkg.Version)
 	shaPin := shaRefPattern.MatchString(pkg.Ref) && (version == "" || IsDisplayVersion(version))
@@ -1059,14 +1067,14 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 		return row
 	}
 
-	refs, err := lister.ListRefs(pkg.Source)
+	refs, err := deps.Lister.ListRefs(pkg.Source)
 	if err != nil {
 		row.Status, row.Note = "[x]", truncateRunes(err.Error(), 60)
 		return row
 	}
 
 	if shaPin && version == "" {
-		return outdatedShaAgainstTip(row, pkg, refs)
+		return outdatedShaAgainstTip(row, pkg, refs, deps.Objects)
 	}
 
 	pattern := pkg.TagPattern
@@ -1137,7 +1145,14 @@ func outdatedForPackage(cfg *AuthoringConfig, pkg PackageEntry, lister RefLister
 // outdatedShaAgainstTip implements SC-C4..C6: a SHA pin with no version is
 // current when it is the remote's default-branch tip (ListRefs' synthetic
 // HEAD entry) and upgradable when the tip has moved.
-func outdatedShaAgainstTip(row OutdatedRow, pkg PackageEntry, refs []semver.TagInfo) OutdatedRow {
+//
+// apm-go-only (issue #39): an entry that also has a subdir installs only
+// that directory, so a moved tip is not enough. It is upgradable only when
+// the subdir's git object id at the tip differs from the one at the pinned
+// commit; with the same id the row is [+] and `package update` writes
+// nothing. When either id cannot be read the row is [x]: it never falls
+// back to the tip comparison, which would report an upgrade nobody checked.
+func outdatedShaAgainstTip(row OutdatedRow, pkg PackageEntry, refs []semver.TagInfo, objects SubdirObjectReader) OutdatedRow {
 	tip := ""
 	for _, r := range refs {
 		if r.Name == "HEAD" {
@@ -1155,9 +1170,49 @@ func outdatedShaAgainstTip(row OutdatedRow, pkg PackageEntry, refs []semver.TagI
 		row.Status = "[+]"
 		return row
 	}
+	if pkg.Subdir != "" {
+		unchanged, err := subdirUnchanged(pkg, tip, objects)
+		if err != nil {
+			row.Status, row.Note = "[x]", truncateRunes(err.Error(), 60)
+			return row
+		}
+		if unchanged {
+			row.Status, row.Note = "[+]", fmt.Sprintf("Tip moved; '%s' unchanged", pkg.Subdir)
+			return row
+		}
+	}
 	row.Status, row.Note, row.Upgradable = "[!]", "Default branch tip moved", true
 	row.TargetRef = tip
 	return row
+}
+
+// subdirUnchanged reports whether pkg.Subdir has the same git object id at
+// the pinned commit and at tip. The error text is the row's Note. Subdir is
+// validated here because LoadAuthoringConfig does not: a hand-written
+// "../x" would otherwise reach git.
+func subdirUnchanged(pkg PackageEntry, tip string, objects SubdirObjectReader) (bool, error) {
+	if err := validateSubdir(pkg.Subdir); err != nil {
+		return false, err
+	}
+	var ids [2]string
+	for i, at := range []struct{ commit, missing string }{
+		{pkg.Ref, "Subdir '%s' not found at ref"},
+		{tip, "Subdir '%s' not found at default branch tip"},
+	} {
+		id, found, err := objects.SubdirObjectID(pkg.Source, at.commit, pkg.Subdir)
+		if errors.Is(err, errRefNotOnRemote) {
+			// check's wording for a pin the remote does not have.
+			return false, fmt.Errorf("Ref '%s' not found", at.commit)
+		}
+		if err != nil {
+			return false, err
+		}
+		if !found {
+			return false, fmt.Errorf(at.missing, pkg.Subdir)
+		}
+		ids[i] = id
+	}
+	return ids[0] == ids[1], nil
 }
 
 // outdatedShaAgainstTags implements SC-C1..C2: a SHA pin with a display

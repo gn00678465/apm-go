@@ -82,6 +82,42 @@ does have keeps the waiver / pending-case rule unchanged.
   an unknown name, a resolution failure, a write or validation failure, and a
   config schema error; config-load errors otherwise follow `outdated`.
 
+## Subdir rule (issue #39)
+
+A SHA pin with no version that has a `subdir` is compared on the content of
+that directory, not on the default-branch tip alone. The verdict is
+`outdatedForPackage`'s, so `marketplace outdated` and this command agree.
+The rule applies only to an entry that is remote, has a lowercase 40-hex
+`ref`, a blank `version`, and a non-empty `subdir`.
+
+| Case | `outdated` row | `package update` |
+|---|---|---|
+| tip equals `ref` | `[+]`, no note (unchanged) | skip, `already up to date` |
+| tip differs, `git rev-parse <commit>:<subdir>` gives the same id at both commits | `[+]`, note `Tip moved; '<subdir>' unchanged`, not upgradable | skip, `already up to date`, nothing written |
+| tip differs, the ids differ | `[!]`, note `Default branch tip moved`, upgradable (unchanged) | writes the tip to `ref` |
+| `subdir` fails `validateSubdir`, the fetch fails, the pinned commit is not on the remote (`Ref '<sha>' not found`), `subdir` is missing at the tip (`Subdir '<subdir>' not found at default branch tip`) or at the pinned commit (`Subdir '<subdir>' not found at ref`) | `[x]` with the reason, cut to 60 characters | the whole batch fails, exit 2, nothing written |
+
+The ids are read through the `SubdirObjectReader` seam; production runs one
+shallow `git fetch` per commit into a scratch repository and
+`git rev-parse FETCH_HEAD:<subdir>`, under the `gitops` secure environment.
+The seam is not called when the tip equals `ref`. The realexec steps stay
+network-free, so this path is covered by `go test` with a canned seam and by
+the production reader against a local repository
+(`internal/marketplace/authoring/refcheck_outdated_subdir_test.go`,
+`cmd/apm-go/marketplace_package_update_test.go`).
+
+Owner's ruling, 2026-10-09 (verbatim):
+
+1. 核准這張卡修改 GitNexus 評為 HIGH 的 outdatedForPackage、outdatedShaAgainstTip、OutdatedPackages、PlanPackageUpdates、marketplaceOutdatedCmd、marketplacePackageUpdateCmd。核准只適用於這張卡的範圍，其他 HIGH 或 CRITICAL 符號要再問。
+2. 推翻 specs/archive/marketplace-check-outdated/SPEC.md 的排除項目「subdir 感知」，只針對有 subdir、沒有 version 的 SHA 釘選條目。沒有 subdir 的條目維持現在的規則。
+3. 最新 commit 不等於 ref 而 subdir 的 git tree id 相同時：outdated 那一列的 STATUS 是 [+]，CURRENT 是 ref 的前 12 字元，LATEST 是最新 commit 的前 12 字元，NOTE 是「Tip moved; '<subdir>' unchanged」（<subdir> 換成條目的 subdir 值）。這一列不可升級，update 不寫入它。
+4. 讀不到 tree 時（fetch 失敗、ref 不在遠端、subdir 在最新 commit 不存在）：那一列是 [x] 並寫出原因，update 的處理與現有的 [x] 一致。不要退回舊規則。
+5. 只用安全環境下的 git 子程序，不使用 gh。package update --help 的說明文字要寫明 subdir 的規則。
+
+Decided by the investigation, not by the ruling: a `subdir` missing at the
+pinned commit is `[x]` (the letter of item 4), and `OutdatedPackages` /
+`PlanPackageUpdates` keep their signatures beside new `...With` functions.
+
 ## Verification strength
 
 `tools/gate/realexec.sh` (`mkt_update` steps) compares the four surfaces

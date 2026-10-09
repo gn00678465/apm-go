@@ -200,8 +200,17 @@ func TestPackageUpdate_ShaPinWithoutVersion_WritesTheFullTipAndNoVersion(t *test
 	lister := &sourceLister{refs: map[string][]semver.TagInfo{
 		"owner/tool": {headRef(shaB), tagRef("v9.0.0", shaC)},
 	}}
+	// The entry has a subdir, so it moves only when the subdir changed (issue #39).
+	objects := &fakeSubdirObjects{ids: map[string]string{shaA: "tree1", shaB: "tree2"}}
+	cfg, _, err := LoadAuthoringConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadAuthoringConfig: %v", err)
+	}
 
-	updates, err := updatePackages(t, dir, nil, false, lister)
+	updates, err := PlanPackageUpdatesWith(cfg, nil, false, OutdatedDeps{Lister: lister, Objects: objects})
+	if err == nil {
+		err = ApplyPackageUpdates(dir, updates, false)
+	}
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}

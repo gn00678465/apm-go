@@ -30,6 +30,9 @@ func marketplacePackageUpdateCmd() *cobra.Command {
 			"'marketplace outdated' reports. An entry with a 40-character SHA ref and an " +
 			"exact version moves to the highest matching tag (version and ref); one " +
 			"with a SHA ref and no version moves to the default branch tip (ref). " +
+			"When such an entry has a subdir, it moves only if the content of that " +
+			"directory at the default branch tip differs from the pinned commit; " +
+			"with the same content nothing is written. " +
 			"Local packages, named refs, and version ranges are skipped. With no NAME " +
 			"every package is considered. Run 'apm-go pack' afterwards to rebuild the outputs.",
 		Args:         cobra.ArbitraryArgs,
@@ -43,7 +46,10 @@ func marketplacePackageUpdateCmd() *cobra.Command {
 				ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
 			}
 
-			updates, err := authoring.PlanPackageUpdates(cfg, args, includePrerelease, authoring.DefaultRefLister)
+			updates, err := authoring.PlanPackageUpdatesWith(cfg, args, includePrerelease, authoring.OutdatedDeps{
+				Lister:  authoring.DefaultRefLister,
+				Objects: authoring.DefaultSubdirObjectReader,
+			})
 			var unresolved *authoring.UpdateResolutionError
 			if errors.As(err, &unresolved) {
 				// One status line per package; the root handler would print

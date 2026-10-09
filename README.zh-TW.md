@@ -130,7 +130,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | `update` | `--frozen` / `--no-frozen` | 對 frozen 安裝拒絕範圍更新（CI 自動開啟）／覆寫 CI 自動偵測 |
 | `marketplace package add` | `--category` | 套件分類，Codex 輸出在 `pack` 時必填 |
 | `marketplace package` | 指令名稱 | 作者側子指令位於 `package` 之下（`add`、`set`、`remove`） |
-| `marketplace package update` | 整個指令 | 把 `marketplace outdated` 回報的升級寫回 `apm.yml`，只處理以 SHA 釘選的套件：有精確版本的條目更新 `version` 與 `ref`，其他條目只更新 `ref`。`--dry-run` 只顯示將寫入的值；`--include-prerelease` 與 `outdated` 相同 |
+| `marketplace package update` | 整個指令 | 把 `marketplace outdated` 回報的升級寫回 `apm.yml`，只處理以 SHA 釘選的套件：有精確版本的條目更新 `version` 與 `ref`，其他條目只更新 `ref`。有 `subdir`、沒有 `version` 的 SHA 釘選條目，只有在該目錄在 default branch 最新 commit 的內容與釘選的 commit 不同時才更新；內容相同時不寫入。`--dry-run` 只顯示將寫入的值；`--include-prerelease` 與 `outdated` 相同 |
 | `self-update` | 整個指令 | 從 GitHub Releases 原地更新二進位檔；`--check` 僅回報可用版本，不套用 |
 
 <img src="./assets/readme/section-develop.zh-TW.svg" width="100%" alt="開發 — build、test、release">

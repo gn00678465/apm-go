@@ -130,7 +130,7 @@ These commands and flags exist only in apm-go. Their defaults keep the standard 
 | `update` | `--frozen` / `--no-frozen` | Refuse a scoped update against a frozen install (auto-enabled in CI) / override the CI detection |
 | `marketplace package add` | `--category` | Package category, required for Codex output at `pack` time |
 | `marketplace package` | command name | The authoring subcommands live under `package` (`add`, `set`, `remove`) |
-| `marketplace package update` | whole command | Write the upgrades `marketplace outdated` reports for SHA-pinned packages back to `apm.yml`: `version` and `ref` for an entry with an exact version, `ref` alone otherwise. `--dry-run` shows the values without writing; `--include-prerelease` as in `outdated` |
+| `marketplace package update` | whole command | Write the upgrades `marketplace outdated` reports for SHA-pinned packages back to `apm.yml`: `version` and `ref` for an entry with an exact version, `ref` alone otherwise. A SHA-pinned entry with a `subdir` and no `version` is updated only when the content of that directory at the default branch tip differs from the pinned commit; with the same content nothing is written. `--dry-run` shows the values without writing; `--include-prerelease` as in `outdated` |
 | `self-update` | whole command | Update the binary in place from GitHub Releases; `--check` reports availability without applying |
 
 <img src="./assets/readme/section-develop.svg" width="100%" alt="Development — build, test, release">
