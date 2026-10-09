@@ -1,8 +1,12 @@
 package deploy
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1541,13 +1545,47 @@ func TestRun_FailedBucketsRecordsBucketOfFailedPrimitive(t *testing.T) {
 	}
 }
 
+// makeUnreadable makes the directory full unreadable until the test ends and
+// returns the operating system's text for the refused read. listed says the
+// read the case expects to fail is the listing of full itself, not a read of
+// an entry below it.
+func makeUnreadable(t *testing.T, full string, listed bool) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		// Windows has no permission bits that refuse a read; a deny entry
+		// for "list folder" in the directory's ACL does. It does not refuse
+		// an entry below the directory, which a user reaches without a
+		// check on the directories above it.
+		if !listed {
+			t.Skip("Windows does not refuse a read of an entry below a directory that cannot be listed")
+		}
+		u, err := user.Current()
+		if err != nil {
+			t.Skipf("cannot determine the current user: %v", err)
+		}
+		if out, err := exec.Command("icacls", full, "/deny", u.Username+":(RD)").CombinedOutput(); err != nil {
+			t.Skipf("icacls could not deny listing %s: %v: %s", full, err, bytes.TrimSpace(out))
+		}
+		t.Cleanup(func() { exec.Command("icacls", full, "/remove:d", u.Username).Run() })
+		if _, err := os.ReadDir(full); err == nil {
+			t.Skip("the deny entry does not stop this process from listing the directory")
+		}
+		return "Access is denied."
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not restrict root")
+	}
+	if err := os.Chmod(full, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(full, 0o755) })
+	return "permission denied"
+}
+
 // An unreadable source directory yields no primitives, exactly like a missing
 // one. Run must tell them apart so the bucket's deployed files are not taken
 // for stale.
 func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits do not restrict root")
-	}
 	const depKey = "acme/foo"
 	const module = "apm_modules/" + depKey
 	m := &manifest.Manifest{
@@ -1561,26 +1599,26 @@ func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
 	tests := []struct {
 		name       string
 		files      []string // created before the run
-		unreadable string   // chmod 000; "" for none
+		unreadable string   // made unreadable; "" for none
 		wantBucket string
 		wantFailed bool
-		wantDiag   string
+		wantDiag   string // without the operating system's reason
 	}{
 		{name: "no source directories at all"},
 		{name: "readable sources", files: []string{".apm/skills/demo/SKILL.md", module + "/skills/s/SKILL.md"}},
-		{"local instructions", []string{".apm/instructions/a.instructions.md"}, ".apm/instructions", "", true, "<local .apm/>: read .apm/instructions failed: permission denied"},
-		{"local agents", []string{".apm/agents/a.agent.md"}, ".apm/agents", "", true, "<local .apm/>: read .apm/agents failed: permission denied"},
-		{"local commands", []string{".apm/commands/a.md"}, ".apm/commands", "", true, "<local .apm/>: read .apm/commands failed: permission denied"},
-		{"local hooks", []string{".apm/hooks/a.json"}, ".apm/hooks", "", true, "<local .apm/>: read .apm/hooks failed: permission denied"},
-		{"local prompts", []string{".apm/prompts/a.prompt.md"}, ".apm/prompts", "", true, "<local .apm/>: read .apm/prompts failed: permission denied"},
-		{"local skills", []string{".apm/skills/demo/SKILL.md"}, ".apm/skills", "", true, "<local .apm/>: read .apm/skills failed: permission denied"},
-		{"local skill directory hides its SKILL.md", []string{".apm/skills/demo/SKILL.md"}, ".apm/skills/demo", "", true, "<local .apm/>: read .apm/skills/demo/SKILL.md failed: permission denied"},
-		{"local .apm itself", []string{".apm/skills/demo/SKILL.md"}, ".apm", "", true, "<local .apm/>: read .apm/instructions failed: permission denied"},
-		{"dependency .apm skills", []string{module + "/.apm/skills/s/SKILL.md"}, module + "/.apm/skills", depKey, true, depKey + ": read " + module + "/.apm/skills failed: permission denied"},
-		{"dependency .apm agents", []string{module + "/.apm/agents/a.md"}, module + "/.apm/agents", depKey, true, depKey + ": read " + module + "/.apm/agents failed: permission denied"},
-		{"dependency root skills", []string{module + "/skills/s/SKILL.md"}, module + "/skills", depKey, true, depKey + ": read " + module + "/skills failed: permission denied"},
-		{"dependency root skill directory hides its SKILL.md", []string{module + "/skills/s/SKILL.md"}, module + "/skills/s", depKey, true, depKey + ": read " + module + "/skills/s/SKILL.md failed: permission denied"},
-		{"dependency plugin manifest directory", []string{module + "/.claude-plugin/plugin.json"}, module + "/.claude-plugin", depKey, true, depKey + ": read " + module + "/.claude-plugin/plugin.json failed: permission denied"},
+		{"local instructions", []string{".apm/instructions/a.instructions.md"}, ".apm/instructions", "", true, "<local .apm/>: read .apm/instructions failed: "},
+		{"local agents", []string{".apm/agents/a.agent.md"}, ".apm/agents", "", true, "<local .apm/>: read .apm/agents failed: "},
+		{"local commands", []string{".apm/commands/a.md"}, ".apm/commands", "", true, "<local .apm/>: read .apm/commands failed: "},
+		{"local hooks", []string{".apm/hooks/a.json"}, ".apm/hooks", "", true, "<local .apm/>: read .apm/hooks failed: "},
+		{"local prompts", []string{".apm/prompts/a.prompt.md"}, ".apm/prompts", "", true, "<local .apm/>: read .apm/prompts failed: "},
+		{"local skills", []string{".apm/skills/demo/SKILL.md"}, ".apm/skills", "", true, "<local .apm/>: read .apm/skills failed: "},
+		{"local skill directory hides its SKILL.md", []string{".apm/skills/demo/SKILL.md"}, ".apm/skills/demo", "", true, "<local .apm/>: read .apm/skills/demo/SKILL.md failed: "},
+		{"local .apm itself", []string{".apm/skills/demo/SKILL.md"}, ".apm", "", true, "<local .apm/>: read .apm/instructions failed: "},
+		{"dependency .apm skills", []string{module + "/.apm/skills/s/SKILL.md"}, module + "/.apm/skills", depKey, true, depKey + ": read " + module + "/.apm/skills failed: "},
+		{"dependency .apm agents", []string{module + "/.apm/agents/a.md"}, module + "/.apm/agents", depKey, true, depKey + ": read " + module + "/.apm/agents failed: "},
+		{"dependency root skills", []string{module + "/skills/s/SKILL.md"}, module + "/skills", depKey, true, depKey + ": read " + module + "/skills failed: "},
+		{"dependency root skill directory hides its SKILL.md", []string{module + "/skills/s/SKILL.md"}, module + "/skills/s", depKey, true, depKey + ": read " + module + "/skills/s/SKILL.md failed: "},
+		{"dependency plugin manifest directory", []string{module + "/.claude-plugin/plugin.json"}, module + "/.claude-plugin", depKey, true, depKey + ": read " + module + "/.claude-plugin/plugin.json failed: "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1588,12 +1626,10 @@ func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
 			for _, f := range tt.files {
 				mkFile(t, dir, f, "x\n")
 			}
+			reason := ""
 			if tt.unreadable != "" {
-				full := filepath.Join(dir, filepath.FromSlash(tt.unreadable))
-				if err := os.Chmod(full, 0); err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { os.Chmod(full, 0o755) })
+				listed := strings.Contains(tt.wantDiag, ": read "+tt.unreadable+" failed: ")
+				reason = makeUnreadable(t, filepath.Join(dir, filepath.FromSlash(tt.unreadable)), listed)
 			}
 
 			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
@@ -1612,12 +1648,12 @@ func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
 			}
 			found := false
 			for _, d := range result.Diags {
-				if d == tt.wantDiag {
+				if d == tt.wantDiag+reason {
 					found = true
 				}
 			}
 			if !found {
-				t.Errorf("Diags = %q, want one equal to %q", result.Diags, tt.wantDiag)
+				t.Errorf("Diags = %q, want one equal to %q", result.Diags, tt.wantDiag+reason)
 			}
 		})
 	}
@@ -1626,9 +1662,6 @@ func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
 // The directories a plugin manifest declares are read only through the
 // manifest, so each kind of declared entry needs its own case.
 func TestRun_FailedBucketsRecordsUnreadablePluginComponent(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission bits do not restrict root")
-	}
 	const depKey = "acme/foo"
 	const module = "apm_modules/" + depKey
 	m := &manifest.Manifest{
@@ -1658,12 +1691,9 @@ func TestRun_FailedBucketsRecordsUnreadablePluginComponent(t *testing.T) {
 			mkFile(t, dir, module+"/helpers/a.md", "x\n")
 			mkFile(t, dir, module+"/cmds/run.md", "x\n")
 			mkFile(t, dir, module+"/skills/legacy/SKILL.md", "x\n")
+			reason := ""
 			if tt.unreadable != "" {
-				full := filepath.Join(dir, filepath.FromSlash(tt.unreadable))
-				if err := os.Chmod(full, 0); err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { os.Chmod(full, 0o755) })
+				reason = makeUnreadable(t, filepath.Join(dir, filepath.FromSlash(tt.unreadable)), !tt.wantFailed || tt.wantPath == tt.unreadable)
 			}
 
 			result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false)
@@ -1680,7 +1710,7 @@ func TestRun_FailedBucketsRecordsUnreadablePluginComponent(t *testing.T) {
 			if len(result.FailedBuckets) != 1 || !result.FailedBuckets[depKey] {
 				t.Errorf("FailedBuckets = %v, want only %q", result.FailedBuckets, depKey)
 			}
-			want := depKey + ": read " + tt.wantPath + " failed: permission denied"
+			want := depKey + ": read " + tt.wantPath + " failed: " + reason
 			found := false
 			for _, d := range result.Diags {
 				if d == want {
