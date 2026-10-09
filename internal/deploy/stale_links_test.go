@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -191,7 +192,7 @@ func TestRemoveStaleLinkedFiles_PathIsSymlinkWithTargetOutsideSourceRoot(t *test
 	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/agents/gone.md"}, nil, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	want := `keeping ".claude/agents/gone.md": symlink target "` + filepath.Join(outside, "agent.md") + `" is not in the source of this package`
+	want := `keeping ".claude/agents/gone.md": symlink target ` + strconv.Quote(filepath.Join(outside, "agent.md")) + ` is not in the source of this package`
 	if len(diags) == 1 && diags[0] != want {
 		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
@@ -214,7 +215,7 @@ func TestRemoveStaleLinkedFiles_UserParentSymlink_KeepsFileWithOtherHash(t *test
 		map[string]string{".claude/skills/demo/SKILL.md": "sha256:eb9c26baee47f19e4993a77bca936d0ff09e355a82d3db79bf154ebff1a80604"}, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	want := `keeping ".claude/skills/demo": symlink target "` + filepath.Join(outside, "skill") + `" is not in the source of this package`
+	want := `keeping ".claude/skills/demo": symlink target ` + strconv.Quote(filepath.Join(outside, "skill")) + ` is not in the source of this package`
 	if len(diags) == 1 && diags[0] != want {
 		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
@@ -393,7 +394,7 @@ func TestRemoveStaleLinkedFiles_KeepsSourceFileBehindSymlinkWrittenThroughAnothe
 		map[string]string{".claude/skills/demo/SKILL.md": "sha256:eb9c26baee47f19e4993a77bca936d0ff09e355a82d3db79bf154ebff1a80604"}, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	want := `keeping ".claude/skills/demo": symlink target "` + filepath.Join(alias, "skills", "demo") + `" is not in the source of this package`
+	want := `keeping ".claude/skills/demo": symlink target ` + strconv.Quote(filepath.Join(alias, "skills", "demo")) + ` is not in the source of this package`
 	if len(diags) == 1 && diags[0] != want {
 		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
@@ -583,7 +584,7 @@ func TestRemoveStaleLinkedFiles_KeepsSymlinkIntoSourceOfAnotherBucket(t *testing
 		[]string{".claude/agents/gone.md"}, nil, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	want := `keeping ".claude/agents/gone.md": symlink target "` + other + `" is not in the source of this package`
+	want := `keeping ".claude/agents/gone.md": symlink target ` + strconv.Quote(other) + ` is not in the source of this package`
 	if len(diags) == 1 && diags[0] != want {
 		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
@@ -646,7 +647,7 @@ func TestRemoveStaleLinkedFiles_TakenOverSkillDirKeepsEveryFileAndReportsOnce(t 
 		}, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	want := `keeping ".claude/skills/demo": symlink target "` + mine + `" is not in the source of this package`
+	want := `keeping ".claude/skills/demo": symlink target ` + strconv.Quote(mine) + ` is not in the source of this package`
 	if len(diags) == 1 && diags[0] != want {
 		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
@@ -665,7 +666,7 @@ func TestRemoveStaleLinkedFiles_TakenOverSkillDirThatDanglesIsKept(t *testing.T)
 		[]string{".claude/skills/demo/SKILL.md"}, nil, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	want := `keeping ".claude/skills/demo": symlink target "` + missing + `" is not in the source of this package`
+	want := `keeping ".claude/skills/demo": symlink target ` + strconv.Quote(missing) + ` is not in the source of this package`
 	if len(diags) == 1 && diags[0] != want {
 		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
@@ -687,7 +688,7 @@ func staleLinkDemoSkill(t *testing.T, deployRoot, sourceRoot string, withExtra b
 
 func assertStaleLinkNotDeployed(t *testing.T, diags []string, lockPath, target string) {
 	t.Helper()
-	want := `keeping "` + lockPath + `": symlink target "` + target + `" does not hold what this package deployed`
+	want := `keeping "` + lockPath + `": symlink target ` + strconv.Quote(target) + ` does not hold what this package deployed`
 	if len(diags) != 1 || diags[0] != want {
 		t.Errorf("diags = %q, want [%q]", diags, want)
 	}

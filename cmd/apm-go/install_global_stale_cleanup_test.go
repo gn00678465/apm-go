@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -311,7 +312,7 @@ func TestInstallGlobal_StaleCleanup_KeepsSymlinkPointingOutsideGlobalDir(t *test
 	if got := globalStaleRead(t, own); got != "the user's own agent\n" {
 		t.Errorf("symlink target = %q, want it unchanged", got)
 	}
-	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target "`+own+`" is not in the source of this package`) {
+	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target `+strconv.Quote(own)+` is not in the source of this package`) {
 		t.Errorf("missing warning for the kept symlink:\n%s", out)
 	}
 	if strings.Contains(out, "Cleaned") {
@@ -508,7 +509,7 @@ func TestInstallGlobal_StaleCleanup_KeepsSkillSymlinkTheUserRepointedInsideGloba
 	if strings.Contains(out, "Cleaned") || strings.Contains(out, ".claude/skills/demo\n") {
 		t.Errorf("the user's symlink is listed as cleaned:\n%s", out)
 	}
-	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target "`+custom+`" is not in the source of this package`) {
+	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target `+strconv.Quote(custom)+` is not in the source of this package`) {
 		t.Errorf("missing warning for the kept skill directory:\n%s", out)
 	}
 }
@@ -563,7 +564,7 @@ func TestInstallGlobal_StaleCleanup_KeepsAgentSymlinkTheUserRepointedIntoAnother
 	if strings.Contains(out, "Cleaned") {
 		t.Errorf("nothing was deleted, want no cleaned line:\n%s", out)
 	}
-	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target "`+other+`" is not in the source of this package`) {
+	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target `+strconv.Quote(other)+` is not in the source of this package`) {
 		t.Errorf("missing warning for the kept symlink:\n%s", out)
 	}
 }
@@ -592,7 +593,7 @@ func TestInstallGlobal_StaleCleanup_KeepsLocalContentSymlinkTheUserRepointed(t *
 	if strings.Contains(out, "Cleaned") {
 		t.Errorf("nothing was deleted, want no cleaned line:\n%s", out)
 	}
-	if !strings.Contains(out, `keeping ".claude/agents/mine.md": symlink target "`+custom+`" is not in the source of this package`) {
+	if !strings.Contains(out, `keeping ".claude/agents/mine.md": symlink target `+strconv.Quote(custom)+` is not in the source of this package`) {
 		t.Errorf("missing warning for the kept symlink:\n%s", out)
 	}
 }
@@ -623,7 +624,7 @@ func TestInstallGlobal_StaleCleanup_KeepsFilesOfSkillDirTheUserRepointedOutsideG
 	if strings.Contains(out, "Cleaned") {
 		t.Errorf("nothing may be deleted, want no cleaned line:\n%s", out)
 	}
-	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target "`+custom+`" is not in the source of this package`) {
+	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target `+strconv.Quote(custom)+` is not in the source of this package`) {
 		t.Errorf("missing warning for the kept skill directory:\n%s", out)
 	}
 }
@@ -653,7 +654,7 @@ func TestInstallGlobal_StaleCleanup_KeepsAgentSymlinkTheUserRepointedInsideSameP
 	if strings.Contains(out, "Cleaned") {
 		t.Errorf("nothing may be deleted, want no cleaned line:\n%s", out)
 	}
-	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target "`+keepSource+`" does not hold what this package deployed`) {
+	if !strings.Contains(out, `keeping ".claude/agents/gone.md": symlink target `+strconv.Quote(keepSource)+` does not hold what this package deployed`) {
 		t.Errorf("missing warning for the kept symlink:\n%s", out)
 	}
 }
@@ -683,7 +684,7 @@ func TestInstallGlobal_StaleCleanup_KeepsSkillSymlinkTheUserRepointedInsideSameP
 	if strings.Contains(out, "Cleaned") {
 		t.Errorf("nothing may be deleted, want no cleaned line:\n%s", out)
 	}
-	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target "`+otherSource+`" does not hold what this package deployed`) {
+	if !strings.Contains(out, `keeping ".claude/skills/demo": symlink target `+strconv.Quote(otherSource)+` does not hold what this package deployed`) {
 		t.Errorf("missing warning for the kept skill directory:\n%s", out)
 	}
 }

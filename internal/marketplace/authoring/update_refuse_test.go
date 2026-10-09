@@ -1,6 +1,8 @@
 package authoring
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,8 +141,10 @@ func TestCheckReplaceableByRename_NotARegularFile(t *testing.T) {
 	t.Run("nothing at the path", func(t *testing.T) {
 		path := filepath.Join(dir, "apm.yml")
 		err := checkReplaceableByRename(path)
-		if prefix := "cannot update " + path + " in place: lstat " + path + ": "; err == nil || !strings.HasPrefix(err.Error(), prefix) {
-			t.Errorf("error = %v\nwant one that starts with %s", err, prefix)
+		// The operation name in the reason is the operating system's (lstat,
+		// GetFileAttributesEx on Windows), so only the cause is compared.
+		if prefix := "cannot update " + path + " in place: "; !errors.Is(err, fs.ErrNotExist) || !strings.HasPrefix(err.Error(), prefix) {
+			t.Errorf("error = %v\nwant a not-exist error that starts with %s", err, prefix)
 		}
 	})
 }
