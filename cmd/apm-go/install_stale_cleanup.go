@@ -33,6 +33,10 @@ type staleCleanup struct {
 // install/phases/post_deps_local.py:60-62,125 for local content). failed uses
 // the keys of deploy.DeployResult.FailedBuckets.
 //
+// A path at or below one of keptDirs (deploy.DeployResult.KeptDirs) is not
+// stale and gets no warning: the deploy left that directory to the user, so
+// the files in it are the user's, also one that still has the recorded hash.
+//
 // deployRoot is the directory lock paths are relative to. A non-empty
 // linkSourceRoot says the deploy made symlinks into that project directory (a
 // --global install): a stale symlink is then removed itself and nothing is
@@ -42,7 +46,7 @@ type staleCleanup struct {
 //
 // newLock must already carry this run's deployed files. Results are ordered
 // local bucket first, then newLock.Dependencies order.
-func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
+func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, keptDirs, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
 	claimed := make(map[string]bool)
 	for _, f := range newLock.LocalDeployedFiles {
 		claimed[normalizeDeployPath(f)] = true
@@ -57,7 +61,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 	clean := func(label string, bucket deploy.DeployBucket, source string, oldFiles []string, oldHashes map[string]string) {
 		var stale []string
 		for _, f := range oldFiles {
-			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(targets, bucket, f) {
+			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(targets, bucket, f) || deploy.UnderKeptDir(keptDirs, f) {
 				continue
 			}
 			stale = append(stale, f)

@@ -1769,6 +1769,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// SAME LocalDeployedFiles slice) -- never a second up-front directory
 	// scan just to decide what to print.
 	var localProjectDeployed bool
+	// keptDirs is deploy.DeployResult.KeptDirs, for the lock merge in step 6b.
+	var keptDirs []string
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
@@ -1801,6 +1803,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		for _, d := range deployResult.Diags {
 			ux.Warn(os.Stderr, "%s", d)
 		}
+		keptDirs = deployResult.KeptDirs
 
 		// depsByKey looks up each resolved dependency's tag/ref/commit by its
 		// deploy key, for the R10a short-hash label fallback below --
@@ -1934,7 +1937,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			if deployDir != "" {
 				cleanRoot, linkSourceRoot = deployDir, "."
 			}
-			for _, c := range cleanStaleDeployedFiles(existingLock, newLock, deployResult.FailedBuckets, targets, cleanRoot, linkSourceRoot) {
+			for _, c := range cleanStaleDeployedFiles(existingLock, newLock, deployResult.FailedBuckets, keptDirs, targets, cleanRoot, linkSourceRoot) {
 				if n := len(c.removed); n > 0 {
 					noun := "files"
 					if n == 1 {
@@ -1967,8 +1970,21 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// that kept a hand-edited file) may leave files on disk that this run's
 	// deploy did not produce. mergeDeployedFiles checks os.Stat and only
 	// re-adds entries whose files still exist, so files reconciliation
-	// removed in step 6a stay out.
+	// removed in step 6a stay out. A path below a kept directory still exists
+	// but is the user's now, so the old record of it is dropped first.
 	if existingLock != nil {
+		notKept := func(files []string) []string {
+			if len(keptDirs) == 0 {
+				return files
+			}
+			var out []string
+			for _, f := range files {
+				if !deploy.UnderKeptDir(keptDirs, f) {
+					out = append(out, f)
+				}
+			}
+			return out
+		}
 		effectiveDeployRoot := "."
 		if deployDir != "" {
 			effectiveDeployRoot = deployDir
@@ -1977,14 +1993,14 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			dep := &newLock.Dependencies[i]
 			if old := existingLock.FindByKey(dep.UniqueKey()); old != nil {
 				dep.DeployedFiles, dep.DeployedHashes = mergeDeployedFiles(
-					old.DeployedFiles, old.DeployedHashes,
+					notKept(old.DeployedFiles), old.DeployedHashes,
 					dep.DeployedFiles, dep.DeployedHashes,
 					effectiveDeployRoot)
 			}
 		}
 		if len(existingLock.LocalDeployedFiles) > 0 {
 			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = mergeDeployedFiles(
-				existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes,
+				notKept(existingLock.LocalDeployedFiles), existingLock.LocalDeployedHashes,
 				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes,
 				effectiveDeployRoot)
 		}
