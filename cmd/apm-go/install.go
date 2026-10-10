@@ -589,7 +589,12 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 
 		// (A1) Re-verify deployed-file hashes (req-lk-017 / req-sc-001). MUST run
 		// before any git download so a tampered deployed file is reported by path.
-		if viol := lockfile.VerifyDeployedState(existingLock, "."); len(viol) > 0 {
+		// A --global install deploys under deployDir, not the working directory.
+		deployRoot := "."
+		if deployDir != "" {
+			deployRoot = deployDir
+		}
+		if viol := lockfile.VerifyDeployedState(existingLock, deployRoot); len(viol) > 0 {
 			v := viol[0]
 			observed := v.Observed
 			if observed == "" {
@@ -702,6 +707,11 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		if hasAnyDeps {
 			for _, dep := range existingLock.Dependencies {
 				if dep.Source == "registry" || dep.Source == "local" {
+					continue
+				}
+				// The lock does not record a local-path dependency's source
+				// path, so the loader would take it for a git dependency.
+				if strings.HasPrefix(dep.RepoURL, localModulesKeyPrefix) {
 					continue
 				}
 				// req-lk-007: always call LoadPackage rather than short-
@@ -2967,8 +2977,12 @@ func resolveLocalSourceAbs(src string) string {
 func localModulesKey(abs string) string {
 	base := sanitizePathSegment(filepath.Base(abs))
 	sum := sha256.Sum256([]byte(filepath.Clean(abs)))
-	return "_local/" + base + "-" + hex.EncodeToString(sum[:])[:8]
+	return localModulesKeyPrefix + base + "-" + hex.EncodeToString(sum[:])[:8]
 }
+
+// localModulesKeyPrefix marks an apm_modules key and lock repo_url that
+// localModulesKey produced.
+const localModulesKeyPrefix = "_local/"
 
 // sanitizePathSegment reduces s to a single safe path segment: every character
 // outside [A-Za-z0-9._-] becomes '_', and a leading '.'/empty result is
