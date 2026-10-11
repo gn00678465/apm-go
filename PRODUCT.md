@@ -81,7 +81,7 @@ Constraints future work must preserve:
 
 Terminology: **parity gate** = the `tools/parity` CI run that enforces the output contract; **waiver** = a recorded allowed difference with its reason; **pending case** = a parked corpus case for a documented design deviation; **realexec contract** = the output contract of an apm-go-only command with no Oracle counterpart, pinned by `tools/gate/realexec.sh` rather than the parity corpus, one named command per ticket; **ticket** = an issue file under `.scratch/parity-runner/issues/`.
 
-Undecided: the lockfile's external interoperability format, and whether MCP servers belong in the lockfile (ticket 32 A/B rulings, out of scope for the current branch).
+Undecided: the lockfile's external interoperability format, and whether MCP servers belong in the lockfile (ticket 32 A/B rulings; tracked in issue #50).
 
 ## Brand Commitments
 
@@ -94,7 +94,7 @@ Undecided: the lockfile's external interoperability format, and whether MCP serv
 - `README.md`, `README.zh-TW.md` — existing product copy in English and Traditional Chinese.
 - `spec/conformance/` — OpenAPM safe-subset spec, agent/marketplace schema, CLI surface notes, verification checklist, dependency-ref and repr conformance tables.
 - `tools/parity/cases/` — 96 byte-exact output-contract cases (0 unwaived diffs at HEAD); `tools/parity/cases-pending/` — 5 parked cases with README.
-- `.scratch/parity-runner/issues/` — 37 ticket files documenting the output-contract backlog and rulings.
+- `.scratch/parity-runner/issues/` — ticket files documenting the output-contract backlog and rulings.
 - CI: `.github/workflows/parity.yml` (parity gate), `release.yml`.
 - Absent, must not be fabricated: testimonials, user counts, benchmarks, customers, pricing.
 
