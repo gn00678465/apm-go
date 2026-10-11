@@ -22,7 +22,7 @@ func TestLoadWaivers_MissingFileReturnsEmptyNotError(t *testing.T) {
 func TestLoadWaivers_ParsesEntries(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "waivers.json")
-	writeJSON(t, path, `[{"id":"version","fields":["stdout"],"taxonomy":"negative-control","oracle_commit":"abc","reason":"r","owner":"o","eval_plan_ref":"ref"}]`)
+	writeJSON(t, path, `[{"id":"version","fields":["stdout"],"taxonomy":"negative-control","reason":"r","owner":"o","eval_plan_ref":"ref"}]`)
 
 	waivers, err := loadWaivers(path)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestLoadWaivers_ParsesEntries(t *testing.T) {
 		t.Fatalf("waivers = %v, want 1 entry", waivers)
 	}
 	w := waivers[0]
-	if w.ID != "version" || w.OracleCommit != "abc" || w.Reason != "r" || w.Owner != "o" || w.EvalPlanRef != "ref" {
+	if w.ID != "version" || w.Reason != "r" || w.Owner != "o" || w.EvalPlanRef != "ref" {
 		t.Errorf("waiver = %+v", w)
 	}
 	if !fieldsEqual(w.Fields, []string{"stdout"}) {
@@ -61,38 +61,32 @@ func casesByID(cases ...Case) map[string]Case {
 }
 
 func TestValidateWaivers_UnknownIDFailsExit2(t *testing.T) {
-	err := validateWaivers([]Waiver{{ID: "ghost", Fields: []string{"stdout"}, Reason: "r", OracleCommit: "pin"}},
-		casesByID(versionCase), "pin")
+	err := validateWaivers([]Waiver{{ID: "ghost", Fields: []string{"stdout"}, Reason: "r"}},
+		casesByID(versionCase))
 	assertWaiverValidationError(t, err)
 }
 
 func TestValidateWaivers_EmptyReasonFailsExit2(t *testing.T) {
-	err := validateWaivers([]Waiver{{ID: "version", Fields: []string{"stdout"}, Reason: "", OracleCommit: "pin"}},
-		casesByID(versionCase), "pin")
+	err := validateWaivers([]Waiver{{ID: "version", Fields: []string{"stdout"}, Reason: ""}},
+		casesByID(versionCase))
 	assertWaiverValidationError(t, err)
 }
 
 func TestValidateWaivers_EmptyFieldsFailsExit2(t *testing.T) {
-	err := validateWaivers([]Waiver{{ID: "version", Fields: nil, Reason: "r", OracleCommit: "pin"}},
-		casesByID(versionCase), "pin")
+	err := validateWaivers([]Waiver{{ID: "version", Fields: nil, Reason: "r"}},
+		casesByID(versionCase))
 	assertWaiverValidationError(t, err)
 }
 
 func TestValidateWaivers_WildcardFieldFailsExit2(t *testing.T) {
-	err := validateWaivers([]Waiver{{ID: "version", Fields: []string{"*"}, Reason: "r", OracleCommit: "pin"}},
-		casesByID(versionCase), "pin")
-	assertWaiverValidationError(t, err)
-}
-
-func TestValidateWaivers_OracleCommitMismatchFailsExit2(t *testing.T) {
-	err := validateWaivers([]Waiver{{ID: "version", Fields: []string{"stdout"}, Reason: "r", OracleCommit: "wrong-pin"}},
-		casesByID(versionCase), "pin")
+	err := validateWaivers([]Waiver{{ID: "version", Fields: []string{"*"}, Reason: "r"}},
+		casesByID(versionCase))
 	assertWaiverValidationError(t, err)
 }
 
 func TestValidateWaivers_ValidPasses(t *testing.T) {
-	err := validateWaivers([]Waiver{{ID: "version", Fields: []string{"stdout"}, Reason: "r", OracleCommit: "pin"}},
-		casesByID(versionCase), "pin")
+	err := validateWaivers([]Waiver{{ID: "version", Fields: []string{"stdout"}, Reason: "r"}},
+		casesByID(versionCase))
 	if err != nil {
 		t.Errorf("validateWaivers: %v, want nil", err)
 	}
@@ -108,8 +102,8 @@ func TestValidateWaivers_NegativeControlOnProductCaseFailsExit2(t *testing.T) {
 	productCase := Case{ID: "doctor-help"} // no expected_taxonomy at all
 	err := validateWaivers([]Waiver{{
 		ID: "doctor-help", Fields: []string{"stdout", "exit_code"}, Taxonomy: "negative-control",
-		Reason: "product negative-control probe", OracleCommit: "pin",
-	}}, casesByID(productCase), "pin")
+		Reason: "product negative-control probe",
+	}}, casesByID(productCase))
 	assertWaiverValidationError(t, err)
 }
 
@@ -123,8 +117,8 @@ func TestValidateWaivers_NegativeControlAllowedForRunnerOwnedID(t *testing.T) {
 	plainVersionCase := Case{ID: "version"} // deliberately no expected_taxonomy
 	err := validateWaivers([]Waiver{{
 		ID: "version", Fields: []string{"stdout"}, Taxonomy: "negative-control",
-		Reason: "proves the diff pipeline detects a real difference", OracleCommit: "pin",
-	}}, casesByID(plainVersionCase), "pin")
+		Reason: "proves the diff pipeline detects a real difference",
+	}}, casesByID(plainVersionCase))
 	if err != nil {
 		t.Errorf("validateWaivers: %v, want nil (\"version\" is runner-owned regardless of its manifest)", err)
 	}
@@ -142,8 +136,8 @@ func TestValidateWaivers_ProductCaseCannotSelfDeclareNegativeControl(t *testing.
 	selfDeclared := Case{ID: "product-negative", ExpectedTaxonomy: []string{"negative-control"}}
 	err := validateWaivers([]Waiver{{
 		ID: "product-negative", Fields: []string{"stdout"}, Taxonomy: "negative-control",
-		Reason: "self-declared negative control", OracleCommit: "pin",
-	}}, casesByID(selfDeclared), "pin")
+		Reason: "self-declared negative control",
+	}}, casesByID(selfDeclared))
 	assertWaiverValidationError(t, err)
 }
 
@@ -161,20 +155,18 @@ func assertWaiverValidationError(t *testing.T, err error) {
 	}
 }
 
-// TestLoadAndValidateWaivers_UsesOracleCommitPassedIn proves the validator
-// checks waivers.json against the oracleCommit the caller passed in
-// directly (this run's in-memory preflight.OracleCommit) -- ticket 02
-// attempt 2's W2 fix means this can no longer be read back from run.json,
-// since run.json isn't written until after this validation passes.
-func TestLoadAndValidateWaivers_UsesOracleCommitPassedIn(t *testing.T) {
+// TestLoadAndValidateWaivers_DefaultPathIsSiblingOfCasesDir proves the
+// default waivers.json is the sibling of casesDir and that it is validated:
+// an entry for an unknown case id fails.
+func TestLoadAndValidateWaivers_DefaultPathIsSiblingOfCasesDir(t *testing.T) {
 	casesDir := filepath.Join(t.TempDir(), "cases")
 	if err := os.MkdirAll(casesDir, 0o755); err != nil {
 		t.Fatalf("mkdir cases: %v", err)
 	}
 	waiversPath := filepath.Join(filepath.Dir(casesDir), "waivers.json")
-	writeJSON(t, waiversPath, `[{"id":"version","fields":["stdout"],"reason":"r","oracle_commit":"from-caller"}]`)
+	writeJSON(t, waiversPath, `[{"id":"version","fields":["stdout"],"reason":"r"}]`)
 
-	waivers, err := loadAndValidateWaivers(casesDir, "", "from-caller", casesByID(versionCase))
+	waivers, err := loadAndValidateWaivers(casesDir, "", casesByID(versionCase))
 	if err != nil {
 		t.Fatalf("loadAndValidateWaivers: %v", err)
 	}
@@ -182,19 +174,16 @@ func TestLoadAndValidateWaivers_UsesOracleCommitPassedIn(t *testing.T) {
 		t.Fatalf("waivers = %v, want 1", waivers)
 	}
 
-	// A waiver pinned to a DIFFERENT commit than the caller passed in must
-	// fail -- proves the check is against the passed-in value, not just
-	// "any commit value".
-	writeJSON(t, waiversPath, `[{"id":"version","fields":["stdout"],"reason":"r","oracle_commit":"stale-commit"}]`)
-	_, err = loadAndValidateWaivers(casesDir, "", "from-caller", casesByID(versionCase))
+	writeJSON(t, waiversPath, `[{"id":"ghost","fields":["stdout"],"reason":"r"}]`)
+	_, err = loadAndValidateWaivers(casesDir, "", casesByID(versionCase))
 	assertWaiverValidationError(t, err)
 }
 
 func TestLoadAndValidateWaivers_ExplicitPathOverridesDefault(t *testing.T) {
 	explicit := filepath.Join(t.TempDir(), "custom-waivers.json")
-	writeJSON(t, explicit, `[{"id":"version","fields":["stdout"],"reason":"r","oracle_commit":"pin"}]`)
+	writeJSON(t, explicit, `[{"id":"version","fields":["stdout"],"reason":"r"}]`)
 
-	waivers, err := loadAndValidateWaivers("/nonexistent/cases", explicit, "pin", casesByID(versionCase))
+	waivers, err := loadAndValidateWaivers("/nonexistent/cases", explicit, casesByID(versionCase))
 	if err != nil {
 		t.Fatalf("loadAndValidateWaivers: %v", err)
 	}
@@ -205,32 +194,32 @@ func TestLoadAndValidateWaivers_ExplicitPathOverridesDefault(t *testing.T) {
 
 func TestValidateWaivers_TreeWaiverRequiresExactTreePaths(t *testing.T) {
 	known := map[string]Case{"c1": {ID: "c1"}}
-	base := Waiver{ID: "c1", Taxonomy: "F09", OracleCommit: "deadbeef", Reason: "r", Owner: "o", EvalPlanRef: "x"}
+	base := Waiver{ID: "c1", Taxonomy: "F09", Reason: "r", Owner: "o", EvalPlanRef: "x"}
 
 	noPaths := base
 	noPaths.Fields = []string{"tree"}
-	if err := validateWaivers([]Waiver{noPaths}, known, "deadbeef"); err == nil {
+	if err := validateWaivers([]Waiver{noPaths}, known); err == nil {
 		t.Error("tree waiver without tree_paths must be rejected")
 	}
 
 	glob := base
 	glob.Fields = []string{"tree"}
 	glob.TreePaths = []string{"home/*"}
-	if err := validateWaivers([]Waiver{glob}, known, "deadbeef"); err == nil {
+	if err := validateWaivers([]Waiver{glob}, known); err == nil {
 		t.Error("tree_paths glob must be rejected")
 	}
 
 	stray := base
 	stray.Fields = []string{"stdout"}
 	stray.TreePaths = []string{"home/.apm/config.json"}
-	if err := validateWaivers([]Waiver{stray}, known, "deadbeef"); err == nil {
+	if err := validateWaivers([]Waiver{stray}, known); err == nil {
 		t.Error("tree_paths without tree in fields must be rejected")
 	}
 
 	ok := base
 	ok.Fields = []string{"tree"}
 	ok.TreePaths = []string{"home/.apm/config.json"}
-	if err := validateWaivers([]Waiver{ok}, known, "deadbeef"); err != nil {
+	if err := validateWaivers([]Waiver{ok}, known); err != nil {
 		t.Errorf("exact tree_paths must validate: %v", err)
 	}
 }

@@ -1,0 +1,22 @@
+{
+ "outcomes": {
+  "*": "failed:request timed out"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  packages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--strict-metadata",
+    "-m",
+    "none"
+   ],
+   "exit": 0,
+   "stdout": "",
+   "files": [
+    "apm.yml"
+   ],
+   "fetch_calls": 0
+  }
+ ]
+}

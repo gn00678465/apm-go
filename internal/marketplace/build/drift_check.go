@@ -20,32 +20,51 @@ type DriftDifference struct {
 	New  any
 }
 
-// DriftOutputReport mirrors DriftOutputReport (drift_check.py:50-65):
-// drift status for a single configured marketplace output profile.
+// DriftUncertifiable is the status of an output whose regenerated metadata
+// cannot certify a comparison.
+const DriftUncertifiable = "uncertifiable"
+
+// DriftOutputReport mirrors DriftOutputReport (Oracle v0.33.0
+// drift_check.py:54-81): drift status for a single configured marketplace
+// output profile.
 type DriftOutputReport struct {
 	Format      string
 	Path        string
-	Status      string // "unchanged" | "missing" | "drift"
+	Status      string // "unchanged" | "missing" | "drift" | "uncertifiable"
 	Differences []DriftDifference
+	// MetadataWarnings is set only for DriftUncertifiable.
+	MetadataWarnings []string
 }
 
-// DriftReport mirrors DriftReport (drift_check.py:68-89): the aggregate
-// drift report across every configured output.
+// ErrorMessages mirrors DriftOutputReport.error_messages
+// (drift_check.py:73-81).
+func (o DriftOutputReport) ErrorMessages() []string {
+	switch o.Status {
+	case "missing":
+		return []string{fmt.Sprintf("%s: missing on disk (would be created)", o.Path)}
+	case "drift":
+		return []string{fmt.Sprintf("%s: %d differences vs. regenerated output", o.Path, len(o.Differences))}
+	case DriftUncertifiable:
+		return []string{fmt.Sprintf("%s: remote metadata unavailable; regeneration is uncertifiable", o.Path)}
+	}
+	return nil
+}
+
+// DriftReport mirrors DriftReport (drift_check.py:84-99): the aggregate
+// drift report across every configured output. Metadata is the metadata
+// state the gate judged; it has no outcomes when no configured output uses
+// package metadata.
 type DriftReport struct {
-	OK      bool
-	Outputs []DriftOutputReport
+	OK       bool
+	Outputs  []DriftOutputReport
+	Metadata MetadataEnrichment
 }
 
-// ErrorMessages mirrors DriftReport.error_messages (drift_check.py:81-89).
+// ErrorMessages mirrors DriftReport.error_messages (drift_check.py:98-99).
 func (r DriftReport) ErrorMessages() []string {
 	var msgs []string
 	for _, out := range r.Outputs {
-		switch out.Status {
-		case "missing":
-			msgs = append(msgs, fmt.Sprintf("%s: missing on disk (would be created)", out.Path))
-		case "drift":
-			msgs = append(msgs, fmt.Sprintf("%s: %d differences vs. regenerated output", out.Path, len(out.Differences)))
-		}
+		msgs = append(msgs, out.ErrorMessages()...)
 	}
 	return msgs
 }
@@ -149,15 +168,14 @@ func loadOnDisk(rw *rootfs.RootWriter, rel string) (any, bool) {
 	return v, true
 }
 
-// CheckMarketplaceDrift mirrors check_marketplace_drift (drift_check.py:
-// 151-238): for each of cfg's configured output profiles, composes the
-// document via the SAME ComposeDocument dispatch the real marketplace
-// producer uses (never writing anything -- resolved is the caller's own,
-// independently-resolved package list, matching the Oracle's own
-// dedicated, always-dry-run MarketplaceBuilder for this gate rather than
-// reusing whatever the real producer already wrote this same invocation),
-// and compares it against whatever is currently on disk at the profile's
-// resolved output path.
+// CheckMarketplaceDrift mirrors check_marketplace_drift (Oracle v0.33.0
+// drift_check.py:160-270): for each of cfg's configured output profiles,
+// composes the document via the SAME ComposeDocument dispatch the real
+// marketplace producer uses (never writing anything) and compares it against
+// whatever is currently on disk at the profile's resolved output path.
+// resolved is the package list this pack run already resolved, so the gate
+// judges the same metadata the build used. An output whose metadata is not
+// certifiable is not compared: two equally degraded documents would match.
 func CheckMarketplaceDrift(
 	cfg *authoring.AuthoringConfig,
 	resolved []ResolvedPackage,
@@ -179,6 +197,7 @@ func CheckMarketplaceDrift(
 	defer rw.Close()
 
 	var reports []DriftOutputReport
+	var metadata MetadataEnrichment
 	for _, format := range configured {
 		if !KnownOutputFormats[format] {
 			continue
@@ -195,7 +214,18 @@ func CheckMarketplaceDrift(
 			return DriftReport{}, err
 		}
 
-		doc, _, err := ComposeDocument(format, cfg, resolved, options...)
+		if m := MetadataFor(format, resolved); m != nil {
+			metadata = *m
+			if !m.Certifiable() {
+				reports = append(reports, DriftOutputReport{
+					Format: format, Path: outputPath, Status: DriftUncertifiable,
+					MetadataWarnings: m.Warnings(),
+				})
+				continue
+			}
+		}
+
+		doc, _, _, err := ComposeDocument(format, cfg, resolved, options...)
 		if err != nil {
 			return DriftReport{}, err
 		}
@@ -244,7 +274,7 @@ func CheckMarketplaceDrift(
 			break
 		}
 	}
-	return DriftReport{OK: overallOK, Outputs: reports}, nil
+	return DriftReport{OK: overallOK, Outputs: reports, Metadata: metadata}, nil
 }
 
 // RenderDiffLines mirrors render_diff_lines (drift_check.py:241-252):

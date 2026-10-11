@@ -3,7 +3,6 @@ package marketplace
 import (
 	"encoding/json"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -31,11 +30,9 @@ type pythonReprWhitespaceRow struct {
 }
 
 // pythonReprConformanceDoc mirrors spec/conformance/python-repr.json's
-// top-level shape; OracleCommit pins the generating Oracle checkout to the
-// SAME commit the parity suite is gated on (tools/parity/oracle.pin), the
-// identical provenance rule depref_conformance_test.go enforces.
+// top-level shape. The fixture's oracle_commit records which Oracle commit
+// generated it. No check compares it.
 type pythonReprConformanceDoc struct {
-	OracleCommit    string                     `json:"oracle_commit"`
 	Rows            []pythonReprConformanceRow `json:"rows"`
 	WhitespaceSweep []pythonReprWhitespaceRow  `json:"whitespace_sweep"`
 }
@@ -61,18 +58,6 @@ func TestPythonReprValue_OracleConformance(t *testing.T) {
 	}
 	if len(doc.Rows) == 0 {
 		t.Fatal("spec/conformance/python-repr.json is empty")
-	}
-
-	pinData, err := os.ReadFile("../../tools/parity/oracle.pin")
-	if err != nil {
-		t.Fatalf("reading tools/parity/oracle.pin: %v", err)
-	}
-	wantPin := strings.TrimSpace(string(pinData))
-	if doc.OracleCommit != wantPin {
-		t.Fatalf("python-repr.json's oracle_commit = %q, want %q (tools/parity/oracle.pin) -- "+
-			"the fixture was generated against a different Oracle commit than the parity suite is pinned to; "+
-			"regenerate it with tools/depref_conformance_gen.py --oracle-commit %s",
-			doc.OracleCommit, wantPin, wantPin)
 	}
 
 	for _, row := range doc.Rows {

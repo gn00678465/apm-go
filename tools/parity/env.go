@@ -21,7 +21,7 @@ var fixedEnv = map[string]string{
 	"TERM":     "dumb",
 	// The Oracle's post-command update check (commands/_helpers.py
 	// _check_and_notify_updates) reaches GitHub and, once upstream publishes
-	// a release newer than the pin, prints "A new version of APM is
+	// a release newer than the Oracle under test, prints "A new version of APM is
 	// available" on stdout of every case. APM_E2E_TESTS=1 is the Oracle's
 	// own opt-out; apm-go has no update check and ignores the variable.
 	"APM_E2E_TESTS": "1",

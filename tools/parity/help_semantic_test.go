@@ -23,7 +23,7 @@ func TestIsHelpCase(t *testing.T) {
 }
 
 // clickDoctorHelp and cobraDoctorHelp are the two sides' actual doctor
-// --help output (pinned oracle.pin commit b75a02b1 / apm-go's own doctor
+// --help output (Oracle commit b75a02b1 / apm-go's own doctor
 // command), captured verbatim so the parser is exercised against real
 // framework output rather than a hand-simplified stand-in.
 const clickDoctorHelp = `Usage: apm doctor [OPTIONS]
@@ -47,7 +47,7 @@ Flags:
 `
 
 // These are exact flag-section excerpts captured from the real pack help
-// commands at the pinned Oracle and current apm-go revisions. The Click
+// commands at Oracle commit b75a02b1 and the apm-go revision of that time. The Click
 // sample exercises both ordinary wrapped descriptions and Click's
 // long-metavar form, where --format's description starts on the next line;
 // the Cobra sample exercises the corresponding target output.

@@ -252,6 +252,9 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
 	// git options even if a crafted value begins with "-".
 	args = append(args, "--", url, dir)
 
+	if err := ValidateURLRewriteSafety(url); err != nil {
+		return err
+	}
 	cmd := cloneCommandFor(url, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -267,6 +270,9 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
 // so the commit is guaranteed present if it's reachable from any of them)
 // followed by an explicit checkout instead of the shallow-clone shorthand.
 func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, commit string) error {
+	if err := ValidateURLRewriteSafety(url); err != nil {
+		return err
+	}
 	cloneCmd := cloneCommandFor(url, "clone", "--", url, dir)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))

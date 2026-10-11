@@ -1,0 +1,20 @@
+{
+ "outcomes": {
+  "*": "failed:request timed out"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  packages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--check-clean"
+   ],
+   "exit": 4,
+   "stdout": "[x] Marketplace clean check failed: remote metadata unavailable [outputs=claude]\n[x]     .claude-plugin/marketplace.json  [cannot certify regenerated metadata]\n[!]     Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\n[i] [dry-run] --check-clean is read-only; no pack outputs were written.\n",
+   "files": [
+    "apm.yml"
+   ],
+   "fetch_calls": 1
+  }
+ ]
+}

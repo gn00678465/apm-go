@@ -1,0 +1,21 @@
+{
+ "outcomes": {
+  "*": "failed:request timed out"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  packages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--json"
+   ],
+   "exit": 0,
+   "stdout": "{\n  \"ok\": true,\n  \"dry_run\": false,\n  \"warnings\": [\n    \"Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\"\n  ],\n  \"errors\": [],\n  \"metadata_enrichment\": {\n    \"certifiable\": false,\n    \"outcomes\": [\n      {\n        \"package\": \"remote-tool\",\n        \"status\": \"failed\",\n        \"cause\": \"request timed out\"\n      }\n    ]\n  },\n  \"marketplace\": {\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \"<ROOT>/.claude-plugin/marketplace.json\",\n        \"added\": 1,\n        \"updated\": 0,\n        \"unchanged\": 0,\n        \"skipped\": 0\n      }\n    ]\n  },\n  \"bundle\": null,\n  \"plugin_manifests\": {\n    \"written\": [],\n    \"skipped\": [],\n    \"dry_run\": []\n  },\n  \"version_alignment\": null,\n  \"drift\": null\n}\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml"
+   ],
+   "fetch_calls": 1
+  }
+ ]
+}

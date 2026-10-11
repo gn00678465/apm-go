@@ -265,6 +265,10 @@ func fetchRefIntoScratch(source, ref string) (dir string, cleanup func(), err er
 	}
 	safeURL := gitops.SanitizeGitOutput(cloneURL)
 
+	if err := gitops.ValidateURLRewriteSafety(cloneURL); err != nil {
+		return "", cleanup, err
+	}
+
 	dir, err = os.MkdirTemp(scratchTempRoot, scratchTempPrefix)
 	if err != nil {
 		return "", cleanup, fmt.Errorf("create scratch repository: %w", err)

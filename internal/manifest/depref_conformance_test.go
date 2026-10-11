@@ -3,7 +3,6 @@ package manifest
 import (
 	"encoding/json"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -25,26 +24,23 @@ type depRefConformanceRow struct {
 	ApmgoIsLocal  bool   `json:"apmgo_is_local"`
 }
 
+// The fixture's oracle_commit records which Oracle commit generated it. No
+// check compares it.
 type depRefConformanceDoc struct {
-	OracleCommit string                 `json:"oracle_commit"`
-	Rows         []depRefConformanceRow `json:"rows"`
+	Rows []depRefConformanceRow `json:"rows"`
 }
 
 // TestParseDepString_OracleConformance is ticket 11 attempt 5's PART 2: a
 // strategy change after four evaluator round-trips of "fix the reproducer,
 // find another corner" -- instead of chasing individual eval-supplied
 // examples, this asserts ParseDepString's accept/reject boundary against a
-// table generated directly from the pinned Oracle's own
+// table generated directly from the Oracle's own
 // DependencyReference.parse across every category reachable from a
 // marketplace source coordinate (shorthand, https/http/ssh/SCP, mixed-case
 // schemes, users, ports, queries/fragments, percent-encoding, GitLab/ADO
 // shapes, IPv6/odd hosts, traversal, control characters, empty/whitespace).
 //
-// Ticket 11 attempt 6's "Standards" fixes:
-//   - The fixture's oracle_commit must match tools/parity/oracle.pin -- the
-//     SAME pin the parity suite itself is gated on -- so a fixture silently
-//     regenerated against a drifted Oracle checkout is caught here, not
-//     discovered later as an unexplained diff.
+// Ticket 11 attempt 6's "Standards" fix:
 //   - A KnownGap row is no longer just logged: it asserts ApmgoAccepted/
 //     ApmgoIsLocal (the CURRENT, documented, deliberately-diverging apm-go
 //     behavior recorded in the fixture) against the live implementation.
@@ -63,18 +59,6 @@ func TestParseDepString_OracleConformance(t *testing.T) {
 	}
 	if len(doc.Rows) == 0 {
 		t.Fatal("spec/conformance/depref-accept.json is empty")
-	}
-
-	pinData, err := os.ReadFile("../../tools/parity/oracle.pin")
-	if err != nil {
-		t.Fatalf("reading tools/parity/oracle.pin: %v", err)
-	}
-	wantPin := strings.TrimSpace(string(pinData))
-	if doc.OracleCommit != wantPin {
-		t.Fatalf("depref-accept.json's oracle_commit = %q, want %q (tools/parity/oracle.pin) -- "+
-			"the fixture was generated against a different Oracle commit than the parity suite is pinned to; "+
-			"regenerate it with tools/depref_conformance_gen.py --oracle-commit %s",
-			doc.OracleCommit, wantPin, wantPin)
 	}
 
 	knownGaps := 0

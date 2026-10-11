@@ -32,7 +32,9 @@ func (r *RealTagLister) resolveCloneURLForRef(ref *manifest.DependencyReference)
 }
 
 func (r *RealTagLister) listTags(cloneURL string) ([]semver.TagInfo, error) {
-
+	if err := ValidateURLRewriteSafety(cloneURL); err != nil {
+		return nil, err
+	}
 	cmd := cloneCommandFor(cloneURL, "ls-remote", "--tags", "--refs", "--", cloneURL)
 	out, err := cmd.Output()
 	if err != nil {

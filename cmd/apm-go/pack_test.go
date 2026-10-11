@@ -853,7 +853,10 @@ func TestPackCmd_HelpMatchesOracleCheckFlagsText(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Release gate: verify per-package versions agree with the configured marketplace.versioning.strategy (lockstep | tag_pattern | per_package). Exits 3 on misalignment. Composes with --check-clean and --dry-run.",
-		"Release gate: regenerate every configured marketplace output to a temp representation and diff against the effective on-disk path, including --marketplace-path overrides. Exits 4 for drift. Use with --dry-run to check without normal pack output generation.",
+		// Oracle v0.33.0 commands/pack.py:66-67,252-268.
+		"Release gate: regenerate every configured marketplace output to a temp representation and diff against the effective on-disk path, including --marketplace-path overrides. This check is always read-only. Exits 4 for drift or uncertifiable remote metadata.",
+		"Marketplace: fail before writing when remote description/version metadata cannot be fetched. Exits 5; --check-clean always rejects uncertifiable metadata with exit 4.",
+		"  5  Strict marketplace metadata check failed (--strict-metadata)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("pack --help output missing %q:\n%s", want, out)

@@ -55,9 +55,17 @@ unimplemented subsystems.`,
 			data, err := os.ReadFile("apm.lock.yaml")
 			if err != nil {
 				if os.IsNotExist(err) {
-					// Oracle commands/audit.py:912-916 treats a missing
-					// lockfile as an empty audit and exits successfully.
-					ux.Info(cmd.OutOrStdout(), "No apm.lock.yaml found -- nothing to scan. Use --file to scan a specific file.")
+					if content {
+						// --content is apm-go-only; it keeps its own
+						// missing-lockfile line.
+						ux.Info(cmd.OutOrStdout(), "No apm.lock.yaml found -- nothing to scan. Use --file to scan a specific file.")
+						return nil
+					}
+					// Oracle v0.33.0 commands/audit.py:948-988: a missing
+					// lockfile is not a special case, it is a scan that
+					// found nothing.
+					ux.Running(cmd.OutOrStdout(), "Scanning installed packages and deployed files...")
+					ux.Info(cmd.OutOrStdout(), auditNothingToScan)
 					return nil
 				}
 				return fmt.Errorf("read apm.lock.yaml: %w", err)
@@ -98,9 +106,9 @@ unimplemented subsystems.`,
 			}
 			count += len(lock.LocalDeployedHashes)
 			if count == 0 {
-				// Oracle commands/audit.py:950 uses a progress/info record for
-				// the empty deployed-file case and exits 0.
-				ux.Info(cmd.OutOrStdout(), "No deployed files found")
+				// Oracle v0.33.0 commands/audit.py:980-988 uses a
+				// progress/info record for the empty case and exits 0.
+				ux.Info(cmd.OutOrStdout(), auditNothingToScan)
 				return nil
 			}
 			ux.Success(cmd.OutOrStdout(), "audit: %d deployed files verified", count)
@@ -162,3 +170,7 @@ func printAuditVerifiedFiles(w io.Writer, lock *lockfile.Lockfile) {
 	}
 	ux.List(w, items)
 }
+
+// auditNothingToScan is the Oracle's record for an audit that found no
+// deployed file (v0.33.0 commands/audit.py:986).
+const auditNothingToScan = "No recognized deployed primitives found -- nothing to scan"

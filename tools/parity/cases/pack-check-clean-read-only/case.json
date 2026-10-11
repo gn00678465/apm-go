@@ -1,0 +1,5 @@
+{
+  "id": "pack-check-clean-read-only",
+  "argv": ["pack", "--check-clean"],
+  "rewrite_binary_name": true
+}

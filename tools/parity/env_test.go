@@ -26,7 +26,7 @@ func TestBuildEnv_AllowListAndFixedVars(t *testing.T) {
 		"TERM":     "dumb",
 		// The Oracle's own update-check opt-out (env.go fixedEnv); without
 		// it every case's stdout grows a version banner once upstream
-		// releases past the pin.
+		// releases past the Oracle under test.
 		"APM_E2E_TESTS": "1",
 		"CASE_VAR":      "case-value",
 		"HOME":          "/tmp/sandbox-home",

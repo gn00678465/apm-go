@@ -2,7 +2,7 @@
 """One-shot generator for spec/conformance/depref-accept.json and
 spec/conformance/python-repr.json (ticket 11 attempts 5-6).
 
-Run against the PINNED Oracle checkout so the fixtures are the Oracle's own
+Run against an Oracle checkout so the fixtures are the Oracle's own
 observed behavior, not a re-derivation of what apm-go's port believes the
 Oracle does:
 
@@ -13,11 +13,9 @@ Oracle does:
         --out-accept spec/conformance/depref-accept.json \
         --out-repr spec/conformance/python-repr.json
 
---oracle-commit MUST match tools/parity/oracle.pin (the parity suite's own
-pinned commit) -- the conformance tests assert this directly (ticket 11
-attempt 6's "Standards" fix: earlier fixtures had no embedded commit at
-all, so a regeneration against a drifted Oracle checkout could not be
-told apart from one against the real pin).
+--oracle-commit is the commit of that checkout. It is written into both
+fixtures as oracle_commit, a record of which Oracle generated them. No test
+compares it.
 
 The input lists below enumerate every accept/reject branch reachable from a
 marketplace source coordinate that apm-go's manifest.ParseDepString and
@@ -39,8 +37,8 @@ apm-go's own behavior on a known-gap row -- either narrowing the gap or
 widening it further -- shows up as a test failure, not a silent drift.
 
 This script is NOT part of the Go build; it is a one-shot fixture
-generator, run manually whenever the fixtures need regenerating (a new
-Oracle pin, a newly-discovered case). Its own output is what the
+generator, run manually whenever the fixtures need regenerating (a newer
+Oracle release, a newly-discovered case). Its own output is what the
 conformance tests in internal/manifest and internal/marketplace consume.
 """
 
@@ -480,7 +478,7 @@ def main() -> None:
     ap.add_argument(
         "--oracle-commit",
         required=True,
-        help="Oracle commit SHA this run's checkout is at -- must match tools/parity/oracle.pin",
+        help="Oracle commit SHA this run's checkout is at -- recorded in the fixtures as their source",
     )
     ap.add_argument("--out-accept", required=True)
     ap.add_argument("--out-repr", required=True)

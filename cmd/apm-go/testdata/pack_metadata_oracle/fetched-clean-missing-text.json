@@ -1,0 +1,20 @@
+{
+ "outcomes": {
+  "*": "fetched"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  packages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--check-clean"
+   ],
+   "exit": 4,
+   "stdout": "[x] Marketplace working tree dirty [outputs=claude]\n[i]     .claude-plugin/marketplace.json  [missing on disk; would be created]\n[i] \n[i]     To recover cleanly (fold into the current commit):\n[i] \n[i]       apm pack                       # regenerate locally\n[i]       git add -- .claude-plugin/marketplace.json\n[i]       git commit --amend --no-edit   # fold into the current commit\n[i]       git push --force-with-lease    # safe re-push\n[i] \n[i]     Or as a follow-up commit:\n[i] \n[i]       apm pack && git add -- .claude-plugin/marketplace.json\n[i]       git commit -m 'chore(marketplace): regen'\n[i] \n[i]     Why this exists: marketplace.json is checked in (lockfile pattern)\n[i]     so consumers can resolve packages without running 'apm pack'. CI\n[i]     enforces that the checked-in copy matches the apm.yml source of truth.\n[i] [dry-run] --check-clean is read-only; no pack outputs were written.\n",
+   "files": [
+    "apm.yml"
+   ],
+   "fetch_calls": 1
+  }
+ ]
+}

@@ -135,12 +135,25 @@ type ClaudeMapper struct {
 // an empty, absolute, or traversal-containing path, design.md's "結果為
 // 空/絕對/含 .. -> BuildError").
 func (m ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []ResolvedPackage) (ClaudeDocument, []string, error) {
-	sourceStyle, err := normalizeClaudeSourceStyle(m.SourceStyle)
+	doc, warnings, diagnostics, err := m.compose(cfg, resolved)
 	if err != nil {
 		return ClaudeDocument{}, nil, err
 	}
+	return doc, append(diagnostics, warnings...), nil
+}
 
-	doc := ClaudeDocument{Name: cfg.Name}
+// compose keeps the Oracle's two kinds apart (v0.33.0
+// marketplace/output_mappers.py:283-285): warnings are the duplicate-name
+// lines, which the build reports as warnings (also in `pack --json`);
+// diagnostics are the pluginRoot lines, a BuildDiagnostic there
+// (:229-238), which never reach the JSON warnings.
+func (m ClaudeMapper) compose(cfg *authoring.AuthoringConfig, resolved []ResolvedPackage) (doc ClaudeDocument, warnings, diagnostics []string, err error) {
+	sourceStyle, err := normalizeClaudeSourceStyle(m.SourceStyle)
+	if err != nil {
+		return ClaudeDocument{}, nil, nil, err
+	}
+
+	doc = ClaudeDocument{Name: cfg.Name}
 	if cfg.DescriptionOverridden && cfg.Description != "" {
 		doc.Description = cfg.Description
 	}
@@ -154,22 +167,20 @@ func (m ClaudeMapper) Compose(cfg *authoring.AuthoringConfig, resolved []Resolve
 
 	pluginRoot, _ := cfg.Metadata["pluginRoot"].(string)
 
-	var warnings []string
 	plugins := make([]ClaudePlugin, 0, len(resolved))
 	for _, pkg := range resolved {
-		plugin, warning, err := composeClaudePlugin(pkg, pluginRoot, sourceStyle)
+		plugin, diagnostic, err := composeClaudePlugin(pkg, pluginRoot, sourceStyle)
 		if err != nil {
-			return ClaudeDocument{}, nil, err
+			return ClaudeDocument{}, nil, nil, err
 		}
-		if warning != "" {
-			warnings = append(warnings, warning)
+		if diagnostic != "" {
+			diagnostics = append(diagnostics, diagnostic)
 		}
 		plugins = append(plugins, plugin)
 	}
 	doc.Plugins = plugins
 
-	warnings = append(warnings, duplicateNameWarnings(plugins)...)
-	return doc, warnings, nil
+	return doc, duplicateNameWarnings(plugins), diagnostics, nil
 }
 
 func normalizeClaudeSourceStyle(style ClaudeSourceStyle) (ClaudeSourceStyle, error) {

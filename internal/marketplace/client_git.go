@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -46,10 +47,55 @@ func fetchGit(ctx context.Context, s *MarketplaceSource) (*MarketplaceManifest, 
 	defer os.RemoveAll(tmpDir)
 
 	if err := shallowCloneGit(ctx, s.URL, ref, tmpDir); err != nil {
+		var policy rewriteCheckError
+		if errors.As(err, &policy) {
+			return nil, rewritePolicyFetchError(s, policy.err)
+		}
 		return nil, fmt.Errorf("clone marketplace source: %w", err)
 	}
 
 	return fetchLocal(ctx, &MarketplaceSource{URL: tmpDir, Path: s.Path})
+}
+
+// rewriteCheckError marks an error of gitops.ValidateURLRewriteSafety so
+// fetchGit can tell it from a failed clone.
+type rewriteCheckError struct{ err error }
+
+func (e rewriteCheckError) Error() string { return e.err.Error() }
+
+// rewritePolicyReasons is the Oracle v0.33.0 wording per reason code
+// (marketplace/client.py:580-588).
+var rewritePolicyReasons = map[string]string{
+	"credentials":        "Git URL rewrite contains credentials",
+	"credential-origin":  "authenticated Git URL rewrite changes the remote origin",
+	"https-downgrade":    "HTTPS Git remote was rejected because Git configuration rewrites it to insecure HTTP",
+	"insecure-transport": "HTTPS Git URL rewrite selects an insecure transport",
+}
+
+// rewritePolicyFetchError mirrors _rewrite_policy_error with
+// MarketplaceFetchError's sentence (marketplace/client.py:579-603,
+// marketplace/errors.py:51-60): a rejection is reworded by reason code and
+// keeps the recovery hint, any other check error is quoted whole.
+func rewritePolicyFetchError(s *MarketplaceSource, err error) error {
+	reason := err.Error()
+	var rejected *gitops.URLRewriteError
+	if errors.As(err, &rejected) {
+		reason = rewritePolicyReasons[rejected.Reason]
+		if reason == "" {
+			reason = "unsafe Git URL rewrite"
+		}
+		reason += "; " + gitops.URLRewriteRecoveryHint
+	}
+	// `marketplace add` fetches before the source has a name; the command
+	// labels it by repository, then "marketplace".
+	name := s.Name
+	if name == "" {
+		name = s.Repo
+	}
+	if name == "" {
+		name = "marketplace"
+	}
+	return fmt.Errorf("Failed to fetch marketplace '%s': %s. Correct the matching Git configuration, then run 'apm-go marketplace update %s' to retry.", name, reason, name)
 }
 
 // commitSHARe matches a full 40-character git commit SHA (case-insensitive:
@@ -102,6 +148,9 @@ func newCloneCmd(ctx context.Context, url string, args ...string) *exec.Cmd {
 func shallowCloneGit(ctx context.Context, remote, ref, dir string) error {
 	if err := validateRef(ref); err != nil {
 		return err
+	}
+	if err := gitops.ValidateURLRewriteSafety(remote); err != nil {
+		return rewriteCheckError{err}
 	}
 	if commitSHARe.MatchString(strings.ToLower(ref)) {
 		return cloneAndCheckoutSHA(ctx, remote, ref, dir)

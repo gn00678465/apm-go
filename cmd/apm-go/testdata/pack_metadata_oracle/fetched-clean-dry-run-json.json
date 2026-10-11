@@ -1,0 +1,22 @@
+{
+ "outcomes": {
+  "*": "fetched"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  packages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--check-clean",
+    "--dry-run",
+    "--json"
+   ],
+   "exit": 4,
+   "stdout": "{\n  \"ok\": false,\n  \"dry_run\": true,\n  \"warnings\": [],\n  \"errors\": [\n    {\n      \"code\": \"marketplace_drift\",\n      \"message\": \".claude-plugin/marketplace.json: missing on disk (would be created)\"\n    }\n  ],\n  \"metadata_enrichment\": {\n    \"certifiable\": true,\n    \"outcomes\": [\n      {\n        \"package\": \"remote-tool\",\n        \"status\": \"fetched\"\n      }\n    ]\n  },\n  \"marketplace\": {\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \"<ROOT>/.claude-plugin/marketplace.json\",\n        \"added\": 1,\n        \"updated\": 0,\n        \"unchanged\": 0,\n        \"skipped\": 0\n      }\n    ]\n  },\n  \"bundle\": null,\n  \"plugin_manifests\": {\n    \"written\": [],\n    \"skipped\": [],\n    \"dry_run\": []\n  },\n  \"version_alignment\": null,\n  \"drift\": {\n    \"ok\": false,\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \".claude-plugin/marketplace.json\",\n        \"status\": \"missing\",\n        \"differences\": [\n          {\n            \"path\": \"name\",\n            \"old\": null,\n            \"new\": \"metadata-outcome\"\n          },\n          {\n            \"path\": \"owner\",\n            \"old\": null,\n            \"new\": {\n              \"name\": \"APM Tests\"\n            }\n          },\n          {\n            \"path\": \"plugins\",\n            \"old\": null,\n            \"new\": [\n              {\n                \"name\": \"remote-tool\",\n                \"description\": \"available\",\n                \"version\": \"1.0.0\",\n                \"category\": \"Productivity\",\n                \"source\": {\n                  \"source\": \"github\",\n                  \"repo\": \"acme/remote-tool\",\n                  \"ref\": \"0123456789abcdef0123456789abcdef01234567\",\n                  \"sha\": \"0123456789abcdef0123456789abcdef01234567\",\n                  \"tag_pattern\": \"v{version}\"\n                }\n              }\n            ]\n          }\n        ],\n        \"metadata_warnings\": []\n      }\n    ]\n  }\n}\n",
+   "files": [
+    "apm.yml"
+   ],
+   "fetch_calls": 1
+  }
+ ]
+}

@@ -1,0 +1,23 @@
+{
+ "outcomes": {
+  "*": "failed:request timed out"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  outputs: [codex, claude]\n  packages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--strict-metadata",
+    "-m",
+    "codex"
+   ],
+   "exit": 0,
+   "stdout": "[*] Built marketplace.json [codex] (1 package(s)) -> <ROOT>/.agents/plugins/marketplace.json\n[i] Marketplace artifacts ready:\n[i]   [codex] <ROOT>/.agents/plugins/marketplace.json\n[i] How consumers install from this marketplace varies by AI assistant.\n[i] See: https://microsoft.github.io/apm/producer/publish-to-a-marketplace/#consume-from-any-assistant\n",
+   "files": [
+    ".agents/plugins/marketplace.json",
+    "apm.yml"
+   ],
+   "fetch_calls": 0
+  }
+ ]
+}
