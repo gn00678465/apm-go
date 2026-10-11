@@ -1390,6 +1390,15 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 // --target (old target's files survive and stay tracked) without preserving
 // files that were deliberately removed (e.g. stale-skill reconciliation).
 func mergeDeployedFiles(oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string, deployRoot string) ([]string, map[string]string) {
+	return mergeDeployedFilesIf(oldFiles, oldHashes, newFiles, newHashes, func(f string) bool {
+		_, err := os.Stat(filepath.Join(deployRoot, filepath.FromSlash(f)))
+		return err == nil
+	})
+}
+
+// mergeDeployedFilesIf adds to this run's deploy output each old entry that
+// the run did not produce and that keep accepts, with its old hash.
+func mergeDeployedFilesIf(oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string, keep func(file string) bool) ([]string, map[string]string) {
 	seen := make(map[string]bool, len(newFiles))
 	merged := make(map[string]string, len(oldHashes)+len(newHashes))
 	for _, f := range newFiles {
@@ -1399,11 +1408,7 @@ func mergeDeployedFiles(oldFiles []string, oldHashes map[string]string, newFiles
 		merged[k] = v
 	}
 	for _, f := range oldFiles {
-		if seen[f] {
-			continue
-		}
-		abs := filepath.Join(deployRoot, filepath.FromSlash(f))
-		if _, err := os.Stat(abs); err != nil {
+		if seen[f] || !keep(f) {
 			continue
 		}
 		newFiles = append(newFiles, f)
@@ -1779,8 +1784,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// SAME LocalDeployedFiles slice) -- never a second up-front directory
 	// scan just to decide what to print.
 	var localProjectDeployed bool
-	// keptDirs is deploy.DeployResult.KeptDirs, for the lock merge in step 6b.
+	// keptDirs and failedBuckets are deploy.DeployResult.KeptDirs and
+	// .FailedBuckets, for the lock merge in step 6b.
 	var keptDirs []string
+	var failedBuckets map[string]bool
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
@@ -1813,7 +1820,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		for _, d := range deployResult.Diags {
 			ux.Warn(os.Stderr, "%s", d)
 		}
-		keptDirs = deployResult.KeptDirs
+		keptDirs, failedBuckets = deployResult.KeptDirs, deployResult.FailedBuckets
 
 		// depsByKey looks up each resolved dependency's tag/ref/commit by its
 		// deploy key, for the R10a short-hash label fallback below --
@@ -1982,6 +1989,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// re-adds entries whose files still exist, so files reconciliation
 	// removed in step 6a stay out. A path below a kept directory still exists
 	// but is the user's now, so the old record of it is dropped first.
+	// A bucket with a failed deploy was not cleaned in step 6a, so every other
+	// old entry of it is kept, also one that os.Stat cannot reach (a path
+	// through a dangling skill symlink): the lock is the only record a later
+	// run has to clean it.
 	if existingLock != nil {
 		notKept := func(files []string) []string {
 			if len(keptDirs) == 0 {
@@ -1999,20 +2010,24 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		if deployDir != "" {
 			effectiveDeployRoot = deployDir
 		}
+		merge := func(bucket string, oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string) ([]string, map[string]string) {
+			if failedBuckets[bucket] {
+				return mergeDeployedFilesIf(notKept(oldFiles), oldHashes, newFiles, newHashes,
+					func(string) bool { return true })
+			}
+			return mergeDeployedFiles(notKept(oldFiles), oldHashes, newFiles, newHashes, effectiveDeployRoot)
+		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
 			if old := existingLock.FindByKey(dep.UniqueKey()); old != nil {
-				dep.DeployedFiles, dep.DeployedHashes = mergeDeployedFiles(
-					notKept(old.DeployedFiles), old.DeployedHashes,
-					dep.DeployedFiles, dep.DeployedHashes,
-					effectiveDeployRoot)
+				dep.DeployedFiles, dep.DeployedHashes = merge(dep.UniqueKey(),
+					old.DeployedFiles, old.DeployedHashes, dep.DeployedFiles, dep.DeployedHashes)
 			}
 		}
 		if len(existingLock.LocalDeployedFiles) > 0 {
-			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = mergeDeployedFiles(
-				notKept(existingLock.LocalDeployedFiles), existingLock.LocalDeployedHashes,
-				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes,
-				effectiveDeployRoot)
+			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = merge("",
+				existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes,
+				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes)
 		}
 	}
 
