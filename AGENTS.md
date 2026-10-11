@@ -24,7 +24,7 @@ This repo is indexed as **apm-go**. Use the MCP tools to navigate and to gate ed
 - **Exploring unfamiliar code**: `query({search_query})` returns execution flows ranked by relevance; `context({name})` gives one symbol's callers, callees, and flows.
 - **Security review**: `explain({target})` lists source→sink taint findings (needs `analyze --pdg`).
 
-Index stale (reported by `gitnexus://repo/apm-go/context`)? `node .gitnexus/run.cjs analyze` from the project root. Task-specific workflows (exploring, impact analysis, debugging, refactoring, CLI) live in `.claude/skills/gitnexus/`.
+Index stale (reported by `gitnexus://repo/apm-go/context`)? `node .gitnexus/run.cjs analyze --index-only` from the project root. Keep `--index-only`: without it `analyze` regenerates `CLAUDE.md` and `AGENTS.md`, which are written by hand here. Task-specific workflows (exploring, impact analysis, debugging, refactoring, CLI) live in `.claude/skills/gitnexus/`.
 
 ## Build & test
 
@@ -69,6 +69,7 @@ internal/
   pluginjson/        plugin.json / mcp.json scaffold, staged atomic commit
   registry/          package registry operations
   resolver/          dependency resolution, diamond detection, updates
+  rootfs/            write confinement: a directory handle every write is resolved against
   security/          security scanning gate (block/warn/ignore policy)
   selfupdate/        binary self-update from GitHub Releases
   semver/            SemVer parsing and comparison
