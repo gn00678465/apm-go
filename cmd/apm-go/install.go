@@ -589,7 +589,12 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 
 		// (A1) Re-verify deployed-file hashes (req-lk-017 / req-sc-001). MUST run
 		// before any git download so a tampered deployed file is reported by path.
-		if viol := lockfile.VerifyDeployedState(existingLock, "."); len(viol) > 0 {
+		// A --global install deploys under deployDir, not the working directory.
+		deployRoot := "."
+		if deployDir != "" {
+			deployRoot = deployDir
+		}
+		if viol := lockfile.VerifyDeployedState(existingLock, deployRoot); len(viol) > 0 {
 			v := viol[0]
 			observed := v.Observed
 			if observed == "" {
@@ -702,6 +707,11 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		if hasAnyDeps {
 			for _, dep := range existingLock.Dependencies {
 				if dep.Source == "registry" || dep.Source == "local" {
+					continue
+				}
+				// The lock does not record a local-path dependency's source
+				// path, so the loader would take it for a git dependency.
+				if strings.HasPrefix(dep.RepoURL, localModulesKeyPrefix) {
 					continue
 				}
 				// req-lk-007: always call LoadPackage rather than short-
@@ -1380,6 +1390,15 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 // --target (old target's files survive and stay tracked) without preserving
 // files that were deliberately removed (e.g. stale-skill reconciliation).
 func mergeDeployedFiles(oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string, deployRoot string) ([]string, map[string]string) {
+	return mergeDeployedFilesIf(oldFiles, oldHashes, newFiles, newHashes, func(f string) bool {
+		_, err := os.Stat(filepath.Join(deployRoot, filepath.FromSlash(f)))
+		return err == nil
+	})
+}
+
+// mergeDeployedFilesIf adds to this run's deploy output each old entry that
+// the run did not produce and that keep accepts, with its old hash.
+func mergeDeployedFilesIf(oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string, keep func(file string) bool) ([]string, map[string]string) {
 	seen := make(map[string]bool, len(newFiles))
 	merged := make(map[string]string, len(oldHashes)+len(newHashes))
 	for _, f := range newFiles {
@@ -1389,11 +1408,7 @@ func mergeDeployedFiles(oldFiles []string, oldHashes map[string]string, newFiles
 		merged[k] = v
 	}
 	for _, f := range oldFiles {
-		if seen[f] {
-			continue
-		}
-		abs := filepath.Join(deployRoot, filepath.FromSlash(f))
-		if _, err := os.Stat(abs); err != nil {
+		if seen[f] || !keep(f) {
 			continue
 		}
 		newFiles = append(newFiles, f)
@@ -1769,8 +1784,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// SAME LocalDeployedFiles slice) -- never a second up-front directory
 	// scan just to decide what to print.
 	var localProjectDeployed bool
-	// keptDirs is deploy.DeployResult.KeptDirs, for the lock merge in step 6b.
+	// keptDirs and failedBuckets are deploy.DeployResult.KeptDirs and
+	// .FailedBuckets, for the lock merge in step 6b.
 	var keptDirs []string
+	var failedBuckets map[string]bool
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
@@ -1803,29 +1820,29 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		for _, d := range deployResult.Diags {
 			ux.Warn(os.Stderr, "%s", d)
 		}
-		keptDirs = deployResult.KeptDirs
+		keptDirs, failedBuckets = deployResult.KeptDirs, deployResult.FailedBuckets
 
-		// depsByKey looks up each resolved dependency's tag/ref/commit by its
-		// deploy key, for the R10a short-hash label fallback below --
-		// deployResult.PerDep is keyed by the same dep key, not by a
-		// human-readable version label.
-		depsByKey := make(map[string]resolver.ResolvedDep, len(result.Deps))
+		// Print deploy summary per dep: dependencies in resolver order
+		// (result.Deps; at one depth, the order apm.yml declares them), then
+		// local content. deployResult.PerDep is a map, so its own order is
+		// not usable (issue #47).
+		// Deliberate deviation from the Oracle, by owner ruling: the Oracle
+		// also puts local content last (install/phases/integrate.py:716), but
+		// it orders the dependencies by (depth, node id)
+		// (deps/apm_resolver.py:46). apm-go keeps the resolver order because
+		// it is the smallest change and because the apm-go key of a local-path
+		// dependency (_local/<name>-<hash8>) is not the Oracle's id (the
+		// declared path), so a sort by key would not match the Oracle either.
 		for _, dep := range result.Deps {
-			depsByKey[dep.Key] = dep
-		}
-
-		// Print deploy summary per dep
-		for key, dr := range deployResult.PerDep {
-			label := key
-			if label == "" {
-				// R14: name the local-primitives bucket after what it
-				// actually is (files integrated from this project's own
-				// .apm/ tree), not a bare, ambiguous "(local)".
-				label = "<project root> (local)"
-			} else if dep, ok := depsByKey[key]; ok {
-				label += depVersionLabel(dep)
+			if dr, ok := deployResult.PerDep[dep.Key]; ok {
+				ux.Tree(os.Stdout, deployedFilesTree(dep.Key+depVersionLabel(dep), dr.Files))
 			}
-			ux.Tree(os.Stdout, deployedFilesTree(label, dr.Files))
+		}
+		if dr, ok := deployResult.PerDep[""]; ok {
+			// R14: name the local-primitives bucket after what it actually
+			// is (files integrated from this project's own .apm/ tree), not
+			// a bare, ambiguous "(local)".
+			ux.Tree(os.Stdout, deployedFilesTree("<project root> (local)", dr.Files))
 		}
 
 		// Warn about resolved dependencies that deployed zero files to any
@@ -1972,6 +1989,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// re-adds entries whose files still exist, so files reconciliation
 	// removed in step 6a stay out. A path below a kept directory still exists
 	// but is the user's now, so the old record of it is dropped first.
+	// A bucket with a failed deploy was not cleaned in step 6a, so every other
+	// old entry of it is kept, also one that os.Stat cannot reach (a path
+	// through a dangling skill symlink): the lock is the only record a later
+	// run has to clean it.
 	if existingLock != nil {
 		notKept := func(files []string) []string {
 			if len(keptDirs) == 0 {
@@ -1989,20 +2010,24 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		if deployDir != "" {
 			effectiveDeployRoot = deployDir
 		}
+		merge := func(bucket string, oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string) ([]string, map[string]string) {
+			if failedBuckets[bucket] {
+				return mergeDeployedFilesIf(notKept(oldFiles), oldHashes, newFiles, newHashes,
+					func(string) bool { return true })
+			}
+			return mergeDeployedFiles(notKept(oldFiles), oldHashes, newFiles, newHashes, effectiveDeployRoot)
+		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
 			if old := existingLock.FindByKey(dep.UniqueKey()); old != nil {
-				dep.DeployedFiles, dep.DeployedHashes = mergeDeployedFiles(
-					notKept(old.DeployedFiles), old.DeployedHashes,
-					dep.DeployedFiles, dep.DeployedHashes,
-					effectiveDeployRoot)
+				dep.DeployedFiles, dep.DeployedHashes = merge(dep.UniqueKey(),
+					old.DeployedFiles, old.DeployedHashes, dep.DeployedFiles, dep.DeployedHashes)
 			}
 		}
 		if len(existingLock.LocalDeployedFiles) > 0 {
-			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = mergeDeployedFiles(
-				notKept(existingLock.LocalDeployedFiles), existingLock.LocalDeployedHashes,
-				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes,
-				effectiveDeployRoot)
+			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = merge("",
+				existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes,
+				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes)
 		}
 	}
 
@@ -2967,8 +2992,12 @@ func resolveLocalSourceAbs(src string) string {
 func localModulesKey(abs string) string {
 	base := sanitizePathSegment(filepath.Base(abs))
 	sum := sha256.Sum256([]byte(filepath.Clean(abs)))
-	return "_local/" + base + "-" + hex.EncodeToString(sum[:])[:8]
+	return localModulesKeyPrefix + base + "-" + hex.EncodeToString(sum[:])[:8]
 }
+
+// localModulesKeyPrefix marks an apm_modules key and lock repo_url that
+// localModulesKey produced.
+const localModulesKeyPrefix = "_local/"
 
 // sanitizePathSegment reduces s to a single safe path segment: every character
 // outside [A-Za-z0-9._-] becomes '_', and a leading '.'/empty result is

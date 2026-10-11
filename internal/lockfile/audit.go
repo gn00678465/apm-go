@@ -1,7 +1,9 @@
 package lockfile
 
 import (
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -19,10 +21,13 @@ type Violation struct {
 // (req-sc-001). Unlike VerifyDeployedHashes (which fails closed on the first
 // mismatch for frozen install), this collects the full set for `apm audit`.
 // A missing or unreadable file is reported as a violation with an empty observed.
+// Violations come in lock.Dependencies order, then the self-entry, each by
+// ascending path: frozen install reports the first one.
 func VerifyDeployedState(lock *Lockfile, root string) []Violation {
 	var viol []Violation
 	check := func(hashes map[string]string) {
-		for path, expected := range hashes {
+		for _, path := range slices.Sorted(maps.Keys(hashes)) {
+			expected := hashes[path]
 			if strings.HasSuffix(path, "/") {
 				continue
 			}

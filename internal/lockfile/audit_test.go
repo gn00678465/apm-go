@@ -56,3 +56,39 @@ func TestVerifyDeployedState_RejectsUnsupportedHashAlgorithm(t *testing.T) {
 		t.Fatalf("expected 1 violation for non-sha256 envelope, got %+v", viol)
 	}
 }
+
+func TestVerifyDeployedState_ViolationOrderIsFixed(t *testing.T) {
+	const testHash = "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	lock := &Lockfile{
+		Dependencies: []LockedDep{
+			{
+				RepoURL:        "github.com/demo/second-in-name",
+				DeployedHashes: map[string]string{"z/4.txt": testHash, "z/1.txt": testHash, "z/3.txt": testHash, "z/2.txt": testHash},
+			},
+			{
+				RepoURL:        "github.com/demo/first-in-name",
+				DeployedHashes: map[string]string{"a/3.txt": testHash, "a/1.txt": testHash, "a/2.txt": testHash},
+			},
+		},
+		LocalDeployedHashes: map[string]string{"m/c.txt": testHash, "m/a.txt": testHash, "m/b.txt": testHash},
+	}
+	want := []string{
+		"z/1.txt", "z/2.txt", "z/3.txt", "z/4.txt",
+		"a/1.txt", "a/2.txt", "a/3.txt",
+		"m/a.txt", "m/b.txt", "m/c.txt",
+	}
+	root := t.TempDir()
+
+	for i := 0; i < 50; i++ {
+		viol := VerifyDeployedState(lock, root)
+
+		if len(viol) != len(want) {
+			t.Fatalf("run %d: %d violations, want %d", i, len(viol), len(want))
+		}
+		for j, v := range viol {
+			if v.Path != want[j] {
+				t.Fatalf("run %d: violation %d is %s, want %s", i, j, v.Path, want[j])
+			}
+		}
+	}
+}
