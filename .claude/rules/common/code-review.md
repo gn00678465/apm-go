@@ -27,18 +27,14 @@ Before requesting review, ensure:
 Before marking code complete:
 
 - [ ] Code is readable and well-named
-- [ ] Functions are focused (<50 lines)
-- [ ] Files are cohesive (<800 lines)
 - [ ] No deep nesting (>4 levels)
 - [ ] Errors are handled explicitly
 - [ ] No hardcoded secrets or credentials
-- [ ] No console.log or debug statements
 - [ ] Tests exist for new functionality
-- [ ] Test coverage meets 80% minimum
 
 ## Security Review Triggers
 
-**STOP and use security-reviewer agent when:**
+**Review security first when the change touches:**
 
 - Authentication or authorization code
 - User input handling
@@ -57,19 +53,6 @@ Before marking code complete:
 | MEDIUM | Maintainability concern | **INFO** - Consider fixing |
 | LOW | Style or minor suggestion | **NOTE** - Optional |
 
-## Agent Usage
-
-Use these agents for code review:
-
-| Agent | Purpose |
-|-------|---------|
-| **code-reviewer** | General code quality, patterns, best practices |
-| **security-reviewer** | Security vulnerabilities, OWASP Top 10 |
-| **typescript-reviewer** | TypeScript/JavaScript specific issues |
-| **python-reviewer** | Python specific issues |
-| **go-reviewer** | Go specific issues |
-| **rust-reviewer** | Rust specific issues |
-
 ## Review Workflow
 
 ```
@@ -77,8 +60,6 @@ Use these agents for code review:
 2. Check security checklist first
 3. Review code quality checklist
 4. Run relevant tests
-5. Verify coverage >= 80%
-6. Use appropriate agent for detailed review
 ```
 
 ## Common Issues to Catch
@@ -86,27 +67,14 @@ Use these agents for code review:
 ### Security
 
 - Hardcoded credentials (API keys, passwords, tokens)
-- SQL injection (string concatenation in queries)
-- XSS vulnerabilities (unescaped user input)
 - Path traversal (unsanitized file paths)
-- CSRF protection missing
 - Authentication bypasses
 
 ### Code Quality
 
-- Large functions (>50 lines) - split into smaller
-- Large files (>800 lines) - extract modules
 - Deep nesting (>4 levels) - use early returns
 - Missing error handling - handle explicitly
-- Mutation patterns - prefer immutable operations
 - Missing tests - add test coverage
-
-### Performance
-
-- N+1 queries - use JOINs or batching
-- Missing pagination - add LIMIT to queries
-- Unbounded queries - add constraints
-- Missing caching - cache expensive operations
 
 ## Approval Criteria
 
@@ -118,7 +86,4 @@ Use these agents for code review:
 
 This rule works with:
 
-- [testing.md](testing.md) - Test coverage requirements
-- [security.md](security.md) - Security checklist
 - [git-workflow.md](git-workflow.md) - Commit standards
-- [agents.md](agents.md) - Agent delegation
