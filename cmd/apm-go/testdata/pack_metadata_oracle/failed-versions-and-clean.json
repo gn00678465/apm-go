@@ -1,0 +1,38 @@
+{
+ "outcomes": {
+  "*": "failed:request timed out"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  versioning:\n    strategy: lockstep\n  packages:\n    - name: local-tool\n      source: ./pkgs/local-tool\n      category: Productivity\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {
+  "pkgs/local-tool/apm.yml": "name: local-tool\ndescription: A local package\nversion: 9.9.9\n"
+ },
+ "steps": [
+  {
+   "args": [
+    "--check-versions",
+    "--check-clean"
+   ],
+   "exit": 3,
+   "stdout": "[x] Version alignment failed [strategy=lockstep, expected=1.0.0]\n[i]     pkgs/local-tool  9.9.9  [drift:expected=1.0.0]\n[x]     pkgs/local-tool: expected 1.0.0, found 9.9.9\n[x] Marketplace clean check failed: remote metadata unavailable [outputs=claude]\n[x]     .claude-plugin/marketplace.json  [cannot certify regenerated metadata]\n[!]     Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\n[i] [dry-run] --check-clean is read-only; no pack outputs were written.\n",
+   "files": [
+    "apm.yml",
+    "pkgs/local-tool/apm.yml"
+   ],
+   "fetch_calls": 1
+  },
+  {
+   "args": [
+    "--check-versions",
+    "--check-clean",
+    "--json"
+   ],
+   "exit": 3,
+   "stdout": "{\n  \"ok\": false,\n  \"dry_run\": true,\n  \"warnings\": [],\n  \"errors\": [\n    {\n      \"code\": \"version_misaligned\",\n      \"message\": \"pkgs/local-tool: expected 1.0.0, found 9.9.9\"\n    },\n    {\n      \"code\": \"marketplace_metadata_uncertifiable\",\n      \"message\": \".claude-plugin/marketplace.json: remote metadata unavailable; regeneration is uncertifiable\"\n    }\n  ],\n  \"metadata_enrichment\": {\n    \"certifiable\": false,\n    \"outcomes\": [\n      {\n        \"package\": \"local-tool\",\n        \"status\": \"local\"\n      },\n      {\n        \"package\": \"remote-tool\",\n        \"status\": \"failed\",\n        \"cause\": \"request timed out\"\n      }\n    ]\n  },\n  \"marketplace\": {\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \"<ROOT>/.claude-plugin/marketplace.json\",\n        \"added\": 2,\n        \"updated\": 0,\n        \"unchanged\": 0,\n        \"skipped\": 0\n      }\n    ]\n  },\n  \"bundle\": null,\n  \"plugin_manifests\": {\n    \"written\": [],\n    \"skipped\": [],\n    \"dry_run\": []\n  },\n  \"version_alignment\": {\n    \"strategy\": \"lockstep\",\n    \"expected\": \"1.0.0\",\n    \"ok\": false,\n    \"packages\": [\n      {\n        \"path\": \"pkgs/local-tool\",\n        \"version\": \"9.9.9\",\n        \"ok\": false,\n        \"reason\": \"drift:expected=1.0.0\"\n      }\n    ]\n  },\n  \"drift\": {\n    \"ok\": false,\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \".claude-plugin/marketplace.json\",\n        \"status\": \"uncertifiable\",\n        \"differences\": [],\n        \"metadata_warnings\": [\n          \"Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\"\n        ]\n      }\n    ]\n  }\n}\n",
+   "files": [
+    "apm.yml",
+    "pkgs/local-tool/apm.yml"
+   ],
+   "fetch_calls": 1
+  }
+ ]
+}

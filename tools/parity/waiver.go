@@ -11,7 +11,7 @@ import (
 )
 
 // Waiver is one entry in waivers.json: an explicit, narrow exemption for a
-// known case/field difference against the pinned Oracle baseline. "id"
+// known case/field difference against the Oracle the run compares. "id"
 // matches a Case.ID directly -- there is no separate waiver-key indirection
 // through Case.Waiver, which ticket 01 carries through case.json unmodified
 // but this ticket does not otherwise use.
@@ -23,17 +23,15 @@ type Waiver struct {
 	// tree diff is waived only when every differing path is listed -- scope
 	// must be machine-checked, never carried in Reason prose alone
 	// (eval-ticket-02-r3.md, ticket-review §E3).
-	TreePaths    []string `json:"tree_paths,omitempty"`
-	Taxonomy     string   `json:"taxonomy"`
-	OracleCommit string   `json:"oracle_commit"`
-	Reason       string   `json:"reason"`
-	Owner        string   `json:"owner"`
-	EvalPlanRef  string   `json:"eval_plan_ref"`
+	TreePaths   []string `json:"tree_paths,omitempty"`
+	Taxonomy    string   `json:"taxonomy"`
+	Reason      string   `json:"reason"`
+	Owner       string   `json:"owner"`
+	EvalPlanRef string   `json:"eval_plan_ref"`
 }
 
 // waiverValidationError marks a waivers.json validation failure -- unknown
-// case id, empty reason, empty/wildcard fields, an oracle_commit that
-// doesn't match this run's pinned baseline, or a reserved-taxonomy misuse.
+// case id, empty reason, empty/wildcard fields, or a reserved-taxonomy misuse.
 // Like *preflightError, this fails the run closed with exit 2, before any
 // real case executes.
 type waiverValidationError struct{ err error }
@@ -85,12 +83,14 @@ var runnerOwnedNegativeControlIDs = map[string]bool{
 
 // validateWaivers fails closed on any waiver that isn't a precise,
 // accountable exemption: an id that doesn't match a loaded case, fields
-// that are empty or a wildcard, an empty reason, an oracle_commit that
-// doesn't match oracleCommit, or the reserved negative-control taxonomy
-// applied to an id outside runnerOwnedNegativeControlIDs. casesByID is
+// that are empty or a wildcard, an empty reason, or the reserved
+// negative-control taxonomy applied to an id outside
+// runnerOwnedNegativeControlIDs. A waiver is not bound to an Oracle commit:
+// the gate runs against the latest upstream release (issue #52), so a
+// waiver holds until a run shows a difference it does not cover. casesByID is
 // every case LoadCases loaded for this run, keyed by ID -- what makes a
 // waiver's id "known".
-func validateWaivers(waivers []Waiver, casesByID map[string]Case, oracleCommit string) error {
+func validateWaivers(waivers []Waiver, casesByID map[string]Case) error {
 	for _, w := range waivers {
 		if w.ID == "" {
 			return &waiverValidationError{fmt.Errorf("waivers.json: entry with empty id")}
@@ -121,11 +121,6 @@ func validateWaivers(waivers []Waiver, casesByID map[string]Case, oracleCommit s
 		if w.Reason == "" {
 			return &waiverValidationError{fmt.Errorf("waivers.json: case %q: reason is empty", w.ID)}
 		}
-		if w.OracleCommit != oracleCommit {
-			return &waiverValidationError{fmt.Errorf(
-				"waivers.json: case %q: oracle_commit %q does not match this run's pinned baseline %q",
-				w.ID, w.OracleCommit, oracleCommit)}
-		}
 		if w.Taxonomy == negativeControlTaxonomy && !runnerOwnedNegativeControlIDs[w.ID] {
 			return &waiverValidationError{fmt.Errorf(
 				"waivers.json: case %q: taxonomy %q is reserved for the runner-owned negative-control case ids %v; a case.json cannot self-declare eligibility",
@@ -136,14 +131,10 @@ func validateWaivers(waivers []Waiver, casesByID map[string]Case, oracleCommit s
 }
 
 // loadAndValidateWaivers reads waivers.json and validates it against
-// casesByID and oracleCommit BEFORE any real case executes (ticket 02
-// attempt 2, W2): oracleCommit is the in-memory preflight.OracleCommit the
-// caller already computed, not a value read back from run.json -- run.json
-// is not written until after this validation passes (runCases calls this
-// before captureRun), so there is nothing on disk yet to read it from.
+// casesByID BEFORE any real case executes (ticket 02 attempt 2, W2).
 // Waivers live at waiversPath if given, otherwise default to a
 // "waivers.json" sibling of casesDir (tools/parity/cases -> tools/parity/waivers.json).
-func loadAndValidateWaivers(casesDir, waiversPath, oracleCommit string, casesByID map[string]Case) ([]Waiver, error) {
+func loadAndValidateWaivers(casesDir, waiversPath string, casesByID map[string]Case) ([]Waiver, error) {
 	path := waiversPath
 	if path == "" {
 		path = filepath.Join(filepath.Dir(casesDir), "waivers.json")
@@ -153,7 +144,7 @@ func loadAndValidateWaivers(casesDir, waiversPath, oracleCommit string, casesByI
 	if err != nil {
 		return nil, err
 	}
-	if err := validateWaivers(waivers, casesByID, oracleCommit); err != nil {
+	if err := validateWaivers(waivers, casesByID); err != nil {
 		return nil, err
 	}
 	return waivers, nil

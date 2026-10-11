@@ -1,0 +1,21 @@
+{
+ "outcomes": {
+  "*": "failed:request timed out"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  packages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--strict-metadata",
+    "--json"
+   ],
+   "exit": 5,
+   "stdout": "{\"ok\": false, \"dry_run\": false, \"warnings\": [\"Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\"], \"errors\": [{\"code\": \"metadata_incomplete\", \"message\": \"Marketplace metadata is incomplete: Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\"}], \"metadata_enrichment\": {\"certifiable\": false, \"outcomes\": [{\"package\": \"remote-tool\", \"status\": \"failed\", \"cause\": \"request timed out\"}]}, \"marketplace\": {\"outputs\": []}, \"bundle\": null}\n",
+   "files": [
+    "apm.yml"
+   ],
+   "fetch_calls": 1
+  }
+ ]
+}

@@ -1,0 +1,60 @@
+{
+ "outcomes": {},
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  packages:\n    - name: local-tool\n      source: ./pkgs/local-tool\n      category: Productivity\n",
+ "files": {
+  "pkgs/local-tool/apm.yml": "name: local-tool\ndescription: A local package\nversion: 1.0.0\n"
+ },
+ "steps": [
+  {
+   "args": [],
+   "exit": 0,
+   "stdout": "[*] Built marketplace.json [claude] (1 package(s)) -> <ROOT>/.claude-plugin/marketplace.json\n[i] Marketplace artifacts ready:\n[i]   [claude] <ROOT>/.claude-plugin/marketplace.json\n[i] How consumers install from this marketplace varies by AI assistant.\n[i] See: https://microsoft.github.io/apm/producer/publish-to-a-marketplace/#consume-from-any-assistant\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml",
+    "pkgs/local-tool/apm.yml"
+   ],
+   "fetch_calls": 0
+  },
+  {
+   "args": [
+    "--json"
+   ],
+   "exit": 0,
+   "stdout": "{\n  \"ok\": true,\n  \"dry_run\": false,\n  \"warnings\": [],\n  \"errors\": [],\n  \"metadata_enrichment\": {\n    \"certifiable\": true,\n    \"outcomes\": [\n      {\n        \"package\": \"local-tool\",\n        \"status\": \"local\"\n      }\n    ]\n  },\n  \"marketplace\": {\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \"<ROOT>/.claude-plugin/marketplace.json\",\n        \"added\": 0,\n        \"updated\": 0,\n        \"unchanged\": 1,\n        \"skipped\": 0\n      }\n    ]\n  },\n  \"bundle\": null,\n  \"plugin_manifests\": {\n    \"written\": [],\n    \"skipped\": [],\n    \"dry_run\": []\n  },\n  \"version_alignment\": null,\n  \"drift\": null\n}\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml",
+    "pkgs/local-tool/apm.yml"
+   ],
+   "fetch_calls": 0
+  },
+  {
+   "args": [
+    "--check-clean"
+   ],
+   "exit": 0,
+   "stdout": "[*] Marketplace working tree clean [outputs=claude]\n[i]     .claude-plugin/marketplace.json  [unchanged]\n[i] [dry-run] --check-clean is read-only; no pack outputs were written.\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml",
+    "pkgs/local-tool/apm.yml"
+   ],
+   "fetch_calls": 0
+  },
+  {
+   "args": [
+    "--check-clean",
+    "--json"
+   ],
+   "exit": 0,
+   "stdout": "{\n  \"ok\": true,\n  \"dry_run\": true,\n  \"warnings\": [],\n  \"errors\": [],\n  \"metadata_enrichment\": {\n    \"certifiable\": true,\n    \"outcomes\": [\n      {\n        \"package\": \"local-tool\",\n        \"status\": \"local\"\n      }\n    ]\n  },\n  \"marketplace\": {\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \"<ROOT>/.claude-plugin/marketplace.json\",\n        \"added\": 0,\n        \"updated\": 0,\n        \"unchanged\": 1,\n        \"skipped\": 0\n      }\n    ]\n  },\n  \"bundle\": null,\n  \"plugin_manifests\": {\n    \"written\": [],\n    \"skipped\": [],\n    \"dry_run\": []\n  },\n  \"version_alignment\": null,\n  \"drift\": {\n    \"ok\": true,\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \".claude-plugin/marketplace.json\",\n        \"status\": \"unchanged\",\n        \"differences\": [],\n        \"metadata_warnings\": []\n      }\n    ]\n  }\n}\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml",
+    "pkgs/local-tool/apm.yml"
+   ],
+   "fetch_calls": 0
+  }
+ ]
+}

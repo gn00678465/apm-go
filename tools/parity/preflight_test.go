@@ -4,7 +4,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,19 +55,16 @@ exit 0
 	}
 }
 
-func TestRunPreflight_PinMatch(t *testing.T) {
+func TestRunPreflight_RecordsOracleCommit(t *testing.T) {
 	oracleDir, head := initGitRepo(t)
 	cfg := testPreflightConfig(t, oracleDir)
 
-	pf, err := runPreflight(cfg, head)
+	pf, err := runPreflight(cfg)
 	if err != nil {
 		t.Fatalf("runPreflight: %v", err)
 	}
 	if pf.OracleCommit != head {
 		t.Errorf("OracleCommit = %q, want %q", pf.OracleCommit, head)
-	}
-	if pf.OraclePin != head {
-		t.Errorf("OraclePin = %q, want %q", pf.OraclePin, head)
 	}
 	if pf.OracleDirty {
 		t.Error("OracleDirty = true, want false for a freshly committed repo")
@@ -84,33 +80,6 @@ func TestRunPreflight_PinMatch(t *testing.T) {
 	}
 }
 
-func TestRunPreflight_PinMismatchFailsClosedWithBothSHAs(t *testing.T) {
-	oracleDir, head := initGitRepo(t)
-	cfg := testPreflightConfig(t, oracleDir)
-
-	wrongPin := strings.Repeat("a", 40)
-	if wrongPin == head {
-		t.Fatal("test setup: wrongPin accidentally equals the repo's real HEAD")
-	}
-
-	_, err := runPreflight(cfg, wrongPin)
-	if err == nil {
-		t.Fatal("runPreflight: expected a pin-mismatch error, got nil")
-	}
-
-	var pf *preflightError
-	if !errors.As(err, &pf) {
-		t.Fatalf("runPreflight error %v is not a *preflightError, so main() would exit 1 instead of 2", err)
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, wrongPin) {
-		t.Errorf("error %q does not contain the pinned SHA %q", msg, wrongPin)
-	}
-	if !strings.Contains(msg, head) {
-		t.Errorf("error %q does not contain the checkout's actual SHA %q", msg, head)
-	}
-}
-
 func TestRunPreflight_DirtyOracleTreeIsRecordedNotFatal(t *testing.T) {
 	oracleDir, head := initGitRepo(t)
 	cfg := testPreflightConfig(t, oracleDir)
@@ -121,7 +90,7 @@ func TestRunPreflight_DirtyOracleTreeIsRecordedNotFatal(t *testing.T) {
 		t.Fatalf("writing untracked file: %v", err)
 	}
 
-	pf, err := runPreflight(cfg, head)
+	pf, err := runPreflight(cfg)
 	if err != nil {
 		t.Fatalf("runPreflight: %v, want a dirty tree to be non-fatal", err)
 	}
@@ -178,43 +147,14 @@ func TestOracleProjectDir_ExtractsProjectFlag(t *testing.T) {
 	}
 }
 
-// TestRun_PinMismatchBlocksAllCasesAndWritesNoOutput exercises Run()'s real
-// wiring end to end: pin lookup -> runPreflight -> exit-2-worthy error, with
-// no override, so it also proves the real oracle.pin genuinely does not
-// match a freshly created throwaway repo (i.e. this isn't a vacuous check).
-func TestRun_PinMismatchBlocksAllCasesAndWritesNoOutput(t *testing.T) {
-	oracleDir, _ := initGitRepo(t)
-	cfg := testPreflightConfig(t, oracleDir)
-
-	casesDir := t.TempDir()
-	writeCase(t, casesDir, "some-case", `{"id": "some-case", "argv": []}`)
-	cfg.CasesDir = casesDir
-	outDir := filepath.Join(t.TempDir(), "out")
-	cfg.OutDir = outDir
-
-	err := Run(cfg)
-	if err == nil {
-		t.Fatal("Run: expected a pin-mismatch error, got nil")
-	}
-	var pf *preflightError
-	if !errors.As(err, &pf) {
-		t.Fatalf("Run error %v is not a *preflightError, so main() would exit 1 instead of 2", err)
-	}
-	if _, statErr := os.Stat(outDir); !os.IsNotExist(statErr) {
-		t.Errorf("Run: %s exists after a preflight failure, want no output directory created", outDir)
-	}
-}
-
 // TestRun_PreflightSuccessDrivesRunCases proves Run() actually wires
 // runPreflight's result into runCases (not just that each function works in
-// isolation): with the pin lookup overridden to match a throwaway Oracle
-// repo, a full Run() call must produce run.json with that preflight
-// evidence AND per-case evidence for the case it loaded.
+// isolation), and that the Oracle checkout may be at any commit: against a
+// throwaway Oracle repo whose HEAD is not a commit of microsoft/apm, a full
+// Run() call must produce run.json recording that commit, with no
+// oracle_pin key, AND per-case evidence for the case it loaded.
 func TestRun_PreflightSuccessDrivesRunCases(t *testing.T) {
 	oracleDir, head := initGitRepo(t)
-	restore := SetPinnedOracleCommitForTest(head)
-	defer restore()
-
 	cfg := testPreflightConfig(t, oracleDir)
 	casesDir := t.TempDir()
 	writeCase(t, casesDir, "some-case", `{"id": "some-case", "argv": []}`)
@@ -236,6 +176,15 @@ func TestRun_PreflightSuccessDrivesRunCases(t *testing.T) {
 	if header.Preflight.OracleCommit != head {
 		t.Errorf("run.json preflight.oracle_commit = %q, want %q", header.Preflight.OracleCommit, head)
 	}
+	var raw struct {
+		Preflight map[string]json.RawMessage `json:"preflight"`
+	}
+	if err := json.Unmarshal(headerData, &raw); err != nil {
+		t.Fatalf("unmarshalling run.json: %v", err)
+	}
+	if _, ok := raw.Preflight["oracle_pin"]; ok {
+		t.Error("run.json preflight has an oracle_pin key, want none")
+	}
 
 	for _, side := range []string{"oracle", "target"} {
 		if _, err := os.Stat(filepath.Join(cfg.OutDir, side, "some-case", "record.json")); err != nil {
@@ -253,10 +202,7 @@ func TestRun_PreflightSuccessDrivesRunCases(t *testing.T) {
 // regardless of actual Oracle/Target parity. Run() must resolve it to the
 // absolute path runPreflight already validated before any case executes.
 func TestRun_RelativeTargetBinIsResolvedToAbsoluteBeforeCaseExecution(t *testing.T) {
-	oracleDir, head := initGitRepo(t)
-	restore := SetPinnedOracleCommitForTest(head)
-	defer restore()
-
+	oracleDir, _ := initGitRepo(t)
 	scriptDir := t.TempDir()
 	oracleBin := writeStubScript(t, scriptDir, "oracle.sh", `
 if [ "$1" = "--version" ]; then echo "oracle 1.0"; exit 0; fi
@@ -297,15 +243,5 @@ echo "ran"; exit 0
 	targetRec := readSoleJSONLRecord(t, filepath.Join(cfg.OutDir, "target.jsonl"))
 	if targetRec.ExitCode != 0 || targetRec.Stdout == nil || !strings.Contains(*targetRec.Stdout, "ran") {
 		t.Errorf("target record = %+v, want the stub to have actually executed", targetRec)
-	}
-}
-
-func TestPinnedOracleCommit_ValidatesEmbeddedPin(t *testing.T) {
-	pin, err := pinnedOracleCommit()
-	if err != nil {
-		t.Fatalf("pinnedOracleCommit: %v", err)
-	}
-	if !isHexSHA(pin) {
-		t.Errorf("pinnedOracleCommit() = %q, not a 40-char hex SHA", pin)
 	}
 }

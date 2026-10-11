@@ -82,8 +82,9 @@ func execGit(ctx context.Context, args ...string) gitResult {
 	return res
 }
 
-// doctorCheck mirrors _DoctorCheck (commands/marketplace/__init__.py:
-// 1299-1308). informational checks never affect the exit code.
+// doctorCheck mirrors _DoctorCheck (Oracle v0.33.0
+// commands/marketplace/__init__.py:1097-1113). informational checks never
+// affect the exit code; one that did not pass shows the warning symbol.
 type doctorCheck struct {
 	name, detail  string
 	passed        bool
@@ -92,12 +93,14 @@ type doctorCheck struct {
 
 func (c doctorCheck) icon() string {
 	switch {
+	case !c.passed && c.informational:
+		return ux.SymbolWarn
+	case !c.passed:
+		return ux.SymbolError
 	case c.informational:
 		return ux.SymbolInfo
-	case c.passed:
-		return ux.SymbolSuccess
 	}
-	return ux.SymbolError
+	return ux.SymbolSuccess
 }
 
 // doctorCmd is the top-level `apm-go doctor` (commands/doctor.py:18-30).
@@ -171,12 +174,20 @@ func checkGit(deps doctorDeps) doctorCheck {
 	return c
 }
 
-// checkNetwork: doctor.py:142-176.
+// checkNetwork: doctor.py:165-204 (Oracle v0.33.0).
 func checkNetwork(deps doctorDeps) doctorCheck {
+	const remote = "https://github.com/git/git.git"
+	c := doctorCheck{name: "network"}
+	// Oracle v0.33.0 doctor.py:171,191-192: git_remote_refs validates the URL
+	// rewrite before ls-remote runs, and the ValueError branch prints the
+	// message whole, unlike the truncated branches below.
+	if err := gitops.ValidateURLRewriteSafety(remote); err != nil {
+		c.detail = err.Error()
+		return c
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), doctorTimeout)
 	defer cancel()
-	r := deps.runGit(ctx, "ls-remote", "https://github.com/git/git.git", "HEAD")
-	c := doctorCheck{name: "network"}
+	r := deps.runGit(ctx, "ls-remote", remote, "HEAD")
 	switch {
 	case r.timedOut:
 		c.detail = "Network check timed out (5s)"

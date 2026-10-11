@@ -10,16 +10,25 @@
 // plumbing:
 //   - FAKEGIT_SLEEP_MS: sleep this many milliseconds before exiting 0.
 //   - FAKEGIT_FAIL_STDERR: if set, write this string to stderr and exit 1.
+//   - FAKEGIT_RECORD_FILE: if set, append the arguments of every invocation
+//     to this file, one line each, so a test can prove git was never run.
 package main
 
 import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 func main() {
+	if record := os.Getenv("FAKEGIT_RECORD_FILE"); record != "" {
+		if f, err := os.OpenFile(record, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, strings.Join(os.Args[1:], " "))
+			f.Close()
+		}
+	}
 	if sleepMS := os.Getenv("FAKEGIT_SLEEP_MS"); sleepMS != "" {
 		if ms, err := strconv.Atoi(sleepMS); err == nil {
 			time.Sleep(time.Duration(ms) * time.Millisecond)

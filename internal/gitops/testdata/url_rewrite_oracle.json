@@ -1,0 +1,506 @@
+{
+ "policy": [
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "ext::sh -c evil",
+   "has_authorization": false,
+   "reason": "insecure-transport",
+   "message": "Git URL rewrite must not select remote-helper syntax; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://user:pw@github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "credentials",
+   "message": "Git URL rewrite replacement must not contain credentials; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://token@github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "credentials",
+   "message": "Git URL rewrite replacement must not contain credentials; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "ssh://git:pw@github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "credentials",
+   "message": "Git URL rewrite replacement must not contain credentials; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "http://github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "https-downgrade",
+   "message": "HTTPS Git remote must not rewrite to insecure HTTP; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "git@github.com:o/r.git",
+   "effective": "http://github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "insecure-transport",
+   "message": "Git remote must not rewrite to insecure HTTP; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "ssh://git@github.com/o/r.git",
+   "effective": "http://github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "insecure-transport",
+   "message": "Git remote must not rewrite to insecure HTTP; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "http://github.com/o/r.git",
+   "effective": "http://mirror.example/o/r.git",
+   "has_authorization": false,
+   "reason": "insecure-transport",
+   "message": "HTTPS Git remote must not rewrite to an insecure transport; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "git://github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "insecure-transport",
+   "message": "HTTPS Git remote must not rewrite to an insecure transport; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "ftp://github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "insecure-transport",
+   "message": "HTTPS Git remote must not rewrite to an insecure transport; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "github.com:o/r.git",
+   "has_authorization": false,
+   "reason": "insecure-transport",
+   "message": "HTTPS Git remote must not rewrite to an insecure transport; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://user:pw@github.com/o/r.git",
+   "effective": "https://github.com/x/r.git",
+   "has_authorization": false,
+   "reason": "credential-origin",
+   "message": "Credential-bearing Git remote must not be rewritten; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://token@github.com/o/r.git",
+   "effective": "ssh://git@github.com/o/r.git",
+   "has_authorization": false,
+   "reason": "credential-origin",
+   "message": "Credential-bearing Git remote must not be rewritten; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://github.com:8443/o/r.git",
+   "has_authorization": true,
+   "reason": "credential-origin",
+   "message": "Authenticated Git remote must not rewrite to a different HTTPS origin; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://github.com:8443/o/r.git",
+   "has_authorization": false
+  },
+  {
+   "remote": "http://github.com/o/r.git",
+   "effective": "http://github.com:8080/o/r.git",
+   "has_authorization": true,
+   "reason": "insecure-transport",
+   "message": "HTTPS Git remote must not rewrite to an insecure transport; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://mirror.example/o/r.git",
+   "has_authorization": true,
+   "reason": "credential-origin",
+   "message": "Authenticated Git remote must not rewrite to a different HTTPS origin; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://mirror.example/o/r.git",
+   "has_authorization": false,
+   "reason": "cross-host",
+   "message": "Git remote must not rewrite to a different network host; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "ssh://git@gitlab.com/o/r.git",
+   "has_authorization": false,
+   "reason": "cross-host",
+   "message": "Git remote must not rewrite to a different network host; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "git@gitlab.com:o/r.git",
+   "has_authorization": false,
+   "reason": "cross-host",
+   "message": "Git remote must not rewrite to a different network host; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "git@github.com:o/r.git",
+   "effective": "git@gitlab.com:o/r.git",
+   "has_authorization": false,
+   "reason": "cross-host",
+   "message": "Git remote must not rewrite to a different network host; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "ssh://git@github.com/o/r.git",
+   "has_authorization": false
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "git@github.com:o/r.git",
+   "has_authorization": false
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "ssh://git@GitHub.com:22/o/r.git",
+   "has_authorization": false
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "file:///srv/mirror/o/r.git",
+   "has_authorization": false
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "/srv/mirror/o/r.git",
+   "has_authorization": false
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://github.com/other/r.git",
+   "has_authorization": true
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://github.com:443/o/r.git",
+   "has_authorization": true
+  },
+  {
+   "remote": "./local/repo",
+   "effective": "/srv/mirror/repo",
+   "has_authorization": false
+  },
+  {
+   "remote": "/srv/a/repo",
+   "effective": "https://github.com/o/r.git",
+   "has_authorization": false
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://github.com:notaport/o/r.git",
+   "has_authorization": false,
+   "message": "Unable to verify Git URL rewrite safety"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://[bad/o/r.git",
+   "has_authorization": false,
+   "message": "Unable to verify Git URL rewrite safety"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "https://github.com:70000/o/r.git",
+   "has_authorization": false,
+   "message": "Unable to verify Git URL rewrite safety"
+  },
+  {
+   "remote": "https://github.com/o/r.git",
+   "effective": "file://user@host/srv/r.git",
+   "has_authorization": false,
+   "reason": "credentials",
+   "message": "Git URL rewrite replacement must not contain credentials; inspect matching rules with 'git config --show-origin --get-regexp ^url\\..*\\.insteadOf$' and remove the unsafe rule"
+  }
+ ],
+ "split": [
+  {
+   "url": "https://github.com/o/r.git",
+   "scheme": "https",
+   "netloc": "github.com",
+   "hostname": "github.com",
+   "port": 443,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "HTTPS://User:Pw@GitHub.COM:8443/o/r.git?x#y",
+   "scheme": "https",
+   "netloc": "User:Pw@GitHub.COM:8443",
+   "hostname": "github.com",
+   "port": 8443,
+   "username": true,
+   "password": true
+  },
+  {
+   "url": "git@github.com:o/r.git",
+   "scheme": "",
+   "netloc": "",
+   "hostname": "",
+   "port": null,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "github.com:o/r.git",
+   "scheme": "github.com",
+   "netloc": "",
+   "hostname": "",
+   "port": null,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "ssh://git@github.com/o/r.git",
+   "scheme": "ssh",
+   "netloc": "git@github.com",
+   "hostname": "github.com",
+   "port": null,
+   "username": true,
+   "password": false
+  },
+  {
+   "url": "/srv/mirror/r.git",
+   "scheme": "",
+   "netloc": "",
+   "hostname": "",
+   "port": null,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "./rel/path",
+   "scheme": "",
+   "netloc": "",
+   "hostname": "",
+   "port": null,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "file:///srv/r.git",
+   "scheme": "file",
+   "netloc": "",
+   "hostname": "",
+   "port": null,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "C:\\repo",
+   "scheme": "c",
+   "netloc": "",
+   "hostname": "",
+   "port": null,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": " \thttps://github.com/o",
+   "scheme": "https",
+   "netloc": "github.com",
+   "hostname": "github.com",
+   "port": 443,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "https://[::1]:8080/o",
+   "scheme": "https",
+   "netloc": "[::1]:8080",
+   "hostname": "::1",
+   "port": 8080,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "https://[fe80::1%eth0]/o",
+   "scheme": "https",
+   "netloc": "[fe80::1%eth0]",
+   "hostname": "fe80::1%eth0",
+   "port": 443,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "https://[v1.x]/o",
+   "scheme": "https",
+   "netloc": "[v1.x]",
+   "hostname": "v1.x",
+   "port": 443,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "https://[1.2.3.4]/o",
+   "error": true
+  },
+  {
+   "url": "https://x[::1]/o",
+   "error": true
+  },
+  {
+   "url": "https://[::1]x/o",
+   "error": true
+  },
+  {
+   "url": "https://[::1/o",
+   "error": true
+  },
+  {
+   "url": "https://a@b@host/o",
+   "scheme": "https",
+   "netloc": "a@b@host",
+   "hostname": "host",
+   "port": 443,
+   "username": true,
+   "password": false
+  },
+  {
+   "url": "https://host:/o",
+   "scheme": "https",
+   "netloc": "host:",
+   "hostname": "host",
+   "port": 443,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "https://host:0/o",
+   "scheme": "https",
+   "netloc": "host:0",
+   "hostname": "host",
+   "port": 0,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "1http://host/o",
+   "scheme": "",
+   "netloc": "",
+   "hostname": "",
+   "port": null,
+   "username": false,
+   "password": false
+  },
+  {
+   "url": "ext::sh -c x",
+   "scheme": "ext",
+   "netloc": "",
+   "hostname": "",
+   "port": null,
+   "username": false,
+   "password": false
+  }
+ ],
+ "headers": [
+  {
+   "value": "",
+   "valid": true,
+   "credential": false
+  },
+  {
+   "value": "   ",
+   "valid": true,
+   "credential": false
+  },
+  {
+   "value": "Authorization: Bearer abc",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "authorization: basic Zm9v",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "X-Custom: hello",
+   "valid": true,
+   "credential": false
+  },
+  {
+   "value": "X-Api-Key: hello",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "X-Custom: token abc",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "X-Custom: ghp_abcdef123456",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "X-Custom: xghp_abcdef123456",
+   "valid": true,
+   "credential": false
+  },
+  {
+   "value": "X-Custom: glpat-abcdef-more",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "X-Custom: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "X-Custom: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true,
+   "credential": false
+  },
+  {
+   "value": "Cookie: a=b",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "no-colon-here",
+   "valid": false,
+   "credential": false
+  },
+  {
+   "value": "Bad Name: x",
+   "valid": false,
+   "credential": false
+  },
+  {
+   "value": "X-Custom: a\rb",
+   "valid": false,
+   "credential": false
+  },
+  {
+   "value": "X-Custom: a\u007fb",
+   "valid": false,
+   "credential": false
+  },
+  {
+   "value": "X-Custom:\ttab ok",
+   "valid": true,
+   "credential": false
+  },
+  {
+   "value": "Proxy-Authorization: x",
+   "valid": true,
+   "credential": true
+  },
+  {
+   "value": "X-Secretive: x",
+   "valid": true,
+   "credential": false
+  },
+  {
+   "value": "X-My_Token: x",
+   "valid": true,
+   "credential": true
+  }
+ ]
+}

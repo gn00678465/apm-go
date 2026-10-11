@@ -98,17 +98,13 @@ func resolveCmd(envVar, def string) []string {
 // unwaived Oracle/Target diff is.
 //
 // Before touching cfg.CasesDir or cfg.OutDir at all, it runs the Oracle/
-// Target pin preflight (ticket 03): a pin mismatch or unusable Target
-// binary returns a *preflightError and NO case runs, no output directory is
+// Target preflight (ticket 03): an unreadable Oracle checkout or unusable
+// Target binary returns a *preflightError and NO case runs, no output directory is
 // created, and no run.json is written. After preflight and before any real
 // case, it runs the fault-injection self-test (ticket 02): a failure there
 // returns a *selfTestError and, likewise, no real case runs.
 func Run(cfg Config) error {
-	pin, err := pinnedOracleCommitFunc()
-	if err != nil {
-		return &preflightError{err}
-	}
-	preflight, err := runPreflight(cfg, pin)
+	preflight, err := runPreflight(cfg)
 	if err != nil {
 		return err
 	}
@@ -191,7 +187,7 @@ func runCases(cfg Config, preflight Preflight) error {
 		casesByID[c.ID] = c
 	}
 
-	waivers, err := loadAndValidateWaivers(cfg.CasesDir, cfg.WaiversPath, preflight.OracleCommit, casesByID)
+	waivers, err := loadAndValidateWaivers(cfg.CasesDir, cfg.WaiversPath, casesByID)
 	if err != nil {
 		return err
 	}
@@ -282,7 +278,7 @@ func runCaseAllSides(cfg Config, c Case) (CasePair, error) {
 }
 
 // runHeader is <out>/run.json: what ran, against which binaries, when.
-// Preflight is ticket 03's Oracle/Target pin evidence; OracleVersion/
+// Preflight is ticket 03's Oracle/Target evidence; OracleVersion/
 // TargetVersion are kept as their own top-level fields (not just nested
 // under Preflight) for ticket 01's existing consumers.
 type runHeader struct {

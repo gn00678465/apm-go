@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,26 +9,63 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apm-go/apm/internal/marketplace/build"
+	"github.com/apm-go/apm/internal/pack/bundle"
 )
 
 // `pack --json`'s output contract (ticket 17 phase 5), mirroring the
-// Oracle's own envelope literal (commands/pack.py:530-541) and
-// BuildReport.failure_to_json_dict (marketplace/builder.py:263-288).
+// Oracle's own envelope literal (v0.33.0 commands/pack.py:604-615) and
+// BuildReport.failure_to_json_dict (marketplace/builder.py:396-424).
 //
 // These are structs rather than maps on purpose: encoding/json emits map
 // keys in sorted order, while the Oracle emits Python dict insertion order.
 // Field declaration order below IS the wire order, and must stay in the
 // Oracle's sequence.
 type packJSONEnvelope struct {
-	OK               bool                    `json:"ok"`
-	DryRun           bool                    `json:"dry_run"`
-	Warnings         []string                `json:"warnings"`
-	Errors           []packJSONError         `json:"errors"`
-	Marketplace      packJSONMarketplace     `json:"marketplace"`
-	Bundle           any                     `json:"bundle"`
-	PluginManifests  packJSONPluginManifests `json:"plugin_manifests"`
-	VersionAlignment any                     `json:"version_alignment"`
-	Drift            any                     `json:"drift"`
+	OK                 bool                       `json:"ok"`
+	DryRun             bool                       `json:"dry_run"`
+	Warnings           []string                   `json:"warnings"`
+	Errors             []packJSONError            `json:"errors"`
+	MetadataEnrichment packJSONMetadataEnrichment `json:"metadata_enrichment"`
+	Marketplace        packJSONMarketplace        `json:"marketplace"`
+	Bundle             any                        `json:"bundle"`
+	PluginManifests    packJSONPluginManifests    `json:"plugin_manifests"`
+	VersionAlignment   any                        `json:"version_alignment"`
+	Drift              any                        `json:"drift"`
+}
+
+// packJSONFailureEnvelope is BuildReport.failure_to_json_dict: the envelope
+// of a run that failed before any producer wrote. It has no
+// plugin_manifests, version_alignment or drift key.
+type packJSONFailureEnvelope struct {
+	OK                 bool                       `json:"ok"`
+	DryRun             bool                       `json:"dry_run"`
+	Warnings           []string                   `json:"warnings"`
+	Errors             []packJSONError            `json:"errors"`
+	MetadataEnrichment packJSONMetadataEnrichment `json:"metadata_enrichment"`
+	Marketplace        packJSONMarketplace        `json:"marketplace"`
+	Bundle             any                        `json:"bundle"`
+}
+
+// packJSONMetadataEnrichment mirrors MetadataEnrichmentResult.to_json_dict
+// (marketplace/builder.py:237-242); an outcome has a cause key only when it
+// has a cause (:165-170).
+type packJSONMetadataEnrichment struct {
+	Certifiable bool                      `json:"certifiable"`
+	Outcomes    []packJSONMetadataOutcome `json:"outcomes"`
+}
+
+type packJSONMetadataOutcome struct {
+	Package string `json:"package"`
+	Status  string `json:"status"`
+	Cause   string `json:"cause,omitempty"`
+}
+
+func metadataEnrichmentJSON(m build.MetadataEnrichment) packJSONMetadataEnrichment {
+	outcomes := make([]packJSONMetadataOutcome, 0, len(m.Outcomes))
+	for _, o := range m.Outcomes {
+		outcomes = append(outcomes, packJSONMetadataOutcome{Package: o.Package, Status: string(o.Status), Cause: o.Cause})
+	}
+	return packJSONMetadataEnrichment{Certifiable: m.Certifiable(), Outcomes: outcomes}
 }
 
 type packJSONError struct {
@@ -56,8 +94,8 @@ type packJSONPluginManifests struct {
 
 // packJSONVersionAlignment / packJSONDrift mirror
 // VersionAlignmentReport.to_json_dict (marketplace/version_check.py:49-63)
-// and DriftReport.to_json_dict (marketplace/drift_check.py:75-79). Both are
-// null in the envelope when their gate did not run.
+// and DriftReport.to_json_dict (marketplace/drift_check.py:64-71,92-96).
+// Both are null in the envelope when their gate did not run.
 type packJSONVersionAlignment struct {
 	Strategy string                            `json:"strategy"`
 	Expected string                            `json:"expected"`
@@ -78,10 +116,11 @@ type packJSONDrift struct {
 }
 
 type packJSONDriftOutput struct {
-	Format      string                    `json:"format"`
-	Path        string                    `json:"path"`
-	Status      string                    `json:"status"`
-	Differences []packJSONDriftDifference `json:"differences"`
+	Format           string                    `json:"format"`
+	Path             string                    `json:"path"`
+	Status           string                    `json:"status"`
+	Differences      []packJSONDriftDifference `json:"differences"`
+	MetadataWarnings []string                  `json:"metadata_warnings"`
 }
 
 type packJSONDriftDifference struct {
@@ -91,15 +130,68 @@ type packJSONDriftDifference struct {
 }
 
 // emitPackJSON writes the success envelope. The Oracle uses
-// json.dumps(envelope, indent=2) here -- two-space indent, and a trailing
-// newline from click.echo.
+// json.dumps(envelope, indent=2) here -- two-space indent, non-ASCII as
+// \uXXXX, and a trailing newline from click.echo.
 func emitPackJSON(w io.Writer, env packJSONEnvelope) error {
-	b, err := json.MarshalIndent(env, "", "  ")
+	v, err := orderedJSONValue(env)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(w, "%s\n", b)
+	_, err = fmt.Fprintf(w, "%s\n", bundle.MarshalIndent(v))
 	return err
+}
+
+// emitPackJSONFailure writes the failure envelope on one line: the Oracle
+// uses json.dumps with no indent there (commands/pack.py:415-423), whose
+// separators are ", " and ": ".
+func emitPackJSONFailure(w io.Writer, env packJSONFailureEnvelope) error {
+	v, err := orderedJSONValue(env)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	writePythonCompactJSON(&buf, v)
+	_, err = fmt.Fprintf(w, "%s\n", buf.Bytes())
+	return err
+}
+
+// orderedJSONValue converts an envelope struct into the order-preserving
+// value model bundle.MarshalIndent serializes the Python way.
+func orderedJSONValue(env any) (bundle.JSONValue, error) {
+	b, err := json.Marshal(env)
+	if err != nil {
+		return bundle.JSONValue{}, err
+	}
+	return bundle.DecodeJSONValue(b)
+}
+
+func writePythonCompactJSON(buf *bytes.Buffer, v bundle.JSONValue) {
+	switch v.Kind {
+	case bundle.KindArray:
+		buf.WriteByte('[')
+		for i, item := range v.A {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			writePythonCompactJSON(buf, item)
+		}
+		buf.WriteByte(']')
+	case bundle.KindObject:
+		buf.WriteByte('{')
+		for i, field := range v.O {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			buf.Write(bundle.MarshalIndent(bundle.StringValue(field.Key)))
+			buf.WriteString(": ")
+			writePythonCompactJSON(buf, field.Val)
+		}
+		buf.WriteByte('}')
+	default:
+		// A scalar has no layout, so the indented writer's bytes are the
+		// compact ones.
+		buf.Write(bundle.MarshalIndent(v))
+	}
 }
 
 // marketplaceOutputsJSON converts the deferred render records into the
@@ -153,10 +245,11 @@ func driftJSON(r *build.DriftReport) any {
 			diffs = append(diffs, packJSONDriftDifference{Path: d.Path, Old: d.Old, New: d.New})
 		}
 		outs = append(outs, packJSONDriftOutput{
-			Format:      o.Format,
-			Path:        o.Path,
-			Status:      o.Status,
-			Differences: diffs,
+			Format:           o.Format,
+			Path:             o.Path,
+			Status:           o.Status,
+			Differences:      diffs,
+			MetadataWarnings: append([]string{}, o.MetadataWarnings...),
 		})
 	}
 	return packJSONDrift{OK: r.OK, Outputs: outs}

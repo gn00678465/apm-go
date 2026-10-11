@@ -1,0 +1,67 @@
+{
+ "outcomes": {
+  "first-tool": "failed:request timed out",
+  "second-tool": "failed:authentication required"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  packages:\n    - name: first-tool\n      source: acme/first-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n    - name: second-tool\n      source: acme/second-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--strict-metadata"
+   ],
+   "exit": 5,
+   "stdout": "[x] Marketplace metadata is incomplete: Package 'first-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry. Package 'second-tool': metadata enrichment failed (authentication required). Restore repository, network, or credential access and retry.\n",
+   "files": [
+    "apm.yml"
+   ],
+   "fetch_calls": 2
+  },
+  {
+   "args": [
+    "--strict-metadata",
+    "--json"
+   ],
+   "exit": 5,
+   "stdout": "{\"ok\": false, \"dry_run\": false, \"warnings\": [\"Package 'first-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\", \"Package 'second-tool': metadata enrichment failed (authentication required). Restore repository, network, or credential access and retry.\"], \"errors\": [{\"code\": \"metadata_incomplete\", \"message\": \"Marketplace metadata is incomplete: Package 'first-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry. Package 'second-tool': metadata enrichment failed (authentication required). Restore repository, network, or credential access and retry.\"}], \"metadata_enrichment\": {\"certifiable\": false, \"outcomes\": [{\"package\": \"first-tool\", \"status\": \"failed\", \"cause\": \"request timed out\"}, {\"package\": \"second-tool\", \"status\": \"failed\", \"cause\": \"authentication required\"}]}, \"marketplace\": {\"outputs\": []}, \"bundle\": null}\n",
+   "files": [
+    "apm.yml"
+   ],
+   "fetch_calls": 2
+  },
+  {
+   "args": [],
+   "exit": 0,
+   "stdout": "[!] Package 'first-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\n[!] Package 'second-tool': metadata enrichment failed (authentication required). Restore repository, network, or credential access and retry.\n[*] Built marketplace.json [claude] (2 package(s)) -> <ROOT>/.claude-plugin/marketplace.json\n[i] Marketplace artifacts ready:\n[i]   [claude] <ROOT>/.claude-plugin/marketplace.json\n[i] How consumers install from this marketplace varies by AI assistant.\n[i] See: https://microsoft.github.io/apm/producer/publish-to-a-marketplace/#consume-from-any-assistant\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml"
+   ],
+   "fetch_calls": 2
+  },
+  {
+   "args": [
+    "--json"
+   ],
+   "exit": 0,
+   "stdout": "{\n  \"ok\": true,\n  \"dry_run\": false,\n  \"warnings\": [\n    \"Package 'first-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\",\n    \"Package 'second-tool': metadata enrichment failed (authentication required). Restore repository, network, or credential access and retry.\"\n  ],\n  \"errors\": [],\n  \"metadata_enrichment\": {\n    \"certifiable\": false,\n    \"outcomes\": [\n      {\n        \"package\": \"first-tool\",\n        \"status\": \"failed\",\n        \"cause\": \"request timed out\"\n      },\n      {\n        \"package\": \"second-tool\",\n        \"status\": \"failed\",\n        \"cause\": \"authentication required\"\n      }\n    ]\n  },\n  \"marketplace\": {\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \"<ROOT>/.claude-plugin/marketplace.json\",\n        \"added\": 0,\n        \"updated\": 0,\n        \"unchanged\": 2,\n        \"skipped\": 0\n      }\n    ]\n  },\n  \"bundle\": null,\n  \"plugin_manifests\": {\n    \"written\": [],\n    \"skipped\": [],\n    \"dry_run\": []\n  },\n  \"version_alignment\": null,\n  \"drift\": null\n}\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml"
+   ],
+   "fetch_calls": 2
+  },
+  {
+   "args": [
+    "--check-clean"
+   ],
+   "exit": 4,
+   "stdout": "[x] Marketplace clean check failed: remote metadata unavailable [outputs=claude]\n[x]     .claude-plugin/marketplace.json  [cannot certify regenerated metadata]\n[!]     Package 'first-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\n[!]     Package 'second-tool': metadata enrichment failed (authentication required). Restore repository, network, or credential access and retry.\n[i] [dry-run] --check-clean is read-only; no pack outputs were written.\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml"
+   ],
+   "fetch_calls": 2
+  }
+ ]
+}

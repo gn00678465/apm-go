@@ -1,0 +1,23 @@
+{
+ "outcomes": {
+  "*": "failed:request timed out"
+ },
+ "apm_yml": "name: metadata-outcome\ndescription: Metadata outcome regression fixture\nversion: 1.0.0\nlicense: MIT\nmarketplace:\n  owner:\n    name: APM Tests\n  outputs: [codex, claude]\n  packages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n",
+ "files": {},
+ "steps": [
+  {
+   "args": [
+    "--check-clean",
+    "-m",
+    "codex",
+    "--json"
+   ],
+   "exit": 4,
+   "stdout": "{\n  \"ok\": false,\n  \"dry_run\": true,\n  \"warnings\": [],\n  \"errors\": [\n    {\n      \"code\": \"marketplace_metadata_uncertifiable\",\n      \"message\": \".claude-plugin/marketplace.json: remote metadata unavailable; regeneration is uncertifiable\"\n    },\n    {\n      \"code\": \"marketplace_drift\",\n      \"message\": \".agents/plugins/marketplace.json: missing on disk (would be created)\"\n    }\n  ],\n  \"metadata_enrichment\": {\n    \"certifiable\": false,\n    \"outcomes\": [\n      {\n        \"package\": \"remote-tool\",\n        \"status\": \"failed\",\n        \"cause\": \"request timed out\"\n      }\n    ]\n  },\n  \"marketplace\": {\n    \"outputs\": [\n      {\n        \"format\": \"codex\",\n        \"path\": \"<ROOT>/.agents/plugins/marketplace.json\",\n        \"added\": 1,\n        \"updated\": 0,\n        \"unchanged\": 0,\n        \"skipped\": 0\n      }\n    ]\n  },\n  \"bundle\": null,\n  \"plugin_manifests\": {\n    \"written\": [],\n    \"skipped\": [],\n    \"dry_run\": []\n  },\n  \"version_alignment\": null,\n  \"drift\": {\n    \"ok\": false,\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \".claude-plugin/marketplace.json\",\n        \"status\": \"uncertifiable\",\n        \"differences\": [],\n        \"metadata_warnings\": [\n          \"Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\"\n        ]\n      },\n      {\n        \"format\": \"codex\",\n        \"path\": \".agents/plugins/marketplace.json\",\n        \"status\": \"missing\",\n        \"differences\": [\n          {\n            \"path\": \"interface\",\n            \"old\": null,\n            \"new\": {\n              \"displayName\": \"metadata-outcome\"\n            }\n          },\n          {\n            \"path\": \"name\",\n            \"old\": null,\n            \"new\": \"metadata-outcome\"\n          },\n          {\n            \"path\": \"plugins\",\n            \"old\": null,\n            \"new\": [\n              {\n                \"name\": \"remote-tool\",\n                \"source\": {\n                  \"source\": \"url\",\n                  \"url\": \"acme/remote-tool\",\n                  \"ref\": \"0123456789abcdef0123456789abcdef01234567\",\n                  \"sha\": \"0123456789abcdef0123456789abcdef01234567\",\n                  \"tag_pattern\": \"v{version}\"\n                },\n                \"policy\": {\n                  \"installation\": \"AVAILABLE\",\n                  \"authentication\": \"ON_INSTALL\"\n                },\n                \"category\": \"Productivity\"\n              }\n            ]\n          }\n        ],\n        \"metadata_warnings\": []\n      }\n    ]\n  }\n}\n",
+   "files": [
+    "apm.yml"
+   ],
+   "fetch_calls": 1
+  }
+ ]
+}

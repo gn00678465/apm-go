@@ -477,3 +477,22 @@ func TestDoctor_ApmYmlWithoutBlock_BrokenLegacy_UsesLegacyPrefix(t *testing.T) {
 		t.Errorf("wrong source attributed:\n%s", out)
 	}
 }
+
+// Oracle v0.33.0 commands/marketplace/__init__.py:1108-1113.
+func TestDoctorCheckIcon(t *testing.T) {
+	cases := []struct {
+		passed, informational bool
+		want                  string
+	}{
+		{passed: false, informational: true, want: "!"},
+		{passed: false, informational: false, want: "x"},
+		{passed: true, informational: true, want: "i"},
+		{passed: true, informational: false, want: "+"},
+	}
+	for _, c := range cases {
+		got := doctorCheck{passed: c.passed, informational: c.informational}.icon()
+		if got != c.want {
+			t.Errorf("icon(passed=%v, informational=%v) = %q, want %q", c.passed, c.informational, got, c.want)
+		}
+	}
+}

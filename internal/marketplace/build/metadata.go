@@ -9,8 +9,8 @@
 // marketplace.packages[] entry always wins when it already supplies a
 // usable value; each package's own apm.yml is only fetched/read to fill in
 // whatever the curator left out, and a fetch/read failure never fails the
-// build -- it downgrades to a warning message ResolvePackages surfaces to
-// its caller (design.md: "抓取失敗降級為「無 metadata」警告,不中斷 build").
+// build: a remote failure is recorded as the package's MetadataOutcome
+// (metadata_enrichment.go), a local one as a warning ResolvePackages returns.
 // Both a remote clone's and a local package's apm.yml are size-capped
 // (64KiB) before being read into memory (F4 fix, readCapped).
 package build
@@ -152,6 +152,10 @@ func (gitMetadataFetcher) FetchMetadata(source, ref, subdir string) (string, str
 func cloneAtRef(ctx context.Context, cloneURL, ref, dir string) error {
 	safeURL := gitops.SanitizeGitOutput(cloneURL)
 
+	if err := gitops.ValidateURLRewriteSafety(cloneURL); err != nil {
+		return err
+	}
+
 	if sha40LowerRe.MatchString(ref) {
 		cloneCmd := exec.CommandContext(ctx, "git", "clone", "--", cloneURL, dir)
 		gitops.ApplyCloneEnv(cloneCmd, cloneURL)
@@ -174,11 +178,28 @@ func cloneAtRef(ctx context.Context, cloneURL, ref, dir string) error {
 	return nil
 }
 
+// cloneError names the failure's cause from the kinds gitops already
+// classifies. GitErrorTimeout covers every network-level failure (DNS,
+// refused, unreachable, reset), so it maps to the Oracle's "network request
+// failed"; only this process's own deadline is "request timed out".
 func cloneError(ctx context.Context, safeURL string, out []byte, err error) error {
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("git clone %s: timed out after %s", safeURL, metadataFetchTimeout)
+		return &MetadataFetchError{
+			Cause: metadataCauseTimeout,
+			Err:   fmt.Errorf("git clone %s: timed out after %s", safeURL, metadataFetchTimeout),
+		}
 	}
-	return fmt.Errorf("git clone %s: %s", safeURL, gitops.SanitizeGitOutput(strings.TrimSpace(string(out))))
+	cause := metadataCauseUnreadable
+	switch gitops.TranslateGitStderr(string(out), -1, "clone", "").Kind {
+	case gitops.GitErrorAuth:
+		cause = metadataCauseAuth
+	case gitops.GitErrorTimeout:
+		cause = metadataCauseNetwork
+	}
+	return &MetadataFetchError{
+		Cause: cause,
+		Err:   fmt.Errorf("git clone %s: %s", safeURL, gitops.SanitizeGitOutput(strings.TrimSpace(string(out)))),
+	}
 }
 
 // metadataScalarString reads key's scalar string value out of mapping node
@@ -207,34 +228,60 @@ func metadataScalarString(m *yaml.Node, key string) string {
 // needs a fallback value -- when the curator already supplies both, the
 // fetch would never change the outcome, so it is skipped entirely
 // (extending mkt-051's "local packages never touch the network" principle
-// to this enrichment step). A fetch failure never fails the build: it
-// downgrades to a warning message, and the fields fall back to whatever the
-// curator already supplied (or "" when nothing is available).
-func enrichRemoteMetadata(entry authoring.PackageEntry, ref, subdir, source string, fetcher MetadataFetcher) (description, version, warning string) {
+// to this enrichment step). A fetch failure never fails the build: the
+// fields fall back to whatever the curator already supplied (or "" when
+// nothing is available) and the outcome records the failure.
+//
+// The outcome follows the Oracle's assignment (v0.33.0
+// marketplace/builder.py:1344-1424 and :1262-1295). The raw fetch error is
+// dropped here on purpose: an outcome's cause must not carry a URL or a
+// credential.
+func enrichRemoteMetadata(entry authoring.PackageEntry, ref, subdir, source string, fetcher MetadataFetcher, opts Options) (description, version string, outcome MetadataOutcome) {
+	outcome.Package = entry.Name
 	description = entry.Description
 	if isDisplayVersion(entry.Version) {
 		version = entry.Version
 	}
 
 	if description != "" && version != "" {
-		return description, version, ""
+		outcome.Status = MetadataExplicit
+		return description, version, outcome
+	}
+	if opts.SkipRemoteMetadata {
+		return description, version, outcome
+	}
+	// Not reachable through ResolvePackages today: apm-go keeps no ref cache,
+	// so --offline fails on a remote package before metadata is considered
+	// (resolvePackage). Kept so the status is assigned the Oracle's way once
+	// --offline can resolve a remote ref.
+	if opts.Offline {
+		outcome.Status, outcome.Cause = MetadataOffline, metadataCauseOffline
+		return description, version, outcome
 	}
 
 	remoteDescription, remoteVersion, err := fetcher.FetchMetadata(source, ref, subdir)
 	if err != nil {
-		return description, version, fmt.Sprintf(
-			"package %q: could not fetch remote apm.yml metadata, continuing without it: %s",
-			entry.Name, err,
-		)
+		outcome.Status, outcome.Cause = MetadataFailed, metadataCauseUnreadable
+		var fetchErr *MetadataFetchError
+		if errors.As(err, &fetchErr) && fetchErr.Cause != "" {
+			outcome.Cause = fetchErr.Cause
+		}
+		return description, version, outcome
 	}
 
+	// builder.py:1275-1278 strips the version before it counts or is used.
+	remoteVersion = strings.TrimSpace(remoteVersion)
+	outcome.Status = MetadataEmpty
+	if remoteDescription != "" || remoteVersion != "" {
+		outcome.Status = MetadataFetched
+	}
 	if description == "" {
 		description = remoteDescription
 	}
 	if version == "" {
 		version = remoteVersion
 	}
-	return description, version, ""
+	return description, version, outcome
 }
 
 // localApmYMLRelPath resolves a local package's own apm.yml path, relative

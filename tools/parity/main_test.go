@@ -47,7 +47,7 @@ exit 3
 	// runCaseSide/the JSONL/run.json writers without also driving ticket
 	// 02's diff/waiver-gate stage -- this test's oracle/target stubs
 	// deliberately differ, which runCases would now (correctly) fail on --
-	// or the Oracle/Target pin preflight (ticket 03, preflight_test.go),
+	// or the Oracle/Target preflight (ticket 03, preflight_test.go),
 	// which needs a real git checkout to resolve APM_ORACLE_CMD's
 	// --project argument against.
 	preflight := Preflight{
@@ -268,7 +268,7 @@ func TestRunCases_UnwaivedDiffFailsGate(t *testing.T) {
 		WaiversPath: filepath.Join(t.TempDir(), "no-such-waivers.json"),
 	}
 
-	err := runCases(cfg, Preflight{OracleCommit: "pin"})
+	err := runCases(cfg, Preflight{})
 	if err == nil {
 		t.Fatal("runCases: expected an unwaived-diff error, got nil")
 	}
@@ -299,7 +299,7 @@ func TestRunCases_WaivedDiffPasses(t *testing.T) {
 	writeCase(t, casesDir, "c1", `{"id": "c1", "argv": []}`)
 
 	waiversPath := filepath.Join(t.TempDir(), "waivers.json")
-	if err := os.WriteFile(waiversPath, []byte(`[{"id":"c1","fields":["stdout"],"reason":"known diff","oracle_commit":"pin"}]`), 0o644); err != nil {
+	if err := os.WriteFile(waiversPath, []byte(`[{"id":"c1","fields":["stdout"],"reason":"known diff"}]`), 0o644); err != nil {
 		t.Fatalf("writing waivers.json: %v", err)
 	}
 
@@ -312,7 +312,7 @@ func TestRunCases_WaivedDiffPasses(t *testing.T) {
 		WaiversPath: waiversPath,
 	}
 
-	if err := runCases(cfg, Preflight{OracleCommit: "pin"}); err != nil {
+	if err := runCases(cfg, Preflight{}); err != nil {
 		t.Fatalf("runCases: %v, want nil (fully-covering waiver)", err)
 	}
 
@@ -343,7 +343,7 @@ func TestRunCases_UnknownWaiverIDFailsExit2(t *testing.T) {
 	writeCase(t, casesDir, "c1", `{"id": "c1", "argv": []}`)
 
 	waiversPath := filepath.Join(t.TempDir(), "waivers.json")
-	if err := os.WriteFile(waiversPath, []byte(`[{"id":"ghost","fields":["stdout"],"reason":"r","oracle_commit":"pin"}]`), 0o644); err != nil {
+	if err := os.WriteFile(waiversPath, []byte(`[{"id":"ghost","fields":["stdout"],"reason":"r"}]`), 0o644); err != nil {
 		t.Fatalf("writing waivers.json: %v", err)
 	}
 
@@ -356,7 +356,7 @@ func TestRunCases_UnknownWaiverIDFailsExit2(t *testing.T) {
 		WaiversPath: waiversPath,
 	}
 
-	err := runCases(cfg, Preflight{OracleCommit: "pin"})
+	err := runCases(cfg, Preflight{})
 	var we *waiverValidationError
 	if !errors.As(err, &we) {
 		t.Fatalf("runCases error %v is not a *waiverValidationError, so main() would not exit 2", err)
@@ -379,7 +379,7 @@ func TestRunCases_InvalidWaiverInvokesNeitherOracleNorTarget(t *testing.T) {
 	writeCase(t, casesDir, "c1", `{"id": "c1", "argv": []}`)
 
 	waiversPath := filepath.Join(t.TempDir(), "waivers.json")
-	if err := os.WriteFile(waiversPath, []byte(`[{"id":"ghost","fields":["stdout"],"reason":"r","oracle_commit":"pin"}]`), 0o644); err != nil {
+	if err := os.WriteFile(waiversPath, []byte(`[{"id":"ghost","fields":["stdout"],"reason":"r"}]`), 0o644); err != nil {
 		t.Fatalf("writing waivers.json: %v", err)
 	}
 
@@ -392,7 +392,7 @@ func TestRunCases_InvalidWaiverInvokesNeitherOracleNorTarget(t *testing.T) {
 		WaiversPath: waiversPath,
 	}
 
-	err := runCases(cfg, Preflight{OracleCommit: "pin"})
+	err := runCases(cfg, Preflight{})
 	var we *waiverValidationError
 	if !errors.As(err, &we) {
 		t.Fatalf("runCases error %v is not a *waiverValidationError, so main() would not exit 2", err)
@@ -426,7 +426,7 @@ func TestRunCases_NegativeControlWaiverOnProductCaseFailsExit2(t *testing.T) {
 	writeCase(t, casesDir, "product", `{"id": "product", "argv": []}`)
 
 	waiversPath := filepath.Join(t.TempDir(), "waivers.json")
-	waiver := `[{"id":"product","fields":["stdout","exit_code"],"taxonomy":"negative-control","reason":"product negative-control probe","oracle_commit":"pin"}]`
+	waiver := `[{"id":"product","fields":["stdout","exit_code"],"taxonomy":"negative-control","reason":"product negative-control probe"}]`
 	if err := os.WriteFile(waiversPath, []byte(waiver), 0o644); err != nil {
 		t.Fatalf("writing waivers.json: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestRunCases_NegativeControlWaiverOnProductCaseFailsExit2(t *testing.T) {
 		WaiversPath: waiversPath,
 	}
 
-	err := runCases(cfg, Preflight{OracleCommit: "pin"})
+	err := runCases(cfg, Preflight{})
 	var we *waiverValidationError
 	if !errors.As(err, &we) {
 		t.Fatalf("runCases error %v is not a *waiverValidationError, so main() would not exit 2 (negative-control must be rejected for a product case)", err)
@@ -481,9 +481,8 @@ func TestRealCases_FixtureDirLoads(t *testing.T) {
 	}
 }
 
-// TestRealWaiversJSON_ValidatesAgainstPin is a regression check that the
-// checked-in waivers.json is internally consistent: every entry's
-// oracle_commit matches the embedded oracle.pin, the reserved
+// TestRealWaiversJSON_Validates is a regression check that the
+// checked-in waivers.json is internally consistent: the reserved
 // negative-control taxonomy is only ever used on a case that itself
 // declares expected_taxonomy ["negative-control"], and (ticket 02 attempt
 // 2: "No bulk waivers") it contains EXACTLY the version, doctor-help,
@@ -508,12 +507,7 @@ func TestRealCases_FixtureDirLoads(t *testing.T) {
 // -checkrefs-on/-structure-fail's own `stdout`-only (`stderr`/`error_body`
 // too for -structure-fail) waivers -- every one field-precise per its own
 // reason -- no other case ever earns a bulk/wildcard waiver here.
-func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
-	pin, err := pinnedOracleCommit()
-	if err != nil {
-		t.Fatalf("pinnedOracleCommit: %v", err)
-	}
-
+func TestRealWaiversJSON_Validates(t *testing.T) {
 	waivers, err := loadWaivers("waivers.json")
 	if err != nil {
 		t.Fatalf("loadWaivers: %v", err)
@@ -527,7 +521,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 	for _, c := range cases {
 		byID[c.ID] = c
 	}
-	if err := validateWaivers(waivers, byID, pin); err != nil {
+	if err := validateWaivers(waivers, byID); err != nil {
 		t.Errorf("validateWaivers: %v", err)
 	}
 
@@ -561,7 +555,7 @@ func TestRealWaiversJSON_ValidatesAgainstPin(t *testing.T) {
 		"pack-check-versions-fail", "pack-check-clean-fail", "pack-help",
 		"pack-marketplace-success", "pack-marketplace-multi-output",
 		"marketplace-audit-unregistered",
-		"audit-error", "experimental-enable", "marketplace-browse-local", "marketplace-list-local",
+		"experimental-enable", "marketplace-browse-local", "marketplace-list-local",
 		"marketplace-refresh-local", "marketplace-update-local", "marketplace-remove-local",
 	}
 	if !fieldsEqual(gotIDs, wantIDs) {

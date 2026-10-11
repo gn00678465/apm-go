@@ -71,18 +71,23 @@ type ComposeOptions struct {
 // (drift_check.go's CheckMarketplaceDrift, ticket 17 phase 4) share the
 // exact same compose path rather than two independently-drifting copies of
 // this dispatch.
-func ComposeDocument(format string, cfg *authoring.AuthoringConfig, resolved []ResolvedPackage, options ...ComposeOptions) (any, []string, error) {
+//
+// warnings are what the Oracle's build reports as warnings; diagnostics are
+// its BuildDiagnostic lines, which `pack --json` does not carry
+// (ClaudeMapper.compose).
+func ComposeDocument(format string, cfg *authoring.AuthoringConfig, resolved []ResolvedPackage, options ...ComposeOptions) (doc any, warnings, diagnostics []string, err error) {
 	var opts ComposeOptions
 	if len(options) > 0 {
 		opts = options[0]
 	}
 	switch format {
 	case "claude":
-		return ClaudeMapper{SourceStyle: opts.ClaudeSourceStyle}.Compose(cfg, resolved)
+		return ClaudeMapper{SourceStyle: opts.ClaudeSourceStyle}.compose(cfg, resolved)
 	case "codex":
-		return CodexMapper{}.Compose(cfg, resolved)
+		doc, warnings, err = CodexMapper{}.Compose(cfg, resolved)
+		return doc, warnings, nil, err
 	default:
-		return nil, nil, fmt.Errorf("unknown marketplace output format %q", format)
+		return nil, nil, nil, fmt.Errorf("unknown marketplace output format %q", format)
 	}
 }
 

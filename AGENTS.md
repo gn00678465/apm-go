@@ -82,7 +82,7 @@ internal/
 
 **Oracle parity.** When the oracle handles a case, match its behaviour — edge cases, error messages, exit codes, output bytes. Cite oracle file:line in a comment when the mapping is non-obvious. Where apm-go deviates on purpose (a flag not yet ported, `apm-go` in place of `apm` in hint text), say so in a comment at the deviation with the reason.
 
-**Git subprocesses** run under `gitops.ApplySecureGitEnv` (no credential prompts, transport allow-list) — every call site, including diagnostics.
+**Git subprocesses** run under `gitops.ApplySecureGitEnv` (no credential prompts, transport allow-list) — every call site, including diagnostics. A subprocess that connects to a remote (`ls-remote`, `clone`, `fetch`) first passes `gitops.ValidateURLRewriteSafety` for that URL.
 
 **YAML round-trip.** `apm.yml` and `apm.lock.yaml` are user-edited files. All mutations go through `yamlcore` splice/patch helpers that preserve comments, ordering, and formatting — never marshal-and-rewrite.
 
@@ -104,6 +104,8 @@ Tests use `t.TempDir()` for filesystem isolation. No global test fixtures — ea
 
 **CI detection is pinned, never inherited.** `cmd/apm-go` and `internal/ux` each have a `TestMain` that unsets `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `TF_BUILD`, and `JENKINS_URL` before running their tests. Both packages have production code that branches on those variables — `install` defaults to frozen under CI (`lockfile.IsCIEnvironment`, req-lk-018) and `ux.isCI` suppresses interactivity — so without the pin the same test suite is green on a workstation and red in Actions. A test that wants CI semantics opts in with `t.Setenv("CI", "1")`, which overrides the baseline for that test only. Any new package whose code reads those variables needs the same `TestMain`.
 
+**The machine's git configuration is pinned the same way.** `gitops.ValidateURLRewriteSafety` reads the effective git configuration before every network git subprocess, so an `insteadOf` rule on the workstation would decide whether a test passes. The `TestMain` of `cmd/apm-go`, `internal/gitops`, `internal/marketplace`, `internal/marketplace/authoring`, and `internal/marketplace/build` installs `gitops.EmptyGitConfigProbe` through `gitops.SetConfigProbeForTest`; a test of the check installs its own probe. A new package whose tests reach a network git call site needs the same line.
+
 Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depend on conformance spec files under `spec/conformance/` — runtime inputs tracked in git, not generated. `TestParseDepString_AbsolutePath` in `internal/manifest` skips its two windows-drive-letter subtests outside `GOOS=windows` (ticket 09); everything else in it runs everywhere.
 
-`go test ./...` passing is not the parity gate — `.github/workflows/parity.yml` runs `tools/parity` against the pinned Oracle on every push/PR and is the authority on Oracle byte-for-byte parity; `go test` only verifies apm-go's own Go-level correctness (ticket 09).
+`go test ./...` passing is not the parity gate — `.github/workflows/parity.yml` runs `tools/parity` against the latest stable upstream release of the Oracle on every push/PR, resolving the version when the job runs, and is the authority on Oracle byte-for-byte parity; `go test` only verifies apm-go's own Go-level correctness (ticket 09).

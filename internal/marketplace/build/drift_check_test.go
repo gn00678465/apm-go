@@ -85,7 +85,7 @@ func driftFixtureConfig() *authoring.AuthoringConfig {
 func TestCheckMarketplaceDrift_Unchanged(t *testing.T) {
 	root := t.TempDir()
 	cfg := driftFixtureConfig()
-	doc, _, err := ComposeDocument("claude", cfg, nil)
+	doc, _, _, err := ComposeDocument("claude", cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestJsonCompactASCII_EscapesNonASCII(t *testing.T) {
 func TestCheckMarketplaceDrift_AbsoluteOutputPathIsNotReportedMissing(t *testing.T) {
 	root := t.TempDir()
 	cfg := driftFixtureConfig()
-	doc, _, err := ComposeDocument("claude", cfg, nil)
+	doc, _, _, err := ComposeDocument("claude", cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

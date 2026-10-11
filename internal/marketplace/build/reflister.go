@@ -57,6 +57,10 @@ func (gitRefLister) ListRemoteRefs(source string) ([]RemoteRef, error) {
 	cloneURL := resolveCloneURL(source)
 	safeURL := gitops.SanitizeGitOutput(cloneURL)
 
+	if err := gitops.ValidateURLRewriteSafety(cloneURL); err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), listRefsTimeout)
 	defer cancel()
 

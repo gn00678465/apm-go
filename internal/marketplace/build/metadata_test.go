@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -77,14 +78,14 @@ func TestEnrichRemoteMetadata_CuratorSuppliesBothFields_SkipsFetchEntirely(t *te
 	entry := authoring.PackageEntry{Name: "tool", Description: "Curator description", Version: "1.2.3"}
 
 	// Act
-	description, version, warning := enrichRemoteMetadata(entry, "v1.2.3", "", "owner/repo", panicMetadataFetcher{})
+	description, version, outcome := enrichRemoteMetadata(entry, "v1.2.3", "", "owner/repo", panicMetadataFetcher{}, Options{})
 
 	// Assert
 	if description != "Curator description" || version != "1.2.3" {
 		t.Errorf("description/version = %q/%q, want curator's own values", description, version)
 	}
-	if warning != "" {
-		t.Errorf("warning = %q, want none", warning)
+	if want := (MetadataOutcome{Package: "tool", Status: MetadataExplicit}); outcome != want {
+		t.Errorf("outcome = %+v, want %+v", outcome, want)
 	}
 }
 
@@ -94,14 +95,14 @@ func TestEnrichRemoteMetadata_CuratorSuppliesNeitherField_UsesRemoteFallback(t *
 	fetcher := &fakeMetadataFetcher{description: "Remote description", version: "2.0.0"}
 
 	// Act
-	description, version, warning := enrichRemoteMetadata(entry, "v2.0.0", "sub/dir", "owner/repo", fetcher)
+	description, version, outcome := enrichRemoteMetadata(entry, "v2.0.0", "sub/dir", "owner/repo", fetcher, Options{})
 
 	// Assert
 	if description != "Remote description" || version != "2.0.0" {
 		t.Errorf("description/version = %q/%q, want the fetched remote values", description, version)
 	}
-	if warning != "" {
-		t.Errorf("warning = %q, want none", warning)
+	if want := (MetadataOutcome{Package: "tool", Status: MetadataFetched}); outcome != want {
+		t.Errorf("outcome = %+v, want %+v", outcome, want)
 	}
 	if len(fetcher.calls) != 1 || fetcher.calls[0] != "owner/repo" {
 		t.Errorf("fetcher.calls = %v, want exactly one call for owner/repo", fetcher.calls)
@@ -117,7 +118,7 @@ func TestEnrichRemoteMetadata_CuratorVersionIsARange_DoesNotWinDespiteBeingNonEm
 	fetcher := &fakeMetadataFetcher{version: "1.5.0"}
 
 	// Act
-	_, version, _ := enrichRemoteMetadata(entry, "v1.5.0", "", "owner/repo", fetcher)
+	_, version, _ := enrichRemoteMetadata(entry, "v1.5.0", "", "owner/repo", fetcher, Options{})
 
 	// Assert
 	if version != "1.5.0" {
@@ -135,7 +136,7 @@ func TestEnrichRemoteMetadata_PartialCuratorOverride_PerFieldPrecedence(t *testi
 	fetcher := &fakeMetadataFetcher{description: "Remote description (should lose)", version: "3.0.0"}
 
 	// Act
-	description, version, _ := enrichRemoteMetadata(entry, "v3.0.0", "", "owner/repo", fetcher)
+	description, version, _ := enrichRemoteMetadata(entry, "v3.0.0", "", "owner/repo", fetcher, Options{})
 
 	// Assert
 	if description != "Curator description" {
@@ -146,23 +147,20 @@ func TestEnrichRemoteMetadata_PartialCuratorOverride_PerFieldPrecedence(t *testi
 	}
 }
 
-func TestEnrichRemoteMetadata_FetchFailure_ReturnsWarning_NotError(t *testing.T) {
+func TestEnrichRemoteMetadata_FetchFailure_IsAFailedOutcome_NotError(t *testing.T) {
 	// Arrange
 	entry := authoring.PackageEntry{Name: "tool"}
 	fetcher := &fakeMetadataFetcher{err: errors.New("boom")}
 
 	// Act
-	description, version, warning := enrichRemoteMetadata(entry, "v1.0.0", "", "owner/repo", fetcher)
+	description, version, outcome := enrichRemoteMetadata(entry, "v1.0.0", "", "owner/repo", fetcher, Options{})
 
 	// Assert
 	if description != "" || version != "" {
 		t.Errorf("description/version = %q/%q, want empty on fetch failure with no curator fallback", description, version)
 	}
-	if warning == "" {
-		t.Fatal("expected a non-empty warning describing the fetch failure")
-	}
-	if !strings.Contains(warning, "tool") {
-		t.Errorf("warning = %q, want it to name the package", warning)
+	if want := (MetadataOutcome{Package: "tool", Status: MetadataFailed, Cause: "remote apm.yml could not be read"}); outcome != want {
+		t.Errorf("outcome = %+v, want %+v", outcome, want)
 	}
 }
 
@@ -173,7 +171,7 @@ func TestEnrichRemoteMetadata_FetchFailure_CuratorFieldsStillWin(t *testing.T) {
 	fetcher := &fakeMetadataFetcher{err: errors.New("boom")}
 
 	// Act
-	description, version, warning := enrichRemoteMetadata(entry, "v1.0.0", "", "owner/repo", fetcher)
+	description, version, outcome := enrichRemoteMetadata(entry, "v1.0.0", "", "owner/repo", fetcher, Options{})
 
 	// Assert
 	if description != "Curator description" {
@@ -182,14 +180,14 @@ func TestEnrichRemoteMetadata_FetchFailure_CuratorFieldsStillWin(t *testing.T) {
 	if version != "" {
 		t.Errorf("version = %q, want empty (curator supplied none, fetch failed)", version)
 	}
-	if warning == "" {
-		t.Fatal("expected a non-empty warning describing the fetch failure")
+	if outcome.Status != MetadataFailed {
+		t.Errorf("outcome = %+v, want status failed", outcome)
 	}
 }
 
-// ── ResolvePackages integration: warnings surface, build never fails ────
+// ── ResolvePackages integration: the failure is recorded, build never fails ────
 
-func TestResolvePackages_MetadataFetchFailure_SurfacesWarning_BuildStillSucceeds(t *testing.T) {
+func TestResolvePackages_MetadataFetchFailure_RecordsOutcome_BuildStillSucceeds(t *testing.T) {
 	// Arrange
 	dir := t.TempDir()
 	initGitRepoWithTags(t, dir, "v1.0.0")
@@ -208,11 +206,16 @@ func TestResolvePackages_MetadataFetchFailure_SurfacesWarning_BuildStillSucceeds
 	if len(resolved) != 1 || resolved[0].Ref != "v1.0.0" {
 		t.Fatalf("resolved = %+v, want the package's ref/sha resolved despite the metadata fetch failure", resolved)
 	}
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %v, want exactly one warning", warnings)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none: a remote failure is an outcome, not a resolve warning", warnings)
 	}
-	if !strings.Contains(warnings[0], "tool") {
-		t.Errorf("warnings[0] = %q, want it to name the package", warnings[0])
+	got := MetadataFor("claude", resolved).Warnings()
+	want := []string{"Package 'tool': metadata enrichment failed (remote apm.yml could not be read). Restore repository, network, or credential access and retry."}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("metadata warnings = %q, want %q", got, want)
+	}
+	if strings.Contains(strings.Join(got, ""), "network unreachable") {
+		t.Errorf("metadata warnings %q carry the raw fetch error", got)
 	}
 }
 

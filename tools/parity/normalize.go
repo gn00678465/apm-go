@@ -25,7 +25,7 @@ var hexRunRe = regexp.MustCompile(`[0-9a-fA-F]+`)
 var isoTimestampRe = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?`)
 
 // parityStatusGlyphs is the sanctioned F0x normalization class (ticket 33).
-// The pinned Oracle prefixes a status record with "[c] "; apm-go uses the
+// The Oracle prefixes a status record with "[c] "; apm-go uses the
 // centered width-3 form " c ". Both are reduced to a canonical token only at
 // the start of a line, so bracketed or spaced text inside a message remains
 // literal. Oracle [*] is its success/sparkles class; apm-go's centered * is

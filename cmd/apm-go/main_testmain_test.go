@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"testing"
+
+	"github.com/apm-go/apm/internal/gitops"
 )
 
 // ciDetectionEnv is every environment variable apm-go inspects to decide it
@@ -42,5 +44,10 @@ func TestMain(m *testing.M) {
 	for _, key := range ciDetectionEnv {
 		os.Unsetenv(key)
 	}
+	// The git configuration of the machine is the same kind of ambient input:
+	// gitops.ValidateURLRewriteSafety reads it before every network git, so an
+	// insteadOf rule there would decide whether these tests pass. A test of
+	// the check's effect installs its own probe.
+	gitops.SetConfigProbeForTest(gitops.EmptyGitConfigProbe)
 	os.Exit(m.Run())
 }

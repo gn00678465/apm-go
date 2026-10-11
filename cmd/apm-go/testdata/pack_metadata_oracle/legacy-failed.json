@@ -1,0 +1,49 @@
+{
+ "outcomes": {
+  "*": "failed:request timed out"
+ },
+ "apm_yml": "name: metadata-outcome\nversion: 1.0.0\nlicense: MIT\n",
+ "files": {
+  "marketplace.yml": "name: legacy-marketplace\ndescription: Legacy marketplace\nversion: 1.0.0\nowner:\n  name: APM Tests\nclaude:\n  output: .claude-plugin/marketplace.json\npackages:\n    - name: remote-tool\n      source: acme/remote-tool\n      ref: 0123456789abcdef0123456789abcdef01234567\n      category: Productivity\n"
+ },
+ "steps": [
+  {
+   "args": [
+    "--check-clean",
+    "--dry-run"
+   ],
+   "exit": 4,
+   "stdout": "[x] Marketplace clean check failed: remote metadata unavailable [outputs=claude]\n[x]     .claude-plugin/marketplace.json  [cannot certify regenerated metadata]\n[!]     Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\n",
+   "files": [
+    "apm.yml",
+    "marketplace.yml"
+   ],
+   "fetch_calls": 1
+  },
+  {
+   "args": [
+    "--check-clean"
+   ],
+   "exit": 4,
+   "stdout": "[x] Marketplace clean check failed: remote metadata unavailable [outputs=claude]\n[x]     .claude-plugin/marketplace.json  [cannot certify regenerated metadata]\n[!]     Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\n[i] [dry-run] --check-clean is read-only; no pack outputs were written.\n",
+   "files": [
+    "apm.yml",
+    "marketplace.yml"
+   ],
+   "fetch_calls": 1
+  },
+  {
+   "args": [
+    "--json"
+   ],
+   "exit": 0,
+   "stdout": "{\n  \"ok\": true,\n  \"dry_run\": false,\n  \"warnings\": [\n    \"marketplace.yml is deprecated. Run 'apm marketplace migrate' to fold it into apm.yml's 'marketplace:' block.\",\n    \"Package 'remote-tool': metadata enrichment failed (request timed out). Restore repository, network, or credential access and retry.\"\n  ],\n  \"errors\": [],\n  \"metadata_enrichment\": {\n    \"certifiable\": false,\n    \"outcomes\": [\n      {\n        \"package\": \"remote-tool\",\n        \"status\": \"failed\",\n        \"cause\": \"request timed out\"\n      }\n    ]\n  },\n  \"marketplace\": {\n    \"outputs\": [\n      {\n        \"format\": \"claude\",\n        \"path\": \"<ROOT>/.claude-plugin/marketplace.json\",\n        \"added\": 1,\n        \"updated\": 0,\n        \"unchanged\": 0,\n        \"skipped\": 0\n      }\n    ]\n  },\n  \"bundle\": null,\n  \"plugin_manifests\": {\n    \"written\": [],\n    \"skipped\": [],\n    \"dry_run\": []\n  },\n  \"version_alignment\": null,\n  \"drift\": null\n}\n",
+   "files": [
+    ".claude-plugin/marketplace.json",
+    "apm.yml",
+    "marketplace.yml"
+   ],
+   "fetch_calls": 1
+  }
+ ]
+}

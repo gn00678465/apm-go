@@ -58,6 +58,7 @@ func packCmd() *cobra.Command {
 		archiveFormat     string
 		checkVersions     bool
 		checkClean        bool
+		strictMetadata    bool
 		jsonOutput        bool
 		claudeSourceStyle string
 	)
@@ -113,7 +114,8 @@ Exit codes:
   1  Build or runtime error
   2  Manifest schema validation error
   3  Version alignment check failed (--check-versions)
-  4  Marketplace working-tree drift detected (--check-clean)`,
+  4  Marketplace working-tree drift detected (--check-clean)
+  5  Strict marketplace metadata check failed (--strict-metadata)`,
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -184,6 +186,7 @@ Exit codes:
 				showZipMigrationNotice: showZipMigrationNotice,
 				checkVersions:          checkVersions,
 				checkClean:             checkClean,
+				strictMetadata:         strictMetadata,
 				jsonOutput:             jsonOutput,
 				claudeSourceStyle:      build.ClaudeSourceStyle(claudeSourceStyle),
 			})
@@ -288,15 +291,12 @@ Exit codes:
 		"Deploy skill files to per-client paths (e.g. .cursor/skills/) instead of "+
 			"the shared .agents/skills/ directory. Compatibility flag for projects "+
 			"that need per-client skill layouts.")
-	// Ticket 17 phase 4: exact Oracle help text (commands/pack.py:305-320).
-	// Both are release gates: pure verification, never write anything of
-	// their own (--check-clean's own MarketplaceBuilder is unconditionally
-	// dry-run, matching the Oracle's, regardless of this command's own
-	// --dry-run). Exit codes 3 (version)/4 (drift) are applied at the very
-	// end of runReleaseGates' caller, after every producer's own output has
-	// rendered -- 3 wins over 4 when both fail simultaneously, per the
-	// Oracle's own explicit "Gate exit codes... 3 wins over 4" comment
-	// (pack.py:576-580), confirmed live.
+	// Exact Oracle help text (v0.33.0 commands/pack.py:236-268). Both are
+	// release gates: pure verification. --check-clean makes the whole run
+	// read-only (runPack). Exit codes 3 (version)/4 (drift) are applied at
+	// the very end of runReleaseGates' caller, after every producer's own
+	// output has rendered -- 3 wins over 4 when both fail simultaneously
+	// (pack.py:673-677).
 	cmd.Flags().BoolVar(&jsonOutput, "json", false,
 		"Emit machine-readable JSON to stdout; logs go to stderr.")
 	cmd.Flags().BoolVar(&checkVersions, "check-versions", false,
@@ -306,8 +306,12 @@ Exit codes:
 	cmd.Flags().BoolVar(&checkClean, "check-clean", false,
 		"Release gate: regenerate every configured marketplace output to a "+
 			"temp representation and diff against the effective on-disk path, "+
-			"including --marketplace-path overrides. Exits 4 for drift. Use "+
-			"with --dry-run to check without normal pack output generation.")
+			"including --marketplace-path overrides. This check is always read-only. "+
+			"Exits 4 for drift or uncertifiable remote metadata.")
+	cmd.Flags().BoolVar(&strictMetadata, "strict-metadata", false,
+		"Marketplace: fail before writing when remote description/version metadata "+
+			"cannot be fetched. Exits 5; --check-clean always rejects uncertifiable "+
+			"metadata with exit 4.")
 	return cmd
 }
 
@@ -380,6 +384,9 @@ type packOptions struct {
 	// (ticket 17 phase 4): release gates run by runReleaseGates.
 	checkVersions bool
 	checkClean    bool
+	// strictMetadata mirrors --strict-metadata: an output whose metadata is
+	// not certifiable fails the run with exit 5 before any producer writes.
+	strictMetadata bool
 	// jsonOutput mirrors --json (ticket 17 phase 5): the envelope becomes
 	// the only thing on stdout and every human line moves to stderr.
 	jsonOutput        bool
@@ -417,6 +424,11 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 		ux.SetConsoleStderr(true)
 		defer ux.SetConsoleStderr(false)
 	}
+	// --check-clean is always read-only, so it implies a dry run for every
+	// producer (Oracle v0.33.0 commands/pack.py:332-333).
+	implicitCheckCleanDryRun := opts.checkClean && !opts.dryRun
+	opts.dryRun = opts.dryRun || opts.checkClean
+
 	warnIfLicenseUndeclared(cmd.ErrOrStderr())
 
 	hasMarketplace := hasMarketplaceConfig(".")
@@ -452,28 +464,48 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 		}
 	}
 
+	// --strict-metadata: resolve the marketplace and judge the metadata of
+	// every selected output before ANY producer writes (Oracle v0.33.0
+	// core/build_orchestrator.py:532-538). Exit 5 wins over both gates
+	// because the gates never run.
+	var plan *marketplacePlan
+	var err error
+	if opts.strictMetadata && doMarketplace {
+		plan, err = prepareMarketplace(opts)
+		if err != nil {
+			return err
+		}
+		if metadata := plan.producedMetadata(); !metadata.Certifiable() {
+			return failStrictMetadata(cmd, opts, metadata)
+		}
+	}
+
 	// Ticket 17 phase 4: build/write every producer FIRST (including their
 	// own inline messages -- a bundle's "No plugin.json found;
 	// synthesising..." notice, marketplace's collision/secret warnings,
 	// plugin-manifest's own completion line), matching the Oracle's own
 	// orchestrator.run() step; the --check-versions/--check-clean release
-	// gates run strictly AFTER that (their own, independent config
-	// load/resolve, never reusing whatever a producer above already
-	// built); each producer's own completion/dry-run TAIL line is deferred
-	// past the gates too (renderBundleResult/renderMarketplaceOutput) --
-	// verified live against the pinned Oracle, in this exact order,
-	// including with plugin-manifest and a failing gate combined.
+	// gates run strictly AFTER that; each producer's own completion/dry-run
+	// TAIL line is deferred past the gates too (renderBundleResult/
+	// renderMarketplaceResult) -- verified live against the Oracle, in this
+	// exact order, including with plugin-manifest and a failing gate
+	// combined.
 	var bundleResult *bundle.ProduceResult
-	var err error
 	if doBundle {
 		bundleResult, err = runBundleProducer(cmd, m, apmYMLRoot, hasMarketplace, opts)
 		if err != nil {
 			return err
 		}
 	}
-	var marketplaceRenders []marketplaceRender
+	var mkt marketplaceResult
 	if doMarketplace {
-		marketplaceRenders, err = runMarketplaceProducer(cmd, opts)
+		if plan == nil {
+			plan, err = prepareMarketplace(opts)
+			if err != nil {
+				return err
+			}
+		}
+		mkt, err = runMarketplaceProducer(cmd, plan, opts)
 		if err != nil {
 			return err
 		}
@@ -485,10 +517,14 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 		}
 	}
 
-	gates, err := runReleaseGates(cmd, opts)
+	gates, err := runReleaseGates(cmd, plan, opts)
 	if err != nil {
 		return err
 	}
+	// The gate judged the metadata; pack.py:662-668 then drops the
+	// marketplace result so its warnings are not printed twice and no write
+	// is promised.
+	driftUncertifiable := gates.drift != nil && !gates.drift.Metadata.Certifiable()
 
 	// The deferred completion/tail lines are SKIPPED ENTIRELY under --json,
 	// not merely redirected: the Oracle emits its envelope and `return`s
@@ -501,13 +537,18 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 	// handles), not this result rendering.
 	if !opts.jsonOutput {
 		w := packLogWriter(cmd, opts)
-		if doBundle {
-			renderBundleResult(w, bundleResult, opts)
+		switch {
+		case implicitCheckCleanDryRun:
+			// pack.py:642-647: the notice replaces every producer's result.
+			ux.Info(w, "[dry-run] --check-clean is read-only; no pack outputs were written.")
+		default:
+			if doBundle {
+				renderBundleResult(w, bundleResult, opts)
+			}
+			if !driftUncertifiable {
+				renderMarketplaceResult(cmd, w, mkt)
+			}
 		}
-		for _, r := range marketplaceRenders {
-			renderMarketplaceOutput(w, r)
-		}
-		renderMarketplaceCatalog(w, marketplaceRenders)
 	}
 
 	// --json: one envelope on stdout, then the gates' own exit codes -- the
@@ -517,21 +558,31 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 	// to have sent every one of those lines to stderr via packLogWriter and
 	// emit the envelope at the same point in the sequence.
 	if opts.jsonOutput {
+		// pack.py:604-630. When the drift gate ran, its metadata is the one
+		// reported, and its warnings stay in drift.outputs[].metadata_warnings
+		// only.
+		metadata := mkt.metadata
+		warnings := mkt.warnings
+		if gates.drift != nil {
+			metadata = gates.drift.Metadata
+			warnings = withoutStrings(warnings, metadata.Warnings())
+		}
 		env := packJSONEnvelope{
-			OK:               true,
-			DryRun:           opts.dryRun,
-			Warnings:         []string{},
-			Errors:           []packJSONError{},
-			Marketplace:      packJSONMarketplace{Outputs: marketplaceOutputsJSON(marketplaceRenders)},
-			PluginManifests:  packJSONPluginManifests{Written: []string{}, Skipped: []string{}, DryRun: []string{}},
-			VersionAlignment: versionAlignmentJSON(gates.version),
-			Drift:            driftJSON(gates.drift),
+			OK:                 true,
+			DryRun:             opts.dryRun,
+			Warnings:           append([]string{}, warnings...),
+			Errors:             []packJSONError{},
+			MetadataEnrichment: metadataEnrichmentJSON(metadata),
+			Marketplace:        packJSONMarketplace{Outputs: marketplaceOutputsJSON(mkt.renders)},
+			PluginManifests:    packJSONPluginManifests{Written: []string{}, Skipped: []string{}, DryRun: []string{}},
+			VersionAlignment:   versionAlignmentJSON(gates.version),
+			Drift:              driftJSON(gates.drift),
 		}
 		// A failed gate is reported IN the envelope as well as through the
 		// exit code (pack.py:548-550's gate_errors merge), so a consumer
 		// reading only stdout still learns why. One error per report row,
 		// with the Oracle's codes and error_messages() wording
-		// (pack.py:470-471 and :526-527) -- not a fixed summary.
+		// (pack.py:512-513 and :589-600) -- not a fixed summary.
 		if gates.versionFailed {
 			for _, msg := range gates.version.ErrorMessages() {
 				env.Errors = append(env.Errors, packJSONError{Code: "version_misaligned", Message: msg})
@@ -539,8 +590,14 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 			env.OK = false
 		}
 		if gates.driftFailed {
-			for _, msg := range gates.drift.ErrorMessages() {
-				env.Errors = append(env.Errors, packJSONError{Code: "marketplace_drift", Message: msg})
+			for _, out := range gates.drift.Outputs {
+				code := "marketplace_drift"
+				if out.Status == build.DriftUncertifiable {
+					code = "marketplace_metadata_uncertifiable"
+				}
+				for _, msg := range out.ErrorMessages() {
+					env.Errors = append(env.Errors, packJSONError{Code: code, Message: msg})
+				}
 			}
 			env.OK = false
 		}
@@ -899,22 +956,56 @@ type marketplaceRender struct {
 	diff build.OutputDiff
 }
 
-// runMarketplaceProducer builds marketplace.json from apm.yml's
-// marketplace: block (or a legacy marketplace.yml), mirroring mkt-054/055's
-// original single-producer packCmd body -- unchanged behavior except that
-// (ticket 17 phase 4) each output's own completion/dry-run line is no
-// longer printed here: it's deferred to renderMarketplaceOutput, called
-// from runPack after the --check-versions/--check-clean release gates run
-// (verified live: the Oracle's own marketplace success/dry-run lines print
-// AFTER the gates too). The "-m none" early return keeps printing inline,
-// unchanged -- that's a pre-existing, unrelated convention (mkt-054/055),
-// not part of what this phase restructures, and Oracle itself has no
-// producer_result at all for a zero-output selection (verified live:
-// "-m none" combined with the gates produces no marketplace-related
-// output on either side).
-func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplaceRender, error) {
-	w := packLogWriter(cmd, opts)
+// marketplacePlan is the marketplace producer's input with every package
+// resolved and nothing written (the Oracle's _MarketplaceBuildPlan, v0.33.0
+// core/build_orchestrator.py:314-321). One pack run prepares it once: the
+// strict-metadata check, the producer and the drift gate all read the same
+// resolved packages, so a remote apm.yml is fetched at most once per run
+// (commands/pack.py:518-521,536).
+type marketplacePlan struct {
+	cfg *authoring.AuthoringConfig
+	src authoring.ConfigSource
+	// activeOutputs is the configured outputs -m selected. When it is empty
+	// nothing was resolved and resolved is nil.
+	activeOutputs             []string
+	cliOverrides, configPaths map[string]string
+	resolved                  []build.ResolvedPackage
+	resolveWarnings           []string
+}
 
+// producedMetadata is the metadata the selected outputs are composed from:
+// the first selected output that uses package metadata decides, and a
+// selection with no such output has no outcomes (Oracle v0.33.0
+// marketplace/builder.py:322-328).
+func (p *marketplacePlan) producedMetadata() build.MetadataEnrichment {
+	for _, format := range p.activeOutputs {
+		if m := build.MetadataFor(format, p.resolved); m != nil {
+			return *m
+		}
+	}
+	return build.MetadataEnrichment{}
+}
+
+func configuredMarketplaceOutputs(cfg *authoring.AuthoringConfig) []string {
+	if len(cfg.Outputs) == 0 {
+		return []string{"claude"}
+	}
+	return cfg.Outputs
+}
+
+func anyUsesRemoteMetadata(formats []string) bool {
+	for _, f := range formats {
+		if build.UsesRemoteMetadata(f) {
+			return true
+		}
+	}
+	return false
+}
+
+// prepareMarketplace loads the marketplace config and resolves its packages.
+// It prints nothing and writes nothing, so --strict-metadata can call it
+// ahead of every producer.
+func prepareMarketplace(opts packOptions) (*marketplacePlan, error) {
 	cfg, src, err := authoring.LoadAuthoringConfig(".")
 	if err != nil {
 		return nil, err
@@ -922,11 +1013,9 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 	if err := authoring.ValidateOutputRequirements(cfg); err != nil {
 		return nil, withStderrError(err)
 	}
-	if src == authoring.ConfigSourceLegacy {
-		ux.Warn(cmd.ErrOrStderr(), "reading legacy marketplace.yml; run 'apm-go marketplace migrate' to fold it into apm.yml")
-	}
 
-	cliOverrides, err := parseMarketplacePathOverrides(opts.pathOverrideArgs)
+	plan := &marketplacePlan{cfg: cfg, src: src}
+	plan.cliOverrides, err = parseMarketplacePathOverrides(opts.pathOverrideArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -935,47 +1024,109 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 		return nil, err
 	}
 
-	configuredOutputs := cfg.Outputs
-	if len(configuredOutputs) == 0 {
-		configuredOutputs = []string{"claude"}
-	}
-	var activeOutputs []string
+	configuredOutputs := configuredMarketplaceOutputs(cfg)
 	if buildAll {
-		activeOutputs = configuredOutputs
+		plan.activeOutputs = configuredOutputs
 	} else {
 		for _, o := range configuredOutputs {
 			if filterSet[o] {
-				activeOutputs = append(activeOutputs, o)
+				plan.activeOutputs = append(plan.activeOutputs, o)
 			}
 		}
 	}
-	if len(activeOutputs) == 0 {
-		ux.Info(w, "No marketplace outputs selected; nothing to write.")
-		return nil, nil
+	if len(plan.activeOutputs) == 0 {
+		return plan, nil
 	}
 
-	resolved, warnings, err := build.ResolvePackages(cfg, build.Options{
+	plan.resolved, plan.resolveWarnings, err = build.ResolvePackages(cfg, build.Options{
 		IncludePrerelease: opts.includePrerelease,
 		Offline:           opts.offline,
 		ProjectRoot:       ".",
+		// The drift gate judges every configured output, not only the
+		// selected ones, and it reuses this resolve.
+		SkipRemoteMetadata: !anyUsesRemoteMetadata(plan.activeOutputs) &&
+			!(opts.checkClean && anyUsesRemoteMetadata(configuredOutputs)),
 	})
 	if err != nil {
 		return nil, err
 	}
-	for _, warning := range warnings {
-		ux.Warn(cmd.ErrOrStderr(), "%s", warning)
+	plan.configPaths, err = build.LoadOutputPathOverrides(".", src)
+	if err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+// marketplaceResult is what the marketplace producer hands to the deferred
+// rendering and to the --json envelope.
+type marketplaceResult struct {
+	renders []marketplaceRender
+	// warnings is what the Oracle reports as the producer's warnings, first
+	// occurrence only, in order (v0.33.0 core/build_orchestrator.py:295,
+	// marketplace/builder.py:316-320): the legacy-config deprecation, each
+	// output's mapper warnings, then the metadata warnings. It is the
+	// `pack --json` warnings list, so nothing else may enter it.
+	warnings []string
+	// heldLines is the producer's warning lines of a text-mode --check-clean
+	// run, which are printed only when the result is rendered.
+	heldLines []string
+	metadata  build.MetadataEnrichment
+}
+
+// legacyMarketplaceDeprecation is the Oracle's DEPRECATION_MESSAGE (v0.33.0
+// marketplace/migration.py:45-48) with apm-go's command name.
+const legacyMarketplaceDeprecation = "marketplace.yml is deprecated. Run 'apm-go marketplace migrate' to " +
+	"fold it into apm.yml's 'marketplace:' block."
+
+// runMarketplaceProducer writes plan's selected outputs (nothing under a dry
+// run), mirroring MarketplaceProducer.produce_prepared (Oracle v0.33.0
+// core/build_orchestrator.py:257-304). Each output's own completion/dry-run
+// line and the metadata warnings are deferred to renderMarketplaceResult,
+// called from runPack after the release gates. The "-m none" line keeps
+// printing inline -- a pre-existing apm-go convention (mkt-054/055); the
+// Oracle has no producer result at all for a zero-output selection.
+//
+// The producer's own warning lines print here, ahead of the gates. That
+// order is apm-go's: the Oracle prints its producer warnings in
+// _render_marketplace_result, after the gates (commands/pack.py:811-819).
+// A text-mode --check-clean run is the exception and holds the lines for
+// renderMarketplaceResult, because there the Oracle may drop the whole
+// marketplace result, warnings included (pack.py:642-647, :663-668).
+func runMarketplaceProducer(cmd *cobra.Command, plan *marketplacePlan, opts packOptions) (marketplaceResult, error) {
+	w := packLogWriter(cmd, opts)
+	var result marketplaceResult
+	hold := opts.checkClean && !opts.jsonOutput
+	// line prints a message the Oracle does not report as a warning: its
+	// counterpart there is a debug log or a BuildDiagnostic.
+	line := func(text string) {
+		if hold {
+			result.heldLines = append(result.heldLines, text)
+			return
+		}
+		ux.Warn(cmd.ErrOrStderr(), "%s", text)
+	}
+	warn := func(warning string) {
+		line(warning)
+		result.warnings = appendUnique(result.warnings, warning)
+	}
+
+	if plan.src == authoring.ConfigSourceLegacy {
+		warn(legacyMarketplaceDeprecation)
+	}
+	if len(plan.activeOutputs) == 0 {
+		ux.Info(w, "No marketplace outputs selected; nothing to write.")
+		return result, nil
+	}
+	// A local package's unreadable apm.yml; the text ends in the raw error.
+	for _, text := range plan.resolveWarnings {
+		line(text)
 	}
 	if opts.verbose {
-		items := make([]ux.Item, len(resolved))
-		for i, pkg := range resolved {
+		items := make([]ux.Item, len(plan.resolved))
+		for i, pkg := range plan.resolved {
 			items[i] = ux.Item{Text: pkg.Entry.Name}
 		}
 		ux.List(w, items)
-	}
-
-	configPaths, err := build.LoadOutputPathOverrides(".", src)
-	if err != nil {
-		return nil, err
 	}
 
 	// One directory handle for the whole run: every output is written
@@ -983,34 +1134,88 @@ func runMarketplaceProducer(cmd *cobra.Command, opts packOptions) ([]marketplace
 	// redirect a write the way a re-walked path string could.
 	rw, err := rootfs.OpenRootWriter(".")
 	if err != nil {
-		return nil, err
+		return marketplaceResult{}, err
 	}
 	defer rw.Close()
 
-	renders := make([]marketplaceRender, 0, len(activeOutputs))
-	for _, format := range activeOutputs {
-		r, err := packOneOutput(cmd, rw, format, cfg, resolved, configPaths, cliOverrides, opts)
+	result.renders = make([]marketplaceRender, 0, len(plan.activeOutputs))
+	for _, format := range plan.activeOutputs {
+		r, err := packOneOutput(rw, format, plan, opts, warn, line)
 		if err != nil {
-			return nil, err
+			return marketplaceResult{}, err
 		}
-		renders = append(renders, r)
+		result.renders = append(result.renders, r)
 	}
-	return renders, nil
+
+	result.metadata = plan.producedMetadata()
+	for _, warning := range result.metadata.Warnings() {
+		result.warnings = appendUnique(result.warnings, warning)
+	}
+	return result, nil
+}
+
+func appendUnique(list []string, s string) []string {
+	for _, have := range list {
+		if have == s {
+			return list
+		}
+	}
+	return append(list, s)
+}
+
+// withoutStrings returns list without the entries that are in drop.
+func withoutStrings(list, drop []string) []string {
+	if len(drop) == 0 {
+		return list
+	}
+	dropped := make(map[string]bool, len(drop))
+	for _, s := range drop {
+		dropped[s] = true
+	}
+	var kept []string
+	for _, s := range list {
+		if !dropped[s] {
+			kept = append(kept, s)
+		}
+	}
+	return kept
+}
+
+// failStrictMetadata reports --strict-metadata's failure and exits 5 (Oracle
+// v0.33.0 commands/pack.py:411-427, core/build_orchestrator.py:85-93). Text
+// mode prints the one error line; --json prints only the failure envelope.
+func failStrictMetadata(cmd *cobra.Command, opts packOptions, metadata build.MetadataEnrichment) error {
+	warnings := metadata.Warnings()
+	failure := fmt.Errorf("Marketplace metadata is incomplete: %s", strings.Join(warnings, " "))
+	if !opts.jsonOutput {
+		return withExitCode(5, failure)
+	}
+	env := packJSONFailureEnvelope{
+		OK:                 false,
+		DryRun:             opts.dryRun,
+		Warnings:           append([]string{}, warnings...),
+		Errors:             []packJSONError{{Code: "metadata_incomplete", Message: failure.Error()}},
+		MetadataEnrichment: metadataEnrichmentJSON(metadata),
+		Marketplace:        packJSONMarketplace{Outputs: []packJSONMarketplaceOutput{}},
+	}
+	if err := emitPackJSONFailure(cmd.OutOrStdout(), env); err != nil {
+		return err
+	}
+	return withSilentExitCode(5, failure)
 }
 
 // packOneOutput composes and (unless dry-run) writes a single output
 // profile's marketplace.json, returning what renderMarketplaceOutput needs
 // to print its deferred tail line.
 func packOneOutput(
-	cmd *cobra.Command,
 	rw *rootfs.RootWriter,
 	format string,
-	cfg *authoring.AuthoringConfig,
-	resolved []build.ResolvedPackage,
-	configPaths, cliOverrides map[string]string,
+	plan *marketplacePlan,
 	opts packOptions,
+	warn, line func(string),
 ) (marketplaceRender, error) {
-	outputPath, err := build.ResolveOutputPath(format, configPaths, cliOverrides)
+	cfg, resolved := plan.cfg, plan.resolved
+	outputPath, err := build.ResolveOutputPath(format, plan.configPaths, plan.cliOverrides)
 	if err != nil {
 		return marketplaceRender{}, err
 	}
@@ -1030,12 +1235,15 @@ func packOneOutput(
 		return marketplaceRender{}, err
 	}
 
-	doc, docWarnings, err := composeMarketplaceDocument(format, cfg, resolved, opts.claudeSourceStyle)
+	doc, docWarnings, diagnostics, err := composeMarketplaceDocument(format, cfg, resolved, opts.claudeSourceStyle)
 	if err != nil {
 		return marketplaceRender{}, err
 	}
+	for _, text := range diagnostics {
+		line(text)
+	}
 	for _, warning := range docWarnings {
-		ux.Warn(cmd.ErrOrStderr(), "%s", warning)
+		warn(warning)
 	}
 
 	// Classified against the file already on disk, before WriteOutput below
@@ -1058,6 +1266,25 @@ func packOneOutput(
 		return marketplaceRender{}, err
 	}
 	return render, nil
+}
+
+// renderMarketplaceResult prints the marketplace producer's deferred tail
+// (_render_marketplace_result, Oracle v0.33.0 commands/pack.py:807-847): the
+// producer's warnings, one line per output, then the artifact catalog. Of
+// the producer's warnings only the metadata ones and a --check-clean run's
+// held lines print here; the rest printed in runMarketplaceProducer, ahead
+// of the gates, where the Oracle prints them here.
+func renderMarketplaceResult(cmd *cobra.Command, w io.Writer, result marketplaceResult) {
+	for _, text := range result.heldLines {
+		ux.Warn(cmd.ErrOrStderr(), "%s", text)
+	}
+	for _, warning := range result.metadata.Warnings() {
+		ux.Warn(cmd.ErrOrStderr(), "%s", warning)
+	}
+	for _, r := range result.renders {
+		renderMarketplaceOutput(w, r)
+	}
+	renderMarketplaceCatalog(w, result.renders)
 }
 
 // renderMarketplaceOutput prints packOneOutput's deferred tail: the
@@ -1121,7 +1348,7 @@ func renderMarketplaceCatalog(w io.Writer, renders []marketplaceRender) {
 // reached). A thin wrapper around build.ComposeDocument (ticket 17 phase 4
 // exported it so the check-clean drift gate shares this exact dispatch
 // instead of a second copy).
-func composeMarketplaceDocument(format string, cfg *authoring.AuthoringConfig, resolved []build.ResolvedPackage, claudeSourceStyle build.ClaudeSourceStyle) (any, []string, error) {
+func composeMarketplaceDocument(format string, cfg *authoring.AuthoringConfig, resolved []build.ResolvedPackage, claudeSourceStyle build.ClaudeSourceStyle) (doc any, warnings, diagnostics []string, err error) {
 	return build.ComposeDocument(format, cfg, resolved, build.ComposeOptions{
 		ClaudeSourceStyle: claudeSourceStyle,
 	})
@@ -1185,15 +1412,15 @@ func parseMarketplaceFilter(value string) (filter map[string]bool, buildAll bool
 }
 
 // runReleaseGates mirrors pack.py's "-- Release gates (--check-versions /
-// --check-clean) --" block (pack.py:396-527): runs whichever of the two
-// gates the caller requested against their OWN, independently loaded
-// marketplace config -- never reusing whatever runMarketplaceProducer
-// already built this same invocation, matching the Oracle's own dedicated
-// (always-dry-run, for --check-clean) MarketplaceBuilder. Returns whether
-// each gate failed; runPack applies the exit-3/exit-4 precedence after
-// rendering every producer's own output, matching the Oracle's own
-// ordering (verified live).
-func runReleaseGates(cmd *cobra.Command, opts packOptions) (gates packGateResults, err error) {
+// --check-clean) --" block (Oracle v0.33.0 commands/pack.py:431-600): runs
+// whichever of the two gates the caller requested. The drift gate reuses
+// plan's resolved packages when the producer resolved any (pack.py:518-521),
+// so it judges the metadata the build used; it resolves on its own only when
+// no marketplace output was selected (plan is nil or has no active output).
+// Returns whether each gate failed; runPack applies the exit-3/exit-4
+// precedence after rendering every producer's own output, matching the
+// Oracle's own ordering (verified live).
+func runReleaseGates(cmd *cobra.Command, plan *marketplacePlan, opts packOptions) (gates packGateResults, err error) {
 	if !opts.checkVersions && !opts.checkClean {
 		return gates, nil
 	}
@@ -1234,20 +1461,24 @@ func runReleaseGates(cmd *cobra.Command, opts packOptions) (gates packGateResult
 		if perr != nil {
 			return gates, perr
 		}
-		// The drift gate always resolves packages fresh, independent of
-		// whether the marketplace producer also ran this invocation --
-		// mirrors the Oracle's own dedicated MarketplaceBuilder.from_config
-		// (drift_check.py's own doc comment: "the gate writes nothing").
-		resolved, warnings, rerr := build.ResolvePackages(cfg, build.Options{
-			IncludePrerelease: opts.includePrerelease,
-			Offline:           opts.offline,
-			ProjectRoot:       ".",
-		})
-		if rerr != nil {
-			return gates, rerr
-		}
-		for _, warning := range warnings {
-			ux.Warn(cmd.ErrOrStderr(), "%s", warning)
+		var resolved []build.ResolvedPackage
+		if plan != nil && len(plan.activeOutputs) > 0 {
+			resolved = plan.resolved
+		} else {
+			var warnings []string
+			var rerr error
+			resolved, warnings, rerr = build.ResolvePackages(cfg, build.Options{
+				IncludePrerelease:  opts.includePrerelease,
+				Offline:            opts.offline,
+				ProjectRoot:        ".",
+				SkipRemoteMetadata: !anyUsesRemoteMetadata(configuredMarketplaceOutputs(cfg)),
+			})
+			if rerr != nil {
+				return gates, rerr
+			}
+			for _, warning := range warnings {
+				ux.Warn(cmd.ErrOrStderr(), "%s", warning)
+			}
 		}
 		report, derr := build.CheckMarketplaceDrift(cfg, resolved, ".", configPaths, cliOverrides, build.ComposeOptions{
 			ClaudeSourceStyle: opts.claudeSourceStyle,
@@ -1308,11 +1539,12 @@ func tagSuffix(tag string) string {
 	return "  -> tag " + tag
 }
 
-// renderDrift mirrors the check_clean half of pack.py's gate block
-// (pack.py:479-527): the header line (success or error, naming only the
-// non-unchanged outputs on failure), one detail row per output (plus a
-// recovery recipe for "missing"/"drift" rows), matching the Oracle's own
-// per-status branching exactly.
+// renderDrift mirrors the check_clean half of pack.py's gate block (Oracle
+// v0.33.0 commands/pack.py:540-588): the header line (success or error,
+// naming only the non-unchanged outputs on failure), one detail row per
+// output (plus a recovery recipe for "missing"/"drift" rows, or the metadata
+// warnings for an "uncertifiable" one), matching the Oracle's own per-status
+// branching exactly.
 func renderDrift(w io.Writer, report build.DriftReport, outputOverrides map[string]string) {
 	if report.OK {
 		formats := make([]string, len(report.Outputs))
@@ -1327,12 +1559,20 @@ func renderDrift(w io.Writer, report build.DriftReport, outputOverrides map[stri
 	}
 
 	var dirtyFormats []string
+	uncertifiable := false
 	for _, out := range report.Outputs {
 		if out.Status != "unchanged" {
 			dirtyFormats = append(dirtyFormats, out.Format)
 		}
+		if out.Status == build.DriftUncertifiable {
+			uncertifiable = true
+		}
 	}
-	ux.Error(w, "Marketplace working tree dirty [outputs=%s]", strings.Join(dirtyFormats, ", "))
+	if uncertifiable {
+		ux.Error(w, "Marketplace clean check failed: remote metadata unavailable [outputs=%s]", strings.Join(dirtyFormats, ", "))
+	} else {
+		ux.Error(w, "Marketplace working tree dirty [outputs=%s]", strings.Join(dirtyFormats, ", "))
+	}
 	for _, out := range report.Outputs {
 		switch out.Status {
 		case "unchanged":
@@ -1340,6 +1580,11 @@ func renderDrift(w io.Writer, report build.DriftReport, outputOverrides map[stri
 		case "missing":
 			ux.Info(w, "    %s  [missing on disk; would be created]", out.Path)
 			emitDriftRecipe(w, out.Path, out.Format, outputOverrides[out.Format])
+		case build.DriftUncertifiable:
+			ux.Error(w, "    %s  [cannot certify regenerated metadata]", out.Path)
+			for _, warning := range out.MetadataWarnings {
+				ux.Warn(w, "    %s", warning)
+			}
 		default: // "drift"
 			ux.Info(w, "    %s  [drift: %d differences]", out.Path, len(out.Differences))
 			for _, line := range build.RenderDiffLines(out, 20) {

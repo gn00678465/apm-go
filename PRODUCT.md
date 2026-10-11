@@ -23,7 +23,7 @@ Success: a user gets deterministic files, output, and exit codes from one binary
 
 ## Positioning
 
-**Single static binary + a verified, extended command surface.** Output bytes, exit codes, and generated file trees are treated as a contract and gated in CI (`tools/parity`), so scripts and agents can depend on them. On that base apm-go ships its own additions — `pack --claude-source-style url`, `pack --json`, `--check-versions` / `--check-clean` release gates, top-level `doctor`, `normalize`, `validate`, `marketplace package update` — each documented at its site in `cmd/apm-go/*.go`.
+**Single static binary + a verified, extended command surface.** Output bytes, exit codes, and generated file trees are treated as a contract and gated in CI (`tools/parity`), so scripts and agents can depend on them. On that base apm-go ships its own additions — `pack --claude-source-style url`, `pack --json`, `--check-versions` / `--check-clean` release gates, top-level `doctor`, `normalize`, `validate`, `marketplace package update` — each documented at its site in `cmd/apm-go/*.go`. Upstream additions are ported on the same contract; `pack --strict-metadata`, the read-only `pack --check-clean`, and the Git URL rewrite safety check came from upstream 0.29.1.
 
 ## Operating Context
 
@@ -68,10 +68,12 @@ Command surface (`apm-go --help`): `audit`, `compile`, `completion`, `doctor`, `
 
 Constraints future work must preserve:
 
-- Output contract: words, exit codes, output bytes, and file trees are gated in CI. Only line-wrap, box-drawing, help layout, status-symbol shape (normalized by the runner), timestamps, and paths may be waived; every waiver is recorded with its reason. An apm-go-only command that the pinned Oracle does not have cannot have a corpus case; its contract is pinned instead by `tools/gate/realexec.sh` at the same strength (full stdout, stderr, exit code, file tree) and recorded in a ticket that quotes the user ruling - ticket 34 covers `plugin validate`, ticket 37 covers `marketplace package update`, and the exemption never extends by analogy to another command.
-- Exit codes: usage errors are 2; specific codes via `withExitCode()`.
+- Output contract: words, exit codes, output bytes, and file trees are gated in CI. Only line-wrap, box-drawing, help layout, status-symbol shape (normalized by the runner), timestamps, and paths may be waived; every waiver is recorded with its reason. The gate runs against the latest stable upstream release of the Oracle, resolved when CI runs, so a new upstream release can turn the gate red with no change in this repository. An apm-go-only command that the Oracle does not have cannot have a corpus case; its contract is pinned instead by `tools/gate/realexec.sh` at the same strength (full stdout, stderr, exit code, file tree) and recorded in a ticket that quotes the user ruling - ticket 34 covers `plugin validate`, ticket 37 covers `marketplace package update`, and the exemption never extends by analogy to another command.
+- Exit codes: usage errors are 2; specific codes via `withExitCode()`. `pack` exits 3 for a failed `--check-versions`, 4 for a failed `--check-clean`, and 5 for a failed `--strict-metadata`; 5 is decided before any producer runs, and 3 wins over 4.
 - JSON bytes from pack/scaffold go through `bundle.MarshalIndent` (2-space indent, non-ASCII escaped as `\uXXXX`); the marketplace builder alone emits UTF-8 unescaped.
 - YAML ingestion is restricted to the OpenAPM safe subset (no anchors, merge keys, custom tags) — `spec/conformance/openapm-v0.1.md`.
+- Marketplace metadata certification (`pack`): each resolved package has one metadata outcome (`fetched`, `empty`, `failed`, `offline`, `local`, `explicit`), reported in `pack --json` as `metadata_enrichment`. Only the Claude output uses package metadata. `--strict-metadata` fails with exit 5 before anything is written when a selected output's metadata could not be fetched. `--check-clean` is always read-only (it implies `--dry-run`), reuses the metadata of the same run, and reports an output whose metadata could not be fetched as `uncertifiable` (exit 4) without comparing it. An outcome's cause never carries raw error text, a URL, or a credential.
+- Git URL rewrite safety: before every network git subprocess, apm-go reads the effective `url.*.insteadOf` rules and refuses a rewrite that downgrades the transport, adds credentials, or moves an authenticated remote to another host or origin; a config that cannot be read fails the operation instead of being skipped.
 - Credential scanning (`internal/security/`) runs in `pack` (warn policy) and `audit` (report); its policy gate is fail-closed (unknown policy = block). It is not part of install/deploy.
 - Deploy targets: claude, codex, copilot, antigravity, opencode, agent-skills (adapter per target).
 - `plugin validate` has no upstream Oracle equivalent (apm-go-only, closing the second half of issue #13); its output contract is fixed by `tools/gate/realexec.sh`, not a `tools/parity` corpus case.
@@ -93,7 +95,7 @@ Undecided: the lockfile's external interoperability format, and whether MCP serv
 
 - `README.md`, `README.zh-TW.md` — existing product copy in English and Traditional Chinese.
 - `spec/conformance/` — OpenAPM safe-subset spec, agent/marketplace schema, CLI surface notes, verification checklist, dependency-ref and repr conformance tables.
-- `tools/parity/cases/` — 96 byte-exact output-contract cases (0 unwaived diffs at HEAD); `tools/parity/cases-pending/` — 5 parked cases with README.
+- `tools/parity/cases/` — 97 byte-exact output-contract cases (0 unwaived diffs at HEAD); `tools/parity/cases-pending/` — 5 parked cases with README.
 - `.scratch/parity-runner/issues/` — ticket files documenting the output-contract backlog and rulings.
 - CI: `.github/workflows/parity.yml` (parity gate), `release.yml`.
 - Absent, must not be fabricated: testimonials, user counts, benchmarks, customers, pricing.

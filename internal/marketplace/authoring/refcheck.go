@@ -61,6 +61,13 @@ func (gitRefLister) ListRefs(source string) ([]semver.TagInfo, error) {
 	}
 	safeURL := gitops.SanitizeGitOutput(cloneURL)
 
+	// Returned bare: `check` and `outdated` cut this text to 60 characters,
+	// as the Oracle cuts str(exc) (commands/marketplace/check.py:244-252,
+	// outdated.py:73-84).
+	if err := gitops.ValidateURLRewriteSafety(cloneURL); err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), listRefsTimeout)
 	defer cancel()
 

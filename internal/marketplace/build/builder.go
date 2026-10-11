@@ -70,6 +70,10 @@ type ResolvedPackage struct {
 	Tags []string
 
 	RemoteDescription, RemoteVersion string
+
+	// Metadata is how the two fields above were obtained. Its Status is ""
+	// for a remote package resolved with Options.SkipRemoteMetadata.
+	Metadata MetadataOutcome
 }
 
 // Options carries ResolvePackages' optional inputs.
@@ -94,6 +98,12 @@ type Options struct {
 	// description/version (mkt-050 修訂版 (c)); nil falls back to
 	// DefaultMetadataFetcher (a real git clone).
 	MetadataFetcher MetadataFetcher
+	// SkipRemoteMetadata leaves a remote package's own apm.yml unread. Set it
+	// when no output of this run uses package metadata (UsesRemoteMetadata):
+	// the Oracle fetches only for such a profile (v0.33.0
+	// marketplace/builder.py:696-704). Local packages are still read: that
+	// read is also what rejects a local source outside the project.
+	SkipRemoteMetadata bool
 	// ProjectRoot is the project root a local package's own apm.yml is
 	// resolved relative to for metadata enrichment (F1/mkt-050 修訂版 (c)):
 	// <ProjectRoot>/<entry.Source>/apm.yml. "" falls back to ".", mirroring
@@ -138,10 +148,10 @@ var sha40LowerRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // then internal/semver.MaxSatisfying), and enriches each remote package's
 // description/version from its own apm.yml (mkt-050 修訂版 (c)).
 //
-// The second return value collects one warning per remote package whose
-// metadata fetch failed -- a failed fetch never fails the build (design.md:
-// "抓取失敗降級為「無 metadata」警告,不中斷 build"), so callers should
-// surface these to the user without treating them as errors.
+// A failed remote metadata fetch never fails the build: it is recorded in
+// the package's Metadata outcome, and MetadataFor(...).Warnings() carries its
+// user-facing line. The second return value collects the warnings for a
+// local package's unreadable apm.yml.
 func ResolvePackages(cfg *authoring.AuthoringConfig, opts Options) ([]ResolvedPackage, []string, error) {
 	lister := opts.lister()
 	fetcher := opts.metadataFetcher()
@@ -178,6 +188,7 @@ func resolvePackage(cfg *authoring.AuthoringConfig, entry authoring.PackageEntry
 			Tags:              entry.Tags,
 			RemoteDescription: description,
 			RemoteVersion:     version,
+			Metadata:          MetadataOutcome{Package: entry.Name, Status: MetadataLocal},
 		}, warning, nil
 	}
 
@@ -238,9 +249,8 @@ func resolvePackage(cfg *authoring.AuthoringConfig, entry authoring.PackageEntry
 		base.Ref, base.SHA = ref, sha
 	}
 
-	description, version, warning := enrichRemoteMetadata(entry, base.Ref, base.Subdir, entry.Source, fetcher)
-	base.RemoteDescription, base.RemoteVersion = description, version
-	return base, warning, nil
+	base.RemoteDescription, base.RemoteVersion, base.Metadata = enrichRemoteMetadata(entry, base.Ref, base.Subdir, entry.Source, fetcher, opts)
+	return base, "", nil
 }
 
 // isLocalPackageSource reports whether source names a local (in-repo)
