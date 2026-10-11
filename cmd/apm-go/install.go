@@ -1822,27 +1822,27 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 		keptDirs, failedBuckets = deployResult.KeptDirs, deployResult.FailedBuckets
 
-		// depsByKey looks up each resolved dependency's tag/ref/commit by its
-		// deploy key, for the R10a short-hash label fallback below --
-		// deployResult.PerDep is keyed by the same dep key, not by a
-		// human-readable version label.
-		depsByKey := make(map[string]resolver.ResolvedDep, len(result.Deps))
+		// Print deploy summary per dep: dependencies in resolver order
+		// (result.Deps; at one depth, the order apm.yml declares them), then
+		// local content. deployResult.PerDep is a map, so its own order is
+		// not usable (issue #47).
+		// Deliberate deviation from the Oracle, by owner ruling: the Oracle
+		// also puts local content last (install/phases/integrate.py:716), but
+		// it orders the dependencies by (depth, node id)
+		// (deps/apm_resolver.py:46). apm-go keeps the resolver order because
+		// it is the smallest change and because the apm-go key of a local-path
+		// dependency (_local/<name>-<hash8>) is not the Oracle's id (the
+		// declared path), so a sort by key would not match the Oracle either.
 		for _, dep := range result.Deps {
-			depsByKey[dep.Key] = dep
-		}
-
-		// Print deploy summary per dep
-		for key, dr := range deployResult.PerDep {
-			label := key
-			if label == "" {
-				// R14: name the local-primitives bucket after what it
-				// actually is (files integrated from this project's own
-				// .apm/ tree), not a bare, ambiguous "(local)".
-				label = "<project root> (local)"
-			} else if dep, ok := depsByKey[key]; ok {
-				label += depVersionLabel(dep)
+			if dr, ok := deployResult.PerDep[dep.Key]; ok {
+				ux.Tree(os.Stdout, deployedFilesTree(dep.Key+depVersionLabel(dep), dr.Files))
 			}
-			ux.Tree(os.Stdout, deployedFilesTree(label, dr.Files))
+		}
+		if dr, ok := deployResult.PerDep[""]; ok {
+			// R14: name the local-primitives bucket after what it actually
+			// is (files integrated from this project's own .apm/ tree), not
+			// a bare, ambiguous "(local)".
+			ux.Tree(os.Stdout, deployedFilesTree("<project root> (local)", dr.Files))
 		}
 
 		// Warn about resolved dependencies that deployed zero files to any
