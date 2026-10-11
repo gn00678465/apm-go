@@ -1,9 +1,11 @@
 package build
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/apm-go/apm/internal/marketplace/authoring"
 )
@@ -251,5 +253,38 @@ func TestCheckMarketplaceDrift_NoMetadataProfileReportsNoOutcomes(t *testing.T) 
 	}
 	if len(report.Metadata.Outcomes) != 0 || report.Outputs[0].Status == "uncertifiable" {
 		t.Errorf("report = %+v, want no outcomes and a compared output", report)
+	}
+}
+
+func TestCloneError_OwnDeadlineIsARequestTimeout(t *testing.T) {
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	err := cloneError(ctx, "https://example.com/o/r.git", nil, errors.New("signal: killed"))
+	var fetchErr *MetadataFetchError
+	if !errors.As(err, &fetchErr) || fetchErr.Cause != "request timed out" {
+		t.Fatalf("cloneError = %#v, want cause %q", err, "request timed out")
+	}
+}
+
+func TestMetadataFetchError_KeepsTheUnderlyingError(t *testing.T) {
+	inner := errors.New("git clone https://example.com/o/r.git: exit status 128")
+	err := error(&MetadataFetchError{Cause: "network request failed", Err: inner})
+	if err.Error() != inner.Error() || !errors.Is(err, inner) {
+		t.Errorf("Error() = %q, Is(inner) = %v", err.Error(), errors.Is(err, inner))
+	}
+}
+
+func TestDriftOutputReport_UnchangedHasNoErrorMessage(t *testing.T) {
+	out := DriftOutputReport{Format: "claude", Path: ".claude-plugin/marketplace.json", Status: "unchanged"}
+	if got := out.ErrorMessages(); got != nil {
+		t.Errorf("ErrorMessages() = %q, want none", got)
+	}
+}
+
+func TestComposeDocument_UnknownFormat(t *testing.T) {
+	_, _, _, err := ComposeDocument("bogus", &authoring.AuthoringConfig{}, nil)
+	if err == nil || err.Error() != `unknown marketplace output format "bogus"` {
+		t.Errorf("err = %v", err)
 	}
 }

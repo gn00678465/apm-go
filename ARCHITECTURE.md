@@ -131,21 +131,21 @@ flowchart LR
   D --> D3[EnrichLockfileForPack lockfile_pack.go:137]
   E --> E1[authoring.LoadAuthoringConfig pack.go:1009]
   E1 --> E2[build.ResolvePackages pack.go:1041]
-  E2 --> P[runMarketplaceProducer pack.go:1095]
-  P --> E3[build.ComposeDocument pack.go:1352]
-  E3 --> E4[build.WriteOutput pack.go:1265 encoding/json]
-  E2 --> G[runReleaseGates pack.go:1423 reuses the resolve]
+  E2 --> P[runMarketplaceProducer pack.go:1094]
+  P --> E3[build.ComposeDocument pack.go:1336]
+  E3 --> E4[build.WriteOutput pack.go:1249 encoding/json]
+  E2 --> G[runReleaseGates pack.go:1407 reuses the resolve]
   F --> F1[bundle.MarshalIndent write.go:79]
 ```
 
 - `runPack` (`cmd/apm-go/pack.go:416`) under `--json` calls `ux.SetConsoleStderr(true)` (`:424`) so status lines move to stderr and stdout carries only `emitPackJSON` (`pack_json.go:135`).
-- One marketplace resolve per run: `prepareMarketplace` (`:1008`) loads the config and resolves the packages into a `marketplacePlan`, printing and writing nothing. The strict check, `runMarketplaceProducer` (`:1095`) and the drift gate all read that plan, so a remote `apm.yml` is fetched at most once. The gate resolves on its own only when no output was selected (`-m none`).
+- One marketplace resolve per run: `prepareMarketplace` (`:1008`) loads the config and resolves the packages into a `marketplacePlan`, printing and writing nothing. The strict check, `runMarketplaceProducer` (`:1094`) and the drift gate all read that plan, so a remote `apm.yml` is fetched at most once. The gate resolves on its own only when no output was selected (`-m none`).
 - Metadata outcome: `build.ResolvePackages` records one `MetadataOutcome` per package (`internal/marketplace/build/metadata_enrichment.go:31`; `enrichRemoteMetadata` `metadata.go:239`): `explicit`, `local`, `fetched`, `empty`, `failed`, `offline`. Only the Claude profile uses package metadata (`UsesRemoteMetadata` `:111`); with no such output in play the remote fetch is skipped (`Options.SkipRemoteMetadata`). `MetadataEnrichment.Certifiable` / `Warnings` (`:69`, `:82`) decide certification and own the user-facing lines; a cause never carries raw error text. apm-go fetches with `git clone` where the Oracle uses HTTP, so a clone failure is mapped to a cause by `cloneError` (`metadata.go:185`) from the kinds `gitops.TranslateGitStderr` already knows.
 - Producer warnings: the `pack --json` `warnings` list holds what the Oracle reports as warnings and nothing else, in this order: the legacy `marketplace.yml` deprecation, each output's mapper warnings (duplicate names), the metadata warnings (`marketplaceResult.warnings`). A local package's unreadable `apm.yml` and the `pluginRoot` line (`build.ComposeDocument`'s `diagnostics`) are text-only lines. In text mode the producer prints its lines before the gates, where the Oracle prints them after; a `--check-clean` run holds them for `renderMarketplaceResult`, so they are not printed when that call is skipped (dry run implied, or the drift metadata is not certifiable).
-- `--strict-metadata`: before any producer, `runPack` prepares the plan and fails with exit 5 when a selected output's metadata is not certifiable (`failStrictMetadata` `:1187`); nothing is written. Text mode prints the one error line; `--json` prints only the one-line failure envelope (`emitPackJSONFailure` `pack_json.go:147`).
-- Release gates: `runReleaseGates` (`:1423`) chains `build.CheckVersionAlignment` (`:1447`) and the drift check (`build.CheckMarketplaceDrift` `:1483`). `--check-clean` makes the whole run read-only: `runPack` turns it into a dry run for every producer (`:429-430`) and, when `--dry-run` was not given, prints one notice in place of the producers' results. An output whose metadata is not certifiable is not compared; it is reported as `uncertifiable` with the metadata warnings and fails the gate with exit 4.
+- `--strict-metadata`: before any producer, `runPack` prepares the plan and fails with exit 5 when a selected output's metadata is not certifiable (`failStrictMetadata` `:1175`); nothing is written. Text mode prints the one error line; `--json` prints only the one-line failure envelope (`emitPackJSONFailure` `pack_json.go:142`).
+- Release gates: `runReleaseGates` (`:1407`) chains `build.CheckVersionAlignment` (`:1431`) and the drift check (`build.CheckMarketplaceDrift` `:1467`). `--check-clean` makes the whole run read-only: `runPack` turns it into a dry run for every producer (`:429-430`) and, when `--dry-run` was not given, prints one notice in place of the producers' results. An output whose metadata is not certifiable is not compared; it is reported as `uncertifiable` with the metadata warnings and fails the gate with exit 4.
 - Exit codes: 5 (strict metadata) is decided before the gates run; after rendering, 3 (versions) wins over 4 (drift).
-- Every output directory passes `build.EnsureWithinRoot` (`:712`, `:1233`), keeping writes inside the project.
+- Every output directory passes `build.EnsureWithinRoot` (`:712`, `:1221`), keeping writes inside the project.
 - The credential scan inside `Produce` runs under `security.WarnPolicy` (`internal/pack/bundle/producer.go:436,444`): it warns and continues; dry-run skips it.
 
 ### 3.4 `marketplace add` / `marketplace package add` / `marketplace audit` / `marketplace init`
@@ -215,7 +215,7 @@ flowchart TD
 
 **Exit codes.** §3.7. Usage errors are 2; `marketplace package` edit failures are 2 (`cmd/apm-go/marketplace_package.go:140,199`); `doctor` exits through `withSilentExitCode` with its table already printed.
 
-**JSON bytes.** pack and scaffold JSON go through `bundle.MarshalIndent` (`internal/pack/bundle/jsonvalue.go:195`: 2-space indent, empty containers as `{}` / `[]`, caller appends the trailing newline): `producer.go:267-283`, `pluginmanifest/write.go:79`, `pluginjson/pluginjson.go:86`. The one exception is marketplace.json via `build.WriteOutput` (`internal/marketplace/build/output.go:439`): `encoding/json` with `SetEscapeHTML(false)`, UTF-8 unescaped. The `pack --json` envelope goes through `bundle.MarshalIndent` too (`cmd/apm-go/pack_json.go:135`); the `--strict-metadata` failure envelope is one line with Python's default separators (`emitPackJSONFailure` `:147`), as the Oracle prints it.
+**JSON bytes.** pack and scaffold JSON go through `bundle.MarshalIndent` (`internal/pack/bundle/jsonvalue.go:195`: 2-space indent, empty containers as `{}` / `[]`, caller appends the trailing newline): `producer.go:267-283`, `pluginmanifest/write.go:79`, `pluginjson/pluginjson.go:86`. The one exception is marketplace.json via `build.WriteOutput` (`internal/marketplace/build/output.go:439`): `encoding/json` with `SetEscapeHTML(false)`, UTF-8 unescaped. The `pack --json` envelope goes through `bundle.MarshalIndent` too (`cmd/apm-go/pack_json.go:135`); the `--strict-metadata` failure envelope is one line with Python's default separators (`emitPackJSONFailure` `:142`), as the Oracle prints it.
 
 **Archive limits.** Extraction goes through `archive.SafeExtract` with `Limits` (`internal/archive/extract.go:25,51`); destinations are checked with `archive.Contained` (`cmd/apm-go/install.go:625`).
 

@@ -66,6 +66,11 @@ func packJSONWarnings(t *testing.T, args ...string) []string {
 	if exit != 0 {
 		t.Fatalf("exit %d\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	}
+	return jsonWarnings(t, stdout)
+}
+
+func jsonWarnings(t *testing.T, stdout string) []string {
+	t.Helper()
 	var env struct {
 		Warnings []string `json:"warnings"`
 	}

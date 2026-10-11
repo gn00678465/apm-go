@@ -133,30 +133,34 @@ type packJSONDriftDifference struct {
 // json.dumps(envelope, indent=2) here -- two-space indent, non-ASCII as
 // \uXXXX, and a trailing newline from click.echo.
 func emitPackJSON(w io.Writer, env packJSONEnvelope) error {
-	v, err := orderedJSONValue(env)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(w, "%s\n", bundle.MarshalIndent(v))
-	return err
+	return writePackJSON(w, env, false)
 }
 
 // emitPackJSONFailure writes the failure envelope on one line: the Oracle
 // uses json.dumps with no indent there (commands/pack.py:415-423), whose
 // separators are ", " and ": ".
 func emitPackJSONFailure(w io.Writer, env packJSONFailureEnvelope) error {
+	return writePackJSON(w, env, true)
+}
+
+// writePackJSON writes env the way Python's json.dumps would, indented or
+// on one line, through the order-preserving value model
+// bundle.MarshalIndent serializes.
+func writePackJSON(w io.Writer, env any, oneLine bool) error {
 	v, err := orderedJSONValue(env)
 	if err != nil {
 		return err
 	}
-	var buf bytes.Buffer
-	writePythonCompactJSON(&buf, v)
-	_, err = fmt.Fprintf(w, "%s\n", buf.Bytes())
+	out := bundle.MarshalIndent(v)
+	if oneLine {
+		var buf bytes.Buffer
+		writePythonCompactJSON(&buf, v)
+		out = buf.Bytes()
+	}
+	_, err = fmt.Fprintf(w, "%s\n", out)
 	return err
 }
 
-// orderedJSONValue converts an envelope struct into the order-preserving
-// value model bundle.MarshalIndent serializes the Python way.
 func orderedJSONValue(env any) (bundle.JSONValue, error) {
 	b, err := json.Marshal(env)
 	if err != nil {

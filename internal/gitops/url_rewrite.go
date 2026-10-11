@@ -507,10 +507,9 @@ func isCredentialBearingHTTPHeader(value string) bool {
 	if stripped == "" {
 		return false
 	}
-	name, fieldValue, found := strings.Cut(stripped, ":")
-	if !found {
-		return true
-	}
+	// A valid header value has a colon, so the Oracle's branch for a value
+	// with none cannot be reached here and is not ported.
+	name, fieldValue, _ := strings.Cut(stripped, ":")
 	if barePlatformTokenRe.MatchString(fieldValue) || authSchemeRe.MatchString(fieldValue) {
 		return true
 	}

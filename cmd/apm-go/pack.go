@@ -1051,21 +1051,20 @@ func prepareMarketplace(opts packOptions) (*marketplacePlan, error) {
 		return nil, err
 	}
 	plan.configPaths, err = build.LoadOutputPathOverrides(".", src)
-	if err != nil {
-		return nil, err
-	}
-	return plan, nil
+	return plan, err
 }
 
 // marketplaceResult is what the marketplace producer hands to the deferred
 // rendering and to the --json envelope.
 type marketplaceResult struct {
 	renders []marketplaceRender
-	// warnings is what the Oracle reports as the producer's warnings, first
-	// occurrence only, in order (v0.33.0 core/build_orchestrator.py:295,
+	// warnings is what the Oracle reports as the producer's warnings, in
+	// order (v0.33.0 core/build_orchestrator.py:295,
 	// marketplace/builder.py:316-320): the legacy-config deprecation, each
 	// output's mapper warnings, then the metadata warnings. It is the
-	// `pack --json` warnings list, so nothing else may enter it.
+	// `pack --json` warnings list, so nothing else may enter it. The Oracle
+	// drops repeats; none can occur here, because the only mapper warning
+	// is for a duplicate package name and the config loader rejects those.
 	warnings []string
 	// heldLines is the producer's warning lines of a text-mode --check-clean
 	// run, which are printed only when the result is rendered.
@@ -1098,16 +1097,18 @@ func runMarketplaceProducer(cmd *cobra.Command, plan *marketplacePlan, opts pack
 	hold := opts.checkClean && !opts.jsonOutput
 	// line prints a message the Oracle does not report as a warning: its
 	// counterpart there is a debug log or a BuildDiagnostic.
-	line := func(text string) {
+	line := func(texts ...string) {
 		if hold {
-			result.heldLines = append(result.heldLines, text)
+			result.heldLines = append(result.heldLines, texts...)
 			return
 		}
-		ux.Warn(cmd.ErrOrStderr(), "%s", text)
+		for _, text := range texts {
+			ux.Warn(cmd.ErrOrStderr(), "%s", text)
+		}
 	}
-	warn := func(warning string) {
-		line(warning)
-		result.warnings = appendUnique(result.warnings, warning)
+	warn := func(warnings ...string) {
+		line(warnings...)
+		result.warnings = append(result.warnings, warnings...)
 	}
 
 	if plan.src == authoring.ConfigSourceLegacy {
@@ -1118,9 +1119,7 @@ func runMarketplaceProducer(cmd *cobra.Command, plan *marketplacePlan, opts pack
 		return result, nil
 	}
 	// A local package's unreadable apm.yml; the text ends in the raw error.
-	for _, text := range plan.resolveWarnings {
-		line(text)
-	}
+	line(plan.resolveWarnings...)
 	if opts.verbose {
 		items := make([]ux.Item, len(plan.resolved))
 		for i, pkg := range plan.resolved {
@@ -1148,19 +1147,8 @@ func runMarketplaceProducer(cmd *cobra.Command, plan *marketplacePlan, opts pack
 	}
 
 	result.metadata = plan.producedMetadata()
-	for _, warning := range result.metadata.Warnings() {
-		result.warnings = appendUnique(result.warnings, warning)
-	}
+	result.warnings = append(result.warnings, result.metadata.Warnings()...)
 	return result, nil
-}
-
-func appendUnique(list []string, s string) []string {
-	for _, have := range list {
-		if have == s {
-			return list
-		}
-	}
-	return append(list, s)
 }
 
 // withoutStrings returns list without the entries that are in drop.
@@ -1212,7 +1200,7 @@ func packOneOutput(
 	format string,
 	plan *marketplacePlan,
 	opts packOptions,
-	warn, line func(string),
+	warn, line func(...string),
 ) (marketplaceRender, error) {
 	cfg, resolved := plan.cfg, plan.resolved
 	outputPath, err := build.ResolveOutputPath(format, plan.configPaths, plan.cliOverrides)
@@ -1239,12 +1227,8 @@ func packOneOutput(
 	if err != nil {
 		return marketplaceRender{}, err
 	}
-	for _, text := range diagnostics {
-		line(text)
-	}
-	for _, warning := range docWarnings {
-		warn(warning)
-	}
+	line(diagnostics...)
+	warn(docWarnings...)
 
 	// Classified against the file already on disk, before WriteOutput below
 	// replaces it -- the Oracle's own ordering (_load_existing_json then

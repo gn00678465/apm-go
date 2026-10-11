@@ -15,6 +15,13 @@ cd "$(dirname "$0")/.."
 . tools/gate/lib.sh
 . tools/gate/versions.env
 
+# go.mod's `go` directive selects the toolchain only when the local Go is
+# older; a newer local Go runs as itself, and the pinned staticcheck cannot
+# read its export data. Run every layer on the directive's version, the one
+# CI installs (go-version-file: go.mod).
+GOTOOLCHAIN="go$(sed -n 's/^go //p' go.mod)"
+export GOTOOLCHAIN
+
 BASE=main
 SCOPE=$(git rev-parse --abbrev-ref HEAD | tr '/' '-')
 SELFTEST_ONLY=0

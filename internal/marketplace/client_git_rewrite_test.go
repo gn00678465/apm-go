@@ -136,3 +136,15 @@ func TestFetch_Git_InvalidRefBeforeRewriteCheck(t *testing.T) {
 		t.Fatalf("want the ref rejected before any probe; err=%v probed=%v", err, probed)
 	}
 }
+
+func TestShallowCloneGit_RewriteCheckErrorKeepsItsMessage(t *testing.T) {
+	record := recordGitInvocations(t)
+	t.Cleanup(gitops.SetConfigProbeForTest(gitops.FailingGitConfigProbe))
+
+	err := shallowCloneGit(context.Background(), "https://git.example.com/team/plugins.git", "main", t.TempDir())
+	const want = "Unable to verify Git URL rewrite safety (Git config probe failed); check Git configuration and retry; " + rewriteInspectHint
+	if err == nil || err.Error() != want {
+		t.Errorf("err = %v\nwant %s", err, want)
+	}
+	assertGitNotRun(t, record)
+}
