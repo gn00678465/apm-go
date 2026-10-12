@@ -39,7 +39,7 @@ Release-size build (same flags CI uses):
 go build -trimpath -ldflags "-s -w" -o bin/apm-go ./cmd/apm-go
 ```
 
-No Makefile or task runner — `go build` and `go test` are the only build/test entry points. `tools/gate.sh` is the verification gate (suite, vet, gofmt, staticcheck, shuffled suite health, property tests, supply chain, real execution of the plugin/marketplace commands, manual mutation, changed-line coverage); it writes its artifacts under `.gate/`, pins its tool versions in `tools/gate/versions.env`, and runs every layer on the Go version of `go.mod`'s `go` directive (it exports `GOTOOLCHAIN`), whatever Go the machine has.
+No Makefile or task runner — `go build` and `go test` are the only build/test entry points. The repository checks are one command, `sh .claude/skills/verify-apm-go/scripts/verify.sh check`: build, the suite in a shuffled order, `go vet`, `gofmt`, `staticcheck` (the list in `staticcheck.conf`), `govulncheck`, and `tools/realexec.sh`. It runs on the working tree as it is, on the Go version of `go.mod`'s `go` directive (it exports `GOTOOLCHAIN`), pins the two tool versions in the script, and writes its logs under `.scratch/verify/check/`. The `verify-apm-go` skill (`.claude/skills/verify-apm-go/`) also drives the built binary in a sandbox to prove a change the way a user would see it.
 
 ## Release
 

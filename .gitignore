@@ -55,5 +55,3 @@ CLAUDE.local.md
 # Local scratch notes (not tracked)
 .scratch/
 
-# verification-gate artifacts (tools/gate.sh)
-.gate/

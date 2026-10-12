@@ -1501,7 +1501,7 @@ func TestMarketplacePackageAdd_ExplicitHead_PrintsResolvedSHALine(t *testing.T) 
 }
 
 // TestMarketplacePackage_AddAfterRemovingLastPackage covers the sequence
-// tools/gate.sh's real-execution layer first tripped over: init (one
+// tools/realexec.sh first tripped over: init (one
 // template package), remove it, add a new one. Removing the last element by
 // splice left "packages:" as a null value with dangling comments, and add
 // could then neither splice nor fall back.

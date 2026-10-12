@@ -77,8 +77,7 @@ func TestScaffold_WriteFileError(t *testing.T) {
 
 // A failure on the SECOND staged file must roll the first one back out of
 // the project root; the cmd-level test fails on the first file, so the
-// committed-list rollback branch had no test until tools/gate.sh's mutant
-// stage-rollback-skipped survived.
+// committed-list rollback branch had no other test.
 func TestStagedScaffold_RollsBackAlreadyCommittedFiles(t *testing.T) {
 	root := t.TempDir()
 	st, err := NewStagedScaffold(root)

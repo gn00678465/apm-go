@@ -17,7 +17,7 @@ import (
 // and a SHA ref -- the pair `outdated` and `check` compare -- could only be
 // upgraded by hand. This command writes back what `outdated` already
 // resolved. With no Oracle output to compare against, its output contract is
-// pinned by tools/gate/realexec.sh instead of a tools/parity corpus case
+// pinned by tools/realexec.sh instead of a tools/parity corpus case
 // (ticket 37, .scratch/parity-runner/issues/
 // 37-marketplace-package-update-realexec-contract.md).
 func marketplacePackageUpdateCmd() *cobra.Command {
