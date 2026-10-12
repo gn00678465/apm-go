@@ -1,6 +1,6 @@
 module github.com/apm-go/apm
 
-go 1.26.3
+go 1.26.9
 
 require (
 	charm.land/bubbles/v2 v2.0.0
@@ -13,8 +13,8 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
-	golang.org/x/net v0.56.0
-	golang.org/x/term v0.44.0
+	golang.org/x/net v0.61.0
+	golang.org/x/term v0.47.0
 )
 
 require (
@@ -39,5 +39,5 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
