@@ -1,6 +1,6 @@
 ---
 name: verify-apm-go
-description: Drive the real apm-go binary (CLI and its interactive init TUI) in a throwaway sandbox and capture evidence — stdout, stderr, exit code, resulting file tree. Use to prove a change to a command works the way a user would see it, to reproduce a reported behaviour, or to check a command before and after a fix. Not a replacement for tools/gate.sh or the parity gate.
+description: Drive the real apm-go binary (CLI and its interactive init TUI) in a throwaway sandbox and capture evidence — stdout, stderr, exit code, resulting file tree. Use to prove a change to a command works the way a user would see it, to reproduce a reported behaviour, or to check a command before and after a fix. Also holds `verify.sh check`, the one command for the repository checks (build, shuffled suite, vet, gofmt, staticcheck, govulncheck, tools/realexec.sh); run it before saying a change is ready. Not a replacement for the parity gate.
 ---
 
 # Verify apm-go
@@ -13,7 +13,20 @@ All commands below go through one helper. Run it from anywhere inside the repo:
 V=.claude/skills/verify-apm-go/scripts/verify.sh
 ```
 
-This skill answers "what does the binary do when a user runs it". It does not replace the project gates: `go test ./...` checks Go-level correctness, `tools/gate.sh` is the verification gate, and `tools/parity` (CI) is the authority on Oracle parity. See `AGENTS.md`.
+This skill answers two questions. "Is the tree sound?" is `$V check` (see Check). "What does the binary do when a user runs it?" is everything from Launch on. Neither replaces `tools/parity` (CI), the authority on Oracle parity. See `AGENTS.md`.
+
+## Check
+
+```sh
+$V check            # add --offline to skip govulncheck
+```
+
+Runs on the working tree as it is; nothing has to be committed. Steps, in order: `go build ./...`; `go test -count=1 -shuffle=<seed> ./...` (the seed is printed, rerun with it to replay an order-dependent failure); `go vet`; `gofmt -l` over the tracked `.go` files; `staticcheck` with the list in `staticcheck.conf`; `tools/realexec.sh`, the output contract of the commands that have no Oracle counterpart; `govulncheck`.
+
+- Every step runs, also after an earlier one failed. A failed step prints `FAIL  <step>` with the end of its log; the whole log is `.scratch/verify/check/<step>.log`. The command exits 1 when a step failed.
+- `govulncheck` prints `ok` or `note` and never fails the run. A `note` is a finding the code calls or a scan that could not run (no network); read its log and report it, do not ignore it.
+- It runs on the Go version of `go.mod`'s `go` directive and keeps the build work directory and the tests' temporary files under `~/.cache/apm-go-verify/tmp` (removed at the end), not `/tmp`: a small or quota-limited `/tmp` fails the suite at link time.
+- Not covered: Oracle parity (CI), and whether the lines a change touched have a test. Read the diff for that.
 
 ## Launch
 
@@ -102,4 +115,4 @@ Clean after every run, including a failed one. Clean only runs you started; `$V 
 
 ## Helpers
 
-`scripts/verify.sh` is the only helper. `$V` with no argument prints its usage. Subcommands: `build`, `doctor`, `new`, `run`, `tty`, `keys`, `expect`, `clean` — each shown above.
+`scripts/verify.sh` is the only helper. `$V` with no argument prints its usage. Subcommands: `check`, `build`, `doctor`, `new`, `run`, `tty`, `keys`, `expect`, `clean` — each shown above.

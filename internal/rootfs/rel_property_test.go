@@ -37,7 +37,7 @@ func TestRelContainmentProperty(t *testing.T) {
 
 // The parent directory itself is the one escape filepath.Rel reports as a
 // bare ".." with no separator after it; the prefix check alone would let
-// it through (tools/gate.sh mutant rel-exact-parent-escapes).
+// it through.
 func TestRelRefusesExactParentProperty(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "root")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

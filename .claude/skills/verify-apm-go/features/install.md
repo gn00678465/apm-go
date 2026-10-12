@@ -37,7 +37,7 @@ Preconditions:
 
 - Without `--ci`, a plain `install` resolves again and may rewrite the lock. Frozen behaviour needs `--ci` or the `--frozen` flag.
 - A local package is copied to `apm_modules/_local/<directory name>` and the lock's `repo_url` is `_local/<directory name>` (issue #50). A lock from before that change names it `_local/<name>-<8 hex>`; a frozen install reads such a lock as it is, and any other install converts it.
-- The sandbox sits inside the apm-go repository. The helper sets `GIT_CEILING_DIRECTORIES` so the dependency is not seen as part of that repository; without it the lock records the apm-go `HEAD` as `resolved_commit`. A fixture that must be a git repository needs its own `git init` inside the sandbox.
+- The sandbox sits inside the apm-go repository. The helper sets `GIT_CEILING_DIRECTORIES` so git inside the sandbox does not discover that repository. The lock of a local-path dependency has no `resolved_commit` either way. A fixture that must be a git repository needs its own `git init` inside the sandbox.
 - `install` adds `apm_modules/` to `.gitignore`, creating the file. That is one of the files the tree gains, and `uninstall` leaves it in place.
 - stdout of `uninstall` prints the absolute sandbox path of `apm.yml`.
 - A remote dependency (`owner/repo`, a marketplace reference) needs the network and a reachable host. It is not covered here.

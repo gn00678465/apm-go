@@ -1,5 +1,5 @@
 #!/bin/sh
-# Real-execution layer: run the built binary end to end on realistic inputs
+# Real-execution contract: run the built binary end to end on realistic inputs
 # in a throwaway sandbox (own HOME / APM_CONFIG_DIR), then an adversarial
 # pass with hostile inputs. Every step asserts an exit code and an
 # observable effect (a file that must exist, or a path that must NOT exist
@@ -7,10 +7,10 @@
 # surface, not derived from the implementation.
 set -eu
 
-ART=${GATE_ART:?GATE_ART is required}
+ART=${REALEXEC_ART:?REALEXEC_ART (artifact directory) is required}
 # Absolute: the steps below cd into the sandbox and still address $SB.
 case "$ART" in /*|?:*) ;; *) ART="$PWD/$ART" ;; esac
-BIN=${GATE_BIN:?GATE_BIN (built apm-go binary) is required}
+BIN=${REALEXEC_BIN:?REALEXEC_BIN (built apm-go binary) is required}
 SB="$ART/sandbox"
 rm -rf "$SB"
 mkdir -p "$SB/home" "$SB/work"

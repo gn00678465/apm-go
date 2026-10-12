@@ -26,7 +26,7 @@ const maxManifestBytes = 5 * 1024 * 1024
 // (pinned b75a02b1/v0.29.0 and `main`) has no counterpart command --
 // research.md R-01 -- so this command's output contract is NOT a
 // tools/parity corpus case; it is pinned by contracts/cli-plugin-
-// validate.md and enforced by tools/gate/realexec.sh's dedicated steps
+// validate.md and enforced by tools/realexec.sh's dedicated steps
 // (ticket 34, .scratch/parity-runner/issues/34-oracle-less-command-output-
 // contract.md), at the same byte-for-byte strength (stdout, stderr, exit
 // code, read-only file tree) the corpus itself uses.

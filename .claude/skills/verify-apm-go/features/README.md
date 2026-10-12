@@ -7,7 +7,7 @@ This directory is the maintained source for verifying the user-facing behaviour 
 - `V=.claude/skills/verify-apm-go/scripts/verify.sh`, run from inside the repo.
 - `$V doctor` exits 0.
 - A fresh run from `$V new NAME`; its printed path is `RUN` in every recipe.
-- Fixtures are created inside `RUN/sandbox/work` before the first drive. Several recipes copy a fixture from `tools/parity/cases/` or `tools/parity/cases-pending/`; those directories are read-only inputs.
+- Fixtures are created inside `RUN/sandbox/work` before the first drive. Several recipes copy a fixture from `tools/parity/cases/`; that directory is a read-only input.
 
 ## Driving conventions
 
@@ -15,7 +15,7 @@ This directory is the maintained source for verifying the user-facing behaviour 
 - Treat every command as literal. Keep names and flags unchanged.
 - Non-interactive drives go through `$V run RUN STEP ... -- ARGS`. Interactive drives go through `$V tty` / `keys` / `expect`.
 - Paths in output are absolute sandbox paths. Compare against the path shape, not a recorded string.
-- Recorded output in these files was observed at commit `1e42c30`. It tells you what to look for; it is not an expected-value table. The parity corpus and `tools/gate/realexec.sh` own exact bytes.
+- Recorded output in these files was observed at commit `858a21f`. It tells you what to look for; it is not an expected-value table. The parity corpus and `tools/realexec.sh` own exact bytes.
 
 ## Proof and skip reporting
 

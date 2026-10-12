@@ -128,17 +128,25 @@ jobs:
       - name: go test
         run: go test ./... -race
 
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$out" ]; then echo "gofmt drift:"; echo "$out"; exit 1; fi
+
   real-execution:
     # The Oracle-less half of the output contract (ticket 34,
     # .scratch/parity-runner/issues/34-oracle-less-command-output-contract.md):
     # a command with no Oracle counterpart (e.g. `plugin validate`) has its
-    # output contract pinned by tools/gate/realexec.sh instead of a
+    # output contract pinned by tools/realexec.sh instead of a
     # tools/parity corpus case. Ticket 34 substituted the comparison
     # mechanism -- it did not exempt the command from CI -- so this job runs
-    # that mechanism on every push/PR, building the binary and invoking the
-    # script exactly the way tools/gate.sh's own real-execution layer does
-    # (same GATE_ART/GATE_BIN contract, same tee-then-grep check for the
-    # summary line and any FAIL). This is not a duplicate of the parity job
+    # that mechanism on every push/PR: it builds the binary and runs the
+    # script, which exits non-zero when a step fails. The summary line is
+    # checked as well, so a script that stopped before its last line does
+    # not pass. This is not a duplicate of the parity job
     # above: parity diffs apm-go against the Oracle release, this pins
     # apm-go's own output for the surface that has no Oracle to diff against.
     runs-on: ubuntu-latest
@@ -151,20 +159,19 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build apm-go (tools/gate.sh's own build-layer command)
+      - name: Build apm-go
         run: |
-          mkdir -p .gate/ci
-          go build ./...
-          go build -o .gate/ci/apm-go ./cmd/apm-go
+          mkdir -p .scratch/realexec
+          go build -o .scratch/realexec/apm-go ./cmd/apm-go
 
-      - name: Run tools/gate/realexec.sh
+      - name: Run tools/realexec.sh
         env:
-          GATE_ART: .gate/ci
-          GATE_BIN: .gate/ci/apm-go
+          REALEXEC_ART: .scratch/realexec
+          REALEXEC_BIN: .scratch/realexec/apm-go
         run: |
-          sh tools/gate/realexec.sh 2>&1 | tee .gate/ci/realexec.log
-          grep -q '^real-execution:' .gate/ci/realexec.log
-          ! grep -q '^FAIL' .gate/ci/realexec.log
+          sh tools/realexec.sh 2>&1 | tee .scratch/realexec/realexec.log
+          grep -q '^real-execution:' .scratch/realexec/realexec.log
+          ! grep -q '^FAIL' .scratch/realexec/realexec.log
 
       # Runs even on failure (mirrors the parity job's own summary step): the
       # job log should always end with the human-readable check count, not
@@ -172,8 +179,8 @@ jobs:
       - name: Print realexec summary
         if: always()
         run: |
-          if [ -f .gate/ci/realexec.log ]; then
-            tail -1 .gate/ci/realexec.log
+          if [ -f .scratch/realexec/realexec.log ]; then
+            tail -1 .scratch/realexec/realexec.log
           else
             echo "no realexec.log written -- the script failed before producing output"
           fi
@@ -183,5 +190,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: realexec-out
-          path: .gate/ci/realexec.log
+          path: .scratch/realexec/realexec.log
           retention-days: 30

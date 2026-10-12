@@ -2,6 +2,7 @@
 # Harness for the verify-apm-go skill: build the binary, drive it in a
 # throwaway sandbox, record evidence. Run from anywhere inside the repo.
 #
+#   verify.sh check [--offline]          run the repository checks; see SKILL.md "Check"
 #   verify.sh build                      build .scratch/verify/bin/apm-go
 #   verify.sh doctor                     is the build worth driving?
 #   verify.sh new NAME                   create a run; prints its directory
@@ -39,8 +40,73 @@ tree_of() {
   ) | sort -k2
 }
 
+# Pinned so a rerun uses the same checker. Both run through
+# `go run <module>@<version>`.
+STATICCHECK_VERSION=2026.2.1
+GOVULNCHECK_VERSION=v1.7.0
+
 cmd=${1:-}; [ $# -gt 0 ] && shift
 case "$cmd" in
+check)
+  offline=
+  case "${1:-}" in "") ;; --offline) offline=1 ;; *) die "usage: verify.sh check [--offline]" ;; esac
+  cd "$ROOT"
+  # go.mod's `go` directive selects the toolchain only when the local Go is
+  # older; a newer local Go runs as itself, and the pinned staticcheck cannot
+  # read its export data. Every step runs on the directive's version, the
+  # one CI installs (go-version-file: go.mod).
+  GOTOOLCHAIN="go$(sed -n 's/^go //p' go.mod)"; export GOTOOLCHAIN
+  out="$BASE/check"; rm -rf "$out"; mkdir -p "$out"
+  # The Go build work directory and every t.TempDir() go here, not to /tmp:
+  # a small or quota-limited /tmp fails the suite with "disk quota exceeded"
+  # at link time, which says nothing about the code. It is outside the
+  # repository because tests that build a git repository in t.TempDir() fail
+  # inside another work tree.
+  TMPDIR="${XDG_CACHE_HOME:-$HOME/.cache}/apm-go-verify/tmp"; export TMPDIR
+  rm -rf "$TMPDIR"; mkdir -p "$TMPDIR"
+  fail=0
+  # step NAME CMD...: every step runs, also after an earlier one failed, so
+  # one run reports everything that is wrong. The log is the evidence.
+  step() {
+    name=$1; shift
+    if "$@" > "$out/$name.log" 2>&1; then echo "ok    $name"
+    else echo "FAIL  $name (rc=$?); log: $out/$name.log"; tail -15 "$out/$name.log" | sed 's/^/      /'; fail=1; fi
+  }
+  # A checker that prints findings and still exits 0 must not pass.
+  silent() { "$@" > "$out/findings.tmp" 2>&1; rc=$?; cat "$out/findings.tmp"; [ "$rc" -eq 0 ] && [ ! -s "$out/findings.tmp" ]; }
+  fmt() { files=$(git ls-files '*.go'); [ -n "$files" ] || { echo "no .go file listed"; return 2; }; silent gofmt -l $files; }
+  lint() {
+    # The list is passed explicitly: staticcheck's own discovery of
+    # staticcheck.conf depends on where the tree is checked out.
+    checks=$(sed -n 's/^checks *= *\[\(.*\)\].*/\1/p' staticcheck.conf | tr -d ' "')
+    [ -n "$checks" ] || { echo "staticcheck.conf has no checks list"; return 2; }
+    silent go run "honnef.co/go/tools/cmd/staticcheck@$STATICCHECK_VERSION" -checks "$checks" ./...
+  }
+  realexec() {
+    mkdir -p "$out/realexec"
+    go build -o "$out/realexec/apm-go" ./cmd/apm-go || return 1
+    REALEXEC_ART="$out/realexec" REALEXEC_BIN="$out/realexec/apm-go" sh tools/realexec.sh > "$out/realexec.out" 2>&1; rc=$?
+    cat "$out/realexec.out"
+    [ "$rc" -eq 0 ] && grep -q '^real-execution:' "$out/realexec.out"
+  }
+  seed=$(date +%s)
+  echo "toolchain $GOTOOLCHAIN, shuffle seed $seed, logs in $out"
+  step build go build ./...
+  step test go test -count=1 -shuffle="$seed" ./...
+  step vet silent go vet ./...
+  step gofmt fmt
+  step staticcheck lint
+  step realexec realexec
+  # govulncheck reports and never fails the run: a finding in the Go standard
+  # library appears when its database is updated, with no change in this
+  # repository, and the fix is a new Go version in go.mod.
+  if [ -n "$offline" ]; then echo "skip  govulncheck (--offline: it downloads the vulnerability database)"
+  elif go run "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION" ./... > "$out/govulncheck.log" 2>&1; then echo "ok    govulncheck"
+  else echo "note  govulncheck: $(grep -c '^Vulnerability #' "$out/govulncheck.log") finding(s) that the code calls, or the scan did not run; log: $out/govulncheck.log"; fi
+  rm -rf "$out/findings.tmp" "$TMPDIR" 2>/dev/null || true
+  [ "$fail" -eq 0 ] && echo "check: all steps passed" || { echo "check: at least one step failed"; exit 1; }
+  ;;
+
 build)
   mkdir -p "$BASE/bin"
   ( cd "$ROOT" && go build -o "$BIN" ./cmd/apm-go )
@@ -159,7 +225,7 @@ clean)
   ;;
 
 *)
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
   [ -z "$cmd" ] || exit 2
   ;;
 esac
