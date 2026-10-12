@@ -1,0 +1,36 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: _local/dep
+  name: local-dep
+  version: 1.0.0
+  package_type: apm_package
+  deployed_files:
+  - .claude/rules/example.md
+  deployed_file_hashes:
+    .claude/rules/example.md: sha256:2bce21782221d26c7efac5eed312f71e70fb6d0460082c29e9a5c2f8c8afd0ac
+  source: local
+  local_path: ./dep
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/rules/example.md
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: sha256:2bce21782221d26c7efac5eed312f71e70fb6d0460082c29e9a5c2f8c8afd0ac
+- kind: project-relative
+  target: claude
+  value: .claude/rules/mine.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:afbf75091351177625dae27f1d1b1d075f45dbc7ca80572a043105ccbeceab4c
+local_deployed_files:
+- .claude/rules/mine.md
+local_deployed_file_hashes:
+  .claude/rules/mine.md: sha256:afbf75091351177625dae27f1d1b1d075f45dbc7ca80572a043105ccbeceab4c

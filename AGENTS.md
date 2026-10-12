@@ -84,7 +84,7 @@ internal/
 
 **Git subprocesses** run under `gitops.ApplySecureGitEnv` (no credential prompts, transport allow-list) — every call site, including diagnostics. A subprocess that connects to a remote (`ls-remote`, `clone`, `fetch`) first passes `gitops.ValidateURLRewriteSafety` for that URL.
 
-**YAML round-trip.** `apm.yml` and `apm.lock.yaml` are user-edited files. All mutations go through `yamlcore` splice/patch helpers that preserve comments, ordering, and formatting — never marshal-and-rewrite.
+**YAML round-trip.** `apm.yml` is a user-edited file. All mutations go through `yamlcore` splice/patch helpers that preserve comments, ordering, and formatting — never marshal-and-rewrite. `apm.lock.yaml` is the exception since issue #50: `lockfile.WriteLockfile` writes the whole file in the Oracle's layout and carries over the keys it does not model; comments and quote style are not kept.
 
 **JSON bytes.** Pack and scaffold output goes through `bundle.MarshalIndent`, which reproduces Python `json.dumps(indent=2)` with `ensure_ascii=True` (non-ASCII as `\uXXXX`). The marketplace builder is the one upstream writer with `ensure_ascii=False`; it uses `encoding/json` separately.
 

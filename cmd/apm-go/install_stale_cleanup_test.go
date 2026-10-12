@@ -125,8 +125,8 @@ func TestInstall_StaleCleanup_LocalSkillFileRemovedFromSource(t *testing.T) {
 	if !strings.Contains(stdout, "Cleaned 1 stale file from <local .apm/>\n  - .claude/skills/demo/extra/remove.md\n") {
 		t.Errorf("stdout must list the removed path under the Cleaned line, got:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "Already up to date") {
-		t.Errorf("stdout must not say Already up to date, got:\n%s", stdout)
+	if installChangedNothing(stdout) {
+		t.Errorf("stdout must report a change, got:\n%s", stdout)
 	}
 }
 
@@ -193,8 +193,8 @@ func TestInstall_StaleCleanup_DependencyFileRemovedFromSource(t *testing.T) {
 	if !strings.Contains(stdout, "Cleaned 1 stale file from "+depKey) {
 		t.Errorf("stdout must report the cleanup for %s, got:\n%s", depKey, stdout)
 	}
-	if strings.Contains(stdout, "Already up to date") {
-		t.Errorf("stdout must not say Already up to date, got:\n%s", stdout)
+	if installChangedNothing(stdout) {
+		t.Errorf("stdout must report a change, got:\n%s", stdout)
 	}
 }
 
@@ -277,8 +277,8 @@ func TestInstall_StaleCleanup_UnchangedSourceIsUpToDate(t *testing.T) {
 
 	stdout := staleCleanupInstall(t, "")
 
-	if !strings.Contains(stdout, "Already up to date") {
-		t.Errorf("stdout must say Already up to date, got:\n%s", stdout)
+	if !installChangedNothing(stdout) {
+		t.Errorf("stdout must report no change, got:\n%s", stdout)
 	}
 	if strings.Contains(stdout, "Cleaned") {
 		t.Errorf("stdout must not report a cleanup, got:\n%s", stdout)
@@ -292,9 +292,10 @@ func TestInstall_StaleCleanup_UnchangedSourceIsUpToDate(t *testing.T) {
 	}
 }
 
-// The MCP config file of a target this run governs is recorded in the old
-// lock and, once the last server is gone from apm.yml, no longer claimed by
-// the new one. It holds the user's own entries too and must survive.
+// The MCP config file of a target holds the user's own entries too. The lock
+// does not list it as a deployed file (the Oracle records MCP servers in
+// mcp_configs and mcp_target_servers only), so it survives when the last
+// server is gone from apm.yml.
 func TestInstall_StaleCleanup_KeepsMCPConfigFiles(t *testing.T) {
 	const withServer = "name: repro\nversion: 1.0.0\ntargets:\n  - claude\n  - codex\ndependencies:\n  mcp:\n    - name: e2e-server\n      registry: false\n      transport: stdio\n      command: my-mcp-server\n"
 	const withoutServer = "name: repro\nversion: 1.0.0\ntargets:\n  - claude\n  - codex\ndependencies:\n  mcp: []\n"
@@ -304,8 +305,8 @@ func TestInstall_StaleCleanup_KeepsMCPConfigFiles(t *testing.T) {
 	assertStaleCleanupExists(t, true, mcpFiles...)
 	lock := readLockfile(t)
 	for _, p := range mcpFiles {
-		if !staleCleanupContains(lock.LocalDeployedFiles, p) {
-			t.Fatalf("first install: lock must list %s, got %v", p, lock.LocalDeployedFiles)
+		if staleCleanupContains(lock.LocalDeployedFiles, p) {
+			t.Fatalf("first install: lock must not list %s, got %v", p, lock.LocalDeployedFiles)
 		}
 	}
 
@@ -442,11 +443,11 @@ func TestInstall_StaleCleanup_DependencyDeployingNothingIsCleaned(t *testing.T) 
 	if _, ok := dep.DeployedHashes[deployed]; ok {
 		t.Errorf("deployed_file_hashes still lists %s", deployed)
 	}
-	if !strings.Contains(stdout, "Cleaned 1 stale file from "+depKey+"\n  - "+deployed+"\n") {
+	if !strings.Contains(stdout, "Cleaned 2 stale files from "+depKey+"\n  - .claude/skills/demo\n  - "+deployed+"\n") {
 		t.Errorf("stdout must report the cleanup of %s and list %s, got:\n%s", depKey, deployed, stdout)
 	}
-	if strings.Contains(stdout, "Already up to date") {
-		t.Errorf("stdout must not say Already up to date, got:\n%s", stdout)
+	if installChangedNothing(stdout) {
+		t.Errorf("stdout must report a change, got:\n%s", stdout)
 	}
 }
 
@@ -707,10 +708,25 @@ func TestInstall_StaleCleanup_MissingLocalSourceDirectoryIsCleaned(t *testing.T)
 	stdout := staleCleanupInstall(t, "")
 
 	assertStaleCleanupExists(t, false, deployed...)
-	if !strings.Contains(stdout, "Cleaned 2 stale files from <local .apm/>\n  - .claude/skills/demo/SKILL.md\n  - .claude/skills/demo/extra/keep.md\n") {
+	if !strings.Contains(stdout, "Cleaned 3 stale files from <local .apm/>\n  - .claude/skills/demo\n  - .claude/skills/demo/SKILL.md\n  - .claude/skills/demo/extra/keep.md\n") {
 		t.Errorf("stdout must report the cleanup, got:\n%s", stdout)
 	}
 	if strings.Contains(stdout, " failed: ") {
 		t.Errorf("a missing source directory is not a read failure, got:\n%s", stdout)
 	}
+}
+
+// installChangedNothing reports whether an install's stdout shows a run that
+// integrated no file and cleaned none: the Oracle's repeat run names each
+// package again with "adopted" counts and "(files unchanged)", or prints "No
+// changes" when it had nothing to integrate (issue #50 ruling R10). A skill
+// line says nothing either way: the Oracle prints "integrated" for a skill on
+// every run.
+func installChangedNothing(stdout string) bool {
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, " integrated -> ") && !strings.Contains(line, " skill(s) integrated -> ") {
+			return false
+		}
+	}
+	return !strings.Contains(stdout, "Cleaned ")
 }

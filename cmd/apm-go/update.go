@@ -34,7 +34,8 @@ The dry-run flag prints the same update plan a real update would apply
 apm.lock.yaml, without materializing or removing anything under
 apm_modules/, and without deploying any change to a target.`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
+			defer silenceUsageForRuntimeError(cmd, &runErr)
 			deps := &installDeps{
 				tags:   &gitops.RealTagLister{},
 				loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
@@ -204,7 +205,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	// fed to both buildLockfile and deployAndFinalize so update's lockfile
 	// and deploy filter never disagree.
 	effectiveSubsets := effectiveSkillSubsets(m, nil, nil)
-	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, nil, nil, false, marketplaceProvenance)
+	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, nil, nil, false, marketplaceProvenance, localDeclaredPaths(m))
 	if err != nil {
 		return err
 	}
@@ -233,7 +234,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		return errNoDeployTarget()
 	}
 
-	return deployAndFinalize(m, "", "", effectiveSubsets, nil, nil, nil, nil, false, false, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, "", "", effectiveSubsets, nil, nil, nil, nil, false, false, result, newLock, existingLock, existingNode, node, nil)
 }
 
 // runUpdateDryRun resolves --dry-run's plan against a throwaway scratch

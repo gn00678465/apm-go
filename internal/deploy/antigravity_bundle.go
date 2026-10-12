@@ -24,8 +24,8 @@ func antigravityBundleDir(depKey string) string {
 // bundleNameFromDepKey derives the plugin bundle directory name from a
 // dependency's unique key, taking only the LAST "/"-separated segment
 // (mirroring skillNameFromDepKey in primitive.go) so a materialized
-// local-path dependency's "_local/<base>-<hash8>" key collapses to
-// "<base>-<hash8>", and any earlier segment -- including one that happens to
+// local-path dependency's "_local/<name>" key collapses to "<name>", and any
+// earlier segment -- including one that happens to
 // be ".." -- never reaches the filesystem call. The result is then reduced
 // to a single safe path segment by sanitizeBundleSegment.
 func bundleNameFromDepKey(depKey string) string {

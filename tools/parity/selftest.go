@@ -49,6 +49,7 @@ func runSelfTest(timeout time.Duration) error {
 		{"S3", selfTestS3},
 		{"S4", selfTestS4},
 		{"S5", selfTestS5},
+		{"S6", selfTestS6},
 	}
 	for _, c := range checks {
 		if err := c.fn(dir, timeout); err != nil {
@@ -170,6 +171,32 @@ func selfTestS5(dir string, timeout time.Duration) error {
 	partial := applyWaiver(cd, nil, []Waiver{{ID: "s5", Fields: []string{"exit_code"}, Reason: "self-test S5"}})
 	if partial.Waived {
 		return fmt.Errorf("a waiver covering only [exit_code] incorrectly waived a [stdout] diff")
+	}
+	return nil
+}
+
+// selfTestS6: two lockfiles that differ only in the apm_version line must
+// produce zero diff fields (normalizeTreeFileContent, issue #50 R12), and
+// one more differing byte on another line must produce exactly ["tree"].
+func selfTestS6(dir string, timeout time.Duration) error {
+	lock := func(version, generated string) string {
+		return "printf 'lockfile_version: 1\\napm_version: " + version + "\\ngenerated: " + generated + "\\n' > apm.lock.yaml\nexit 0\n"
+	}
+
+	cd, err := selfTestDiff(dir, "s6-version", lock("0.33.0", "a"), lock("dev", "a"), timeout)
+	if err != nil {
+		return err
+	}
+	if len(cd.Fields) != 0 {
+		return fmt.Errorf("lockfiles differing only in apm_version produced fields %v, want none", cd.Fields)
+	}
+
+	cd, err = selfTestDiff(dir, "s6-other", lock("0.33.0", "a"), lock("dev", "b"), timeout)
+	if err != nil {
+		return err
+	}
+	if !fieldsEqual(cd.Fields, []string{"tree"}) {
+		return fmt.Errorf("lockfiles differing outside apm_version produced fields %v, want [tree]", cd.Fields)
 	}
 	return nil
 }

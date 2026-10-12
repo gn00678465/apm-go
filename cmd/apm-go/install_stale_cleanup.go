@@ -1,8 +1,10 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/lockfile"
@@ -73,7 +75,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		if linkSourceRoot != "" {
 			removed, diags = deploy.RemoveStaleLinkedFiles(deployRoot, linkSourceRoot, filepath.Join(linkSourceRoot, source), stale, oldHashes, claimed)
 		} else {
-			removed, _, diags = deploy.RemoveDeployedFiles(deployRoot, stale, oldHashes)
+			removed, _, diags = removeDeployedPaths(deployRoot, stale, oldHashes)
 		}
 		if len(removed) > 0 || len(diags) > 0 {
 			sort.Strings(removed)
@@ -93,4 +95,61 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(key)), old.DeployedFiles, old.DeployedHashes)
 	}
 	return results
+}
+
+// withSkillDirs adds, for each deployed skill, the skill's own directory
+// (<root>/skills/<name>) to the deployed files, as the Oracle's lock lists it:
+// a path with no hash (measured on Oracle v0.33.0, issue #50). A --global
+// deploy makes that directory a symlink and keeps its own record of it, so
+// its list is left as it is.
+func withSkillDirs(files []string, deployDir string) []string {
+	if deployDir != "" {
+		return files
+	}
+	out := append([]string(nil), files...)
+	seen := make(map[string]bool, len(files))
+	for _, f := range files {
+		seen[f] = true
+	}
+	for _, f := range files {
+		segs := strings.Split(normalizeDeployPath(f), "/")
+		for i := 0; i+2 < len(segs); i++ {
+			if segs[i] != "skills" {
+				continue
+			}
+			if dir := strings.Join(segs[:i+2], "/"); !seen[dir] {
+				seen[dir] = true
+				out = append(out, dir)
+			}
+			break
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// removeDeployedPaths is deploy.RemoveDeployedFiles for a lock's deployed
+// paths, which also name skill directories (withSkillDirs). A directory has
+// no hash to prove it is unchanged, so it is never removed by itself: it
+// counts as removed when it was there and is gone once its files are, and it
+// stays, with no warning, when something is left in it.
+func removeDeployedPaths(root string, paths []string, hashes map[string]string) (removed, kept, diags []string) {
+	var dirs, files []string
+	for _, p := range paths {
+		if _, hashed := hashes[p]; !hashed {
+			if info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(p))); err == nil && info.IsDir() {
+				dirs = append(dirs, p)
+				continue
+			}
+		}
+		files = append(files, p)
+	}
+	removed, kept, diags = deploy.RemoveDeployedFiles(root, files, hashes)
+	for _, d := range dirs {
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(d))); os.IsNotExist(err) {
+			removed = append(removed, d)
+		}
+	}
+	sort.Strings(removed)
+	return removed, kept, diags
 }

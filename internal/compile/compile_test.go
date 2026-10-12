@@ -200,7 +200,7 @@ func TestCollectInstructions_IgnoresWrongSuffixAndSymlink(t *testing.T) {
 		t.Errorf("unexpected surviving instruction: %s", got[0].RelPath)
 	}
 
-	rendered := RenderAgentsMD(got, "test")
+	rendered := RenderAgentsMD(got)
 	if strings.Contains(rendered, secretToken) {
 		t.Fatalf("symlinked external content leaked into rendered output:\n%s", rendered)
 	}

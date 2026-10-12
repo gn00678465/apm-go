@@ -222,7 +222,7 @@ func TestBuildLockfile_MarketplaceProvenanceAttached(t *testing.T) {
 	}
 
 	// Act
-	lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, nil, nil, true, provenance)
+	lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, nil, nil, true, provenance, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestBuildLockfile_MarketplaceProvenance_SourceURLOnlyForURLKind(t *testing.
 	}
 
 	// Act
-	lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, nil, nil, true, provenance)
+	lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, nil, nil, true, provenance, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestBuildLockfile_ProvenanceCarriesForwardFromExistingLock(t *testing.T) {
 
 	// Act -- NO marketplaceProvenance for this call (nil), simulating a bare
 	// `apm install` that doesn't re-supply the marketplace CLI ref.
-	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, nil)
+	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, nil, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestBuildLockfile_ProvenanceCarryForward_FreshProvenanceWins(t *testing.T) 
 	}
 
 	// Act
-	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, freshProvenance)
+	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, freshProvenance, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestBuildLockfile_ProvenanceCarryForward_NoExistingProvenanceStaysEmpty(t *
 	}}
 
 	// Act
-	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, nil)
+	lock, err := buildLockfile(result, existingLock, &registry.Loader{}, nil, nil, nil, true, nil, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -815,13 +815,17 @@ func TestNormalizeLocalDep(t *testing.T) {
 		}
 	})
 
-	t.Run("collision resistance: same basename, different dirs", func(t *testing.T) {
+	// Issue #50 ruling R1: the key is the Oracle's, _local/<directory name>,
+	// so two directories of one name share it. install refuses that pair
+	// before it writes anything (ruling R6,
+	// TestInstall_LocalNameCollision_RefusedBeforeAnyWrite).
+	t.Run("same basename, different dirs: one key", func(t *testing.T) {
 		a := &manifest.DependencyReference{RepoURL: filepath.Join(dir, "a", "hello"), Source: "git"}
 		b := &manifest.DependencyReference{RepoURL: filepath.Join(dir, "b", "hello"), Source: "git"}
 		normalizeLocalDep(a)
 		normalizeLocalDep(b)
-		if a.RepoURL == b.RepoURL {
-			t.Errorf("distinct sources collided on key %q", a.RepoURL)
+		if a.RepoURL != "_local/hello" || b.RepoURL != "_local/hello" {
+			t.Errorf("keys = %q, %q, want _local/hello for both", a.RepoURL, b.RepoURL)
 		}
 	})
 

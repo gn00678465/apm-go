@@ -1,0 +1,15 @@
+lockfile_version: "1"
+generated_at: "2026-10-12T01:52:16Z"
+apm_version: dev
+local_deployed_files:
+  - .claude/rules/own.md
+local_deployed_file_hashes:
+  .claude/rules/own.md: sha256:ad3790093c985e844a6541e159782c829227aa2d98fda86ef24eb673af37fe33
+dependencies:
+  - repo_url: _local/dep-493bc424
+    source: git
+    depth: 1
+    deployed_files:
+      - .claude/rules/dep.md
+    deployed_file_hashes:
+      .claude/rules/dep.md: sha256:b65d2cf2095c072332c85702c9cdcade660bba79de9a67ea5bb12c1878a7217a

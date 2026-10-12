@@ -131,6 +131,42 @@ func ParseLockfile(doc *yaml.Node) (*Lockfile, error) {
 					lf.MCPServers = append(lf.MCPServers, item.Value)
 				}
 			}
+		case "deployments":
+			// Only the target of a file row is read; every other value of
+			// the section is derived again when the lock is written.
+			if val.Kind == yaml.SequenceNode {
+				lf.PathTargets = make(map[string]string)
+				for _, row := range val.Content {
+					if row.Kind != yaml.MappingNode {
+						continue
+					}
+					fields := buildOriginalPairs(row)
+					kind, target, value := fields["kind"], fields["target"], fields["value"]
+					if kind.val != nil && kind.val.Value == "project-relative" && target.val != nil && value.val != nil {
+						lf.PathTargets[value.val.Value] = target.val.Value
+					}
+				}
+			}
+		case "mcp_configs":
+			if val.Kind == yaml.MappingNode {
+				lf.MCPConfigs = make(map[string]*yaml.Node)
+				for j := 0; j < len(val.Content)-1; j += 2 {
+					lf.MCPConfigs[val.Content[j].Value] = val.Content[j+1]
+				}
+			}
+		case "mcp_target_servers":
+			if val.Kind == yaml.MappingNode {
+				lf.MCPTargetServers = make(map[string][]string)
+				for j := 0; j < len(val.Content)-1; j += 2 {
+					servers := []string{}
+					if val.Content[j+1].Kind == yaml.SequenceNode {
+						for _, item := range val.Content[j+1].Content {
+							servers = append(servers, item.Value)
+						}
+					}
+					lf.MCPTargetServers[val.Content[j].Value] = servers
+				}
+			}
 		}
 	}
 
@@ -149,7 +185,8 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 		return nil, fmt.Errorf("lockfile: dependency %d must be a mapping", idx)
 	}
 
-	d := &LockedDep{}
+	// The Oracle writes depth only when it is not 1.
+	d := &LockedDep{Depth: 1}
 	for i := 0; i < len(node.Content)-1; i += 2 {
 		key := node.Content[i].Value
 		val := node.Content[i+1]
@@ -163,6 +200,10 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 				return nil, err
 			}
 			d.RepoURL = val.Value
+		case "name":
+			d.Name = val.Value
+		case "local_path":
+			d.LocalPath = val.Value
 		case "host":
 			d.Host = val.Value
 		case "port":

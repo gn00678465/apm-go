@@ -1,0 +1,24 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies: []
+deployments:
+- kind: uri
+  target: mcp
+  value: demo
+  runtime: claude
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+mcp_servers:
+- demo
+mcp_configs:
+  demo:
+    name: demo
+    transport: http
+    registry: false
+    url: https://example.com/mcp
+mcp_target_servers:
+  claude:
+  - demo

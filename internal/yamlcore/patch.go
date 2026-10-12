@@ -34,6 +34,20 @@ type pathFrame struct {
 // hits anything unexpected); callers must fall back to a full SafeDump in
 // that case.
 func PatchMappingPath(src []byte, doc *yaml.Node, path []string) (out []byte, ok bool, err error) {
+	return patchMappingPath(src, doc, path, SafeDump)
+}
+
+// PatchMappingPathCompact is PatchMappingPath with the rewritten block in
+// the Oracle's PyYAML layout (SafeDumpManifest): a sequence is not indented
+// under its key. It is for a block apm-go creates; a block whose existing
+// items the user indented keeps that layout through PatchMappingPath.
+func PatchMappingPathCompact(src []byte, doc *yaml.Node, path []string) (out []byte, ok bool, err error) {
+	return patchMappingPath(src, doc, path, SafeDumpManifest)
+}
+
+type dumpFunc func(*yaml.Node) ([]byte, error)
+
+func patchMappingPath(src []byte, doc *yaml.Node, path []string, dump dumpFunc) (out []byte, ok bool, err error) {
 	if len(path) == 0 {
 		return nil, false, nil
 	}
@@ -52,13 +66,13 @@ func PatchMappingPath(src []byte, doc *yaml.Node, path []string) (out []byte, ok
 		isLast := i == len(path)-1
 
 		if idx == -1 || cur.Content[idx].Line == 0 {
-			return insertMissingPath(src, root, frames, cur, path[i:])
+			return insertMissingPath(src, root, frames, cur, path[i:], dump)
 		}
 
 		valNode := cur.Content[idx+1]
 		if isLast {
 			frames = append(frames, pathFrame{mapping: cur, keyIdx: idx})
-			return replaceValueSpan(src, frames, valNode)
+			return replaceValueSpan(src, frames, valNode, dump)
 		}
 		if valNode.Kind != yaml.MappingNode {
 			return nil, false, nil
@@ -135,7 +149,7 @@ func lineStartOffset(src []byte, line int) int {
 	return len(src)
 }
 
-func replaceValueSpan(src []byte, frames []pathFrame, valNode *yaml.Node) ([]byte, bool, error) {
+func replaceValueSpan(src []byte, frames []pathFrame, valNode *yaml.Node, dump dumpFunc) ([]byte, bool, error) {
 	level := len(frames) - 1
 	f := frames[level]
 	keyNode := f.mapping.Content[f.keyIdx]
@@ -150,7 +164,7 @@ func replaceValueSpan(src []byte, frames []pathFrame, valNode *yaml.Node) ([]byt
 	if indent < 0 {
 		indent = 0
 	}
-	fragment, err := renderKeyValue(keyNode, valNode, indent)
+	fragment, err := renderKeyValue(keyNode, valNode, indent, dump)
 	if err != nil {
 		return nil, false, err
 	}
@@ -163,7 +177,7 @@ func replaceValueSpan(src []byte, frames []pathFrame, valNode *yaml.Node) ([]byt
 	return buf.Bytes(), true, nil
 }
 
-func insertMissingPath(src []byte, root *yaml.Node, frames []pathFrame, cur *yaml.Node, remaining []string) ([]byte, bool, error) {
+func insertMissingPath(src []byte, root *yaml.Node, frames []pathFrame, cur *yaml.Node, remaining []string, dump dumpFunc) ([]byte, bool, error) {
 	idx := findMappingKeyIndex(cur, remaining[0])
 	if idx == -1 {
 		// The caller was supposed to have already created this key
@@ -187,7 +201,7 @@ func insertMissingPath(src []byte, root *yaml.Node, frames []pathFrame, cur *yam
 		indent = 0
 	}
 
-	fragment, err := renderKeyValue(keyNode, valNode, indent)
+	fragment, err := renderKeyValue(keyNode, valNode, indent, dump)
 	if err != nil {
 		return nil, false, err
 	}
@@ -246,7 +260,7 @@ func matchLineEndings(src, fragment []byte) []byte {
 // exactly the style dependencies.mcp/dependencies.apm normally use.
 // FootComment does not have that failure mode, so it is still set directly
 // on the synthetic key and left to the dumper.
-func renderKeyValue(keyNode *yaml.Node, valNode *yaml.Node, indent int) ([]byte, error) {
+func renderKeyValue(keyNode *yaml.Node, valNode *yaml.Node, indent int, dump dumpFunc) ([]byte, error) {
 	syntheticKey := &yaml.Node{
 		Kind:        yaml.ScalarNode,
 		Value:       keyNode.Value,
@@ -258,7 +272,7 @@ func renderKeyValue(keyNode *yaml.Node, valNode *yaml.Node, indent int) ([]byte,
 		Tag:     "!!map",
 		Content: []*yaml.Node{syntheticKey, valNode},
 	}
-	rendered, err := SafeDump(pair)
+	rendered, err := dump(pair)
 	if err != nil {
 		return nil, err
 	}

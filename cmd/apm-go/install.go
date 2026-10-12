@@ -79,7 +79,8 @@ func installCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install [packages...]",
 		Short: "Install dependencies from apm.yml or by URL/shorthand",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
+			defer silenceUsageForRuntimeError(cmd, &runErr)
 			var deployDir string
 			if globalFlag {
 				var err error
@@ -165,7 +166,7 @@ func installCmd() *cobra.Command {
 					Version: mcpVersion, Registry: mcpRegistry, Force: mcpForce,
 					Command: stdioCommand, PrePackages: prePackages,
 					SkillSubset: skillFlags, TargetFlag: targetFlag,
-					DeployDir: deployDir,
+					DeployDir: deployDir, NoProvenance: noProvenance,
 				})
 			}
 
@@ -198,7 +199,7 @@ func installCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&frozen, "frozen", false, "frozen install mode: lockfile must exist and cover all deps")
-	cmd.Flags().BoolVar(&noProvenance, "no-provenance", false, "omit generated_at and apm_version from lockfile")
+	cmd.Flags().BoolVar(&noProvenance, "no-provenance", false, "omit apm_version from lockfile")
 	cmd.Flags().StringVarP(&targetFlag, "target", "t", "", "explicit target(s) for deployment, comma-separated (overrides auto-detection)")
 	cmd.Flags().StringArrayVar(&skillFlags, "skill", nil, "install only named skills from the package (repeatable)")
 	cmd.Flags().IntVar(&maxEntries, "max-entries", archive.DefaultMaxEntries, "max archive entries before fail-closed (req-sc-004)")
@@ -234,6 +235,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			return err
 		}
 	}
+	started := time.Now()
 
 	// Determine frozen mode up front (explicit flag or CI default) so apm.yml can
 	// be optional in frozen verify-only mode (integrity is checked from lockfile+disk).
@@ -313,7 +315,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	// presenting it as a fresh install.
 	//
 	// A pre-existing local/absolute-path dep MUST be normalized (into its
-	// copy-materialized apm_modules/_local/<hash> key, step 1b-2's job)
+	// copy-materialized apm_modules/_local/<name> key, step 1b-2's job)
 	// BEFORE it's used to key this map: a still-IsLocal ref has no
 	// deploy.DepRefKey at all ("" -- skipped by the guard below), while the
 	// SAME dependency re-requested positionally this call gets normalized
@@ -324,11 +326,20 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	// recognizing it as already declared. m.ParsedDevDeps is normalized here
 	// too (external Tier-2 audit finding, scenario A/B below) so its keys
 	// are computed the same way BEFORE existing/existingIsDev is indexed.
+	// Decided before anything is written: apm.yml, apm_modules and the lock
+	// are untouched when two local packages collide.
+	locals := make(localSources)
 	for _, d := range m.ParsedDeps {
 		normalizeLocalDep(d)
+		if err := locals.add(d); err != nil {
+			return err
+		}
 	}
 	for _, d := range m.ParsedDevDeps {
 		normalizeLocalDep(d)
+		if err := locals.add(d); err != nil {
+			return err
+		}
 	}
 	existing := make(map[string]bool)
 	// existingIsDev tracks, for every key in `existing`, which section it is
@@ -411,6 +422,19 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	// apm.yml section move gets written -- would never run (2026-07-30
 	// Tier-2 finding).
 	manifestSectionMoved := false
+	// The lines the Oracle prints while it validates positional packages
+	// (core/command_logger.py:276-295, install/manifest_helpers.py:40). A
+	// frozen install keeps its own output.
+	announce := !frozen && len(packages) > 0
+	newPackages := 0
+	// heldLines are the lines from "Updated apm.yml" to the last "Resolving",
+	// printed once the resolve has returned. apm.yml is written at the end of
+	// the run, so "Updated apm.yml" is true only when the run gets there: a
+	// run that fails up to and in the resolve does not print it.
+	var heldLines []heldLine
+	if announce {
+		ux.Success(os.Stdout, "Validating %d %s...", len(packages), pluralWord(len(packages), "package", "packages"))
+	}
 	if len(packages) > 0 {
 		// mi-fix (MI2): key by deploy.DepRefKey (RepoURL, or
 		// RepoURL/VirtualPath) instead of bare RepoURL, matching the identity
@@ -458,6 +482,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			// key (F1: an absolute RepoURL was previously joined onto
 			// apm_modules verbatim, producing an invalid clone destination).
 			normalizeLocalDep(ref)
+			if err := locals.add(ref); err != nil {
+				return err
+			}
 			key := deploy.DepRefKey(ref)
 			// BUG-1: fold this pkg onto the first-declared dep key sharing
 			// its canonical repo identity -- whether that first declaration
@@ -507,9 +534,18 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 					existingIsDev[key] = deps.dev
 					appendedThisCall[key] = true
 				}
+				if announce {
+					ux.Success(os.Stdout, "%s (already in apm.yml)", persistPkg)
+				}
 				continue
 			}
 			appendedThisCall[key] = true
+			newPackages++
+			// A local path that does not exist was not validated: the
+			// resolve reports it.
+			if announce && !isMissingLocalPath(ref) {
+				ux.Success(os.Stdout, "%s", persistPkg)
+			}
 			// R9/AC42: --dev routes this call's positional packages into
 			// devDependencies.apm instead of dependencies.apm. allDirectDeps
 			// (resolver root seeding, allDirectDeps-based scans) already
@@ -520,6 +556,16 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			} else {
 				m.ParsedDeps = append(m.ParsedDeps, ref)
 			}
+		}
+	}
+	if announce {
+		// apm.yml itself is written at the end of the run, with the lock.
+		if newPackages > 0 {
+			heldLines = append(heldLines, heldLine{onlyOnSuccess: true, print: func() {
+				ux.Success(os.Stdout, "Updated apm.yml with %d new package(s)", newPackages)
+			}})
+		} else {
+			ux.Progress(os.Stdout, "No new packages to add")
 		}
 	}
 
@@ -580,6 +626,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		if existingLock == nil {
 			return fmt.Errorf("frozen install requires a lockfile but none was found")
 		}
+		useLegacyLocalKeys(m, existingLock)
 		if err := lockfile.CheckFrozenInstall(m, existingLock); err != nil {
 			return err
 		}
@@ -801,16 +848,31 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 
 	var result *resolver.ResolutionResult
 	var regLoader *registry.Loader
+	// core/command_logger.py:319-347. A local package the lock already holds
+	// is not resolved again by the Oracle and gets no line.
+	heldLines = append(heldLines, heldLine{print: func() {
+		if len(packages) > 0 {
+			ux.Progress(os.Stdout, "Installing %d new %s...", len(packages), pluralWord(len(packages), "package", "packages"))
+		} else {
+			ux.Progress(os.Stdout, "Installing dependencies from apm.yml...")
+		}
+	}})
 	if !hasAnyDeps {
+		printHeldLines(heldLines, true)
 		result = &resolver.ResolutionResult{}
 	} else {
-		sp := ux.Spinner(os.Stdout, "Installing dependencies from apm.yml...")
 		seen := make(map[string]bool)
 		for _, dep := range allDirectDeps(m) {
 			canon := dep.ToCanonical(m.DefaultHost)
+			if dep.LocalSourcePath != "" {
+				canon = dep.LocalDeclaredPath
+				if existingLock != nil && existingLock.FindByKey(deploy.DepRefKey(dep)) != nil {
+					continue
+				}
+			}
 			if !seen[canon] {
 				seen[canon] = true
-				sp.Update(fmt.Sprintf("Resolving %s...", canon))
+				heldLines = append(heldLines, heldLine{print: func() { ux.Progress(os.Stdout, "Resolving %s...", canon) }})
 			}
 		}
 
@@ -820,6 +882,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		for _, d := range allDirectDeps(m) {
 			if d.Source == "registry" {
 				if err := experimental.RequireEnabled("registries"); err != nil {
+					printHeldLines(heldLines, false)
 					return err
 				}
 				break
@@ -837,14 +900,15 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			MaxEntries:      deps.maxEntries,
 		}
 
+		newLocalCopies := absentLocalCopies(m)
 		result, err = resolver.Resolve(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{
 			MarketplaceResolve: newMarketplaceResolveFunc(),
 		})
+		printHeldLines(heldLines, err == nil)
 		if err != nil {
-			sp.Fail(fmt.Sprintf("resolve: %v", err))
+			removeNewLocalCopies(newLocalCopies)
 			return fmt.Errorf("resolve: %w", err)
 		}
-		sp.Success(fmt.Sprintf("Resolved %d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies")))
 		// mkt-029/033/F1: apm.yml dict-form marketplace dependencies
 		// (dependencies.apm entries {name, marketplace, version}) are
 		// resolved by the BFS itself now (root and transitive alike), not
@@ -869,7 +933,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		return err
 	}
 
-	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, skillSubset, requestedKeys, noProvenance, marketplaceProvenance)
+	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, skillSubset, requestedKeys, noProvenance, marketplaceProvenance, localDeclaredPaths(m))
 	if err != nil {
 		return err
 	}
@@ -915,7 +979,8 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node)
+	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node,
+		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance})
 }
 
 // printFrozenVerifiedDeps lists every dependency a successful --frozen
@@ -1156,8 +1221,8 @@ func persistLocalBundleDeployment(result *localbundle.IntegrateResult) error {
 	if err != nil {
 		return fmt.Errorf("serialize lockfile: %w", err)
 	}
-	if err := os.WriteFile("apm.lock.yaml", outBytes, 0644); err != nil {
-		return fmt.Errorf("write apm.lock.yaml: %w", err)
+	if err := writeLockfileBytes(outBytes); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1609,7 +1674,7 @@ func hasMarketplaceProvenance(d *lockfile.LockedDep) bool {
 // buildLockfile converts a resolution result into the lockfile that would be
 // written for it, without touching disk (steps 5). Shared by runInstall and
 // runUpdate so both build the same lockfile shape from a resolution result.
-func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys map[string]bool, noProvenance bool, marketplaceProvenance map[string]*marketplace.Provenance) (*lockfile.Lockfile, error) {
+func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys map[string]bool, noProvenance bool, marketplaceProvenance map[string]*marketplace.Provenance, localDeclared map[string]string) (*lockfile.Lockfile, error) {
 	existingVersion := ""
 	if existingLock != nil {
 		existingVersion = existingLock.Version
@@ -1619,7 +1684,6 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 		Version: lockfile.DetermineVersion(toLockDeps(result.Deps), existingVersion),
 	}
 	if !noProvenance {
-		newLock.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 		newLock.APMVersion = version.Version
 	}
 
@@ -1642,6 +1706,17 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 
 		// req-lk-002/003: registry deps carry resolved_url + resolved_hash +
 		// version, collected out-of-band by the registry loader.
+		// A local package: the Oracle records where it came from and what
+		// its own apm.yml says, and no commit (install/sources.py:246).
+		declaredPath, isLocal := localDeclared[dep.Key]
+		if isLocal {
+			ld.Source = "local"
+			ld.LocalPath = declaredPath
+			ld.ResolvedRef = ""
+			ld.ResolvedCommit = ""
+			ld.Name, ld.Version, ld.PackageType = localPackageIdentity(filepath.Join("apm_modules", filepath.FromSlash(dep.Key)))
+		}
+
 		if dep.Kind == resolver.KindRegistry {
 			if r, ok := regLoader.Resolutions()[dep.Key]; ok {
 				ld.ResolvedURL = r.ResolvedURL
@@ -1710,6 +1785,11 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 		}
 
 		// Resolve commit SHA for git deps that don't have it yet
+		if isLocal {
+			newLock.Dependencies = append(newLock.Dependencies, ld)
+			continue
+		}
+
 		if (dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral) && dep.Commit == "" {
 			installDir := filepath.Join("apm_modules", dep.Key)
 			if commit, err := gitops.ResolveCommit(installDir); err == nil {
@@ -1771,7 +1851,7 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // already-persisted subset, not just the one this call's --skill flag named.
 // dev (R9/AC42) selects which apm.yml section packages is persisted into --
 // always false for `update`, which never persists positional packages.
-func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node) error {
+func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, run *installRun) error {
 	detectRoot := "."
 	if deployDir != "" {
 		detectRoot = deployDir
@@ -1784,6 +1864,11 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// SAME LocalDeployedFiles slice) -- never a second up-front directory
 	// scan just to decide what to print.
 	var localProjectDeployed bool
+	// apmInstalled and mcpConfigured are the counts of the Oracle's summary
+	// line: what this run installed or configured.
+	var apmInstalled, mcpConfigured int
+	// apmPhase: a dependency or the project's own content was deployed.
+	var apmPhase bool
 	// keptDirs and failedBuckets are deploy.DeployResult.KeptDirs and
 	// .FailedBuckets, for the lock merge in step 6b.
 	var keptDirs []string
@@ -1797,10 +1882,19 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		targetSource := "auto-detect"
 		if targetFlag != "" {
 			targetSource = "--target"
+			if run != nil {
+				// The Oracle's provenance wording (core/target_detection.py:814).
+				targetSource = "--target flag"
+			}
 		} else if len(m.Target) > 0 {
 			targetSource = "apm.yml"
 		}
-		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
+		printTargets := func() {
+			ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
+		}
+		if run == nil {
+			printTargets()
+		}
 
 		var skillFilter *deploy.SkillFilter
 		if len(effectiveSubsets) > 0 {
@@ -1809,13 +1903,26 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// The "Skill subset:" info line only makes sense when THIS call
 		// narrowed something -- an already-persisted subset from an earlier
 		// call being silently re-applied isn't news the user asked for now.
-		if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
-			ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
+		printSkillSubset := func() {
+			if len(skillSubset) > 0 && !containsSkillWildcard(skillSubset) {
+				ux.Info(os.Stdout, "Skill subset: %s", strings.Join(skillSubset, ", "))
+			}
+		}
+		if run == nil {
+			printSkillSubset()
 		}
 
+		beforeDeploy := hashesOnDisk(existingLock, detectRoot)
 		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir, deployDir != "")
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
+		}
+		apmPhase = len(result.Deps) > 0 || len(deployResult.PerDep) > 0
+		if run != nil && apmPhase {
+			// The Oracle names the targets only when it has a package or the
+			// project's own content to integrate (core/target_detection.py:1186).
+			printTargets()
+			printSkillSubset()
 		}
 		for _, d := range deployResult.Diags {
 			ux.Warn(os.Stderr, "%s", d)
@@ -1829,20 +1936,47 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// Deliberate deviation from the Oracle, by owner ruling: the Oracle
 		// also puts local content last (install/phases/integrate.py:716), but
 		// it orders the dependencies by (depth, node id)
-		// (deps/apm_resolver.py:46). apm-go keeps the resolver order because
-		// it is the smallest change and because the apm-go key of a local-path
-		// dependency (_local/<name>-<hash8>) is not the Oracle's id (the
-		// declared path), so a sort by key would not match the Oracle either.
+		// (deps/apm_resolver.py:46). apm-go keeps the resolver order (issue
+		// #47, kept by issue #50 ruling R1).
 		for _, dep := range result.Deps {
-			if dr, ok := deployResult.PerDep[dep.Key]; ok {
-				ux.Tree(os.Stdout, deployedFilesTree(dep.Key+depVersionLabel(dep), dr.Files))
+			dr, ok := deployResult.PerDep[dep.Key]
+			if !ok && run == nil {
+				continue
 			}
+			if run == nil {
+				ux.Tree(os.Stdout, deployedFilesTree(dep.Key+depVersionLabel(dep), dr.Files))
+				continue
+			}
+			// A package that deployed nothing still gets its header, with
+			// "(files unchanged)", and is counted (measured on the Oracle).
+			var files []string
+			var hashes map[string]string
+			if ok {
+				files, hashes = dr.Files, dr.Hashes
+			}
+			printInstallBlock(run.installBlockLabel(dep), files, hashes, beforeDeploy)
+			// The Oracle counts a local package on every run
+			// (install/sources.py:74). A remote package it counts only when
+			// fetched in this run; apm-go counts it always, which was not
+			// compared against the Oracle.
+			apmInstalled++
 		}
 		if dr, ok := deployResult.PerDep[""]; ok {
 			// R14: name the local-primitives bucket after what it actually
 			// is (files integrated from this project's own .apm/ tree), not
 			// a bare, ambiguous "(local)".
-			ux.Tree(os.Stdout, deployedFilesTree("<project root> (local)", dr.Files))
+			if run == nil {
+				ux.Tree(os.Stdout, deployedFilesTree("<project root> (local)", dr.Files))
+			} else if printInstallBlock("<project root> (local)", dr.Files, dr.Hashes, beforeDeploy) > 0 {
+				// The project's own content counts as one dependency when a
+				// file of it was integrated (install/phases/integrate.py:385).
+				apmInstalled++
+			}
+		}
+
+		if run != nil && apmPhase {
+			// Here, before the MCP servers, is where the Oracle prints it.
+			updateGitignoreForApmModules()
 		}
 
 		// Warn about resolved dependencies that deployed zero files to any
@@ -1860,49 +1994,21 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			dep := &newLock.Dependencies[i]
 			key := dep.UniqueKey()
 			if dr, ok := deployResult.PerDep[key]; ok {
-				dep.DeployedFiles = dr.Files
+				dep.DeployedFiles = withSkillDirs(dr.Files, deployDir)
 				dep.DeployedHashes = dr.Hashes
 			}
 		}
 		// Populate local deployed files
 		if dr, ok := deployResult.PerDep[""]; ok {
-			newLock.LocalDeployedFiles = dr.Files
+			newLock.LocalDeployedFiles = withSkillDirs(dr.Files, deployDir)
 			newLock.LocalDeployedHashes = dr.Hashes
 			localProjectDeployed = len(dr.Files) > 0
 		}
 
-		// Merged MCP config files (e.g. .mcp.json) are multi-source -- no
-		// single dep or "local" bucket owns them -- so their hashes are
-		// recorded alongside local deployed files (pr-001 per-file source
-		// attribution is served by deployResult.MCPProvenance in-memory,
-		// not persisted; only the server name list is, via MCPServers below).
-		if len(deployResult.MCPFiles) > 0 {
-			if newLock.LocalDeployedHashes == nil {
-				newLock.LocalDeployedHashes = map[string]string{}
-			}
-			for f, hash := range deployResult.MCPFiles {
-				newLock.LocalDeployedFiles = append(newLock.LocalDeployedFiles, f)
-				newLock.LocalDeployedHashes[f] = hash
-			}
-			sort.Strings(newLock.LocalDeployedFiles)
-		}
-
-		// Record the full current set of MCP server names deployed this run
-		// (un-060 prerequisite: uninstall's transitive-stale MCP cleanup
-		// needs an "old" name list to diff against). deploy.Run recomputes
-		// the merged bake from scratch every call, so MCPProvenance already
-		// reflects the complete current state, not just a delta -- dedup by
-		// name since the same server can appear once per target file.
-		//
-		// R13 (prd.md/design.md §3): deployResult.MCPProvenance already
-		// carries which target(s) each server actually landed in (via its
-		// per-entry Target field) -- print a "server -> targets" summary
-		// while building the SAME dedup pass, instead of only ever
-		// persisting the server name list and never surfacing it in stdout.
-		// targetsByServer is aggregated (not just concatenated) so a server
-		// with entries from multiple target files collapses to one line
-		// naming every target it reached (codex M3: no duplicate lines for
-		// the same server, no duplicate targets within a line).
+		// A merged MCP config file (.mcp.json) is shared with the user's own
+		// servers, so the lock does not list it as a deployed file; the
+		// servers are recorded instead (the Oracle's mcp_servers, mcp_configs
+		// and mcp_target_servers).
 		if len(deployResult.MCPProvenance) > 0 {
 			seen := make(map[string]bool, len(deployResult.MCPProvenance))
 			targetsByServer := make(map[string]map[string]bool, len(deployResult.MCPProvenance))
@@ -1921,15 +2027,29 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 			}
 			sort.Strings(newLock.MCPServers)
+			declaredMCP := manifestMCPByName(m)
+			recordMCPState(newLock, declaredMCP, targetsByServer)
 
-			mcpItems := make([]ux.Item, 0, len(newLock.MCPServers))
-			for _, server := range newLock.MCPServers {
-				mcpItems = append(mcpItems, ux.Item{
-					Text: fmt.Sprintf("%s -> %s", server, strings.Join(sortedStringSet(targetsByServer[server]), ", ")),
-				})
+			if run != nil {
+				mcpTargets := map[string]bool{}
+				for _, set := range targetsByServer {
+					for t := range set {
+						mcpTargets[t] = true
+					}
+				}
+				ensureClaudeDir(detectRoot, mcpTargets)
+				mcpConfigured = printMCPBlock(manifestMCPOrder(m, newLock.MCPServers, targetsByServer), declaredMCP,
+					newLock, existingLock, targetsByServer, targetFlag != "", len(m.Target) > 0)
+			} else {
+				mcpItems := make([]ux.Item, 0, len(newLock.MCPServers))
+				for _, server := range newLock.MCPServers {
+					mcpItems = append(mcpItems, ux.Item{
+						Text: fmt.Sprintf("%s -> %s", server, strings.Join(sortedStringSet(targetsByServer[server]), ", ")),
+					})
+				}
+				ux.Info(os.Stdout, "MCP servers configured:")
+				ux.List(os.Stdout, mcpItems)
 			}
-			ux.Info(os.Stdout, "MCP servers configured:")
-			ux.List(os.Stdout, mcpItems)
 		}
 
 		// Pollution convergence (design.md §1.2g, codex C1, prd.md B2-3/
@@ -2025,8 +2145,16 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			}
 		}
 		if len(existingLock.LocalDeployedFiles) > 0 {
+			// A lock written before issue #50 lists the merged MCP config
+			// file here; it is not carried over.
+			var oldLocal []string
+			for _, f := range existingLock.LocalDeployedFiles {
+				if !deploy.IsMCPConfigPath(f) {
+					oldLocal = append(oldLocal, f)
+				}
+			}
 			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = merge("",
-				existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes,
+				oldLocal, existingLock.LocalDeployedHashes,
 				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes)
 		}
 	}
@@ -2042,6 +2170,16 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// report a false "Already up to date" and the section move's apm.yml
 	// write would silently never happen, despite the "moved from ..."
 	// info message already printed above.
+	newLock.PathTargets = pathTargets(newLock, existingLock, targets)
+	if run != nil {
+		return run.finish(installOutcome{
+			node: node, packages: packages, effectiveSubsets: effectiveSubsets, dev: dev,
+			manifestSectionMoved: manifestSectionMoved, result: result, targets: targets,
+			newLock: newLock, existingLock: existingLock, existingNode: existingNode,
+			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase,
+		})
+	}
+
 	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) && !manifestSectionMoved {
 		ux.Info(os.Stdout, "Already up to date")
 		return nil
@@ -2053,9 +2191,12 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		return fmt.Errorf("serialize lockfile: %w", err)
 	}
 
-	if err := os.WriteFile("apm.lock.yaml", outBytes, 0644); err != nil {
-		return fmt.Errorf("write apm.lock.yaml: %w", err)
+	if err := writeLockfileBytes(outBytes); err != nil {
+		return err
 	}
+	// update rewrites a lock from before issue #50 too; the directories that
+	// lock named would otherwise stay with no lock entry to clean them (R16).
+	removeLegacyLocalModules(existingLock, newLock)
 
 	// 9. Persist positional packages to apm.yml
 	if len(packages) > 0 {
@@ -2652,7 +2793,7 @@ func entryDepString(entry *yamllib.Node) string {
 // CanonicalRepoIdentity). normalizeLocalDep is applied first so a
 // LOCAL-PATH dependency (which ParseDepString alone reports as IsLocal, but
 // which runInstall's own step 1b-2 loop always normalizes into a
-// Source="git" apm_modules/_local/<hash> materialization key before
+// Source="git" apm_modules/_local/<name> materialization key before
 // effectiveSkillSubsets/deploy.Run ever see it) computes the SAME identity
 // here that the rest of the --skill subset pipeline uses -- without this,
 // a positional local-path package would parse straight to IsLocal=true and
@@ -2932,14 +3073,16 @@ func extractDepByKey(refs []*manifest.DependencyReference, key string) (*manifes
 //	    empty Owner/Repo and an ABSOLUTE RepoURL, no git ref).
 //
 // Both are converted to {Source:"git", RepoURL:"_local/<name>", LocalSourcePath:
-// <abs source>}. RepoURL becomes the sanitized, contained apm_modules key that
-// the resolver (depKey), deploy (DepRefKey), and the lockfile (repo_url) all
-// use, so no filepath.Join(apm_modules, key) ever sees an absolute path. The
-// real source path rides on LocalSourcePath for the loader's copy step and is
-// never persisted. RELATIVE git-local paths (git: ./remote, which may pin a
-// ref and clone) are deliberately NOT matched -- only absolute ones, which the
-// clone path cannot handle at all. No-op (returns without change) for anything
-// else, and idempotent (an already-"_local/…" ref matches neither shape).
+// <abs source>, LocalDeclaredPath: <path as written>}. RepoURL becomes the
+// contained apm_modules key that the resolver (depKey), deploy (DepRefKey),
+// and the lockfile (repo_url) all use, so no filepath.Join(apm_modules, key)
+// ever sees an absolute path. The real source path rides on LocalSourcePath
+// for the loader's copy step and is never persisted; LocalDeclaredPath is what
+// the lock records as local_path. RELATIVE git-local paths (git: ./remote,
+// which may pin a ref and clone) are deliberately NOT matched -- only absolute
+// ones, which the clone path cannot handle at all. No-op (returns without
+// change) for anything else, and idempotent (an already-"_local/…" ref matches
+// neither shape).
 func normalizeLocalDep(ref *manifest.DependencyReference) {
 	var src string
 	switch {
@@ -2963,6 +3106,33 @@ func normalizeLocalDep(ref *manifest.DependencyReference) {
 	ref.Source = "git"
 	ref.RepoURL = localModulesKey(abs)
 	ref.LocalSourcePath = abs
+	ref.LocalDeclaredPath = src
+}
+
+// errLocalNameCollision reports two local packages whose source directories
+// have the same name. Both would be copied to apm_modules/_local/<name>.
+//
+// Deliberate deviation from the Oracle (issue #50, owner ruling R6): it
+// copies the second over the first and exits 0, leaving one directory and two
+// lock entries with the same repo_url.
+func errLocalNameCollision(key, first, second string) error {
+	return fmt.Errorf("local packages %s and %s have the same directory name %q; a local package is installed to apm_modules/%s, so the two would overwrite each other -- rename one of the directories",
+		first, second, strings.TrimPrefix(key, localModulesKeyPrefix), key)
+}
+
+// localSources records the source directory of each local package by its
+// apm_modules key and refuses a second directory for the same key.
+type localSources map[string]string
+
+func (s localSources) add(ref *manifest.DependencyReference) error {
+	if ref.LocalSourcePath == "" {
+		return nil
+	}
+	if first, ok := s[ref.RepoURL]; ok && first != ref.LocalSourcePath {
+		return errLocalNameCollision(ref.RepoURL, first, ref.LocalSourcePath)
+	}
+	s[ref.RepoURL] = ref.LocalSourcePath
+	return nil
 }
 
 // resolveLocalSourceAbs turns a local dependency source (which may be
@@ -2983,16 +3153,70 @@ func resolveLocalSourceAbs(src string) string {
 	return filepath.Clean(s)
 }
 
-// localModulesKey derives a stable, path-safe, contained apm_modules key for a
-// copy-materialized local dependency, mirroring Python's apm_modules/_local/
-// <name>/ layout but appending a short hash of the absolute source path so two
-// different sources sharing a basename (e.g. two ".../hello" dirs) never
-// collide on the same key. Deterministic for a given absolute source, so a
-// re-install (or the round-trip second `apm install`) reuses the same key.
+// localModulesKey is the apm_modules key and lock repo_url of a
+// copy-materialized local dependency: _local/<name of the source directory>,
+// the Oracle's layout (install/phases/local_content.py:184). Two sources with
+// the same directory name share a key; runInstall refuses that
+// (errLocalNameCollision).
 func localModulesKey(abs string) string {
+	name := filepath.Base(abs)
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\`+"\x00") {
+		name = sanitizePathSegment(name)
+	}
+	return localModulesKeyPrefix + name
+}
+
+// legacyLocalModulesKey is the key apm-go gave a local dependency before
+// issue #50: the directory name plus eight hex characters of the hash of the
+// absolute source path. A lock written then still names it, so uninstall and
+// the conversion of an old lock have to find it.
+func legacyLocalModulesKey(abs string) string {
 	base := sanitizePathSegment(filepath.Base(abs))
 	sum := sha256.Sum256([]byte(filepath.Clean(abs)))
 	return localModulesKeyPrefix + base + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// heldLine is one stdout line of install whose printing waits for the resolve.
+type heldLine struct {
+	// onlyOnSuccess marks a line that states something the run does only when
+	// it succeeds.
+	onlyOnSuccess bool
+	print         func()
+}
+
+func printHeldLines(lines []heldLine, succeeded bool) {
+	for _, l := range lines {
+		if succeeded || !l.onlyOnSuccess {
+			l.print()
+		}
+	}
+}
+
+// isMissingLocalPath reports whether ref, after normalizeLocalDep, names a
+// local directory that is not there.
+func isMissingLocalPath(ref *manifest.DependencyReference) bool {
+	if ref.LocalSourcePath == "" {
+		return false
+	}
+	_, err := os.Stat(ref.LocalSourcePath)
+	return os.IsNotExist(err)
+}
+
+// useLegacyLocalKeys gives a local dependency the key a lock from before
+// issue #50 pins it under, when that lock has no entry under the current key.
+// A frozen install changes neither the lock nor apm_modules/, so it has to
+// read such a lock as it is (ruling R16); every other install converts it.
+func useLegacyLocalKeys(m *manifest.Manifest, lock *lockfile.Lockfile) {
+	for _, deps := range [][]*manifest.DependencyReference{m.ParsedDeps, m.ParsedDevDeps} {
+		for _, dep := range deps {
+			if dep.LocalSourcePath == "" || lock.FindByKey(dep.RepoURL) != nil {
+				continue
+			}
+			if legacy := legacyLocalModulesKey(dep.LocalSourcePath); lock.FindByKey(legacy) != nil {
+				dep.RepoURL = legacy
+			}
+		}
+	}
 }
 
 // localModulesKeyPrefix marks an apm_modules key and lock repo_url that
@@ -3019,6 +3243,83 @@ func sanitizePathSegment(s string) string {
 		out = "pkg" + strings.TrimLeft(out, ".")
 	}
 	return out
+}
+
+// absentLocalCopies lists the apm_modules directories of the direct local
+// packages that do not exist yet. A failed resolve removes exactly these
+// (ruling R20): the loader copies a local package before the resolver can
+// refuse it, and a refused package must not stay in apm_modules.
+func absentLocalCopies(m *manifest.Manifest) []string {
+	var absent []string
+	for _, d := range allDirectDeps(m) {
+		if d.LocalSourcePath == "" {
+			continue
+		}
+		key := deploy.DepRefKey(d)
+		if _, err := os.Lstat(filepath.Join("apm_modules", filepath.FromSlash(key))); os.IsNotExist(err) {
+			absent = append(absent, key)
+		}
+	}
+	return absent
+}
+
+// removeNewLocalCopies deletes the copies absentLocalCopies listed, and the
+// _local and apm_modules directories when that leaves them empty.
+func removeNewLocalCopies(keys []string) {
+	for _, key := range keys {
+		if _, err := deploy.SafeRemoveModuleDir(".", key); err != nil {
+			ux.Warn(os.Stderr, "could not remove apm_modules/%s: %v", key, err)
+		}
+	}
+}
+
+// localDeclaredPaths maps the apm_modules key of each direct local package
+// to its path as declared, after normalizeLocalDep.
+func localDeclaredPaths(m *manifest.Manifest) map[string]string {
+	declared := make(map[string]string)
+	for _, d := range allDirectDeps(m) {
+		if d.LocalSourcePath != "" {
+			declared[deploy.DepRefKey(d)] = d.LocalDeclaredPath
+		}
+	}
+	return declared
+}
+
+// localPackageIdentity reads what the lock records about a materialized
+// local package: the name and version of its apm.yml, and its package type.
+// The type follows the first signals of the Oracle's cascade
+// (detect_package_type, models/validation.py:256); only apm_package was
+// compared against the Oracle's output.
+func localPackageIdentity(dir string) (name, pkgVersion, packageType string) {
+	exists := func(rel string) bool {
+		_, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel)))
+		return err == nil
+	}
+	hasManifest := false
+	if data, err := os.ReadFile(filepath.Join(dir, "apm.yml")); err == nil {
+		if node, err := yamlcore.SafeLoad(data); err == nil {
+			if sub, _, err := manifest.ParseManifest(node); err == nil {
+				hasManifest = true
+				name, pkgVersion = sub.Name, sub.Version
+			}
+		}
+	}
+	nestedSkills, _ := filepath.Glob(filepath.Join(dir, "skills", "*", "SKILL.md"))
+	switch {
+	case hasManifest && exists("SKILL.md"):
+		packageType = "hybrid"
+	case hasManifest:
+		packageType = lockfile.PackageTypeAPMPackage
+	case exists("plugin.json") || exists(".claude-plugin"):
+		packageType = lockfile.PackageTypeMarketplacePlugin
+	case exists("SKILL.md"):
+		packageType = "claude_skill"
+	case len(nestedSkills) > 0:
+		packageType = "skill_bundle"
+	case exists("hooks"):
+		packageType = "hook_package"
+	}
+	return name, pkgVersion, packageType
 }
 
 func kindToSource(k resolver.ReferenceKind) string {

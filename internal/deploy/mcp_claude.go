@@ -16,12 +16,30 @@ func (a *claudeAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string
 	if len(prims) == 0 {
 		return nil, nil, diags, nil
 	}
+	for _, p := range prims {
+		entry := entries[p.Name]
+		if p.MCP == nil || entry == nil {
+			continue
+		}
+		keepDeclaredOrder(entry, "env", p.MCP.EnvOrder)
+		keepDeclaredOrder(entry, "headers", p.MCP.HeaderOrder)
+	}
 	relPath := ".mcp.json"
-	if err := writeMergedMCPJSON(projectDir, relPath, "mcpServers", entries, consideredNames(prims), 0600); err != nil {
+	names := make([]string, 0, len(prims))
+	for _, p := range prims {
+		names = append(names, p.Name)
+	}
+	if err := writeOrderedMCPJSON(projectDir, relPath, "mcpServers", entries, consideredNames(prims), names, claudeMCPKeyOrder, 0600); err != nil {
 		return nil, nil, diags, err
 	}
 	return []string{relPath}, entryNames(entries), diags, nil
 }
+
+// claudeMCPKeyOrder is the key order of one server in .mcp.json as the
+// Oracle's Claude adapter writes it (adapters/client/claude.py), observed
+// from its output: stdio is type, command, env, args; remote is type, url,
+// headers.
+var claudeMCPKeyOrder = []string{"type", "command", "env", "args", "cwd", "url", "headers"}
 
 func claudeMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 	if r.Transport == "stdio" {
@@ -39,4 +57,19 @@ func claudeMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 		e["headers"] = r.Headers
 	}
 	return e, true, ""
+}
+
+// keepDeclaredOrder turns entry[key], a string map, into an object whose keys
+// are in the order apm.yml or the command line declared them: the Oracle
+// writes env and headers to .mcp.json in that order, not sorted.
+func keepDeclaredOrder(entry map[string]any, key string, order []string) {
+	m, ok := entry[key].(map[string]string)
+	if !ok {
+		return
+	}
+	obj := newOrderedObject()
+	for _, k := range manifest.OrderedKeys(m, order) {
+		obj.set(k, m[k])
+	}
+	entry[key] = obj
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
-	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
@@ -202,7 +201,7 @@ func Run(projectDir string, m *manifest.Manifest) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	content := StabilizeBuildID(RenderAgentsMD(instructions, version.Version))
+	content := StabilizeBuildID(RenderAgentsMD(instructions))
 	wrote, err := WriteAGENTSMD(projectDir, content)
 	if err != nil {
 		return nil, err

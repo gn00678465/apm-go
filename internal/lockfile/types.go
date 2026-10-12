@@ -1,13 +1,17 @@
 package lockfile
 
+import "go.yaml.in/yaml/v4"
+
 // LockedDep represents a single resolved dependency in the lockfile.
 type LockedDep struct {
 	RepoURL        string
+	Name           string // the package's own name, from its apm.yml
 	Host           string
 	Port           int
 	RegistryPrefix string
 	VirtualPath    string
 	Source         string // "git", "registry", "local"
+	LocalPath      string // source "local": the path as apm.yml declares it
 	Constraint     string // verbatim semver range from manifest at lock time
 	ResolvedTag    string
 	ResolvedCommit string
@@ -16,7 +20,7 @@ type LockedDep struct {
 	ResolvedHash   string // registry archive hash (authoritative)
 	ResolvedBy     string // parent unique key format: "<repo_url>" or "<repo_url>/<virtual_path>"
 	ResolvedAt     string // ISO 8601 UTC
-	Version        string // registry version
+	Version        string // registry version; source "local": the package's own version
 	Depth          int
 	TreeSHA256     string
 	SkillSubset    []string
@@ -41,6 +45,10 @@ type LockedDep struct {
 	// dependencies.apm entry.
 	PackageType string
 }
+
+// PackageTypeAPMPackage is the package_type of a package with an apm.yml
+// and .apm/ content.
+const PackageTypeAPMPackage = "apm_package"
 
 // PackageTypeMarketplacePlugin is the package_type value apm-go writes for a
 // devDependencies.apm entry (the only classification currently produced).
@@ -73,6 +81,19 @@ type Lockfile struct {
 	// nil/empty slice as "unknown, assume none" (fail-open), never as
 	// "explicitly no MCP servers were ever deployed".
 	MCPServers []string
+
+	// MCPConfigs is the configuration of each self-defined or resolved MCP
+	// server by name, and MCPTargetServers the servers written for each
+	// target (the Oracle's mcp_configs and mcp_target_servers). A config is
+	// kept as the YAML mapping the lock holds, because its keys depend on
+	// the transport.
+	MCPConfigs       map[string]*yaml.Node
+	MCPTargetServers map[string][]string
+
+	// PathTargets names the target that owns a deployed path, for the
+	// deployments section. Parsed from that section and set by install; a
+	// path it lacks takes its target from the path prefix.
+	PathTargets map[string]string
 
 	index map[string]int // lazy index: unique key -> slice index
 }

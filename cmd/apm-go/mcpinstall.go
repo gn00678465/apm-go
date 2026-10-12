@@ -12,6 +12,7 @@ import (
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/deploy"
+	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/mcpregistry"
 	"github.com/apm-go/apm/internal/ux"
@@ -33,6 +34,8 @@ type mcpInstallOpts struct {
 	SkillSubset []string
 	TargetFlag  string
 	DeployDir   string
+	// NoProvenance leaves apm_version out of the lock (--no-provenance).
+	NoProvenance bool
 }
 
 // runMCPInstall handles `apm install --mcp NAME [flags]`: a standalone
@@ -78,6 +81,9 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if err != nil {
 		return err
 	}
+	setEntryMapOrder(entryNode, "env", kvPairKeys(opts.EnvPairs))
+	setEntryMapOrder(entryNode, "headers", kvPairKeys(opts.HeaderPairs))
+	compactList := !mcpListIsIndented(node)
 
 	// On an interactive TTY a conflicting entry is resolved by prompting
 	// (show the diff, default No) instead of hard-failing; non-interactively
@@ -92,25 +98,36 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		return err
 	}
 	if status == "skipped" {
+		// The user declined the replacement: the operation is cancelled
+		// and no file changes, the lock included.
 		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
 		return nil
 	}
 
 	if status == "unchanged" && opts.Registry != "" {
 		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
-		return nil
+		return syncLockProvenance(opts.NoProvenance)
 	}
 
 	deployDep, diags, err := buildDeployDep(opts)
 	if err != nil {
 		return err
 	}
+	// --env and --header keep the order they were given in, in apm.yml, the
+	// lock and .mcp.json, as the Oracle writes them.
+	deployDep.EnvOrder, deployDep.HeaderOrder = kvPairKeys(opts.EnvPairs), kvPairKeys(opts.HeaderPairs)
 	for _, d := range diags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
 
 	if status != "unchanged" {
-		manifestBytes, patched, err := yamlcore.PatchMappingPath(data, node, []string{"dependencies", "mcp"})
+		// A list apm-go starts gets the Oracle's layout; a list the user
+		// already indented keeps theirs.
+		patch := yamlcore.PatchMappingPath
+		if compactList {
+			patch = yamlcore.PatchMappingPathCompact
+		}
+		manifestBytes, patched, err := patch(data, node, []string{"dependencies", "mcp"})
 		if err != nil {
 			return fmt.Errorf("serialize apm.yml: %w", err)
 		}
@@ -125,25 +142,54 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		}
 	}
 
-	// Print target source (--target > apm.yml targets: > auto-detect) before
-	// deploying, matching runInstall's existing convention (deployAndFinalize)
-	// and design.md §8 -- R7 requires the resolved target source be
-	// verifiable in stdout, not just the deploy/skip outcome (codex review).
-	targets, targetDiags := deploy.ResolveTargets(opts.TargetFlag, m.Target, deployRoot)
-	for _, d := range targetDiags {
-		ux.Warn(os.Stderr, "%s", d)
+	// The transcript is the Oracle's (integration/mcp_integrator_install.py:
+	// 825, :950-1081, :1175), issue #50 ruling R10.
+	deployed, skipped, err := deployMCPEntry(m, opts.TargetFlag, deployDep, deployRoot)
+	if err != nil {
+		return err
 	}
-	if len(targets) > 0 {
-		targetSource := "auto-detect"
-		if opts.TargetFlag != "" {
-			targetSource = "--target"
-		} else if len(m.Target) > 0 {
-			targetSource = "apm.yml"
-		}
-		ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
+	if len(skipped) > 0 {
+		ux.Info(os.Stdout, "Skipped MCP config for %s  (active targets: %s)",
+			strings.Join(skipped, ", "), strings.Join(deployed, ", "))
+	}
+	if len(deployed) == 0 {
+		ux.Warn(os.Stdout, "MCP server %q declared in apm.yml but not deployed to any target; see diagnostics above", opts.Name)
+		return syncLockProvenance(opts.NoProvenance)
 	}
 
-	deployed, skipped, err := deployMCPEntry(m, opts.TargetFlag, deployDep, deployRoot)
+	lock, lockNode, err := readUninstallLockfile()
+	if err != nil {
+		return err
+	}
+	var oldLock *lockfile.Lockfile
+	if lock == nil {
+		lock = &lockfile.Lockfile{Version: "1"}
+	} else {
+		previous := *lock
+		previous.MCPConfigs = map[string]*yamllib.Node{}
+		for name, cfg := range lock.MCPConfigs {
+			previous.MCPConfigs[name] = cfg
+		}
+		previous.MCPTargetServers = map[string][]string{}
+		for target, servers := range lock.MCPTargetServers {
+			previous.MCPTargetServers[target] = append([]string(nil), servers...)
+		}
+		oldLock = &previous
+	}
+	targetSet := map[string]bool{}
+	for _, t := range deployed {
+		targetSet[t] = true
+	}
+	recordMCPServer(lock, deployDep, deployed)
+	ensureClaudeDir(deployRoot, targetSet)
+	printMCPBlock([]string{opts.Name}, map[string]*manifest.MCPDependency{opts.Name: deployDep}, lock, oldLock,
+		map[string]map[string]bool{opts.Name: targetSet}, opts.TargetFlag != "", len(m.Target) > 0)
+
+	lock.APMVersion = apmVersionFor(lock, lock.APMVersion, lockHasAPMVersion(lockNode), opts.NoProvenance)
+	lockBytes, err := lockfile.WriteLockfile(lock, lockNode)
+	if err == nil {
+		err = writeLockfileBytes(lockBytes)
+	}
 	if err != nil {
 		return err
 	}
@@ -155,44 +201,59 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	case "unchanged":
 		verb = "Deployed"
 	}
-	if len(skipped) > 0 {
-		ux.Info(os.Stdout, "Skipped MCP config for %s  (active targets: %s)",
-			strings.Join(skipped, ", "), strings.Join(deployed, ", "))
-	}
-	// A target adapter can accept the write call yet filter the entry out
-	// internally (e.g. a non-https remote URL, or an unresolved placeholder)
-	// -- deployed stays empty even though no error was returned. Declaring
-	// "Added" in that case would be a false success (found by codex review):
-	// apm.yml now carries an entry that is not actually running anywhere.
-	if len(deployed) == 0 {
-		ux.Warn(os.Stdout, "MCP server %q declared in apm.yml but not deployed to any target; see diagnostics above", opts.Name)
-		return nil
-	}
-	// Oracle install/mcp/command.py:227-231 uses symbol="check" for
-	// verified/added/replaced MCP server records.
 	ux.Check(os.Stdout, "%s MCP server '%s'", verb, opts.Name)
-	// R11 (prd.md/design.md §3): deployMCPEntry already returns `deployed`,
-	// the target list it actually configured -- previously only surfaced
-	// when a --force/conflict path ALSO populated `skipped` (the "Skipped
-	// MCP config for X (active targets: ...)" line above); the common case
-	// (nothing skipped) silently dropped it. And "apm.yml: apm.yml" was a
-	// hardcoded, always-relative literal, not the real path -- both are
-	// presentation-only fixes: the data was already computed, just not
-	// printed/resolved.
 	apmYMLPath := "apm.yml"
 	if abs, pathErr := filepath.Abs("apm.yml"); pathErr == nil {
 		apmYMLPath = abs
 	}
-	ux.List(os.Stdout, []ux.Item{
-		{Text: fmt.Sprintf("transport: %s", deployDep.Transport)},
-		{Text: fmt.Sprintf("targets: %s", strings.Join(deployed, ", "))},
-		{Text: fmt.Sprintf("apm.yml: %s", apmYMLPath)},
-	})
+	ux.Plain(os.Stdout, "  transport: %s", deployDep.Transport)
+	ux.Plain(os.Stdout, "  apm.yml: %s", apmYMLPath)
 	return nil
 }
 
-// validateMCPConflicts covers the subset of the Python original's E1-E15
-// conflict matrix relevant to apm-go's actual flag surface (design.md §2).
+// mcpListIsIndented reports whether dependencies.mcp already has items the
+// user indented under the key ("mcp:" then "    - name"). An absent, empty or
+// flow list has no layout to keep.
+func mcpListIsIndented(doc *yamllib.Node) bool {
+	// doc passed manifest.ParseManifest: a document whose root is a mapping.
+	root := doc.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != "dependencies" || root.Content[i+1].Kind != yamllib.MappingNode {
+			continue
+		}
+		deps := root.Content[i+1]
+		for j := 0; j+1 < len(deps.Content); j += 2 {
+			key, seq := deps.Content[j], deps.Content[j+1]
+			if key.Value != "mcp" || seq.Kind != yamllib.SequenceNode || len(seq.Content) == 0 || seq.Style&yamllib.FlowStyle != 0 {
+				continue
+			}
+			// "- " puts a block item two columns after its dash.
+			return seq.Content[0].Column-2 > key.Column
+		}
+	}
+	return false
+}
+
+// recordMCPServer adds one server to the lock's MCP state for the targets it
+// was written to.
+func recordMCPServer(lock *lockfile.Lockfile, dep *manifest.MCPDependency, targets []string) {
+	if !containsString(lock.MCPServers, dep.Name) {
+		lock.MCPServers = append(lock.MCPServers, dep.Name)
+	}
+	if lock.MCPConfigs == nil {
+		lock.MCPConfigs = map[string]*yamllib.Node{}
+	}
+	lock.MCPConfigs[dep.Name] = mcpConfigNode(dep)
+	if lock.MCPTargetServers == nil {
+		lock.MCPTargetServers = map[string][]string{}
+	}
+	for _, t := range targets {
+		if !containsString(lock.MCPTargetServers[t], dep.Name) {
+			lock.MCPTargetServers[t] = append(lock.MCPTargetServers[t], dep.Name)
+		}
+	}
+}
+
 func validateMCPConflicts(opts mcpInstallOpts) error {
 	if opts.Name == "" {
 		return fmt.Errorf("--mcp requires a server name")

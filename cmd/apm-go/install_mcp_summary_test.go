@@ -50,20 +50,20 @@ dependencies:
 	if err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
-	if !strings.Contains(stdout, "MCP servers configured:") {
-		t.Errorf("expected an MCP servers configured section, got:\n%s", stdout)
+	if !strings.Contains(stdout, "+- MCP Servers (1)\n") {
+		t.Errorf("expected the MCP Servers section, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "e2e-server -> claude, codex") {
+	if !strings.Contains(stdout, "e2e-server -> Claude, Codex (configured)") {
 		t.Errorf("expected e2e-server aggregated across both targets on one line, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "Installed 0 dependencies and 1 MCP server") {
+	if !strings.Contains(stdout, "Installed 1 MCP server in ") {
 		t.Errorf("expected the closing summary to mention 1 MCP server, got:\n%s", stdout)
 	}
 }
 
-// TestInstall_MCPSummary_NoMCPServersOmitsMention keeps today's exact
-// wording ("Installed N dependencies") when this run configured zero MCP
-// servers -- the R15 addition must be silent, not "and 0 MCP servers".
+// TestInstall_MCPSummary_NoMCPServersOmitsMention: a run that configured zero
+// MCP servers says nothing about them, not "and 0 MCP servers"; with nothing
+// else to install the closing line is the Oracle's "No changes" one.
 func TestInstall_MCPSummary_NoMCPServersOmitsMention(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -93,7 +93,7 @@ func TestInstall_MCPSummary_NoMCPServersOmitsMention(t *testing.T) {
 	if strings.Contains(stdout, "MCP server") {
 		t.Errorf("expected no MCP server mention when none were configured, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "Installed 0 dependencies") {
-		t.Errorf("expected the unchanged summary wording, got:\n%s", stdout)
+	if !strings.Contains(stdout, "No changes -- install state already up to date in ") {
+		t.Errorf("expected the \"No changes\" closing line, got:\n%s", stdout)
 	}
 }

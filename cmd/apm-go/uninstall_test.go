@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -195,8 +194,10 @@ func TestRunUninstall_RemovesPackageDeployedFilesModuleDirAndLockEntry(t *testin
 	if _, err := os.Stat(filepath.Join(dir, "apm_modules", "acme", "foo")); !os.IsNotExist(err) {
 		t.Errorf("expected apm_modules/acme/foo to be removed, stat err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "apm_modules")); !os.IsNotExist(err) {
-		t.Errorf("expected apm_modules itself to be cleaned up (now empty), stat err=%v", err)
+	// The Oracle leaves apm_modules/ itself, empty (issue #50, parity case
+	// uninstall-local).
+	if entries, err := os.ReadDir(filepath.Join(dir, "apm_modules")); err != nil || len(entries) != 0 {
+		t.Errorf("expected apm_modules to stay, empty; entries=%v err=%v", entries, err)
 	}
 
 	fx := readManifestParsed(t)
@@ -1003,7 +1004,7 @@ func TestReachableFromRemainingRoots_LocalModulesKeyWalksTransitive(t *testing.T
 // dependencies.apm/devDependencies.apm x relative/absolute local paths --
 // four cases, all translating the same way.
 func TestUninstallRemainingRootKeys_LocalRootUsesModulesKey(t *testing.T) {
-	localKeyRe := regexp.MustCompile(`^_local/[^/]+-[0-9a-f]{8}$`)
+	const wantKey = "_local/dep-pkg"
 
 	tests := []struct {
 		name string
@@ -1020,10 +1021,6 @@ func TestUninstallRemainingRootKeys_LocalRootUsesModulesKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := chdirTemp(t)
 			path := tc.path(dir)
-			wantKey := localModulesKey(resolveLocalSourceAbs(path))
-			if !localKeyRe.MatchString(wantKey) {
-				t.Fatalf("test setup produced an unexpected key shape %q", wantKey)
-			}
 
 			ref := &manifest.DependencyReference{IsLocal: true, LocalPath: path, Source: "local"}
 			m := &manifest.Manifest{}
@@ -1033,7 +1030,7 @@ func TestUninstallRemainingRootKeys_LocalRootUsesModulesKey(t *testing.T) {
 				m.ParsedDeps = []*manifest.DependencyReference{ref}
 			}
 
-			got := uninstallRemainingRootKeys(m, map[string]bool{})
+			got := uninstallRemainingRootKeys(m, map[string]bool{}, nil)
 
 			if len(got) != 1 {
 				t.Fatalf("expected exactly one remaining root key, got %v", got)
@@ -1063,7 +1060,7 @@ func TestUninstallRemainingRootKeys_RemovedLocalRootExcluded(t *testing.T) {
 		},
 	}
 
-	got := uninstallRemainingRootKeys(m, map[string]bool{"local:./dep-pkg": true})
+	got := uninstallRemainingRootKeys(m, map[string]bool{"local:./dep-pkg": true}, nil)
 
 	if len(got) != 0 {
 		t.Errorf("expected the removed local root to be excluded entirely, got %v", got)
@@ -1081,7 +1078,7 @@ func TestUninstallRemainingRootKeys_NonLocalKeyUnchanged(t *testing.T) {
 		},
 	}
 
-	got := uninstallRemainingRootKeys(m, map[string]bool{})
+	got := uninstallRemainingRootKeys(m, map[string]bool{}, nil)
 
 	if len(got) != 1 || !got["acme/foo"] {
 		t.Errorf("expected the git root key to pass through unchanged, got %v", got)

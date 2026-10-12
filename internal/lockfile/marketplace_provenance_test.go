@@ -143,20 +143,21 @@ func TestSerializeEntry_MarketplaceProvenanceFields(t *testing.T) {
 // one, per this task's fixture-diversity requirement.
 func TestWriteLockfile_RoundTrip_ProvenanceNoDoubleEmit(t *testing.T) {
 	// Arrange
-	yamlSrc := "# hand-maintained lockfile, do not delete this comment\n" +
-		"lockfile_version: \"1\"\n" +
-		"generated_at: \"2026-01-01T00:00:00Z\"\n" +
+	// Key order and style of the Oracle's LockedDependency.to_dict and
+	// LockFile.to_yaml (deps/lockfile.py:351, :844).
+	yamlSrc := "lockfile_version: '1'\n" +
 		"dependencies:\n" +
-		"  - repo_url: github.com/acme/bar\n" +
-		"    source: git\n" +
-		"    resolved_ref: v2.0.0\n" +
-		"  - repo_url: github.com/acme/foo\n" +
-		"    source: git\n" +
-		"    resolved_ref: v1.0.0\n" +
-		"    discovered_via: acme-marketplace\n" +
-		"    marketplace_plugin_name: Foo-Plugin\n" +
-		"    source_url: https://example.com/marketplace.json\n" +
-		"    source_digest: sha256:deadbeef\n"
+		"- repo_url: github.com/acme/bar\n" +
+		"  resolved_ref: v2.0.0\n" +
+		"  source: git\n" +
+		"- repo_url: github.com/acme/foo\n" +
+		"  resolved_ref: v1.0.0\n" +
+		"  source: git\n" +
+		"  discovered_via: acme-marketplace\n" +
+		"  marketplace_plugin_name: Foo-Plugin\n" +
+		"  source_url: https://example.com/marketplace.json\n" +
+		"  source_digest: sha256:deadbeef\n" +
+		"deployments: []\n"
 	node, err := yamlcore.SafeLoad([]byte(yamlSrc))
 	if err != nil {
 		t.Fatalf("SafeLoad: %v", err)

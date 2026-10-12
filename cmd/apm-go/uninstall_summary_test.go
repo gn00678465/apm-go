@@ -46,10 +46,10 @@ func TestUninstall_Summary_NamesPackageAndReportsApmYMLPath(t *testing.T) {
 	if !strings.Contains(stdout, wantPath) {
 		t.Errorf("expected the apm.yml absolute path %q in the summary, got:\n%s", wantPath, stdout)
 	}
-	if !strings.Contains(stdout, "cleaned 1 integrated file") {
-		t.Errorf(`expected "cleaned 1 integrated file(s)" in the summary, got:\n%s`, stdout)
+	if !strings.Contains(stdout, "Cleaned 1 stale file from acme/foo\n") {
+		t.Errorf(`expected "Cleaned 1 stale file from acme/foo" in the summary, got:\n%s`, stdout)
 	}
-	if strings.Contains(stdout, "kept") {
+	if strings.Contains(stdout, "keeping") {
 		t.Errorf("no file was kept in this scenario, summary should not mention kept files, got:\n%s", stdout)
 	}
 }
@@ -103,7 +103,7 @@ func TestUninstall_Summary_CountsReflectActualRemovalOutcome(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(stdout, "cleaned 1 integrated file(s) (1 kept -- modified or shared)") {
+	if !strings.Contains(stdout, "Cleaned 1 stale file from acme/foo\n") || strings.Count(stdout, "keeping ") != 1 {
 		t.Errorf("expected the cleanup count to reflect 1 actually-removed + 1 kept (not the lockfile's 3 recorded files), got:\n%s", stdout)
 	}
 

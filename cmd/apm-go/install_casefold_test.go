@@ -151,8 +151,8 @@ func TestInstall_CaseFoldDedup(t *testing.T) {
 		t.Fatalf("runInstall: %v\noutput:\n%s", installErr, out)
 	}
 
-	if !strings.Contains(out, "Resolved 1 dependency") {
-		t.Errorf("output: expected \"Resolved 1 dependency\", got:\n%s", out)
+	if got := strings.Count(out, "Resolving "); got != 1 {
+		t.Errorf("output: %d \"Resolving\" lines, want 1 (one package for both spellings):\n%s", got, out)
 	}
 	if strings.Contains(out, "shadowed") {
 		t.Errorf("output: unexpected shadow-conflict noise from the case-duplicate:\n%s", out)

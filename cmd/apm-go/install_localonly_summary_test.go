@@ -32,10 +32,12 @@ func runInstallCapturingStdout(t *testing.T, deps *installDeps, frozen, noProven
 // primitives used to print the contradictory sequence "No dependencies to
 // install" -> a deployed-files tree -> "Installed 0 dependencies". The
 // up-front info line must be muted when a target resolves and local content
-// WILL be deployed, and the closing summary must say "Installed local
-// project" -- decided from deploy.Run's ACTUAL result (a file really landed
-// under .claude/rules/), not a second directory scan or a hardcoded "0
-// dependencies" count that contradicts the tree just printed above it.
+// WILL be deployed, and the closing summary counts the project's own content
+// as one dependency, the Oracle's count (install/phases/integrate.py:385;
+// issue #50 ruling R10) -- decided from deploy.Run's ACTUAL result (a file
+// really landed under .claude/rules/), not a second directory scan or a
+// hardcoded "0 dependencies" count that contradicts the block printed above
+// it.
 func TestInstall_LocalOnlyProject_Success(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -55,8 +57,8 @@ func TestInstall_LocalOnlyProject_Success(t *testing.T) {
 	if strings.Contains(stdout, "No dependencies to install") {
 		t.Errorf("expected the up-front info line to be muted when local content will deploy, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "Installed local project") {
-		t.Errorf(`expected "Installed local project" in the summary, got:\n%s`, stdout)
+	if !strings.Contains(stdout, "Installed 1 APM dependency in ") {
+		t.Errorf(`expected "Installed 1 APM dependency" in the summary, got:\n%s`, stdout)
 	}
 	if strings.Contains(stdout, "Installed 0 dependencies") {
 		t.Errorf("summary must not contradict the deployed-files tree with a 0-dependencies count, got:\n%s", stdout)
@@ -67,9 +69,10 @@ func TestInstall_LocalOnlyProject_Success(t *testing.T) {
 // zero-dependency manifest with a .apm/ primitive that exists on disk but
 // deploys ZERO files to the resolved target (codex has no registered
 // handler for TypeInstructions -- adapterSupports filters it out). The
-// summary must NOT falsely claim "Installed local project" just because a
+// summary must NOT count the project's content as installed just because a
 // local primitive was found on disk; the decision must reflect deploy.Run's
-// actual (empty) result.
+// actual (empty) result, and the closing line is the Oracle's for a run with
+// nothing to integrate.
 func TestInstall_LocalOnlyProject_ZeroFilesDeployed(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -88,10 +91,10 @@ func TestInstall_LocalOnlyProject_ZeroFilesDeployed(t *testing.T) {
 		t.Fatalf("runInstall: %v", err)
 	}
 
-	if strings.Contains(stdout, "Installed local project") {
-		t.Errorf("must not claim a local project install when zero files actually deployed, got:\n%s", stdout)
+	if strings.Contains(stdout, "Installed 1 APM dependency") {
+		t.Errorf("must not count the project's content when zero files actually deployed, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "Installed 0 dependencies") {
-		t.Errorf(`expected the unchanged "Installed 0 dependencies" wording when nothing deployed, got:\n%s`, stdout)
+	if !strings.Contains(stdout, "No changes -- install state already up to date in ") {
+		t.Errorf(`expected the "No changes" line when nothing deployed, got:\n%s`, stdout)
 	}
 }

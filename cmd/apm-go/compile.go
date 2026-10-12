@@ -19,6 +19,14 @@ import (
 // oracle's `apm compile`: it compiles local + dependency *.instructions.md
 // primitives into a single project-root AGENTS.md for antigravity/codex/
 // opencode.
+//
+// Deviation from the Oracle (issue #50 ruling R11): apm-go writes the root
+// AGENTS.md only. The Oracle's default mode places an instruction that has
+// an applyTo pattern in the AGENTS.md of the directory holding the matching
+// files (src/AGENTS.md); apm-go keeps such an instruction in the root file,
+// under the section heading and body format the Oracle gives it there. The
+// root file otherwise has the Oracle's default-mode form.
+//
 // v1 僅提供 -t/--target；以下旗標不在此版本範圍內：
 // --dry-run/--watch/--validate/--root/--clean/--single-agents/--no-links/--no-constitution。
 func compileCmd() *cobra.Command {
@@ -42,14 +50,11 @@ func runCompile(targetFlag, projectDir string) error {
 	if err != nil {
 		return err
 	}
-	if m == nil {
-		// loadCompileManifest already reported the diagnostic.
-		return withExitCode(1, errors.New("not an APM project - no apm.yml found"))
-	}
 
+	// The returned error is the one report of each failure below:
+	// renderRootError prints it (issue #50 ruling R15).
 	if !compile.HasCompilableContent(projectDir) {
-		ux.Error(os.Stderr, "No instruction files found in .apm/ directory")
-		return withExitCode(1, errors.New("no instruction files found in .apm/ directory"))
+		return withExitCode(1, errors.New("No instruction files found in .apm/ directory"))
 	}
 
 	resolved, _ := deploy.ResolveTargets(targetFlag, m.Target, projectDir)
@@ -59,9 +64,7 @@ func runCompile(targetFlag, projectDir string) error {
 		if len(resolved) > 0 {
 			label = strings.Join(resolved, ",")
 		}
-		msg := fmt.Sprintf("compile for target(s) %s not implemented in apm-go yet", label)
-		ux.Error(os.Stderr, "%s", msg)
-		return withExitCode(2, errors.New(msg))
+		return withExitCode(2, fmt.Errorf("compile for target(s) %s not implemented in apm-go yet", label))
 	}
 
 	result, err := compile.Run(projectDir, m)
@@ -90,15 +93,13 @@ func runCompile(targetFlag, projectDir string) error {
 }
 
 // loadCompileManifest reads and parses projectDir/apm.yml. A missing
-// apm.yml reports the oracle-matching diagnostic and returns (nil, nil) --
-// callers exit 1 in that case (design.md §2; oracle: commands/compile/
-// cli.py:347-351).
+// apm.yml is the Oracle's diagnostic with exit 1 (commands/compile/
+// cli.py:595-599).
 func loadCompileManifest(projectDir string) (*manifest.Manifest, error) {
 	data, err := os.ReadFile(filepath.Join(projectDir, "apm.yml"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			ux.Error(os.Stderr, "Not an APM project - no apm.yml found")
-			return nil, nil
+			return nil, withExitCode(1, errors.New("Not an APM project - no apm.yml found"))
 		}
 		return nil, fmt.Errorf("read apm.yml: %w", err)
 	}

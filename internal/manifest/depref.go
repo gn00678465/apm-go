@@ -36,11 +36,15 @@ type DependencyReference struct {
 	// filepath.Join(apm_modules, key). Empty for git/registry/marketplace
 	// deps. Never serialized to apm.yml or the lockfile.
 	LocalSourcePath string
-	IsParent        bool
-	Port            int
-	Scheme          string // "https", "http", "ssh", "git" (SCP)
-	Source          string // "git", "registry", "local", "marketplace", "" (inferred)
-	RegistryName    string // registry name for source=="registry" (empty = use default)
+	// LocalDeclaredPath is the path of that dependency as apm.yml or the
+	// command line wrote it ("./dep"). The lock records it as local_path.
+	// Runtime-only, like LocalSourcePath.
+	LocalDeclaredPath string
+	IsParent          bool
+	Port              int
+	Scheme            string // "https", "http", "ssh", "git" (SCP)
+	Source            string // "git", "registry", "local", "marketplace", "" (inferred)
+	RegistryName      string // registry name for source=="registry" (empty = use default)
 
 	// SSHUser is the parsed userinfo for an ssh:// or SCP-form dependency
 	// whose git remote needs a non-default user (e.g. an EMU/self-hosted

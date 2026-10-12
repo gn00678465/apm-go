@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -17,8 +18,13 @@ type MCPDependency struct {
 	URL       string
 	Env       map[string]string
 	Headers   map[string]string
-	Registry  any    // nil=default, false=self-defined, string=custom URL
-	Version   string // pinned registry entry version; only meaningful when Registry is not false
+	// EnvOrder and HeaderOrder are the keys of Env and Headers in the order
+	// they were declared. The Oracle writes them in that order to apm.yml,
+	// the lock and .mcp.json (issue #50).
+	EnvOrder    []string
+	HeaderOrder []string
+	Registry    any    // nil=default, false=self-defined, string=custom URL
+	Version     string // pinned registry entry version; only meaningful when Registry is not false
 }
 
 func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
@@ -67,6 +73,7 @@ func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
 				m.Env = make(map[string]string)
 				for j := 0; j < len(v.Content)-1; j += 2 {
 					m.Env[v.Content[j].Value] = v.Content[j+1].Value
+					m.EnvOrder = append(m.EnvOrder, v.Content[j].Value)
 				}
 			}
 		case "headers":
@@ -74,6 +81,7 @@ func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
 				m.Headers = make(map[string]string)
 				for j := 0; j < len(v.Content)-1; j += 2 {
 					m.Headers[v.Content[j].Value] = v.Content[j+1].Value
+					m.HeaderOrder = append(m.HeaderOrder, v.Content[j].Value)
 				}
 			}
 		}
@@ -390,4 +398,25 @@ func decodePercentEncodedSegment(seg string) string {
 		decoded = next
 	}
 	return decoded
+}
+
+// OrderedKeys returns the keys of m: first those order names, in that order,
+// then every other key sorted.
+func OrderedKeys(m map[string]string, order []string) []string {
+	keys := make([]string, 0, len(m))
+	seen := make(map[string]bool, len(m))
+	for _, k := range order {
+		if _, ok := m[k]; ok && !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	rest := make([]string, 0, len(m)-len(keys))
+	for k := range m {
+		if !seen[k] {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	return append(keys, rest...)
 }

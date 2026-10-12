@@ -123,7 +123,7 @@ These commands and flags exist only in apm-go. Their defaults keep the standard 
 | `normalize` | whole command | Round-trip a YAML file through the safe-subset loader and print or rewrite it (`--stdout`) |
 | `pack` | `--claude-source-style github\|url` | Emit `url` sources in `marketplace.json` so Claude Code installs GitHub packages over HTTPS when no SSH key is available (default `github`) |
 | `install` | `--max-archive-bytes`, `--max-entries` | Fail-closed limits on uncompressed archive size (default 100 MiB) and entry count (default 10000) |
-| `install` | `--no-provenance` | Omit `generated_at` and `apm_version` from `apm.lock.yaml` for reproducible lockfiles |
+| `install` | `--no-provenance` | Omit `apm_version` from `apm.lock.yaml` for reproducible lockfiles |
 | `install --mcp` | `--force` | Overwrite a conflicting existing MCP entry non-interactively |
 | `init` | `--force` | Overwrite an existing `apm.yml` without prompting |
 | `audit` | `--content` | Scan every deployed file for hidden Unicode characters |

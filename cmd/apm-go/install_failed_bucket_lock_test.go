@@ -13,8 +13,8 @@ import (
 const (
 	failedBucketAgent     = "---\nname: a\ndescription: d\n---\nbody\n"
 	failedBucketSkill     = "---\nname: s2\ndescription: d\n---\nskill\n"
-	failedBucketSkillFile = "      - .claude/skills/s2/SKILL.md\n"
-	failedBucketSkillHash = "      .claude/skills/s2/SKILL.md: sha256:bcf0e3e2cbe39bf16f0ecd4168bff95026cb0d894fdf1b9802085f7e24f263b6\n"
+	failedBucketSkillFile = "  - .claude/skills/s2/SKILL.md\n"
+	failedBucketSkillHash = "    .claude/skills/s2/SKILL.md: sha256:bcf0e3e2cbe39bf16f0ecd4168bff95026cb0d894fdf1b9802085f7e24f263b6\n"
 	failedBucketUserFile  = "x\n"
 )
 
@@ -104,10 +104,10 @@ func TestInstallGlobal_FailedBucket_CleanedAfterFailureIsFixed(t *testing.T) {
 	if got := globalStaleRead(t, agent); got != failedBucketAgent {
 		t.Errorf("a.md through its symlink = %q, want %q", got, failedBucketAgent)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep-") || strings.Count(out, ".claude/skills/s2\n") != 1 {
+	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") || strings.Count(out, ".claude/skills/s2\n") != 1 {
 		t.Errorf("want one cleaned line listing .claude/skills/s2:\n%s", out)
 	}
-	if again := globalStaleInstall(t, "claude"); !strings.Contains(again, "Already up to date") {
+	if again := globalStaleInstall(t, "claude"); !installChangedNothing(again) {
 		t.Errorf("the next install is not up to date:\n%s", again)
 	}
 }
@@ -192,7 +192,7 @@ func TestInstall_FailedBucket_CopyDeployLockKeepsPathThenCleaned(t *testing.T) {
 	if lock := readLockfile(t); staleCleanupContains(lock.LocalDeployedFiles, ".claude/skills/s2/SKILL.md") {
 		t.Errorf("local_deployed_files still lists .claude/skills/s2/SKILL.md: %v", lock.LocalDeployedFiles)
 	}
-	if !strings.Contains(fixed, "Cleaned 1 stale file from <local .apm/>") {
+	if !strings.Contains(fixed, "Cleaned 2 stale files from <local .apm/>\n  - .claude/skills/s2\n  - .claude/skills/s2/SKILL.md\n") {
 		t.Errorf("missing cleaned line:\n%s", fixed)
 	}
 }

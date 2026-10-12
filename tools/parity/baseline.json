@@ -20,6 +20,26 @@
     "oracle_ref": "utils/version_checker.py:261-271 (get_update_cache_path)"
   },
   {
+    "path": "home/.cache/apm/git",
+    "reason": "One of the Oracle's own cache directories, created under ~/.cache/apm by its cache layer. apm-go has no corresponding cache. Owner ruling on issue #50 (R17), precedent ticket 12 Decision B: baseline exclusion, not mirrored.",
+    "oracle_ref": "cache/paths.py:36-38 (GIT_DB_BUCKET, GIT_CHECKOUTS_BUCKET, HTTP_BUCKET)"
+  },
+  {
+    "path": "home/.cache/apm/git/checkouts_v1",
+    "reason": "See home/.cache/apm/git: the Oracle's git checkout cache, one level down. apm-go has no corresponding cache. Owner ruling on issue #50 (R17), precedent ticket 12 Decision B: baseline exclusion, not mirrored.",
+    "oracle_ref": "cache/paths.py:36-38 (GIT_DB_BUCKET, GIT_CHECKOUTS_BUCKET, HTTP_BUCKET)"
+  },
+  {
+    "path": "home/.cache/apm/git/db_v1",
+    "reason": "See home/.cache/apm/git: the Oracle's bare-repository cache, one level down. apm-go has no corresponding cache. Owner ruling on issue #50 (R17), precedent ticket 12 Decision B: baseline exclusion, not mirrored.",
+    "oracle_ref": "cache/paths.py:36-38 (GIT_DB_BUCKET, GIT_CHECKOUTS_BUCKET, HTTP_BUCKET)"
+  },
+  {
+    "path": "home/.cache/apm/http_v1",
+    "reason": "The Oracle's HTTP response cache directory, a sibling of home/.cache/apm/git. apm-go has no corresponding cache. Owner ruling on issue #50 (R17), precedent ticket 12 Decision B: baseline exclusion, not mirrored.",
+    "oracle_ref": "cache/paths.py:36-38 (GIT_DB_BUCKET, GIT_CHECKOUTS_BUCKET, HTTP_BUCKET)"
+  },
+  {
     "path": "home/.cache/apm/last_version_check",
     "reason": "The Oracle touches ~/.cache/apm/last_version_check (save_version_check_timestamp()) whenever check_for_updates() runs and should_check_for_updates() finds no cache file or one older than 86400s -- gated by _check_and_notify_updates() in the CLI's post-command callback (cli.py:178), so it appears on commands that reach that callback (e.g. doctor) but not on --version/--help, which exit before it runs. apm-go has no self-update/version-check feature: no code path calls GitHub to compare versions or persists a check timestamp. Decision B (ticket 12): baseline exclusion, not mirrored.",
     "oracle_ref": "utils/version_checker.py:301-308 (save_version_check_timestamp), utils/version_checker.py:311-338 (check_for_updates), commands/_helpers.py:453-486 (_check_and_notify_updates)"

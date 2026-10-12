@@ -738,7 +738,7 @@ func TestRunMCPInstall_PrintsTargetSource(t *testing.T) {
 	r, w, _ := os.Pipe()
 	origStdout := os.Stdout
 	os.Stdout = w
-	err := runMCPInstall(mcpInstallOpts{Name: "api", URL: "https://example.com/mcp", Transport: "http"})
+	err := runMCPInstall(mcpInstallOpts{Name: "api", URL: "https://example.com/mcp", Transport: "http", TargetFlag: "claude"})
 	os.Stdout = origStdout
 	w.Close()
 	var buf bytes.Buffer
@@ -748,7 +748,8 @@ func TestRunMCPInstall_PrintsTargetSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runMCPInstall: %v", err)
 	}
-	if !strings.Contains(stdout, " i Targets: claude  (source: auto-detect)") {
+	// The Oracle's line for an install with --target (issue #50 ruling R10).
+	if !strings.Contains(stdout, " i Targeting specific runtime: claude\n") {
 		t.Errorf("expected a target-source line, got:\n%s", stdout)
 	}
 }
@@ -781,8 +782,8 @@ func TestRunMCPInstall_SummaryShowsTargetsAndAbsolutePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runMCPInstall: %v", err)
 	}
-	if !strings.Contains(stdout, "targets: claude") {
-		t.Errorf("expected the deployed target list in the summary, got:\n%s", stdout)
+	if !strings.Contains(stdout, "api -> Claude (configured)") {
+		t.Errorf("expected the configured target in the summary, got:\n%s", stdout)
 	}
 	wantPath, pathErr := filepath.Abs("apm.yml")
 	if pathErr != nil {
