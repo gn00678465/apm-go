@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -73,9 +74,45 @@ func normalizeString(s, cwd, cfg, home string, rewriteBinaryName bool) string {
 func normalizeStatusGlyphs(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
-		lines[i] = canonicalStatusGlyphLine(line)
+		lines[i] = canonicalNestedStatusGlyphLine(canonicalStatusGlyphLine(line))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// nestedStatusGlyphPrefixes are the two places a status symbol is printed
+// away from column 0: an indented row of a summary block, and a row under
+// the "|" bar of a tree section.
+var nestedStatusGlyphPrefixes = []string{"  ", "|  "}
+
+// nestedStatusGlyphs is the set of symbols recognized there (issue #50
+// ruling): the Oracle's "[*]" is the project's success class, as at column 0.
+var nestedStatusGlyphs = map[string]string{"+": "+", ">": ">", "*": "+", "i": "i", "!": "!", "x": "x"}
+
+// canonicalNestedStatusGlyphLine maps the Oracle's "<prefix>[c] " and
+// apm-go's "<prefix> c " to "<prefix><c> ". It is the same difference of
+// symbol shape canonicalStatusGlyphLine removes at column 0, and nothing
+// wider: only these prefixes, only these symbols, and a different symbol or
+// any other text stays a difference. It is kept apart from
+// canonicalStatusGlyphLine so the error-body and wrap-folding rules, which
+// treat only a column-0 symbol as the start of a record, do not change.
+func canonicalNestedStatusGlyphLine(line string) string {
+	for _, prefix := range nestedStatusGlyphPrefixes {
+		rest, ok := strings.CutPrefix(line, prefix)
+		if !ok || len(rest) < 4 {
+			continue
+		}
+		if rest[0] == '[' && rest[2] == ']' && rest[3] == ' ' {
+			if canonical, ok := nestedStatusGlyphs[rest[1:2]]; ok {
+				return prefix + "<" + canonical + "> " + rest[4:]
+			}
+		}
+		if rest[0] == ' ' && rest[2] == ' ' {
+			if _, ok := nestedStatusGlyphs[rest[1:2]]; ok {
+				return prefix + "<" + rest[1:2] + "> " + rest[3:]
+			}
+		}
+	}
+	return line
 }
 
 // canonicalStatusGlyphLine recognizes only the exact line-leading forms.
@@ -160,4 +197,49 @@ func sandboxPathsFromEnvDelta(envDelta map[string]string) (cwd, cfg, home string
 	cfg = envDelta["APM_CONFIG_DIR"]
 	cwd = sandboxCwdFromHome(home)
 	return cwd, cfg, home
+}
+
+// lockfileTreePath is the one tree path normalizeTreeFileContent rewrites.
+const lockfileTreePath = "cwd/apm.lock.yaml"
+
+var (
+	lockfileVersionKey  = []byte("apm_version:")
+	lockfileVersionLine = []byte("apm_version: <APM_VERSION>")
+)
+
+// normalizeTreeFileContent is the ONLY normalisation keyed on a file's own
+// path: every other tree file gets normalizeString alone, the same
+// substitutions stdout and stderr get. Owner ruling R12 on issue #50: the
+// lockfile records the version of the binary that wrote it (the Oracle's
+// release number, "dev" for the gate-built apm-go), so the two sides can
+// never agree on that line and it says nothing about the lockfile contract.
+//
+// Exactly one line changes: the first line of cwd/apm.lock.yaml that starts
+// at column 0 with "apm_version:". Its line terminator is kept, so a missing
+// trailing newline or a CRLF still differs. An indented apm_version key, a
+// second top-level one, and a lockfile at any other path stay as written.
+func normalizeTreeFileContent(path string, data []byte) []byte {
+	if path != lockfileTreePath {
+		return data
+	}
+	for start := 0; start < len(data); {
+		end := bytes.IndexByte(data[start:], '\n')
+		if end < 0 {
+			end = len(data)
+		} else {
+			end += start
+		}
+		if bytes.HasPrefix(data[start:end], lockfileVersionKey) {
+			tail := end
+			if tail > start && data[tail-1] == '\r' {
+				tail--
+			}
+			out := make([]byte, 0, len(data)+len(lockfileVersionLine))
+			out = append(out, data[:start]...)
+			out = append(out, lockfileVersionLine...)
+			return append(out, data[tail:]...)
+		}
+		start = end + 1
+	}
+	return data
 }

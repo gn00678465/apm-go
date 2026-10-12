@@ -64,7 +64,17 @@ jobs:
       # never passed to a binary as an argument.
       - name: Network-free guarantee -- no case argv references a network URL
         run: |
-          if grep -rn "https://\|github\.com/" tools/parity/cases/*/case.json; then
+          # One URL is allowed, and only as a whole JSON string:
+          # "https://example.com/mcp", the --url value of `install --mcp`.
+          # It is data written into apm.yml, .mcp.json and the lockfile; the
+          # Oracle (v0.33.0) gives the same stdout, stderr, exit code and file
+          # tree for that install and the plain install after it inside an
+          # empty network namespace as with network (issue #50). A longer
+          # string that starts with it, or the same URL inside another
+          # argument, is still blocked.
+          if grep -rn "https://\|github\.com/" tools/parity/cases/*/case.json \
+            | sed 's#"https://example\.com/mcp"#""#g' \
+            | grep "https://\|github\.com/"; then
             echo "::error::a case's argv references a network URL (https:// or github.com/); parity cases must be runnable from local fixtures alone"
             exit 1
           fi

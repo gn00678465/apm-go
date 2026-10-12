@@ -38,11 +38,11 @@ func captureInstallStdout(t *testing.T, fn func()) string {
 	return string(data)
 }
 
-// TestRunInstall_SummaryDistinguishesNewFromExisting is the R9/R10c
-// regression: the "Installed N dependencies" summary must mark an
-// already-declared dependency as such (textually, not just by color -- P4-10
-// requires the distinction to survive ANSI stripping) while leaving a
-// genuinely new positional addition unmarked.
+// TestRunInstall_SummaryDistinguishesNewFromExisting: the validation step
+// names each requested package, and the summary has one block per resolved
+// dependency, the already-declared one too (the Oracle's transcript, issue
+// #50 ruling R10). A package that was already in apm.yml is marked so in
+// words, not only by color.
 func TestRunInstall_SummaryDistinguishesNewFromExisting(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -54,46 +54,29 @@ func TestRunInstall_SummaryDistinguishesNewFromExisting(t *testing.T) {
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
 	out := captureInstallStdout(t, func() {
-		if err := runInstall(deps, false, true, "claude", "", nil, []string{"org/monorepo/skills/b"}); err != nil {
+		if err := runInstall(deps, false, true, "claude", "", nil, []string{"org/monorepo/skills/b", "org/monorepo/skills/a"}); err != nil {
 			t.Fatalf("runInstall: %v", err)
 		}
 	})
 
-	foundExisting := false
-	foundNew := false
-	for _, line := range strings.Split(out, "\n") {
-		// Only the final "Installed N dependencies" bullet list carries "
-		// (depth N)"; the earlier "Resolving <dep>..." spinner-update lines
-		// also mention the dep name and would otherwise false-match.
-		if !strings.Contains(line, "(depth") {
-			continue
-		}
-		switch {
-		case strings.Contains(line, "org/monorepo/skills/a"):
-			foundExisting = true
-			if !strings.Contains(line, "(already in apm.yml)") {
-				t.Errorf("already-declared dep line must be marked (already in apm.yml), got: %q", line)
-			}
-		case strings.Contains(line, "org/monorepo/skills/b"):
-			foundNew = true
-			if strings.Contains(line, "(already in apm.yml)") {
-				t.Errorf("newly-requested dep line must NOT be marked (already in apm.yml), got: %q", line)
-			}
+	for _, want := range []string{
+		" + org/monorepo/skills/b\n",
+		" + org/monorepo/skills/a (already in apm.yml)\n",
+		"   + org/monorepo/skills/a\n",
+		"   + org/monorepo/skills/b\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
-	if !foundExisting {
-		t.Errorf("expected org/monorepo/skills/a in summary output, got: %s", out)
-	}
-	if !foundNew {
-		t.Errorf("expected org/monorepo/skills/b in summary output, got: %s", out)
+	if strings.Contains(out, "org/monorepo/skills/b (already in apm.yml)") {
+		t.Errorf("a newly requested package must not be marked (already in apm.yml):\n%s", out)
 	}
 }
 
 // TestRunInstall_SummaryBareInstall_AllExistingDepsMuted covers a bare
-// `apm-go install` (no positional packages): every resolved dep comes purely
-// from an already-populated apm.yml, so requestedKeys is empty and every
-// summary line should carry the "(already in apm.yml)" marker (R10c: install
-// still resolves/deploys the full manifest -- this is presentation only).
+// `apm-go install` (no positional packages): there is no validation step, so
+// nothing is marked, and the dependency still gets its summary block.
 func TestRunInstall_SummaryBareInstall_AllExistingDepsMuted(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -110,17 +93,11 @@ func TestRunInstall_SummaryBareInstall_AllExistingDepsMuted(t *testing.T) {
 		}
 	})
 
-	found := false
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "acme/foo") && strings.Contains(line, "(depth") {
-			found = true
-			if !strings.Contains(line, "(already in apm.yml)") {
-				t.Errorf("bare install of an already-declared dep must be marked (already in apm.yml), got: %q", line)
-			}
-		}
+	if !strings.Contains(out, "   + acme/foo\n") {
+		t.Errorf("expected a summary block for acme/foo, got:\n%s", out)
 	}
-	if !found {
-		t.Errorf("expected acme/foo in summary output, got: %s", out)
+	if strings.Contains(out, "Validating") || strings.Contains(out, "(already in apm.yml)") {
+		t.Errorf("a bare install has no validation step, got:\n%s", out)
 	}
 }
 

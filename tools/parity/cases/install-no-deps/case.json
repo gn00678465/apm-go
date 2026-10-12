@@ -1,0 +1,6 @@
+{
+  "id": "install-no-deps",
+  "argv": ["install"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

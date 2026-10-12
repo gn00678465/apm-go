@@ -1,0 +1,55 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: _local/dep
+  name: dep
+  version: 1.0.0
+  package_type: apm_package
+  deployed_files:
+  - .claude/rules/dep.md
+  - .claude/skills/sk
+  - .claude/skills/sk/SKILL.md
+  - .claude/skills/sk/extra.txt
+  deployed_file_hashes:
+    .claude/rules/dep.md: sha256:b65d2cf2095c072332c85702c9cdcade660bba79de9a67ea5bb12c1878a7217a
+    .claude/skills/sk/SKILL.md: sha256:ec3a24fe9f6579ba4c20bbdaba509d4e3c45c8265afff2320b07cef3017e5b7e
+    .claude/skills/sk/extra.txt: sha256:65110ea3b8b62b0c09742c368bf1527f0978b06dff7a1371ef7b4c98e244d91a
+  source: local
+  local_path: ./dep
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/rules/dep.md
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: sha256:b65d2cf2095c072332c85702c9cdcade660bba79de9a67ea5bb12c1878a7217a
+- kind: project-relative
+  target: claude
+  value: .claude/skills/sk
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/sk/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: sha256:ec3a24fe9f6579ba4c20bbdaba509d4e3c45c8265afff2320b07cef3017e5b7e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/sk/extra.txt
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: sha256:65110ea3b8b62b0c09742c368bf1527f0978b06dff7a1371ef7b4c98e244d91a

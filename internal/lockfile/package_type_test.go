@@ -11,12 +11,15 @@ import (
 // (parse.go's switch): package_type round-trips through ParseLockfile.
 func TestParseLockedDep_PackageType(t *testing.T) {
 	// Arrange
-	yamlSrc := "lockfile_version: \"1\"\n" +
+	// Key order and style of the Oracle's LockedDependency.to_dict and
+	// LockFile.to_yaml (deps/lockfile.py:351, :844).
+	yamlSrc := "lockfile_version: '1'\n" +
 		"dependencies:\n" +
-		"  - repo_url: github.com/acme/foo\n" +
-		"    source: git\n" +
-		"    resolved_ref: v1.0.0\n" +
-		"    package_type: marketplace_plugin\n"
+		"- repo_url: github.com/acme/foo\n" +
+		"  resolved_ref: v1.0.0\n" +
+		"  package_type: marketplace_plugin\n" +
+		"  source: git\n" +
+		"deployments: []\n"
 	node, err := yamlcore.SafeLoad([]byte(yamlSrc))
 	if err != nil {
 		t.Fatalf("SafeLoad: %v", err)
@@ -78,12 +81,15 @@ func TestSerializeEntry_PackageType(t *testing.T) {
 // time.
 func TestWriteLockfile_RoundTrip_PackageTypeNoDoubleEmit(t *testing.T) {
 	// Arrange
-	yamlSrc := "lockfile_version: \"1\"\n" +
+	// Key order and style of the Oracle's LockedDependency.to_dict and
+	// LockFile.to_yaml (deps/lockfile.py:351, :844).
+	yamlSrc := "lockfile_version: '1'\n" +
 		"dependencies:\n" +
-		"  - repo_url: github.com/acme/foo\n" +
-		"    source: git\n" +
-		"    resolved_ref: v1.0.0\n" +
-		"    package_type: marketplace_plugin\n"
+		"- repo_url: github.com/acme/foo\n" +
+		"  resolved_ref: v1.0.0\n" +
+		"  package_type: marketplace_plugin\n" +
+		"  source: git\n" +
+		"deployments: []\n"
 	node, err := yamlcore.SafeLoad([]byte(yamlSrc))
 	if err != nil {
 		t.Fatalf("SafeLoad: %v", err)

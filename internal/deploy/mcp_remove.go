@@ -20,10 +20,12 @@ type mcpRemoveTarget struct {
 	topKey  string
 	isTOML  bool
 	perm    os.FileMode
+	// keyOrder is set for a file written through writeOrderedMCPJSON.
+	keyOrder []string
 }
 
 var mcpRemoveTargets = []mcpRemoveTarget{
-	{relPath: ".mcp.json", topKey: "mcpServers", perm: 0600},
+	{relPath: ".mcp.json", topKey: "mcpServers", perm: 0600, keyOrder: claudeMCPKeyOrder},
 	{relPath: ".codex/config.toml", topKey: "mcp_servers", isTOML: true, perm: 0600},
 	{relPath: ".github/mcp-config.json", topKey: "mcpServers", perm: 0644},
 	{relPath: ".agents/mcp_config.json", topKey: "mcpServers", perm: 0600},
@@ -74,9 +76,12 @@ func RemoveMCPServersFromTargets(projectDir string, serverNames []string) (diags
 		}
 
 		var writeErr error
-		if t.isTOML {
+		switch {
+		case t.isTOML:
 			writeErr = writeMergedMCPTOML(projectDir, t.relPath, t.topKey, entries, considered, t.perm)
-		} else {
+		case t.keyOrder != nil:
+			writeErr = writeOrderedMCPJSON(projectDir, t.relPath, t.topKey, entries, considered, nil, t.keyOrder, t.perm)
+		default:
 			writeErr = writeMergedMCPJSON(projectDir, t.relPath, t.topKey, entries, considered, t.perm)
 		}
 		if writeErr != nil {

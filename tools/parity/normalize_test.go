@@ -124,6 +124,53 @@ func TestNormalizeString_StatusGlyphsCanonicalizeOnlyAtLineStart(t *testing.T) {
 	}
 }
 
+// A status symbol on an indented row or under a tree bar differs between the
+// two sides in shape only ("[+]" and " + "). The rule is narrow: the same
+// symbol in both shapes is equal, and a different symbol, a different prefix,
+// or any other bracket or text is not.
+func TestNormalizeString_NestedStatusGlyphs(t *testing.T) {
+	equal := []struct{ name, oracle, target string }{
+		{"tree row, progress", "|  [>]  demo (self-defined, http)", "|   >  demo (self-defined, http)"},
+		{"tree row, success", "|  [+]  demo -> Claude (configured)", "|   +  demo -> Claude (configured)"},
+		{"tree row, one space after", "|  [+] demo (already configured)", "|   + demo (already configured)"},
+		{"indented row", "  [+] ./dep (local)", "   + ./dep (local)"},
+		{"indented info", "  [i] note", "   i note"},
+		{"indented warning", "  [!] careful", "   ! careful"},
+		{"indented error", "  [x] failed", "   x failed"},
+		{"oracle sparkle is success", "  [*] done", "   + done"},
+	}
+	for _, tt := range equal {
+		t.Run("equal/"+tt.name, func(t *testing.T) {
+			o := normalizeString(tt.oracle, "", "", "", false)
+			g := normalizeString(tt.target, "", "", "", false)
+			if o != g {
+				t.Errorf("normalized %q = %q, %q = %q; want them equal", tt.oracle, o, tt.target, g)
+			}
+		})
+	}
+
+	different := []struct{ name, oracle, target string }{
+		{"different symbol", "|  [+]  demo", "|   >  demo"},
+		{"different text", "|  [+]  demo", "|   +  other"},
+		{"different gap after the symbol", "|  [+]  demo", "|   + demo"},
+		{"symbol outside the set", "  [~] demo", "   ~ demo"},
+		{"other bracketed text", "  [a] demo", "   a demo"},
+		{"word in brackets", "  [ok] demo", "   ok demo"},
+		{"symbol later in the line", "name [+] demo", "name  +  demo"},
+		{"other prefix", "    [+] demo", "     + demo"},
+		{"bracket form against bare text", "  [+] demo", "  + demo"},
+	}
+	for _, tt := range different {
+		t.Run("different/"+tt.name, func(t *testing.T) {
+			o := normalizeString(tt.oracle, "", "", "", false)
+			g := normalizeString(tt.target, "", "", "", false)
+			if o == g {
+				t.Errorf("normalized %q and %q are both %q; want them different", tt.oracle, tt.target, o)
+			}
+		})
+	}
+}
+
 func TestSandboxCwdFromHome(t *testing.T) {
 	if got := sandboxCwdFromHome("/tmp/apm-parity-xyz/home"); got != "/tmp/apm-parity-xyz/cwd" {
 		t.Errorf("sandboxCwdFromHome = %q, want %q", got, "/tmp/apm-parity-xyz/cwd")
@@ -151,5 +198,81 @@ func TestSandboxPathsFromEnvDelta_ExtractsAllThree(t *testing.T) {
 	}
 	if home != "/tmp/apm-parity-xyz/home" {
 		t.Errorf("home = %q, want %q", home, "/tmp/apm-parity-xyz/home")
+	}
+}
+
+func TestNormalizeTreeFileContent(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		in   string
+		want string
+	}{
+		{
+			name: "lockfile version line is replaced, the rest kept",
+			path: "cwd/apm.lock.yaml",
+			in:   "lockfile_version: '1'\napm_version: 0.33.0\ndependencies: []\n",
+			want: "lockfile_version: '1'\napm_version: <APM_VERSION>\ndependencies: []\n",
+		},
+		{
+			name: "version line without a trailing newline keeps none",
+			path: "cwd/apm.lock.yaml",
+			in:   "a: 1\napm_version: dev",
+			want: "a: 1\napm_version: <APM_VERSION>",
+		},
+		{
+			name: "CRLF terminator is kept",
+			path: "cwd/apm.lock.yaml",
+			in:   "apm_version: dev\r\na: 1\r\n",
+			want: "apm_version: <APM_VERSION>\r\na: 1\r\n",
+		},
+		{
+			name: "indented key is not the top-level one",
+			path: "cwd/apm.lock.yaml",
+			in:   "pack:\n  apm_version: 0.33.0\n",
+			want: "pack:\n  apm_version: 0.33.0\n",
+		},
+		{
+			name: "only the first top-level line is replaced",
+			path: "cwd/apm.lock.yaml",
+			in:   "apm_version: 1\napm_version: 2\n",
+			want: "apm_version: <APM_VERSION>\napm_version: 2\n",
+		},
+		{
+			name: "a longer key is not the version key",
+			path: "cwd/apm.lock.yaml",
+			in:   "apm_versions: 0.33.0\n",
+			want: "apm_versions: 0.33.0\n",
+		},
+		{
+			name: "lockfile in a subdirectory is untouched",
+			path: "cwd/sub/apm.lock.yaml",
+			in:   "apm_version: 0.33.0\n",
+			want: "apm_version: 0.33.0\n",
+		},
+		{
+			name: "another file in cwd is untouched",
+			path: "cwd/other.yaml",
+			in:   "apm_version: 0.33.0\n",
+			want: "apm_version: 0.33.0\n",
+		},
+		{
+			name: "lockfile under HOME is untouched",
+			path: "home/apm.lock.yaml",
+			in:   "apm_version: 0.33.0\n",
+			want: "apm_version: 0.33.0\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := []byte(tt.in)
+			got := string(normalizeTreeFileContent(tt.path, in))
+			if got != tt.want {
+				t.Errorf("normalizeTreeFileContent(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+			if string(in) != tt.in {
+				t.Errorf("input was modified in place: %q", in)
+			}
+		})
 	}
 }

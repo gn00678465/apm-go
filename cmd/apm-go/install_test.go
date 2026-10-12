@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -542,7 +543,7 @@ func TestBuildLockfile_SkillSubsetScopedToRequestedDep(t *testing.T) {
 	requestedKeys := map[string]bool{"acme/foo": true}
 	effectiveSubsets := map[string][]string{"acme/foo": {"x"}}
 
-	lock, err := buildLockfile(result, nil, &registry.Loader{}, effectiveSubsets, []string{"x"}, requestedKeys, true, nil)
+	lock, err := buildLockfile(result, nil, &registry.Loader{}, effectiveSubsets, []string{"x"}, requestedKeys, true, nil, nil)
 	if err != nil {
 		t.Fatalf("buildLockfile: %v", err)
 	}
@@ -576,7 +577,7 @@ func TestBuildLockfile_SkillSubsetNoMatch_Errors(t *testing.T) {
 		},
 	}
 
-	_, err := buildLockfile(result, nil, &registry.Loader{}, nil, []string{"x"}, map[string]bool{}, true, nil)
+	_, err := buildLockfile(result, nil, &registry.Loader{}, nil, []string{"x"}, map[string]bool{}, true, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error when --skill's requestedKeys match no resolved dependency")
 	}
@@ -600,7 +601,7 @@ func TestBuildLockfile_SkillSubsetPartialMatch_Errors(t *testing.T) {
 	}
 	requestedKeys := map[string]bool{"acme/good": true, "acme/collided/sub": true}
 
-	_, err := buildLockfile(result, nil, &registry.Loader{}, nil, []string{"x"}, requestedKeys, true, nil)
+	_, err := buildLockfile(result, nil, &registry.Loader{}, nil, []string{"x"}, requestedKeys, true, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error when one of two requested keys never resolved into the graph")
 	}
@@ -1277,7 +1278,7 @@ func TestBuildLockfile_SkillWildcardDoesNotRecordSubset(t *testing.T) {
 			// dependency's entry entirely (design.md §1.2c rule 3) -- nil
 			// here simulates exactly that outcome, since this test targets
 			// buildLockfile's OWN stamping logic directly.
-			lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, tt.skillSubset, requestedKeys, true, nil)
+			lock, err := buildLockfile(result, nil, &registry.Loader{}, nil, tt.skillSubset, requestedKeys, true, nil, nil)
 			if err != nil {
 				t.Fatalf("buildLockfile: %v", err)
 			}
@@ -1515,7 +1516,7 @@ func TestInstall_SkillSubsetPollution(t *testing.T) {
 	}
 	// Absolute paths, not a "./..."-relative one (deliberate -- an existing
 	// apm.yml `git: <relative-path>` entry re-parsed via ParseDepDict is NOT
-	// re-normalized into the same apm_modules/_local/<hash> materialization
+	// re-normalized into the same apm_modules/_local/<name> materialization
 	// key a fresh CLI positional arg gets (normalizeLocalDep's local-path
 	// branch only matches manifest.IsAbsoluteLocalPath); that asymmetry is a
 	// separate, pre-existing gap unrelated to BUG-2, so this fixture sticks
@@ -1606,8 +1607,8 @@ func TestInstall_SkillSubsetPollution(t *testing.T) {
 	if len(da.SkillSubset) != 1 || da.SkillSubset[0] != "skillA1" {
 		t.Errorf("apm.lock.yaml: %s skill_subset = %v, want [skillA1]", repoA, da.SkillSubset)
 	}
-	if len(da.DeployedFiles) != 2 {
-		t.Errorf("apm.lock.yaml: %s deployed_files = %v, want exactly 2 paths (1 skill, 2 files, native .claude/skills/ root only)", repoA, da.DeployedFiles)
+	if len(da.DeployedFiles) != 3 {
+		t.Errorf("apm.lock.yaml: %s deployed_files = %v, want exactly 3 paths (1 skill: its directory and 2 files, native .claude/skills/ root only)", repoA, da.DeployedFiles)
 	}
 
 	// apm_modules: exactly one materialized directory per repo, no
@@ -1817,8 +1818,8 @@ func TestInstall_SkillSubsetSameRepoUnion(t *testing.T) {
 	if got := lock.Dependencies[0].SkillSubset; len(got) != 2 || got[0] != "skillX" || got[1] != "skillY" {
 		t.Errorf("step2: apm.lock.yaml skill_subset = %v, want [skillX skillY]", got)
 	}
-	if len(lock.Dependencies[0].DeployedFiles) != 4 {
-		t.Errorf("step2: deployed_files = %v, want 4 paths (2 skills, 2 files, native .claude/skills/ root only)", lock.Dependencies[0].DeployedFiles)
+	if len(lock.Dependencies[0].DeployedFiles) != 6 {
+		t.Errorf("step2: deployed_files = %v, want 6 paths (2 skills: each its directory and 2 files, native .claude/skills/ root only)", lock.Dependencies[0].DeployedFiles)
 	}
 
 	// Step 3: bare re-install (no positional package, no --skill) must keep
@@ -2076,11 +2077,12 @@ func TestInstall_StaleSkillReconciliation(t *testing.T) {
 	if got := lock.Dependencies[0].SkillSubset; len(got) != 1 || got[0] != "skillA1" {
 		t.Errorf("apm.lock.yaml skill_subset must be [skillA1], got %v", got)
 	}
-	// 3 paths: skillA1's 2 files + the hand-edited skillA2/notes.md that
-	// reconciliation kept. Tracking it in the lockfile ensures uninstall
-	// can clean it up.
-	if len(lock.Dependencies[0].DeployedFiles) != 3 {
-		t.Errorf("apm.lock.yaml deployed_files must be exactly 3 paths (skillA1 2 files + kept hand-edited skillA2/notes.md), got %v", lock.Dependencies[0].DeployedFiles)
+	// 5 paths: skillA1's directory and 2 files, plus the hand-edited
+	// skillA2/notes.md that reconciliation kept and the directory it keeps
+	// alive. Tracking them in the lockfile ensures uninstall can clean up.
+	want := []string{".claude/skills/skillA1", ".claude/skills/skillA1/SKILL.md", ".claude/skills/skillA1/notes.md", ".claude/skills/skillA2", ".claude/skills/skillA2/notes.md"}
+	if got := lock.Dependencies[0].DeployedFiles; !reflect.DeepEqual(got, want) {
+		t.Errorf("apm.lock.yaml deployed_files = %v, want %v", got, want)
 	}
 }
 

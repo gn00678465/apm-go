@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"sort"
 
 	"github.com/apm-go/apm/internal/lockfile"
@@ -44,7 +45,15 @@ func collectDeployedFilePaths(lock *lockfile.Lockfile) []string {
 // Exit codes (checklist A4): 0 clean (or info-only), 1 critical findings
 // present, 2 warning-only (no critical).
 func runAuditContentScan(out, errOut io.Writer, lock *lockfile.Lockfile) error {
-	paths := collectDeployedFilePaths(lock)
+	// The lock lists a deployed skill's directory next to its files (the
+	// Oracle's layout); only files are scanned and counted.
+	var paths []string
+	for _, p := range collectDeployedFilePaths(lock) {
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			continue
+		}
+		paths = append(paths, p)
+	}
 
 	var all []security.ScanFinding
 	for _, p := range paths {

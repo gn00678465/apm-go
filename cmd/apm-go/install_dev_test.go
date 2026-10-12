@@ -395,7 +395,7 @@ func TestRunInstall_Dev_MoveOutOfDevWithLegacyLock_StillPersistsManifestMove(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := strings.Replace(string(lockBytes), "    package_type: marketplace_plugin\n", "", 1)
+	legacy := strings.Replace(string(lockBytes), "  package_type: marketplace_plugin\n", "", 1)
 	if legacy == string(lockBytes) {
 		t.Fatalf("fixture setup: expected package_type: marketplace_plugin in seeded apm.lock.yaml, got:\n%s", string(lockBytes))
 	}

@@ -70,7 +70,16 @@ func runUninstall(args []string, opts uninstallOptions) error {
 		return err
 	}
 
+	// The transcript of the Oracle (commands/uninstall/cli.py:288,
+	// engine.py:676-681), issue #50 ruling R10.
+	ux.Progress(os.Stdout, "Uninstalling %d package(s)...", len(args))
 	plan := prepareUninstallPlan(args, m, lock, opts.DryRun)
+	for _, t := range plan.resolution.APMTargets {
+		ux.Success(os.Stdout, "%s - found in apm.yml", plan.moduleKey(t))
+	}
+	for _, t := range plan.resolution.MCPTargets {
+		ux.Success(os.Stdout, "%s - found in apm.yml", t.Name)
+	}
 	for _, nf := range plan.resolution.NotFound {
 		printUninstallNotFound(nf)
 	}
@@ -84,7 +93,7 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	}
 
 	if opts.DryRun {
-		printUninstallDryRunPlan(plan.resolution, plan.allRemovalKeys, plan.orphans)
+		printUninstallDryRunPlan(plan)
 		return nil
 	}
 
@@ -97,11 +106,13 @@ func runUninstall(args []string, opts uninstallOptions) error {
 // deliberately done up front rather than after a --dry-run early return:
 // un-080 requires the dry-run preview to include "the orphan BFS result").
 type uninstallPlan struct {
-	resolution        *uninstallResolution
-	removedIdentities map[string]bool
+	resolution *uninstallResolution
+	// moduleKeyByIdentity is the apm_modules key of each matched target.
+	moduleKeyByIdentity map[string]string
+	removedIdentities   map[string]bool
 	// removedModuleKeys is removedIdentities translated through
 	// uninstallRemovalKey into the apm.lock.yaml / apm_modules key space --
-	// identical for git/marketplace targets, "_local/<base>-<sha8>" for
+	// identical for git/marketplace targets, "_local/<name>" for
 	// local-path targets. Everything that touches the lockfile or
 	// apm_modules must use this set; removedIdentities stays in
 	// uninstallIdentity's matching space for the apm.yml splice and the
@@ -128,16 +139,19 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 
 	removedIdentities := make(map[string]bool, len(resolution.APMTargets))
 	removedModuleKeys := make(map[string]bool, len(resolution.APMTargets))
+	moduleKeyByIdentity := make(map[string]string, len(resolution.APMTargets))
 	for _, t := range resolution.APMTargets {
 		removedIdentities[t.IdentityKey] = true
-		removedModuleKeys[uninstallRemovalKey(t.IdentityKey)] = true
+		key := uninstallRemovalKey(t.IdentityKey, lock)
+		moduleKeyByIdentity[t.IdentityKey] = key
+		removedModuleKeys[key] = true
 	}
 	mcpNames := make(map[string]bool, len(resolution.MCPTargets))
 	for _, t := range resolution.MCPTargets {
 		mcpNames[t.Name] = true
 	}
 
-	remainingRootKeys := uninstallRemainingRootKeys(m, removedIdentities)
+	remainingRootKeys := uninstallRemainingRootKeys(m, removedIdentities, lock)
 	orphans := resolver.ActualOrphans(lock, removedModuleKeys, remainingRootKeys)
 
 	// CRITICAL #1 fix (applied here so --dry-run's preview matches the real
@@ -163,34 +177,46 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	}
 
 	return &uninstallPlan{
-		resolution:        resolution,
-		removedIdentities: removedIdentities,
-		removedModuleKeys: removedModuleKeys,
-		mcpNames:          mcpNames,
-		orphans:           orphans,
-		allRemovalKeys:    allRemovalKeys,
+		resolution:          resolution,
+		moduleKeyByIdentity: moduleKeyByIdentity,
+		removedIdentities:   removedIdentities,
+		removedModuleKeys:   removedModuleKeys,
+		mcpNames:            mcpNames,
+		orphans:             orphans,
+		allRemovalKeys:      allRemovalKeys,
 	}
+}
+
+// moduleKey is the name the transcript gives a matched target: its
+// apm_modules key, which is the Oracle's public label of a package.
+func (p *uninstallPlan) moduleKey(t uninstallAPMTarget) string {
+	return p.moduleKeyByIdentity[t.IdentityKey]
 }
 
 // uninstallRemovalKey translates a matched target's identity key (the
 // uninstallIdentity space used to MATCH a PACKAGE argument against apm.yml)
-// into the key space apm.lock.yaml and apm_modules actually use (ag-23
-// defect fix). Git and marketplace identities already ARE that key space and
-// pass through unchanged. A local-path dependency's synthetic
-// "local:<path>" matching key has no on-disk counterpart: install
-// (install.go's normalizeLocalDep) materializes the package under
-// localModulesKey(resolveLocalSourceAbs(path)) == "_local/<base>-<sha8>"
-// and records that same key as the lockfile repo_url -- so THAT is the key
-// SafeRemoveModuleDir, lock.RemoveKeys, and the deployed-provenance lookup
-// must receive. A relative path resolves against cwd, which is the project
-// root throughout runUninstall exactly as it was throughout runInstall, so
-// the same source path always re-derives the same key install produced.
-func uninstallRemovalKey(identity string) string {
+// into the key space apm.lock.yaml and apm_modules actually use. Git and
+// marketplace identities already ARE that key space and pass through
+// unchanged. A local-path dependency's synthetic "local:<path>" matching key
+// has no on-disk counterpart: install materializes the package under
+// localModulesKey(<source>) == "_local/<name>" and records that key as the
+// lock's repo_url. A relative path resolves against cwd, which is the project
+// root throughout runUninstall exactly as it was throughout runInstall. A lock
+// written before issue #50 names the package _local/<name>-<hash8> instead;
+// when the lock has that entry and not the current one, it is the key.
+func uninstallRemovalKey(identity string, lock *lockfile.Lockfile) string {
 	path, isLocal := strings.CutPrefix(identity, "local:")
 	if !isLocal {
 		return identity
 	}
-	return localModulesKey(resolveLocalSourceAbs(path))
+	abs := resolveLocalSourceAbs(path)
+	key := localModulesKey(abs)
+	if lock != nil && lock.FindByKey(key) == nil {
+		if legacy := legacyLocalModulesKey(abs); lock.FindByKey(legacy) != nil {
+			return legacy
+		}
+	}
+	return key
 }
 
 // applyUninstallPlan performs every actual write for a non-dry-run uninstall:
@@ -222,7 +248,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	// candidate against the ACTUAL dependency graph declared on disk by
 	// every surviving root (transitively), and veto any candidate that's
 	// still reachable before anything is deleted.
-	remainingRootKeys := uninstallRemainingRootKeys(m, plan.removedIdentities)
+	remainingRootKeys := uninstallRemainingRootKeys(m, plan.removedIdentities, lock)
 	reachable := reachableFromRemainingRoots(remainingRootKeys, lock, ".")
 	orphans := plan.orphans
 	for k := range orphans {
@@ -244,9 +270,10 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	if deployDir != "" {
 		removeRoot = deployDir
 	}
-	removedFiles, keptFiles, diags := deploy.RemoveDeployedFiles(removeRoot, deployedFiles, deployedHashes)
+	removedFiles, keptFiles, diags := removeDeployedPaths(removeRoot, deployedFiles, deployedHashes)
+	cleaned := uninstallCleanedByOwner(lock, allRemovalKeys, removedFiles)
 
-	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys, verbose)
+	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys)
 	if err != nil {
 		return err
 	}
@@ -311,7 +338,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		return err
 	}
 
-	printUninstallSummary(plan.resolution, orphans, removedModuleDirs, removedFiles, keptFiles)
+	printUninstallSummary(plan, orphans, removedModuleDirs, cleaned, keptFiles)
 	return nil
 }
 
@@ -405,12 +432,12 @@ func readUninstallLockfile() (lock *lockfile.Lockfile, lockNode *yamllib.Node, e
 // un-041's remaining_deps, reused as-is by resolver.ActualOrphans. Reuses
 // uninstallIdentity (uninstall_resolve.go) so this is always the exact same
 // key space removedIdentities was built from.
-func uninstallRemainingRootKeys(m *manifest.Manifest, removedIdentities map[string]bool) map[string]bool {
+func uninstallRemainingRootKeys(m *manifest.Manifest, removedIdentities map[string]bool, lock *lockfile.Lockfile) map[string]bool {
 	remaining := map[string]bool{}
 	addRemaining := func(deps []*manifest.DependencyReference) {
 		for _, d := range deps {
 			if k, ok := uninstallIdentity(d); ok && !removedIdentities[k] {
-				remaining[uninstallRemovalKey(k)] = true
+				remaining[uninstallRemovalKey(k, lock)] = true
 			}
 		}
 	}
@@ -491,24 +518,67 @@ func writeUninstallManifest(data []byte, node *yamllib.Node, removedIdentities, 
 
 // removeUninstallModuleDirs deletes apm_modules/<key> for every removal key
 // (un-030~032, direct targets and transitive orphans alike).
-func removeUninstallModuleDirs(removalKeys map[string]bool, verbose bool) (removedCount int, err error) {
-	var removed []ux.Item
+func removeUninstallModuleDirs(removalKeys map[string]bool) (removed map[string]bool, err error) {
+	_, statErr := os.Stat("apm_modules")
+	hadModules := statErr == nil
+	removed = make(map[string]bool)
 	for _, key := range sortedStringSet(removalKeys) {
 		wasRemoved, rerr := deploy.SafeRemoveModuleDir(".", key)
 		if rerr != nil {
-			return removedCount, fmt.Errorf("remove apm_modules/%s: %w", key, rerr)
+			return removed, fmt.Errorf("remove apm_modules/%s: %w", key, rerr)
 		}
 		if wasRemoved {
-			removedCount++
-			if verbose {
-				removed = append(removed, ux.Item{Text: "apm_modules/" + key})
-			}
+			removed[key] = true
 		}
 	}
-	if len(removed) > 0 {
-		ux.List(os.Stdout, removed)
+	// The Oracle removes the package directory and its empty parents below
+	// apm_modules, and leaves apm_modules itself.
+	if hadModules {
+		if err := os.MkdirAll("apm_modules", 0o755); err != nil {
+			return removed, fmt.Errorf("keep apm_modules: %w", err)
+		}
 	}
-	return removedCount, nil
+	return removed, nil
+}
+
+// uninstallCleanedByOwner counts the deployed files removed for each removed
+// package, named as the Oracle names the owner of a file: a local package by
+// its declared path, any other by its key.
+func uninstallCleanedByOwner(lock *lockfile.Lockfile, removalKeys map[string]bool, removedFiles []string) []uninstallCleaned {
+	if lock == nil {
+		return nil
+	}
+	gone := make(map[string]bool, len(removedFiles))
+	for _, f := range removedFiles {
+		gone[f] = true
+	}
+	var out []uninstallCleaned
+	for _, key := range sortedStringSet(removalKeys) {
+		dep := lock.FindByKey(key)
+		if dep == nil {
+			continue
+		}
+		n := 0
+		for _, f := range dep.DeployedFiles {
+			if gone[f] {
+				n++
+				delete(gone, f)
+			}
+		}
+		owner := key
+		if dep.LocalPath != "" {
+			owner = dep.LocalPath
+		}
+		if n > 0 {
+			out = append(out, uninstallCleaned{owner: owner, files: n})
+		}
+	}
+	return out
+}
+
+type uninstallCleaned struct {
+	owner string
+	files int
 }
 
 // removeUninstallStandaloneMCP reverse-removes every explicitly-targeted MCP
@@ -543,14 +613,40 @@ func removeUninstallStandaloneMCP(mcpNames map[string]bool, lock *lockfile.Lockf
 }
 
 // writeUninstallLockfile removes removalKeys from lock.Dependencies and
-// writes the result -- or, if that empties it entirely, deletes
-// apm.lock.yaml outright (un-071) instead of writing back an empty shell.
+// writes the result. The lock is deleted only when nothing is left in it: it
+// stays while it records the project's own deployed files or an MCP server,
+// as the Oracle's does (issue #50, item 6a).
 func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, removalKeys map[string]bool) error {
 	if lock == nil {
 		return nil
 	}
 	lock.RemoveKeys(sortedStringSet(removalKeys))
-	if len(lock.Dependencies) == 0 {
+
+	// mcp_configs and mcp_target_servers follow mcp_servers.
+	kept := make(map[string]bool, len(lock.MCPServers))
+	for _, name := range lock.MCPServers {
+		kept[name] = true
+	}
+	for name := range lock.MCPConfigs {
+		if !kept[name] {
+			delete(lock.MCPConfigs, name)
+		}
+	}
+	for target, servers := range lock.MCPTargetServers {
+		var remaining []string
+		for _, name := range servers {
+			if kept[name] {
+				remaining = append(remaining, name)
+			}
+		}
+		if len(remaining) == 0 {
+			delete(lock.MCPTargetServers, target)
+		} else {
+			lock.MCPTargetServers[target] = remaining
+		}
+	}
+
+	if len(lock.Dependencies) == 0 && len(lock.LocalDeployedFiles) == 0 && len(lock.MCPServers) == 0 && len(lock.MCPTargetServers) == 0 {
 		if err := os.Remove("apm.lock.yaml"); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove apm.lock.yaml: %w", err)
 		}
@@ -560,10 +656,7 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 	if err != nil {
 		return fmt.Errorf("serialize apm.lock.yaml: %w", err)
 	}
-	if err := os.WriteFile("apm.lock.yaml", out, 0644); err != nil {
-		return fmt.Errorf("write apm.lock.yaml: %w", err)
-	}
-	return nil
+	return writeLockfileBytes(out)
 }
 
 // printUninstallNotFound reports why one PACKAGE argument produced no
@@ -584,95 +677,83 @@ func printUninstallNotFound(nf uninstallNotFound) {
 	}
 }
 
-// printUninstallDryRunPlan is un-080/081's preview: what would be removed
-// from apm.yml, whether each apm_modules/<key> path currently exists, and
-// which transitive dependencies would be pruned as orphans -- no writes.
-func printUninstallDryRunPlan(resolution *uninstallResolution, allRemovalKeys, orphans map[string]bool) {
-	ux.Section(os.Stdout, "dry-run: would remove from apm.yml")
-	targetItems := make([]ux.Item, 0, len(resolution.APMTargets)+len(resolution.MCPTargets))
+// printUninstallDryRunPlan previews an uninstall without writing: what would
+// leave apm.yml, which apm_modules directories exist to remove, and which
+// transitive dependencies would go with them. The lines are the Oracle's
+// (commands/uninstall/engine.py:745-810); a matched MCP server, which the
+// Oracle does not uninstall, gets a line of the same shape.
+func printUninstallDryRunPlan(plan *uninstallPlan) {
+	resolution := plan.resolution
+	ux.Info(os.Stdout, "Dry run: Would remove %d package(s):", len(resolution.APMTargets)+len(resolution.MCPTargets))
+	for _, t := range resolution.APMTargets {
+		key := plan.moduleKey(t)
+		ux.Info(os.Stdout, "  - %s from apm.yml", key)
+		if _, err := os.Stat(filepath.Join("apm_modules", filepath.FromSlash(key))); err == nil {
+			ux.Info(os.Stdout, "  - %s from apm_modules/", key)
+		}
+	}
+	for _, t := range resolution.MCPTargets {
+		ux.Info(os.Stdout, "  - %s from apm.yml", t.Name)
+	}
+	if len(plan.orphans) > 0 {
+		ux.Info(os.Stdout, "  Transitive dependencies that would be removed:")
+		for _, k := range sortedStringSet(plan.orphans) {
+			ux.Info(os.Stdout, "    - %s", k)
+		}
+	}
+	ux.Success(os.Stdout, "Dry run complete - no changes made")
+}
+
+// printUninstallSummary prints what an uninstall did, in the Oracle's words
+// and order (commands/uninstall/engine.py:855-944, cli.py:495-506, :689-691):
+// the directories removed from apm_modules, the deployed files cleaned for
+// each package, the entries removed from apm.yml, and the closing count. The
+// counts come from what was removed, not from what the lock listed.
+func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[string]bool, cleaned []uninstallCleaned, keptFiles []string) {
+	resolution := plan.resolution
+	fromModules := 0
+	for _, t := range resolution.APMTargets {
+		key := plan.moduleKey(t)
+		if removedModuleDirs[key] {
+			fromModules++
+			ux.Info(os.Stdout, "Removed %s from apm_modules/", key)
+		} else {
+			ux.Warn(os.Stdout, "Package %s not found in apm_modules/", key)
+		}
+	}
+	for _, k := range sortedStringSet(orphans) {
+		if removedModuleDirs[k] {
+			ux.Info(os.Stdout, "Removed transitive dependency %s from apm_modules/", k)
+		}
+	}
+	for _, c := range cleaned {
+		ux.Info(os.Stdout, "Cleaned %d stale %s from %s", c.files, pluralWord(c.files, "file", "files"), c.owner)
+	}
+	if len(keptFiles) > 0 {
+		ux.Warn(os.Stdout, "Kept %d deployed file(s) that were modified or are shared", len(keptFiles))
+	}
 	for _, t := range resolution.APMTargets {
 		section := "dependencies.apm"
 		if t.IsDev {
 			section = "devDependencies.apm"
 		}
-		targetItems = append(targetItems, ux.Item{Text: fmt.Sprintf("%s (%s)", t.Name, section)})
+		ux.Info(os.Stdout, "Removed %s from %s in apm.yml", plan.moduleKey(t), section)
 	}
 	for _, t := range resolution.MCPTargets {
-		targetItems = append(targetItems, ux.Item{Text: fmt.Sprintf("%s (dependencies.mcp)", t.Name)})
+		ux.Info(os.Stdout, "Removed %s from dependencies.mcp in apm.yml", t.Name)
 	}
-	ux.List(os.Stdout, targetItems)
-
-	if len(orphans) > 0 {
-		ux.Section(os.Stdout, "dry-run: transitive orphans that would also be removed")
-		orphanItems := make([]ux.Item, 0, len(orphans))
-		for _, k := range sortedStringSet(orphans) {
-			orphanItems = append(orphanItems, ux.Item{Text: k})
-		}
-		ux.List(os.Stdout, orphanItems)
-	}
-
-	ux.Section(os.Stdout, "dry-run: apm_modules")
-	moduleItems := make([]ux.Item, 0, len(allRemovalKeys))
-	for _, k := range sortedStringSet(allRemovalKeys) {
-		state := "missing"
-		if _, err := os.Stat(filepath.Join("apm_modules", filepath.FromSlash(k))); err == nil {
-			state = "exists"
-		}
-		moduleItems = append(moduleItems, ux.Item{Text: fmt.Sprintf("apm_modules/%s: %s", k, state)})
-	}
-	ux.List(os.Stdout, moduleItems)
-
-	ux.Info(os.Stdout, "dry-run: no changes made")
-}
-
-// printUninstallSummary is un-101's closing summary. R7 (prd.md/design.md
-// §3): a non-dry-run uninstall used to compress everything into two bare
-// counts, while --dry-run's preview (printUninstallDryRunPlan) already
-// listed the matched package names -- the real run ended up LESS
-// informative than its own preview. This now also names the removed
-// package(s), reports the apm.yml path that was updated, and reports the
-// integrated-file cleanup count from deploy.RemoveDeployedFiles's ACTUAL
-// removed/kept results (codex M1: not lockfile DeployedFiles length, which
-// is a bookkeeping intent that can diverge from what's really on disk --
-// e.g. a file already missing or hand-modified is silently skipped/kept,
-// never "removed").
-func printUninstallSummary(resolution *uninstallResolution, orphans map[string]bool, removedModuleDirs int, removedFiles, keptFiles []string) {
 	removedPackages := len(resolution.APMTargets) + len(resolution.MCPTargets)
-	if len(orphans) > 0 {
-		ux.Success(os.Stdout, "Removed %d package(s) (+%d transitive orphan(s))", removedPackages, len(orphans))
-	} else {
-		ux.Success(os.Stdout, "Removed %d package(s)", removedPackages)
+	apmYMLPath := "apm.yml"
+	if abs, err := filepath.Abs("apm.yml"); err == nil {
+		apmYMLPath = abs
 	}
-	items := make([]ux.Item, 0, removedPackages)
-	for _, t := range resolution.APMTargets {
-		items = append(items, ux.Item{Text: t.Name})
-	}
-	for _, t := range resolution.MCPTargets {
-		items = append(items, ux.Item{Text: t.Name})
-	}
-	if len(items) > 0 {
-		ux.List(os.Stdout, items)
-	}
+	ux.Success(os.Stdout, "Updated %s (removed %d package(s))", apmYMLPath, removedPackages)
 
-	if apmYMLPath, err := filepath.Abs("apm.yml"); err == nil {
-		ux.Info(os.Stdout, "apm.yml updated: %s", apmYMLPath)
+	summary := fmt.Sprintf("Removed %d package(s) from apm.yml", removedPackages)
+	if fromModules > 0 {
+		summary += fmt.Sprintf(", Removed %d package(s) from apm_modules/", fromModules)
 	}
-
-	ux.Success(os.Stdout, "apm_modules: removed %d director%s", removedModuleDirs, pluralYIES(removedModuleDirs))
-
-	switch {
-	case len(keptFiles) > 0:
-		ux.Success(os.Stdout, "cleaned %d integrated file(s) (%d kept -- modified or shared)", len(removedFiles), len(keptFiles))
-	default:
-		ux.Success(os.Stdout, "cleaned %d integrated file(s)", len(removedFiles))
-	}
-}
-
-func pluralYIES(n int) string {
-	if n == 1 {
-		return "y"
-	}
-	return "ies"
+	ux.Success(os.Stdout, "Uninstall complete: %s", summary)
 }
 
 // sortedStringSet returns the sorted keys of a string set, for deterministic

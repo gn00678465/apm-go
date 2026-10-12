@@ -2,7 +2,6 @@ package main
 
 import (
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -12,16 +11,20 @@ import (
 
 const summaryOrderRuns = 20
 
-var summaryOrderKeyHash = regexp.MustCompile(`-[0-9a-f]{8}$`)
-
 // summaryBlockLabels returns the label of each summary block in out, in
-// printed order, without the hash a local-path dependency key ends with.
+// printed order. A dependency's block is headed by the path apm.yml declares
+// it with; the label here is its lock key, _local/<directory name>.
 func summaryBlockLabels(out string) []string {
 	var labels []string
 	for _, line := range strings.Split(out, "\n") {
-		if strings.HasPrefix(line, "_local/") || strings.HasPrefix(line, "<project root>") {
-			labels = append(labels, summaryOrderKeyHash.ReplaceAllString(line, ""))
+		label, ok := strings.CutPrefix(strings.TrimSpace(line), "+ ")
+		if !ok || !strings.HasSuffix(label, " (local)") {
+			continue
 		}
+		if !strings.HasPrefix(label, "<project root>") {
+			label = "_local/" + filepath.Base(strings.TrimSuffix(label, " (local)"))
+		}
+		labels = append(labels, label)
 	}
 	return labels
 }

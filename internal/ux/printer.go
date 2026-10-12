@@ -129,3 +129,15 @@ func ProgressText(format string, a ...any) string {
 func HintText(format string, a ...any) string {
 	return symbolLine(infoStyle, SymbolInfo, format, a...)
 }
+
+// SuccessAt prints a success record after prefix, for a status row that sits
+// inside another block: an indented package header of the install summary
+// ("  "), or a row of the MCP server frame ("|  ").
+func SuccessAt(w io.Writer, prefix, format string, a ...any) {
+	lipgloss.Fprintln(errWriter(w), prefix+symbolLine(successStyle, SymbolSuccess, format, a...))
+}
+
+// ProgressAt is SuccessAt for a progress record.
+func ProgressAt(w io.Writer, prefix, format string, a ...any) {
+	lipgloss.Fprintln(errWriter(w), prefix+symbolLine(infoStyle, SymbolProgress, format, a...))
+}

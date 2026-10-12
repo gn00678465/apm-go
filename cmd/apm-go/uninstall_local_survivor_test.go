@@ -399,10 +399,10 @@ func TestRunUninstall_SurvivingLocalRootDryRunKeepsSharedTransitive(t *testing.T
 	// The output must be the preview/plan style, never the success/deletion
 	// style -- proves this is genuinely a --dry-run codepath, not a real run
 	// that happens to have deleted nothing.
-	if !strings.Contains(stdout, "dry-run") {
+	if !strings.Contains(stdout, "Dry run complete - no changes made") {
 		t.Errorf("expected --dry-run output to be the preview/plan style, got:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "+ Removed") {
+	if strings.Contains(stdout, "Uninstall complete") {
 		t.Errorf("expected --dry-run output to never contain the real-run success summary, got:\n%s", stdout)
 	}
 

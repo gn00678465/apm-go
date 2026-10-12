@@ -11,7 +11,7 @@ import (
 
 // TestRunSelfTest_Passes is the shipped self-test actually passing: proof
 // that the diff/waiver-gate pipeline this ticket adds genuinely detects
-// the differences S1-S5 inject, using in-process stub scripts and never
+// the differences S1-S6 inject, using in-process stub scripts and never
 // the real Oracle.
 func TestRunSelfTest_Passes(t *testing.T) {
 	if err := runSelfTest(5 * time.Second); err != nil {
@@ -67,5 +67,11 @@ func TestSelfTestOnlyFlag_ExitsZeroOnSuccess(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("parity -selftest-only failed: %v\n%s", err, out)
+	}
+}
+
+func TestSelfTestS6_LockfileApmVersionLine(t *testing.T) {
+	if err := selfTestS6(t.TempDir(), 5*time.Second); err != nil {
+		t.Errorf("selfTestS6: %v", err)
 	}
 }

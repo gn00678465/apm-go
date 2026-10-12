@@ -1,0 +1,5 @@
+name: install-fixture
+version: 1.0.0
+target: claude
+dependencies:
+  apm: []

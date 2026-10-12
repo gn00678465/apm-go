@@ -33,20 +33,19 @@ func TestEnrichLockfileForPack_AlwaysEmitsGeneratedAtAndDeployments(t *testing.T
 }
 
 // TestEnrichLockfileForPack_ExistingDeploymentsNotDuplicated guards the
-// failure mode this fix could easily introduce: "deployments" is absent from
-// SerializeLockfile's knownTopKeys, so an existing key already survives via
-// the unknown-key preservation loop. Appending unconditionally would emit it
-// twice -- a duplicate mapping key, worse than the omission being fixed.
+// failure mode of two writers of one key: the lock serializer derives
+// "deployments" from the deployed files (the Oracle's to_yaml,
+// deps/lockfile.py:871), and the pack layer must not add the key again.
 func TestEnrichLockfileForPack_ExistingDeploymentsNotDuplicated(t *testing.T) {
 	// Arrange
-	out := enrich(t, "lockfile_version: \"1\"\ndeployments:\n  - kind: skill\n    path: a/b.md\n")
+	out := enrich(t, "lockfile_version: \"1\"\ndependencies:\n- repo_url: acme/foo\n  deployed_files:\n  - .claude/rules/a.md\ndeployments:\n- target: claude\n  path: .claude/rules/a.md\n  owners:\n  - kind: dependency\n    key: acme/foo\n")
 
 	// Assert
 	if got := strings.Count(out, "deployments:"); got != 1 {
 		t.Errorf("deployments key appears %d times, want exactly 1:\n%s", got, out)
 	}
-	if !strings.Contains(out, "path: a/b.md") {
-		t.Errorf("existing deployments rows were not preserved:\n%s", out)
+	if !strings.Contains(out, "value: .claude/rules/a.md") {
+		t.Errorf("the deployments row of the deployed file is missing:\n%s", out)
 	}
 	if strings.Contains(out, "deployments: []") {
 		t.Errorf("existing deployments rows were clobbered with an empty list:\n%s", out)
@@ -68,12 +67,10 @@ func TestEnrichLockfileForPack_RealGeneratedAtPreserved(t *testing.T) {
 	}
 }
 
-// TestSerializeLockfile_TopLevelWriteUnaffected is the other half of ticket
-// 27's scoping decision: the two unconditional keys belong to the pack-only
-// wrapping layer, NOT to SerializeLockfile, because the top-level
-// apm.lock.yaml path deliberately guarantees a byte-identical round-trip of
-// an unchanged user file -- a property the Oracle does not have and that
-// `install` must not break by silently adding keys.
+// TestSerializeLockfile_TopLevelWriteUnaffected: the two pack-only keys
+// (pack, generated_at) belong to the pack wrapping layer, so the top-level
+// apm.lock.yaml write does not get them. The expected bytes are the Oracle's
+// layout of an empty lock (deps/lockfile.py:864-871), issue #50 ruling R1.
 func TestSerializeLockfile_TopLevelWriteUnaffected(t *testing.T) {
 	// Arrange
 	src := "lockfile_version: \"1\"\ndependencies: []\n"
@@ -93,8 +90,9 @@ func TestSerializeLockfile_TopLevelWriteUnaffected(t *testing.T) {
 	}
 
 	// Assert
-	if string(b) != src {
-		t.Errorf("top-level lockfile write is no longer a byte-identical round-trip:\nwant %q\ngot  %q", src, b)
+	const want = "lockfile_version: '1'\ndependencies: []\ndeployments: []\n"
+	if string(b) != want {
+		t.Errorf("top-level lockfile write:\nwant %q\ngot  %q", want, b)
 	}
 }
 

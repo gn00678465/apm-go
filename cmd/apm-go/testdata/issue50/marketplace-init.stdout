@@ -1,0 +1,8 @@
+ + Created apm.yml with 'marketplace:' block
+╭────────────────────────────────  Next Steps ─────────────────────────────────╮
+│   1. Edit the 'marketplace:' block in apm.yml to add your packages           │
+│   2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json           │
+│   3. Add 'codex' to marketplace.outputs to also generate                     │
+│ .agents/plugins/marketplace.json                                             │
+│   4. Commit apm.yml and the generated marketplace file(s)                    │
+╰──────────────────────────────────────────────────────────────────────────────╯

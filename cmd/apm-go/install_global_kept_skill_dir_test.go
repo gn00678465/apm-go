@@ -105,8 +105,8 @@ func TestInstallGlobal_RealSkillDirWithSourceContentBecomesSymlinkAgain(t *testi
 	if strings.Contains(out, "keeping") || strings.Contains(out, "Cleaned") {
 		t.Errorf("want no warning and no cleaned line:\n%s", out)
 	}
-	if !strings.Contains(out, "Already up to date") {
-		t.Errorf("want Already up to date:\n%s", out)
+	if !installChangedNothing(out) {
+		t.Errorf("want no change:\n%s", out)
 	}
 }
 
@@ -129,8 +129,8 @@ func TestInstallGlobal_KeepsRealSkillDirWithExtraFile(t *testing.T) {
 	out = globalStaleInstall(t, "claude")
 
 	assertKeptSkillDir(t, skill, keptSkillUserFiles())
-	if !strings.Contains(out, "Already up to date") || strings.Count(out, keptSkillWarning) != 1 {
-		t.Errorf("want Already up to date and the warning once:\n%s", out)
+	if !installChangedNothing(out) || strings.Count(out, keptSkillWarning) != 1 {
+		t.Errorf("want no change and the warning once:\n%s", out)
 	}
 	assertGlobalStaleLock(t, home, false, ".claude/skills/demo")
 }
@@ -174,7 +174,7 @@ func TestInstallGlobal_KeptSkillDirDoesNotStopCleanupOfAnotherSkill(t *testing.T
 	if _, err := os.Lstat(other); !os.IsNotExist(err) {
 		t.Errorf(".claude/skills/other still present (Lstat err = %v)", err)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep-") || strings.Count(out, ".claude/skills/other\n") != 1 {
+	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") || strings.Count(out, ".claude/skills/other\n") != 1 {
 		t.Errorf("want one cleaned line listing .claude/skills/other:\n%s", out)
 	}
 	if strings.Count(out, keptSkillWarning) != 1 {
@@ -267,8 +267,8 @@ func TestInstallGlobal_ReplacesRepointedSkillSymlinkAndRegularFile(t *testing.T)
 			if got := globalStaleRead(t, filepath.Join(skill, "SKILL.md")); got != staleCleanupSkillMD {
 				t.Errorf("SKILL.md through the skill symlink = %q, want %q", got, staleCleanupSkillMD)
 			}
-			if strings.Contains(out, "keeping") || !strings.Contains(out, "Already up to date") {
-				t.Errorf("want Already up to date and no warning:\n%s", out)
+			if strings.Contains(out, "keeping") {
+				t.Errorf("want no warning:\n%s", out)
 			}
 		})
 	}

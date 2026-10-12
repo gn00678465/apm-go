@@ -1,6 +1,10 @@
 package main
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/spf13/cobra"
+)
 
 // exitCodeError wraps an error with a specific process exit code, so
 // main()'s root.Execute() error path can exit with something other than
@@ -146,4 +150,14 @@ func exitCodeOf(err error) int {
 		return ec.code
 	}
 	return 1
+}
+
+// silenceUsageForRuntimeError keeps cobra's usage text for a usage error
+// (exit code 2) and drops it for every other failure of a command, which is
+// then one error line and nothing else (issue #50 ruling R15). Deferred by a
+// RunE with its named result.
+func silenceUsageForRuntimeError(cmd *cobra.Command, err *error) {
+	if *err != nil && exitCodeOf(*err) != 2 {
+		cmd.SilenceUsage = true
+	}
 }

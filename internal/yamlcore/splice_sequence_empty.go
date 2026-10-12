@@ -46,7 +46,7 @@ func ReplaceSequenceWithEmptyFlow(src []byte, doc *yaml.Node, path []string) (ou
 			}
 			frames = append(frames, pathFrame{mapping: cur, keyIdx: idx})
 			empty := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
-			return replaceValueSpan(src, frames, empty)
+			return replaceValueSpan(src, frames, empty, SafeDump)
 		}
 		if valNode.Kind != yaml.MappingNode {
 			return nil, false, nil

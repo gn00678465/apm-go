@@ -679,3 +679,98 @@ func TestApplyWaiver_TreeRequiresPathPreciseCoverage(t *testing.T) {
 		t.Fatal("tree_paths must not widen field coverage")
 	}
 }
+
+// TestDiffCase_LockfileApmVersionLine pins issue #50 ruling R12 through the
+// path a real case takes: only the top-level apm_version line of
+// cwd/apm.lock.yaml is exempt from the tree comparison.
+func TestDiffCase_LockfileApmVersionLine(t *testing.T) {
+	const oracleLock = "lockfile_version: '1'\napm_version: 0.33.0\ndependencies: []\n"
+	const targetLock = "lockfile_version: '1'\napm_version: dev\ndependencies: []\n"
+
+	tests := []struct {
+		name       string
+		path       string
+		oracle     string
+		target     string
+		wantFields []string
+	}{
+		{
+			name:   "only the apm_version line differs",
+			path:   "cwd/apm.lock.yaml",
+			oracle: oracleLock,
+			target: targetLock,
+		},
+		{
+			name:       "another line differs too",
+			path:       "cwd/apm.lock.yaml",
+			oracle:     oracleLock,
+			target:     "lockfile_version: '2'\napm_version: dev\ndependencies: []\n",
+			wantFields: []string{"tree"},
+		},
+		{
+			name:       "trailing newline is missing",
+			path:       "cwd/apm.lock.yaml",
+			oracle:     oracleLock,
+			target:     "lockfile_version: '1'\napm_version: dev\ndependencies: []",
+			wantFields: []string{"tree"},
+		},
+		{
+			name:       "version line is the last line and has no newline",
+			path:       "cwd/apm.lock.yaml",
+			oracle:     "lockfile_version: '1'\napm_version: 0.33.0\n",
+			target:     "lockfile_version: '1'\napm_version: dev",
+			wantFields: []string{"tree"},
+		},
+		{
+			name:       "version line ends in CRLF on one side",
+			path:       "cwd/apm.lock.yaml",
+			oracle:     oracleLock,
+			target:     "lockfile_version: '1'\napm_version: dev\r\ndependencies: []\n",
+			wantFields: []string{"tree"},
+		},
+		{
+			name:       "version line is missing on one side",
+			path:       "cwd/apm.lock.yaml",
+			oracle:     oracleLock,
+			target:     "lockfile_version: '1'\ndependencies: []\n",
+			wantFields: []string{"tree"},
+		},
+		{
+			name:       "nested apm_version is compared as written",
+			path:       "cwd/apm.lock.yaml",
+			oracle:     "pack:\n  apm_version: 0.33.0\n",
+			target:     "pack:\n  apm_version: dev\n",
+			wantFields: []string{"tree"},
+		},
+		{
+			name:       "lockfile in a subdirectory is compared as written",
+			path:       "cwd/sub/apm.lock.yaml",
+			oracle:     oracleLock,
+			target:     targetLock,
+			wantFields: []string{"tree"},
+		},
+		{
+			name:       "another yaml file is compared as written",
+			path:       "cwd/other.yaml",
+			oracle:     oracleLock,
+			target:     targetLock,
+			wantFields: []string{"tree"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outDir := t.TempDir()
+			c := Case{ID: "c1"}
+			writeBinFiles(t, outDir, "oracle", "c1", "", "")
+			writeBinFiles(t, outDir, "target", "c1", "", "")
+			entry := TreeEntry{Path: tt.path, Kind: "file"}
+			writeFSFile(t, outDir, "oracle", "c1", tt.path, tt.oracle)
+			writeFSFile(t, outDir, "target", "c1", tt.path, tt.target)
+
+			cd, _ := mustDiffCase(t, outDir, c, Record{Tree: []TreeEntry{entry}}, Record{Tree: []TreeEntry{entry}})
+			if !fieldsEqual(cd.Fields, tt.wantFields) {
+				t.Errorf("Fields = %v, want %v", cd.Fields, tt.wantFields)
+			}
+		})
+	}
+}

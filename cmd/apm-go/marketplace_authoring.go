@@ -112,25 +112,15 @@ func marketplaceInitCmd() *cobra.Command {
 				warnIfGitignoreIgnoresMarketplaceJSON(cmd.ErrOrStderr())
 			}
 
-			// Bordered box, not the plain ux.Section+BulletList this used to
-			// be: upstream renders this exact step list inside a Rich Panel
-			// (border_style="cyan", title=" Next Steps",
-			// commands/marketplace/init.py:117-123) with a plain-text
-			// fallback only when Rich itself is unavailable
-			// (utils/console.py:175-191's `except (ImportError, NameError)`
-			// branch) -- not a routine TTY/non-TTY choice. ux.Box is the
-			// existing plain (non-interactive, no huh/clack dependency --
-			// AC53/D13 requires marketplace init to stay non-interactive)
-			// bordered-box primitive already used for init's own "About to
-			// create" summary shape; it does not reproduce Rich's exact
-			// glyphs or TTY-conditional fallback (that gap is parent
-			// prd.md's Out of Scope, ~80-150 LOC), only that a border exists
-			// where upstream has one.
-			ux.Box(w, "Next steps", []string{
-				"1. Edit the 'marketplace:' block in apm.yml to add your packages",
-				"2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json",
-				"3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json",
-				"4. Commit apm.yml and the generated marketplace file(s)",
+			// The Oracle prints these steps, each as "  {i}. {step}", in a
+			// Rich Panel titled " Next Steps"
+			// (commands/marketplace/init.py:111-123). Step 2 says `apm-go`
+			// where the Oracle says `apm`.
+			ux.Panel(w, " Next Steps", []string{
+				"  1. Edit the 'marketplace:' block in apm.yml to add your packages",
+				"  2. Run 'apm-go pack' to generate .claude-plugin/marketplace.json",
+				"  3. Add 'codex' to marketplace.outputs to also generate .agents/plugins/marketplace.json",
+				"  4. Commit apm.yml and the generated marketplace file(s)",
 			})
 			return nil
 		},

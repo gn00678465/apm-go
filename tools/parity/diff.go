@@ -417,6 +417,8 @@ func normalizedFileBytesEqual(oracleFSRoot, targetFSRoot, path, oCwd, oCfg, oHom
 	if oErr != nil || tErr != nil {
 		return false
 	}
+	oData = normalizeTreeFileContent(path, oData)
+	tData = normalizeTreeFileContent(path, tData)
 	if !utf8.Valid(oData) || !utf8.Valid(tData) {
 		return bytes.Equal(oData, tData)
 	}

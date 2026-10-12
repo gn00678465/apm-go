@@ -123,7 +123,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | `normalize` | 整個指令 | 將 YAML 檔經安全子集載入後 round-trip 重新輸出（`--stdout` 印到標準輸出） |
 | `pack` | `--claude-source-style github\|url` | 在 `marketplace.json` 輸出 `url` 來源，讓 Claude Code 在沒有 SSH 金鑰時改以 HTTPS 安裝 GitHub 套件（預設 `github`） |
 | `install` | `--max-archive-bytes`、`--max-entries` | 解壓縮大小（預設 100 MiB）與檔案數（預設 10000）上限，超過即失敗 |
-| `install` | `--no-provenance` | `apm.lock.yaml` 省略 `generated_at` 與 `apm_version`，產生可重現的 lockfile |
+| `install` | `--no-provenance` | `apm.lock.yaml` 省略 `apm_version`，產生可重現的 lockfile |
 | `install --mcp` | `--force` | 不詢問直接覆寫衝突的既有 MCP 條目 |
 | `init` | `--force` | 不詢問直接覆寫既有 `apm.yml` |
 | `audit` | `--content` | 掃描每個已部署檔案的隱藏 Unicode 字元 |

@@ -144,8 +144,10 @@ func TestRunUpdate_LocalDep_LockfileKeyStable_NoBarePathEntry(t *testing.T) {
 	if strings.Contains(content, "repo_url: ./dep-pkg") {
 		t.Errorf("update must not rewrite the local dep's lock entry into a bare relative-path repo_url, got:\n%s", content)
 	}
-	if strings.Contains(content, "source: local") {
-		t.Errorf("update must not rewrite the local dep's lock entry into source: local, got:\n%s", content)
+	// Issue #50 ruling R1: the entry keeps its _local/ key and records the
+	// source the way the Oracle does.
+	if !strings.Contains(content, "  source: local\n  local_path: ./dep-pkg\n") {
+		t.Errorf("update must keep the local dep's source and declared path, got:\n%s", content)
 	}
 
 	lock := readLockfile(t)

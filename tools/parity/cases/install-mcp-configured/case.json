@@ -1,0 +1,7 @@
+{
+  "id": "install-mcp-configured",
+  "setup_argv": [["install", "--mcp", "demo", "--url", "https://example.com/mcp", "--target", "claude"]],
+  "argv": ["install"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

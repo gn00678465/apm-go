@@ -903,5 +903,54 @@
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/31-stdout-glyph-audit.md",
     "tree_paths": ["home/.apm/cache", "home/.apm/cache/marketplace"]
+  },
+  {
+    "id": "install-local-path-dep",
+    "fields": ["stdout"],
+    "taxonomy": "issue-50-ruling",
+    "reason": "Issue #50 ruling R10 (waiver approved by R18): the Oracle prints two lines, \"Skipped inactive experimental resolver for target 'copilot-cowork'/'copilot-app' during lockfile reconciliation.\", for experimental targets apm-go does not have; apm-go does not print them. Words, exit code and file tree, with apm.lock.yaml, are the same.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
+  },
+  {
+    "id": "install-local-multi-block",
+    "fields": ["stdout"],
+    "taxonomy": "issue-50-ruling",
+    "reason": "Issue #50 ruling R10 (waiver approved by R18): the Oracle prints two lines, \"Skipped inactive experimental resolver for target 'copilot-cowork'/'copilot-app' during lockfile reconciliation.\", for experimental targets apm-go does not have; apm-go does not print them. Words, exit code and file tree, with apm.lock.yaml, are the same.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
+  },
+  {
+    "id": "install-local-repeat",
+    "fields": ["stdout"],
+    "taxonomy": "issue-50-ruling",
+    "reason": "Issue #50 ruling R10 (waiver approved by R18): the Oracle prints two lines, \"Skipped inactive experimental resolver for target 'copilot-cowork'/'copilot-app' during lockfile reconciliation.\", for experimental targets apm-go does not have; apm-go does not print them. Words, exit code and file tree, with apm.lock.yaml, are the same.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
+  },
+  {
+    "id": "compile-instruction",
+    "fields": ["stdout"],
+    "taxonomy": "issue-50-ruling",
+    "reason": "Issue #50 ruling R3 (waiver approved by R18): apm-go keeps its minimal agents-family compiler and its own two-line transcript; the Oracle prints the project analysis, the placement table and the frontmatter warnings. AGENTS.md, exit code and file tree are the same.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
+  },
+  {
+    "id": "uninstall-local",
+    "fields": ["stdout"],
+    "taxonomy": "issue-50-ruling",
+    "reason": "Issue #50 owner ruling of 2026-10-12: the words are the same; the Oracle's Rich console breaks the last line at column 80 (\"[*] Uninstall complete: Removed 1 package(s) from apm.yml, Removed 1 package(s) \" then \"from apm_modules/\"), and apm-go prints it as one line. Exit code and file tree are the same. TestUninstallLocal_StdoutVerbatim pins apm-go's stdout for the same fixture.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
+  },
+  {
+    "id": "marketplace-init",
+    "fields": ["stdout", "tree"],
+    "taxonomy": "issue-50-ruling",
+    "reason": "Issue #50 rulings R4 and R7, and the owner ruling of 2026-10-12. stdout: the Next Steps panel has the Oracle's layout; row 2 has three fewer padding spaces before the right border because 'apm-go pack' is three characters longer than 'apm pack', which the binary-name rewrite turns back into 'apm pack' without restoring the padding. tree (cwd/apm.yml): the template's commented example is apm-go's own (R4, R7). Exit code is the same. TestMarketplaceInit_StdoutVerbatim pins apm-go's stdout for the same fixture.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md",
+    "tree_paths": ["cwd/apm.yml"]
   }
 ]
