@@ -612,10 +612,34 @@ func removeUninstallStandaloneMCP(mcpNames map[string]bool, lock *lockfile.Lockf
 	lock.MCPServers = kept
 }
 
+// lockModeledTopKeys are the top-level keys of apm.lock.yaml that hold only
+// what apm-go records itself.
+var lockModeledTopKeys = map[string]bool{
+	"lockfile_version": true, "generated_at": true, "apm_version": true,
+	"dependencies": true, "deployments": true, "mcp_servers": true,
+	"mcp_configs": true, "mcp_target_servers": true,
+	"local_deployed_files": true, "local_deployed_file_hashes": true,
+}
+
+// lockHasUnmodeledKey reports whether the lock document has a top-level key
+// outside lockModeledTopKeys. lockNode passed lockfile.ParseLockfile: a
+// document whose root is a mapping.
+func lockHasUnmodeledKey(lockNode *yamllib.Node) bool {
+	root := lockNode.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if !lockModeledTopKeys[root.Content[i].Value] {
+			return true
+		}
+	}
+	return false
+}
+
 // writeUninstallLockfile removes removalKeys from lock.Dependencies and
 // writes the result. The lock is deleted only when nothing is left in it: it
 // stays while it records the project's own deployed files or an MCP server,
-// as the Oracle's does (issue #50, item 6a).
+// as the Oracle's does (issue #50, item 6a), and while it has a top-level
+// key apm-go does not model. The last is a deliberate deviation: the Oracle
+// deletes that lock, and PRODUCT.md promises such keys survive.
 func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, removalKeys map[string]bool) error {
 	if lock == nil {
 		return nil
@@ -646,7 +670,7 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 		}
 	}
 
-	if len(lock.Dependencies) == 0 && len(lock.LocalDeployedFiles) == 0 && len(lock.MCPServers) == 0 && len(lock.MCPTargetServers) == 0 {
+	if len(lock.Dependencies) == 0 && len(lock.LocalDeployedFiles) == 0 && len(lock.MCPServers) == 0 && len(lock.MCPTargetServers) == 0 && !lockHasUnmodeledKey(lockNode) {
 		if err := os.Remove("apm.lock.yaml"); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove apm.lock.yaml: %w", err)
 		}

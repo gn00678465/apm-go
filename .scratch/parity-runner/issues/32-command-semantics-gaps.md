@@ -273,3 +273,13 @@ during the implementation.
     l. `install --mcp` when `.mcp.json` is not valid JSON. Oracle: warns,
        rewrites the file from scratch, exit 0. apm-go: refuses with exit 1
        and keeps the file.
+27. Two deliberate deviations from the pull request review (step 31).
+    a. `uninstall` of the last package or MCP server when the lock has a
+       top-level key apm-go does not model. Oracle: deletes the lock.
+       apm-go: keeps it, with `dependencies: []` and the key as it was
+       (`PRODUCT.md`: such keys survive).
+    b. `install` on a lock that has no `apm_version` line and records a
+       dependency or an MCP server. Oracle: does not add the line. apm-go:
+       writes the lock again with the line unless `--no-provenance` is
+       given, and with the flag removes an existing line. `install --mcp`
+       follows the flag too. Both leave a line with another value alone.

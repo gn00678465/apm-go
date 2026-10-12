@@ -35,6 +35,8 @@ type mcpInstallOpts struct {
 	SkillSubset []string
 	TargetFlag  string
 	DeployDir   string
+	// NoProvenance leaves apm_version out of the lock (--no-provenance).
+	NoProvenance bool
 }
 
 // runMCPInstall handles `apm install --mcp NAME [flags]`: a standalone
@@ -183,6 +185,9 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		map[string]map[string]bool{opts.Name: targetSet}, opts.TargetFlag != "", len(m.Target) > 0)
 
 	lock.APMVersion = version.Version
+	if opts.NoProvenance {
+		lock.APMVersion = ""
+	}
 	lockBytes, err := lockfile.WriteLockfile(lock, lockNode)
 	if err == nil {
 		err = writeLockfileBytes(lockBytes)

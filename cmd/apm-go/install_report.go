@@ -256,7 +256,13 @@ func (r *installRun) finish(o installOutcome) error {
 	empty := len(lock.Dependencies) == 0 && len(lock.LocalDeployedFiles) == 0 && len(lock.MCPServers) == 0
 	unchanged := o.existingLock != nil && lockfile.IsSemanticEqual(o.existingLock, lock) && !o.manifestSectionMoved &&
 		lockIsCanonical(o.existingLock, o.existingNode)
-	if !unchanged && !(o.existingLock == nil && empty) {
+	// Whether the apm_version line is there follows --no-provenance, so a
+	// lock that differs in that alone is written again; another value in
+	// the line is not a difference. Adding the line to a lock that has
+	// none is a deliberate deviation: the Oracle, which has no such flag,
+	// leaves it out.
+	lockCurrent := unchanged && (o.existingLock.APMVersion == "") == (lock.APMVersion == "")
+	if !lockCurrent && !(o.existingLock == nil && empty) {
 		outBytes, err := lockfile.WriteLockfile(lock, o.existingNode)
 		if err != nil {
 			return fmt.Errorf("serialize lockfile: %w", err)
