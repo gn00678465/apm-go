@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/rootfs"
 	"github.com/apm-go/apm/internal/ux"
+	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 	yamllib "go.yaml.in/yaml/v4"
 )
@@ -240,28 +243,17 @@ type installOutcome struct {
 // finish writes the lock and apm.yml of an install and prints its last lines.
 func (r *installRun) finish(o installOutcome) error {
 	lock := o.newLock
-	if r.noProvenance {
-		lock.APMVersion = ""
-	} else if len(lock.Dependencies) == 0 && len(lock.MCPServers) == 0 {
-		// The Oracle stamps its version when it locks a dependency or an
-		// MCP server; a lock of the project's own content alone keeps what
-		// it had.
-		lock.APMVersion = ""
-		if o.existingLock != nil {
-			lock.APMVersion = o.existingLock.APMVersion
-		}
+	existingVersion := ""
+	if o.existingLock != nil {
+		existingVersion = o.existingLock.APMVersion
 	}
+	lock.APMVersion = apmVersionFor(lock, existingVersion, r.noProvenance)
 
 	// With nothing to record and no lock yet, the Oracle writes no file.
 	empty := len(lock.Dependencies) == 0 && len(lock.LocalDeployedFiles) == 0 && len(lock.MCPServers) == 0
 	unchanged := o.existingLock != nil && lockfile.IsSemanticEqual(o.existingLock, lock) && !o.manifestSectionMoved &&
 		lockIsCanonical(o.existingLock, o.existingNode)
-	// Whether the apm_version line is there follows --no-provenance, so a
-	// lock that differs in that alone is written again; another value in
-	// the line is not a difference. Adding the line to a lock that has
-	// none is a deliberate deviation: the Oracle, which has no such flag,
-	// leaves it out.
-	lockCurrent := unchanged && (o.existingLock.APMVersion == "") == (lock.APMVersion == "")
+	lockCurrent := unchanged && sameProvenanceLine(o.existingLock.APMVersion, lock.APMVersion)
 	if !lockCurrent && !(o.existingLock == nil && empty) {
 		outBytes, err := lockfile.WriteLockfile(lock, o.existingNode)
 		if err != nil {
@@ -295,6 +287,69 @@ func (r *installRun) finish(o installOutcome) error {
 	}
 	r.printInstallSummary(o.apmInstalled, o.mcpConfigured)
 	return nil
+}
+
+// apmVersionFor is the apm_version a lock is written with; existing is the
+// value of the lock it replaces. The Oracle stamps its version when it locks
+// a dependency or an MCP server, and a lock of the project's own content
+// alone keeps what it had; --no-provenance leaves the line out of any lock.
+func apmVersionFor(lock *lockfile.Lockfile, existing string, noProvenance bool) string {
+	switch {
+	case noProvenance:
+		return ""
+	case len(lock.Dependencies) == 0 && len(lock.MCPServers) == 0:
+		return existing
+	}
+	return version.Version
+}
+
+// sameProvenanceLine reports whether two apm_version values agree on the
+// line being there. Whether it is there follows --no-provenance, so a lock
+// that differs in that alone is written again; another value in the line is
+// not a difference. Adding the line to a lock that has none is a deliberate
+// deviation: the Oracle, which has no such flag, leaves it out.
+func sameProvenanceLine(a, b string) bool {
+	return (a == "") == (b == "")
+}
+
+// syncLockProvenance makes the apm_version line of an existing apm.lock.yaml
+// follow --no-provenance, for a command that ends without recording anything
+// else. Only that line is added or removed, in the bytes on disk: writing
+// the lock whole would also convert one in the format before issue #50,
+// which is the job of an install that moves its directories too.
+func syncLockProvenance(noProvenance bool) error {
+	lock, lockNode, err := readUninstallLockfile()
+	if err != nil || lock == nil {
+		return err
+	}
+	want := apmVersionFor(lock, lock.APMVersion, noProvenance)
+	if sameProvenanceLine(lock.APMVersion, want) {
+		return nil
+	}
+	lock.APMVersion = want
+	canonical, err := lockfile.WriteLockfile(lock, lockNode)
+	onDisk, readErr := os.ReadFile("apm.lock.yaml")
+	if err == nil && readErr == nil {
+		const key = "apm_version:"
+		var out []string
+		insertAt := 0
+		for _, line := range strings.SplitAfter(string(onDisk), "\n") {
+			if strings.HasPrefix(line, key) {
+				continue
+			}
+			out = append(out, line)
+			if strings.HasPrefix(line, "lockfile_version:") || strings.HasPrefix(line, "generated_at:") {
+				insertAt = len(out)
+			}
+		}
+		for _, line := range strings.SplitAfter(string(canonical), "\n") {
+			if strings.HasPrefix(line, key) {
+				out = slices.Insert(out, insertAt, line)
+			}
+		}
+		err = writeLockfileBytes([]byte(strings.Join(out, "")))
+	}
+	return errors.Join(err, readErr)
 }
 
 // lockIsCanonical reports whether apm.lock.yaml on disk is what apm-go would

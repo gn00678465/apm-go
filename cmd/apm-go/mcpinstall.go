@@ -16,7 +16,6 @@ import (
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/mcpregistry"
 	"github.com/apm-go/apm/internal/ux"
-	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
@@ -99,13 +98,15 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		return err
 	}
 	if status == "skipped" {
+		// The user declined the replacement: the operation is cancelled
+		// and no file changes, the lock included.
 		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
 		return nil
 	}
 
 	if status == "unchanged" && opts.Registry != "" {
 		ux.Info(os.Stdout, "MCP server %q unchanged", opts.Name)
-		return nil
+		return syncLockProvenance(opts.NoProvenance)
 	}
 
 	deployDep, diags, err := buildDeployDep(opts)
@@ -153,7 +154,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	}
 	if len(deployed) == 0 {
 		ux.Warn(os.Stdout, "MCP server %q declared in apm.yml but not deployed to any target; see diagnostics above", opts.Name)
-		return nil
+		return syncLockProvenance(opts.NoProvenance)
 	}
 
 	lock, lockNode, err := readUninstallLockfile()
@@ -184,10 +185,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	printMCPBlock([]string{opts.Name}, map[string]*manifest.MCPDependency{opts.Name: deployDep}, lock, oldLock,
 		map[string]map[string]bool{opts.Name: targetSet}, opts.TargetFlag != "", len(m.Target) > 0)
 
-	lock.APMVersion = version.Version
-	if opts.NoProvenance {
-		lock.APMVersion = ""
-	}
+	lock.APMVersion = apmVersionFor(lock, lock.APMVersion, opts.NoProvenance)
 	lockBytes, err := lockfile.WriteLockfile(lock, lockNode)
 	if err == nil {
 		err = writeLockfileBytes(lockBytes)
