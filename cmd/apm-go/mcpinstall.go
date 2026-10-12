@@ -185,7 +185,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	printMCPBlock([]string{opts.Name}, map[string]*manifest.MCPDependency{opts.Name: deployDep}, lock, oldLock,
 		map[string]map[string]bool{opts.Name: targetSet}, opts.TargetFlag != "", len(m.Target) > 0)
 
-	lock.APMVersion = apmVersionFor(lock, lock.APMVersion, opts.NoProvenance)
+	lock.APMVersion = apmVersionFor(lock, lock.APMVersion, lockHasAPMVersion(lockNode), opts.NoProvenance)
 	lockBytes, err := lockfile.WriteLockfile(lock, lockNode)
 	if err == nil {
 		err = writeLockfileBytes(lockBytes)

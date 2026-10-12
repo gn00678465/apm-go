@@ -2,11 +2,14 @@ package main
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"charm.land/huh/v2"
+	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/ux"
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 func appendToLock(t *testing.T, text string) {
@@ -138,6 +141,85 @@ func TestInstall_NoProvenance_AppliesToExistingLock(t *testing.T) {
 	})
 }
 
+// parsedLockOnDisk parses apm.lock.yaml and reports whether the document has
+// a top-level apm_version key, whatever its value or quoting.
+func parsedLockOnDisk(t *testing.T) (lock *lockfile.Lockfile, hasVersionKey bool) {
+	t.Helper()
+	node, err := yamlcore.SafeLoad([]byte(lockOnDisk(t)))
+	if err != nil {
+		t.Fatalf("apm.lock.yaml is not valid YAML: %v\n%s", err, lockOnDisk(t))
+	}
+	lock, err = lockfile.ParseLockfile(node)
+	if err != nil {
+		t.Fatalf("apm.lock.yaml does not parse: %v\n%s", err, lockOnDisk(t))
+	}
+	root := node.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "apm_version" {
+			hasVersionKey = true
+		}
+	}
+	return lock, hasVersionKey
+}
+
+// install reads the same key: an apm_version line with an empty value or a
+// quoted key is a line that is there, and --no-provenance removes it.
+func TestInstall_NoProvenance_RemovesAnySpellingOfTheKey(t *testing.T) {
+	for _, spelling := range []string{"apm_version: ''\n", "'apm_version': dev\n"} {
+		t.Run(spelling, func(t *testing.T) {
+			installParityFixture(t, "install-local-path-dep")
+			mustRunCLI(t, "install", "./dep", "--target", "claude")
+			edited := strings.Replace(lockOnDisk(t), "apm_version: dev\n", spelling, 1)
+			if err := os.WriteFile("apm.lock.yaml", []byte(edited), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mustRunCLI(t, "install", "--no-provenance")
+			if lock, hasKey := parsedLockOnDisk(t); hasKey || len(lock.Dependencies) != 1 {
+				t.Errorf("apm_version key = %v, dependencies = %d; want no key and one dependency\n%s", hasKey, len(lock.Dependencies), lockOnDisk(t))
+			}
+		})
+	}
+}
+
+// A lock of the project's own content alone keeps the apm_version line it
+// had (PRODUCT.md), and it has the line when the key is there, whatever the
+// value. An empty value cannot be written, so the line that stays carries
+// the current version.
+func TestInstall_ProjectContentLock_KeepsLineWithEmptyValue(t *testing.T) {
+	for _, tc := range []struct {
+		name, line string
+		args       []string
+		wantKey    bool
+	}{
+		{"empty string", "apm_version: ''\n", []string{"install"}, true},
+		{"null", "apm_version:\n", []string{"install"}, true},
+		{"empty string with the flag", "apm_version: ''\n", []string{"install", "--no-provenance"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := chdirTemp(t)
+			writeCompileFile(t, dir, "apm.yml", "name: proj\nversion: 1.0.0\ntarget: claude\n")
+			writeCompileFile(t, dir, ".apm/instructions/a.instructions.md", "---\ndescription: a\napplyTo: \"**\"\n---\nA.\n")
+			mustRunCLI(t, "install")
+			const head = "lockfile_version: '1'\n"
+			before := lockOnDisk(t)
+			if !strings.HasPrefix(before, head+"dependencies: []\n") {
+				t.Fatalf("lock before:\n%s", before)
+			}
+			if err := os.WriteFile("apm.lock.yaml", []byte(head+tc.line+strings.TrimPrefix(before, head)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mustRunCLI(t, tc.args...)
+			lock, hasKey := parsedLockOnDisk(t)
+			if hasKey != tc.wantKey {
+				t.Errorf("apm_version key = %v, want %v\n%s", hasKey, tc.wantKey, lockOnDisk(t))
+			}
+			if got, want := lock.LocalDeployedFiles, []string{".claude/rules/a.md"}; !slices.Equal(got, want) {
+				t.Errorf("local_deployed_files = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 const registryEntryManifest = "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  mcp:\n  - name: acme/server\n    transport: http\n    registry: http://127.0.0.1:1\n"
 
 // The registry at 127.0.0.1:1 cannot be reached: an entry that does not
@@ -223,20 +305,14 @@ func TestInstallMCP_EarlyReturn_ProvenanceLineFollowsFlag(t *testing.T) {
 			t.Errorf("apm.lock.yaml was written again:\n%s\nwant the same file with:\n%s", lockOnDisk(t), edited)
 		}
 	})
-	t.Run("lock in the format before issue 50 changes in that line only", func(t *testing.T) {
-		legacyLockProject(t)
-		before := lockOnDisk(t)
-		const line = "apm_version: dev\n"
-		if strings.Count(before, line) != 1 {
-			t.Fatalf("lock before:\n%s", before)
-		}
-		mustRunCLI(t, "install", "--mcp", "two", "--target", "agent-skills", "--no-provenance", "--", "npx")
-		if got, want := lockOnDisk(t), strings.Replace(before, line, "", 1); got != want {
-			t.Errorf("lock after the flag:\n%s\nwant:\n%s", got, want)
-		}
-		mustRunCLI(t, "install", "--mcp", "two", "--target", "agent-skills", "--", "npx")
-		if got := lockOnDisk(t); got != before {
-			t.Errorf("lock after the run without the flag:\n%s\nwant the first lock:\n%s", got, before)
+	t.Run("empty value without the flag is a line that is there", func(t *testing.T) {
+		dir := chdirTemp(t)
+		writeCompileFile(t, dir, "apm.yml", registryEntryManifest)
+		const lock = "lockfile_version: '1'\napm_version: ''\ndependencies: []\nmcp_servers:\n- demo\n"
+		writeCompileFile(t, dir, "apm.lock.yaml", lock)
+		mustRunCLI(t, unchangedRegistryArgs...)
+		if got := lockOnDisk(t); got != lock {
+			t.Errorf("lock:\n%s\nwant it unchanged:\n%s", got, lock)
 		}
 	})
 	t.Run("no lock, none is created", func(t *testing.T) {
@@ -247,6 +323,81 @@ func TestInstallMCP_EarlyReturn_ProvenanceLineFollowsFlag(t *testing.T) {
 			t.Errorf("apm.lock.yaml: stat err = %v, want no file", err)
 		}
 	})
+}
+
+// Each lock below is valid YAML that apm-go reads. The early return of
+// install --mcp writes the lock whole when the apm_version key has to come
+// or go, so the result is valid YAML whatever the layout of the file was.
+func TestInstallMCP_EarlyReturn_WritesAnyValidLockWhole(t *testing.T) {
+	const unchanged = " i MCP server \"acme/server\" unchanged\n"
+	tests := []struct {
+		name    string
+		lock    string
+		flag    bool
+		wantKey bool
+	}{
+		{
+			name:    "no newline at the end, line is added",
+			lock:    "lockfile_version: '1'\ndependencies: []\nmcp_servers:\n- demo\ngenerated_at: 2026-10-12",
+			wantKey: true,
+		},
+		{
+			name: "block scalar value, line is removed",
+			lock: "lockfile_version: '1'\napm_version: |-\n  dev\ndependencies: []\nmcp_servers:\n- demo\n",
+			flag: true,
+		},
+		{
+			name: "empty value, line is removed",
+			lock: "lockfile_version: '1'\napm_version: ''\ndependencies: []\nmcp_servers:\n- demo\n",
+			flag: true,
+		},
+		{
+			name: "quoted key, line is removed",
+			lock: "lockfile_version: '1'\n'apm_version': dev\ndependencies: []\nmcp_servers:\n- demo\n",
+			flag: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := chdirTemp(t)
+			writeCompileFile(t, dir, "apm.yml", registryEntryManifest)
+			writeCompileFile(t, dir, "apm.lock.yaml", tt.lock)
+			args := unchangedRegistryArgs
+			if tt.flag {
+				args = append(append([]string(nil), args...), "--no-provenance")
+			}
+			if got := mustRunCLI(t, args...); got != unchanged {
+				t.Errorf("stdout = %q, want %q", got, unchanged)
+			}
+			lock, hasKey := parsedLockOnDisk(t)
+			if hasKey != tt.wantKey || len(lock.MCPServers) != 1 || lock.MCPServers[0] != "demo" {
+				t.Errorf("apm_version key = %v, mcp_servers = %v; want key = %v and [demo]\n%s", hasKey, lock.MCPServers, tt.wantKey, lockOnDisk(t))
+			}
+		})
+	}
+}
+
+// A lock from before issue #50 is written in the current layout when the
+// key has to go; its entries keep their content, so a frozen install still
+// accepts it and the conversion stays the job of the next plain install.
+func TestInstallMCP_EarlyReturn_LegacyLockKeepsItsEntries(t *testing.T) {
+	key := legacyLockProject(t)
+	if err := os.WriteFile("apm.yml", []byte("name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n    - ./dep\n  mcp:\n  - name: acme/server\n    transport: http\n    registry: http://127.0.0.1:1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mustRunCLI(t, append(append([]string(nil), unchangedRegistryArgs...), "--no-provenance")...)
+
+	lock, hasKey := parsedLockOnDisk(t)
+	if hasKey || len(lock.Dependencies) != 1 || lock.Dependencies[0].RepoURL != key {
+		t.Fatalf("apm_version key = %v, dependencies = %+v; want no key and one entry with repo_url %s\n%s", hasKey, lock.Dependencies, key, lockOnDisk(t))
+	}
+	if strings.Contains(lockOnDisk(t), "generated_at") {
+		t.Errorf("lock is not in the current layout:\n%s", lockOnDisk(t))
+	}
+	if _, stderr, exitCode := runCompileCLI(t, "install", "--frozen"); exitCode != 0 || stderr != "" {
+		t.Errorf("install --frozen: exit = %d, stderr = %q", exitCode, stderr)
+	}
 }
 
 // A user who answers No to replacing an entry cancelled the operation: no

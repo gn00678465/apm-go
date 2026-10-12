@@ -1,11 +1,9 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -247,13 +245,14 @@ func (r *installRun) finish(o installOutcome) error {
 	if o.existingLock != nil {
 		existingVersion = o.existingLock.APMVersion
 	}
-	lock.APMVersion = apmVersionFor(lock, existingVersion, r.noProvenance)
+	hasVersion := lockHasAPMVersion(o.existingNode)
+	lock.APMVersion = apmVersionFor(lock, existingVersion, hasVersion, r.noProvenance)
 
 	// With nothing to record and no lock yet, the Oracle writes no file.
 	empty := len(lock.Dependencies) == 0 && len(lock.LocalDeployedFiles) == 0 && len(lock.MCPServers) == 0
 	unchanged := o.existingLock != nil && lockfile.IsSemanticEqual(o.existingLock, lock) && !o.manifestSectionMoved &&
 		lockIsCanonical(o.existingLock, o.existingNode)
-	lockCurrent := unchanged && sameProvenanceLine(o.existingLock.APMVersion, lock.APMVersion)
+	lockCurrent := unchanged && hasVersion == wantsAPMVersion(lock, hasVersion, r.noProvenance)
 	if !lockCurrent && !(o.existingLock == nil && empty) {
 		outBytes, err := lockfile.WriteLockfile(lock, o.existingNode)
 		if err != nil {
@@ -289,67 +288,72 @@ func (r *installRun) finish(o installOutcome) error {
 	return nil
 }
 
-// apmVersionFor is the apm_version a lock is written with; existing is the
-// value of the lock it replaces. The Oracle stamps its version when it locks
-// a dependency or an MCP server, and a lock of the project's own content
-// alone keeps what it had; --no-provenance leaves the line out of any lock.
-func apmVersionFor(lock *lockfile.Lockfile, existing string, noProvenance bool) string {
+// lockHasAPMVersion reports whether the lock document has a top-level
+// apm_version key, whatever its value or quoting; a nil node is no lock.
+func lockHasAPMVersion(lockNode *yamllib.Node) bool {
+	if lockNode == nil {
+		return false
+	}
+	root := lockNode.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "apm_version" {
+			return true
+		}
+	}
+	return false
+}
+
+// wantsAPMVersion reports whether a lock is to have the apm_version line;
+// has is whether the lock it replaces has it. The Oracle stamps its version
+// when it locks a dependency or an MCP server, and a lock of the project's
+// own content alone stays as it was; --no-provenance leaves the line out of
+// any lock. The value of the line is informational: a lock that has the
+// line and is to have it is not written again for the value. Adding the
+// line to a lock that has none is a deliberate deviation: the Oracle, which
+// has no such flag, leaves it out.
+func wantsAPMVersion(lock *lockfile.Lockfile, has, noProvenance bool) bool {
 	switch {
 	case noProvenance:
-		return ""
+		return false
 	case len(lock.Dependencies) == 0 && len(lock.MCPServers) == 0:
+		return has
+	}
+	return true
+}
+
+// apmVersionFor is the apm_version a lock is written with; existing is the
+// value and has the presence of the line in the lock it replaces. A line
+// with an empty value cannot be written, so a lock that keeps such a line
+// gets the current version.
+func apmVersionFor(lock *lockfile.Lockfile, existing string, has, noProvenance bool) string {
+	switch {
+	case !wantsAPMVersion(lock, has, noProvenance):
+		return ""
+	case len(lock.Dependencies) == 0 && len(lock.MCPServers) == 0 && existing != "":
 		return existing
 	}
 	return version.Version
 }
 
-// sameProvenanceLine reports whether two apm_version values agree on the
-// line being there. Whether it is there follows --no-provenance, so a lock
-// that differs in that alone is written again; another value in the line is
-// not a difference. Adding the line to a lock that has none is a deliberate
-// deviation: the Oracle, which has no such flag, leaves it out.
-func sameProvenanceLine(a, b string) bool {
-	return (a == "") == (b == "")
-}
-
 // syncLockProvenance makes the apm_version line of an existing apm.lock.yaml
 // follow --no-provenance, for a command that ends without recording anything
-// else. Only that line is added or removed, in the bytes on disk: writing
-// the lock whole would also convert one in the format before issue #50,
-// which is the job of an install that moves its directories too.
+// else. A lock whose line has to come or go is written whole, like every
+// other lock; one that already agrees is not touched.
 func syncLockProvenance(noProvenance bool) error {
 	lock, lockNode, err := readUninstallLockfile()
 	if err != nil || lock == nil {
 		return err
 	}
-	want := apmVersionFor(lock, lock.APMVersion, noProvenance)
-	if sameProvenanceLine(lock.APMVersion, want) {
+	has := lockHasAPMVersion(lockNode)
+	if has == wantsAPMVersion(lock, has, noProvenance) {
 		return nil
 	}
-	lock.APMVersion = want
-	canonical, err := lockfile.WriteLockfile(lock, lockNode)
-	onDisk, readErr := os.ReadFile("apm.lock.yaml")
-	if err == nil && readErr == nil {
-		const key = "apm_version:"
-		var out []string
-		insertAt := 0
-		for _, line := range strings.SplitAfter(string(onDisk), "\n") {
-			if strings.HasPrefix(line, key) {
-				continue
-			}
-			out = append(out, line)
-			if strings.HasPrefix(line, "lockfile_version:") || strings.HasPrefix(line, "generated_at:") {
-				insertAt = len(out)
-			}
-		}
-		for _, line := range strings.SplitAfter(string(canonical), "\n") {
-			if strings.HasPrefix(line, key) {
-				out = slices.Insert(out, insertAt, line)
-			}
-		}
-		err = writeLockfileBytes([]byte(strings.Join(out, "")))
+	lock.APMVersion = apmVersionFor(lock, lock.APMVersion, has, noProvenance)
+	out, err := lockfile.WriteLockfile(lock, lockNode)
+	if err == nil {
+		err = writeLockfileBytes(out)
 	}
-	return errors.Join(err, readErr)
+	return err
 }
 
 // lockIsCanonical reports whether apm.lock.yaml on disk is what apm-go would
