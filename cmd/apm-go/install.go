@@ -2563,10 +2563,10 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 	// C3/H2 -- locates the SAME already-declared dependency even across a
 	// pkg string that differs only by case/URL form, so its skills: field
 	// gets updated in place instead of silently `continue`-d past) and by
-	// exact literal string (unchanged fallback for local/parent/unparseable
-	// forms, which never carry a skill subset -- the source matrix only
-	// supports skills: on the git dict form, so an empty identity is never
-	// looked up in effectiveSubsets).
+	// exact literal string (the fallback for parent and unparseable forms,
+	// which have no identity and so no entry in effectiveSubsets). A local
+	// path has an identity (canonicalIdentityForDepString) and carries its
+	// skill subset on the path dict form.
 	//
 	// The two indexes are populated INDEPENDENTLY (2026-07-30 round-4 fix):
 	// entryDepString only recognizes a ScalarNode or a MappingNode carrying
@@ -2661,9 +2661,14 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 		case len(subset) > 0:
 			apmSeq.Content = append(apmSeq.Content, newGitSkillEntry(pkg, subset))
 		default:
-			// String form
+			// String form. A local path is written without the whitespace
+			// around it, as newGitSkillEntry writes it.
+			value := pkg
+			if ref, err := manifest.ParseDepString(pkg); err == nil && ref.IsLocal {
+				value = ref.LocalPath
+			}
 			apmSeq.Content = append(apmSeq.Content,
-				&yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"},
+				&yamllib.Node{Kind: yamllib.ScalarNode, Value: value, Tag: "!!str"},
 			)
 		}
 		appended = true
@@ -2836,10 +2841,20 @@ func entryCanonicalIdentity(entry *yamllib.Node) string {
 // silently dropped a version pin like `ref: stable` (final codex gate
 // finding). A scalar entry gaining a subset is upgraded to the object form;
 // a mapping whose subset is cleared drops just its skills: pair, and only
-// collapses back to the scalar form when git: was the sole remaining key
-// (preserving the pre-existing wildcard-RESET round-trip shape). The
-// entry's ORIGINAL persisted git value is preserved verbatim
-// (first-declared spelling wins).
+// collapses back to the scalar form when git: or path: was the sole
+// remaining key (preserving the pre-existing wildcard-RESET round-trip
+// shape).
+// The entry's ORIGINAL persisted git value is preserved verbatim
+// (first-declared spelling wins). A local path is written as the path the
+// entry reads as, without the whitespace around it, as the Oracle writes it
+// (models/dependency/reference.py:1955-1963), whenever the subset of the
+// entry is set or cleared.
+//
+// Keeping the other fields when a subset is ADDED is a deliberate deviation
+// from the Oracle, which rebuilds a local entry from the new reference and
+// so drops a hand-written alias: (models/dependency/reference.py:1955-1963).
+// Adding a subset must not make a field the user wrote disappear (owner
+// ruling 2026-10-13, issue #61).
 func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 	entry := apmSeq.Content[idx]
 
@@ -2853,18 +2868,35 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 	if entry.Kind != yamllib.MappingNode {
 		return
 	}
+	trimLocalPath := func() {
+		ref, err := manifest.ParseDepDict(entry, idx)
+		if err != nil || !ref.IsLocal {
+			return
+		}
+		for j := 0; j < len(entry.Content)-1; j += 2 {
+			if v := entry.Content[j+1]; entry.Content[j].Value == "path" && v.Value != ref.LocalPath {
+				v.Value, v.Style = ref.LocalPath, 0
+			}
+		}
+	}
 
 	for j := 0; j < len(entry.Content)-1; j += 2 {
 		if entry.Content[j].Value != "skills" {
 			continue
 		}
+		trimLocalPath()
 		if len(subset) == 0 {
 			entry.Content = append(entry.Content[:j], entry.Content[j+2:]...)
-			// Collapse {git: x} (nothing else left) to the scalar form,
-			// matching how a subset-free dependency is persisted in the
-			// first place; any other surviving key (ref:, path:, ...)
-			// keeps the mapping.
-			if len(entry.Content) == 2 && entry.Content[0].Value == "git" {
+			// Collapse {git: x} or {path: x} (nothing else left) to the
+			// scalar form, matching how a subset-free dependency is
+			// persisted in the first place; any other surviving key
+			// (ref:, alias:, ...) keeps the mapping. manifest.ParseDepDict
+			// reads a path: value as the string form reads the same
+			// string, so the value is written back as it is.
+			if len(entry.Content) != 2 {
+				return
+			}
+			if key := entry.Content[0].Value; key == "git" || key == "path" {
 				apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: entry.Content[1].Value, Tag: "!!str"}
 			}
 			return
@@ -2873,6 +2905,7 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 		return
 	}
 	if len(subset) > 0 {
+		trimLocalPath()
 		entry.Content = append(entry.Content,
 			&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
 			newSkillSeqNode(subset),
@@ -2881,11 +2914,18 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 }
 
 // newGitSkillEntry builds the object-form dependencies.apm entry
-// `{git: gitVal, skills: [subset...]}`.
+// `{git: gitVal, skills: [subset...]}`. A local path gets the key `path`
+// instead and loses the whitespace around it, as the Oracle writes it
+// (models/dependency/reference.py:1955-1963, object_fields.py:87-101):
+// `git: ./dep` would make the next install clone the path (issue #61).
 func newGitSkillEntry(gitVal string, subset []string) *yamllib.Node {
+	sourceKey := "git"
+	if ref, err := manifest.ParseDepString(gitVal); err == nil && ref.IsLocal {
+		sourceKey, gitVal = "path", ref.LocalPath
+	}
 	entry := &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
 	entry.Content = append(entry.Content,
-		&yamllib.Node{Kind: yamllib.ScalarNode, Value: "git", Tag: "!!str"},
+		&yamllib.Node{Kind: yamllib.ScalarNode, Value: sourceKey, Tag: "!!str"},
 		&yamllib.Node{Kind: yamllib.ScalarNode, Value: gitVal, Tag: "!!str"},
 		&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
 		newSkillSeqNode(subset),

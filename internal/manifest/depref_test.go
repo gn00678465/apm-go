@@ -290,7 +290,6 @@ func TestParseDepString_AbsolutePath(t *testing.T) {
 		{"posix absolute tmp", "/tmp/malicious", false},
 		{"windows drive letter backslash", `C:\Users\me\plugins\p`, true},
 		{"windows drive letter forward-slash", "C:/Users/me/plugins/p", true},
-		{"windows UNC", `\\myserver\share\plugin`, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

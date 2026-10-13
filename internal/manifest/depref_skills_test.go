@@ -144,7 +144,6 @@ func TestParseDepDict_Skills_PathTraversalNamesRejected(t *testing.T) {
 func TestParseDepDict_Skills_RejectedOnNonGitBranches(t *testing.T) {
 	cases := map[string]*yaml.Node{
 		"registry (id)":  buildDictNodeWithSkills(map[string]string{"id": "some/pkg"}),
-		"local (path)":   buildDictNodeWithSkills(map[string]string{"path": "./local"}),
 		"name (literal)": buildDictNodeWithSkills(map[string]string{"name": "literal"}),
 		"git: parent":    buildDictNodeWithSkills(map[string]string{"git": "parent", "path": "sub/path"}),
 		// marketplace rejects skills via its pre-existing unknown-key
@@ -157,6 +156,55 @@ func TestParseDepDict_Skills_RejectedOnNonGitBranches(t *testing.T) {
 			_, err := ParseDepDict(entry, 0)
 			if err == nil {
 				t.Fatalf("%s: expected error rejecting 'skills' key, got nil", label)
+			}
+		})
+	}
+}
+
+// Issue #61: the Oracle's path object form takes skills
+// (models/dependency/reference.py:831-846).
+func TestParseDepDict_Skills_PathFormCarriesSubset(t *testing.T) {
+	entry := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "path"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "./dep"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "skills"},
+		strSeqNode("sk"),
+	}}
+	d, err := ParseDepDict(entry, 0)
+	if err != nil {
+		t.Fatalf("ParseDepDict: %v", err)
+	}
+	if !d.IsLocal || d.LocalPath != "./dep" || d.Source != "local" {
+		t.Errorf("got IsLocal %v, LocalPath %q, Source %q; want a local reference to ./dep", d.IsLocal, d.LocalPath, d.Source)
+	}
+	if len(d.SkillSubset) != 1 || d.SkillSubset[0] != "sk" {
+		t.Errorf("SkillSubset = %v, want [sk]", d.SkillSubset)
+	}
+}
+
+func TestParseDepDict_Skills_PathFormEmptyListRejected(t *testing.T) {
+	entry := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "path"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "./dep"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "skills"},
+		strSeqNode(),
+	}}
+	_, err := ParseDepDict(entry, 0)
+	if err == nil || !strings.Contains(err.Error(), "'skills' must contain at least one name") {
+		t.Fatalf("expected the empty-list error, got: %v", err)
+	}
+}
+
+func TestParseDepDict_Skills_RegistryAndNameKeepTheirMessage(t *testing.T) {
+	const want = "dependency entry 0: 'skills' is only supported for git dependencies"
+	for label, entry := range map[string]*yaml.Node{
+		"id":   buildDictNodeWithSkills(map[string]string{"id": "some/pkg"}),
+		"name": buildDictNodeWithSkills(map[string]string{"name": "owner/repo"}),
+	} {
+		t.Run(label, func(t *testing.T) {
+			_, err := ParseDepDict(entry, 0)
+			if err == nil || err.Error() != want {
+				t.Fatalf("got %v, want %q", err, want)
 			}
 		})
 	}

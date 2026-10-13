@@ -937,6 +937,14 @@
     "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
   },
   {
+    "id": "install-local-skill-subset",
+    "fields": ["stdout"],
+    "taxonomy": "issue-50-ruling",
+    "reason": "Issue #61, owner ruling of 2026-10-13: one case for `install ./dep --skill sk` on a local package, stdout only. The stdout differences are these four and no other. (1) Issue #50 ruling R10: the Oracle prints two lines, \"Skipped inactive experimental resolver for target 'copilot-cowork'/'copilot-app' during lockfile reconciliation.\", for experimental targets apm-go does not have; apm-go does not print them. (2) Ticket 32 item 18: the Oracle prints \"./dep (updated ref in apm.yml)\" and \"Updated apm.yml dependency entries\"; apm-go prints \"./dep (already in apm.yml)\" and \"No new packages to add\". (3) Ticket 31 (the row for install.go's \"Skill subset:\" line): apm-go prints \"Skill subset: sk\"; the Oracle has no such line. (4) Ticket 32 item 24: the Oracle prints \"Cleaned 2 stale files from ./dep\" and its summary has \"(2 stale files cleaned)\"; apm-go prints neither. Exit code and file tree, with apm.yml and apm.lock.yaml, are the same.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
+  },
+  {
     "id": "compile-instruction",
     "fields": ["stdout"],
     "taxonomy": "issue-50-ruling",
