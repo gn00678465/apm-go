@@ -56,14 +56,18 @@ check)
   # read its export data. Every step runs on the directive's version, the
   # one CI installs (go-version-file: go.mod).
   GOTOOLCHAIN="go$(sed -n 's/^go //p' go.mod)"; export GOTOOLCHAIN
-  out="$BASE/check"; rm -rf "$out"; mkdir -p "$out"
+  # No recursive delete names a path built from a variable: each one enters
+  # the parent directory and removes a literal name there, so an empty or
+  # wrong variable cannot aim it at anything else.
+  out="$BASE/check"; mkdir -p "$BASE"; (cd "$BASE" && rm -rf check); mkdir -p "$out"
   # The Go build work directory and every t.TempDir() go here, not to /tmp:
   # a small or quota-limited /tmp fails the suite with "disk quota exceeded"
   # at link time, which says nothing about the code. It is outside the
   # repository because tests that build a git repository in t.TempDir() fail
   # inside another work tree.
-  TMPDIR="${XDG_CACHE_HOME:-$HOME/.cache}/apm-go-verify/tmp"; export TMPDIR
-  rm -rf "$TMPDIR"; mkdir -p "$TMPDIR"
+  tmpparent="${XDG_CACHE_HOME:-$HOME/.cache}/apm-go-verify"
+  TMPDIR="$tmpparent/tmp"; export TMPDIR
+  mkdir -p "$tmpparent"; (cd "$tmpparent" && rm -rf tmp); mkdir -p "$TMPDIR"
   fail=0
   # step NAME CMD...: every step runs, also after an earlier one failed, so
   # one run reports everything that is wrong. The log is the evidence.
@@ -103,7 +107,7 @@ check)
   if [ -n "$offline" ]; then echo "skip  govulncheck (--offline: it downloads the vulnerability database)"
   elif go run "golang.org/x/vuln/cmd/govulncheck@$GOVULNCHECK_VERSION" ./... > "$out/govulncheck.log" 2>&1; then echo "ok    govulncheck"
   else echo "note  govulncheck: $(grep -c '^Vulnerability #' "$out/govulncheck.log") finding(s) that the code calls, or the scan did not run; log: $out/govulncheck.log"; fi
-  rm -rf "$out/findings.tmp" "$TMPDIR" 2>/dev/null || true
+  rm -f "$out/findings.tmp"; (cd "$tmpparent" && rm -rf tmp) 2>/dev/null || true
   [ "$fail" -eq 0 ] && echo "check: all steps passed" || { echo "check: at least one step failed"; exit 1; }
   ;;
 
@@ -219,7 +223,7 @@ clean)
   tmux -L "$(sock_of "$run")" kill-server 2>/dev/null || true
   # A killed server leaves its socket file behind.
   rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$(sock_of "$run")"
-  rm -rf "$run/sandbox"
+  (cd "$run" && rm -rf sandbox)
   n=$(find "$run/evidence" -type f | wc -l)
   echo "cleaned sandbox; $n evidence file(s) kept in $run/evidence"
   ;;

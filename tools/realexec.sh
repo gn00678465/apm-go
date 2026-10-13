@@ -12,7 +12,9 @@ ART=${REALEXEC_ART:?REALEXEC_ART (artifact directory) is required}
 case "$ART" in /*|?:*) ;; *) ART="$PWD/$ART" ;; esac
 BIN=${REALEXEC_BIN:?REALEXEC_BIN (built apm-go binary) is required}
 SB="$ART/sandbox"
-rm -rf "$SB"
+# A literal name inside the artifact directory, not a path built from a
+# variable: an empty or wrong ART cannot aim the delete at anything else.
+mkdir -p "$ART"; (cd "$ART" && rm -rf sandbox)
 mkdir -p "$SB/home" "$SB/work"
 case "$BIN" in /*|?:*) ;; *) BIN="$PWD/$BIN" ;; esac
 
