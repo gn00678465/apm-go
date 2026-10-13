@@ -929,6 +929,14 @@
     "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
   },
   {
+    "id": "install-local-skill",
+    "fields": ["stdout"],
+    "taxonomy": "issue-50-ruling",
+    "reason": "Issue #50 ruling R10 (waiver approved by R18; this case was added after issue #50 closed, by the owner ruling of 2026-10-12 in its comments): the Oracle prints two lines, \"Skipped inactive experimental resolver for target 'copilot-cowork'/'copilot-app' during lockfile reconciliation.\", for experimental targets apm-go does not have; apm-go does not print them. Words, exit code and file tree, with apm.lock.yaml, are the same.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md"
+  },
+  {
     "id": "compile-instruction",
     "fields": ["stdout"],
     "taxonomy": "issue-50-ruling",

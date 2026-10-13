@@ -245,7 +245,7 @@ Runner:
 - **Waiver** (`waiver.go:18`; `waivers.json`): `id`, `fields`, `tree_paths`, `taxonomy`, `reason`, `owner`, `eval_plan_ref`. `applyWaiver` (`diff.go:486`) counts a case waived only when the waiver covers every differing field; an unknown waiver id fails validation.
 - **Baseline** (`baseline.go:40`; `baseline.json`): exact paths of global-state side-effect files, excluded from the tree comparison.
 - `countUnwaived` (`diff.go:553`) > 0 returns an error and fails the job (`main.go:237`); `summary.txt` and `parity-out/` are printed and uploaded as an artifact either way.
-- **Pending cases** (`tools/parity/cases-pending/`, currently none: the directory holds only its `README.md`; `tools/parity/cases/` holds 108 cases): a case recorded as a design deviation is kept there, out of the gate. `README.md` there requires such a case to have a **ticket** in `.scratch/parity-runner/issues/` and to return to `cases/` when the ticket closes.
+- **Pending cases** (`tools/parity/cases-pending/`, currently none: the directory holds only its `README.md`; `tools/parity/cases/` holds 109 cases): a case recorded as a design deviation is kept there, out of the gate. `README.md` there requires such a case to have a **ticket** in `.scratch/parity-runner/issues/` and to return to `cases/` when the ticket closes.
 - The runner has its own `go test` (`tools/parity/*_test.go`) and a `-selftest-only` fault-injection self-check (`main.go:45-54`, `selftest.go`).
 
 **Release.** `release.yml` requires the tagged commit to be an ancestor of `origin/main` (fail-closed) and injects the tag into `Version` via `-ldflags -X` (`internal/version/version.go:14`); tags containing `-` are marked prerelease.
