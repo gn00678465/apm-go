@@ -447,3 +447,80 @@ func TestRemoveDeployedFiles_MultipleFilesMixedOutcomes(t *testing.T) {
 		t.Fatalf("expected one diag referencing %s, got %v", editedRel, diags)
 	}
 }
+
+// A lock lists a deployed skill's directory with no hash (issue #50).
+func TestRemoveDeployedFiles_SkillDirEntryGoesWithItsFiles(t *testing.T) {
+	dir := t.TempDir()
+	skill, file := ".claude/skills/demo", ".claude/skills/demo/SKILL.md"
+	hash := writeDeployedFile(t, dir, file, "skill content")
+
+	removed, kept, diags := RemoveDeployedFiles(dir, []string{skill, file}, map[string]string{file: hash})
+
+	if len(kept) != 0 || len(diags) != 0 {
+		t.Fatalf("kept = %v, diags = %v, want none", kept, diags)
+	}
+	if strings.Join(removed, ",") != file+","+skill {
+		t.Fatalf("removed = %v, want [%s %s]", removed, file, skill)
+	}
+}
+
+func TestRemoveDeployedFiles_SkillDirEntryStaysWithUserFile(t *testing.T) {
+	dir := t.TempDir()
+	skill, file := ".claude/skills/demo", ".claude/skills/demo/SKILL.md"
+	hash := writeDeployedFile(t, dir, file, "skill content")
+	writeDeployedFile(t, dir, skill+"/notes.txt", "mine")
+
+	removed, kept, diags := RemoveDeployedFiles(dir, []string{skill, file}, map[string]string{file: hash})
+
+	if len(kept) != 0 || len(diags) != 0 {
+		t.Fatalf("kept = %v, diags = %v, want none", kept, diags)
+	}
+	if strings.Join(removed, ",") != file {
+		t.Fatalf("removed = %v, want [%s]", removed, file)
+	}
+	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(skill), "notes.txt")); err != nil {
+		t.Fatalf("the user's file is gone: %v", err)
+	}
+}
+
+// A user-scope deploy makes the skill directory a symlink into the package;
+// uninstall removes the files through it and the emptied symlink with them.
+func TestRemoveDeployedFiles_SkillDirEntryIsSymlinkToDirectory(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(t.TempDir(), "demo")
+	hash := writeDeployedFile(t, source, "SKILL.md", "skill content")
+	skill, file := ".claude/skills/demo", ".claude/skills/demo/SKILL.md"
+	if err := os.MkdirAll(filepath.Join(dir, ".claude", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(source, filepath.Join(dir, filepath.FromSlash(skill))); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, kept, diags := RemoveDeployedFiles(dir, []string{skill, file}, map[string]string{file: hash})
+
+	if len(kept) != 0 || len(diags) != 0 {
+		t.Fatalf("kept = %v, diags = %v, want none", kept, diags)
+	}
+	if strings.Join(removed, ",") != file+","+skill {
+		t.Fatalf("removed = %v, want [%s %s]", removed, file, skill)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf(".claude still present (Lstat err = %v)", err)
+	}
+}
+
+func TestRemoveDeployedFiles_SkillDirEntryAfterItsFiles(t *testing.T) {
+	dir := t.TempDir()
+	skill, file := ".claude/skills/demo", ".claude/skills/demo/SKILL.md"
+	hash := writeDeployedFile(t, dir, file, "skill content")
+
+	removed, kept, diags := RemoveDeployedFiles(dir, []string{file, skill}, map[string]string{file: hash})
+
+	if len(kept) != 0 || len(diags) != 0 {
+		t.Fatalf("kept = %v, diags = %v, want none", kept, diags)
+	}
+	if strings.Join(removed, ",") != file+","+skill {
+		t.Fatalf("removed = %v, want [%s %s]", removed, file, skill)
+	}
+}

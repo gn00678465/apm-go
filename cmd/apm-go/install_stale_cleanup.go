@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -75,7 +74,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		if linkSourceRoot != "" {
 			removed, diags = deploy.RemoveStaleLinkedFiles(deployRoot, linkSourceRoot, filepath.Join(linkSourceRoot, source), stale, oldHashes, claimed)
 		} else {
-			removed, _, diags = removeDeployedPaths(deployRoot, stale, oldHashes)
+			removed, _, diags = deploy.RemoveDeployedFiles(deployRoot, stale, oldHashes)
 		}
 		if len(removed) > 0 || len(diags) > 0 {
 			sort.Strings(removed)
@@ -100,12 +99,8 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 // withSkillDirs adds, for each deployed skill, the skill's own directory
 // (<root>/skills/<name>) to the deployed files, as the Oracle's lock lists it:
 // a path with no hash (measured on Oracle v0.33.0, issue #50). A --global
-// deploy makes that directory a symlink and keeps its own record of it, so
-// its list is left as it is.
-func withSkillDirs(files []string, deployDir string) []string {
-	if deployDir != "" {
-		return files
-	}
+// deploy lists it too; there the directory is the skill symlink.
+func withSkillDirs(files []string) []string {
 	out := append([]string(nil), files...)
 	seen := make(map[string]bool, len(files))
 	for _, f := range files {
@@ -128,28 +123,30 @@ func withSkillDirs(files []string, deployDir string) []string {
 	return out
 }
 
-// removeDeployedPaths is deploy.RemoveDeployedFiles for a lock's deployed
-// paths, which also name skill directories (withSkillDirs). A directory has
-// no hash to prove it is unchanged, so it is never removed by itself: it
-// counts as removed when it was there and is gone once its files are, and it
-// stays, with no warning, when something is left in it.
-func removeDeployedPaths(root string, paths []string, hashes map[string]string) (removed, kept, diags []string) {
-	var dirs, files []string
-	for _, p := range paths {
-		if _, hashed := hashes[p]; !hashed {
-			if info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(p))); err == nil && info.IsDir() {
-				dirs = append(dirs, p)
-				continue
-			}
+// withoutOrphanSkillDirs drops from a merged file list each skill directory
+// entry (<root>/skills/<name>, no hash) that has no file below it left in the
+// list. The entry follows its files: whether the path exists says nothing,
+// because a directory the user filled, or a skill symlink the user pointed
+// elsewhere, is still there after the skill is gone.
+func withoutOrphanSkillDirs(files []string, hashes map[string]string) []string {
+	out := files[:0:0]
+	for _, f := range files {
+		segs := strings.Split(normalizeDeployPath(f), "/")
+		_, hashed := hashes[f]
+		if !hashed && len(segs) >= 2 && segs[len(segs)-2] == "skills" && !hasFileBelow(files, f) {
+			continue
 		}
-		files = append(files, p)
+		out = append(out, f)
 	}
-	removed, kept, diags = deploy.RemoveDeployedFiles(root, files, hashes)
-	for _, d := range dirs {
-		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(d))); os.IsNotExist(err) {
-			removed = append(removed, d)
+	return out
+}
+
+func hasFileBelow(files []string, dir string) bool {
+	prefix := normalizeDeployPath(dir) + "/"
+	for _, f := range files {
+		if strings.HasPrefix(normalizeDeployPath(f), prefix) {
+			return true
 		}
 	}
-	sort.Strings(removed)
-	return removed, kept, diags
+	return false
 }

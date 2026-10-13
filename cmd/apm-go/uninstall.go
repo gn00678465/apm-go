@@ -270,7 +270,8 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	if deployDir != "" {
 		removeRoot = deployDir
 	}
-	removedFiles, keptFiles, diags := removeDeployedPaths(removeRoot, deployedFiles, deployedHashes)
+	removedFiles, keptFiles, diags := deploy.RemoveDeployedFiles(removeRoot, deployedFiles, deployedHashes)
+	sort.Strings(removedFiles)
 	cleaned := uninstallCleanedByOwner(lock, allRemovalKeys, removedFiles)
 
 	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys)
