@@ -209,9 +209,9 @@ func TestPersistPackagesToManifest_MonorepoPathEntryNotMisHit(t *testing.T) {
 	}
 }
 
-// persistLocalSubset runs persistPackagesToManifest for the local package
-// ./dep with the given effective subset and returns the dumped manifest.
-func persistLocalSubset(t *testing.T, src string, subset []string) string {
+// persistLocalSubset runs persistPackagesToManifest for the local package pkg
+// with the given effective subset and returns the dumped manifest.
+func persistLocalSubset(t *testing.T, src, pkg string, subset []string) string {
 	t.Helper()
 	chdirTemp(t)
 	doc, err := yamlcore.SafeLoad([]byte(src))
@@ -220,9 +220,9 @@ func persistLocalSubset(t *testing.T, src string, subset []string) string {
 	}
 	var subsets map[string][]string
 	if len(subset) > 0 {
-		subsets = map[string][]string{canonicalIdentityForDepString("./dep"): subset}
+		subsets = map[string][]string{canonicalIdentityForDepString(pkg): subset}
 	}
-	if err := persistPackagesToManifest(doc, []string{"./dep"}, subsets, false); err != nil {
+	if err := persistPackagesToManifest(doc, []string{pkg}, subsets, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 	out, err := yamlcore.SafeDump(doc)
@@ -267,7 +267,40 @@ func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := persistLocalSubset(t, tt.src, tt.subset); got != tt.want {
+			if got := persistLocalSubset(t, tt.src, "./dep", tt.subset); got != tt.want {
+				t.Errorf("apm.yml:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+// A path: value with no ./ prefix is not a local path as a plain string
+// (`dep` does not parse, `sub/dep` is an owner/repo shorthand), so a reset
+// keeps the object.
+func TestPersistPackagesToManifest_ResetKeepsPathEntryWithoutLocalPrefix(t *testing.T) {
+	const head = "name: proj\nversion: 1.0.0\ntarget: claude\n"
+	tests := []struct {
+		name string
+		pkg  string
+		src  string
+		want string
+	}{
+		{
+			name: "bare name",
+			pkg:  "./dep",
+			src:  head + "dependencies:\n  apm:\n    - path: dep\n      skills:\n        - sk\n",
+			want: head + "dependencies:\n  apm:\n    - path: dep\n",
+		},
+		{
+			name: "two segments",
+			pkg:  "./sub/dep",
+			src:  head + "dependencies:\n  apm:\n    - path: sub/dep\n      skills:\n        - sk\n",
+			want: head + "dependencies:\n  apm:\n    - path: sub/dep\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := persistLocalSubset(t, tt.src, tt.pkg, nil); got != tt.want {
 				t.Errorf("apm.yml:\n%s\nwant:\n%s", got, tt.want)
 			}
 		})

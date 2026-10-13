@@ -2838,8 +2838,9 @@ func entryCanonicalIdentity(entry *yamllib.Node) string {
 // a mapping whose subset is cleared drops just its skills: pair, and only
 // collapses back to the scalar form when git: or path: was the sole
 // remaining key (preserving the pre-existing wildcard-RESET round-trip
-// shape). The entry's ORIGINAL persisted git or path value is preserved
-// verbatim (first-declared spelling wins).
+// shape) and, for path:, the value is still a local path as a plain string.
+// The entry's ORIGINAL persisted git or path value is preserved verbatim
+// (first-declared spelling wins).
 func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 	entry := apmSeq.Content[idx]
 
@@ -2863,9 +2864,21 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 			// Collapse {git: x} or {path: x} (nothing else left) to the
 			// scalar form, matching how a subset-free dependency is
 			// persisted in the first place; any other surviving key
-			// (ref:, alias:, ...) keeps the mapping.
-			if len(entry.Content) == 2 && (entry.Content[0].Value == "git" || entry.Content[0].Value == "path") {
-				apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: entry.Content[1].Value, Tag: "!!str"}
+			// (ref:, alias:, ...) keeps the mapping. ParseDepDict takes any
+			// path: value as a local path, the plain-string parser only a
+			// prefixed one (./, ../, /, ~), so {path: dep} stays a mapping:
+			// as a string `dep` does not parse and `sub/dep` is owner/repo.
+			if len(entry.Content) != 2 {
+				return
+			}
+			key, val := entry.Content[0].Value, entry.Content[1].Value
+			collapse := key == "git"
+			if key == "path" {
+				ref, err := manifest.ParseDepString(val)
+				collapse = err == nil && ref.IsLocal
+			}
+			if collapse {
+				apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: val, Tag: "!!str"}
 			}
 			return
 		}
