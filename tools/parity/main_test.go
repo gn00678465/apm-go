@@ -557,7 +557,7 @@ func TestRealWaiversJSON_Validates(t *testing.T) {
 		"marketplace-audit-unregistered",
 		"experimental-enable", "marketplace-browse-local", "marketplace-list-local",
 		"marketplace-refresh-local", "marketplace-update-local", "marketplace-remove-local",
-		"install-local-path-dep", "install-local-multi-block", "install-local-repeat",
+		"install-local-path-dep", "install-local-multi-block", "install-local-repeat", "install-local-skill",
 		"compile-instruction",
 		"uninstall-local", "marketplace-init",
 	}
