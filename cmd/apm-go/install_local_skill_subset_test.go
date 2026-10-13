@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/gitops"
@@ -183,4 +184,65 @@ func TestRunInstall_DoubleSlashPathSubsetSurvivesNextInstall(t *testing.T) {
 	installLocalStep(t, "install <path> --skill '*'", []string{"*"}, []string{pkg})
 	manifestIs("--skill '*'", plain)
 	installLocalStep(t, "install after the reset", nil, nil)
+}
+
+// A string is the same path in the string form and in the `path:` form, so
+// moving `./dep ` between the two never turns it into the sibling `./dep`.
+func TestRunInstall_TrailingSpacePathSubsetKeepsItsPackage(t *testing.T) {
+	chdirTemp(t)
+	writeSkill := func(pkg, name, body string) {
+		t.Helper()
+		dir := filepath.Join(pkg, ".apm", "skills", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		text := "---\nname: " + name + "\ndescription: skill " + name + "\n---\n" + body + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, pkg := range []string{"dep", "dep "} {
+		writeSkill(pkg, "sk", "from ["+pkg+"]")
+		if err := os.WriteFile(filepath.Join(pkg, "apm.yml"), []byte("name: dep\nversion: 1.0.0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSkill("dep ", "b", "b")
+	const head = "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n"
+	const plain = head + "    - './dep '\n"
+	if err := os.WriteFile("apm.yml", []byte(plain), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := func(step, wantManifest string, wantSkills ...string) {
+		t.Helper()
+		got, err := os.ReadFile("apm.yml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != wantManifest {
+			t.Fatalf("apm.yml after %s:\n%s\nwant:\n%s", step, got, wantManifest)
+		}
+		if names := deployedClaudeSkills(t); strings.Join(names, ",") != strings.Join(wantSkills, ",") {
+			t.Errorf("%s: .claude/skills = %v, want %v", step, names, wantSkills)
+		}
+		sk, err := os.ReadFile(filepath.Join(".claude", "skills", "sk", "SKILL.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(sk), "from [dep ]") {
+			t.Fatalf("%s: deployed sk is not the one of `dep `:\n%s", step, sk)
+		}
+	}
+	const subset = head + "    - path: './dep '\n      skills:\n        - sk\n"
+
+	installLocalStep(t, "install", nil, nil)
+	after("install", plain, "b", "sk")
+	installLocalStep(t, "install './dep ' --skill sk", []string{"sk"}, []string{"./dep "})
+	after("--skill sk", subset, "sk")
+	installLocalStep(t, "install after --skill sk", nil, nil)
+	after("install after --skill sk", subset, "sk")
+	installLocalStep(t, "install './dep ' --skill '*'", []string{"*"}, []string{"./dep "})
+	after("--skill '*'", plain, "b", "sk")
+	installLocalStep(t, "install after the reset", nil, nil)
+	after("install after the reset", plain, "b", "sk")
 }

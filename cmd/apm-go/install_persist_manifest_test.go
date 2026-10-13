@@ -209,9 +209,9 @@ func TestPersistPackagesToManifest_MonorepoPathEntryNotMisHit(t *testing.T) {
 	}
 }
 
-// persistLocalSubset runs persistPackagesToManifest for the package ./dep
+// persistLocalSubset runs persistPackagesToManifest for the local package pkg
 // with the given effective subset and returns the dumped manifest.
-func persistLocalSubset(t *testing.T, src string, subset []string) string {
+func persistLocalSubset(t *testing.T, src, pkg string, subset []string) string {
 	t.Helper()
 	chdirTemp(t)
 	doc, err := yamlcore.SafeLoad([]byte(src))
@@ -220,9 +220,9 @@ func persistLocalSubset(t *testing.T, src string, subset []string) string {
 	}
 	var subsets map[string][]string
 	if len(subset) > 0 {
-		subsets = map[string][]string{canonicalIdentityForDepString("./dep"): subset}
+		subsets = map[string][]string{canonicalIdentityForDepString(pkg): subset}
 	}
-	if err := persistPackagesToManifest(doc, []string{"./dep"}, subsets, false); err != nil {
+	if err := persistPackagesToManifest(doc, []string{pkg}, subsets, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 	out, err := yamlcore.SafeDump(doc)
@@ -239,6 +239,7 @@ func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
 	tests := []struct {
 		name   string
 		src    string
+		pkg    string
 		subset []string
 		want   string
 	}{
@@ -260,11 +261,11 @@ func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
 			want: head + "dependencies:\n  apm:\n    - ./dep\n",
 		},
 		{
-			// ParseDepDict reads the value without the surrounding
-			// whitespace; the string form does not strip it.
-			name: "padded path and skills reset to the stripped string",
-			src:  head + "dependencies:\n  apm:\n    - path: ' ./dep '\n      skills:\n        - sk\n",
-			want: head + "dependencies:\n  apm:\n    - ./dep\n",
+			// `./dep ` is another directory than `./dep`, in both forms.
+			name: "path with a trailing space and skills reset to the same string",
+			src:  head + "dependencies:\n  apm:\n    - path: './dep '\n      skills:\n        - sk\n",
+			pkg:  "./dep ",
+			want: head + "dependencies:\n  apm:\n    - './dep '\n",
 		},
 		{
 			// Deliberate deviation: the Oracle v0.33.0 writes {path, skills}
@@ -282,7 +283,11 @@ func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := persistLocalSubset(t, tt.src, tt.subset); got != tt.want {
+			pkg := tt.pkg
+			if pkg == "" {
+				pkg = "./dep"
+			}
+			if got := persistLocalSubset(t, tt.src, pkg, tt.subset); got != tt.want {
 				t.Errorf("apm.yml:\n%s\nwant:\n%s", got, tt.want)
 			}
 		})

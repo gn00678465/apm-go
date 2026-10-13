@@ -17,8 +17,8 @@ func pathEntry(t *testing.T, value string) *yaml.Node {
 
 // Every row's verdict and reason is what the Oracle v0.33.0's
 // DependencyReference.parse_from_dict gave for the same YAML
-// (models/dependency/reference.py:831-846), but for the three rows marked
-// as deviations.
+// (models/dependency/reference.py:831-846), but for the rows marked as
+// deviations.
 func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 	const (
 		notLocal = "Object-style dependency must have a 'git' field, or 'path' must be a local filesystem path (starting with './', '../', '/', or '~')"
@@ -30,7 +30,9 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 		{"./sub/dep", "./sub/dep"},
 		{"/abs/dep", "/abs/dep"},
 		{"~/x", "~/x"},
-		{"' ./dep '", "./dep"},
+		// Deviation: the Oracle strips the whitespace of a path in both
+		// forms, apm-go in neither.
+		{"'./dep '", "./dep "},
 		// Deviations: the Oracle refuses these two. The string form takes
 		// them, and install writes `path:` for what the string form takes.
 		{"//x", "//x"},
@@ -51,6 +53,8 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 	rejected := []struct{ yaml, want string }{
 		{"dep", `dependency entry 3 (path: "dep"): ` + notLocal},
 		{"sub/dep", `dependency entry 3 (path: "sub/dep"): ` + notLocal},
+		// Deviation, as above: the Oracle reads this one as `./dep`.
+		{"' ./dep '", `dependency entry 3 (path: " ./dep "): ` + notLocal},
 		{"''", empty},
 		{"' '", empty},
 		{"null", empty},
@@ -85,11 +89,13 @@ func TestParseDepDict_PathAgreesWithStringForm(t *testing.T) {
 		{"dep", false},
 		{"sub/dep", false},
 		{"owner/repo", false},
+		{"./dep ", true},
+		{" ./dep", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.value, func(t *testing.T) {
 			str, strErr := ParseDepString(tt.value)
-			obj, objErr := ParseDepDict(pathEntry(t, tt.value), 0)
+			obj, objErr := ParseDepDict(pathEntry(t, "'"+tt.value+"'"), 0)
 			if !tt.local {
 				if strErr == nil && str.IsLocal {
 					t.Errorf("string form: local path %q, want not local", str.LocalPath)

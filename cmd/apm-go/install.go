@@ -2871,18 +2871,13 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 			// scalar form, matching how a subset-free dependency is
 			// persisted in the first place; any other surviving key
 			// (ref:, alias:, ...) keeps the mapping. manifest.ParseDepDict
-			// takes a path: value only when the string form reads it as
-			// the same local path, and reads it without the surrounding
-			// whitespace, so it is written back that way.
+			// reads a path: value as the string form reads the same
+			// string, so the value is written back as it is.
 			if len(entry.Content) != 2 {
 				return
 			}
-			key, val := entry.Content[0].Value, entry.Content[1].Value
-			if key == "path" {
-				val = strings.TrimSpace(val)
-			}
-			if key == "git" || key == "path" {
-				apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: val, Tag: "!!str"}
+			if key := entry.Content[0].Value; key == "git" || key == "path" {
+				apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: entry.Content[1].Value, Tag: "!!str"}
 			}
 			return
 		}

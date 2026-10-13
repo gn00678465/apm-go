@@ -1098,20 +1098,18 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	if keys["path"] && !keys["git"] && !keys["id"] && !keys["name"] {
-		// The object form takes exactly the values the string form reads as
-		// a local path, because install writes `path:` for every string that
-		// form calls local (newGitSkillEntry) and has to read it back.
-		// `path: dep` as a string is not a reference and `sub/dep` is
-		// owner/repo; the Oracle refuses both too
-		// (models/dependency/reference.py:831-846). `//x` and a UNC path are
-		// taken in both forms, where the Oracle refuses them (issue #61).
-		if pathNode.Kind != yaml.ScalarNode || pathNode.ShortTag() != "!!str" {
+		// The value goes to the string form's parser as it is, so one string
+		// is the same path in both forms: install moves it between them when
+		// a skill subset is added (newGitSkillEntry) or reset. What the
+		// string form does not read as a local path is refused; `path: dep`
+		// is not a reference there and `sub/dep` is owner/repo, and the
+		// Oracle refuses both too (models/dependency/reference.py:831-846).
+		// Deviations the string form already has: `//x` and a UNC path are
+		// taken, and surrounding whitespace is kept (issue #61).
+		if pathNode.Kind != yaml.ScalarNode || pathNode.ShortTag() != "!!str" || strings.TrimSpace(pathNode.Value) == "" {
 			return nil, fmt.Errorf("dependency entry %d: 'path' field must be a non-empty string", idx)
 		}
-		p := strings.TrimSpace(pathNode.Value)
-		if p == "" {
-			return nil, fmt.Errorf("dependency entry %d: 'path' field must be a non-empty string", idx)
-		}
+		p := pathNode.Value
 		if !IsAbsoluteLocalPath(p) && !isLocalPath(p) {
 			return nil, fmt.Errorf("dependency entry %d (path: %q): %s", idx, p, errPathNotLocal)
 		}
