@@ -264,14 +264,11 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	for k := range orphans {
 		allRemovalKeys[k] = true
 	}
-	deployedFiles, deployedHashes := collectUninstallDeployedProvenance(lock, allRemovalKeys)
-
 	removeRoot := "."
 	if deployDir != "" {
 		removeRoot = deployDir
 	}
-	removedFiles, keptFiles, diags := deploy.RemoveDeployedFiles(removeRoot, deployedFiles, deployedHashes)
-	sort.Strings(removedFiles)
+	removedFiles, keptFiles, diags := removeUninstallDeployed(lock, allRemovalKeys, deployDir)
 	cleaned := uninstallCleanedByOwner(lock, allRemovalKeys, removedFiles)
 
 	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys)
@@ -474,6 +471,64 @@ func collectUninstallDeployedProvenance(lock *lockfile.Lockfile, removalKeys map
 	}
 	sort.Strings(files)
 	return files, hashes
+}
+
+// removeUninstallDeployed deletes what the removed dependencies deployed and
+// returns the lock paths that are gone, sorted, the files that stayed, and
+// the diagnostics. A project deploy is copies and goes to
+// deploy.RemoveDeployedFiles. A --global deploy is symlinks into the global
+// project directory (the working directory here), so each dependency goes to
+// deploy.RemoveStaleLinkedFiles, as the stale cleanup of `install --global`
+// does: a symlink the deploy made is removed itself, nothing is deleted
+// through a symlink, and one the user pointed elsewhere is kept. That
+// function names a removed symlink once; every lock path at or below it is
+// reported here, as the Oracle counts the files of a skill.
+func removeUninstallDeployed(lock *lockfile.Lockfile, removalKeys map[string]bool, deployDir string) (removed, kept, diags []string) {
+	if deployDir == "" {
+		files, hashes := collectUninstallDeployedProvenance(lock, removalKeys)
+		removed, kept, diags = deploy.RemoveDeployedFiles(".", files, hashes)
+		sort.Strings(removed)
+		return removed, kept, diags
+	}
+	if lock == nil {
+		return nil, nil, nil
+	}
+	for _, key := range sortedStringSet(removalKeys) {
+		dep := lock.FindByKey(key)
+		if dep == nil {
+			continue
+		}
+		source := filepath.Join(".", "apm_modules", filepath.FromSlash(key))
+		gone, depDiags := deploy.RemoveStaleLinkedFiles(deployDir, ".", source, dep.DeployedFiles, dep.DeployedHashes, nil)
+		diags = append(diags, depDiags...)
+		for _, f := range dep.DeployedFiles {
+			switch _, hashed := dep.DeployedHashes[f]; {
+			case atOrBelowAny(gone, f):
+				removed = append(removed, f)
+			case hashed && pathExists(filepath.Join(deployDir, filepath.FromSlash(f))):
+				kept = append(kept, f)
+			}
+		}
+	}
+	sort.Strings(removed)
+	return removed, kept, diags
+}
+
+// atOrBelowAny reports whether the lock path f is one of paths or below one.
+func atOrBelowAny(paths []string, f string) bool {
+	p := normalizeDeployPath(f)
+	for _, q := range paths {
+		q = normalizeDeployPath(q)
+		if p == q || strings.HasPrefix(p, q+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func pathExists(full string) bool {
+	_, err := os.Stat(full)
+	return err == nil
 }
 
 // writeUninstallManifest splices the removed apm/mcp entries out of apm.yml

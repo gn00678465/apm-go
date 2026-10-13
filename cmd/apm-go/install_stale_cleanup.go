@@ -150,3 +150,29 @@ func hasFileBelow(files []string, dir string) bool {
 	}
 	return false
 }
+
+// notTakenOver drops from a bucket's old lock paths each one at or below an
+// entry the user took over (deploy.TakenOver) that this run's targets govern.
+// The stale cleanup has kept it and warned once; with the record gone the
+// warning is not repeated, and a frozen install and `audit` do not check a
+// file that is the user's. bucket is "" for the project's own content.
+func notTakenOver(bucket string, files, targets []string, deployDir string) []string {
+	kind, source := deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(bucket))
+	if bucket == "" {
+		kind, source = deploy.LocalBucket, ".apm"
+	}
+	root := "."
+	if deployDir == "" {
+		source = "" // a copy deploy
+	} else {
+		root = deployDir
+	}
+	out := files[:0:0]
+	for _, f := range files {
+		if deploy.TargetsGovernPath(targets, kind, f) && deploy.TakenOver(root, source, f) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}

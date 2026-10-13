@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/lockfile"
@@ -32,19 +33,41 @@ import (
 // now-empty ancestor directories (up to but excluding projectDir) are
 // cleaned up.
 //
+// A copy deploy never makes a symlink, so a symlink at a skill's directory,
+// skills/<name>, is the user's: no path at or below it is compared or
+// removed, one diagnostic names the symlink (skillSymlink), and a file that
+// exists there is reported in kept. A deploy that
+// does make symlinks is removed by RemoveStaleLinkedFiles, which calls this
+// function only for paths with no such symlink on them.
+//
 // A lock also lists each deployed skill's directory, a path with no hash
 // (recordedDir). Such an entry is never removed by itself and gets no
 // warning: it is reported in removed when it was there and is gone once the
 // files of this call are, and it stays when something is left in it.
 func RemoveDeployedFiles(projectDir string, files []string, hashes map[string]string) (removed []string, kept []string, diags []string) {
-	dirs := recordedDirs(projectDir, files, hashes)
-	defer func() { removed = append(removed, goneDirs(projectDir, dirs)...) }()
-	isDir := make(map[string]bool, len(dirs))
-	for _, d := range dirs {
-		isDir[d] = true
+	var dirs []string
+	isDir := make(map[string]bool)
+	for _, d := range recordedDirs(projectDir, files, hashes) {
+		if skillSymlink(projectDir, d) == "" {
+			dirs = append(dirs, d)
+			isDir[d] = true
+		}
 	}
+	defer func() { removed = append(removed, goneDirs(projectDir, dirs)...) }()
+	reported := make(map[string]bool)
 	for _, f := range files {
 		if isDir[f] {
+			continue
+		}
+		if link := skillSymlink(projectDir, f); link != "" && archive.ContainedKey(projectDir, f) {
+			if !reported[link] {
+				reported[link] = true
+				diags = append(diags, fmt.Sprintf("keeping %q: it is a symlink, so nothing below it is removed", link))
+			}
+			_, hashed := hashes[f]
+			if _, err := os.Stat(filepath.Join(projectDir, filepath.FromSlash(f))); hashed && err == nil {
+				kept = append(kept, f)
+			}
 			continue
 		}
 		if !archive.ContainedKey(projectDir, f) {
@@ -105,6 +128,22 @@ func recordedDir(root, rel string, hashes map[string]string) bool {
 	}
 	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
 	return err == nil && info.IsDir()
+}
+
+// skillSymlink returns the lock path of the first symlink on rel that sits at
+// a skill's directory, the segment after "skills", or "" when there is none.
+func skillSymlink(root, rel string) string {
+	segs := strings.Split(filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))), "/")
+	for i := 1; i < len(segs); i++ {
+		if segs[i-1] != "skills" {
+			continue
+		}
+		prefix := strings.Join(segs[:i+1], "/")
+		if info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(prefix))); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return prefix
+		}
+	}
+	return ""
 }
 
 // recordedDirs returns the entries of files that are recordedDir and inside

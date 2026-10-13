@@ -483,30 +483,61 @@ func TestRemoveDeployedFiles_SkillDirEntryStaysWithUserFile(t *testing.T) {
 	}
 }
 
-// A user-scope deploy makes the skill directory a symlink into the package;
-// uninstall removes the files through it and the emptied symlink with them.
-func TestRemoveDeployedFiles_SkillDirEntryIsSymlinkToDirectory(t *testing.T) {
+// A copy deploy makes no symlink, so one at a skill's directory is the
+// user's: a file behind it with the recorded hash is not the deployed file.
+func TestRemoveDeployedFiles_KeepsEverythingBehindSkillSymlink(t *testing.T) {
 	dir := t.TempDir()
-	source := filepath.Join(t.TempDir(), "demo")
-	hash := writeDeployedFile(t, source, "SKILL.md", "skill content")
+	own := filepath.Join(t.TempDir(), "own")
+	hash := writeDeployedFile(t, own, "SKILL.md", "skill content")
+	writeDeployedFile(t, own, "notes.md", "mine")
 	skill, file := ".claude/skills/demo", ".claude/skills/demo/SKILL.md"
-	if err := os.MkdirAll(filepath.Join(dir, ".claude", "skills"), 0o755); err != nil {
+	link := filepath.Join(dir, filepath.FromSlash(skill))
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(source, filepath.Join(dir, filepath.FromSlash(skill))); err != nil {
+	if err := os.Symlink(own, link); err != nil {
 		t.Fatal(err)
 	}
 
 	removed, kept, diags := RemoveDeployedFiles(dir, []string{skill, file}, map[string]string{file: hash})
 
-	if len(kept) != 0 || len(diags) != 0 {
-		t.Fatalf("kept = %v, diags = %v, want none", kept, diags)
+	if len(removed) != 0 {
+		t.Fatalf("removed = %v, want none", removed)
 	}
-	if strings.Join(removed, ",") != file+","+skill {
-		t.Fatalf("removed = %v, want [%s %s]", removed, file, skill)
+	if strings.Join(kept, ",") != file {
+		t.Fatalf("kept = %v, want [%s]", kept, file)
 	}
-	if _, err := os.Lstat(filepath.Join(dir, ".claude")); !os.IsNotExist(err) {
-		t.Fatalf(".claude still present (Lstat err = %v)", err)
+	if len(diags) != 1 || !strings.Contains(diags[0], `keeping ".claude/skills/demo": it is a symlink`) {
+		t.Fatalf("diags = %v, want one that names the symlink", diags)
+	}
+	for _, name := range []string{"SKILL.md", "notes.md"} {
+		if _, err := os.Stat(filepath.Join(own, name)); err != nil {
+			t.Errorf("the user's %s is gone: %v", name, err)
+		}
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the user's symlink is gone (err = %v)", err)
+	}
+}
+
+func TestRemoveDeployedFiles_KeepsDanglingSkillSymlink(t *testing.T) {
+	dir := t.TempDir()
+	skill, file := ".claude/skills/demo", ".claude/skills/demo/SKILL.md"
+	link := filepath.Join(dir, filepath.FromSlash(skill))
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone"), link); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, _, diags := RemoveDeployedFiles(dir, []string{skill, file}, map[string]string{file: "sha256:00"})
+
+	if len(removed) != 0 || len(diags) != 1 {
+		t.Fatalf("removed = %v, diags = %v, want nothing removed and one diagnostic", removed, diags)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Errorf("the user's symlink is gone: %v", err)
 	}
 }
 
