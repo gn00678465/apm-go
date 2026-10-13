@@ -1,0 +1,7 @@
+{
+  "id": "install-local-skill-subset",
+  "setup_argv": [["install"]],
+  "argv": ["install", "./dep", "--skill", "sk"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

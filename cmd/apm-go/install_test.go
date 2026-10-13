@@ -1576,9 +1576,11 @@ func TestInstall_SkillSubsetPollution(t *testing.T) {
 
 	// apm.yml: each dependency must carry its OWN persisted subset.
 	m := readManifestParsed(t)
+	// An absolute local path with a subset is a path: entry (issue #61), so
+	// its declared path is LocalPath, not RepoURL.
 	subsetByRepo := make(map[string][]string)
 	for _, d := range m.ParsedDeps {
-		subsetByRepo[d.RepoURL] = d.SkillSubset
+		subsetByRepo[d.LocalPath] = d.SkillSubset
 	}
 	if got := subsetByRepo[repoA]; len(got) != 1 || got[0] != "skillA1" {
 		t.Errorf("apm.yml: expected %s skills: [skillA1], got %v (all deps: %+v)", repoA, got, subsetByRepo)
@@ -1702,9 +1704,11 @@ func TestInstall_SkillSubsetThreeRepos(t *testing.T) {
 	assertOnly("after repo-c install", []string{"skillA1", "skillB1", "skillC1"}, []string{"skillA2", "skillB2", "skillC2"})
 
 	m := readManifestParsed(t)
+	// An absolute local path with a subset is a path: entry (issue #61), so
+	// its declared path is LocalPath, not RepoURL.
 	subsetByRepo := make(map[string][]string)
 	for _, d := range m.ParsedDeps {
-		subsetByRepo[d.RepoURL] = d.SkillSubset
+		subsetByRepo[d.LocalPath] = d.SkillSubset
 	}
 	for repo, want := range map[string]string{repoA: "skillA1", repoB: "skillB1", repoC: "skillC1"} {
 		if got := subsetByRepo[repo]; len(got) != 1 || got[0] != want {

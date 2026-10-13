@@ -1091,19 +1091,26 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	if keys["path"] && !keys["git"] && !keys["id"] && !keys["name"] {
-		if keys["skills"] {
-			return nil, fmt.Errorf("dependency entry %d: 'skills' is only supported for git dependencies", idx)
-		}
 		p := kv["path"]
 		if containsEscape(p) {
 			return nil, fmt.Errorf("dependency path %q escapes project root", p)
 		}
-		return &DependencyReference{
+		d := &DependencyReference{
 			IsLocal:   true,
 			LocalPath: p,
 			Alias:     kv["alias"],
 			Source:    "local",
-		}, nil
+		}
+		// The Oracle's path object form takes skills too
+		// (models/dependency/reference.py:831-846).
+		if keys["skills"] {
+			subset, err := parseSkillsField(skillsNode, idx)
+			if err != nil {
+				return nil, err
+			}
+			d.SkillSubset = subset
+		}
+		return d, nil
 	}
 
 	if keys["git"] {

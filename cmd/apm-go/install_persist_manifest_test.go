@@ -208,3 +208,68 @@ func TestPersistPackagesToManifest_MonorepoPathEntryNotMisHit(t *testing.T) {
 		t.Errorf("base-repo entry missing its subset; got:\n%s", got)
 	}
 }
+
+// persistLocalSubset runs persistPackagesToManifest for the local package
+// ./dep with the given effective subset and returns the dumped manifest.
+func persistLocalSubset(t *testing.T, src string, subset []string) string {
+	t.Helper()
+	chdirTemp(t)
+	doc, err := yamlcore.SafeLoad([]byte(src))
+	if err != nil {
+		t.Fatalf("SafeLoad: %v", err)
+	}
+	var subsets map[string][]string
+	if len(subset) > 0 {
+		subsets = map[string][]string{canonicalIdentityForDepString("./dep"): subset}
+	}
+	if err := persistPackagesToManifest(doc, []string{"./dep"}, subsets, false); err != nil {
+		t.Fatalf("persistPackagesToManifest: %v", err)
+	}
+	out, err := yamlcore.SafeDump(doc)
+	if err != nil {
+		t.Fatalf("SafeDump: %v", err)
+	}
+	return string(out)
+}
+
+// Issue #61: a local package's skill subset is a `path:` entry, the bytes the
+// Oracle v0.33.0 writes; `git: ./dep` makes the next install clone the path.
+func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
+	const head = "name: proj\nversion: 1.0.0\ntarget: claude\n"
+	tests := []struct {
+		name   string
+		src    string
+		subset []string
+		want   string
+	}{
+		{
+			name:   "plain string entry gains a subset",
+			src:    head + "dependencies:\n  apm:\n  - ./dep\n",
+			subset: []string{"sk"},
+			want:   head + "dependencies:\n  apm:\n    - path: ./dep\n      skills:\n        - sk\n",
+		},
+		{
+			name:   "new local package with a subset",
+			src:    head,
+			subset: []string{"sk"},
+			want:   head + "dependencies:\n  apm:\n    - path: ./dep\n      skills:\n        - sk\n",
+		},
+		{
+			name: "path and skills reset to the plain string",
+			src:  head + "dependencies:\n  apm:\n    - path: ./dep\n      skills:\n        - sk\n",
+			want: head + "dependencies:\n  apm:\n    - ./dep\n",
+		},
+		{
+			name: "path, alias and skills reset keeps path and alias",
+			src:  head + "dependencies:\n  apm:\n    - path: ./dep\n      alias: mydep\n      skills:\n        - sk\n",
+			want: head + "dependencies:\n  apm:\n    - path: ./dep\n      alias: mydep\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := persistLocalSubset(t, tt.src, tt.subset); got != tt.want {
+				t.Errorf("apm.yml:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
+}
