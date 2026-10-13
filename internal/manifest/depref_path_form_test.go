@@ -17,7 +17,8 @@ func pathEntry(t *testing.T, value string) *yaml.Node {
 
 // Every row's verdict and reason is what the Oracle v0.33.0's
 // DependencyReference.parse_from_dict gave for the same YAML
-// (models/dependency/reference.py:831-846).
+// (models/dependency/reference.py:831-846), but for the three rows marked
+// as deviations.
 func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 	const (
 		notLocal = "Object-style dependency must have a 'git' field, or 'path' must be a local filesystem path (starting with './', '../', '/', or '~')"
@@ -30,6 +31,10 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 		{"/abs/dep", "/abs/dep"},
 		{"~/x", "~/x"},
 		{"' ./dep '", "./dep"},
+		// Deviations: the Oracle refuses these two. The string form takes
+		// them, and install writes `path:` for what the string form takes.
+		{"//x", "//x"},
+		{`\\host\share`, `\\host\share`},
 	}
 	for _, tt := range accepted {
 		t.Run(tt.yaml, func(t *testing.T) {
@@ -46,7 +51,6 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 	rejected := []struct{ yaml, want string }{
 		{"dep", `dependency entry 3 (path: "dep"): ` + notLocal},
 		{"sub/dep", `dependency entry 3 (path: "sub/dep"): ` + notLocal},
-		{"//x", `dependency entry 3 (path: "//x"): ` + notLocal},
 		{"''", empty},
 		{"' '", empty},
 		{"null", empty},
@@ -60,6 +64,46 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 			_, err := ParseDepDict(pathEntry(t, tt.yaml), 3)
 			if err == nil || err.Error() != tt.want {
 				t.Errorf("error %v, want %s", err, tt.want)
+			}
+		})
+	}
+}
+
+// install writes `path:` for a string the string form reads as a local path,
+// so the two forms have to agree on every value.
+func TestParseDepDict_PathAgreesWithStringForm(t *testing.T) {
+	tests := []struct {
+		value string
+		local bool
+	}{
+		{"./dep", true},
+		{"/abs/dep", true},
+		{"//x", true},
+		{"~/x", true},
+		{`.\dep`, true},
+		{`\\host\share`, true},
+		{"dep", false},
+		{"sub/dep", false},
+		{"owner/repo", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			str, strErr := ParseDepString(tt.value)
+			obj, objErr := ParseDepDict(pathEntry(t, tt.value), 0)
+			if !tt.local {
+				if strErr == nil && str.IsLocal {
+					t.Errorf("string form: local path %q, want not local", str.LocalPath)
+				}
+				if objErr == nil {
+					t.Errorf("object form: accepted with LocalPath %q, want an error", obj.LocalPath)
+				}
+				return
+			}
+			if strErr != nil || !str.IsLocal || str.LocalPath != tt.value {
+				t.Errorf("string form: %+v, error %v; want local path %q", str, strErr, tt.value)
+			}
+			if objErr != nil || !obj.IsLocal || obj.LocalPath != tt.value {
+				t.Errorf("object form: %+v, error %v; want local path %q", obj, objErr, tt.value)
 			}
 		})
 	}

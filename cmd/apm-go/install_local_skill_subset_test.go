@@ -153,3 +153,34 @@ func TestPathEntryWithoutLocalPrefixIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// The string form takes a path that starts with two slashes, so the `path:`
+// entry `--skill` writes for it has to parse again on the next install.
+func TestRunInstall_DoubleSlashPathSubsetSurvivesNextInstall(t *testing.T) {
+	chdirTemp(t)
+	pkg := "/" + filepath.Join(t.TempDir(), "dep")
+	const head = "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n"
+	plain := head + "    - " + pkg + "\n"
+	writeTwoSkillDep(t, pkg, "    - "+pkg+"\n")
+	manifestIs := func(step, want string) {
+		t.Helper()
+		got, err := os.ReadFile("apm.yml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("apm.yml after %s:\n%s\nwant:\n%s", step, got, want)
+		}
+	}
+
+	installLocalStep(t, "install", nil, nil)
+	installLocalStep(t, "install <path> --skill sk", []string{"sk"}, []string{pkg})
+	manifestIs("--skill sk", head+"    - path: "+pkg+"\n      skills:\n        - sk\n")
+	installLocalStep(t, "install after --skill sk", nil, nil)
+	if names := deployedClaudeSkills(t); len(names) != 1 || names[0] != "sk" {
+		t.Errorf(".claude/skills = %v, want [sk]", names)
+	}
+	installLocalStep(t, "install <path> --skill '*'", []string{"*"}, []string{pkg})
+	manifestIs("--skill '*'", plain)
+	installLocalStep(t, "install after the reset", nil, nil)
+}
