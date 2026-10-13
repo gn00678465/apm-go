@@ -46,8 +46,8 @@ import (
 // directory) is walked through and never removed, also not when the directory
 // behind it becomes empty.
 //
-// A path with no deploy symlink on it that is a file goes to
-// RemoveDeployedFiles, unless a user symlink was walked through and the file
+// A path with no deploy symlink on it that is a file, or the lock's entry for
+// a skill directory, goes to RemoveDeployedFiles, unless a user symlink was walked through and the file
 // is in fact anywhere inside projectDir: then it is kept with a diagnostic. A
 // path that does not exist is skipped.
 //
@@ -56,7 +56,25 @@ import (
 func RemoveStaleLinkedFiles(deployRoot, projectDir, bucketSource string, stale []string, hashes map[string]string, claimed map[string]bool) (removed []string, diags []string) {
 	var plain []string
 	decided := make(map[string]bool)
+	// A skill directory that is a real directory is never removed by itself;
+	// it is reported when the removal of its files below takes it along.
+	realDirs := make(map[string]bool)
+	for _, d := range recordedDirs(deployRoot, stale, hashes) {
+		if info, err := os.Lstat(filepath.Join(deployRoot, filepath.FromSlash(d))); err == nil && info.IsDir() {
+			realDirs[d] = true
+		}
+	}
+	defer func() {
+		for _, f := range stale {
+			if realDirs[f] {
+				removed = append(removed, goneDirs(deployRoot, []string{f})...)
+			}
+		}
+	}()
 	for _, f := range stale {
+		if realDirs[f] {
+			continue
+		}
 		if !archive.ContainedKey(deployRoot, f) {
 			plain = append(plain, f) // RemoveDeployedFiles refuses and reports it
 			continue
@@ -199,7 +217,8 @@ func lockPathsAtOrBelow(stale []string, link string) []string {
 // proof is what the lock does record: the symlink dangles because its source
 // is gone, or at least one of lockPaths exists and each one that exists reads
 // through the symlink the content hash the lock holds for it. The comparison
-// is the one RemoveDeployedFiles makes.
+// is the one RemoveDeployedFiles makes. The lock's entry for the skill
+// directory itself has no hash and proves nothing either way.
 func holdsDeployedContent(deployRoot, full string, lockPaths []string, hashes map[string]string) (bool, error) {
 	if _, err := os.Stat(full); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -209,6 +228,9 @@ func holdsDeployedContent(deployRoot, full string, lockPaths []string, hashes ma
 	}
 	found := false
 	for _, f := range lockPaths {
+		if recordedDir(deployRoot, f, hashes) {
+			continue
+		}
 		actual, err := lockfile.HashFileBytes(filepath.Join(deployRoot, filepath.FromSlash(f)))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue

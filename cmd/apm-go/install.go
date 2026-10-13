@@ -1485,7 +1485,7 @@ func mergeDeployedFilesIf(oldFiles []string, oldHashes map[string]string, newFil
 		}
 	}
 	sort.Strings(newFiles)
-	return newFiles, merged
+	return withoutOrphanSkillDirs(newFiles, merged), merged
 }
 
 func normalizeDeployPath(p string) string {
@@ -1994,13 +1994,13 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			dep := &newLock.Dependencies[i]
 			key := dep.UniqueKey()
 			if dr, ok := deployResult.PerDep[key]; ok {
-				dep.DeployedFiles = withSkillDirs(dr.Files, deployDir)
+				dep.DeployedFiles = withSkillDirs(dr.Files)
 				dep.DeployedHashes = dr.Hashes
 			}
 		}
 		// Populate local deployed files
 		if dr, ok := deployResult.PerDep[""]; ok {
-			newLock.LocalDeployedFiles = withSkillDirs(dr.Files, deployDir)
+			newLock.LocalDeployedFiles = withSkillDirs(dr.Files)
 			newLock.LocalDeployedHashes = dr.Hashes
 			localProjectDeployed = len(dr.Files) > 0
 		}

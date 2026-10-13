@@ -817,3 +817,87 @@ func TestRemoveStaleLinkedFiles_ProofIgnoresSiblingWithSameNamePrefix(t *testing
 	assertStaleLinkGone(t, link)
 	assertStaleLinkContent(t, sibling, "edited by the user\n")
 }
+
+// The lock also lists the skill directory itself, with no hash (issue #50).
+// That entry is not a file to compare: the files below it are the proof.
+func TestRemoveStaleLinkedFiles_SkillDirEntryWithLiveSymlink(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := filepath.Join(deployRoot, ".claude", "skills", "demo")
+	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, map[string]bool{})
+
+	assertStaleLinkResult(t, removed, []string{".claude/skills/demo"}, diags, 0)
+	assertStaleLinkGone(t, link)
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
+}
+
+func TestRemoveStaleLinkedFiles_SkillDirEntryWithLiveSymlinkAndOtherContent(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	link := filepath.Join(deployRoot, ".claude", "skills", "demo")
+	staleLink(t, filepath.Join(sourceRoot, "skills", "demo"), link)
+	writeStaleLinkFile(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "edited\n")
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, map[string]bool{})
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if _, err := os.Lstat(link); err != nil {
+		t.Errorf("the symlink was removed: %v", err)
+	}
+}
+
+// A real directory where the deploy would make a symlink: its files take the
+// hash check, and the directory entry is reported once it is gone.
+func TestRemoveStaleLinkedFiles_SkillDirEntryOfRealDirectory(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	dir := filepath.Join(deployRoot, ".claude", "skills", "demo")
+	writeStaleLinkFile(t, filepath.Join(dir, "SKILL.md"), "demo\n")
+	writeStaleLinkFile(t, filepath.Join(deployRoot, ".claude", "keep.txt"), "keep\n")
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, map[string]bool{})
+
+	assertStaleLinkResult(t, removed, []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo"}, diags, 0)
+	assertStaleLinkGone(t, dir)
+}
+
+func TestRemoveStaleLinkedFiles_SkillDirEntryOfRealDirectoryWithUserFile(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	dir := filepath.Join(deployRoot, ".claude", "skills", "demo")
+	writeStaleLinkFile(t, filepath.Join(dir, "SKILL.md"), "demo\n")
+	writeStaleLinkFile(t, filepath.Join(dir, "notes.txt"), "mine\n")
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, map[string]bool{})
+
+	assertStaleLinkResult(t, removed, []string{".claude/skills/demo/SKILL.md"}, diags, 0)
+	assertStaleLinkContent(t, filepath.Join(dir, "notes.txt"), "mine\n")
+}
+
+// ~/.claude is the user's symlink into a dotfiles directory and the skill
+// directory below it is a real directory.
+func TestRemoveStaleLinkedFiles_UserParentSymlink_SkillDirEntryOfRealDirectory(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	dotfiles := filepath.Join(t.TempDir(), "dotfiles")
+	writeStaleLinkFile(t, filepath.Join(dotfiles, "skills", "demo", "SKILL.md"), "demo\n")
+	writeStaleLinkFile(t, filepath.Join(dotfiles, "settings.json"), "{}\n")
+	userLink := filepath.Join(deployRoot, ".claude")
+	staleLink(t, dotfiles, userLink)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, map[string]bool{})
+
+	assertStaleLinkResult(t, removed, []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo"}, diags, 0)
+	assertStaleLinkGone(t, filepath.Join(dotfiles, "skills", "demo"))
+	if _, err := os.Lstat(userLink); err != nil {
+		t.Errorf("the user's symlink was removed: %v", err)
+	}
+	assertStaleLinkContent(t, filepath.Join(dotfiles, "settings.json"), "{}\n")
+}

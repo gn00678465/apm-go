@@ -31,8 +31,22 @@ import (
 // Only once all three checks pass is the file removed, after which any
 // now-empty ancestor directories (up to but excluding projectDir) are
 // cleaned up.
+//
+// A lock also lists each deployed skill's directory, a path with no hash
+// (recordedDir). Such an entry is never removed by itself and gets no
+// warning: it is reported in removed when it was there and is gone once the
+// files of this call are, and it stays when something is left in it.
 func RemoveDeployedFiles(projectDir string, files []string, hashes map[string]string) (removed []string, kept []string, diags []string) {
+	dirs := recordedDirs(projectDir, files, hashes)
+	defer func() { removed = append(removed, goneDirs(projectDir, dirs)...) }()
+	isDir := make(map[string]bool, len(dirs))
+	for _, d := range dirs {
+		isDir[d] = true
+	}
 	for _, f := range files {
+		if isDir[f] {
+			continue
+		}
 		if !archive.ContainedKey(projectDir, f) {
 			kept = append(kept, f)
 			diags = append(diags, fmt.Sprintf("refusing to remove %q: path escapes project directory", f))
@@ -80,6 +94,41 @@ func RemoveDeployedFiles(projectDir string, files []string, hashes map[string]st
 		cleanupEmptyParents(projectDir, filepath.Dir(target))
 	}
 	return removed, kept, diags
+}
+
+// recordedDir reports whether the lock path rel is a deployed skill's
+// directory: an entry with no hash that is a directory on disk, also when it
+// is reached through a symlink (the skill symlink of a user-scope deploy).
+func recordedDir(root, rel string, hashes map[string]string) bool {
+	if _, hashed := hashes[rel]; hashed {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+	return err == nil && info.IsDir()
+}
+
+// recordedDirs returns the entries of files that are recordedDir and inside
+// root, found before anything is removed, so the answer does not depend on
+// the order of files.
+func recordedDirs(root string, files []string, hashes map[string]string) []string {
+	var dirs []string
+	for _, f := range files {
+		if archive.ContainedKey(root, f) && recordedDir(root, f, hashes) {
+			dirs = append(dirs, f)
+		}
+	}
+	return dirs
+}
+
+// goneDirs returns the entries of dirs that are not on disk any more.
+func goneDirs(root string, dirs []string) []string {
+	var gone []string
+	for _, d := range dirs {
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(d))); os.IsNotExist(err) {
+			gone = append(gone, d)
+		}
+	}
+	return gone
 }
 
 // SafeRemoveModuleDir deletes a single dependency's vendored directory under
