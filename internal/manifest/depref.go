@@ -1016,15 +1016,42 @@ func parseShorthand(s string) (*DependencyReference, error) {
 	return d, nil
 }
 
+// errPathNotLocal is the Oracle's reason for a `path:` value that is not a
+// local filesystem path (models/dependency/reference.py:838-842).
+const errPathNotLocal = "Object-style dependency must have a 'git' field, or 'path' must be a local filesystem path (starting with './', '../', '/', or '~')"
+
+// hasOracleLocalPrefix is the Oracle's is_local_path
+// (models/dependency/reference.py:328-348): the prefixes ./ ../ / ~/ and
+// their backslash spellings, or a drive letter with a separator. A
+// protocol-relative `//...` is not a path there, while IsAbsoluteLocalPath
+// takes it.
+func hasOracleLocalPrefix(s string) bool {
+	if strings.HasPrefix(s, "//") {
+		return false
+	}
+	for _, prefix := range []string{"./", "../", "/", "~/", `~\`, `.\`, `..\`} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	if len(s) < 3 || s[1] != ':' || (s[2] != '\\' && s[2] != '/') {
+		return false
+	}
+	return (s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z')
+}
+
 func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	kv := make(map[string]string)
 	keys := make(map[string]bool)
-	var skillsNode *yaml.Node
+	var skillsNode, pathNode *yaml.Node
 	for i := 0; i < len(entry.Content)-1; i += 2 {
 		k := entry.Content[i].Value
 		keys[k] = true
 		if k == "skills" {
 			skillsNode = entry.Content[i+1]
+		}
+		if k == "path" {
+			pathNode = entry.Content[i+1]
 		}
 		if entry.Content[i+1].Kind == yaml.ScalarNode {
 			kv[k] = entry.Content[i+1].Value
@@ -1091,16 +1118,28 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	if keys["path"] && !keys["git"] && !keys["id"] && !keys["name"] {
-		p := kv["path"]
-		if containsEscape(p) {
-			return nil, fmt.Errorf("dependency path %q escapes project root", p)
+		// The object form takes the values the string form reads as a local
+		// path and no others, as the Oracle does
+		// (models/dependency/reference.py:831-846): `path: dep` as a string
+		// is not a reference and `sub/dep` is owner/repo, so no command
+		// could find or write back such an entry (issue #61).
+		if pathNode.Kind != yaml.ScalarNode || pathNode.ShortTag() != "!!str" {
+			return nil, fmt.Errorf("dependency entry %d: 'path' field must be a non-empty string", idx)
 		}
-		d := &DependencyReference{
-			IsLocal:   true,
-			LocalPath: p,
-			Alias:     kv["alias"],
-			Source:    "local",
+		p := strings.TrimSpace(pathNode.Value)
+		if p == "" {
+			return nil, fmt.Errorf("dependency entry %d: 'path' field must be a non-empty string", idx)
 		}
+		// The second test is the string form's own: a drive-letter path is
+		// local there on Windows only.
+		if !hasOracleLocalPrefix(p) || !(IsAbsoluteLocalPath(p) || isLocalPath(p)) {
+			return nil, fmt.Errorf("dependency entry %d (path: %q): %s", idx, p, errPathNotLocal)
+		}
+		d, err := ParseDepString(p)
+		if err != nil {
+			return nil, err
+		}
+		d.Alias = kv["alias"]
 		// The Oracle's path object form takes skills too
 		// (models/dependency/reference.py:831-846).
 		if keys["skills"] {

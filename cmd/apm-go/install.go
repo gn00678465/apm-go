@@ -2838,9 +2838,15 @@ func entryCanonicalIdentity(entry *yamllib.Node) string {
 // a mapping whose subset is cleared drops just its skills: pair, and only
 // collapses back to the scalar form when git: or path: was the sole
 // remaining key (preserving the pre-existing wildcard-RESET round-trip
-// shape) and, for path:, the value is still a local path as a plain string.
+// shape).
 // The entry's ORIGINAL persisted git or path value is preserved verbatim
 // (first-declared spelling wins).
+//
+// Keeping the other fields when a subset is ADDED is a deliberate deviation
+// from the Oracle, which rebuilds a local entry from the new reference and
+// so drops a hand-written alias: (models/dependency/reference.py:1955-1963).
+// Adding a subset must not make a field the user wrote disappear (owner
+// ruling 2026-10-13, issue #61).
 func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 	entry := apmSeq.Content[idx]
 
@@ -2864,20 +2870,18 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 			// Collapse {git: x} or {path: x} (nothing else left) to the
 			// scalar form, matching how a subset-free dependency is
 			// persisted in the first place; any other surviving key
-			// (ref:, alias:, ...) keeps the mapping. ParseDepDict takes any
-			// path: value as a local path, the plain-string parser only a
-			// prefixed one (./, ../, /, ~), so {path: dep} stays a mapping:
-			// as a string `dep` does not parse and `sub/dep` is owner/repo.
+			// (ref:, alias:, ...) keeps the mapping. manifest.ParseDepDict
+			// takes a path: value only when the string form reads it as
+			// the same local path, and reads it without the surrounding
+			// whitespace, so it is written back that way.
 			if len(entry.Content) != 2 {
 				return
 			}
 			key, val := entry.Content[0].Value, entry.Content[1].Value
-			collapse := key == "git"
 			if key == "path" {
-				ref, err := manifest.ParseDepString(val)
-				collapse = err == nil && ref.IsLocal
+				val = strings.TrimSpace(val)
 			}
-			if collapse {
+			if key == "git" || key == "path" {
 				apmSeq.Content[idx] = &yamllib.Node{Kind: yamllib.ScalarNode, Value: val, Tag: "!!str"}
 			}
 			return

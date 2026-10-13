@@ -209,9 +209,9 @@ func TestPersistPackagesToManifest_MonorepoPathEntryNotMisHit(t *testing.T) {
 	}
 }
 
-// persistLocalSubset runs persistPackagesToManifest for the local package pkg
+// persistLocalSubset runs persistPackagesToManifest for the package ./dep
 // with the given effective subset and returns the dumped manifest.
-func persistLocalSubset(t *testing.T, src, pkg string, subset []string) string {
+func persistLocalSubset(t *testing.T, src string, subset []string) string {
 	t.Helper()
 	chdirTemp(t)
 	doc, err := yamlcore.SafeLoad([]byte(src))
@@ -220,9 +220,9 @@ func persistLocalSubset(t *testing.T, src, pkg string, subset []string) string {
 	}
 	var subsets map[string][]string
 	if len(subset) > 0 {
-		subsets = map[string][]string{canonicalIdentityForDepString(pkg): subset}
+		subsets = map[string][]string{canonicalIdentityForDepString("./dep"): subset}
 	}
-	if err := persistPackagesToManifest(doc, []string{pkg}, subsets, false); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"./dep"}, subsets, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 	out, err := yamlcore.SafeDump(doc)
@@ -260,6 +260,21 @@ func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
 			want: head + "dependencies:\n  apm:\n    - ./dep\n",
 		},
 		{
+			// ParseDepDict reads the value without the surrounding
+			// whitespace; the string form does not strip it.
+			name: "padded path and skills reset to the stripped string",
+			src:  head + "dependencies:\n  apm:\n    - path: ' ./dep '\n      skills:\n        - sk\n",
+			want: head + "dependencies:\n  apm:\n    - ./dep\n",
+		},
+		{
+			// Deliberate deviation: the Oracle v0.33.0 writes {path, skills}
+			// here and drops the alias (owner ruling 2026-10-13).
+			name:   "path and alias gains a subset and keeps the alias",
+			src:    head + "dependencies:\n  apm:\n    - path: ./dep\n      alias: mydep\n",
+			subset: []string{"sk"},
+			want:   head + "dependencies:\n  apm:\n    - path: ./dep\n      alias: mydep\n      skills:\n        - sk\n",
+		},
+		{
 			name: "path, alias and skills reset keeps path and alias",
 			src:  head + "dependencies:\n  apm:\n    - path: ./dep\n      alias: mydep\n      skills:\n        - sk\n",
 			want: head + "dependencies:\n  apm:\n    - path: ./dep\n      alias: mydep\n",
@@ -267,40 +282,7 @@ func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := persistLocalSubset(t, tt.src, "./dep", tt.subset); got != tt.want {
-				t.Errorf("apm.yml:\n%s\nwant:\n%s", got, tt.want)
-			}
-		})
-	}
-}
-
-// A path: value with no ./ prefix is not a local path as a plain string
-// (`dep` does not parse, `sub/dep` is an owner/repo shorthand), so a reset
-// keeps the object.
-func TestPersistPackagesToManifest_ResetKeepsPathEntryWithoutLocalPrefix(t *testing.T) {
-	const head = "name: proj\nversion: 1.0.0\ntarget: claude\n"
-	tests := []struct {
-		name string
-		pkg  string
-		src  string
-		want string
-	}{
-		{
-			name: "bare name",
-			pkg:  "./dep",
-			src:  head + "dependencies:\n  apm:\n    - path: dep\n      skills:\n        - sk\n",
-			want: head + "dependencies:\n  apm:\n    - path: dep\n",
-		},
-		{
-			name: "two segments",
-			pkg:  "./sub/dep",
-			src:  head + "dependencies:\n  apm:\n    - path: sub/dep\n      skills:\n        - sk\n",
-			want: head + "dependencies:\n  apm:\n    - path: sub/dep\n",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := persistLocalSubset(t, tt.src, tt.pkg, nil); got != tt.want {
+			if got := persistLocalSubset(t, tt.src, tt.subset); got != tt.want {
 				t.Errorf("apm.yml:\n%s\nwant:\n%s", got, tt.want)
 			}
 		})
