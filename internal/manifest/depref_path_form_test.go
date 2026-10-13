@@ -15,10 +15,9 @@ func pathEntry(t *testing.T, value string) *yaml.Node {
 	return doc.Content[0].Content[0]
 }
 
-// Every row's verdict and reason is what the Oracle v0.33.0's
-// DependencyReference.parse_from_dict gave for the same YAML
-// (models/dependency/reference.py:831-846), but for the rows marked as
-// deviations.
+// Every row's verdict, path and reason is what the Oracle (microsoft/apm
+// 18c4c43) gave for the same value, by DependencyReference.parse_from_dict
+// for the object form and DependencyReference.parse for the string form.
 func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 	const (
 		notLocal = "Object-style dependency must have a 'git' field, or 'path' must be a local filesystem path (starting with './', '../', '/', or '~')"
@@ -30,13 +29,10 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 		{"./sub/dep", "./sub/dep"},
 		{"/abs/dep", "/abs/dep"},
 		{"~/x", "~/x"},
-		// Deviation: the Oracle strips the whitespace of a path in both
-		// forms, apm-go in neither.
-		{"'./dep '", "./dep "},
-		// Deviations: the Oracle refuses these two. The string form takes
-		// them, and install writes `path:` for what the string form takes.
-		{"//x", "//x"},
-		{`\\host\share`, `\\host\share`},
+		{"' ./dep'", "./dep"},
+		{"'./dep '", "./dep"},
+		{"' ./dep '", "./dep"},
+		{`"\t./dep"`, "./dep"},
 	}
 	for _, tt := range accepted {
 		t.Run(tt.yaml, func(t *testing.T) {
@@ -53,14 +49,16 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 	rejected := []struct{ yaml, want string }{
 		{"dep", `dependency entry 3 (path: "dep"): ` + notLocal},
 		{"sub/dep", `dependency entry 3 (path: "sub/dep"): ` + notLocal},
-		// Deviation, as above: the Oracle reads this one as `./dep`.
-		{"' ./dep '", `dependency entry 3 (path: " ./dep "): ` + notLocal},
+		{"//x", `dependency entry 3 (path: "//x"): ` + notLocal},
+		{"' //x'", `dependency entry 3 (path: "//x"): ` + notLocal},
+		{`\\host\share`, `dependency entry 3 (path: "\\\\host\\share"): ` + notLocal},
 		{"''", empty},
 		{"' '", empty},
 		{"null", empty},
 		{"5", empty},
 		{"[a]", empty},
-		// Deviation kept from before this rule: the Oracle takes `../dep`.
+		// The one deviation, kept from before issue #61: the Oracle takes
+		// `../dep`.
 		{"../dep", `dependency path "../dep" escapes project root`},
 	}
 	for _, tt := range rejected {
@@ -73,30 +71,29 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 	}
 }
 
-// install writes `path:` for a string the string form reads as a local path,
-// so the two forms have to agree on every value.
+// install moves a string between the string form and the `path:` form, so
+// the two have to read it as the same path or both refuse it. localPath is
+// what the Oracle reads; "" is a value it refuses as a path in both forms.
 func TestParseDepDict_PathAgreesWithStringForm(t *testing.T) {
-	tests := []struct {
-		value string
-		local bool
-	}{
-		{"./dep", true},
-		{"/abs/dep", true},
-		{"//x", true},
-		{"~/x", true},
-		{`.\dep`, true},
-		{`\\host\share`, true},
-		{"dep", false},
-		{"sub/dep", false},
-		{"owner/repo", false},
-		{"./dep ", true},
-		{" ./dep", false},
+	tests := []struct{ value, localPath string }{
+		{"./dep", "./dep"},
+		{"/abs/dep", "/abs/dep"},
+		{"~/x", "~/x"},
+		{`.\dep`, `.\dep`},
+		{" ./dep", "./dep"},
+		{"./dep ", "./dep"},
+		{" ./dep ", "./dep"},
+		{"//x", ""},
+		{`\\host\share`, ""},
+		{"dep", ""},
+		{"sub/dep", ""},
+		{"owner/repo", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.value, func(t *testing.T) {
 			str, strErr := ParseDepString(tt.value)
 			obj, objErr := ParseDepDict(pathEntry(t, "'"+tt.value+"'"), 0)
-			if !tt.local {
+			if tt.localPath == "" {
 				if strErr == nil && str.IsLocal {
 					t.Errorf("string form: local path %q, want not local", str.LocalPath)
 				}
@@ -105,11 +102,67 @@ func TestParseDepDict_PathAgreesWithStringForm(t *testing.T) {
 				}
 				return
 			}
-			if strErr != nil || !str.IsLocal || str.LocalPath != tt.value {
-				t.Errorf("string form: %+v, error %v; want local path %q", str, strErr, tt.value)
+			if strErr != nil || !str.IsLocal || str.LocalPath != tt.localPath {
+				t.Errorf("string form: %+v, error %v; want local path %q", str, strErr, tt.localPath)
 			}
-			if objErr != nil || !obj.IsLocal || obj.LocalPath != tt.value {
-				t.Errorf("object form: %+v, error %v; want local path %q", obj, objErr, tt.value)
+			if objErr != nil || !obj.IsLocal || obj.LocalPath != tt.localPath {
+				t.Errorf("object form: %+v, error %v; want local path %q", obj, objErr, tt.localPath)
+			}
+		})
+	}
+}
+
+// The string form's local-path step, with the Oracle's results for the same
+// strings (DependencyReference.parse, models/dependency/reference.py:1806-1832).
+func TestParseDepString_LocalPathFollowsOracle(t *testing.T) {
+	const protocolRelative = "Protocol-relative URLs are not supported\n\n" +
+		"Invalid Git host: '//...'.\n\n" +
+		"APM supports any valid FQDN as a Git host, including:\n" +
+		"  * github.com\n" +
+		"  * *.ghe.com (GitHub Enterprise Cloud)\n" +
+		"  * dev.azure.com, *.visualstudio.com (Azure DevOps)\n" +
+		"  * gitlab.com, bitbucket.org, or any self-hosted Git server\n\n" +
+		"To use '//...', set the appropriate environment variable:\n\n" +
+		"  For GitHub Enterprise Server:\n" +
+		"  # Linux/macOS:\n" +
+		"  export GITHUB_HOST=//...\n\n" +
+		"  # Windows (PowerShell):\n" +
+		"  $env:GITHUB_HOST = \"//...\"\n\n" +
+		"  # Windows (Command Prompt):\n" +
+		"  set GITHUB_HOST=//...\n\n" +
+		"  For on-prem Azure DevOps Server:\n" +
+		"  # Linux/macOS:\n" +
+		"  export ADO_HOST=//...\n\n" +
+		"  # Windows (PowerShell):\n" +
+		"  $env:ADO_HOST = \"//...\"\n\n" +
+		"  # Windows (Command Prompt):\n" +
+		"  set ADO_HOST=//...\n"
+	const shorthand = "Use 'user/repo' or 'github.com/user/repo' or 'dev.azure.com/org/project/repo' format"
+
+	for _, value := range []string{" ./dep", "./dep ", " ./dep "} {
+		t.Run(value, func(t *testing.T) {
+			d, err := ParseDepString(value)
+			if err != nil || !d.IsLocal || d.LocalPath != "./dep" {
+				t.Errorf("%+v, error %v; want local path ./dep", d, err)
+			}
+		})
+	}
+
+	rejected := []struct{ value, want string }{
+		{"//x", protocolRelative},
+		{"//tmp/dep", protocolRelative},
+		{"//x ", protocolRelative},
+		{`\\host\share`, shorthand},
+		{` \\host\share`, shorthand},
+		// The wording of this one is apm-go's (lower-case d); the check runs
+		// before the whitespace is looked at, as in the Oracle.
+		{"\t./dep", "dependency string contains invalid control characters"},
+	}
+	for _, tt := range rejected {
+		t.Run(tt.value, func(t *testing.T) {
+			_, err := ParseDepString(tt.value)
+			if err == nil || err.Error() != tt.want {
+				t.Errorf("error %v, want %s", err, tt.want)
 			}
 		})
 	}

@@ -155,61 +155,91 @@ func TestPathEntryWithoutLocalPrefixIsRefused(t *testing.T) {
 	}
 }
 
-// The string form takes a path that starts with two slashes, so the `path:`
-// entry `--skill` writes for it has to parse again on the next install.
-func TestRunInstall_DoubleSlashPathSubsetSurvivesNextInstall(t *testing.T) {
-	chdirTemp(t)
-	pkg := "/" + filepath.Join(t.TempDir(), "dep")
-	const head = "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n"
-	plain := head + "    - " + pkg + "\n"
-	writeTwoSkillDep(t, pkg, "    - "+pkg+"\n")
-	manifestIs := func(step, want string) {
-		t.Helper()
-		got, err := os.ReadFile("apm.yml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != want {
-			t.Fatalf("apm.yml after %s:\n%s\nwant:\n%s", step, got, want)
-		}
+// A path that starts with two slashes is not a local path in either form, as
+// in the Oracle (models/dependency/reference.py:328-348, :1829-1832); every
+// command stops before it writes anything.
+func TestDoubleSlashPathIsRefused(t *testing.T) {
+	const notLocal = "Object-style dependency must have a 'git' field, or 'path' must be a local filesystem path (starting with './', '../', '/', or '~')"
+	tests := []struct {
+		name, entry string
+		want        func(pkg string) string
+	}{
+		{"string form", "    - %s\n", func(string) string {
+			return "validate apm.yml: Protocol-relative URLs are not supported\n\nInvalid Git host: '//...'.\n"
+		}},
+		{"path form", "    - path: %s\n", func(pkg string) string {
+			return `validate apm.yml: dependency entry 0 (path: "` + pkg + `"): ` + notLocal
+		}},
 	}
-
-	installLocalStep(t, "install", nil, nil)
-	installLocalStep(t, "install <path> --skill sk", []string{"sk"}, []string{pkg})
-	manifestIs("--skill sk", head+"    - path: "+pkg+"\n      skills:\n        - sk\n")
-	installLocalStep(t, "install after --skill sk", nil, nil)
-	if names := deployedClaudeSkills(t); len(names) != 1 || names[0] != "sk" {
-		t.Errorf(".claude/skills = %v, want [sk]", names)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chdirTemp(t)
+			pkg := "/" + filepath.Join(t.TempDir(), "dep")
+			writeTwoSkillDep(t, pkg, strings.Replace(tt.entry, "%s", pkg, 1))
+			before, err := os.ReadFile("apm.yml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			install := func(skills, packages []string) error {
+				deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
+				return runInstall(deps, false, false, "", "", skills, packages)
+			}
+			steps := []struct {
+				name string
+				run  func() error
+			}{
+				{"install", func() error { return install(nil, nil) }},
+				{"install <path> --skill sk", func() error { return install([]string{"sk"}, []string{pkg}) }},
+				{"uninstall <path>", func() error { return runUninstall([]string{pkg}, uninstallOptions{}) }},
+			}
+			for _, step := range steps {
+				err := step.run()
+				if err == nil || !strings.HasPrefix(err.Error(), tt.want(pkg)) {
+					t.Errorf("%s: error %v, want it to start with %s", step.name, err, tt.want(pkg))
+				}
+				if code := exitCodeOf(err); code != 1 {
+					t.Errorf("%s: exit code %d, want 1", step.name, code)
+				}
+				if after, err := os.ReadFile("apm.yml"); err != nil || string(after) != string(before) {
+					t.Errorf("%s: apm.yml changed (err %v):\n%s", step.name, err, after)
+				}
+				for _, p := range []string{"apm.lock.yaml", "apm_modules", ".claude"} {
+					if _, err := os.Lstat(p); !os.IsNotExist(err) {
+						t.Errorf("%s: %s exists (err %v)", step.name, p, err)
+					}
+				}
+			}
+		})
 	}
-	installLocalStep(t, "install <path> --skill '*'", []string{"*"}, []string{pkg})
-	manifestIs("--skill '*'", plain)
-	installLocalStep(t, "install after the reset", nil, nil)
 }
 
-// A string is the same path in the string form and in the `path:` form, so
-// moving `./dep ` between the two never turns it into the sibling `./dep`.
-func TestRunInstall_TrailingSpacePathSubsetKeepsItsPackage(t *testing.T) {
+// Whitespace around a path is not part of it in either form, as in the
+// Oracle (models/dependency/reference.py:1812-1814): `./dep ` is ./dep, also
+// with a directory `dep ` next to it, and `install ./dep --skill` updates
+// that entry instead of adding a second one.
+func TestRunInstall_PaddedPathEntryIsTheUnpaddedPackage(t *testing.T) {
 	chdirTemp(t)
-	writeSkill := func(pkg, name, body string) {
+	writeSkill := func(pkg, name string) {
 		t.Helper()
 		dir := filepath.Join(pkg, ".apm", "skills", name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		text := "---\nname: " + name + "\ndescription: skill " + name + "\n---\n" + body + "\n"
+		text := "---\nname: " + name + "\ndescription: skill " + name + "\n---\nfrom [" + pkg + "]\n"
 		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, pkg := range []string{"dep", "dep "} {
-		writeSkill(pkg, "sk", "from ["+pkg+"]")
+		writeSkill(pkg, "sk")
 		if err := os.WriteFile(filepath.Join(pkg, "apm.yml"), []byte("name: dep\nversion: 1.0.0\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	writeSkill("dep ", "b", "b")
+	writeSkill("dep", "b")
 	const head = "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n"
 	const plain = head + "    - './dep '\n"
+	const subset = head + "    - path: './dep '\n      skills:\n        - sk\n"
 	if err := os.WriteFile("apm.yml", []byte(plain), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -229,19 +259,18 @@ func TestRunInstall_TrailingSpacePathSubsetKeepsItsPackage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(sk), "from [dep ]") {
-			t.Fatalf("%s: deployed sk is not the one of `dep `:\n%s", step, sk)
+		if !strings.Contains(string(sk), "from [dep]") {
+			t.Fatalf("%s: deployed sk is not the one of `dep`:\n%s", step, sk)
 		}
 	}
-	const subset = head + "    - path: './dep '\n      skills:\n        - sk\n"
 
 	installLocalStep(t, "install", nil, nil)
 	after("install", plain, "b", "sk")
-	installLocalStep(t, "install './dep ' --skill sk", []string{"sk"}, []string{"./dep "})
+	installLocalStep(t, "install ./dep --skill sk", []string{"sk"}, []string{"./dep"})
 	after("--skill sk", subset, "sk")
 	installLocalStep(t, "install after --skill sk", nil, nil)
 	after("install after --skill sk", subset, "sk")
-	installLocalStep(t, "install './dep ' --skill '*'", []string{"*"}, []string{"./dep "})
+	installLocalStep(t, "install ./dep --skill '*'", []string{"*"}, []string{"./dep"})
 	after("--skill '*'", plain, "b", "sk")
 	installLocalStep(t, "install after the reset", nil, nil)
 	after("install after the reset", plain, "b", "sk")

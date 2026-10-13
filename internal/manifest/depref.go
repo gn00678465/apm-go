@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -265,23 +266,28 @@ func ParseDepString(s string) (*DependencyReference, error) {
 		}
 	}
 
-	// An OS-absolute filesystem path (POSIX "/...", Windows "C:\..."/"C:/...",
-	// or a "\\host\share" UNC path) is user-intended, not a path-traversal
-	// attempt -- accept it as a local dependency outright, WITHOUT running
-	// containsEscape below (that guard only makes sense for a path meant to
-	// stay relative to -- and inside -- the project root). This also lets an
-	// absolute path resolved by mkt-025's local-marketplace fast path
-	// round-trip back through apm.yml when install.go can't relativize it
-	// into the project tree.
-	if IsAbsoluteLocalPath(s) {
-		return &DependencyReference{IsLocal: true, LocalPath: s, Source: "local"}, nil
-	}
-
-	if isLocalPath(s) {
-		if containsEscape(s) {
-			return nil, fmt.Errorf("dependency path %q escapes project root", s)
+	// An OS-absolute filesystem path (POSIX "/...", Windows "C:\..."/"C:/...")
+	// is user-intended, not a path-traversal attempt -- accept it as a local
+	// dependency outright, WITHOUT running containsEscape (that guard only
+	// makes sense for a path meant to stay relative to -- and inside -- the
+	// project root). This also lets an absolute path resolved by mkt-025's
+	// local-marketplace fast path round-trip back through apm.yml when
+	// install.go can't relativize it into the project tree.
+	if p, ok := localPathOf(s); ok {
+		if !IsAbsoluteLocalPath(p) && containsEscape(p) {
+			return nil, fmt.Errorf("dependency path %q escapes project root", p)
 		}
-		return &DependencyReference{IsLocal: true, LocalPath: s, Source: "local"}, nil
+		return &DependencyReference{IsLocal: true, LocalPath: p, Source: "local"}, nil
+	}
+	// reference.py:1829-1832: the Oracle tests the string as written here,
+	// not the trimmed one.
+	if strings.HasPrefix(s, "//") {
+		return nil, errors.New(errProtocolRelative)
+	}
+	// A UNC path reaches the Oracle's shorthand parser, which refuses it
+	// with this text (reference.py:1471).
+	if strings.HasPrefix(strings.TrimSpace(s), `\\`) {
+		return nil, errors.New("Use 'user/repo' or 'github.com/user/repo' or 'dev.azure.com/org/project/repo' format")
 	}
 
 	// reference.py:1775 calls _reject_shorthand_alias after local-path
@@ -1020,6 +1026,55 @@ func parseShorthand(s string) (*DependencyReference, error) {
 // local filesystem path (models/dependency/reference.py:838-842).
 const errPathNotLocal = "Object-style dependency must have a 'git' field, or 'path' must be a local filesystem path (starting with './', '../', '/', or '~')"
 
+// errProtocolRelative is the Oracle's unsupported_host_error("//...",
+// context="Protocol-relative URLs are not supported") with GITHUB_HOST unset
+// (utils/github_host.py:318-373).
+const errProtocolRelative = `Protocol-relative URLs are not supported
+
+Invalid Git host: '//...'.
+
+APM supports any valid FQDN as a Git host, including:
+  * github.com
+  * *.ghe.com (GitHub Enterprise Cloud)
+  * dev.azure.com, *.visualstudio.com (Azure DevOps)
+  * gitlab.com, bitbucket.org, or any self-hosted Git server
+
+To use '//...', set the appropriate environment variable:
+
+  For GitHub Enterprise Server:
+  # Linux/macOS:
+  export GITHUB_HOST=//...
+
+  # Windows (PowerShell):
+  $env:GITHUB_HOST = "//..."
+
+  # Windows (Command Prompt):
+  set GITHUB_HOST=//...
+
+  For on-prem Azure DevOps Server:
+  # Linux/macOS:
+  export ADO_HOST=//...
+
+  # Windows (PowerShell):
+  $env:ADO_HOST = "//..."
+
+  # Windows (Command Prompt):
+  set ADO_HOST=//...
+`
+
+// localPathOf is the one test of "is this a local path" for the string form
+// and the `path:` object form, and gives the path both read: the value
+// without its surrounding whitespace (the Oracle's is_local_path,
+// models/dependency/reference.py:328-348, and :1812-1814). A value that
+// starts with `//` or is a UNC path is not a local path there.
+func localPathOf(s string) (string, bool) {
+	p := strings.TrimSpace(s)
+	if strings.HasPrefix(p, "//") || strings.HasPrefix(p, `\\`) {
+		return "", false
+	}
+	return p, IsAbsoluteLocalPath(p) || isLocalPath(p)
+}
+
 func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	kv := make(map[string]string)
 	keys := make(map[string]bool)
@@ -1098,20 +1153,17 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	}
 
 	if keys["path"] && !keys["git"] && !keys["id"] && !keys["name"] {
-		// The value goes to the string form's parser as it is, so one string
-		// is the same path in both forms: install moves it between them when
-		// a skill subset is added (newGitSkillEntry) or reset. What the
-		// string form does not read as a local path is refused; `path: dep`
-		// is not a reference there and `sub/dep` is owner/repo, and the
-		// Oracle refuses both too (models/dependency/reference.py:831-846).
-		// Deviations the string form already has: `//x` and a UNC path are
-		// taken, and surrounding whitespace is kept (issue #61).
+		// A value is a local path here exactly when the string form reads
+		// it as one (localPathOf), and both read the same path: install
+		// moves the string between the two forms when a skill subset is
+		// added (newGitSkillEntry) or reset. The reason text is the
+		// Oracle's (models/dependency/reference.py:831-846).
 		if pathNode.Kind != yaml.ScalarNode || pathNode.ShortTag() != "!!str" || strings.TrimSpace(pathNode.Value) == "" {
 			return nil, fmt.Errorf("dependency entry %d: 'path' field must be a non-empty string", idx)
 		}
-		p := pathNode.Value
-		if !IsAbsoluteLocalPath(p) && !isLocalPath(p) {
-			return nil, fmt.Errorf("dependency entry %d (path: %q): %s", idx, p, errPathNotLocal)
+		p, ok := localPathOf(pathNode.Value)
+		if !ok {
+			return nil, fmt.Errorf("dependency entry %d (path: %q): %s", idx, strings.TrimSpace(pathNode.Value), errPathNotLocal)
 		}
 		d, err := ParseDepString(p)
 		if err != nil {
