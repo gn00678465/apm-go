@@ -185,7 +185,7 @@ func locateStalePath(deployRoot, bucketSource, rel string) (staleLocation, error
 		isSkillDir := i > 0 && segments[i-1] == "skills"
 		if isPathItself || isSkillDir {
 			loc.exists, loc.linkTarget = true, target
-			if archive.Contained(bucketSource, target) {
+			if archive.Contained(bucketSource, target) || containedReal(bucketSource, target) {
 				loc.deployLink = filepath.ToSlash(prefix)
 			} else {
 				loc.userLink = filepath.ToSlash(prefix)
@@ -197,6 +197,52 @@ func locateStalePath(deployRoot, bucketSource, rel string) (staleLocation, error
 	}
 	loc.exists = true
 	return loc, nil
+}
+
+// containedReal is archive.Contained for a symlink target written through
+// another name of root: the deploy writes the absolute path of its source as
+// the working directory spelled it, and a later run can enter the same
+// directory through another name (a symlinked ~/.apm or home directory). The
+// directory holding target is resolved, the last component is not: where it
+// leads is what holdsDeployedContent judges.
+func containedReal(root, target string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	return archive.Contained(resolveExisting(absRoot), filepath.Join(resolveExisting(filepath.Dir(target)), filepath.Base(target)))
+}
+
+// resolveExisting follows the symlinks of the longest part of p that exists
+// and keeps the rest as it is.
+func resolveExisting(p string) string {
+	rest := ""
+	for cur := filepath.Clean(p); ; {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return p
+		}
+		rest, cur = filepath.Join(filepath.Base(cur), rest), parent
+	}
+}
+
+// TakenOver reports whether the lock path rel is at or below an entry the
+// user took over, so that what is there is not the deploy's any more. For a
+// copy deploy (bucketSource "") that is a symlink at a skill's directory. For
+// a symlink deploy it is a symlink, at the path itself or at a skill's
+// directory, that leads outside bucketSource.
+func TakenOver(deployRoot, bucketSource, rel string) bool {
+	if !archive.ContainedKey(deployRoot, rel) {
+		return false
+	}
+	if bucketSource == "" {
+		return skillSymlink(deployRoot, rel) != ""
+	}
+	loc, err := locateStalePath(deployRoot, bucketSource, rel)
+	return err == nil && loc.userLink != ""
 }
 
 // lockPathsAtOrBelow returns the entries of stale that are link itself or

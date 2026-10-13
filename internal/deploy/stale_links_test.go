@@ -1,6 +1,8 @@
 package deploy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -379,27 +381,55 @@ func TestRemoveStaleLinkedFiles_ReportsSymlinkThatCannotBeRemovedOnce(t *testing
 	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "extra.md"), "extra\n")
 }
 
-// The target of the parent symlink is written through another name of
-// sourceRoot, so by its text it is outside sourceRoot. The file behind it is
-// still source content and its hash matches the lock.
-func TestRemoveStaleLinkedFiles_KeepsSourceFileBehindSymlinkWrittenThroughAnotherName(t *testing.T) {
+// The deploy's symlink is written through another name of sourceRoot (a
+// symlinked ~/.apm): by its text the target is outside sourceRoot, resolved it
+// is inside. It is the deploy's, so it is removed itself, and the source file
+// behind it stays.
+func TestRemoveStaleLinkedFiles_RemovesDeploySymlinkWrittenThroughAnotherName(t *testing.T) {
 	deployRoot, sourceRoot := staleLinkRoots(t)
 	alias := filepath.Join(t.TempDir(), "alias")
 	staleLink(t, sourceRoot, alias)
 	parent := filepath.Join(deployRoot, ".claude", "skills", "demo")
 	staleLink(t, filepath.Join(alias, "skills", "demo"), parent)
+	agent := filepath.Join(deployRoot, ".claude", "agents", "gone.md")
+	staleLink(t, filepath.Join(alias, "agents", "gone.md"), agent)
 
-	// sha256sum of "demo\n".
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot,
+		[]string{".claude/agents/gone.md", ".claude/skills/demo/SKILL.md"},
+		map[string]string{
+			".claude/agents/gone.md":       "sha256:" + staleLinkSHA256(t, "gone\n"),
+			".claude/skills/demo/SKILL.md": staleLinkDemoHash,
+		}, nil)
+
+	assertStaleLinkResult(t, removed, []string{".claude/agents/gone.md", ".claude/skills/demo"}, diags, 0)
+	assertStaleLinkGone(t, parent)
+	assertStaleLinkGone(t, agent)
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "gone.md"), "gone\n")
+}
+
+// Another name of sourceRoot does not make a symlink the deploy's when what
+// is behind it is not what the lock recorded.
+func TestRemoveStaleLinkedFiles_KeepsSymlinkWrittenThroughAnotherNameWithOtherContent(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	staleLink(t, sourceRoot, alias)
+	parent := filepath.Join(deployRoot, ".claude", "skills", "demo")
+	staleLink(t, filepath.Join(alias, "skills", "demo"), parent)
+	writeStaleLinkFile(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "edited\n")
+
 	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/skills/demo/SKILL.md"},
-		map[string]string{".claude/skills/demo/SKILL.md": "sha256:eb9c26baee47f19e4993a77bca936d0ff09e355a82d3db79bf154ebff1a80604"}, nil)
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	want := `keeping ".claude/skills/demo": symlink target ` + strconv.Quote(filepath.Join(alias, "skills", "demo")) + ` is not in the source of this package`
-	if len(diags) == 1 && diags[0] != want {
-		t.Errorf("diag = %q, want %q", diags[0], want)
-	}
-	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
 	assertStaleLinkIsSymlink(t, parent)
+	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "edited\n")
+}
+
+func staleLinkSHA256(t *testing.T, content string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
 }
 
 func TestRemoveStaleLinkedFiles_KeepsPathItCannotInspect(t *testing.T) {
@@ -900,4 +930,47 @@ func TestRemoveStaleLinkedFiles_UserParentSymlink_SkillDirEntryOfRealDirectory(t
 		t.Errorf("the user's symlink was removed: %v", err)
 	}
 	assertStaleLinkContent(t, filepath.Join(dotfiles, "settings.json"), "{}\n")
+}
+
+// Resolving a target through another name must not reach into a neighbour:
+// a bucket whose name starts with this bucket's name is another package.
+func TestRemoveStaleLinkedFiles_AnotherNameOfSiblingBucketIsUsers(t *testing.T) {
+	deployRoot, base := staleLinkRoots(t)
+	bucket, sibling := filepath.Join(base, "apm_modules", "k"), filepath.Join(base, "apm_modules", "k-two")
+	writeStaleLinkFile(t, filepath.Join(bucket, "agents", "gone.md"), "gone\n")
+	writeStaleLinkFile(t, filepath.Join(sibling, "agents", "gone.md"), "gone\n")
+	alias := filepath.Join(t.TempDir(), "alias")
+	staleLink(t, base, alias)
+	link := filepath.Join(deployRoot, ".claude", "agents", "gone.md")
+	staleLink(t, filepath.Join(alias, "apm_modules", "k-two", "agents", "gone.md"), link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, base, bucket, []string{".claude/agents/gone.md"},
+		map[string]string{".claude/agents/gone.md": "sha256:" + staleLinkSHA256(t, "gone\n")}, nil)
+
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	assertStaleLinkIsSymlink(t, link)
+}
+
+// The last component of the target is not resolved: a source entry that is
+// itself a symlink out of the bucket does not move the target out of it, and
+// nothing is deleted behind it.
+func TestRemoveStaleLinkedFiles_AnotherNameDoesNotFollowTheLastComponent(t *testing.T) {
+	deployRoot, sourceRoot := staleLinkRoots(t)
+	outside := filepath.Join(t.TempDir(), "outside")
+	writeStaleLinkFile(t, filepath.Join(outside, "SKILL.md"), "demo\n")
+	if err := os.RemoveAll(filepath.Join(sourceRoot, "skills", "demo")); err != nil {
+		t.Fatal(err)
+	}
+	staleLink(t, outside, filepath.Join(sourceRoot, "skills", "demo"))
+	alias := filepath.Join(t.TempDir(), "alias")
+	staleLink(t, sourceRoot, alias)
+	link := filepath.Join(deployRoot, ".claude", "skills", "demo")
+	staleLink(t, filepath.Join(alias, "skills", "demo"), link)
+
+	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/skills/demo/SKILL.md"},
+		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, nil)
+
+	assertStaleLinkResult(t, removed, []string{".claude/skills/demo"}, diags, 0)
+	assertStaleLinkGone(t, link)
+	assertStaleLinkContent(t, filepath.Join(outside, "SKILL.md"), "demo\n")
 }

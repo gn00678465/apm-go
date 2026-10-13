@@ -216,6 +216,14 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		return symlinkSkillTo(p.SrcPath, absDestDir, destDir)
 	}
 
+	// A symlink here is not the deploy's: a copy through it would write into
+	// the directory it leads to. It is replaced by the skill's own directory,
+	// as a symlink deploy replaces one (symlinkSkillTo).
+	if info, err := os.Lstat(absDestDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(absDestDir); err != nil {
+			return nil, fmt.Errorf("replace skill destination: %w", err)
+		}
+	}
 	if err := os.MkdirAll(absDestDir, 0755); err != nil {
 		return nil, fmt.Errorf("create skill dir: %w", err)
 	}

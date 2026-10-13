@@ -2135,7 +2135,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				return mergeDeployedFilesIf(notKept(oldFiles), oldHashes, newFiles, newHashes,
 					func(string) bool { return true })
 			}
-			return mergeDeployedFiles(notKept(oldFiles), oldHashes, newFiles, newHashes, effectiveDeployRoot)
+			return mergeDeployedFiles(notTakenOver(bucket, notKept(oldFiles), targets, deployDir), oldHashes, newFiles, newHashes, effectiveDeployRoot)
 		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
