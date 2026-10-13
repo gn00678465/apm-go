@@ -2661,9 +2661,14 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 		case len(subset) > 0:
 			apmSeq.Content = append(apmSeq.Content, newGitSkillEntry(pkg, subset))
 		default:
-			// String form
+			// String form. A local path is written without the whitespace
+			// around it, as newGitSkillEntry writes it.
+			value := pkg
+			if ref, err := manifest.ParseDepString(pkg); err == nil && ref.IsLocal {
+				value = ref.LocalPath
+			}
 			apmSeq.Content = append(apmSeq.Content,
-				&yamllib.Node{Kind: yamllib.ScalarNode, Value: pkg, Tag: "!!str"},
+				&yamllib.Node{Kind: yamllib.ScalarNode, Value: value, Tag: "!!str"},
 			)
 		}
 		appended = true
@@ -2839,8 +2844,11 @@ func entryCanonicalIdentity(entry *yamllib.Node) string {
 // collapses back to the scalar form when git: or path: was the sole
 // remaining key (preserving the pre-existing wildcard-RESET round-trip
 // shape).
-// The entry's ORIGINAL persisted git or path value is preserved verbatim
-// (first-declared spelling wins).
+// The entry's ORIGINAL persisted git value is preserved verbatim
+// (first-declared spelling wins). A local path is written as the path the
+// entry reads as, without the whitespace around it, as the Oracle writes it
+// (models/dependency/reference.py:1955-1963), whenever the subset of the
+// entry is set or cleared.
 //
 // Keeping the other fields when a subset is ADDED is a deliberate deviation
 // from the Oracle, which rebuilds a local entry from the new reference and
@@ -2860,11 +2868,23 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 	if entry.Kind != yamllib.MappingNode {
 		return
 	}
+	trimLocalPath := func() {
+		ref, err := manifest.ParseDepDict(entry, idx)
+		if err != nil || !ref.IsLocal {
+			return
+		}
+		for j := 0; j < len(entry.Content)-1; j += 2 {
+			if v := entry.Content[j+1]; entry.Content[j].Value == "path" && v.Value != ref.LocalPath {
+				v.Value, v.Style = ref.LocalPath, 0
+			}
+		}
+	}
 
 	for j := 0; j < len(entry.Content)-1; j += 2 {
 		if entry.Content[j].Value != "skills" {
 			continue
 		}
+		trimLocalPath()
 		if len(subset) == 0 {
 			entry.Content = append(entry.Content[:j], entry.Content[j+2:]...)
 			// Collapse {git: x} or {path: x} (nothing else left) to the
@@ -2885,6 +2905,7 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 		return
 	}
 	if len(subset) > 0 {
+		trimLocalPath()
 		entry.Content = append(entry.Content,
 			&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
 			newSkillSeqNode(subset),
@@ -2894,13 +2915,13 @@ func setEntrySkillSubset(apmSeq *yamllib.Node, idx int, subset []string) {
 
 // newGitSkillEntry builds the object-form dependencies.apm entry
 // `{git: gitVal, skills: [subset...]}`. A local path gets the key `path`
-// instead, as the Oracle writes it (models/dependency/reference.py:1955-1963,
-// object_fields.py:87-101): `git: ./dep` would make the next install clone
-// the path (issue #61).
+// instead and loses the whitespace around it, as the Oracle writes it
+// (models/dependency/reference.py:1955-1963, object_fields.py:87-101):
+// `git: ./dep` would make the next install clone the path (issue #61).
 func newGitSkillEntry(gitVal string, subset []string) *yamllib.Node {
 	sourceKey := "git"
 	if ref, err := manifest.ParseDepString(gitVal); err == nil && ref.IsLocal {
-		sourceKey = "path"
+		sourceKey, gitVal = "path", ref.LocalPath
 	}
 	entry := &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
 	entry.Content = append(entry.Content,

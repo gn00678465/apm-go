@@ -259,12 +259,45 @@ func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
 			src:  head + "dependencies:\n  apm:\n    - path: ./dep\n      skills:\n        - sk\n",
 			want: head + "dependencies:\n  apm:\n    - ./dep\n",
 		},
+		// The six padded rows: the bytes the Oracle (microsoft/apm 18c4c43)
+		// wrote for the same entry and `install ./dep --skill ...`. It
+		// writes the path without the whitespace around it.
 		{
-			// Both forms read `./dep ` as ./dep, so the value is written
-			// back as the user spelled it.
-			name: "padded path and skills reset to the same padded string",
+			name:   "string with a leading space gains a subset",
+			src:    head + "dependencies:\n  apm:\n  - ' ./dep'\n",
+			subset: []string{"sk"},
+			want:   head + "dependencies:\n  apm:\n    - path: ./dep\n      skills:\n        - sk\n",
+		},
+		{
+			name:   "string with a trailing space gains a subset",
+			src:    head + "dependencies:\n  apm:\n  - './dep '\n",
+			subset: []string{"sk"},
+			want:   head + "dependencies:\n  apm:\n    - path: ./dep\n      skills:\n        - sk\n",
+		},
+		{
+			name:   "padded path gains a subset",
+			src:    head + "dependencies:\n  apm:\n  - path: './dep '\n",
+			subset: []string{"sk"},
+			want:   head + "dependencies:\n  apm:\n    - path: ./dep\n      skills:\n        - sk\n",
+		},
+		{
+			name:   "padded path and skills gets a larger subset",
+			src:    head + "dependencies:\n  apm:\n  - path: './dep '\n    skills:\n    - sk\n",
+			subset: []string{"b", "sk"},
+			want:   head + "dependencies:\n  apm:\n    - path: ./dep\n      skills:\n        - b\n        - sk\n",
+		},
+		{
+			name: "padded path and skills reset to the unpadded string",
 			src:  head + "dependencies:\n  apm:\n    - path: './dep '\n      skills:\n        - sk\n",
-			want: head + "dependencies:\n  apm:\n    - './dep '\n",
+			want: head + "dependencies:\n  apm:\n    - ./dep\n",
+		},
+		{
+			// The Oracle writes the same without the alias line (owner
+			// ruling 2026-10-13: the alias stays).
+			name:   "padded path and alias gains a subset and keeps the alias",
+			src:    head + "dependencies:\n  apm:\n  - path: './dep '\n    alias: mydep\n",
+			subset: []string{"sk"},
+			want:   head + "dependencies:\n  apm:\n    - path: ./dep\n      alias: mydep\n      skills:\n        - sk\n",
 		},
 		{
 			// Deliberate deviation: the Oracle v0.33.0 writes {path, skills}

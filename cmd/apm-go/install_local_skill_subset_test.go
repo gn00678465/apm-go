@@ -216,7 +216,8 @@ func TestDoubleSlashPathIsRefused(t *testing.T) {
 // Whitespace around a path is not part of it in either form, as in the
 // Oracle (models/dependency/reference.py:1812-1814): `./dep ` is ./dep, also
 // with a directory `dep ` next to it, and `install ./dep --skill` updates
-// that entry instead of adding a second one.
+// that entry instead of adding a second one and writes the path back without
+// the whitespace, the bytes the Oracle (18c4c43) wrote.
 func TestRunInstall_PaddedPathEntryIsTheUnpaddedPackage(t *testing.T) {
 	chdirTemp(t)
 	writeSkill := func(pkg, name string) {
@@ -239,7 +240,8 @@ func TestRunInstall_PaddedPathEntryIsTheUnpaddedPackage(t *testing.T) {
 	writeSkill("dep", "b")
 	const head = "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n"
 	const plain = head + "    - './dep '\n"
-	const subset = head + "    - path: './dep '\n      skills:\n        - sk\n"
+	const subset = head + "    - path: ./dep\n      skills:\n        - sk\n"
+	const reset = head + "    - ./dep\n"
 	if err := os.WriteFile("apm.yml", []byte(plain), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +273,7 @@ func TestRunInstall_PaddedPathEntryIsTheUnpaddedPackage(t *testing.T) {
 	installLocalStep(t, "install after --skill sk", nil, nil)
 	after("install after --skill sk", subset, "sk")
 	installLocalStep(t, "install ./dep --skill '*'", []string{"*"}, []string{"./dep"})
-	after("--skill '*'", plain, "b", "sk")
+	after("--skill '*'", reset, "b", "sk")
 	installLocalStep(t, "install after the reset", nil, nil)
-	after("install after the reset", plain, "b", "sk")
+	after("install after the reset", reset, "b", "sk")
 }
