@@ -398,3 +398,187 @@ func TestUninstall_SharedRuleOwner_DuplicateDeclaration_NoExtraWarning(t *testin
 		t.Errorf(".claude/rules/shared.md = %q, want %q", got, "shared rule\n")
 	}
 }
+
+const (
+	transferBSkillMD = "---\nname: demo\ndescription: b demo skill\n---\n\n# B demo\n"
+	transferBScript  = "print('b')\n"
+)
+
+// writeTransferFiles writes files (slash path below dir -> content).
+func writeTransferFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for rel, content := range files {
+		writeGlobalStaleFile(t, filepath.Join(dir, filepath.FromSlash(rel)), content)
+	}
+}
+
+// transferSkillFiles gives a and b the skill demo, each with a resource of
+// its own.
+var transferSkillFiles = map[string]string{
+	"a/.apm/skills/demo/SKILL.md":     staleCleanupSkillMD,
+	"a/.apm/skills/demo/a.txt":        "a\n",
+	"b/.apm/skills/demo/SKILL.md":     transferBSkillMD,
+	"b/.apm/skills/demo/scripts/b.py": transferBScript,
+}
+
+// A skill is handed over as a whole directory: b's own resource comes with
+// it, and a's own resource goes.
+func TestUninstall_SharedSkillOwner_HandsWholeSkillDirToSurvivor(t *testing.T) {
+	dir := staleCleanupProject(t, transferManifest, nil)
+	transferProject(t, dir, transferSkillFiles)
+	staleCleanupInstall(t, "claude")
+
+	transferUninstall(t, uninstallOptions{}, "./a")
+
+	skill := filepath.Join(dir, ".claude", "skills", "demo")
+	if got := globalStaleRead(t, filepath.Join(skill, "SKILL.md")); got != transferBSkillMD {
+		t.Errorf("SKILL.md = %q, want b's %q", got, transferBSkillMD)
+	}
+	if got := globalStaleRead(t, filepath.Join(skill, "scripts", "b.py")); got != transferBScript {
+		t.Errorf("scripts/b.py = %q, want %q", got, transferBScript)
+	}
+	if _, err := os.Lstat(filepath.Join(skill, "a.txt")); !os.IsNotExist(err) {
+		t.Errorf("a's a.txt is still there (Lstat err = %v)", err)
+	}
+	lockPath := filepath.Join(dir, "apm.lock.yaml")
+	assertTransferRecord(t, transferLockDep(t, lockPath, "_local/b"),
+		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md", ".claude/skills/demo/scripts/b.py"},
+		map[string]string{
+			".claude/skills/demo/SKILL.md":     transferSHA(transferBSkillMD),
+			".claude/skills/demo/scripts/b.py": transferSHA(transferBScript),
+		})
+
+	before := globalStaleRead(t, lockPath)
+	staleCleanupInstall(t, "claude")
+	if got := globalStaleRead(t, lockPath); got != before {
+		t.Errorf("install after the uninstall rewrote the lock:\n%s\nwas\n%s", got, before)
+	}
+}
+
+func TestUninstallGlobal_SharedSkillOwner_RecordsSurvivorResources(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	chdirTemp(t)
+	home := t.TempDir()
+	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
+	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
+	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
+	transferProject(t, filepath.Join(home, ".apm"), transferSkillFiles)
+	globalStaleInstall(t, "claude")
+	lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
+
+	transferUninstall(t, uninstallOptions{Global: true}, "./a")
+
+	if got := globalStaleRead(t, filepath.Join(home, ".claude", "skills", "demo", "scripts", "b.py")); got != transferBScript {
+		t.Errorf("~/.claude/skills/demo/scripts/b.py = %q, want %q", got, transferBScript)
+	}
+	assertTransferRecord(t, transferLockDep(t, lockPath, "_local/b"),
+		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md", ".claude/skills/demo/scripts/b.py"},
+		map[string]string{
+			".claude/skills/demo/SKILL.md":     transferSHA(transferBSkillMD),
+			".claude/skills/demo/scripts/b.py": transferSHA(transferBScript),
+		})
+
+	before := globalStaleRead(t, lockPath)
+	globalStaleInstall(t, "claude")
+	if got := globalStaleRead(t, lockPath); got != before {
+		t.Errorf("install after the uninstall rewrote the lock:\n%s\nwas\n%s", got, before)
+	}
+}
+
+// The first surviving declaration takes the path, as install decides it,
+// whatever the package names sort to.
+func TestUninstall_SharedRuleOwner_FirstSurvivingDeclarationWins(t *testing.T) {
+	const manifestYAML = "name: app\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./a\n    - ./c\n    - ./b\n"
+	dir := staleCleanupProject(t, manifestYAML, nil)
+	files := map[string]string{}
+	for _, p := range []string{"a", "c", "b"} {
+		files[p+"/apm.yml"] = "name: " + p + "\nversion: 1.0.0\n"
+		files[p+"/.apm/instructions/shared.instructions.md"] = "---\ndescription: shared\n---\n" + p + " rule\n"
+	}
+	writeTransferFiles(t, dir, files)
+	staleCleanupInstall(t, "claude")
+
+	transferUninstall(t, uninstallOptions{}, "./a")
+
+	rule := filepath.Join(dir, ".claude", "rules", "shared.md")
+	if got := globalStaleRead(t, rule); got != "c rule\n" {
+		t.Errorf(".claude/rules/shared.md = %q, want c's %q", got, "c rule\n")
+	}
+	lockPath := filepath.Join(dir, "apm.lock.yaml")
+	assertTransferRecord(t, transferLockDep(t, lockPath, "_local/c"),
+		[]string{".claude/rules/shared.md"},
+		map[string]string{".claude/rules/shared.md": transferSHA("c rule\n")})
+
+	before := globalStaleRead(t, lockPath)
+	staleCleanupInstall(t, "claude")
+	if got := globalStaleRead(t, rule); got != "c rule\n" {
+		t.Errorf("install after the uninstall changed the rule to %q", got)
+	}
+	if got := globalStaleRead(t, lockPath); got != before {
+		t.Errorf("install after the uninstall rewrote the lock:\n%s\nwas\n%s", got, before)
+	}
+}
+
+// b keeps only the skill its apm.yml entry names; the skill it shares with a
+// is not handed to it.
+func TestUninstall_SharedSkillOwner_SurvivorSkillSubsetHonored(t *testing.T) {
+	const manifestYAML = "name: app\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./a\n    - path: ./b\n      skills: [only-b]\n"
+	dir := staleCleanupProject(t, manifestYAML, nil)
+	onlyB := "---\nname: only-b\ndescription: only b\n---\n"
+	writeTransferFiles(t, dir, map[string]string{
+		"a/apm.yml":                     "name: a\nversion: 1.0.0\n",
+		"b/apm.yml":                     "name: b\nversion: 1.0.0\n",
+		"a/.apm/skills/demo/SKILL.md":   staleCleanupSkillMD,
+		"b/.apm/skills/demo/SKILL.md":   transferBSkillMD,
+		"b/.apm/skills/only-b/SKILL.md": onlyB,
+	})
+	staleCleanupInstall(t, "claude")
+
+	transferUninstall(t, uninstallOptions{}, "./a")
+
+	if _, err := os.Lstat(filepath.Join(dir, ".claude", "skills", "demo")); !os.IsNotExist(err) {
+		t.Errorf(".claude/skills/demo is still there (Lstat err = %v)", err)
+	}
+	assertTransferRecord(t, transferLockDep(t, filepath.Join(dir, "apm.lock.yaml"), "_local/b"),
+		[]string{".claude/skills/only-b", ".claude/skills/only-b/SKILL.md"},
+		map[string]string{".claude/skills/only-b/SKILL.md": transferSHA(onlyB)})
+}
+
+// A lock written before issue #50 names a local package _local/<name>-<hash>,
+// and the package is in that directory. The hand-over reads the packages
+// under those keys, in the order apm.yml declares them, and records the file
+// under c's key.
+func TestUninstall_SharedRuleOwner_LegacyLockKeys(t *testing.T) {
+	const manifestYAML = "name: app\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./a\n    - ./c\n    - ./b\n"
+	dir := staleCleanupProject(t, manifestYAML, nil)
+	files := map[string]string{}
+	for _, p := range []string{"a", "c", "b"} {
+		files[p+"/apm.yml"] = "name: " + p + "\nversion: 1.0.0\n"
+		files[p+"/.apm/instructions/shared.instructions.md"] = "---\ndescription: shared\n---\n" + p + " rule\n"
+	}
+	writeTransferFiles(t, dir, files)
+	staleCleanupInstall(t, "claude")
+	lockPath := filepath.Join(dir, "apm.lock.yaml")
+	lock := globalStaleRead(t, lockPath)
+	keys := map[string]string{}
+	for _, p := range []string{"a", "c", "b"} {
+		legacy := legacyLocalModulesKey(filepath.Join(dir, p))
+		keys[p] = legacy
+		if err := os.Rename(filepath.Join(dir, "apm_modules", "_local", p), filepath.Join(dir, "apm_modules", filepath.FromSlash(legacy))); err != nil {
+			t.Fatal(err)
+		}
+		lock = strings.Replace(lock, "repo_url: _local/"+p+"\n", "repo_url: "+legacy+"\n", 1)
+	}
+	if err := os.WriteFile(lockPath, []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	transferUninstall(t, uninstallOptions{}, "./a")
+
+	if got := globalStaleRead(t, filepath.Join(dir, ".claude", "rules", "shared.md")); got != "c rule\n" {
+		t.Errorf(".claude/rules/shared.md = %q, want c's %q", got, "c rule\n")
+	}
+	assertTransferRecord(t, transferLockDep(t, lockPath, keys["c"]),
+		[]string{".claude/rules/shared.md"},
+		map[string]string{".claude/rules/shared.md": transferSHA("c rule\n")})
+}

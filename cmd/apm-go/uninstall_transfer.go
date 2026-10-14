@@ -42,7 +42,8 @@ type uninstallHandover struct {
 
 // planUninstallHandover deploys the packages that stay into a temporary
 // directory, with the apm.yml already written without the removed ones, and
-// keeps each removed lock path that one of them deploys. It returns nil when
+// keeps each removed lock path that one of them deploys; for a skill, the
+// whole directory that one of them deploys. It returns nil when
 // the removed packages recorded no path that a target governs.
 func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool, deployDir string) (*uninstallHandover, error) {
 	removed, _ := collectUninstallDeployedProvenance(lock, removalKeys)
@@ -64,6 +65,14 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 	if err != nil {
 		return nil, err
 	}
+	// install hands deploy.Run the manifest with each local dependency under
+	// its apm_modules key, the one a lock from before issue #50 names when it
+	// has it; without that a local package loses its declaration order and its
+	// skills: subset.
+	for _, d := range allDirectDeps(m) {
+		normalizeLocalDep(d)
+	}
+	useLegacyLocalKeys(m, lock)
 	result := &resolver.ResolutionResult{}
 	for i := range lock.Dependencies {
 		d := &lock.Dependencies[i]
@@ -106,14 +115,31 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 			deployedBy[f] = key
 		}
 	}
-	for _, p := range removed {
-		key, ok := deployedBy[p]
-		if !ok {
-			continue
-		}
+	take := func(key, p string) {
 		h.owner[p] = key
 		if hash, ok := trial.PerDep[key].Hashes[p]; ok {
 			h.hashes[p] = hash
+		}
+	}
+	for _, p := range removed {
+		// A skill is a directory deployed as one unit, so it is handed over
+		// whole: the survivor's own files below it come too, and the removed
+		// package's own files there are not handed over.
+		if dir := skillDirOf(p); dir != "" {
+			key, ok := deployedBy[dir]
+			if !ok {
+				continue
+			}
+			take(key, dir)
+			for _, f := range trial.PerDep[key].Files {
+				if strings.HasPrefix(f, dir+"/") {
+					take(key, f)
+				}
+			}
+			continue
+		}
+		if key, ok := deployedBy[p]; ok {
+			take(key, p)
 		}
 	}
 	root := "."
@@ -130,6 +156,18 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		}
 	}
 	return h, nil
+}
+
+// skillDirOf returns the skill directory (<root>/skills/<name>) that the
+// slash path p is or lies below, or "" when p is in no skill.
+func skillDirOf(p string) string {
+	segs := strings.Split(normalizeDeployPath(p), "/")
+	for i := 0; i+1 < len(segs); i++ {
+		if segs[i] == "skills" {
+			return strings.Join(segs[:i+2], "/")
+		}
+	}
+	return ""
 }
 
 func (h *uninstallHandover) close() {
