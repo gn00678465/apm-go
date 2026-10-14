@@ -310,6 +310,83 @@ func TestInstallFrozen_Cold_NoManifest_Fails(t *testing.T) {
 	unchanged()
 }
 
+// coldRewriteLock replaces one string in the lock, which has to be there once.
+func coldRewriteLock(t *testing.T, project, old, replacement string) {
+	t.Helper()
+	lockPath := filepath.Join(project, "apm.lock.yaml")
+	lock := globalStaleRead(t, lockPath)
+	if n := strings.Count(lock, old); n != 1 {
+		t.Fatalf("lock has %q %d times, want 1:\n%s", old, n, lock)
+	}
+	writeGlobalStaleFile(t, lockPath, strings.Replace(lock, old, replacement, 1))
+}
+
+// coldBareHexLock drops the sha256: prefix of both deployed_file_hashes
+// values, the other form req-lk-016 lets a lock record a digest in.
+func coldBareHexLock(t *testing.T, project string) {
+	t.Helper()
+	coldRewriteLock(t, project, coldSkillPath+": sha256:", coldSkillPath+": ")
+	coldRewriteLock(t, project, coldPackagePath+": sha256:", coldPackagePath+": ")
+}
+
+func TestInstallFrozen_Cold_BareHexLock_DeploysLockedFiles(t *testing.T) {
+	project := coldProject(t)
+	coldStrip(t, project)
+	coldBareHexLock(t, project)
+	unchanged := coldUnchanged(t, project)
+
+	out, err := coldFrozen(t, true, "claude")
+
+	if err != nil {
+		t.Fatalf("frozen install: %v", err)
+	}
+	if !strings.Contains(out, frozenRootSuccess) {
+		t.Errorf("missing success line:\n%s", out)
+	}
+	assertColdDeployed(t, project)
+	unchanged()
+}
+
+func TestInstallFrozen_Cold_BareHexLock_SourceChangedAfterLock_Fails(t *testing.T) {
+	project := coldProject(t)
+	coldStrip(t, project)
+	coldBareHexLock(t, project)
+	writeGlobalStaleFile(t, filepath.Join(project, "vendor", "style", "SKILL.md"), coldSkillMD+"extra\n")
+	unchanged := coldUnchanged(t, project)
+
+	_, err := coldFrozen(t, true, "claude")
+
+	const want = "frozen install: content-integrity violation: " + coldSkillPath +
+		" expected 4b0bd57babf059f4499fb1084669da94d683824baaa7bbf4be7b7a69bc5e6894" +
+		", observed sha256:cea6a79859de08569f3fc85847ca7e8429e6df1c013134ed751890853119ef27"
+	if err == nil || err.Error() != want {
+		t.Fatalf("frozen install error = %v\nwant %s", err, want)
+	}
+	if code := exitCodeOf(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	unchanged()
+}
+
+func TestInstallFrozen_Cold_NonSHA256LockHash_Fails(t *testing.T) {
+	project := coldProject(t)
+	coldStrip(t, project)
+	coldRewriteLock(t, project, coldSkillPath+": "+coldSkillHash, coldSkillPath+": sha512:abcdef")
+	unchanged := coldUnchanged(t, project)
+
+	_, err := coldFrozen(t, true, "claude")
+
+	const want = "frozen install: content-integrity violation: " + coldSkillPath +
+		" expected sha512:abcdef, observed " + coldSkillHash
+	if err == nil || err.Error() != want {
+		t.Fatalf("frozen install error = %v\nwant %s", err, want)
+	}
+	if code := exitCodeOf(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	unchanged()
+}
+
 // coldGitLoader puts a copy of one git checkout at apm_modules/<repo URL>, as
 // the real loader does by cloning.
 type coldGitLoader struct {

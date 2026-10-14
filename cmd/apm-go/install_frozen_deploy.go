@@ -175,9 +175,13 @@ func frozenDeployMatchesLock(deployed *deploy.DeployResult, lock *lockfile.Lockf
 			}
 			expected, ok := locked[path]
 			if !ok {
-				expected = notInLockfile
+				return frozenViolationError(path, notInLockfile, written)
 			}
-			if expected != written {
+			// The lock may record a bare hex digest (req-lk-016), so the
+			// parsed digests are compared, as VerifyDeployedState does.
+			algo, expectedHex, err := lockfile.ParseHashEnvelope(expected)
+			_, writtenHex, _ := lockfile.ParseHashEnvelope(written)
+			if err != nil || algo != "sha256" || expectedHex != writtenHex {
 				return frozenViolationError(path, expected, written)
 			}
 		}
