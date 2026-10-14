@@ -16,11 +16,9 @@ import (
 // the standalone names the user explicitly targeted -- that's
 // removeUninstallStandaloneMCP's job, un-064/065).
 //
-// This deliberately does NOT call deploy.Run to get a faithful answer --
-// that would require re-resolving the remaining dependency graph, which is
-// un-054's deferred Phase 2 (see the KNOWN LIMITATION note in
-// applyUninstallPlan). Instead it approximates the same question directly
-// from what's already on disk/in the manifest, mirroring deploy.Run's own
+// It does not call deploy.Run: the answer is a set of server names, which
+// the manifests on disk already give, and a deploy writes the merged MCP
+// config files. It reads them directly, mirroring deploy.Run's own
 // depth split (internal/deploy/deploy.go:82-102) exactly:
 //
 //   - root: every dependencies.mcp/devDependencies.mcp entry in the

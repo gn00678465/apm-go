@@ -268,7 +268,14 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	if deployDir != "" {
 		removeRoot = deployDir
 	}
+	handover, err := planUninstallHandover(lock, allRemovalKeys, deployDir)
+	if err != nil {
+		warnReintegrationSkipped(err)
+	}
+	defer handover.close()
 	removedFiles, keptFiles, diags := removeUninstallDeployed(lock, allRemovalKeys, deployDir)
+	handover.restore(removeRoot)
+	removedFiles = handover.notHandedOver(removedFiles)
 	cleaned := uninstallCleanedByOwner(lock, allRemovalKeys, removedFiles)
 
 	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys)
@@ -314,24 +321,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		lock.MCPServers = sortedStringSet(newMCP)
 	}
 
-	// KNOWN LIMITATION (un-054, documented deviation): Phase 2 re-integration
-	// is not implemented. RemoveDeployedFiles above only looks at the
-	// REMOVED/orphaned deps' own deployed_files -- a path also contributed by
-	// a still-installed dependency (e.g. two packages declaring the same
-	// skill name, sharing the same target file) is deleted here with no
-	// attempt to restore it. Python's engine.py re-walks every surviving
-	// dependency's primitives and re-deploys them after Phase 1; the apm-go
-	// equivalent would be re-running deploy.Run(targets, ".", m, <resolution
-	// of the remaining graph>, nil) at this point, with a single package's
-	// re-integration failure only warning (not aborting). Not implemented in
-	// this pass: building that remaining-graph ResolutionResult faithfully
-	// requires re-running dependency resolution, a bigger unit of work than
-	// fits this orchestration pass. Every other piece of this pipeline is
-	// still safe on its own (RemoveDeployedFiles's hash check keeps a
-	// hand-edited shared file even without Phase 2); the residual risk is
-	// narrowly scoped to a shared, unedited deployed file getting dropped
-	// when it should have been restored.
-
+	handover.record(lock)
 	if err := writeUninstallLockfile(lock, lockNode, allRemovalKeys); err != nil {
 		return err
 	}
