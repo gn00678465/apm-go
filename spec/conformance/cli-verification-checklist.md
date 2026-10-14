@@ -94,6 +94,7 @@ bin\apm-go.exe install --frozen        # 預期 stderr 'frozen install requires 
 $env:CI='1'; bin\apm-go.exe install    # 預期出現 CI-frozen 訊息;測畢 Remove-Item Env:CI
 # c. 內容完整性(apm-go 強化,超出 doc 範圍——記為 strengthening 非 bug):
 #    正常 install → 手改一個 deployed 檔的 bytes → install --frozen → 預期 path/expected/observed 錯誤
+#    deployed 檔不存在(例如剛 clone)時依 lock 部署,exit 0;不改寫 lock(issue #65)
 ```
 - Edge:direct dep 在 apm.yml 但不在 lockfile → 兩邊 exit 1;孤兒 lockfile entry → 兩邊靜默容忍;`--skill` + `--frozen` → apm-go 明確拒絕(install.go:161-164),確認 Python 對應行為
 

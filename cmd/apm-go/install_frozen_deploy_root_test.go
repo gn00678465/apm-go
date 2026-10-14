@@ -134,15 +134,14 @@ func TestInstallGlobal_Frozen_ReportsObservedHashOfChangedContent(t *testing.T) 
 func TestInstallGlobal_Frozen_ReportsFirstPathInSortedOrder(t *testing.T) {
 	home, src := globalStaleScope(t, frozenRootPackage)
 	globalStaleInstall(t, "claude", src)
-	for _, rel := range []string{".claude/skills/s2", ".claude/skills/s1", ".claude/agents/a.md"} {
-		if err := os.Remove(filepath.Join(home, filepath.FromSlash(rel))); err != nil {
-			t.Fatal(err)
-		}
+	module := frozenRootLocalModule(t, filepath.Join(home, ".apm"))
+	for _, rel := range []string{".apm/skills/s2/SKILL.md", ".apm/skills/s1/SKILL.md", ".apm/agents/a.md"} {
+		writeGlobalStaleFile(t, filepath.Join(module, filepath.FromSlash(rel)), frozenRootTampered)
 	}
 
 	const want = "frozen install: content-integrity violation: .claude/agents/a.md" +
 		" expected sha256:d69d5d87e63020276ead84a8093adbf3a8c6cb6fff5b5f2eb5fb2b0174eb20ce," +
-		" observed <missing>"
+		" observed sha256:b042cbaf6f9a8618d9637956a2ef782316a118fc383a3ce5f0690d6919117f9d"
 	for i := 0; i < 20; i++ {
 		_, err := frozenRootGlobalInstall(t, true)
 		if err == nil || err.Error() != want {

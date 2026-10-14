@@ -637,18 +637,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		// (A1) Re-verify deployed-file hashes (req-lk-017 / req-sc-001). MUST run
 		// before any git download so a tampered deployed file is reported by path.
 		// A --global install deploys under deployDir, not the working directory.
-		deployRoot := "."
-		if deployDir != "" {
-			deployRoot = deployDir
-		}
-		if viol := lockfile.VerifyDeployedState(existingLock, deployRoot); len(viol) > 0 {
-			v := viol[0]
-			observed := v.Observed
-			if observed == "" {
-				observed = "<missing>"
-			}
-			return fmt.Errorf("frozen install: content-integrity violation: %s expected %s, observed %s",
-				v.Path, v.Expected, observed)
+		// Locked files that are not on disk at all are deployed after (B).
+		deployPlan, err := planFrozenDeploy(existingLock, m, node != nil, targetFlag, deployDir)
+		if err != nil {
+			return err
 		}
 
 		// (A2) Registry archives: verify bytes' SHA-256 before extraction
@@ -800,6 +792,12 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 						return fmt.Errorf("frozen install: entry %s: %w", dep.UniqueKey(), err)
 					}
 				}
+			}
+		}
+
+		if deployPlan != nil {
+			if err := deployPlan.run(deps, m, existingLock); err != nil {
+				return err
 			}
 		}
 

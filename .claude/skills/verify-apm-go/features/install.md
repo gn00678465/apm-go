@@ -5,7 +5,7 @@
 ## Sub-features
 
 - `install-local` installs `./dep` and deploys one instruction to `.claude/rules/`.
-- `install-frozen` re-runs `install` under CI and verifies against the lock without resolving.
+- `install-frozen` re-runs `install` under CI and verifies against the lock without resolving. A recorded file that is not on disk is deployed from the lock (issue #65); a file with other content is an error.
 - `audit-clean` reports the deployed files as verified.
 - `audit-tampered` fails when a deployed file was edited.
 - `uninstall-clean` removes the package and what it deployed.
