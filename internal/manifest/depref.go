@@ -1425,6 +1425,16 @@ func IsAbsoluteLocalPath(s string) bool {
 	return filepath.VolumeName(s) != ""
 }
 
+// VirtualTypeOf is the VirtualType of a reference whose virtual path is vp,
+// for a caller that rebuilds a reference from a recorded virtual path. It is
+// empty for an empty path.
+func VirtualTypeOf(vp string) string {
+	if vp == "" {
+		return ""
+	}
+	return classifyVirtualPath(vp)
+}
+
 func classifyVirtualPath(vp string) string {
 	for _, ext := range virtualFileExtensions {
 		if strings.HasSuffix(vp, ext) {

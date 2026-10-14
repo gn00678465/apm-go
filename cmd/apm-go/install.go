@@ -637,18 +637,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		// (A1) Re-verify deployed-file hashes (req-lk-017 / req-sc-001). MUST run
 		// before any git download so a tampered deployed file is reported by path.
 		// A --global install deploys under deployDir, not the working directory.
-		deployRoot := "."
-		if deployDir != "" {
-			deployRoot = deployDir
-		}
-		if viol := lockfile.VerifyDeployedState(existingLock, deployRoot); len(viol) > 0 {
-			v := viol[0]
-			observed := v.Observed
-			if observed == "" {
-				observed = "<missing>"
-			}
-			return fmt.Errorf("frozen install: content-integrity violation: %s expected %s, observed %s",
-				v.Path, v.Expected, observed)
+		// Locked files that are not on disk at all are deployed after (B).
+		deployPlan, err := planFrozenDeploy(existingLock, m, node != nil, targetFlag, deployDir)
+		if err != nil {
+			return err
 		}
 
 		// (A2) Registry archives: verify bytes' SHA-256 before extraction
@@ -767,12 +759,16 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 				// locked ref before deciding whether to skip re-cloning, so
 				// a stale/tampered checkout is replaced rather than
 				// silently trusted.
+				// VirtualType is set because the loader takes only the
+				// virtual path's directory for a subdirectory reference and
+				// the whole repository for a reference with no type.
 				ref := &manifest.DependencyReference{
 					RepoURL:           dep.RepoURL,
 					Host:              dep.Host,
 					Port:              dep.Port,
 					ArtifactoryPrefix: dep.RegistryPrefix,
 					VirtualPath:       dep.VirtualPath,
+					VirtualType:       manifest.VirtualTypeOf(dep.VirtualPath),
 					Owner:             ownerFromRepoURL(dep.RepoURL),
 					Repo:              repoFromRepoURL(dep.RepoURL),
 					Source:            "git",
@@ -791,7 +787,8 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 				}
 			}
 			for _, dep := range existingLock.Dependencies {
-				if dep.ResolvedCommit != "" && dep.Source != "registry" {
+				// A subdirectory package has no tree_sha256 (buildLockfile).
+				if dep.ResolvedCommit != "" && dep.Source != "registry" && !isSubdirectoryPackage(dep.VirtualPath) {
 					if dep.TreeSHA256 == "" {
 						return fmt.Errorf("frozen install: entry %s missing required tree_sha256", dep.UniqueKey())
 					}
@@ -800,6 +797,12 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 						return fmt.Errorf("frozen install: entry %s: %w", dep.UniqueKey(), err)
 					}
 				}
+			}
+		}
+
+		if deployPlan != nil {
+			if err := deployPlan.run(deps, m, existingLock); err != nil {
+				return err
 			}
 		}
 
@@ -1790,15 +1793,22 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			continue
 		}
 
-		if (dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral) && dep.Commit == "" {
-			installDir := filepath.Join("apm_modules", dep.Key)
-			if commit, err := gitops.ResolveCommit(installDir); err == nil {
+		// A subdirectory package's module directory has no .git: git run
+		// there answers for the repository that encloses the project. Its
+		// commit comes from the loader that cloned it, and it has no
+		// tree_sha256; the commit and deployed_file_hashes pin its content.
+		isGit := dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral
+		isSubdir := isSubdirectoryPackage(dep.VirtualPath)
+		if isGit && dep.Commit == "" {
+			if isSubdir {
+				ld.ResolvedCommit = clonedSubdirCommit(regLoader, dep.Key)
+			} else if commit, err := gitops.ResolveCommit(filepath.Join("apm_modules", dep.Key)); err == nil {
 				ld.ResolvedCommit = commit
 			}
 		}
 
 		// req-lk-015: compute tree_sha256 for git-sourced deps (required)
-		if dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral {
+		if isGit && !isSubdir {
 			installDir := filepath.Join("apm_modules", dep.Key)
 			commit := ld.ResolvedCommit
 			if commit != "" {
@@ -3360,6 +3370,26 @@ func localPackageIdentity(dir string) (name, pkgVersion, packageType string) {
 		packageType = "hook_package"
 	}
 	return name, pkgVersion, packageType
+}
+
+// isSubdirectoryPackage reports whether a dependency with this virtual path
+// is a directory taken out of a repository, as opposed to a whole repository
+// or a single file.
+func isSubdirectoryPackage(virtualPath string) bool {
+	return manifest.VirtualTypeOf(virtualPath) == "subdirectory"
+}
+
+// clonedSubdirCommit returns the commit the git loader behind regLoader cloned
+// the subdirectory package key from in this run, or "" when it did not clone
+// it.
+func clonedSubdirCommit(regLoader *registry.Loader, key string) string {
+	if regLoader == nil {
+		return ""
+	}
+	if source, ok := regLoader.Next.(interface{ SubdirCommit(string) string }); ok {
+		return source.SubdirCommit(key)
+	}
+	return ""
 }
 
 func kindToSource(k resolver.ReferenceKind) string {
