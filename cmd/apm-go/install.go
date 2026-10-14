@@ -1302,41 +1302,11 @@ func containsSkillWildcard(skillSubset []string) bool {
 //     still-wanted skills. Widest-wins can never delete anything. A
 //     warning is emitted so the user cleans the duplicate up.
 func effectiveSkillSubsets(m *manifest.Manifest, requestedKeys map[string]bool, cliSubset []string) map[string][]string {
-	result := make(map[string][]string)
+	result, duplicates := persistedSkillSubsets(m)
+	for _, repoURL := range duplicates {
+		ux.Warn(os.Stderr, "apm.yml declares %q more than once (case/spelling variants of the same repository) -- consider removing the duplicate entry", repoURL)
+	}
 	wildcard := containsSkillWildcard(cliSubset)
-
-	// Pass 1 -- persisted subsets, with rule 4's duplicate handling:
-	// duplicateBare marks identities declared MORE THAN ONCE where at least
-	// one duplicate carries no subset ("deploy everything" outvotes a
-	// sibling's narrowing). A single subset-free entry is just the normal
-	// "no subset" case and must NOT block a CLI narrowing below.
-	occurrences := make(map[string]int)
-	bareSeen := make(map[string]bool)
-	for _, dep := range allDirectDeps(m) {
-		identity := deploy.CanonicalDepKey(dep)
-		if identity == "" {
-			continue
-		}
-		occurrences[identity]++
-		if occurrences[identity] > 1 {
-			ux.Warn(os.Stderr, "apm.yml declares %q more than once (case/spelling variants of the same repository) -- consider removing the duplicate entry", dep.RepoURL)
-		}
-		if len(dep.SkillSubset) > 0 {
-			result[identity] = unionSortedSkills(result[identity], dep.SkillSubset)
-		} else {
-			bareSeen[identity] = true
-		}
-	}
-	// Widest-wins resolution, deliberately AFTER the whole walk so it is
-	// order-independent: a subset-free duplicate outvotes its siblings'
-	// narrowing whether it appears before or after them. A SINGLE
-	// subset-free entry (occurrences == 1) is just the ordinary "no subset"
-	// case -- no map entry exists for it anyway.
-	for identity := range bareSeen {
-		if occurrences[identity] > 1 {
-			delete(result, identity)
-		}
-	}
 
 	// Pass 2 -- this call's CLI narrowing on the requested dependencies.
 	// Runs after the duplicate resolution above: an explicit --skill flag
@@ -1365,6 +1335,49 @@ func effectiveSkillSubsets(m *manifest.Manifest, requestedKeys map[string]bool, 
 		}
 	}
 	return result
+}
+
+// persistedSkillSubsets is pass 1 of effectiveSkillSubsets, which prints
+// nothing: the persisted subsets with rule 4's duplicate handling, and the
+// RepoURL of each entry that repeats an earlier identity, for the caller to
+// warn about. uninstall's trial deploy uses it alone, so the warning install
+// already gave is not printed again.
+func persistedSkillSubsets(m *manifest.Manifest) (subsets map[string][]string, duplicates []string) {
+	result := make(map[string][]string)
+
+	// duplicateBare marks identities declared MORE THAN ONCE where at least
+	// one duplicate carries no subset ("deploy everything" outvotes a
+	// sibling's narrowing). A single subset-free entry is just the normal
+	// "no subset" case and must NOT block the CLI narrowing
+	// of effectiveSkillSubsets' pass 2.
+	occurrences := make(map[string]int)
+	bareSeen := make(map[string]bool)
+	for _, dep := range allDirectDeps(m) {
+		identity := deploy.CanonicalDepKey(dep)
+		if identity == "" {
+			continue
+		}
+		occurrences[identity]++
+		if occurrences[identity] > 1 {
+			duplicates = append(duplicates, dep.RepoURL)
+		}
+		if len(dep.SkillSubset) > 0 {
+			result[identity] = unionSortedSkills(result[identity], dep.SkillSubset)
+		} else {
+			bareSeen[identity] = true
+		}
+	}
+	// Widest-wins resolution, deliberately AFTER the whole walk so it is
+	// order-independent: a subset-free duplicate outvotes its siblings'
+	// narrowing whether it appears before or after them. A SINGLE
+	// subset-free entry (occurrences == 1) is just the ordinary "no subset"
+	// case -- no map entry exists for it anyway.
+	for identity := range bareSeen {
+		if occurrences[identity] > 1 {
+			delete(result, identity)
+		}
+	}
+	return result, duplicates
 }
 
 // validateNewSkillNames enforces H3's atomicity requirement (design.md

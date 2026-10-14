@@ -220,7 +220,7 @@ bin\apm-go.exe install --mcp a --url ftp://x --transport http  # 已實測:exit 
 
 ## 2. apm-go uninstall(8 項)
 
-> 本節為釋出級複驗面；已知接受的限制：**un-054**（共用部署檔 Phase-2 復原，刻意不做）、**un-090/091**（-g 明確拒絕，定案 A）。
+> 本節為釋出級複驗面；已知接受的限制：**un-090/091**（-g 明確拒絕，定案 A）。**un-054**（共用部署檔）已在 issue #74 修正，見 UN-06。
 >
 > **(已實測 2026-07-09,本地批次)**:零 args → exit 1(C8 落定);not-found → exit 0 + 'No packages found';無 apm.yml → exit 1;`-g` 空目錄 → exit 1 'not supported yet'(先於 manifest 讀取,UN-04 核心);flow 部分移除 → `apm: [acme/bar]` 保持 flow;flow 清空 → `apm: []`;block 部分移除 → 註解(`# top comment`、行內 `# keep me`)逐字存活;--dry-run → md5 零差異 + '[dry-run] no changes made'(UN-02/07 本地面全過)。
 
@@ -258,10 +258,10 @@ bin\apm-go.exe install --mcp foo -- npx x  →  bin\apm-go.exe uninstall foo
 ```
 - Edge:同名 apm-package 與 MCP server 並存 → apm identity 優先;devDependencies.mcp 也要能掃到
 
-#### [ ] UN-06 · 逐 target 反向清理 · ◐(un-054 已知限制)
+#### [ ] UN-06 · 逐 target 反向清理 · ✅(un-054 已在 issue #74 修正)
 - [network] 完整回合:install(20 skills)→ uninstall → deployed_files 全消、apm_modules 消、lockfile 消/空、空父目錄修剪
 - 手寫檔存活:target 目錄裡非 deployed_files 記錄的檔案不可動
-- **un-054 重現(記錄用)**:兩套件共用同一部署路徑 → 移除其一,共用檔**會**被刪(Python Phase-2 會復原)——預期行為=已接受限制,寫明於報告
+- **un-054(issue #74 已修正)**:兩套件共用同一部署路徑 → 移除擁有者後,共用檔留在磁碟上,內容是留下來的套件的,lock 記在那個套件底下;`--global` 相同。Oracle 0.33.0 選擁有者的方式不同,被移除的不是 Oracle 選的擁有者時結果相同;偏離:被移除的是 Oracle 選的擁有者時,Oracle 刪掉這個檔案,改部署到其他目標(`.github/`、`.agents/skills/`),lock 不記,apm-go 保留並記在留下來的套件底下。`Updated <apm.yml>` 與 `Uninstall complete` 之間,每個收到檔案的留下套件印出它的 install 區塊各行(不含標題),與 Oracle 相同;偏離:Oracle 對每個重新部署的套件都印,沒共用檔案的也印,apm-go 只印收到檔案的套件,沒有交接時輸出不變
 - Edge:hash-mismatch 檔保留+診斷;lockfile 路徑逃逸 entry 拒絕(Contained guard);apm_modules 已被手刪 → no-op;hooks 從 .claude/settings.json 拼接移除而非刪整檔
 
 #### [ ] UN-07 · flow vs block YAML(近期 bug 區)· ✅
@@ -515,7 +515,7 @@ bin\apm-go.exe marketplace package add ./b --version 1.0.0 --ref abc --no-verify
 - [ ] 對 1.4 的 19 個 flag 逐一標記:實作 / 記 deviation / out-of-scope,寫入 conformance statement(`openapm-v0.1.md` 範本的 documented deviations 段)
 
 ### 既有已接受限制(勿重複開單)
-- un-054 共用部署檔 Phase-2 復原(uninstall)· un-090/091 -g 明確拒絕 · --check-refs 省略 · marketplace build tombstone 措辭 · `ref: v1.0.0` init 範本差異 · package add 零 flag local 成功(mkt-046 的刻意修正)· --frozen 內容檢查強化 · MCP standalone uninstall(增強)· diamond-orphan reachability 修正(增強,Python 自身有此 bug)
+- un-090/091 -g 明確拒絕 · --check-refs 省略 · marketplace build tombstone 措辭 · `ref: v1.0.0` init 範本差異 · package add 零 flag local 成功(mkt-046 的刻意修正)· --frozen 內容檢查強化 · MCP standalone uninstall(增強)· diamond-orphan reachability 修正(增強,Python 自身有此 bug)
 
 ---
 
