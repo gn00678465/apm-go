@@ -32,7 +32,7 @@ Success: a user gets deterministic files, output, and exit codes from one binary
 - Under CI, `install` defaults to frozen (lockfile-only) mode.
 - A user's `apm.yml` is a hand-edited file; every mutation is a round-trip patch that preserves comments, ordering, and formatting. `apm.lock.yaml` is written whole in the Oracle's layout (issue #50): keys apm-go does not model survive, comments and the quote style of the old file do not.
 - Git is a subprocess run under a hardened environment (no credential prompts, transport allow-list). On this project's development machine there is no SSH key, which is why `--claude-source-style url` exists for installable marketplaces.
-- Distribution: `install.sh` (defaults to latest stable; pre-release tags are GitHub prereleases), GitHub Releases, `go build`. The release version is injected from the git tag at release build time (`internal/version/version.go`); local builds report `dev`.
+- Distribution: `install.sh` (defaults to latest stable; pre-release tags are GitHub prereleases), GitHub Releases, mise (`github:gn00678465/apm-go`, through its `github` backend), `go build`. The release version is injected from the git tag at release build time (`internal/version/version.go`); local builds report `dev`.
 
 ### Terminal UI design
 

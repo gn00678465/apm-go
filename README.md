@@ -35,7 +35,7 @@ irm https://raw.githubusercontent.com/gn00678465/apm-go/main/install.ps1 | iex
 Installs to `%LOCALAPPDATA%\apm-go` and adds it to your user PATH. To pin a version:
 
 ```powershell
-$env:APM_GO_VERSION = "0.2.1"; irm https://raw.githubusercontent.com/gn00678465/apm-go/main/install.ps1 | iex
+$env:APM_GO_VERSION = "0.4.0"; irm https://raw.githubusercontent.com/gn00678465/apm-go/main/install.ps1 | iex
 ```
 
 ### Linux / macOS
@@ -47,10 +47,21 @@ curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh |
 Installs to `~/.local/bin` and, if that directory is not on PATH, appends it to your login shell's profile file (`~/.zprofile` for zsh, `~/.bash_profile` when bash already has one, `~/.profile` otherwise). To pin a version:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | APM_GO_VERSION=0.2.1 sh
+curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | APM_GO_VERSION=0.4.0 sh
 ```
 
 Verify with `apm-go --version` in a new terminal.
+
+### mise
+
+With [mise](https://mise.jdx.dev/), install from the GitHub release through its `github` backend:
+
+```sh
+mise use -g github:gn00678465/apm-go          # latest stable release
+mise use -g github:gn00678465/apm-go@0.4.0    # a specific version
+```
+
+Drop `-g` to pin the version in the current project's `mise.toml`. Update with `mise upgrade`, not `apm-go self-update`: `self-update` replaces the binary inside mise's install directory, and mise keeps reporting the old version.
 
 ### Uninstall
 
@@ -143,4 +154,4 @@ go vet ./...          # static analysis
 go fmt ./...          # format
 ```
 
-Releases are automated: pushing a `v*` tag triggers the [release workflow](.github/workflows/release.yml), which verifies the tag against `internal/version`, cross-compiles all six platform binaries with `CGO_ENABLED=0`, generates `SHA256SUMS`, and publishes a GitHub Release.
+Releases are automated: pushing a `v*` tag triggers the [release workflow](.github/workflows/release.yml), which checks that the tagged commit is on `main`, injects the tag as the version, cross-compiles all six platform binaries with `CGO_ENABLED=0`, generates `SHA256SUMS`, and publishes a GitHub Release.
