@@ -20,10 +20,11 @@ import (
 // package deletes a file the other one still provides.
 //
 // Only these paths are touched: deploying every remaining package in place
-// would rewrite files the user changed in them. This deviates from Oracle
-// 0.33.0, which deletes the file when its owner is removed, redeploys the
-// remaining packages to other targets, and records no owner for it
-// (commands/uninstall/engine.py:1106-1419).
+// would rewrite files the user changed in them. Oracle 0.33.0 picks the owner
+// of a shared file in its own way. Removing a package that is not that owner
+// gives the same result here; removing that owner deviates: Oracle deletes the
+// file, redeploys the remaining packages to other targets, and records no
+// owner for it (commands/uninstall/engine.py:1106-1419).
 type uninstallHandover struct {
 	trialDir string
 	// owner maps each handed-over lock path to the bucket that deploys it in
@@ -32,6 +33,10 @@ type uninstallHandover struct {
 	// hashes holds the trial's hash of each handed-over file; a skill
 	// directory entry has none.
 	hashes map[string]string
+	// order lists the buckets as install prints them: the direct dependencies
+	// in the order apm.yml declares them, then the others in lock order, then
+	// the project's own content.
+	order []string
 	// parentLinks holds, before the removal, each symlink on a handed-over
 	// path above it and above a skill's directory (a project's .claude linked
 	// elsewhere), by slash path, with its target. The removal deletes such a
@@ -103,6 +108,20 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		return nil, err
 	}
 	h := &uninstallHandover{trialDir: trialDir, owner: map[string]string{}, hashes: map[string]string{}, parentLinks: map[string]string{}}
+	listed := map[string]bool{}
+	for _, d := range allDirectDeps(m) {
+		if key := deploy.DepRefKey(d); key != "" && !listed[key] {
+			listed[key] = true
+			h.order = append(h.order, key)
+		}
+	}
+	for _, dep := range result.Deps {
+		if !listed[dep.Key] {
+			listed[dep.Key] = true
+			h.order = append(h.order, dep.Key)
+		}
+	}
+	h.order = append(h.order, "")
 	trial, err := deploy.Run(targets, ".", m, result, filter, trialDir, deployDir != "")
 	if err != nil {
 		h.close()
@@ -339,6 +358,43 @@ func (h *uninstallHandover) record(lock *lockfile.Lockfile) {
 				(*hashes)[p] = hash
 			}
 		}
+	}
+}
+
+// printBlocks prints, for each package that received a path, the lines of its
+// install block without the header, as the Oracle prints them after
+// "Updated <apm.yml>" (commands/uninstall/engine.py:1106-1419). They count
+// every file the lock now records for the package; one that has the recorded
+// hash on disk is adopted. The Oracle prints them for every remaining
+// package; apm-go prints them only for one that received a path, so an
+// uninstall that hands nothing over prints what it printed before.
+func (h *uninstallHandover) printBlocks(lock *lockfile.Lockfile, root string) {
+	if h == nil || lock == nil {
+		return
+	}
+	received := map[string]bool{}
+	for _, key := range h.owner {
+		received[key] = true
+	}
+	for _, key := range h.order {
+		if !received[key] {
+			continue
+		}
+		files, hashes := lock.LocalDeployedFiles, lock.LocalDeployedHashes
+		if key != "" {
+			dep := lock.FindByKey(key)
+			if dep == nil {
+				continue
+			}
+			files, hashes = dep.DeployedFiles, dep.DeployedHashes
+		}
+		onDisk := map[string]string{}
+		for _, f := range files {
+			if hash, err := lockfile.HashFileBytes(filepath.Join(root, filepath.FromSlash(f))); err == nil {
+				onDisk[f] = hash
+			}
+		}
+		printInstallBlockLines(files, hashes, onDisk)
 	}
 }
 

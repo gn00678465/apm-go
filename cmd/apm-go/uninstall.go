@@ -326,7 +326,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		return err
 	}
 
-	printUninstallSummary(plan, orphans, removedModuleDirs, cleaned, keptFiles)
+	printUninstallSummary(plan, orphans, removedModuleDirs, cleaned, keptFiles, func() { handover.printBlocks(lock, removeRoot) })
 	return nil
 }
 
@@ -777,9 +777,10 @@ func printUninstallDryRunPlan(plan *uninstallPlan) {
 // printUninstallSummary prints what an uninstall did, in the Oracle's words
 // and order (commands/uninstall/engine.py:855-944, cli.py:495-506, :689-691):
 // the directories removed from apm_modules, the deployed files cleaned for
-// each package, the entries removed from apm.yml, and the closing count. The
+// each package, the entries removed from apm.yml, what handedOver prints, and
+// the closing count. The
 // counts come from what was removed, not from what the lock listed.
-func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[string]bool, cleaned []uninstallCleaned, keptFiles []string) {
+func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[string]bool, cleaned []uninstallCleaned, keptFiles []string, handedOver func()) {
 	resolution := plan.resolution
 	fromModules := 0
 	for _, t := range resolution.APMTargets {
@@ -818,6 +819,7 @@ func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[s
 		apmYMLPath = abs
 	}
 	ux.Success(os.Stdout, "Updated %s (removed %d package(s))", apmYMLPath, removedPackages)
+	handedOver()
 
 	summary := fmt.Sprintf("Removed %d package(s) from apm.yml", removedPackages)
 	if fromModules > 0 {

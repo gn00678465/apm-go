@@ -261,7 +261,7 @@ bin\apm-go.exe install --mcp foo -- npx x  →  bin\apm-go.exe uninstall foo
 #### [ ] UN-06 · 逐 target 反向清理 · ✅(un-054 已在 issue #74 修正)
 - [network] 完整回合:install(20 skills)→ uninstall → deployed_files 全消、apm_modules 消、lockfile 消/空、空父目錄修剪
 - 手寫檔存活:target 目錄裡非 deployed_files 記錄的檔案不可動
-- **un-054(issue #74 已修正)**:兩套件共用同一部署路徑 → 移除擁有者後,共用檔留在磁碟上,內容是留下來的套件的,lock 記在那個套件底下;`--global` 相同。偏離:Oracle 0.33.0 刪掉這個檔案
+- **un-054(issue #74 已修正)**:兩套件共用同一部署路徑 → 移除擁有者後,共用檔留在磁碟上,內容是留下來的套件的,lock 記在那個套件底下;`--global` 相同。Oracle 0.33.0 選擁有者的方式不同,被移除的不是 Oracle 選的擁有者時結果相同;偏離:被移除的是 Oracle 選的擁有者時,Oracle 刪掉這個檔案,改部署到其他目標(`.github/`、`.agents/skills/`),lock 不記,apm-go 保留並記在留下來的套件底下。`Updated <apm.yml>` 與 `Uninstall complete` 之間,每個收到檔案的留下套件印出它的 install 區塊各行(不含標題),與 Oracle 相同;偏離:Oracle 對每個重新部署的套件都印,沒共用檔案的也印,apm-go 只印收到檔案的套件,沒有交接時輸出不變
 - Edge:hash-mismatch 檔保留+診斷;lockfile 路徑逃逸 entry 拒絕(Contained guard);apm_modules 已被手刪 → no-op;hooks 從 .claude/settings.json 拼接移除而非刪整檔
 
 #### [ ] UN-07 · flow vs block YAML(近期 bug 區)· ✅

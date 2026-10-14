@@ -51,14 +51,18 @@ var installKindLabels = map[string]string{
 }
 
 // printInstallBlock prints one package of the install summary: its header and
-// one line per kind of deployed file, the Oracle's shape
-// (install/services.py:560-689). A file the lock already recorded with the
-// hash it has now was adopted, not integrated; a package with no integrated
-// file ends with "(files unchanged)". It returns the number of integrated
-// files.
+// its printInstallBlockLines. It returns the number of integrated files.
 func printInstallBlock(label string, files []string, hashes, before map[string]string) int {
 	ux.SuccessAt(os.Stdout, "  ", "%s", label)
+	return printInstallBlockLines(files, hashes, before)
+}
 
+// printInstallBlockLines prints one line per kind of deployed file, the
+// Oracle's shape (install/services.py:560-689). A file the lock already
+// recorded with the hash it has now was adopted, not integrated; a package
+// with no integrated file ends with "(files unchanged)". It returns the number
+// of integrated files.
+func printInstallBlockLines(files []string, hashes, before map[string]string) int {
 	type group struct {
 		label               string
 		roots               []string

@@ -582,3 +582,93 @@ func TestUninstall_SharedRuleOwner_LegacyLockKeys(t *testing.T) {
 		[]string{".claude/rules/shared.md"},
 		map[string]string{".claude/rules/shared.md": transferSHA("c rule\n")})
 }
+
+// transferBlockLines returns the stdout lines of an uninstall between the
+// "Updated <apm.yml>" line and the "Uninstall complete" line.
+func transferBlockLines(t *testing.T, out string) string {
+	t.Helper()
+	start := strings.Index(out, " + Updated ")
+	end := strings.Index(out, " + Uninstall complete: ")
+	if start < 0 || end < start {
+		t.Fatalf("no Updated / Uninstall complete lines:\n%s", out)
+	}
+	after := out[start:end]
+	return after[strings.Index(after, "\n")+1:]
+}
+
+// The lines are the Oracle's for the same steps (v0.33.0): the install block
+// of each package that received a path, without its header.
+func TestUninstall_SharedRuleOwner_PrintsSurvivorBlock(t *testing.T) {
+	dir := staleCleanupProject(t, transferManifest, nil)
+	transferProject(t, dir, map[string]string{
+		"a/.apm/instructions/shared.instructions.md": transferRule,
+		"b/.apm/instructions/shared.instructions.md": transferRule,
+	})
+	staleCleanupInstall(t, "claude")
+
+	out := transferUninstall(t, uninstallOptions{}, "./a")
+
+	want := "  |-- 1 rule(s) adopted -> .claude/rules/\n  |-- (files unchanged)\n"
+	if got := transferBlockLines(t, out); got != want {
+		t.Errorf("lines before Uninstall complete =\n%q\nwant\n%q\n%s", got, want, out)
+	}
+}
+
+// The block counts every file the survivor has, not only the handed-over one.
+func TestUninstall_SharedRuleOwner_BlockCountsSurvivorsOwnFiles(t *testing.T) {
+	dir := staleCleanupProject(t, transferManifest, nil)
+	transferProject(t, dir, map[string]string{
+		"a/.apm/instructions/shared.instructions.md": transferRule,
+		"b/.apm/instructions/shared.instructions.md": transferRule,
+		"b/.apm/instructions/own.instructions.md":    "---\ndescription: own\n---\nb own\n",
+	})
+	staleCleanupInstall(t, "claude")
+
+	out := transferUninstall(t, uninstallOptions{}, "./a")
+
+	want := "  |-- 2 rule(s) adopted -> .claude/rules/\n  |-- (files unchanged)\n"
+	if got := transferBlockLines(t, out); got != want {
+		t.Errorf("lines before Uninstall complete =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// A skill is counted integrated on every run, so there is no
+// "(files unchanged)" line.
+func TestUninstall_SharedSkillOwner_PrintsSurvivorBlock(t *testing.T) {
+	dir := staleCleanupProject(t, transferManifest, nil)
+	transferProject(t, dir, map[string]string{
+		"a/.apm/skills/demo/SKILL.md": staleCleanupSkillMD,
+		"b/.apm/skills/demo/SKILL.md": staleCleanupSkillMD,
+	})
+	staleCleanupInstall(t, "claude")
+
+	out := transferUninstall(t, uninstallOptions{}, "./a")
+
+	want := "  |-- 1 skill(s) integrated -> .claude/skills/\n"
+	if got := transferBlockLines(t, out); got != want {
+		t.Errorf("lines before Uninstall complete =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestUninstallGlobal_SharedRuleAndSkillOwner_PrintsSurvivorBlock(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	chdirTemp(t)
+	home := t.TempDir()
+	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
+	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
+	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
+	transferProject(t, filepath.Join(home, ".apm"), map[string]string{
+		"a/.apm/instructions/shared.instructions.md": transferRule,
+		"b/.apm/instructions/shared.instructions.md": transferRule,
+		"a/.apm/skills/demo/SKILL.md":                staleCleanupSkillMD,
+		"b/.apm/skills/demo/SKILL.md":                staleCleanupSkillMD,
+	})
+	globalStaleInstall(t, "claude")
+
+	out := transferUninstall(t, uninstallOptions{Global: true}, "./a")
+
+	want := "  |-- 1 rule(s) adopted -> .claude/rules/\n  |-- 1 skill(s) integrated -> .claude/skills/\n"
+	if got := transferBlockLines(t, out); got != want {
+		t.Errorf("lines before Uninstall complete =\n%q\nwant\n%q", got, want)
+	}
+}
