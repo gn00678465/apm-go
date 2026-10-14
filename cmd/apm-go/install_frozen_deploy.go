@@ -154,8 +154,9 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 		return fmt.Errorf("frozen install: create trial deploy directory: %w", err)
 	}
 	defer os.RemoveAll(trialDir)
-	// A copy deploy and a symlink deploy record the same paths and hashes.
-	trial, err := deploy.Run(p.targets, ".", m, result, filter, trialDir, false)
+	// The trial takes the mode of the real deploy: a symlink deploy records
+	// the symlinks inside a skill, which a copy deploy skips.
+	trial, err := deploy.Run(p.targets, ".", m, result, filter, trialDir, p.deployDir != "")
 	if err == nil {
 		if err = frozenDeployMatchesLock(trial, lock); err == nil {
 			err = p.missingDeployed(trial, lock)

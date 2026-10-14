@@ -707,3 +707,53 @@ func TestInstallGlobal_Frozen_ChangedSourceAndRemovedSymlink_FailsAndWritesNothi
 	}
 	assertColdTree(t, home, before)
 }
+
+func TestInstallGlobal_Frozen_SkillWithInnerSymlink_RestoresDirectorySymlink(t *testing.T) {
+	const (
+		skillMD = "---\nname: style\ndescription: d\n---\nskill\n"
+		notes   = "safe local notes\n"
+	)
+	home, _ := globalStaleScope(t, nil)
+	source := filepath.Join(home, ".apm", ".apm", "skills", "style")
+	writeGlobalStaleFile(t, filepath.Join(source, "SKILL.md"), skillMD)
+	writeGlobalStaleFile(t, filepath.Join(source, "notes.md"), notes)
+	if err := os.Symlink("notes.md", filepath.Join(source, "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	globalStaleInstall(t, "claude")
+	lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
+	lockBefore := globalStaleRead(t, lockPath)
+	if !strings.Contains(lockBefore, ".claude/skills/style/linked.md: sha256:") {
+		t.Fatalf("lock does not record the inner symlink:\n%s", lockBefore)
+	}
+	deployed := filepath.Join(home, ".claude", "skills", "style")
+	if err := os.Remove(deployed); err != nil {
+		t.Fatal(err)
+	}
+	sourceBefore := coldTree(t, source)
+
+	out, err := frozenRootGlobalInstall(t, true)
+
+	if err != nil {
+		t.Fatalf("frozen install: %v", err)
+	}
+	if !strings.Contains(out, frozenRootSuccess) {
+		t.Errorf("missing success line:\n%s", out)
+	}
+	if info, statErr := os.Lstat(deployed); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("%s: lstat = %v, %v; want a symlink", deployed, info, statErr)
+	}
+	if got := globalStaleRead(t, filepath.Join(deployed, "linked.md")); got != notes {
+		t.Errorf("linked.md through the deployed symlink = %q, want %q", got, notes)
+	}
+	if got := globalStaleRead(t, lockPath); got != lockBefore {
+		t.Errorf("lock changed:\n%s\nwant:\n%s", got, lockBefore)
+	}
+	// Removing the trial deploy directory must remove its links, not what
+	// they point to.
+	wantSource := map[string]string{".": "", "SKILL.md": skillMD, "notes.md": notes, "linked.md": "-> notes.md"}
+	if !maps.Equal(sourceBefore, wantSource) {
+		t.Fatalf("source before the frozen install = %v, want %v", sourceBefore, wantSource)
+	}
+	assertColdTree(t, source, wantSource)
+}
