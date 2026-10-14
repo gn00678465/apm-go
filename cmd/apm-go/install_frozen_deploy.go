@@ -41,6 +41,8 @@ type frozenDeployPlan struct {
 	targets    []string
 	deployDir  string
 	deployRoot string
+	// missing holds the locked paths with nothing at them.
+	missing map[string]bool
 }
 
 // planFrozenDeploy checks the deployed files against the lock. It returns nil
@@ -80,7 +82,11 @@ func planFrozenDeploy(lock *lockfile.Lockfile, m *manifest.Manifest, haveManifes
 			return nil, frozenViolationError(v.Path, v.Expected, "")
 		}
 	}
-	return &frozenDeployPlan{targets: targets, deployDir: deployDir, deployRoot: deployRoot}, nil
+	missing := make(map[string]bool, len(viol))
+	for _, v := range viol {
+		missing[v.Path] = true
+	}
+	return &frozenDeployPlan{targets: targets, deployDir: deployDir, deployRoot: deployRoot, missing: missing}, nil
 }
 
 // frozenTargetsGovern reports whether targets govern relPath in every bucket
@@ -100,8 +106,10 @@ func frozenTargetsGovern(lock *lockfile.Lockfile, targets []string, relPath stri
 }
 
 // run deploys what the lock pins and verifies the result. It runs after the
-// registry and git sources of the lock are in apm_modules/. A failure leaves
-// the files already written; the next frozen install reports them.
+// registry and git sources of the lock are in apm_modules/. The deploy is
+// tried in a temporary directory first, so a deploy that would not reproduce
+// the lock fails with the deploy root as it was; the sources this run put in
+// apm_modules/ stay, as the source step leaves them.
 func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lockfile.Lockfile) error {
 	// The frozen source step skips local packages, so a fresh clone has no
 	// copy of them. An existing copy is kept, as a frozen install with
@@ -141,6 +149,29 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 	if subsets := effectiveSkillSubsets(m, nil, nil); len(subsets) > 0 {
 		filter = &deploy.SkillFilter{Subsets: subsets}
 	}
+	trialDir, err := os.MkdirTemp("", "apm-go-frozen-*")
+	if err != nil {
+		return fmt.Errorf("frozen install: create trial deploy directory: %w", err)
+	}
+	defer os.RemoveAll(trialDir)
+	// A copy deploy and a symlink deploy record the same paths and hashes.
+	trial, err := deploy.Run(p.targets, ".", m, result, filter, trialDir, false)
+	if err == nil {
+		if err = frozenDeployMatchesLock(trial, lock); err == nil {
+			err = p.missingDeployed(trial, lock)
+		}
+	} else {
+		err = fmt.Errorf("frozen install: deploy: %w", err)
+	}
+	if err != nil {
+		if trial != nil {
+			for _, d := range trial.Diags {
+				ux.Warn(os.Stderr, "%s", d)
+			}
+		}
+		return err
+	}
+
 	deployed, err := deploy.Run(p.targets, ".", m, result, filter, p.deployDir, p.deployDir != "")
 	if err != nil {
 		return fmt.Errorf("frozen install: deploy: %w", err)
@@ -156,6 +187,30 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 		return frozenViolationError(viol[0].Path, viol[0].Expected, viol[0].Observed)
 	}
 	return nil
+}
+
+// missingDeployed reports the first locked path with nothing at it that the
+// deploy did not write in the bucket that records it, in VerifyDeployedState's
+// order: deploying would leave it missing.
+func (p *frozenDeployPlan) missingDeployed(deployed *deploy.DeployResult, lock *lockfile.Lockfile) error {
+	check := func(key string, locked map[string]string) error {
+		var written map[string]string
+		if dr := deployed.PerDep[key]; dr != nil {
+			written = dr.Hashes
+		}
+		for _, path := range slices.Sorted(maps.Keys(locked)) {
+			if p.missing[path] && written[path] == "" {
+				return frozenViolationError(path, locked[path], "")
+			}
+		}
+		return nil
+	}
+	for i := range lock.Dependencies {
+		if err := check(lock.Dependencies[i].UniqueKey(), lock.Dependencies[i].DeployedHashes); err != nil {
+			return err
+		}
+	}
+	return check("", lock.LocalDeployedHashes)
 }
 
 // frozenDeployMatchesLock reports the first file this deploy wrote that the

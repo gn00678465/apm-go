@@ -1,13 +1,17 @@
 package main
 
 import (
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 // Issue #65: a frozen install deploys the locked files that are not on disk,
@@ -202,7 +206,7 @@ func TestInstallFrozen_Cold_SourceChangedAfterLock_Fails(t *testing.T) {
 	project := coldProject(t)
 	coldStrip(t, project)
 	writeGlobalStaleFile(t, filepath.Join(project, "vendor", "style", "SKILL.md"), coldSkillMD+"extra\n")
-	unchanged := coldUnchanged(t, project)
+	before := coldTree(t, project)
 
 	_, err := coldFrozen(t, true, "claude")
 
@@ -215,7 +219,7 @@ func TestInstallFrozen_Cold_SourceChangedAfterLock_Fails(t *testing.T) {
 	if code := exitCodeOf(err); code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
-	unchanged()
+	assertColdTree(t, project, before)
 }
 
 func TestInstallFrozen_Cold_SourceHasUnlockedSkill_Fails(t *testing.T) {
@@ -223,7 +227,7 @@ func TestInstallFrozen_Cold_SourceHasUnlockedSkill_Fails(t *testing.T) {
 	coldStrip(t, project)
 	writeGlobalStaleFile(t, filepath.Join(project, "vendor", "style", ".apm", "skills", "extra", "SKILL.md"),
 		"---\nname: extra\ndescription: d\n---\nextra skill\n")
-	unchanged := coldUnchanged(t, project)
+	before := coldTree(t, project)
 
 	_, err := coldFrozen(t, true, "claude")
 
@@ -233,7 +237,7 @@ func TestInstallFrozen_Cold_SourceHasUnlockedSkill_Fails(t *testing.T) {
 	if err == nil || err.Error() != want {
 		t.Fatalf("frozen install error = %v\nwant %s", err, want)
 	}
-	unchanged()
+	assertColdTree(t, project, before)
 }
 
 func TestInstallFrozen_MissingAndChanged_ReportsChangedAndWritesNothing(t *testing.T) {
@@ -352,7 +356,7 @@ func TestInstallFrozen_Cold_BareHexLock_SourceChangedAfterLock_Fails(t *testing.
 	coldStrip(t, project)
 	coldBareHexLock(t, project)
 	writeGlobalStaleFile(t, filepath.Join(project, "vendor", "style", "SKILL.md"), coldSkillMD+"extra\n")
-	unchanged := coldUnchanged(t, project)
+	before := coldTree(t, project)
 
 	_, err := coldFrozen(t, true, "claude")
 
@@ -365,14 +369,14 @@ func TestInstallFrozen_Cold_BareHexLock_SourceChangedAfterLock_Fails(t *testing.
 	if code := exitCodeOf(err); code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
-	unchanged()
+	assertColdTree(t, project, before)
 }
 
 func TestInstallFrozen_Cold_NonSHA256LockHash_Fails(t *testing.T) {
 	project := coldProject(t)
 	coldStrip(t, project)
 	coldRewriteLock(t, project, coldSkillPath+": "+coldSkillHash, coldSkillPath+": sha512:abcdef")
-	unchanged := coldUnchanged(t, project)
+	before := coldTree(t, project)
 
 	_, err := coldFrozen(t, true, "claude")
 
@@ -384,7 +388,7 @@ func TestInstallFrozen_Cold_NonSHA256LockHash_Fails(t *testing.T) {
 	if code := exitCodeOf(err); code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
-	unchanged()
+	assertColdTree(t, project, before)
 }
 
 // coldGitLoader puts a copy of one git checkout at apm_modules/<repo URL>, as
@@ -479,4 +483,227 @@ func TestInstallGlobal_Frozen_RemovedSkillSymlink_ComesBack(t *testing.T) {
 	if got := globalStaleRead(t, lockPath); got != lockBefore {
 		t.Errorf("lock changed:\n%s\nwant:\n%s", got, lockBefore)
 	}
+}
+
+// coldTree maps every path under root that is not in an apm_modules directory
+// to its content: the bytes of a file, the target of a symlink, "" for a
+// directory.
+func coldTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == "apm_modules" {
+			return filepath.SkipDir
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			tree[rel] = ""
+		case d.Type()&fs.ModeSymlink != 0:
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			tree[rel] = "-> " + target
+		default:
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			tree[rel] = string(data)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}
+
+func assertColdTree(t *testing.T, root string, want map[string]string) {
+	t.Helper()
+	got := coldTree(t, root)
+	for _, path := range slices.Sorted(maps.Keys(got)) {
+		if before, ok := want[path]; !ok {
+			t.Errorf("%s was created", path)
+		} else if before != got[path] {
+			t.Errorf("%s changed: %q, want %q", path, got[path], before)
+		}
+	}
+	for _, path := range slices.Sorted(maps.Keys(want)) {
+		if _, ok := got[path]; !ok {
+			t.Errorf("%s was removed", path)
+		}
+	}
+}
+
+// coldRepoLoader fills apm_modules/<key> from in-memory repositories the way
+// the real loader does: the contents of the virtual path for a subdirectory
+// reference, the whole repository for any other.
+type coldRepoLoader struct {
+	t     *testing.T
+	repos map[string]map[string]string
+	refs  []manifest.DependencyReference
+}
+
+func (l *coldRepoLoader) LoadPackage(ref *manifest.DependencyReference, _ string) (*manifest.Manifest, error) {
+	l.refs = append(l.refs, *ref)
+	dest := filepath.Join("apm_modules", filepath.FromSlash(ref.RepoURL), filepath.FromSlash(ref.VirtualPath))
+	if err := os.RemoveAll(dest); err != nil {
+		l.t.Fatal(err)
+	}
+	prefix := ""
+	if ref.VirtualPath != "" && ref.VirtualType == "subdirectory" {
+		prefix = ref.VirtualPath + "/"
+	}
+	for rel, content := range l.repos[ref.RepoURL] {
+		if strings.HasPrefix(rel, prefix) {
+			writeGlobalStaleFile(l.t, filepath.Join(dest, filepath.FromSlash(strings.TrimPrefix(rel, prefix))), content)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dest, "apm.yml"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	node, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		return nil, err
+	}
+	m, _, err := manifest.ParseManifest(node)
+	return m, err
+}
+
+func (l *coldRepoLoader) virtualTypes(repoURL string) []string {
+	var types []string
+	for _, ref := range l.refs {
+		if ref.RepoURL == repoURL {
+			types = append(types, ref.VirtualType)
+		}
+	}
+	return types
+}
+
+const (
+	coldAlphaSkill = "---\nname: alpha\ndescription: d\n---\nalpha\n"
+	coldBetaSkill  = "---\nname: beta\ndescription: d\n---\nbeta\n"
+	coldOwnSkill   = "---\nname: own\ndescription: d\n---\nown\n"
+)
+
+var coldMonoRepo = map[string]string{
+	"skills/alpha/SKILL.md": coldAlphaSkill,
+	"skills/beta/SKILL.md":  coldBetaSkill,
+}
+
+// coldFrozenWith runs a frozen install for claude with loader.
+func coldFrozenWith(t *testing.T, loader *coldRepoLoader) (string, error) {
+	t.Helper()
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: loader}
+	var err error
+	out := captureUninstallStdout(t, func() {
+		err = runInstall(deps, true, true, "claude", "", nil, nil)
+	})
+	return out, err
+}
+
+func TestInstallFrozen_Cold_VirtualPathDependency_DeploysOnlyThatDirectory(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	project := chdirTemp(t)
+	writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"),
+		"name: caller\nversion: 0.1.0\ndependencies:\n  apm:\n    - acme/mono/skills/alpha\n")
+	loader := &coldRepoLoader{t: t, repos: map[string]map[string]string{"acme/mono": coldMonoRepo}}
+	coldInstall(t, loader)
+	want := coldTree(t, project)
+	if want[filepath.FromSlash(".claude/skills/alpha/SKILL.md")] != coldAlphaSkill {
+		t.Fatalf("install did not deploy the alpha skill: %v", slices.Sorted(maps.Keys(want)))
+	}
+	if _, ok := want[filepath.FromSlash(".claude/skills/beta")]; ok {
+		t.Fatalf("install deployed the beta skill: %v", slices.Sorted(maps.Keys(want)))
+	}
+	coldStrip(t, project)
+	delete(want, ".gitignore")
+	loader.refs = nil
+
+	out, err := coldFrozenWith(t, loader)
+
+	if err != nil {
+		t.Fatalf("frozen install: %v", err)
+	}
+	if !strings.Contains(out, frozenRootSuccess) {
+		t.Errorf("missing success line:\n%s", out)
+	}
+	assertColdTree(t, project, want)
+	if got := loader.virtualTypes("acme/mono"); !slices.Equal(got, []string{"subdirectory"}) {
+		t.Errorf("loader got virtual types %q for acme/mono, want one subdirectory reference", got)
+	}
+}
+
+func TestInstallFrozen_Cold_TransitiveVirtualPathDependency_DeploysLockedFiles(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	project := chdirTemp(t)
+	writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"),
+		"name: caller\nversion: 0.1.0\ndependencies:\n  apm:\n    - acme/pkg\n")
+	loader := &coldRepoLoader{t: t, repos: map[string]map[string]string{
+		"acme/mono": coldMonoRepo,
+		"acme/pkg": {
+			"apm.yml":                  "name: pkg\nversion: 1.0.0\ndependencies:\n  apm:\n    - acme/mono/skills/alpha\n",
+			".apm/skills/own/SKILL.md": coldOwnSkill,
+		},
+	}}
+	coldInstall(t, loader)
+	lock := globalStaleRead(t, filepath.Join(project, "apm.lock.yaml"))
+	if !strings.Contains(lock, "virtual_path: skills/alpha") || !strings.Contains(lock, "depth: 2") ||
+		strings.Contains(lock, "resolved_commit") {
+		t.Fatalf("lock is not a depth-2 virtual path entry with no resolved_commit:\n%s", lock)
+	}
+	want := coldTree(t, project)
+	if want[filepath.FromSlash(".claude/skills/alpha/SKILL.md")] != coldAlphaSkill ||
+		want[filepath.FromSlash(".claude/skills/own/SKILL.md")] != coldOwnSkill {
+		t.Fatalf("install did not deploy both skills: %v", slices.Sorted(maps.Keys(want)))
+	}
+	coldStrip(t, project)
+	delete(want, ".gitignore")
+	loader.refs = nil
+
+	out, err := coldFrozenWith(t, loader)
+
+	if err != nil {
+		t.Fatalf("frozen install: %v", err)
+	}
+	if !strings.Contains(out, frozenRootSuccess) {
+		t.Errorf("missing success line:\n%s", out)
+	}
+	assertColdTree(t, project, want)
+	if got := loader.virtualTypes("acme/mono"); !slices.Equal(got, []string{"subdirectory"}) {
+		t.Errorf("loader got virtual types %q for acme/mono, want one subdirectory reference", got)
+	}
+}
+
+func TestInstallGlobal_Frozen_ChangedSourceAndRemovedSymlink_FailsAndWritesNothing(t *testing.T) {
+	home, src := globalStaleScope(t, frozenRootPackage)
+	globalStaleInstall(t, "claude", src)
+	module := frozenRootLocalModule(t, filepath.Join(home, ".apm"))
+	writeGlobalStaleFile(t, filepath.Join(module, ".apm", "skills", "s1", "SKILL.md"), frozenRootTampered)
+	if err := os.Remove(filepath.Join(home, ".claude", "skills", "s1")); err != nil {
+		t.Fatal(err)
+	}
+	before := coldTree(t, home)
+
+	_, err := frozenRootGlobalInstall(t, true)
+
+	const want = "frozen install: content-integrity violation: .claude/skills/s1/SKILL.md" +
+		" expected sha256:be6d6557ab9085f5bc1eac70e27943eb1ed44aa4b0eaa14f97b388dd1fdd0e19," +
+		" observed sha256:b042cbaf6f9a8618d9637956a2ef782316a118fc383a3ce5f0690d6919117f9d"
+	if err == nil || err.Error() != want {
+		t.Fatalf("frozen install error = %v\nwant %s", err, want)
+	}
+	assertColdTree(t, home, before)
 }

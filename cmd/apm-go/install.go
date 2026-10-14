@@ -759,12 +759,16 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 				// locked ref before deciding whether to skip re-cloning, so
 				// a stale/tampered checkout is replaced rather than
 				// silently trusted.
+				// VirtualType is set because the loader takes only the
+				// virtual path's directory for a subdirectory reference and
+				// the whole repository for a reference with no type.
 				ref := &manifest.DependencyReference{
 					RepoURL:           dep.RepoURL,
 					Host:              dep.Host,
 					Port:              dep.Port,
 					ArtifactoryPrefix: dep.RegistryPrefix,
 					VirtualPath:       dep.VirtualPath,
+					VirtualType:       manifest.VirtualTypeOf(dep.VirtualPath),
 					Owner:             ownerFromRepoURL(dep.RepoURL),
 					Repo:              repoFromRepoURL(dep.RepoURL),
 					Source:            "git",
