@@ -35,7 +35,7 @@ irm https://raw.githubusercontent.com/gn00678465/apm-go/main/install.ps1 | iex
 安裝到 `%LOCALAPPDATA%\apm-go` 並加入使用者 PATH。指定版本：
 
 ```powershell
-$env:APM_GO_VERSION = "0.2.1"; irm https://raw.githubusercontent.com/gn00678465/apm-go/main/install.ps1 | iex
+$env:APM_GO_VERSION = "0.4.0"; irm https://raw.githubusercontent.com/gn00678465/apm-go/main/install.ps1 | iex
 ```
 
 ### Linux / macOS
@@ -47,10 +47,21 @@ curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh |
 安裝到 `~/.local/bin`。若該目錄不在 PATH，會附加至登入 shell 的 profile 檔（zsh 為 `~/.zprofile`；bash 已有 `~/.bash_profile` 時用該檔；其餘為 `~/.profile`）。指定版本：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | APM_GO_VERSION=0.2.1 sh
+curl -fsSL https://raw.githubusercontent.com/gn00678465/apm-go/main/install.sh | APM_GO_VERSION=0.4.0 sh
 ```
 
 開新終端機執行 `apm-go --version` 驗證。
+
+### mise
+
+使用 [mise](https://mise.jdx.dev/) 時，透過它的 `github` 後端從 GitHub Release 安裝：
+
+```sh
+mise use -g github:gn00678465/apm-go          # 最新穩定版本
+mise use -g github:gn00678465/apm-go@0.4.0    # 指定版本
+```
+
+去掉 `-g` 會把版本記在目前專案的 `mise.toml`。更新請用 `mise upgrade`，不要用 `apm-go self-update`：`self-update` 會直接替換 mise 安裝目錄裡的執行檔，mise 仍然記著舊版本。
 
 ### 移除
 
@@ -143,4 +154,4 @@ go vet ./...          # 靜態檢查
 go fmt ./...          # 格式化
 ```
 
-Release 已自動化：推 `v*` tag 觸發 [release workflow](.github/workflows/release.yml) — 守門比對 tag 與 `internal/version`、以 `CGO_ENABLED=0` 交叉編譯 6 平台二進位、產生 `SHA256SUMS`、發佈 GitHub Release。
+Release 已自動化：推 `v*` tag 觸發 [release workflow](.github/workflows/release.yml) — 確認 tag 指向的提交在 `main` 上、把 tag 注入為版本號、以 `CGO_ENABLED=0` 交叉編譯 6 平台二進位、產生 `SHA256SUMS`、發佈 GitHub Release。
