@@ -787,7 +787,8 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 				}
 			}
 			for _, dep := range existingLock.Dependencies {
-				if dep.ResolvedCommit != "" && dep.Source != "registry" {
+				// A subdirectory package has no tree_sha256 (buildLockfile).
+				if dep.ResolvedCommit != "" && dep.Source != "registry" && !isSubdirectoryPackage(dep.VirtualPath) {
 					if dep.TreeSHA256 == "" {
 						return fmt.Errorf("frozen install: entry %s missing required tree_sha256", dep.UniqueKey())
 					}
@@ -1792,15 +1793,22 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			continue
 		}
 
-		if (dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral) && dep.Commit == "" {
-			installDir := filepath.Join("apm_modules", dep.Key)
-			if commit, err := gitops.ResolveCommit(installDir); err == nil {
+		// A subdirectory package's module directory has no .git: git run
+		// there answers for the repository that encloses the project. Its
+		// commit comes from the loader that cloned it, and it has no
+		// tree_sha256; the commit and deployed_file_hashes pin its content.
+		isGit := dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral
+		isSubdir := isSubdirectoryPackage(dep.VirtualPath)
+		if isGit && dep.Commit == "" {
+			if isSubdir {
+				ld.ResolvedCommit = clonedSubdirCommit(regLoader, dep.Key)
+			} else if commit, err := gitops.ResolveCommit(filepath.Join("apm_modules", dep.Key)); err == nil {
 				ld.ResolvedCommit = commit
 			}
 		}
 
 		// req-lk-015: compute tree_sha256 for git-sourced deps (required)
-		if dep.Kind == resolver.KindGitSemver || dep.Kind == resolver.KindGitLiteral {
+		if isGit && !isSubdir {
 			installDir := filepath.Join("apm_modules", dep.Key)
 			commit := ld.ResolvedCommit
 			if commit != "" {
@@ -3362,6 +3370,26 @@ func localPackageIdentity(dir string) (name, pkgVersion, packageType string) {
 		packageType = "hook_package"
 	}
 	return name, pkgVersion, packageType
+}
+
+// isSubdirectoryPackage reports whether a dependency with this virtual path
+// is a directory taken out of a repository, as opposed to a whole repository
+// or a single file.
+func isSubdirectoryPackage(virtualPath string) bool {
+	return manifest.VirtualTypeOf(virtualPath) == "subdirectory"
+}
+
+// clonedSubdirCommit returns the commit the git loader behind regLoader cloned
+// the subdirectory package key from in this run, or "" when it did not clone
+// it.
+func clonedSubdirCommit(regLoader *registry.Loader, key string) string {
+	if regLoader == nil {
+		return ""
+	}
+	if source, ok := regLoader.Next.(interface{ SubdirCommit(string) string }); ok {
+		return source.SubdirCommit(key)
+	}
+	return ""
 }
 
 func kindToSource(k resolver.ReferenceKind) string {

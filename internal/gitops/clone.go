@@ -3,6 +3,7 @@ package gitops
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -17,6 +18,19 @@ type RealPackageLoader struct {
 	ModulesDir  string
 	DefaultHost string
 	Lock        *lockfile.Lockfile
+
+	// subdirCommits maps the module key of each subdirectory package this
+	// loader cloned to the commit it was taken from.
+	subdirCommits map[string]string
+}
+
+// SubdirCommit returns the commit of the repository that the subdirectory
+// package with module key key was taken from, or "" when this loader did not
+// clone it. The package's module directory holds only the subdirectory's
+// content and no .git, so git run there answers for whatever repository
+// encloses the project; the clone is the one place the commit is known.
+func (r *RealPackageLoader) SubdirCommit(key string) string {
+	return r.subdirCommits[path.Clean(key)]
 }
 
 func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
@@ -82,6 +96,11 @@ func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolved
 		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
 	}
 
+	commit, err := ResolveCommit(tmpClone)
+	if err != nil {
+		return nil, err
+	}
+
 	subdir := filepath.Join(tmpClone, filepath.FromSlash(virtualPath))
 	info, err := os.Stat(subdir)
 	if err != nil || !info.IsDir() {
@@ -94,6 +113,13 @@ func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolved
 
 	if err := copyDirContents(subdir, installDir); err != nil {
 		return nil, fmt.Errorf("extract subdirectory %q: %w", virtualPath, err)
+	}
+
+	if key, err := filepath.Rel(r.ModulesDir, installDir); err == nil {
+		if r.subdirCommits == nil {
+			r.subdirCommits = make(map[string]string)
+		}
+		r.subdirCommits[filepath.ToSlash(key)] = commit
 	}
 
 	return r.parseSubManifest(installDir)
