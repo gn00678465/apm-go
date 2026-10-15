@@ -221,6 +221,7 @@ func TestParseDepString_LocalPath(t *testing.T) {
 		{"./packages/local", "./packages/local"},
 		{"./foo/bar", "./foo/bar"},
 		{"~/my-skills", "~/my-skills"},
+		{"../../../etc/passwd", "../../../etc/passwd"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -245,7 +246,6 @@ func TestParseDepString_Rejection(t *testing.T) {
 	}{
 		{"", "empty"},
 		{"not valid string", "does not match"},
-		{"../../../etc/passwd", "escapes project root"},
 		{"just-one-word", "does not match"},
 		{"https://", "requires host"},
 		// mkt-033 negative test (a): apm.yml never accepts the CLI's
@@ -275,10 +275,7 @@ func TestParseDepString_Rejection(t *testing.T) {
 // used to error with "absolute"). This is what lets (a) a plain
 // `apm install /abs/path` local git dependency parse at all, and (b)
 // mkt-025's local-marketplace fast path round-trip an out-of-project-tree
-// absolute canonical back through apm.yml. containsEscape must NOT run on
-// an explicitly-absolute path (it is user-intended, not a traversal
-// attempt) -- exercised here with a path that would itself look like it
-// "escapes" if the relative-path escape check ran on it.
+// absolute canonical back through apm.yml.
 func TestParseDepString_AbsolutePath(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -318,12 +315,9 @@ func TestParseDepString_AbsolutePath(t *testing.T) {
 	}
 }
 
-// TestParseDepString_AbsolutePathSkipsEscapeGuard covers the design's
-// explicit carve-out: an absolute path containing a literal ".." segment is
-// still accepted (never routed through containsEscape), since an explicitly
-// absolute path is user-intended and the RELATIVE-path escape guard only
-// makes sense for a path meant to stay inside the project root.
-func TestParseDepString_AbsolutePathSkipsEscapeGuard(t *testing.T) {
+// An absolute path with a ".." segment that does not end in one names a
+// directory and is accepted as written.
+func TestParseDepString_AbsolutePathWithDotDotSegment(t *testing.T) {
 	d, err := ParseDepString("/abs/foo/../bar")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

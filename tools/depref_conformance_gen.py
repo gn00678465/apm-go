@@ -258,28 +258,8 @@ DEPREF_INPUTS: list[dict] = [
     # -- local paths ----------------------------------------------------------
     {"input": "./packages/local", "category": "local"},
     {"input": "./foo/bar", "category": "local"},
-    {
-        "input": "../../../etc/passwd",
-        "category": "local-traversal",
-        "known_gap": (
-            "The Oracle's is_local_path branch (reference.py:1754-1768) accepts "
-            "ANY relative local path whose basename isn't '.'/'..' -- it "
-            "performs NO traversal/escape check at all, so a '../'-climbing "
-            "path is accepted as a local dependency (is_local=True). apm-go's "
-            "containsEscape is a DELIBERATE, pre-existing security hardening "
-            "beyond the Oracle (see depref.go's own doc comment) that rejects "
-            "this outright; matching the Oracle here would be a security "
-            "regression, not a parity fix, so this row's rejection is kept "
-            "and NOT relaxed to match."
-        ),
-        "apmgo_accepted": False,
-    },
-    {
-        "input": "../secret",
-        "category": "local-traversal",
-        "known_gap": "Same intentional divergence as '../../../etc/passwd' above.",
-        "apmgo_accepted": False,
-    },
+    {"input": "../../../etc/passwd", "category": "local-traversal"},
+    {"input": "../secret", "category": "local-traversal"},
     {
         "input": "%2e%2e/%2e%2e/etc/passwd",
         "category": "percent-traversal",

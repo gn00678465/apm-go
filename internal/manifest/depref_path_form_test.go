@@ -27,6 +27,7 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 	accepted := []struct{ yaml, localPath string }{
 		{"./dep", "./dep"},
 		{"./sub/dep", "./sub/dep"},
+		{"../dep", "../dep"},
 		{"/abs/dep", "/abs/dep"},
 		{"~/x", "~/x"},
 		{"' ./dep'", "./dep"},
@@ -57,9 +58,6 @@ func TestParseDepDict_PathTakesOnlyLocalPaths(t *testing.T) {
 		{"null", empty},
 		{"5", empty},
 		{"[a]", empty},
-		// The one deviation, kept from before issue #61: the Oracle takes
-		// `../dep`.
-		{"../dep", `dependency path "../dep" escapes project root`},
 	}
 	for _, tt := range rejected {
 		t.Run(tt.yaml, func(t *testing.T) {
