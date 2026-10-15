@@ -144,7 +144,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		// A skill is a directory deployed as one unit, so it is handed over
 		// whole: the survivor's own files below it come too, and the removed
 		// package's own files there are not handed over.
-		if dir := skillDirOf(p); dir != "" {
+		if dir := deploy.SkillDirOf(p); dir != "" {
 			key, ok := deployedBy[dir]
 			if !ok {
 				continue
@@ -175,18 +175,6 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		}
 	}
 	return h, nil
-}
-
-// skillDirOf returns the skill directory (<root>/skills/<name>) that the
-// slash path p is or lies below, or "" when p is in no skill.
-func skillDirOf(p string) string {
-	segs := strings.Split(normalizeDeployPath(p), "/")
-	for i := 0; i+1 < len(segs); i++ {
-		if segs[i] == "skills" {
-			return strings.Join(segs[:i+2], "/")
-		}
-	}
-	return ""
 }
 
 func (h *uninstallHandover) close() {
@@ -248,7 +236,10 @@ func (h *uninstallHandover) restore(root string) {
 // --global deploy). A symlink at p or at a skill's directory (<root>/skills/
 // <name>) is the user's, or the skill symlink just restored, and nothing is
 // written through it. A symlink at any other parent (~/.claude linked into a
-// dotfiles directory) is walked through, as deploy and removal walk it.
+// dotfiles directory) is walked through, as deploy and removal walk it, but
+// each segment is checked before it is made (deploy.CheckDeployWrite; for a
+// symlink, deploy.CheckDeployPath), since os.Mkdir and the copy follow a
+// parent that leads out of the target root.
 func restoreFromTrial(trialDir, root, p string) error {
 	segs := strings.Split(p, "/")
 	for i := range segs {
@@ -268,6 +259,13 @@ func restoreFromTrial(trialDir, root, p string) error {
 		src := filepath.Join(trialDir, rel)
 		sinfo, err := os.Lstat(src)
 		if err != nil {
+			return err
+		}
+		check := deploy.CheckDeployWrite
+		if sinfo.Mode()&os.ModeSymlink != 0 {
+			check = deploy.CheckDeployPath
+		}
+		if err := check(root, filepath.ToSlash(rel)); err != nil {
 			return err
 		}
 		switch {

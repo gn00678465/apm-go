@@ -222,21 +222,27 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	// A symlink here is not the deploy's: a copy through it would write into
 	// the directory it leads to. It is replaced by the skill's own directory,
 	// as a symlink deploy replaces one (symlinkSkillTo), so nothing below it
-	// is written through it. In an existing directory every file is checked
-	// before the first write: a symlink the user put inside it, at a
-	// directory or at the file, would take a copy elsewhere.
+	// is written through it. In an existing directory every file, then every
+	// directory (an empty one has no file to catch it), is checked before the
+	// first write: a symlink the user put inside it would take a copy, or an
+	// os.MkdirAll, elsewhere.
 	info, err := os.Lstat(absDestDir)
 	if err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if err := os.Remove(absDestDir); err != nil {
 			return nil, fmt.Errorf("replace skill destination: %w", err)
 		}
-	} else if err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(_, rel string, isDir bool) error {
-		if isDir {
-			return nil
+	} else {
+		for _, dirs := range []bool{false, true} {
+			err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(_, rel string, isDir bool) error {
+				if isDir != dirs {
+					return nil
+				}
+				return CheckDeployWrite(projectDir, path.Join(destDir, rel))
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
-		return CheckDeployWrite(projectDir, path.Join(destDir, rel))
-	}); err != nil {
-		return nil, err
 	}
 	if err := os.MkdirAll(absDestDir, 0755); err != nil {
 		return nil, fmt.Errorf("create skill dir: %w", err)

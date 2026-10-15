@@ -3,7 +3,9 @@ package deploy
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -117,11 +119,18 @@ func withinTargetRoot(root, dir string) bool {
 	return err == nil && archive.Within(realRoot, resolved)
 }
 
-// OutsideDeployPaths returns, sorted, each of files (lock paths relative to
-// deployRoot) that CheckDeployPath refuses because a symlink leads it out of
-// its target root, and each recorded skill directory (an entry with no hash)
-// with such a path below it: the paths Oracle 0.33.0's uninstall lists as
-// the tracked files it could not remove (measured, issue #86).
+// OutsideDeployPaths returns, sorted, the paths Oracle 0.33.0's uninstall
+// lists as the tracked files it could not remove (measured, issue #86): each
+// of files (lock paths relative to deployRoot) that CheckDeployPath refuses
+// because a symlink leads it out of its target root, each recorded skill
+// directory (an entry with no hash) with such a path below it, and each
+// skill directory one of files is in whose tree, walked without following a
+// symlink, holds a symlink that resolves (a dangling one by its target) out
+// of its target root. The skill directory passes as a whole to a package
+// that stays (the uninstall hand-over), also files the removed package does
+// not have, so a symlink anywhere in it would take that write outside. A
+// skill directory that is itself a symlink is not walked: it is the user's
+// (skillSymlink).
 func OutsideDeployPaths(deployRoot string, files []string, hashes map[string]string) []string {
 	var out []string
 	seen := make(map[string]bool)
@@ -131,7 +140,11 @@ func OutsideDeployPaths(deployRoot string, files []string, hashes map[string]str
 			out = append(out, f)
 		}
 	}
+	skillDirs := make(map[string]bool)
 	for _, f := range files {
+		if dir := SkillDirOf(f); dir != "" {
+			skillDirs[dir] = true
+		}
 		var outside *DeployPathError
 		if !errors.As(CheckDeployPath(deployRoot, f), &outside) {
 			continue
@@ -145,6 +158,50 @@ func OutsideDeployPaths(deployRoot string, files []string, hashes map[string]str
 			}
 		}
 	}
+	for dir := range skillDirs {
+		if !seen[dir] && treeLeavesTargetRoot(deployRoot, dir) {
+			add(dir)
+		}
+	}
 	sort.Strings(out)
 	return out
+}
+
+// treeLeavesTargetRoot reports whether the skill directory dir (relative to
+// deployRoot), a real directory whose parents pass CheckDeployPath, holds a
+// symlink that resolves out of its target root.
+func treeLeavesTargetRoot(deployRoot, dir string) bool {
+	abs := filepath.Join(deployRoot, filepath.FromSlash(dir))
+	if info, err := os.Lstat(abs); err != nil || !info.IsDir() || CheckDeployPath(deployRoot, dir) != nil {
+		return false
+	}
+	first, _, _ := strings.Cut(dir, "/")
+	root, err := archive.RealPath(filepath.Join(deployRoot, first))
+	if err != nil {
+		return false
+	}
+	leaves := false
+	filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+		if resolved, err := archive.RealPath(p); err != nil || !archive.Within(root, resolved) {
+			leaves = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return leaves
+}
+
+// SkillDirOf returns the skill directory (<root>/skills/<name>) that the
+// slash path p is or lies below, or "" when p is in no skill.
+func SkillDirOf(p string) string {
+	segs := strings.Split(path.Clean(strings.ReplaceAll(p, "\\", "/")), "/")
+	for i := 0; i+1 < len(segs); i++ {
+		if segs[i] == "skills" {
+			return strings.Join(segs[:i+2], "/")
+		}
+	}
+	return ""
 }

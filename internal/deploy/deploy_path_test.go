@@ -149,3 +149,45 @@ func TestOutsideDeployPaths(t *testing.T) {
 		t.Errorf("OutsideDeployPaths = %v, want %v", got, want)
 	}
 }
+
+// A skill directory a removed path is in passes as a whole to a package that
+// stays, so a symlink anywhere in its tree that leads out of the target root
+// lists the skill directory; one that stays inside does not, and a skill
+// directory that is itself a symlink is the user's and is not walked.
+func TestOutsideDeployPaths_SkillTree(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, root string)
+		want  []string
+	}{
+		{name: "symlink in the skill leads outside", want: []string{".claude/skills/demo"},
+			setup: func(t *testing.T, root string) {
+				deployPathLink(t, filepath.Join(root, "outside/rules"), filepath.Join(root, "home/.claude/skills/demo/sub"))
+			}},
+		{name: "dangling symlink in the skill leads outside", want: []string{".claude/skills/demo"},
+			setup: func(t *testing.T, root string) {
+				deployPathLink(t, filepath.Join(root, "outside/gone"), filepath.Join(root, "home/.claude/skills/demo/deep/sub"))
+			}},
+		{name: "symlink in the skill stays in the target root",
+			setup: func(t *testing.T, root string) {
+				deployPathLink(t, "../../rules", filepath.Join(root, "home/.claude/skills/demo/sub"))
+			}},
+		{name: "skill directory is a symlink",
+			setup: func(t *testing.T, root string) {
+				deployPathLink(t, filepath.Join(root, "outside"), filepath.Join(root, "home/.claude/skills/demo"))
+				deployPathLink(t, filepath.Join(root, "outside/rules"), filepath.Join(root, "outside/sub"))
+			}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := deployPathRoot(t)
+			tt.setup(t, root)
+
+			got := OutsideDeployPaths(filepath.Join(root, "home"), []string{".claude/skills/demo/SKILL.md"}, map[string]string{".claude/skills/demo/SKILL.md": "h"})
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("OutsideDeployPaths = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
