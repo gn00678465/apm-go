@@ -75,6 +75,13 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	// engine.py:676-681), issue #50 ruling R10.
 	ux.Progress(os.Stdout, "Uninstalling %d package(s)...", len(args))
 	plan := prepareUninstallPlan(args, m, lock, opts.DryRun)
+	// The Oracle resolves every marketplace argument before it walks the
+	// arguments, and prints what resolving says then (commands/uninstall/
+	// engine.py:619-628). It resolves them in the order of a Python set
+	// (:619), which changes from run to run, so apm-go keeps argument order.
+	for _, arg := range plan.resolution.Arguments {
+		printUninstallResolveLines(arg)
+	}
 	for _, arg := range plan.resolution.Arguments {
 		printUninstallArgument(plan, arg)
 	}
@@ -807,7 +814,22 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 	return writeLockfileBytes(out)
 }
 
-// printUninstallArgument prints the line of one argument's outcome.
+// printUninstallResolveLines prints what resolving a marketplace argument
+// said: that it could not be resolved, could not be previewed, or was
+// refused by the supply-chain guard.
+func printUninstallResolveLines(arg *uninstallResolution) {
+	for _, nf := range arg.NotFound {
+		if nf.Reason != uninstallNotFoundNoMatch {
+			printUninstallNotFound(nf)
+		}
+	}
+	for _, rej := range arg.SupplyChainRejected {
+		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
+	}
+}
+
+// printUninstallArgument prints the line of one argument's outcome, unless
+// printUninstallResolveLines already did.
 func printUninstallArgument(plan *uninstallPlan, arg *uninstallResolution) {
 	for _, t := range arg.APMTargets {
 		ux.Success(os.Stdout, "%s - found in apm.yml", plan.moduleKey(t))
@@ -816,10 +838,9 @@ func printUninstallArgument(plan *uninstallPlan, arg *uninstallResolution) {
 		ux.Success(os.Stdout, "%s - found in apm.yml", t.Name)
 	}
 	for _, nf := range arg.NotFound {
-		printUninstallNotFound(nf)
-	}
-	for _, rej := range arg.SupplyChainRejected {
-		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
+		if nf.Reason == uninstallNotFoundNoMatch {
+			printUninstallNotFound(nf)
+		}
 	}
 	// The Oracle's words (commands/uninstall/engine.py:694-698).
 	for _, a := range arg.Ambiguous {

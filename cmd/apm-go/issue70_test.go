@@ -382,3 +382,84 @@ func TestUninstall_MCPAndPackageLinesInArgumentOrder(t *testing.T) {
 		t.Errorf("uninstall --dry-run one ./dep:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// marketplaceLocal70 registers a marketplace directory, sample, that has one
+// plugin, unlocked, and installs the local package ./dep, under a HOME of
+// the test's own. The proxies point at a closed port, so no request leaves
+// the machine. It returns the project and the marketplace directories.
+func marketplaceLocal70(t *testing.T) (proj, market string) {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("APM_CONFIG_DIR", "")
+	for _, v := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
+		t.Setenv(v, "http://127.0.0.1:9")
+	}
+	proj, market = filepath.Join(root, "proj"), filepath.Join(root, "market")
+	for _, dir := range []string{filepath.Join(proj, "dep"), filepath.Join(market, "plugin")} {
+		writeCompileFile(t, dir, "apm.yml", "name: dep\nversion: 1.0.0\n")
+		writeCompileFile(t, dir, "SKILL.md", "---\nname: dep\ndescription: d\n---\nx\n")
+	}
+	writeCompileFile(t, market, "marketplace.json", `{"name": "sample", "plugins": [{"name": "unlocked", "source": "./plugin", "description": "Offline plugin"}]}`)
+	writeCompileFile(t, proj, "apm.yml", "name: repro\nversion: 1.0.0\ndependencies:\n  apm:\n  - ./dep\n")
+	t.Chdir(proj)
+	mustRunCLI(t, "marketplace", "add", market, "--name", "sample")
+	mustRunCLI(t, "install", "--target", "claude")
+	return proj, market
+}
+
+// The Oracle resolves every marketplace argument before it walks the
+// arguments (commands/uninstall/engine.py:619-628), so a resolution message
+// comes before every argument's line, whatever the argument order. The
+// words are apm-go's.
+func TestUninstall_MarketplaceResolutionLinesFirst(t *testing.T) {
+	const missing = ` ! "missing@sample": could not resolve (plugin not found in marketplace: "missing" in marketplace "sample"; run ` +
+		"`apm-go marketplace browse sample` to see available plugins)\n"
+	removed := func(proj string) string {
+		return " i Removed _local/dep from apm_modules/\n" +
+			" i Cleaned 3 stale files from ./dep\n" +
+			" i Removed _local/dep from dependencies.apm in apm.yml\n" +
+			" + Updated " + filepath.Join(proj, "apm.yml") + " (removed 1 package(s))\n" +
+			" + Uninstall complete: Removed 1 package(s) from apm.yml, Removed 1 package(s) from apm_modules/\n"
+	}
+	tests := []struct {
+		name string
+		args []string
+		want func(proj, market string) string
+	}{
+		{"missing plugin after the package", []string{"_local/dep", "missing@sample"}, func(proj, _ string) string {
+			return " > Uninstalling 2 package(s)...\n" + missing + " + _local/dep - found in apm.yml\n" + removed(proj)
+		}},
+		{"missing plugin before the package", []string{"missing@sample", "_local/dep"}, func(proj, _ string) string {
+			return " > Uninstalling 2 package(s)...\n" + missing + " + _local/dep - found in apm.yml\n" + removed(proj)
+		}},
+		{"plugin not in the lock", []string{"unlocked@sample", "_local/dep"}, func(proj, market string) string {
+			return " > Uninstalling 2 package(s)...\n" +
+				` x "unlocked@sample": refused to remove -- registry resolved "` + filepath.Join(market, "plugin") + `", which is not present in apm.lock.yaml (supply-chain guard)` + "\n" +
+				" + _local/dep - found in apm.yml\n" + removed(proj)
+		}},
+		{"dry run", []string{"--dry-run", "_local/dep", "missing@sample"}, func(string, string) string {
+			return " > Uninstalling 2 package(s)...\n" +
+				` ! "missing@sample": cannot preview with --dry-run (marketplace reference has no lockfile anchor); use owner/repo, or run without --dry-run` + "\n" +
+				" + _local/dep - found in apm.yml\n" +
+				" i Dry run: Would remove 1 package(s):\n" +
+				" i   - _local/dep from apm.yml\n" +
+				" i   - _local/dep from apm_modules/\n" +
+				" + Dry run complete - no changes made\n"
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			proj, market := marketplaceLocal70(t)
+
+			stdout, stderr, exitCode := runCompileCLI(t, append([]string{"uninstall"}, tt.args...)...)
+
+			if exitCode != 0 || stderr != "" {
+				t.Errorf("exit = %d, stderr = %q", exitCode, stderr)
+			}
+			if want := tt.want(proj, market); stdout != want {
+				t.Errorf("stdout:\n%s\nwant:\n%s", stdout, want)
+			}
+		})
+	}
+}
