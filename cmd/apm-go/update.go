@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/deploy"
@@ -150,6 +151,13 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	// and buildLockfile/deployAndFinalize are disk-writing by design.
 	if dryRun {
 		return runUpdateDryRun(m, existingLock, deps, pkg, resolverCfg)
+	}
+
+	// Before the first copy, so a refusal leaves earlier copies as they were.
+	for _, dep := range slices.Concat(m.ParsedDeps, m.ParsedDevDeps) {
+		if err := gitops.CheckLocalCopy("apm_modules", dep); err != nil {
+			return err
+		}
 	}
 
 	// Composite loader: registry-sourced deps go through the HTTP consumer,

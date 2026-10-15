@@ -151,3 +151,79 @@ func TestInstall_SourceHoldingTheProject_RefusedBeforeAnyWrite(t *testing.T) {
 		})
 	}
 }
+
+// review of PR for issue #64, repro destination-symlink: apm_modules/_local
+// links to the directory that holds the source, so the copy's destination is
+// the source itself. The source must survive and install must fail.
+func TestInstall_DestinationResolvingToTheSource_Refused(t *testing.T) {
+	root := upDepProject(t, "  apm:\n    - ../dep\n")
+	writeCompileFile(t, root, "dep/important.txt", "SOURCE MUST SURVIVE\n")
+	if err := os.MkdirAll("apm_modules", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(root, filepath.Join("apm_modules", "_local")); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, exitCode := runCompileCLI(t, "install")
+
+	if exitCode != 1 {
+		t.Errorf("exit = %d, want 1\n%s", exitCode, stdout)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "dep", "important.txt")); err != nil || string(got) != "SOURCE MUST SURVIVE\n" {
+		t.Errorf("the source's important.txt = %q (err %v), want it untouched", got, err)
+	}
+}
+
+// lateRefusalProject installs ../dep, changes its source, and declares the
+// project itself after it. It returns the bytes of the copy, apm.yml and the
+// lock that a refused run must leave as they are.
+func lateRefusalProject(t *testing.T) (root string, copied, manifestBytes, lock []byte) {
+	t.Helper()
+	root = upDepProject(t, "  apm:\n    - ../dep\n")
+	writeCompileFile(t, root, "dep/important.txt", "FIRST\n")
+	mustRunCLI(t, "install")
+	writeCompileFile(t, root, "dep/important.txt", "CHANGED SOURCE\n")
+	f, err := os.OpenFile("apm.yml", os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("    - path: ../proj\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	read := func(p string) []byte {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	return root, read("apm_modules/_local/dep/important.txt"), read("apm.yml"), read("apm.lock.yaml")
+}
+
+func assertLateRefusal(t *testing.T, args []string, copied, manifestBytes, lock []byte) {
+	t.Helper()
+	stdout, _, exitCode := runCompileCLI(t, args...)
+	want := "local dependency ../proj is the project directory or one of its parent directories; it cannot be copied into apm_modules/\n"
+	if exitCode != 1 || !strings.HasSuffix(stdout, want) {
+		t.Errorf("exit = %d; stdout:\n%s\nwant exit 1 and it to end with:\n%s", exitCode, stdout, want)
+	}
+	for p, want := range map[string][]byte{"apm_modules/_local/dep/important.txt": copied, "apm.yml": manifestBytes, "apm.lock.yaml": lock} {
+		if got, err := os.ReadFile(p); err != nil || string(got) != string(want) {
+			t.Errorf("%s = %q (err %v), want it unchanged: %q", p, got, err, want)
+		}
+	}
+}
+
+// review of PR for issue #64, repro late-refusal: a local dependency that is
+// refused must not let an earlier one be copied again first.
+func TestInstall_LateRefusal_LeavesEarlierCopy(t *testing.T) {
+	_, copied, manifestBytes, lock := lateRefusalProject(t)
+	assertLateRefusal(t, []string{"install"}, copied, manifestBytes, lock)
+}
+
+func TestUpdate_LateRefusal_LeavesEarlierCopy(t *testing.T) {
+	_, copied, manifestBytes, lock := lateRefusalProject(t)
+	assertLateRefusal(t, []string{"update"}, copied, manifestBytes, lock)
+}

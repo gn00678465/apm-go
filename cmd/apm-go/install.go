@@ -3182,7 +3182,9 @@ func errLocalNameCollision(key, first, second string) error {
 }
 
 // localSources records the source directory of each local package by its
-// apm_modules key and refuses a second directory for the same key.
+// apm_modules key and refuses a second directory for the same key, and a
+// copy gitops.CheckLocalCopy refuses. Every direct local dependency passes
+// here before the first copy, so a refusal leaves earlier copies as they were.
 type localSources map[string]string
 
 func (s localSources) add(ref *manifest.DependencyReference) error {
@@ -3193,7 +3195,7 @@ func (s localSources) add(ref *manifest.DependencyReference) error {
 		return errLocalNameCollision(ref.RepoURL, first, ref.LocalSourcePath)
 	}
 	s[ref.RepoURL] = ref.LocalSourcePath
-	return nil
+	return gitops.CheckLocalCopy("apm_modules", ref)
 }
 
 // resolveLocalSourceAbs turns a local dependency source (which may be

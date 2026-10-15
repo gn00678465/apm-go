@@ -201,6 +201,10 @@ func worktreeClean(repoDir string) bool {
 }
 
 func (r *RealPackageLoader) installPath(ref *manifest.DependencyReference) (string, error) {
+	return installPathIn(r.ModulesDir, ref)
+}
+
+func installPathIn(modulesDir string, ref *manifest.DependencyReference) (string, error) {
 	key := ref.RepoURL
 	if ref.VirtualPath != "" {
 		key += "/" + ref.VirtualPath
@@ -210,11 +214,11 @@ func (r *RealPackageLoader) installPath(ref *manifest.DependencyReference) (stri
 	// resolving outside ModulesDir, or landing on an unrelated sibling
 	// directory still technically inside it, before this path is used for a
 	// destructive os.RemoveAll (req-lk-007's stale-checkout repair).
-	if !archive.ContainedKey(r.ModulesDir, key) {
-		return "", fmt.Errorf("refusing to resolve install path for %q outside %s", key, r.ModulesDir)
+	if !archive.ContainedKey(modulesDir, key) {
+		return "", fmt.Errorf("refusing to resolve install path for %q outside %s", key, modulesDir)
 	}
 	safe := strings.ReplaceAll(key, "/", string(filepath.Separator))
-	return filepath.Join(r.ModulesDir, safe), nil
+	return filepath.Join(modulesDir, safe), nil
 }
 
 func (r *RealPackageLoader) resolveCloneURL(ref *manifest.DependencyReference) string {
@@ -362,7 +366,7 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 	if !info.IsDir() {
 		return nil, fmt.Errorf("local dependency source %s is not a directory", src)
 	}
-	if err := r.refuseSelfCopy(ref); err != nil {
+	if err := CheckLocalCopy(r.ModulesDir, ref); err != nil {
 		return nil, err
 	}
 
@@ -382,35 +386,69 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 	return r.parseSubManifest(installDir)
 }
 
-// refuseSelfCopy refuses a source that is, or holds, the project directory
-// or ModulesDir: the copy would land inside its own source and recurse until
-// the path is too long. Deliberate deviation from the Oracle, which copies
-// until "[Errno 36] File name too long", exits 1 and leaves .claude/ behind.
-// Both sides are compared after symlinks are resolved, so a link to a parent
-// directory is refused too.
-func (r *RealPackageLoader) refuseSelfCopy(ref *manifest.DependencyReference) error {
+// CheckLocalCopy refuses a copy of the local dependency ref into modulesDir
+// that would remove or write outside its own copy: the copy step removes the
+// destination and then writes the source into it. Install and update run it
+// for every direct local dependency before anything is written, so a refusal
+// leaves earlier copies as they were; the loader runs it again for the paths
+// that skip that check. It is a no-op for a dependency that is not copied.
+//
+// Refused, in this order: a destination whose parent directories, symlinks
+// resolved, put it outside modulesDir (a symlinked apm_modules/_local); a
+// source that holds the project (the working directory); a source and
+// destination where one holds the other. The last component of the
+// destination is not resolved: a symlink there is removed, not followed.
+//
+// Deliberate deviation from the Oracle, which copies a source holding the
+// project into itself until "[Errno 36] File name too long", exits 1 and
+// leaves .claude/ behind.
+func CheckLocalCopy(modulesDir string, ref *manifest.DependencyReference) error {
+	if ref.LocalSourcePath == "" {
+		return nil
+	}
 	declared := ref.LocalDeclaredPath
 	if declared == "" {
 		declared = ref.LocalSourcePath
+	}
+	modules := filepath.ToSlash(filepath.Clean(modulesDir))
+	dest, err := installPathIn(modulesDir, ref)
+	if err != nil {
+		return err
+	}
+	destParent, err := realPath(filepath.Dir(dest))
+	if err != nil {
+		return fmt.Errorf("local dependency %s: %w", declared, err)
+	}
+	destReal := filepath.Join(destParent, filepath.Base(dest))
+	modulesReal, err := realPath(modulesDir)
+	if err != nil {
+		return fmt.Errorf("local dependency %s: %w", declared, err)
+	}
+	if !within(modulesReal, destReal) || destReal == modulesReal {
+		return fmt.Errorf("local dependency %s would be copied to %s, which resolves to %s outside %s/; refusing to replace it",
+			declared, filepath.ToSlash(dest), destReal, modules)
 	}
 	src, err := realPath(ref.LocalSourcePath)
 	if err != nil {
 		return fmt.Errorf("local dependency source %s: %w", ref.LocalSourcePath, err)
 	}
-	modules := filepath.ToSlash(filepath.Clean(r.ModulesDir))
-	for _, held := range []struct{ dir, what string }{
-		{".", "the project directory"},
-		{r.ModulesDir, modules},
-	} {
-		dir, err := realPath(held.dir)
-		if err != nil {
-			return fmt.Errorf("local dependency %s: %w", declared, err)
-		}
-		if rel, err := filepath.Rel(src, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("local dependency %s is %s or one of its parent directories; it cannot be copied into %s/", declared, held.what, modules)
-		}
+	project, err := realPath(".")
+	if err != nil {
+		return fmt.Errorf("local dependency %s: %w", declared, err)
+	}
+	if within(src, project) {
+		return fmt.Errorf("local dependency %s is the project directory or one of its parent directories; it cannot be copied into %s/", declared, modules)
+	}
+	if within(src, destReal) || within(destReal, src) {
+		return fmt.Errorf("local dependency %s overlaps its copy %s; a package cannot be copied into or over itself", declared, filepath.ToSlash(dest))
 	}
 	return nil
+}
+
+// within reports whether path is dir or below it.
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // realPath is p made absolute with every symlink resolved. The part of p
