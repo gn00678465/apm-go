@@ -58,10 +58,18 @@ func Write(w io.Writer, projectRoot, ecosystem string, m *bundle.PluginManifest,
 		return "", Skipped, nil
 	}
 
-	absPath, err = build.EnsureWithinRoot(projectRoot, relPath)
+	if _, err := build.EnsureWithinRoot(projectRoot, relPath); err != nil {
+		return "", Skipped, err
+	}
+	// Oracle reports project_root / rel_path with only the root resolved
+	// (commands/pack.py:363, core/plugin_manifest.py:432): a symlinked
+	// plugin.json or .claude-plugin is named as written, since that entry is
+	// what the RootWriter replaces.
+	resolvedRoot, err := build.EnsureWithinRoot(projectRoot, ".")
 	if err != nil {
 		return "", Skipped, err
 	}
+	absPath = filepath.Join(resolvedRoot, filepath.FromSlash(relPath))
 
 	// Every write below goes through the RootWriter, whose directory handle
 	// is taken once here. The path string absPath is used only for messages

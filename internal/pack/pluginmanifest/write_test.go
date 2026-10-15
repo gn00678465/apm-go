@@ -335,3 +335,85 @@ func TestWrite_DryRun_CopilotExistingFile_SkipsWithoutGithubInfoLine(t *testing.
 	}
 	assertFileBytes(t, path, original)
 }
+
+// assertReportsPath checks that the returned path and every output line that
+// names a path under root use want, never the symlink's target.
+func assertReportsPath(t *testing.T, out, gotPath, root, want, target string) {
+	t.Helper()
+	if gotPath != want {
+		t.Errorf("path = %q, want %q", gotPath, want)
+	}
+	if strings.Contains(out, target) {
+		t.Errorf("output names the symlink target %q:\n%s", target, out)
+	}
+	named := false
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, root) {
+			continue
+		}
+		named = true
+		if !strings.Contains(line, want) {
+			t.Errorf("line %q does not name %q", line, want)
+		}
+	}
+	if !named {
+		t.Errorf("no output line names the manifest:\n%s", out)
+	}
+}
+
+// Oracle reports project_root / rel_path (core/plugin_manifest.py:432,
+// 439-483): the project root resolved, the path below it as written, so a
+// symlinked plugin.json is reported under its own name.
+func TestWrite_SymlinkedManifest_ReportsUnresolvedPath(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		force, dryRun bool
+	}{
+		{"dry-run", false, true},
+		{"dry-run force", true, true},
+		{"run", false, false},
+		{"run force", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, want := seedPluginJSON(t, "claude", nil)
+			target := filepath.Join(root, "custom.json")
+			if err := os.WriteFile(target, []byte("{}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join("..", "custom.json"), want); err != nil {
+				t.Skipf("cannot create a symlink on this host: %v", err)
+			}
+
+			var buf bytes.Buffer
+			gotPath, _, err := Write(&buf, root, "claude", &bundle.PluginManifest{Name: "demo"}, tc.force, tc.dryRun)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertReportsPath(t, buf.String(), gotPath, root, want, target)
+		})
+	}
+}
+
+func TestWrite_SymlinkedManifestDir_ReportsUnresolvedPath(t *testing.T) {
+	root, want := seedPluginJSON(t, "claude", nil)
+	real := filepath.Join(root, "realdir")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "plugin.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("realdir", filepath.Join(root, ".claude-plugin")); err != nil {
+		t.Skipf("cannot create a symlink on this host: %v", err)
+	}
+
+	var buf bytes.Buffer
+	gotPath, _, err := Write(&buf, root, "claude", &bundle.PluginManifest{Name: "demo"}, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReportsPath(t, buf.String(), gotPath, root, want, real)
+}

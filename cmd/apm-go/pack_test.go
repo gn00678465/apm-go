@@ -2428,3 +2428,37 @@ func TestPackCmd_JSON_PluginManifestOutcomes(t *testing.T) {
 		}
 	}
 }
+
+// The review's reproduction: a symlinked plugin.json is reported under its own
+// name, the path pack --force replaced, as Oracle 0.33.0 reports it.
+func TestPackCmd_JSON_SymlinkedPluginManifest_ReportsItsOwnPath(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(chdirTemp(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: my-plugin\nversion: 1.0.9\ndescription: d\nlicense: MIT\ntarget: claude\n")
+	if err := os.MkdirAll(filepath.Join("skills", "my-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("skills", "my-skill", "SKILL.md"), []byte("---\nname: my-skill\ndescription: d\n---\nx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("custom.json", []byte(`{"name":"my-plugin","version":"1.0.8"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(".claude-plugin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "custom.json"), filepath.Join(".claude-plugin", "plugin.json")); err != nil {
+		t.Skipf("cannot create a symlink on this host: %v", err)
+	}
+
+	out, err := runPackCmd(t, "--force", "--json")
+	if err != nil {
+		t.Fatalf("pack --force --json: %v\n%s", err, out)
+	}
+	got := packJSONFromOutput(t, out).PluginManifests.Written
+	if want := []string{filepath.Join(dir, ".claude-plugin", "plugin.json")}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("plugin_manifests.written = %q, want %q", got, want)
+	}
+}
