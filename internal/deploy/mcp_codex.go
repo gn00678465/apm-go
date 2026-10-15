@@ -10,9 +10,9 @@ import (
 
 func (a *codexAdapter) MCPResolveMode() manifest.ResolveMode { return manifest.ResolveBake }
 
-// WriteMCP writes .codex/config.toml table mcp_servers (apm-cli parity: url+
-// id+http_headers for remote transports; SSE is not supported and skipped
-// with a diagnostic).
+// WriteMCP writes .codex/config.toml table mcp_servers (url plus the header
+// fields for remote transports; SSE is not supported and skipped with a
+// diagnostic).
 func (a *codexAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string, []string, []string, error) {
 	// Headers keep ${VAR} verbatim (envMode bakes env dict as before); the
 	// entry builder re-encodes header placeholders into Codex's own
@@ -42,7 +42,10 @@ func codexMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 		}
 		return e, true, ""
 	}
-	e := map[string]any{"url": r.URL, "id": r.Name}
+	// Deviation: Oracle 0.33.0 writes id = "" on stdio and remote entries
+	// (codex.py:235,318). Codex's config schema has no id field and
+	// --strict-config rejects the whole file over it (microsoft/apm#3087).
+	e := map[string]any{"url": r.URL}
 	if len(r.Headers) > 0 {
 		encodeCodexHeaders(e, r.Headers)
 	}
