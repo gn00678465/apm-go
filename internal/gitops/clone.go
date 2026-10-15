@@ -1,11 +1,16 @@
 package gitops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/lockfile"
@@ -351,8 +356,9 @@ func (r *RealPackageLoader) loadLocalPackage(path string) (*manifest.Manifest, e
 // is guarded by archive.ContainedKey exactly like every other dependency, so a
 // crafted key can never escape ModulesDir. The clone SOURCE guard is moot here
 // (no git clone happens); the source directory is user-trusted (it came from
-// the user's own apm.yml/CLI arg), and symlinks under it are SKIPPED to prevent
-// any copy-out-of-tree escape.
+// the user's own apm.yml/CLI arg). A symlink under it is copied as what it
+// points at when that stays inside the package, and fails the copy otherwise
+// (copyTreeDereferencing); a failed copy leaves no installDir behind.
 func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReference) (*manifest.Manifest, error) {
 	installDir, err := r.installPath(ref)
 	if err != nil {
@@ -379,10 +385,18 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 	if err := os.RemoveAll(installDir); err != nil {
 		return nil, fmt.Errorf("remove stale local copy %s: %w", installDir, err)
 	}
+	created := absentDirs(filepath.Dir(installDir))
 	if err := os.MkdirAll(filepath.Dir(installDir), 0o755); err != nil {
 		return nil, err
 	}
-	if err := copyTreeNoSymlinks(src, installDir); err != nil {
+	if err := copyTreeDereferencing(src, installDir, src, nil); err != nil {
+		err = errors.Join(err, os.RemoveAll(installDir))
+		// The Oracle removes an apm_modules it created that is empty after
+		// a failed install (install/resolution_staging.py:195-200). A
+		// directory that another copy filled since is not empty and stays.
+		for _, dir := range created {
+			_ = os.Remove(dir)
+		}
 		return nil, fmt.Errorf("copy local dependency %s: %w", ref.LocalSourcePath, err)
 	}
 
@@ -455,6 +469,18 @@ func checkLocalCopy(modulesDir string, ref *manifest.DependencyReference) (strin
 	return src, nil
 }
 
+// absentDirs lists dir and each parent above it that does not exist yet,
+// deepest first: the directories os.MkdirAll(dir) would create.
+func absentDirs(dir string) []string {
+	var absent []string
+	for ; ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(dir); !os.IsNotExist(err) || filepath.Dir(dir) == dir {
+			return absent
+		}
+		absent = append(absent, dir)
+	}
+}
+
 // within reports whether path is dir or below it.
 func within(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
@@ -484,49 +510,189 @@ func realPath(p string) (string, error) {
 	return filepath.Join(resolved, filepath.Base(abs)), nil
 }
 
-// copyTreeNoSymlinks recursively copies srcDir to dstDir, copying regular files
-// and directories only and SKIPPING symlinks entirely (never following them).
-// Skipping symlinks is the security-relevant choice: a symlink under an
-// otherwise-trusted local source could point outside it, and dereferencing it
-// during the copy would pull unrelated content into apm_modules. Matching the
-// Python original's "never bundle symlinks" rule keeps materialization to the
-// package's own in-tree content.
-func copyTreeNoSymlinks(srcDir, dstDir string) error {
+// copyTreeDereferencing copies srcDir to dstDir the way Oracle 0.33.0 copies a
+// local package (install/phases/local_content.py:91-181): a symlink is resolved
+// and its target copied as a regular file or directory when it lies inside
+// pkgRoot; a dangling symlink, one that resolves outside pkgRoot (its target is
+// not read), or one back to a directory already entered on the current path
+// (visited, per branch as in the Oracle) fails the copy. Every failure reading
+// the package carries the Oracle's reason, Python's own OSError and
+// RuntimeError texts included. Devices, pipes and sockets are skipped: reading
+// a FIFO would block.
+func copyTreeDereferencing(srcDir, dstDir, pkgRoot string, visited []string) error {
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("Cannot read package directory '%s': %s. Check that the package directory has read permissions. Local install aborted.", srcDir, pyOSError(err))
 	}
 	for _, e := range entries {
-		info, err := e.Info()
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			continue // never follow/copy symlinks
-		}
 		srcPath := filepath.Join(srcDir, e.Name())
 		dstPath := filepath.Join(dstDir, e.Name())
-		if e.IsDir() {
-			if err := copyTreeNoSymlinks(srcPath, dstPath); err != nil {
+		info, err := e.Info()
+		if err != nil {
+			return errors.New(pyOSError(err))
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolved, err := realpathStrict(srcPath)
+			if err != nil {
+				// pathlib turns ELOOP into RuntimeError("Symlink loop from %r"),
+				// which the Oracle does not catch: it is the whole reason.
+				var pe *os.PathError
+				if errors.As(err, &pe) && errors.Is(pe.Err, syscall.ELOOP) {
+					return fmt.Errorf("Symlink loop from %s", pyRepr(pe.Path))
+				}
+				return fmt.Errorf("Symlink '%s' has a broken or unresolvable target: %s. Remove the dangling symlink or restore its target. Local install aborted.", srcPath, pyOSError(err))
+			}
+			if !within(pkgRoot, resolved) {
+				return fmt.Errorf("Symlink '%s' resolves to '%s', which escapes the package root '%s'. Only in-package symlinks are dereferenced. Remove the symlink or replace it with a real file copy. Local install aborted.", srcPath, resolved, pkgRoot)
+			}
+			if info, err = os.Stat(resolved); err != nil {
+				return errors.New(pyOSError(err))
+			}
+			if info.IsDir() {
+				if slices.Contains(visited, resolved) {
+					return fmt.Errorf("Circular symlink detected: '%s' resolves to '%s', which was already visited during this install. Break the cycle by replacing one symlink with a real directory copy. Local install aborted.", srcPath, resolved)
+				}
+				if err := copyTreeDereferencing(resolved, dstPath, pkgRoot, append(slices.Clip(visited), resolved)); err != nil {
+					return err
+				}
+				continue
+			}
+			srcPath = resolved
+		}
+		if info.IsDir() {
+			if err := copyTreeDereferencing(srcPath, dstPath, pkgRoot, visited); err != nil {
 				return err
 			}
 			continue
 		}
 		if !info.Mode().IsRegular() {
-			continue // skip devices, pipes, sockets
+			continue
 		}
 		data, err := os.ReadFile(srcPath)
 		if err != nil {
-			return err
+			return errors.New(pyOSError(err))
 		}
 		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// realpathStrict is Python 3.12's os.path.realpath(path, strict=True) for an
+// absolute POSIX path (posixpath.py:420-496). It resolves one component at a
+// time, so an error names the component Python's names, and a symlink met
+// again while it is being resolved is ELOOP on that symlink; filepath.
+// EvalSymlinks gives up after 255 links and names no path. Every error is an
+// *os.PathError.
+func realpathStrict(path string) (string, error) {
+	return joinRealpath("", path, map[string]*string{})
+}
+
+// joinRealpath is posixpath._joinrealpath with strict=True. seen maps a
+// symlink to its resolved path, or to nil while it is being resolved.
+func joinRealpath(path, rest string, seen map[string]*string) (string, error) {
+	if strings.HasPrefix(rest, "/") {
+		rest, path = rest[1:], "/"
+	}
+	for rest != "" {
+		var name string
+		name, rest, _ = strings.Cut(rest, "/")
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			path = filepath.Dir(path)
+			continue
+		}
+		newpath := filepath.Join(path, name)
+		info, err := os.Lstat(newpath)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			path = newpath
+			continue
+		}
+		if resolved, ok := seen[newpath]; ok {
+			if resolved != nil {
+				path = *resolved
+				continue
+			}
+			if _, err := os.Stat(newpath); err != nil {
+				return "", err
+			}
+			return "", &os.PathError{Op: "stat", Path: newpath, Err: syscall.ELOOP}
+		}
+		seen[newpath] = nil
+		target, err := os.Readlink(newpath)
+		if err != nil {
+			return "", err
+		}
+		if path, err = joinRealpath(path, target, seen); err != nil {
+			return "", err
+		}
+		resolved := path
+		seen[newpath] = &resolved
+	}
+	return path, nil
+}
+
+// pyOSError is str(OSError) as Python 3.12 prints err:
+// "[Errno <n>] <strerror>: <repr(filename)>". Go's text for a Linux errno is
+// glibc's strerror with a lowercase first letter; the two differ only for
+// errno 41, 58 and 133, which no path operation returns.
+func pyOSError(err error) string {
+	var pe *os.PathError
+	var errno syscall.Errno
+	if !errors.As(err, &pe) || !errors.As(pe.Err, &errno) {
+		return err.Error()
+	}
+	text := errno.Error()
+	return fmt.Sprintf("[Errno %d] %s%s: %s", int(errno), strings.ToUpper(text[:1]), text[1:], pyRepr(pe.Path))
+}
+
+// pyRepr is Python's repr() of a str holding a path, an invalid UTF-8 byte b
+// being the lone surrogate U+DC00+b Python decodes it to. It follows the rule
+// of pythonReprPyStr (internal/marketplace/models.go), which gitops cannot
+// import.
+func pyRepr(s string) string {
+	quote := '\''
+	if strings.ContainsRune(s, '\'') && !strings.ContainsRune(s, '"') {
+		quote = '"'
+	}
+	var sb strings.Builder
+	sb.WriteRune(quote)
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&sb, `\u%04x`, 0xdc00+int(s[i]))
+		case r == quote || r == '\\':
+			sb.WriteByte('\\')
+			sb.WriteRune(r)
+		case r == '\n':
+			sb.WriteString(`\n`)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case unicode.IsPrint(r):
+			sb.WriteRune(r)
+		case r < 0x100:
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		case r < 0x10000:
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		default:
+			fmt.Fprintf(&sb, `\U%08x`, r)
+		}
+		i += size
+	}
+	sb.WriteRune(quote)
+	return sb.String()
 }
 
 func (r *RealPackageLoader) parseSubManifest(dir string) (*manifest.Manifest, error) {
