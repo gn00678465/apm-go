@@ -112,7 +112,7 @@ Decided in issue #50 (ticket 32 A/B rulings): the lockfile follows the Oracle's 
 
 - `README.md`, `README.zh-TW.md` — existing product copy in English and Traditional Chinese.
 - `spec/conformance/` — OpenAPM safe-subset spec, agent/marketplace schema, CLI surface notes, verification checklist, dependency-ref and repr conformance tables.
-- `tools/parity/cases/` — 113 output-contract cases (0 unwaived diffs at HEAD); `tools/parity/cases-pending/` — no parked case, only its README.
+- `tools/parity/cases/` — 115 output-contract cases (0 unwaived diffs at HEAD); `tools/parity/cases-pending/` — no parked case, only its README.
 - `.scratch/parity-runner/issues/` — ticket files documenting the output-contract backlog and rulings.
 - CI: `.github/workflows/parity.yml` (parity gate), `release.yml`.
 - Absent, must not be fabricated: testimonials, user counts, benchmarks, customers, pricing.

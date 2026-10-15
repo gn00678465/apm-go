@@ -32,8 +32,8 @@ const defaultManifestPath = "marketplace.json"
 // following the discrimination order design.md prescribes for mkt-010: the
 // first matching rule wins, not "the closest match".
 //
-//  1. Local path shape (looksLikeLocalPath) -> KindLocal, URL canonicalized
-//     to an absolute path.
+//  1. Local path shape (looksLikeLocalPath, or isDotRelativeSource) ->
+//     KindLocal, URL canonicalized to an absolute path.
 //  2. Bare "http://" -> hard error (https:// or a schemeless form only).
 //  3. SCP-style SSH remote ("user@host:path") -> KindGit/GitHub/GitLab by
 //     host, URL kept verbatim (the SSH transport must survive for client_
@@ -66,7 +66,7 @@ func ParseMarketplaceSource(raw, host string) (*MarketplaceSource, error) {
 		return nil, err
 	}
 
-	if looksLikeLocalPath(raw) {
+	if looksLikeLocalPath(raw) || isDotRelativeSource(raw) {
 		return parseLocalSource(raw, host)
 	}
 	if strings.HasPrefix(strings.ToLower(raw), "http://") {
@@ -82,6 +82,16 @@ func ParseMarketplaceSource(raw, host string) (*MarketplaceSource, error) {
 		return parseHTTPSSource(raw, host)
 	}
 	return parseShorthandSource(raw, host)
+}
+
+// isDotRelativeSource reports a relative path written without "./", such as
+// ".github/plugin/marketplace.json": it starts with "." and has a separator.
+// Oracle marketplace/source_identity.py:256 adds this rule at add time only.
+// It stays out of looksLikeLocalPath because MarketplaceSource.Kind() reads
+// stored URLs through that function, the port of Oracle
+// marketplace/models.py:28's _looks_like_local_path, which has no such rule.
+func isDotRelativeSource(raw string) bool {
+	return strings.HasPrefix(raw, ".") && strings.ContainsAny(raw, `/\`)
 }
 
 // rejectControlCharacters mirrors the Python original's control-character
