@@ -22,12 +22,12 @@ func TestProduce_BothEcosystems_TwoFilesWritten(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	written, err := Produce(&buf, dir, doc.Content[0], []string{"claude", "copilot"}, false, false)
+	got, err := Produce(&buf, dir, doc.Content[0], []string{"claude", "copilot"}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(written) != 2 {
-		t.Fatalf("written = %v, want both ecosystems", written)
+	if len(got.Written) != 2 {
+		t.Fatalf("written = %v, want both ecosystems", got.Written)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); statErr != nil {
 		t.Errorf("expected claude plugin.json: %v", statErr)
@@ -46,12 +46,12 @@ func TestProduce_OnlyClaudeTarget_WritesOnlyClaude(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	written, err := Produce(&buf, dir, doc.Content[0], []string{"claude"}, false, false)
+	got, err := Produce(&buf, dir, doc.Content[0], []string{"claude"}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(written) != 1 || written[0] != "claude" {
-		t.Fatalf("written = %v, want [claude]", written)
+	if len(got.Written) != 1 || filepath.Base(filepath.Dir(got.Written[0])) != ".claude-plugin" {
+		t.Fatalf("written = %v, want only the claude plugin.json", got.Written)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, ".github", "plugin", "plugin.json")); !os.IsNotExist(statErr) {
 		t.Errorf("copilot plugin.json must not be written (stat err = %v)", statErr)
