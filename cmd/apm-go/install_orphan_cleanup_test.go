@@ -384,3 +384,127 @@ func TestInstall_OrphanCleanup_RemovesFilesOfTransitivePackageNoLongerDeclared(t
 		t.Errorf("stdout must report and list the removed rule, got:\n%s", stdout)
 	}
 }
+
+// legacyLockB rewrites _local/b in the lock to the format before issue #50:
+// repo_url _local/b-<8 hex of the source's absolute path>, no source,
+// local_path, name, version or package_type (review-step9/compare.py).
+func legacyLockB(t *testing.T) string {
+	t.Helper()
+	legacy := legacyLocalModulesKey(resolveLocalSourceAbs("./b"))
+	rewriteOrphanLock(t, func(lock *lockfile.Lockfile) {
+		b := orphanLockEntry(lock, "_local/b")
+		b.RepoURL, b.Source, b.LocalPath, b.Name, b.Version, b.PackageType = legacy, "", "", "", "", ""
+	})
+	if !slices.Contains(orphanLockKeys(t), legacy) {
+		t.Fatalf("lock must record b under %s, got %q", legacy, orphanLockKeys(t))
+	}
+	return legacy
+}
+
+// review-step9 legacy: a package recorded in the old format and no longer
+// declared is an orphan like any other; Oracle 0.33.0 removes its 3 paths.
+func TestInstall_OrphanCleanup_RemovesFilesOfLegacyLocalEntry(t *testing.T) {
+	orphanProject(t, "claude")
+	legacyLockB(t)
+
+	writeStaleCleanupFile(t, "apm.yml", orphanManifestA)
+	stdout := staleCleanupInstall(t, "claude")
+
+	assertStaleCleanupExists(t, false, ".claude/rules/b.md", ".claude/skills/sb/SKILL.md", ".claude/skills/sb")
+	assertOrphanLockKeys(t, "_local/a")
+	if !strings.Contains(stdout, orphanCleanedB) {
+		t.Errorf("stdout must report and list the three removed paths, got:\n%s", stdout)
+	}
+}
+
+// A package still declared whose old record is in the old format: its old
+// record is the package's, so a skill gone from its source is cleaned and
+// the lock records the package under its current key with the rule alone.
+func TestInstall_StaleCleanup_LegacyLocalEntryOfDeclaredPackage(t *testing.T) {
+	orphanProject(t, "claude")
+	oldHash := orphanLockEntry(readLockfile(t), "_local/b").DeployedHashes[".claude/rules/b.md"]
+	legacyLockB(t)
+
+	if err := os.RemoveAll(filepath.FromSlash("b/.apm/skills/sb")); err != nil {
+		t.Fatal(err)
+	}
+	stdout := staleCleanupInstall(t, "claude")
+
+	assertStaleCleanupExists(t, false, ".claude/skills/sb/SKILL.md", ".claude/skills/sb")
+	assertStaleCleanupExists(t, true, ".claude/rules/b.md")
+	assertOrphanLockKeys(t, "_local/a", "_local/b")
+	b := orphanLockEntry(readLockfile(t), "_local/b")
+	if !slices.Equal(b.DeployedFiles, []string{".claude/rules/b.md"}) || b.DeployedHashes[".claude/rules/b.md"] != oldHash {
+		t.Errorf("_local/b = %q %v, want only the rule with hash %s", b.DeployedFiles, b.DeployedHashes, oldHash)
+	}
+	if strings.Contains(stdout, "no longer in apm.yml") {
+		t.Errorf("a declared package is no orphan, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "Cleaned 2 stale files from _local/b\n  - .claude/skills/sb\n  - .claude/skills/sb/SKILL.md\n") {
+		t.Errorf("stdout must report the removed skill, got:\n%s", stdout)
+	}
+}
+
+// unreadableDir makes rel unreadable until the test ends.
+func unreadableDir(t *testing.T, rel string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a directory of mode 000")
+	}
+	dir := filepath.FromSlash(rel)
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+}
+
+// review-step9 compare-skill: a file that cannot be removed or read is still
+// on disk, so the orphan keeps its record of it.
+func TestInstall_OrphanCleanup_KeepsRecordOfUnreadableFile(t *testing.T) {
+	orphanProject(t, "claude")
+	oldHash := orphanLockEntry(readLockfile(t), "_local/b").DeployedHashes[".claude/skills/sb/SKILL.md"]
+
+	writeStaleCleanupFile(t, "apm.yml", orphanManifestA)
+	unreadableDir(t, ".claude/skills/sb")
+	staleCleanupInstall(t, "claude")
+
+	b := orphanLockEntry(readLockfile(t), "_local/b")
+	if b == nil {
+		t.Fatalf("lock must keep _local/b, got %q", orphanLockKeys(t))
+	}
+	if !slices.Contains(b.DeployedFiles, ".claude/skills/sb/SKILL.md") || b.DeployedHashes[".claude/skills/sb/SKILL.md"] != oldHash {
+		t.Errorf("_local/b = %q %v, want .claude/skills/sb/SKILL.md with hash %s", b.DeployedFiles, b.DeployedHashes, oldHash)
+	}
+}
+
+// The same holds for a stale file of a package that is still declared.
+func TestInstall_StaleCleanup_KeepsRecordOfUnreadableFile(t *testing.T) {
+	orphanProject(t, "claude")
+	oldHash := orphanLockEntry(readLockfile(t), "_local/b").DeployedHashes[".claude/skills/sb/SKILL.md"]
+
+	if err := os.RemoveAll(filepath.FromSlash("b/.apm/skills/sb")); err != nil {
+		t.Fatal(err)
+	}
+	unreadableDir(t, ".claude/skills/sb")
+	staleCleanupInstall(t, "claude")
+
+	b := orphanLockEntry(readLockfile(t), "_local/b")
+	if b == nil || !slices.Contains(b.DeployedFiles, ".claude/skills/sb/SKILL.md") || b.DeployedHashes[".claude/skills/sb/SKILL.md"] != oldHash {
+		t.Errorf("_local/b = %+v, want .claude/skills/sb/SKILL.md with hash %s", b, oldHash)
+	}
+}
+
+// A file the user deleted before the install is gone: the record leaves.
+func TestInstall_OrphanCleanup_DropsRecordOfFileAlreadyGone(t *testing.T) {
+	orphanProject(t, "claude")
+	staleCleanupRemove(t, ".claude/rules/b.md")
+
+	writeStaleCleanupFile(t, "apm.yml", orphanManifestA)
+	stdout := staleCleanupInstall(t, "claude")
+
+	assertStaleCleanupExists(t, false, ".claude/skills/sb")
+	assertOrphanLockKeys(t, "_local/a")
+	if !strings.Contains(stdout, "Cleaned 2 files from packages no longer in apm.yml\n  - .claude/skills/sb\n  - .claude/skills/sb/SKILL.md\n") {
+		t.Errorf("stdout must report the two removed skill paths, got:\n%s", stdout)
+	}
+}

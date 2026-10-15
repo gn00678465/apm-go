@@ -2,11 +2,13 @@ package main
 
 import (
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/lockfile"
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 // staleCleanup is the outcome for one lock bucket: the project's own .apm/
@@ -104,18 +106,44 @@ func claimedPaths(newLock *lockfile.Lockfile) map[string]bool {
 
 // orphanDeps returns the dependencies the previous lock records and this run
 // no longer resolves, transitive ones included, as the Oracle compares the
-// old lock with intended_dep_keys (install/phases/resolve.py:975-980). A local
-// entry in the format before issue #50 is not one: this run records the same
-// package under its current key.
+// old lock with intended_dep_keys (install/phases/resolve.py:975-980).
+// existingLock is lockUnderCurrentKeys' view of the old lock.
 func orphanDeps(existingLock, newLock *lockfile.Lockfile) []lockfile.LockedDep {
 	var orphans []lockfile.LockedDep
 	for i := range existingLock.Dependencies {
 		old := &existingLock.Dependencies[i]
-		if newLock.FindByKey(old.UniqueKey()) == nil && !isLegacyLocalEntry(old) {
+		if newLock.FindByKey(old.UniqueKey()) == nil {
 			orphans = append(orphans, *old)
 		}
 	}
 	return orphans
+}
+
+// lockUnderCurrentKeys returns the old lock's records with each local entry
+// in the format before issue #50 that a local dependency of m still declares
+// under that dependency's current key, matched as useLegacyLocalKeys matches
+// it, so the stale cleanup and the lock merge find the package's old record.
+// An old-format entry no dependency declares keeps its key and is an orphan.
+// existingLock is not changed: the lock write and removeLegacyLocalModules
+// read the keys it was written with.
+func lockUnderCurrentKeys(existingLock *lockfile.Lockfile, m *manifest.Manifest) *lockfile.Lockfile {
+	prev := &lockfile.Lockfile{
+		Dependencies:        slices.Clone(existingLock.Dependencies),
+		LocalDeployedFiles:  existingLock.LocalDeployedFiles,
+		LocalDeployedHashes: existingLock.LocalDeployedHashes,
+	}
+	for _, dep := range slices.Concat(m.ParsedDeps, m.ParsedDevDeps) {
+		if dep.LocalSourcePath == "" || existingLock.FindByKey(dep.RepoURL) != nil {
+			continue
+		}
+		legacy := legacyLocalModulesKey(dep.LocalSourcePath)
+		for i := range prev.Dependencies {
+			if old := &prev.Dependencies[i]; old.UniqueKey() == legacy && isLegacyLocalEntry(old) {
+				old.RepoURL = dep.RepoURL
+			}
+		}
+	}
+	return prev
 }
 
 // orphanCleanup is what cleanOrphanedDeployedFiles did.

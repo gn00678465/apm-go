@@ -1472,14 +1472,16 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 // read on Linux (a second codex final-gate finding) -- replace explicitly
 // instead, unconditionally, regardless of the host OS.
 // mergeDeployedFiles combines the existing lockfile's deployed_files with
-// this run's deploy output, keeping old entries only when the file still
-// exists on disk under deployRoot. This handles re-install with a different
-// --target (old target's files survive and stay tracked) without preserving
-// files that were deliberately removed (e.g. stale-skill reconciliation).
+// this run's deploy output, dropping an old entry only when os.Stat says the
+// file does not exist under deployRoot. This handles re-install with a
+// different --target (old target's files survive and stay tracked) without
+// preserving files that were deliberately removed (e.g. stale-skill
+// reconciliation). A path that cannot be read (a permission error) is kept:
+// it may still be on disk, and without its record no later run cleans it.
 func mergeDeployedFiles(oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string, deployRoot string) ([]string, map[string]string) {
 	return mergeDeployedFilesIf(oldFiles, oldHashes, newFiles, newHashes, func(f string) bool {
 		_, err := os.Stat(filepath.Join(deployRoot, filepath.FromSlash(f)))
-		return err == nil
+		return !errors.Is(err, os.ErrNotExist)
 	})
 }
 
@@ -1912,8 +1914,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// run no longer resolves: whole when they were not cleaned, else the
 	// paths the cleanup could not remove.
 	var orphans []lockfile.LockedDep
+	var prevLock *lockfile.Lockfile
 	if existingLock != nil {
-		orphans = orphanDeps(existingLock, newLock)
+		prevLock = lockUnderCurrentKeys(existingLock, m)
+		orphans = orphanDeps(prevLock, newLock)
 	}
 
 	// 6. Deploy primitives to targets
@@ -2144,7 +2148,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 				orphans = oc.kept
 			}
-			for _, c := range cleanStaleDeployedFiles(existingLock, newLock, deployResult.FailedBuckets, keptDirs, targets, cleanRoot, linkSourceRoot) {
+			for _, c := range cleanStaleDeployedFiles(prevLock, newLock, deployResult.FailedBuckets, keptDirs, targets, cleanRoot, linkSourceRoot) {
 				if n := len(c.removed); n > 0 {
 					noun := "files"
 					if n == 1 {
@@ -2182,9 +2186,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// 6b. Merge surviving deployed files from the existing lockfile.
 	// A re-install with a different --target (or stale-skill reconciliation
 	// that kept a hand-edited file) may leave files on disk that this run's
-	// deploy did not produce. mergeDeployedFiles checks os.Stat and only
-	// re-adds entries whose files still exist, so files reconciliation
-	// removed in step 6a stay out. A path below a kept directory still exists
+	// deploy did not produce. mergeDeployedFiles drops the entries whose
+	// files are gone, so files reconciliation removed in step 6a stay out. A path below a kept directory still exists
 	// but is the user's now, so the old record of it is dropped first.
 	// A bucket with a failed deploy was not cleaned in step 6a, so every other
 	// old entry of it is kept, also one that os.Stat cannot reach (a path
@@ -2216,7 +2219,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
-			if old := existingLock.FindByKey(dep.UniqueKey()); old != nil {
+			if old := prevLock.FindByKey(dep.UniqueKey()); old != nil {
 				dep.DeployedFiles, dep.DeployedHashes = merge(dep.UniqueKey(),
 					old.DeployedFiles, old.DeployedHashes, dep.DeployedFiles, dep.DeployedHashes)
 			}
