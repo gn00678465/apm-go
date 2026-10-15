@@ -1,0 +1,5 @@
+{
+  "id": "marketplace-add-local-dot-dir",
+  "argv": ["marketplace", "add", ".github/plugin", "--name", "sample"],
+  "rewrite_binary_name": true
+}

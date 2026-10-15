@@ -128,6 +128,88 @@ func TestParseMarketplaceSource_LocalPathPointingToFile(t *testing.T) {
 	}
 }
 
+// TestParseMarketplaceSource_DotRelativePaths covers issue #73: a relative
+// path that starts with "." and has a separator is a local source even
+// without a "./" prefix, as the Oracle classifies it at add time. The
+// expected values come from Oracle 0.33.0's `marketplace add` output.
+// "dir/marketplace.json" exists on disk and stays a GitHub shorthand: the
+// rule reads the string, never the filesystem.
+func TestParseMarketplaceSource_DotRelativePaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      string
+		files    []string
+		wantKind SourceKind
+		wantURL  string // relative to the working directory for KindLocal
+		wantPath string
+	}{
+		{"file under .github", ".github/plugin/marketplace.json", []string{".github/plugin/marketplace.json"}, KindLocal, ".github/plugin/marketplace.json", ""},
+		{"file under .claude-plugin", ".claude-plugin/marketplace.json", []string{".claude-plugin/marketplace.json"}, KindLocal, ".claude-plugin/marketplace.json", ""},
+		{"directory", ".github/plugin", []string{".github/plugin/marketplace.json"}, KindLocal, ".github/plugin", "marketplace.json"},
+		{"directory with trailing slash", ".mk/", []string{".mk/marketplace.json"}, KindLocal, ".mk", "marketplace.json"},
+		{"missing path", ".missing/marketplace.json", nil, KindLocal, ".missing/marketplace.json", "marketplace.json"},
+		{"double dot prefix", "..foo/bar", nil, KindLocal, "..foo/bar", "marketplace.json"},
+		{"existing path without dot", "dir/marketplace.json", []string{"dir/marketplace.json"}, KindGitHub, "https://github.com/dir/marketplace.json", "marketplace.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			dir := t.TempDir()
+			for _, f := range tt.files {
+				p := filepath.Join(dir, filepath.FromSlash(f))
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(`{"name":"mk"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Chdir(dir)
+			wantURL := tt.wantURL
+			if tt.wantKind == KindLocal {
+				wantURL = "file://" + filepath.Join(dir, filepath.FromSlash(tt.wantURL))
+			}
+
+			// Act
+			src, err := ParseMarketplaceSource(tt.raw, "")
+
+			// Assert
+			if err != nil {
+				t.Fatalf("ParseMarketplaceSource(%q) returned error: %v", tt.raw, err)
+			}
+			if src.Kind() != tt.wantKind {
+				t.Errorf("Kind() = %q, want %q", src.Kind(), tt.wantKind)
+			}
+			if src.URL != wantURL {
+				t.Errorf("URL = %q, want %q", src.URL, wantURL)
+			}
+			if src.Path != tt.wantPath {
+				t.Errorf("Path = %q, want %q", src.Path, tt.wantPath)
+			}
+		})
+	}
+}
+
+// TestParseMarketplaceSource_DotPrefixWithoutSeparatorRejected: ".github"
+// has no separator, so it is not a local path (Oracle 0.33.0 exits 1 too).
+func TestParseMarketplaceSource_DotPrefixWithoutSeparatorRejected(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".github"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	// Act
+	src, err := ParseMarketplaceSource(".github", "")
+
+	// Assert
+	if err == nil {
+		t.Fatalf("ParseMarketplaceSource(%q) = %#v, want an error", ".github", src)
+	}
+}
+
 // TestParseMarketplaceSource_NonLocalShapes_NoFileURIAdded is ticket 24
 // AC5: the "file://"-wrapping added for local sources (AC2) must never leak
 // onto a non-local source's URL -- OWNER/REPO, a full HTTPS URL, and an
