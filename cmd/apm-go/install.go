@@ -1800,6 +1800,7 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 				ld.SkillSubset = subset
 			}
 		}
+		ld.TargetSubset = dep.TargetSubset
 
 		// req-lk-008: record resolved_at for git-semver entries
 		if dep.Kind == resolver.KindGitSemver && dep.Constraint != "" {
@@ -1902,6 +1903,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// .FailedBuckets, for the lock merge in step 6b.
 	var keptDirs []string
 	var failedBuckets map[string]bool
+	var skippedDeps []deploy.SkippedDep
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
@@ -1957,6 +1959,11 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			ux.Warn(os.Stderr, "%s", d)
 		}
 		keptDirs, failedBuckets = deployResult.KeptDirs, deployResult.FailedBuckets
+		skippedDeps = deployResult.SkippedDeps
+		skipped := make(map[string]bool, len(skippedDeps))
+		for _, sd := range skippedDeps {
+			skipped[sd.Key] = true
+		}
 
 		// Print deploy summary per dep: dependencies in resolver order
 		// (result.Deps; at one depth, the order apm.yml declares them), then
@@ -1977,13 +1984,19 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				continue
 			}
 			// A package that deployed nothing still gets its header, with
-			// "(files unchanged)", and is counted (measured on the Oracle).
+			// "(files unchanged)", and is counted (measured on the Oracle);
+			// one whose targets: has no active target gets the header alone
+			// (install/services.py:321).
 			var files []string
 			var hashes map[string]string
 			if ok {
 				files, hashes = dr.Files, dr.Hashes
 			}
-			printInstallBlock(run.installBlockLabel(dep), files, hashes, beforeDeploy)
+			if skipped[dep.Key] {
+				ux.SuccessAt(os.Stdout, "  ", "%s", run.installBlockLabel(dep))
+			} else {
+				printInstallBlock(run.installBlockLabel(dep), files, hashes, beforeDeploy)
+			}
 			// The Oracle counts a local package on every run
 			// (install/sources.py:74). A remote package it counts only when
 			// fetched in this run; apm-go counts it always, which was not
@@ -2013,7 +2026,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// even when a dependency's primitives went entirely undiscovered
 		// (e.g. an unrecognized manifest format).
 		for _, dep := range result.Deps {
-			if _, ok := deployResult.PerDep[dep.Key]; !ok {
+			if _, ok := deployResult.PerDep[dep.Key]; !ok && !skipped[dep.Key] {
 				ux.Warn(os.Stderr, "%s deployed 0 files to any target", dep.Key)
 			}
 		}
@@ -2206,6 +2219,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			manifestSectionMoved: manifestSectionMoved, result: result, targets: targets,
 			newLock: newLock, existingLock: existingLock, existingNode: existingNode,
 			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase,
+			skippedDeps: skippedDeps,
 		})
 	}
 

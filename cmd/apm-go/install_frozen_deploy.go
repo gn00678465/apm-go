@@ -143,6 +143,7 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 			Commit:            d.ResolvedCommit,
 			Depth:             d.Depth,
 			ResolvedBy:        d.ResolvedBy,
+			TargetSubset:      d.TargetSubset,
 		})
 	}
 	var filter *deploy.SkillFilter

@@ -10,9 +10,11 @@ func (a *agentSkillsAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeSkills}
 }
 
+func (a *agentSkillsAdapter) skillRoot(Primitive) string { return sharedSkillRoot }
+
 func (a *agentSkillsAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
 	if p.Type == TypeSkills {
-		return deploySkill(p, projectDir)
+		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	}
 	return nil, nil
 }

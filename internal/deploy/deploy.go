@@ -3,6 +3,7 @@ package deploy
 import (
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -45,6 +46,15 @@ type DeployResult struct {
 	// package does not have. Nothing below one is this run's deploy output,
 	// and nothing below one is stale output of an earlier run either.
 	KeptDirs []string
+	// SkippedDeps holds, in the order Run takes the dependencies, each one
+	// whose `targets:` names none of the active targets: it deployed nothing.
+	SkippedDeps []SkippedDep
+}
+
+// SkippedDep is a dependency whose `targets:` (Targets) has no active target.
+type SkippedDep struct {
+	Key     string
+	Targets []string
 }
 
 // SkillFilter scopes a per-dependency --skill name whitelist (BUG-2, design
@@ -151,6 +161,19 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// requiring Primitive itself to carry the full DependencyReference.
 	directKeys := make(map[string]bool)
 	depCanonKeys := make(map[string]string, len(directDeps))
+	// targetSubsets maps a dependency's DepKey to its `targets:`; a
+	// dependency with none has no entry.
+	targetSubsets := make(map[string][]string)
+	var skippedDeps []SkippedDep
+	noteTargetSubset := func(key string, subset []string) {
+		if len(subset) == 0 {
+			return
+		}
+		targetSubsets[key] = subset
+		if !slices.ContainsFunc(targets, func(t string) bool { return slices.Contains(subset, t) }) {
+			skippedDeps = append(skippedDeps, SkippedDep{Key: key, Targets: subset})
+		}
+	}
 	for _, dep := range directDeps {
 		key := DepRefKey(dep)
 		if key == "" || directKeys[key] {
@@ -158,6 +181,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 		directKeys[key] = true
 		depCanonKeys[key] = CanonicalDepKey(dep)
+		noteTargetSubset(key, dep.TargetSubset)
 		modulePath := filepath.Join(projectDir, "apm_modules", key)
 		prims, depServers, loadDiags, err := collectDependencySources(key, modulePath)
 		if err != nil {
@@ -177,6 +201,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	if resolved != nil {
 		transitive := sortedTransitiveDeps(resolved.Deps, directKeys)
 		for _, dep := range transitive {
+			noteTargetSubset(dep.Key, dep.TargetSubset)
 			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
 			prims, transitiveServers, loadDiags, err := collectDependencySources(dep.Key, modulePath)
 			if err != nil {
@@ -256,8 +281,39 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		ordered = filtered
 	}
 
-	// 3. Resolve conflicts
+	// 3. Resolve conflicts. A dependency with `targets:` competes for a name
+	// only on the targets it allows, so with any such dependency each
+	// target gets its own winners, as in the Oracle (install/services.py:294).
 	winners, conflictDiags := ResolvePrimitives(ordered)
+	winnersByTarget := make(map[string][]Primitive, len(targets))
+	if len(targetSubsets) == 0 {
+		for _, target := range targets {
+			winnersByTarget[target] = winners
+		}
+	} else {
+		conflictDiags = nil
+		for _, target := range targets {
+			var allowed []Primitive
+			for _, p := range ordered {
+				if subset, ok := targetSubsets[p.DepKey]; !ok || p.Type == TypeMCP || slices.Contains(subset, target) {
+					allowed = append(allowed, p)
+				}
+			}
+			w, diags := ResolvePrimitives(allowed)
+			winnersByTarget[target] = w
+			conflictDiags = append(conflictDiags, diags...)
+		}
+		conflictDiags = append(conflictDiags, keepFirstSharedSkill(targets, ordered, winnersByTarget)...)
+		seenDiag := make(map[string]bool)
+		var unique []string
+		for _, d := range conflictDiags {
+			if !seenDiag[d] {
+				seenDiag[d] = true
+				unique = append(unique, d)
+			}
+		}
+		conflictDiags = unique
+	}
 
 	// 3.5. Bundle-target dependency naming must be validated for every
 	// target BEFORE any primitive is deployed anywhere in this Run: a
@@ -274,7 +330,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		if !ok {
 			continue
 		}
-		if err := bundleAdapter.ValidateBundleNames(bundleCandidateDepKeys(adapter, winners)); err != nil {
+		if err := bundleAdapter.ValidateBundleNames(bundleCandidateDepKeys(adapter, winnersByTarget[target])); err != nil {
 			return nil, fmt.Errorf("%s: %w", target, err)
 		}
 	}
@@ -289,6 +345,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		PerDep:        make(map[string]*DepDeployResult),
 		Diags:         allDiags,
 		FailedBuckets: failedBuckets,
+		SkippedDeps:   skippedDeps,
 	}
 
 	deployedSkills := make(map[string]bool)
@@ -307,7 +364,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			continue
 		}
 		_, isBundleTarget := adapter.(BundleTarget)
-		for _, p := range winners {
+		for _, p := range winnersByTarget[target] {
 			if !adapterSupports(adapter, p.Type) {
 				continue
 			}
@@ -486,6 +543,59 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 
 	return result, nil
+}
+
+// keepFirstSharedSkill makes a skill directory that several targets write
+// (sharedSkillRoot) one package's: the first package in priority order that
+// one of those targets deploys the skill from, as the Oracle keeps the first
+// writer. Each other winner of that directory is dropped from its target, so
+// the bytes on disk are the ones recorded for the package that owns them. It
+// returns a conflict diagnostic per dropped winner.
+func keepFirstSharedSkill(targets []string, ordered []Primitive, winnersByTarget map[string][]Primitive) []string {
+	same := func(a, b Primitive) bool { return a.DepKey == b.DepKey && a.Source == b.Source }
+	wins := func(target string, p Primitive) bool {
+		for _, w := range winnersByTarget[target] {
+			if w.Type == p.Type && w.Name == p.Name {
+				return same(w, p)
+			}
+		}
+		return false
+	}
+	owner := map[string]Primitive{}
+	for _, p := range ordered {
+		if p.Type != TypeSkills {
+			continue
+		}
+		for _, target := range targets {
+			r, ok := Adapters[target].(skillRooter)
+			if !ok || !wins(target, p) {
+				continue
+			}
+			dir := path.Join(r.skillRoot(p), p.Name)
+			if _, taken := owner[dir]; !taken {
+				owner[dir] = p
+			}
+		}
+	}
+	var diags []string
+	for _, target := range targets {
+		r, ok := Adapters[target].(skillRooter)
+		if !ok {
+			continue
+		}
+		var kept []Primitive
+		for _, w := range winnersByTarget[target] {
+			if w.Type == TypeSkills {
+				if o := owner[path.Join(r.skillRoot(w), w.Name)]; !same(o, w) {
+					diags = append(diags, fmt.Sprintf("%s %q from %s shadowed by %s (first-declared wins)", w.Type, w.Name, w.Source, o.Source))
+					continue
+				}
+			}
+			kept = append(kept, w)
+		}
+		winnersByTarget[target] = kept
+	}
+	return diags
 }
 
 // collectDependencySources reads the primitives and the MCP servers of the

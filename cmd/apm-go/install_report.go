@@ -146,6 +146,23 @@ func (r *installRun) installBlockLabel(dep resolver.ResolvedDep) string {
 	return dep.Key + depVersionLabel(dep)
 }
 
+// dependencyName is the Oracle's get_unique_key (models/dependency/
+// identity.py:184-233): a local package's declared path, else its key, behind
+// its host when that is not github.com.
+func (r *installRun) dependencyName(key string, result *resolver.ResolutionResult) string {
+	if declared, ok := r.localDeclared[key]; ok {
+		return declared
+	}
+	for _, dep := range result.Deps {
+		if dep.Key == key {
+			if host := strings.ToLower(strings.TrimSpace(dep.Host)); host != "" && host != "github.com" && dep.ArtifactoryPrefix == "" {
+				return host + "/" + key
+			}
+		}
+	}
+	return key
+}
+
 // hashesOnDisk reads the current hash of every file the lock records, so the
 // install summary can tell an adopted file from an integrated one.
 func hashesOnDisk(lock *lockfile.Lockfile, root string) map[string]string {
@@ -240,6 +257,7 @@ type installOutcome struct {
 	existingNode                *yamllib.Node
 	apmInstalled, mcpConfigured int
 	apmPhase                    bool
+	skippedDeps                 []deploy.SkippedDep
 }
 
 // finish writes the lock and apm.yml of an install and prints its last lines.
@@ -287,6 +305,12 @@ func (r *installRun) finish(o installOutcome) error {
 		// The Oracle leaves one empty line when it had no package and no
 		// project content to integrate.
 		ux.Plain(os.Stdout, "")
+	}
+	for _, sd := range o.skippedDeps {
+		// The Oracle's diagnostic (install/target_filter.py:62-67), printed
+		// with the other warnings before the last line.
+		ux.WarnAt(os.Stdout, "  ", "[%s] Per-dependency targets [%s] do not overlap active install targets; skipping",
+			r.dependencyName(sd.Key, o.result), strings.Join(sd.Targets, ", "))
 	}
 	r.printInstallSummary(o.apmInstalled, o.mcpConfigured)
 	return nil

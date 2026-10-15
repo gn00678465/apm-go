@@ -1,0 +1,46 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: _local/my-local-skill
+  name: my-local-skill
+  version: 1.0.0
+  package_type: hybrid
+  deployed_files:
+  - .claude/skills/my-local-skill
+  - .claude/skills/my-local-skill/SKILL.md
+  - .claude/skills/my-local-skill/apm.yml
+  deployed_file_hashes:
+    .claude/skills/my-local-skill/SKILL.md: sha256:849a243fc0036997be1875326c52a096386930a32b1d869eb13fcdaa11ab0e79
+    .claude/skills/my-local-skill/apm.yml: sha256:edba0f20c337a559aeddb8a59ecce3a0c306d1d6bcee426aa2a488a4a1dda425
+  source: local
+  local_path: ./skills/my-local-skill
+  target_subset:
+  - claude
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/skills/my-local-skill
+  runtime: null
+  scope: project
+  owners:
+  - ./skills/my-local-skill
+  active_owner: ./skills/my-local-skill
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/my-local-skill/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - ./skills/my-local-skill
+  active_owner: ./skills/my-local-skill
+  content_hash: sha256:849a243fc0036997be1875326c52a096386930a32b1d869eb13fcdaa11ab0e79
+- kind: project-relative
+  target: claude
+  value: .claude/skills/my-local-skill/apm.yml
+  runtime: null
+  scope: project
+  owners:
+  - ./skills/my-local-skill
+  active_owner: ./skills/my-local-skill
+  content_hash: sha256:edba0f20c337a559aeddb8a59ecce3a0c306d1d6bcee426aa2a488a4a1dda425

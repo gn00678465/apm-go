@@ -10,10 +10,12 @@ func (a *codexAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeAgents, TypeSkills, TypeHooks}
 }
 
+func (a *codexAdapter) skillRoot(Primitive) string { return sharedSkillRoot }
+
 func (a *codexAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
 	switch p.Type {
 	case TypeSkills:
-		return deploySkill(p, projectDir)
+		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	case TypeAgents:
 		return deployCodexAgentTOML(p, projectDir)
 	case TypeHooks:

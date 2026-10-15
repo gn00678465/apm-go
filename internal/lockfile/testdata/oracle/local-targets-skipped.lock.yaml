@@ -1,0 +1,12 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: _local/my-local-skill
+  name: my-local-skill
+  version: 1.0.0
+  package_type: hybrid
+  source: local
+  local_path: ./skills/my-local-skill
+  target_subset:
+  - codex
+deployments: []

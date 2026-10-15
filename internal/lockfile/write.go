@@ -190,6 +190,10 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 			if len(dep.SkillSubset) > 0 {
 				addNode(node, key, stringSeq(sortedCopy(dep.SkillSubset)))
 			}
+		case "target_subset":
+			if len(dep.TargetSubset) > 0 {
+				addNode(node, key, stringSeq(sortedCopy(dep.TargetSubset)))
+			}
 		default:
 			if pair, ok := origPairs[key]; ok {
 				node.Content = append(node.Content, pair.key, pair.val)
@@ -311,6 +315,7 @@ func depSemanticEqual(a, b *LockedDep) bool {
 		// (found via BUG-1's case-fold RESET regression test, which
 		// exercises exactly this "nothing else changed" shape).
 		slicesEqual(a.SkillSubset, b.SkillSubset) &&
+		slicesEqual(a.TargetSubset, b.TargetSubset) &&
 		slicesEqual(a.DeployedFiles, b.DeployedFiles) &&
 		mapsEqual(a.DeployedHashes, b.DeployedHashes)
 }

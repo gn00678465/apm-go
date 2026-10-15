@@ -141,3 +141,8 @@ func SuccessAt(w io.Writer, prefix, format string, a ...any) {
 func ProgressAt(w io.Writer, prefix, format string, a ...any) {
 	lipgloss.Fprintln(errWriter(w), prefix+symbolLine(infoStyle, SymbolProgress, format, a...))
 }
+
+// WarnAt is SuccessAt for a warning record.
+func WarnAt(w io.Writer, prefix, format string, a ...any) {
+	lipgloss.Fprintln(errWriter(w), prefix+symbolLine(warnStyle, SymbolWarn, format, a...))
+}

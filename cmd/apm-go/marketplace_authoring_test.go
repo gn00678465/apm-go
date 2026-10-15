@@ -489,7 +489,10 @@ func TestMarketplaceInit_VerbosePrintsPath(t *testing.T) {
 // internal/marketplace/authoring/refcheck_test.go's own helpers.
 func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	// git 2.55 repacks a repository in the background after a commit when two
+	// loose objects hash into objects/17/, which races a test that compares
+	// the files of a fixture repository before and after a command.
+	cmd := exec.Command("git", append([]string{"-c", "maintenance.auto=false"}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",

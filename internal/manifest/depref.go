@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,6 +83,11 @@ type DependencyReference struct {
 	// caller as of this field's introduction -- ParseDepDict is the only
 	// writer so far.
 	SkillSubset []string
+
+	// TargetSubset is the dict entry's `targets:` field, trimmed,
+	// lowercased, deduplicated and sorted: the package deploys only to the
+	// active targets it names. nil means no restriction.
+	TargetSubset []string
 }
 
 var virtualFileExtensions = []string{
@@ -1098,12 +1104,15 @@ func namesDirectory(p string) bool {
 func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	kv := make(map[string]string)
 	keys := make(map[string]bool)
-	var skillsNode, pathNode *yaml.Node
+	var skillsNode, pathNode, targetsNode *yaml.Node
 	for i := 0; i < len(entry.Content)-1; i += 2 {
 		k := entry.Content[i].Value
 		keys[k] = true
 		if k == "skills" {
 			skillsNode = entry.Content[i+1]
+		}
+		if k == "targets" {
+			targetsNode = entry.Content[i+1]
 		}
 		if k == "path" {
 			pathNode = entry.Content[i+1]
@@ -1199,6 +1208,9 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 			}
 			d.SkillSubset = subset
 		}
+		if d.TargetSubset, err = parseDepTargets(targetsNode, idx); err != nil {
+			return nil, err
+		}
 		return d, nil
 	}
 
@@ -1213,6 +1225,9 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 			}
 			if keys["skills"] {
 				return nil, fmt.Errorf("dependency entry %d: 'skills' is not allowed with git: parent", idx)
+			}
+			if keys["targets"] {
+				return nil, fmt.Errorf("dependency entry %d: Unsupported field(s) for parent git dependency: 'targets'", idx)
 			}
 			return &DependencyReference{
 				IsParent:    true,
@@ -1249,12 +1264,19 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 			}
 			d.SkillSubset = subset
 		}
+		if d.TargetSubset, err = parseDepTargets(targetsNode, idx); err != nil {
+			return nil, err
+		}
 		return d, nil
 	}
 
 	if keys["id"] {
 		if keys["skills"] {
 			return nil, fmt.Errorf("dependency entry %d: 'skills' is only supported for git dependencies", idx)
+		}
+		targets, err := parseDepTargets(targetsNode, idx)
+		if err != nil {
+			return nil, err
 		}
 		// Registry object form uses `version:` (docs); accept `ref:` as an alias.
 		reference := kv["version"]
@@ -1267,6 +1289,7 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 			RegistryName: kv["registry"],
 			Alias:        kv["alias"],
 			Source:       "registry",
+			TargetSubset: targets,
 		}, nil
 	}
 
@@ -1358,6 +1381,85 @@ func parseSkillsField(node *yaml.Node, idx int) ([]string, error) {
 	}
 	sort.Strings(validated)
 	return validated, nil
+}
+
+// knownTargets is the Oracle's KNOWN_TARGETS (integration/targets.py:537),
+// sorted: the names a dependency's `targets:` may hold. It is wider than
+// CanonicalTargets, the targets apm-go deploys to, and has no aliases.
+var knownTargets = []string{
+	"agent-skills", "antigravity", "claude", "codex", "copilot", "copilot-app",
+	"copilot-cowork", "cursor", "gemini", "grok-build", "grok-cloud", "hermes",
+	"kiro", "openclaw", "opencode", "windsurf",
+}
+
+// parseDepTargets validates and normalizes a dependency dict's `targets:`
+// as the Oracle's parse_target_subset does (models/dependency/subsets.py:59-89),
+// with its reason texts. A nil node (no key) and a null are no restriction.
+func parseDepTargets(node *yaml.Node, idx int) ([]string, error) {
+	if node == nil || (node.Kind == yaml.ScalarNode && node.Tag == "!!null") {
+		return nil, nil
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("dependency entry %d: 'targets' field must be a list of target names", idx)
+	}
+	if len(node.Content) == 0 {
+		return nil, fmt.Errorf("dependency entry %d: targets: must contain at least one target; remove the field to route primitives to all active install targets.", idx)
+	}
+	seen := make(map[string]bool, len(node.Content))
+	var names []string
+	for _, item := range node.Content {
+		// pyyaml11Value: a plain yes or on is a bool to the Oracle.
+		if item.Kind != yaml.ScalarNode || pyyaml11Value(item).ShortTag() != "!!str" || strings.TrimSpace(item.Value) == "" {
+			return nil, fmt.Errorf("dependency entry %d: Each entry in 'targets' must be a non-empty string", idx)
+		}
+		name := strings.ToLower(strings.TrimSpace(item.Value))
+		if !slices.Contains(knownTargets, name) {
+			hint := ""
+			if s := closestTarget(name); s != "" {
+				hint = fmt.Sprintf(" Did you mean '%s'?", s)
+			}
+			return nil, fmt.Errorf("dependency entry %d: Unknown target '%s'. Valid targets: %s.%s", idx, name, strings.Join(knownTargets, ", "), hint)
+		}
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// closestTarget is the Oracle's _closest_target (subsets.py:91-100): the
+// first known target at the smallest edit distance, when that is at most 2.
+func closestTarget(name string) string {
+	best, bestDist := "", 3
+	for _, t := range knownTargets {
+		if d := levenshtein(name, t); d < bestDist {
+			best, bestDist = t, d
+		}
+	}
+	return best
+}
+
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		cur := make([]int, len(rb)+1)
+		cur[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(rb)]
 }
 
 // ValidateResolved returns an error if d is still an unresolved marketplace

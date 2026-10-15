@@ -12,10 +12,12 @@ func (a *copilotAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeSkills, TypeHooks}
 }
 
+func (a *copilotAdapter) skillRoot(Primitive) string { return sharedSkillRoot }
+
 func (a *copilotAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
 	switch p.Type {
 	case TypeSkills:
-		return deploySkill(p, projectDir)
+		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	case TypeInstructions:
 		return deployFileToPath(p, fmt.Sprintf(".github/instructions/%s.instructions.md", p.Name), projectDir)
 	case TypePrompts:

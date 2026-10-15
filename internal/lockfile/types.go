@@ -24,6 +24,7 @@ type LockedDep struct {
 	Depth          int
 	TreeSHA256     string
 	SkillSubset    []string
+	TargetSubset   []string
 	DeployedFiles  []string
 	DeployedHashes map[string]string // path -> hash
 
