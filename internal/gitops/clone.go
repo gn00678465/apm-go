@@ -1,10 +1,12 @@
 package gitops
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/apm-go/apm/internal/archive"
@@ -351,8 +353,9 @@ func (r *RealPackageLoader) loadLocalPackage(path string) (*manifest.Manifest, e
 // is guarded by archive.ContainedKey exactly like every other dependency, so a
 // crafted key can never escape ModulesDir. The clone SOURCE guard is moot here
 // (no git clone happens); the source directory is user-trusted (it came from
-// the user's own apm.yml/CLI arg), and symlinks under it are SKIPPED to prevent
-// any copy-out-of-tree escape.
+// the user's own apm.yml/CLI arg). A symlink under it is copied as what it
+// points at when that stays inside the package, and fails the copy otherwise
+// (copyTreeDereferencing); a failed copy leaves no installDir behind.
 func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReference) (*manifest.Manifest, error) {
 	installDir, err := r.installPath(ref)
 	if err != nil {
@@ -379,10 +382,18 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 	if err := os.RemoveAll(installDir); err != nil {
 		return nil, fmt.Errorf("remove stale local copy %s: %w", installDir, err)
 	}
+	created := absentDirs(filepath.Dir(installDir))
 	if err := os.MkdirAll(filepath.Dir(installDir), 0o755); err != nil {
 		return nil, err
 	}
-	if err := copyTreeNoSymlinks(src, installDir); err != nil {
+	if err := copyTreeDereferencing(src, installDir, src, nil); err != nil {
+		err = errors.Join(err, os.RemoveAll(installDir))
+		// The Oracle removes an apm_modules it created that is empty after
+		// a failed install (install/resolution_staging.py:195-200). A
+		// directory that another copy filled since is not empty and stays.
+		for _, dir := range created {
+			_ = os.Remove(dir)
+		}
 		return nil, fmt.Errorf("copy local dependency %s: %w", ref.LocalSourcePath, err)
 	}
 
@@ -455,6 +466,18 @@ func checkLocalCopy(modulesDir string, ref *manifest.DependencyReference) (strin
 	return src, nil
 }
 
+// absentDirs lists dir and each parent above it that does not exist yet,
+// deepest first: the directories os.MkdirAll(dir) would create.
+func absentDirs(dir string) []string {
+	var absent []string
+	for ; ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(dir); !os.IsNotExist(err) || filepath.Dir(dir) == dir {
+			return absent
+		}
+		absent = append(absent, dir)
+	}
+}
+
 // within reports whether path is dir or below it.
 func within(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
@@ -484,14 +507,14 @@ func realPath(p string) (string, error) {
 	return filepath.Join(resolved, filepath.Base(abs)), nil
 }
 
-// copyTreeNoSymlinks recursively copies srcDir to dstDir, copying regular files
-// and directories only and SKIPPING symlinks entirely (never following them).
-// Skipping symlinks is the security-relevant choice: a symlink under an
-// otherwise-trusted local source could point outside it, and dereferencing it
-// during the copy would pull unrelated content into apm_modules. Matching the
-// Python original's "never bundle symlinks" rule keeps materialization to the
-// package's own in-tree content.
-func copyTreeNoSymlinks(srcDir, dstDir string) error {
+// copyTreeDereferencing copies srcDir to dstDir the way Oracle 0.33.0 copies a
+// local package (install/phases/local_content.py:91-181): a symlink is resolved
+// and its target copied as a regular file or directory when it lies inside
+// pkgRoot; a dangling symlink, one that resolves outside pkgRoot (its target is
+// not read), or one back to a directory already entered on the current path
+// (visited, per branch as in the Oracle) fails the copy with the Oracle's
+// reason. Devices, pipes and sockets are skipped: reading a FIFO would block.
+func copyTreeDereferencing(srcDir, dstDir, pkgRoot string, visited []string) error {
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return err
 	}
@@ -500,23 +523,42 @@ func copyTreeNoSymlinks(srcDir, dstDir string) error {
 		return err
 	}
 	for _, e := range entries {
+		srcPath := filepath.Join(srcDir, e.Name())
+		dstPath := filepath.Join(dstDir, e.Name())
 		info, err := e.Info()
 		if err != nil {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			continue // never follow/copy symlinks
+			resolved, err := filepath.EvalSymlinks(srcPath)
+			if err != nil {
+				return fmt.Errorf("Symlink '%s' has a broken or unresolvable target: %v. Remove the dangling symlink or restore its target. Local install aborted.", srcPath, err)
+			}
+			if !within(pkgRoot, resolved) {
+				return fmt.Errorf("Symlink '%s' resolves to '%s', which escapes the package root '%s'. Only in-package symlinks are dereferenced. Remove the symlink or replace it with a real file copy. Local install aborted.", srcPath, resolved, pkgRoot)
+			}
+			if info, err = os.Stat(resolved); err != nil {
+				return err
+			}
+			if info.IsDir() {
+				if slices.Contains(visited, resolved) {
+					return fmt.Errorf("Circular symlink detected: '%s' resolves to '%s', which was already visited during this install. Break the cycle by replacing one symlink with a real directory copy. Local install aborted.", srcPath, resolved)
+				}
+				if err := copyTreeDereferencing(resolved, dstPath, pkgRoot, append(slices.Clip(visited), resolved)); err != nil {
+					return err
+				}
+				continue
+			}
+			srcPath = resolved
 		}
-		srcPath := filepath.Join(srcDir, e.Name())
-		dstPath := filepath.Join(dstDir, e.Name())
-		if e.IsDir() {
-			if err := copyTreeNoSymlinks(srcPath, dstPath); err != nil {
+		if info.IsDir() {
+			if err := copyTreeDereferencing(srcPath, dstPath, pkgRoot, visited); err != nil {
 				return err
 			}
 			continue
 		}
 		if !info.Mode().IsRegular() {
-			continue // skip devices, pipes, sockets
+			continue
 		}
 		data, err := os.ReadFile(srcPath)
 		if err != nil {

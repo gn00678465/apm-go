@@ -449,49 +449,35 @@ func TestMaterializeLocalCopy_RefusesKeyEscapingModulesDir(t *testing.T) {
 	}
 }
 
-// TestCopyTreeNoSymlinks_SkipsSymlinks proves the security-relevant copy rule:
-// a symlink under the source tree (which could point outside it) is never
-// followed or copied into apm_modules; only the package's own in-tree regular
-// files land there.
-func TestCopyTreeNoSymlinks_SkipsSymlinks(t *testing.T) {
-	src := t.TempDir()
-	const realContent = "in-tree"
-	if err := os.WriteFile(filepath.Join(src, "real.txt"), []byte(realContent), 0644); err != nil {
+// A symlink that leads out of a local package fails the copy before its
+// target is read: nothing is left under apm_modules, and the target is left
+// as it was.
+func TestMaterializeLocalCopy_SymlinkOutsidePackageIsNotRead(t *testing.T) {
+	root, dep := symlinkDep(t)
+	if err := os.WriteFile(filepath.Join(dep, "real.txt"), []byte("in-tree"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// A secret the symlink would leak if followed.
-	outside := t.TempDir()
-	secret := filepath.Join(outside, "secret.txt")
+	secret := filepath.Join(root, "outside", "secret.txt")
 	const secretContent = "must not be copied"
+	if err := os.MkdirAll(filepath.Dir(secret), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(secret, []byte(secretContent), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(secret, filepath.Join(src, "leak.txt")); err != nil {
-		t.Skipf("symlink unsupported on this platform/CI: %v", err)
-	}
+	symlink(t, secret, filepath.Join(dep, "leak.txt"))
 
-	dst := filepath.Join(t.TempDir(), "out")
-	if err := copyTreeNoSymlinks(src, dst); err != nil {
-		t.Fatalf("copyTreeNoSymlinks: %v", err)
+	r := &RealPackageLoader{ModulesDir: "apm_modules"}
+	_, err := r.LoadPackage(localRef("../dep", dep), "")
+	const reason = "', which escapes the package root '"
+	if err == nil || !strings.Contains(err.Error(), "Symlink '"+filepath.Join(dep, "leak.txt")+"' resolves to '"+secret+reason+dep+"'.") {
+		t.Fatalf("error %v, want the escape reason for leak.txt", err)
 	}
-	got, err := os.ReadFile(filepath.Join(dst, "real.txt"))
-	if err != nil {
-		t.Fatalf("regular file should be copied: %v", err)
+	if _, err := os.Lstat("apm_modules"); !os.IsNotExist(err) {
+		t.Errorf("apm_modules exists after a refused copy (lstat error %v)", err)
 	}
-	if string(got) != realContent {
-		t.Errorf("copied regular file bytes changed unexpectedly: got %q want %q", got, realContent)
-	}
-	if _, err := os.Lstat(filepath.Join(dst, "leak.txt")); err == nil {
-		t.Error("symlink must NOT be copied (dereferenced or otherwise)")
-	}
-	// The secret the symlink pointed at must never have been read/altered by
-	// the copy attempt.
-	gotSecret, err := os.ReadFile(secret)
-	if err != nil {
-		t.Fatalf("secret outside src must survive: %v", err)
-	}
-	if string(gotSecret) != secretContent {
-		t.Errorf("secret bytes changed unexpectedly: got %q want %q", gotSecret, secretContent)
+	if got, err := os.ReadFile(secret); err != nil || string(got) != secretContent {
+		t.Errorf("outside file = %q, error %v; want %q", got, err, secretContent)
 	}
 }
 
