@@ -985,7 +985,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, result, newLock, existingLock, existingNode, node,
+	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, len(requestedKeys) > 0, result, newLock, existingLock, existingNode, node,
 		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance})
 }
 
@@ -1472,14 +1472,16 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 // read on Linux (a second codex final-gate finding) -- replace explicitly
 // instead, unconditionally, regardless of the host OS.
 // mergeDeployedFiles combines the existing lockfile's deployed_files with
-// this run's deploy output, keeping old entries only when the file still
-// exists on disk under deployRoot. This handles re-install with a different
-// --target (old target's files survive and stay tracked) without preserving
-// files that were deliberately removed (e.g. stale-skill reconciliation).
+// this run's deploy output, dropping an old entry only when os.Stat says the
+// file does not exist under deployRoot. This handles re-install with a
+// different --target (old target's files survive and stay tracked) without
+// preserving files that were deliberately removed (e.g. stale-skill
+// reconciliation). A path that cannot be read (a permission error) is kept:
+// it may still be on disk, and without its record no later run cleans it.
 func mergeDeployedFiles(oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string, deployRoot string) ([]string, map[string]string) {
 	return mergeDeployedFilesIf(oldFiles, oldHashes, newFiles, newHashes, func(f string) bool {
 		_, err := os.Stat(filepath.Join(deployRoot, filepath.FromSlash(f)))
-		return err == nil
+		return !errors.Is(err, os.ErrNotExist)
 	})
 }
 
@@ -1881,7 +1883,11 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // already-persisted subset, not just the one this call's --skill flag named.
 // dev (R9/AC42) selects which apm.yml section packages is persisted into --
 // always false for `update`, which never persists positional packages.
-func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, run *installRun) error {
+// scoped says the command named packages (`install <pkg>`, `update <pkg>`):
+// the files of a package apm.yml no longer declares are then not cleaned and
+// its lock entry stays as it was, as the Oracle skips its orphan cleanup when
+// it has only_packages (install/phases/cleanup.py:69).
+func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved, scoped bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, run *installRun) error {
 	detectRoot := "."
 	if deployDir != "" {
 		detectRoot = deployDir
@@ -1904,6 +1910,15 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	var keptDirs []string
 	var failedBuckets map[string]bool
 	var skippedDeps []deploy.SkippedDep
+	// orphans are the lock entries step 6b carries over for packages this
+	// run no longer resolves: whole when they were not cleaned, else the
+	// paths the cleanup could not remove.
+	var orphans []lockfile.LockedDep
+	var prevLock *lockfile.Lockfile
+	if existingLock != nil {
+		prevLock = lockUnderCurrentKeys(existingLock, m)
+		orphans = orphanDeps(prevLock, newLock)
+	}
 
 	// 6. Deploy primitives to targets
 	for _, d := range targetDiags {
@@ -2116,7 +2131,24 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			if deployDir != "" {
 				cleanRoot, linkSourceRoot = deployDir, "."
 			}
-			for _, c := range cleanStaleDeployedFiles(existingLock, newLock, deployResult.FailedBuckets, keptDirs, targets, cleanRoot, linkSourceRoot) {
+			if !scoped {
+				oc := cleanOrphanedDeployedFiles(orphans, newLock, keptDirs, cleanRoot, linkSourceRoot)
+				if n := len(oc.removed); n > 0 {
+					// Oracle sentence: core/command_logger.py:563-576. The
+					// paths are listed as for a stale file below (issue #30).
+					ux.Info(os.Stdout, "Cleaned %d %s from packages no longer in apm.yml", n, pluralWord(n, "file", "files"))
+					items := make([]ux.Item, 0, n)
+					for _, f := range oc.removed {
+						items = append(items, ux.Item{Text: f})
+					}
+					ux.List(os.Stdout, items)
+				}
+				for _, d := range oc.diags {
+					ux.Warn(os.Stderr, "%s", d)
+				}
+				orphans = oc.kept
+			}
+			for _, c := range cleanStaleDeployedFiles(prevLock, newLock, deployResult.FailedBuckets, keptDirs, targets, cleanRoot, linkSourceRoot) {
 				if n := len(c.removed); n > 0 {
 					noun := "files"
 					if n == 1 {
@@ -2154,9 +2186,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// 6b. Merge surviving deployed files from the existing lockfile.
 	// A re-install with a different --target (or stale-skill reconciliation
 	// that kept a hand-edited file) may leave files on disk that this run's
-	// deploy did not produce. mergeDeployedFiles checks os.Stat and only
-	// re-adds entries whose files still exist, so files reconciliation
-	// removed in step 6a stay out. A path below a kept directory still exists
+	// deploy did not produce. mergeDeployedFiles drops the entries whose
+	// files are gone, so files reconciliation removed in step 6a stay out. A path below a kept directory still exists
 	// but is the user's now, so the old record of it is dropped first.
 	// A bucket with a failed deploy was not cleaned in step 6a, so every other
 	// old entry of it is kept, also one that os.Stat cannot reach (a path
@@ -2188,7 +2219,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
-			if old := existingLock.FindByKey(dep.UniqueKey()); old != nil {
+			if old := prevLock.FindByKey(dep.UniqueKey()); old != nil {
 				dep.DeployedFiles, dep.DeployedHashes = merge(dep.UniqueKey(),
 					old.DeployedFiles, old.DeployedHashes, dep.DeployedFiles, dep.DeployedHashes)
 			}
@@ -2206,6 +2237,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				oldLocal, existingLock.LocalDeployedHashes,
 				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes)
 		}
+		newLock.Dependencies = append(newLock.Dependencies, orphans...)
 	}
 
 	// 7. No-op check. manifestSectionMoved must gate this alongside lockfile

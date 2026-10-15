@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -42,6 +43,16 @@ var governedPaths = map[string]governedRoots{
 		local:      []string{".agents/skills", ".agents/rules", ".agents/agents", ".agents/hooks.json"},
 		dependency: []string{antigravityBundleRoot},
 	},
+}
+
+// AllTargets lists every target apm-go deploys to, sorted.
+func AllTargets() []string {
+	targets := make([]string, 0, len(governedPaths))
+	for t := range governedPaths {
+		targets = append(targets, t)
+	}
+	sort.Strings(targets)
+	return targets
 }
 
 func normalizeRelPath(p string) string {
