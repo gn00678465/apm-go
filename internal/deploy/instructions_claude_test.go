@@ -3,7 +3,10 @@ package deploy
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 // applyToSource is a representative .instructions.md with an applyTo
@@ -78,9 +81,9 @@ func TestDeployOtherTargets_InstructionsStayByteIdentical(t *testing.T) {
 	}
 }
 
-// TestConvertToClaudeRules covers every boundary of the Python oracle
-// _convert_to_claude_rules (instruction_integrator.py:670-703) +
-// parse_apply_to / yaml_double_quote (patterns.py).
+// TestConvertToClaudeRules covers the frontmatter split and the body of the
+// Python oracle _convert_to_claude_rules (instruction_integrator.py:784-805);
+// applyToOracleCases covers how applyTo is read.
 func TestConvertToClaudeRules(t *testing.T) {
 	tests := []struct {
 		name, in, want string
@@ -91,64 +94,9 @@ func TestConvertToClaudeRules(t *testing.T) {
 			"---\npaths:\n  - \"**/*.go\"\n---\n\nbody\n",
 		},
 		{
-			"unquoted comma list",
-			"---\napplyTo: **/src/**,**/api/**\n---\nbody\n",
-			"---\npaths:\n  - \"**/src/**\"\n  - \"**/api/**\"\n---\n\nbody\n",
-		},
-		{
-			"brace alternation commas are not separators",
-			"---\napplyTo: \"**/*.{css,scss},**/*.py\"\n---\nbody\n",
-			"---\npaths:\n  - \"**/*.{css,scss}\"\n  - \"**/*.py\"\n---\n\nbody\n",
-		},
-		{
-			"unmatched closing brace stays top-level",
-			"---\napplyTo: a}b,{c,d}\n---\nbody\n",
-			"---\npaths:\n  - \"a}b\"\n  - \"{c,d}\"\n---\n\nbody\n",
-		},
-		{
 			"single-quoted value",
 			"---\napplyTo: '**/*.ts'\n---\nbody\n",
 			"---\npaths:\n  - \"**/*.ts\"\n---\n\nbody\n",
-		},
-		{
-			"mixed surrounding quotes all stripped",
-			"---\napplyTo: \"'**/*.go'\"\n---\nbody\n",
-			"---\npaths:\n  - \"**/*.go\"\n---\n\nbody\n",
-		},
-		{
-			"segment whitespace trimmed, empty segments dropped",
-			"---\napplyTo: , **/a ,, **/b ,\n---\nbody\n",
-			"---\npaths:\n  - \"**/a\"\n  - \"**/b\"\n---\n\nbody\n",
-		},
-		{
-			"last applyTo line wins",
-			"---\napplyTo: \"**/*.go\"\napplyTo: \"**/*.py\"\n---\nbody\n",
-			"---\npaths:\n  - \"**/*.py\"\n---\n\nbody\n",
-		},
-		{
-			"indented applyTo line still found",
-			"---\n  applyTo: \"**/*.md\"\n---\nbody\n",
-			"---\npaths:\n  - \"**/*.md\"\n---\n\nbody\n",
-		},
-		{
-			"glob with quote and backslash escaped",
-			"---\napplyTo: a\"b\\c\n---\nbody\n",
-			"---\npaths:\n  - \"a\\\"b\\\\c\"\n---\n\nbody\n",
-		},
-		{
-			"empty applyTo strips frontmatter",
-			"---\napplyTo:\n---\nbody\n",
-			"body\n",
-		},
-		{
-			"whitespace-only applyTo strips frontmatter",
-			"---\napplyTo:   \n---\nbody\n",
-			"body\n",
-		},
-		{
-			"frontmatter without applyTo stripped",
-			"---\ntitle: X\ndescription: Y\n---\n\n# Body\n",
-			"# Body\n",
 		},
 		{
 			"no frontmatter passthrough",
@@ -178,7 +126,11 @@ func TestConvertToClaudeRules(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := string(convertToClaudeRules([]byte(tt.in))); got != tt.want {
+			got, err := convertToClaudeRules([]byte(tt.in))
+			if err != nil {
+				t.Fatalf("convertToClaudeRules(%q): %v", tt.in, err)
+			}
+			if string(got) != tt.want {
 				t.Errorf("convertToClaudeRules(%q)\n got: %q\nwant: %q", tt.in, got, tt.want)
 			}
 		})
@@ -208,5 +160,39 @@ func TestCollectInstructions_OnlyInstructionsMDCollected(t *testing.T) {
 	inst := groupByType(CollectLocalPrimitives(dir))[TypeInstructions]
 	if len(inst) != 1 || inst[0].Name != "keep" {
 		t.Errorf("expected only [keep] collected, got %v", inst)
+	}
+}
+
+// An instruction whose frontmatter is not YAML (an unquoted ** is an alias)
+// fails alone: the rule is not written, the old one stays, the bucket is not
+// cleaned, and the other instructions deploy.
+func TestRun_ClaudeInstructionWithInvalidFrontmatterFails(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/instructions/bad.instructions.md", "---\napplyTo: **/*.go\n---\nbad\n")
+	mkFile(t, dir, ".apm/instructions/good.instructions.md", "---\napplyTo:\n  - \"a/**\"\n---\ngood\n")
+	mkFile(t, dir, ".claude/rules/bad.md", "old rule\n")
+	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
+
+	result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	src := filepath.Join(dir, ".apm", "instructions", "bad.instructions.md")
+	want := "deploy bad to claude failed: " + src + ": frontmatter: YAML parse error: "
+	found := false
+	for _, d := range result.Diags {
+		found = found || strings.HasPrefix(d, want)
+	}
+	if !found {
+		t.Errorf("Diags = %q, want one starting with %q", result.Diags, want)
+	}
+	if !result.FailedBuckets[""] {
+		t.Errorf("FailedBuckets = %v, want the local bucket", result.FailedBuckets)
+	}
+	if got := readDeployed(t, dir, ".claude/rules/bad.md"); got != "old rule\n" {
+		t.Errorf(".claude/rules/bad.md = %q, want the old rule kept", got)
+	}
+	if got := readDeployed(t, dir, ".claude/rules/good.md"); got != "---\npaths:\n  - \"a/**\"\n---\n\ngood\n" {
+		t.Errorf(".claude/rules/good.md = %q", got)
 	}
 }

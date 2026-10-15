@@ -50,8 +50,8 @@ func RenderAgentsMD(instructions []SourcedInstruction) string {
 // renderInstructionsBlock mirrors render_instructions_block
 // (compilation/template_builder.py:25-92): global instructions (no applyTo)
 // render first under one heading sorted by RelPath, then pattern-scoped
-// groups sorted by pattern (the raw applyTo string -- design.md §3, never
-// split on commas), each internally sorted by RelPath.
+// groups sorted by pattern (the normalized applyTo string, never split on
+// commas), each internally sorted by RelPath.
 //
 // A group's heading is emitted whenever at least one instruction belongs
 // to it, even if every instruction in the group has an empty body: the

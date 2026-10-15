@@ -41,7 +41,7 @@ func TestCollectInstructions_LocalDependencySourcePaths(t *testing.T) {
 		},
 	}
 
-	got, err := CollectInstructions(dir, m)
+	got, _, err := CollectInstructions(dir, m)
 	if err != nil {
 		t.Fatalf("CollectInstructions: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestCollectInstructions_PriorityAndTransitiveOrder(t *testing.T) {
 		},
 	}
 
-	got, err := CollectInstructions(dir, m)
+	got, _, err := CollectInstructions(dir, m)
 	if err != nil {
 		t.Fatalf("CollectInstructions: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestCollectInstructions_IgnoresWrongSuffixAndSymlink(t *testing.T) {
 	}
 
 	m := &manifest.Manifest{}
-	got, err := CollectInstructions(dir, m)
+	got, _, err := CollectInstructions(dir, m)
 	if err != nil {
 		t.Fatalf("CollectInstructions: %v", err)
 	}
@@ -439,5 +439,126 @@ func TestWriteFile_AtomicFailurePreservesExisting(t *testing.T) {
 	}
 	if string(got) != existingContent {
 		t.Errorf("existing AGENTS.md was modified despite atomic-write failure: %q", got)
+	}
+}
+
+// An instruction whose frontmatter cannot be read is skipped before the
+// conflicts are resolved, so a dependency's instruction of the same name is
+// compiled in its place (measured with Oracle 0.33.0: the dependency's x is
+// compiled and the local x is reported as not parsed).
+func TestCollectInstructions_SkipsUnreadableFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/instructions/x.instructions.md", "---\napplyTo: **/*.go\n---\nbad local\n")
+	mkFile(t, dir, ".apm/instructions/ok.instructions.md", "---\napplyTo: \"ok/**\"\n---\nok local\n")
+	mkFile(t, dir, "apm_modules/acme/dep/.apm/instructions/x.instructions.md", "---\napplyTo: \"dep/**\"\n---\ngood dep\n")
+	m := &manifest.Manifest{
+		ParsedDeps: []*manifest.DependencyReference{
+			{RepoURL: "acme/dep", Owner: "acme", Repo: "dep", Source: "git"},
+		},
+	}
+
+	got, skipped, err := CollectInstructions(dir, m)
+	if err != nil {
+		t.Fatalf("CollectInstructions: %v", err)
+	}
+	want := []string{".apm/instructions/ok.instructions.md", "apm_modules/acme/dep/.apm/instructions/x.instructions.md"}
+	if paths := relPaths(got); strings.Join(paths, "|") != strings.Join(want, "|") {
+		t.Errorf("compiled %v, want %v", paths, want)
+	}
+	if len(skipped) != 1 || skipped[0].RelPath != ".apm/instructions/x.instructions.md" || !strings.Contains(skipped[0].Err.Error(), "YAML parse error") {
+		t.Errorf("skipped = %+v, want the local x with its YAML error", skipped)
+	}
+}
+
+// An instruction compile cannot use is no candidate, so the next one of its
+// name takes its place, and only some are reported, as Oracle 0.33.0's
+// discovery skips them (primitives/discovery.py:225-263, 385-430, 678-692;
+// measured with ~/.cache/apm-go-verify/issue76/scripts/unread.sh and
+// unread_f.sh).
+func TestCollectInstructions_SkipsWhatTheOracleSkips(t *testing.T) {
+	const dep = "apm_modules/acme/dep/.apm/instructions/"
+	pad := strings.Repeat("a", 8192)
+	tests := []struct {
+		name       string
+		files      map[string]string
+		unreadable string
+		want       []string // compiled RelPath: Body
+		wantWarned []string
+	}{
+		{
+			name:       "a: unreadable local file is reported and a dependency takes its name",
+			files:      map[string]string{".apm/instructions/y.instructions.md": "local y\n", dep + "y.instructions.md": "dep y\n"},
+			unreadable: ".apm/instructions/y.instructions.md",
+			want:       []string{dep + "y.instructions.md: dep y"},
+			wantWarned: []string{".apm/instructions/y.instructions.md"},
+		},
+		{
+			name:       "b: local file that is not UTF-8 is reported",
+			files:      map[string]string{".apm/instructions/w.instructions.md": "---\napplyTo: \"w/**\"\n---\nlocal w \xff\n", ".apm/instructions/u.instructions.md": "local u \xff no fm\n"},
+			wantWarned: []string{".apm/instructions/u.instructions.md", ".apm/instructions/w.instructions.md"},
+		},
+		{
+			name:       "d: unreadable dependency file is skipped without a word",
+			files:      map[string]string{".apm/instructions/x.instructions.md": "local x\n", dep + "x.instructions.md": "dep x\n"},
+			unreadable: dep + "x.instructions.md",
+			want:       []string{".apm/instructions/x.instructions.md: local x"},
+		},
+		{
+			name: "e: dependency file not UTF-8 in its first 8192 bytes is skipped without a word",
+			files: map[string]string{
+				dep + "v.instructions.md":  "dep v \xff\n",
+				dep + "e.instructions.md":  pad[:8190] + "\xe0\x80\n",
+				dep + "c1.instructions.md": "\xc3",
+				dep + "e2.instructions.md": "\xe0\xa0",
+			},
+		},
+		{
+			name: "f: dependency file not UTF-8 only after byte 8192 is reported",
+			files: map[string]string{
+				dep + "f.instructions.md":  pad + "\xff\n",
+				dep + "ac.instructions.md": "A\xc3",
+				dep + "c.instructions.md":  pad[:8191] + "\xc3A\n",
+				dep + "ok.instructions.md": pad[:8191] + "\xc3\xa9\n",
+			},
+			want:       []string{dep + "ok.instructions.md: " + pad[:8191] + "\xc3\xa9"},
+			wantWarned: []string{dep + "ac.instructions.md", dep + "c.instructions.md", dep + "f.instructions.md"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.unreadable != "" && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("needs a file that refuses a read: Windows ignores the read bits of mode 000 and root is not bound by them")
+			}
+			dir := t.TempDir()
+			for rel, content := range tt.files {
+				mkFile(t, dir, rel, content)
+			}
+			if tt.unreadable != "" {
+				p := filepath.Join(dir, filepath.FromSlash(tt.unreadable))
+				if err := os.Chmod(p, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { os.Chmod(p, 0o644) })
+			}
+			m := &manifest.Manifest{ParsedDeps: []*manifest.DependencyReference{{RepoURL: "acme/dep", Owner: "acme", Repo: "dep", Source: "git"}}}
+
+			got, skipped, err := CollectInstructions(dir, m)
+			if err != nil {
+				t.Fatalf("CollectInstructions: %v", err)
+			}
+			var compiled, warned []string
+			for _, inst := range got {
+				compiled = append(compiled, inst.RelPath+": "+inst.Body)
+			}
+			for _, s := range skipped {
+				warned = append(warned, s.RelPath)
+			}
+			if strings.Join(compiled, "|") != strings.Join(tt.want, "|") {
+				t.Errorf("compiled %q, want %q", compiled, tt.want)
+			}
+			if strings.Join(warned, "|") != strings.Join(tt.wantWarned, "|") {
+				t.Errorf("reported %q, want %q", warned, tt.wantWarned)
+			}
+		})
 	}
 }

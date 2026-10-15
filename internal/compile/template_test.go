@@ -19,7 +19,8 @@ func inst(relPath, applyTo, body string) SourcedInstruction {
 // compute.
 
 // TestRender_OracleRootFile_GlobalOnly is the root AGENTS.md the Oracle
-// writes for tools/parity/cases-pending/compile-instruction/fixture.
+// writes for tools/parity/cases/compile-instruction/fixture as it was before
+// issue #76.
 func TestRender_OracleRootFile_GlobalOnly(t *testing.T) {
 	instructions := []SourcedInstruction{
 		inst(".apm/instructions/example.instructions.md", "", "# Example instruction\n\nUse the example."),
@@ -148,8 +149,9 @@ func TestRender_OracleRootFile_LocalThenDependency(t *testing.T) {
 
 // TestRender_RawApplyToComma covers CMP-05: an applyTo value with an
 // embedded comma produces exactly one heading, verbatim -- compile groups
-// by the raw applyTo string, never install's comma-splitting parseApplyTo
-// (design.md §3 note; oracle: template_builder.py:86 formats the dict key).
+// by the normalized applyTo string, never split on commas as install's
+// .claude/rules paths are (oracle: template_builder.py:86 formats the dict
+// key).
 func TestRender_RawApplyToComma(t *testing.T) {
 	got := RenderAgentsMD([]SourcedInstruction{
 		inst(".apm/instructions/comma.instructions.md", "**/src/**, **/api/**", "Comma body."),

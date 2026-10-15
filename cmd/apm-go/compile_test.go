@@ -94,10 +94,10 @@ func TestCompile_ErrorsPrintedOnce(t *testing.T) {
 	}
 }
 
-// TestCompile_WritesOracleRootFile runs the command on the files of
-// tools/parity/cases-pending/compile-instruction/fixture. The expected
-// AGENTS.md is the file the Oracle (v0.33.0) wrote for that fixture with
-// `apm compile`, Build ID included. The second run must not rewrite it.
+// TestCompile_WritesOracleRootFile runs the command on the files
+// tools/parity/cases/compile-instruction/fixture had before issue #76. The
+// expected AGENTS.md is the file the Oracle (v0.33.0) wrote for that fixture
+// with `apm compile`, Build ID included. The second run must not rewrite it.
 func TestCompile_WritesOracleRootFile(t *testing.T) {
 	dir := chdirTemp(t)
 	writeCompileFile(t, dir, "apm.yml", "name: compile-fixture\nversion: 1.0.0\ntarget: codex\n")
@@ -143,5 +143,34 @@ func TestCompile_WritesOracleRootFile(t *testing.T) {
 	}
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Errorf("second run rewrote AGENTS.md (mtime %v -> %v)", before.ModTime(), after.ModTime())
+	}
+}
+
+// An instruction whose frontmatter is not YAML is skipped with one warning
+// and the others are compiled; a list applyTo is one heading, its items
+// joined with "," (Oracle 0.33.0's heading for these files, measured).
+func TestCompile_SkipsUnreadableFrontmatterAndJoinsLists(t *testing.T) {
+	dir := chdirTemp(t)
+	writeCompileFile(t, dir, "apm.yml", "name: compile-fixture\nversion: 1.0.0\ntarget: codex\n")
+	writeCompileFile(t, dir, ".apm/instructions/bad.instructions.md", "---\napplyTo: **/*.go\n---\nbad rule\n")
+	writeCompileFile(t, dir, ".apm/instructions/list.instructions.md", "---\napplyTo:\n  - \"src/**/*.ts\"\n  - \"web/**/*.ts\"\n---\nlist rule\n")
+
+	stdout, stderr, exitCode := runCompileCLI(t, "compile")
+	if exitCode != 0 || stderr != "" {
+		t.Fatalf("exit = %d, stderr = %q, stdout = %q", exitCode, stderr, stdout)
+	}
+	const warn = " ! Skipping .apm/instructions/bad.instructions.md: frontmatter: YAML parse error: "
+	if !strings.HasPrefix(stdout, warn) || strings.Count(stdout, "Skipping") != 1 {
+		t.Errorf("stdout = %q, want one line starting with %q first", stdout, warn)
+	}
+	if !strings.HasSuffix(stdout, "Compiled 1 instruction(s) to AGENTS.md\n") {
+		t.Errorf("stdout = %q, want the success line last", stdout)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(got), "\n## Files matching `src/**/*.ts,web/**/*.ts`\n\nlist rule\n") || strings.Contains(string(got), "bad rule") {
+		t.Errorf("AGENTS.md =\n%s", got)
 	}
 }

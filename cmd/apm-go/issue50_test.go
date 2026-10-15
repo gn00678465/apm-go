@@ -278,9 +278,9 @@ func TestInstall_LocalPackageTranscripts(t *testing.T) {
 				" > Resolving ./dep...\n" +
 				" i Targets: claude  (source: apm.yml)\n" +
 				"   + ./dep (local)\n" +
-				"  |-- 1 rule(s) integrated -> .claude/rules/\n" +
+				"  |-- 3 rule(s) integrated -> .claude/rules/\n" +
 				"   + <project root> (local)\n" +
-				"  |-- 1 rule(s) integrated -> .claude/rules/\n" +
+				"  |-- 3 rule(s) integrated -> .claude/rules/\n" +
 				" i Added apm_modules/ to .gitignore\n" +
 				" + Installed 2 APM dependencies in <DUR>.\n",
 		},
