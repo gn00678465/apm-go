@@ -479,3 +479,28 @@ func TestResolveUninstallTargets_LocalKeyAlias_NilLock(t *testing.T) {
 		t.Errorf("APMTargets = %+v, NotFound = %+v, want no target and %+v", res.APMTargets, res.NotFound, want)
 	}
 }
+
+// An alias that matches more than one declaration, through one lock entry or
+// several, selects nothing and is neither a target nor a not-found.
+func TestResolveUninstallTargets_LocalKeyAlias_Ambiguous(t *testing.T) {
+	m := &manifest.Manifest{
+		ParsedDeps: []*manifest.DependencyReference{
+			{IsLocal: true, LocalPath: "./a/dep", Source: "local"},
+			{IsLocal: true, LocalPath: "./b/dep", Source: "local"},
+			{IsLocal: true, LocalPath: "./twice", Source: "local"},
+		},
+		ParsedDevDeps: []*manifest.DependencyReference{{IsLocal: true, LocalPath: "./twice", Source: "local"}},
+	}
+	lock := &lockfile.Lockfile{Dependencies: []lockfile.LockedDep{
+		{RepoURL: "_local/dep", Source: "local", LocalPath: "./a/dep"},
+		{RepoURL: "_local/dep", Source: "local", LocalPath: "./b/dep"},
+		{RepoURL: "_local/twice", Source: "local", LocalPath: "./twice"},
+	}}
+
+	res := resolveUninstallTargets([]string{"_local/dep", "_local/twice"}, m, lock, panicResolver, false)
+
+	want := []uninstallAmbiguous{{Name: "_local/dep", Matches: 2}, {Name: "_local/twice", Matches: 2}}
+	if !reflect.DeepEqual(res.Ambiguous, want) || len(res.APMTargets) != 0 || len(res.NotFound) != 0 {
+		t.Errorf("Ambiguous = %+v, APMTargets = %+v, NotFound = %+v, want Ambiguous %+v only", res.Ambiguous, res.APMTargets, res.NotFound, want)
+	}
+}

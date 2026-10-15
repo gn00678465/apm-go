@@ -87,6 +87,15 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	for _, rej := range plan.resolution.SupplyChainRejected {
 		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
 	}
+	if ambiguous := plan.resolution.Ambiguous; len(ambiguous) > 0 {
+		// The Oracle's refusal (commands/uninstall/engine.py:694-698,
+		// cli.py:324), before anything is written; a not-found argument does
+		// not abort, by the ruling, so it is not counted.
+		for _, a := range ambiguous {
+			ux.Error(os.Stderr, "Ambiguous dependency '%s': it matches %d declarations. Use one exact path from apm.yml to uninstall a single dependency.", a.Name, a.Matches)
+		}
+		return fmt.Errorf("Uninstall aborted: %d requested package(s) could not be selected. Resolve the errors above and retry; no changes were made.", len(ambiguous))
+	}
 	if len(plan.resolution.APMTargets) == 0 && len(plan.resolution.MCPTargets) == 0 {
 		// un-013: every argument was some flavor of not-found -- no changes.
 		ux.Info(os.Stdout, "No packages found in apm.yml to remove")

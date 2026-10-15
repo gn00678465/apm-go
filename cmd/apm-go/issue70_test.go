@@ -261,3 +261,73 @@ func TestUninstall_SameMCPServerTwice_RemovedAndCountedOnce(t *testing.T) {
 		t.Errorf("uninstall one one:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+const ambiguous70 = " x Ambiguous dependency '_local/dep': it matches 2 declarations. Use one exact path from apm.yml to uninstall a single dependency.\n" +
+	" x Uninstall aborted: 1 requested package(s) could not be selected. Resolve the errors above and retry; no changes were made.\n"
+
+// collidingLocal70 is the state an Oracle install leaves for two local
+// packages whose directories are both named dep: one lock name, two entries.
+func collidingLocal70(t *testing.T) string {
+	t.Helper()
+	dir := chdirTemp(t)
+	for rel, content := range map[string]string{
+		"apm.yml":                        "name: repro\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./a/dep\n    - ./b/dep\n",
+		"a/dep/apm.yml":                  "name: dep\nversion: 1.0.0\n",
+		"b/dep/apm.yml":                  "name: dep\nversion: 1.0.0\n",
+		"apm_modules/_local/dep/apm.yml": "name: dep\nversion: 1.0.0\n",
+		".claude/skills/dep/apm.yml":     "name: dep\nversion: 1.0.0\n",
+		"apm.lock.yaml": "lockfile_version: '1'\napm_version: 0.33.0\ndependencies:\n" +
+			"- repo_url: _local/dep\n  name: dep\n  version: 1.0.0\n  package_type: hybrid\n  source: local\n  local_path: ./a/dep\n" +
+			"- repo_url: _local/dep\n  name: dep\n  version: 1.0.0\n  package_type: hybrid\n  deployed_files:\n  - .claude/skills/dep\n  - .claude/skills/dep/apm.yml\n" +
+			"  deployed_file_hashes:\n    .claude/skills/dep/apm.yml: sha256:b7f519e5f03ccbc51b15b42c19f654f045b1a8e59263e35f8b7b902367a21473\n" +
+			"  source: local\n  local_path: ./b/dep\n",
+	} {
+		writeCompileFile(t, dir, rel, content)
+	}
+	return dir
+}
+
+// An alias that matches two declarations selects neither: the Oracle refuses
+// the whole uninstall (commands/uninstall/engine.py:694-698, cli.py:324) and
+// changes nothing, also for --dry-run.
+func TestUninstall_LocalKeyAlias_Ambiguous_RefusedWithoutWrites(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) string
+		args  []string
+		want  string
+	}{
+		{"one path declared twice", func(t *testing.T) string {
+			dir, _ := installedLocal70(t, "dependencies:\n  apm:\n  - ./dep\n  - path: ./dep\n")
+			return dir
+		}, []string{"_local/dep"}, " > Uninstalling 1 package(s)...\n" + ambiguous70},
+		{"one path declared twice, dry run", func(t *testing.T) string {
+			dir, _ := installedLocal70(t, "dependencies:\n  apm:\n  - ./dep\n  - path: ./dep\n")
+			return dir
+		}, []string{"--dry-run", "_local/dep"}, " > Uninstalling 1 package(s)...\n" + ambiguous70},
+		{"dependencies and devDependencies", func(t *testing.T) string {
+			dir, _ := installedLocal70(t, "dependencies:\n  apm:\n  - ./dep\ndevDependencies:\n  apm:\n  - ./dep\n")
+			return dir
+		}, []string{"_local/dep"}, " > Uninstalling 1 package(s)...\n" + ambiguous70},
+		{"two paths sharing a lock name", collidingLocal70,
+			[]string{"_local/dep"}, " > Uninstalling 1 package(s)...\n" + ambiguous70},
+		{"two paths sharing a lock name, with a path argument", collidingLocal70,
+			[]string{"_local/dep", "./a/dep"}, " > Uninstalling 2 package(s)...\n + _local/dep - found in apm.yml\n" + ambiguous70},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := tt.setup(t)
+			before := tree86(t, dir)
+
+			stdout, stderr, exitCode := runCompileCLI(t, append([]string{"uninstall"}, tt.args...)...)
+
+			if exitCode != 1 || stderr != "" {
+				t.Errorf("exit = %d, stderr = %q, want exit 1 and no stderr", exitCode, stderr)
+			}
+			if stdout != tt.want {
+				t.Errorf("stdout:\n%s\nwant:\n%s", stdout, tt.want)
+			}
+			assertTree86(t, dir, before)
+		})
+	}
+}
