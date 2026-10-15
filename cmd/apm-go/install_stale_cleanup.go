@@ -48,15 +48,7 @@ type staleCleanup struct {
 // newLock must already carry this run's deployed files. Results are ordered
 // local bucket first, then newLock.Dependencies order.
 func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, keptDirs, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
-	claimed := make(map[string]bool)
-	for _, f := range newLock.LocalDeployedFiles {
-		claimed[normalizeDeployPath(f)] = true
-	}
-	for _, d := range newLock.Dependencies {
-		for _, f := range d.DeployedFiles {
-			claimed[normalizeDeployPath(f)] = true
-		}
-	}
+	claimed := claimedPaths(newLock)
 
 	var results []staleCleanup
 	clean := func(label string, bucket deploy.DeployBucket, source string, oldFiles []string, oldHashes map[string]string) {
@@ -94,6 +86,103 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(key)), old.DeployedFiles, old.DeployedHashes)
 	}
 	return results
+}
+
+// claimedPaths is every path newLock records for this run, normalized.
+func claimedPaths(newLock *lockfile.Lockfile) map[string]bool {
+	claimed := make(map[string]bool)
+	for _, f := range newLock.LocalDeployedFiles {
+		claimed[normalizeDeployPath(f)] = true
+	}
+	for _, d := range newLock.Dependencies {
+		for _, f := range d.DeployedFiles {
+			claimed[normalizeDeployPath(f)] = true
+		}
+	}
+	return claimed
+}
+
+// orphanDeps returns the dependencies the previous lock records and this run
+// no longer resolves, transitive ones included, as the Oracle compares the
+// old lock with intended_dep_keys (install/phases/resolve.py:975-980). A local
+// entry in the format before issue #50 is not one: this run records the same
+// package under its current key.
+func orphanDeps(existingLock, newLock *lockfile.Lockfile) []lockfile.LockedDep {
+	var orphans []lockfile.LockedDep
+	for i := range existingLock.Dependencies {
+		old := &existingLock.Dependencies[i]
+		if newLock.FindByKey(old.UniqueKey()) == nil && !isLegacyLocalEntry(old) {
+			orphans = append(orphans, *old)
+		}
+	}
+	return orphans
+}
+
+// orphanCleanup is what cleanOrphanedDeployedFiles did.
+type orphanCleanup struct {
+	removed []string // lock-relative paths of every orphan, sorted
+	diags   []string
+	kept    []lockfile.LockedDep
+}
+
+// cleanOrphanedDeployedFiles deletes the files the orphans deployed (oracle:
+// install/phases/cleanup.py:69-131). Their paths are judged against every
+// target apm-go deploys to, not this run's, because the Oracle passes
+// targets=None there: a file of a target this run no longer names goes too.
+// A path this run deployed, an MCP config file, a path at or below keptDirs
+// and a path no apm-go target writes are not touched and leave the record.
+//
+// An orphan with a path that is still on disk after the delete (a hash
+// mismatch, a failed delete) is returned in kept with only those paths and
+// their old hashes, as the Oracle keeps it (orphan_cleanup_retained), so a
+// later run can still clean them. deployRoot and linkSourceRoot are as for
+// cleanStaleDeployedFiles; newLock must already carry this run's deployed
+// files.
+func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.Lockfile, keptDirs []string, deployRoot, linkSourceRoot string) orphanCleanup {
+	claimed := claimedPaths(newLock)
+	allTargets := deploy.AllTargets()
+	takenOverRoot := ""
+	if linkSourceRoot != "" {
+		takenOverRoot = deployRoot
+	}
+	var out orphanCleanup
+	for _, dep := range orphans {
+		var candidates []string
+		for _, f := range dep.DeployedFiles {
+			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(allTargets, deploy.DependencyBucket, f) || deploy.UnderKeptDir(keptDirs, f) {
+				continue
+			}
+			candidates = append(candidates, f)
+		}
+		if len(candidates) == 0 {
+			continue
+		}
+		key := dep.UniqueKey()
+		var removed, diags []string
+		if linkSourceRoot != "" {
+			// A removed skill link counts every path of the skill, as the
+			// Oracle, which copies the files, counts them; uninstall
+			// --global counts them the same way.
+			var gone []string
+			gone, diags = deploy.RemoveStaleLinkedFiles(deployRoot, linkSourceRoot, filepath.Join(linkSourceRoot, "apm_modules", filepath.FromSlash(key)), candidates, dep.DeployedHashes, claimed)
+			for _, f := range candidates {
+				if atOrBelowAny(gone, f) {
+					removed = append(removed, f)
+				}
+			}
+		} else {
+			removed, _, diags = deploy.RemoveDeployedFiles(deployRoot, candidates, dep.DeployedHashes)
+		}
+		out.removed = append(out.removed, removed...)
+		out.diags = append(out.diags, diags...)
+		left, hashes := mergeDeployedFiles(notTakenOver(key, candidates, allTargets, takenOverRoot), dep.DeployedHashes, nil, nil, deployRoot)
+		if len(left) > 0 {
+			dep.DeployedFiles, dep.DeployedHashes = left, hashes
+			out.kept = append(out.kept, dep)
+		}
+	}
+	sort.Strings(out.removed)
+	return out
 }
 
 // withSkillDirs adds, for each deployed skill, the skill's own directory
