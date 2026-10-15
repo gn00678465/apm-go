@@ -75,17 +75,21 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	// engine.py:676-681), issue #50 ruling R10.
 	ux.Progress(os.Stdout, "Uninstalling %d package(s)...", len(args))
 	plan := prepareUninstallPlan(args, m, lock, opts.DryRun)
-	for _, t := range plan.resolution.APMTargets {
-		ux.Success(os.Stdout, "%s - found in apm.yml", plan.moduleKey(t))
+	// The Oracle resolves every marketplace argument before it walks the
+	// arguments, and prints what resolving says then (commands/uninstall/
+	// engine.py:619-628). It resolves them in the order of a Python set
+	// (:619), which changes from run to run, so apm-go keeps argument order.
+	for _, arg := range plan.resolution.Arguments {
+		printUninstallResolveLines(arg)
 	}
-	for _, t := range plan.resolution.MCPTargets {
-		ux.Success(os.Stdout, "%s - found in apm.yml", t.Name)
+	for _, arg := range plan.resolution.Arguments {
+		printUninstallArgument(plan, arg)
 	}
-	for _, nf := range plan.resolution.NotFound {
-		printUninstallNotFound(nf)
-	}
-	for _, rej := range plan.resolution.SupplyChainRejected {
-		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
+	if ambiguous := plan.resolution.Ambiguous; len(ambiguous) > 0 {
+		// The Oracle's refusal (cli.py:324), before anything is written; a
+		// not-found argument does not abort, by the ruling, so it is not
+		// counted.
+		return fmt.Errorf("Uninstall aborted: %d requested package(s) could not be selected. Resolve the errors above and retry; no changes were made.", len(ambiguous))
 	}
 	if len(plan.resolution.APMTargets) == 0 && len(plan.resolution.MCPTargets) == 0 {
 		// un-013: every argument was some flavor of not-found -- no changes.
@@ -108,6 +112,12 @@ func runUninstall(args []string, opts uninstallOptions) error {
 // un-080 requires the dry-run preview to include "the orphan BFS result").
 type uninstallPlan struct {
 	resolution *uninstallResolution
+	// apmTargets and mcpTargets hold each selected entry once, in the order
+	// the arguments first select it: an entry is removed and counted once
+	// however many arguments name it (Oracle commands/uninstall/
+	// engine.py:630-731).
+	apmTargets []uninstallAPMTarget
+	mcpTargets []uninstallMCPTarget
 	// moduleKeyByIdentity is the apm_modules key of each matched target.
 	moduleKeyByIdentity map[string]string
 	removedIdentities   map[string]bool
@@ -141,15 +151,24 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	removedIdentities := make(map[string]bool, len(resolution.APMTargets))
 	removedModuleKeys := make(map[string]bool, len(resolution.APMTargets))
 	moduleKeyByIdentity := make(map[string]string, len(resolution.APMTargets))
+	var apmTargets []uninstallAPMTarget
 	for _, t := range resolution.APMTargets {
+		if removedIdentities[t.IdentityKey] {
+			continue
+		}
+		apmTargets = append(apmTargets, t)
 		removedIdentities[t.IdentityKey] = true
 		key := uninstallRemovalKey(t.IdentityKey, lock)
 		moduleKeyByIdentity[t.IdentityKey] = key
 		removedModuleKeys[key] = true
 	}
 	mcpNames := make(map[string]bool, len(resolution.MCPTargets))
+	var mcpTargets []uninstallMCPTarget
 	for _, t := range resolution.MCPTargets {
-		mcpNames[t.Name] = true
+		if !mcpNames[t.Name] {
+			mcpTargets = append(mcpTargets, t)
+			mcpNames[t.Name] = true
+		}
 	}
 
 	remainingRootKeys := uninstallRemainingRootKeys(m, removedIdentities, lock)
@@ -179,6 +198,8 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 
 	return &uninstallPlan{
 		resolution:          resolution,
+		apmTargets:          apmTargets,
+		mcpTargets:          mcpTargets,
 		moduleKeyByIdentity: moduleKeyByIdentity,
 		removedIdentities:   removedIdentities,
 		removedModuleKeys:   removedModuleKeys,
@@ -793,6 +814,40 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 	return writeLockfileBytes(out)
 }
 
+// printUninstallResolveLines prints what resolving a marketplace argument
+// said: that it could not be resolved, could not be previewed, or was
+// refused by the supply-chain guard.
+func printUninstallResolveLines(arg *uninstallResolution) {
+	for _, nf := range arg.NotFound {
+		if nf.Reason != uninstallNotFoundNoMatch {
+			printUninstallNotFound(nf)
+		}
+	}
+	for _, rej := range arg.SupplyChainRejected {
+		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
+	}
+}
+
+// printUninstallArgument prints the line of one argument's outcome, unless
+// printUninstallResolveLines already did.
+func printUninstallArgument(plan *uninstallPlan, arg *uninstallResolution) {
+	for _, t := range arg.APMTargets {
+		ux.Success(os.Stdout, "%s - found in apm.yml", plan.moduleKey(t))
+	}
+	for _, t := range arg.MCPTargets {
+		ux.Success(os.Stdout, "%s - found in apm.yml", t.Name)
+	}
+	for _, nf := range arg.NotFound {
+		if nf.Reason == uninstallNotFoundNoMatch {
+			printUninstallNotFound(nf)
+		}
+	}
+	// The Oracle's words (commands/uninstall/engine.py:694-698).
+	for _, a := range arg.Ambiguous {
+		ux.Error(os.Stderr, "Ambiguous dependency '%s': it matches %d declarations. Use one exact path from apm.yml to uninstall a single dependency.", a.Name, a.Matches)
+	}
+}
+
 // printUninstallNotFound reports why one PACKAGE argument produced no
 // uninstall target (un-013/017/081), warning and letting the rest of the
 // command proceed.
@@ -817,9 +872,8 @@ func printUninstallNotFound(nf uninstallNotFound) {
 // (commands/uninstall/engine.py:745-810); a matched MCP server, which the
 // Oracle does not uninstall, gets a line of the same shape.
 func printUninstallDryRunPlan(plan *uninstallPlan) {
-	resolution := plan.resolution
-	ux.Info(os.Stdout, "Dry run: Would remove %d package(s):", len(resolution.APMTargets)+len(resolution.MCPTargets))
-	for _, t := range resolution.APMTargets {
+	ux.Info(os.Stdout, "Dry run: Would remove %d package(s):", len(plan.apmTargets)+len(plan.mcpTargets))
+	for _, t := range plan.apmTargets {
 		key := plan.moduleKey(t)
 		ux.Info(os.Stdout, "  - %s from apm.yml", key)
 		// A directory that leads out of apm_modules is not one the real run
@@ -831,7 +885,7 @@ func printUninstallDryRunPlan(plan *uninstallPlan) {
 			ux.Info(os.Stdout, "  - %s from apm_modules/", key)
 		}
 	}
-	for _, t := range resolution.MCPTargets {
+	for _, t := range plan.mcpTargets {
 		ux.Info(os.Stdout, "  - %s from apm.yml", t.Name)
 	}
 	if len(plan.orphans) > 0 {
@@ -850,9 +904,8 @@ func printUninstallDryRunPlan(plan *uninstallPlan) {
 // the closing count. The
 // counts come from what was removed, not from what the lock listed.
 func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[string]bool, cleaned []uninstallCleaned, keptFiles []string, handedOver func()) {
-	resolution := plan.resolution
 	fromModules := 0
-	for _, t := range resolution.APMTargets {
+	for _, t := range plan.apmTargets {
 		key := plan.moduleKey(t)
 		if removedModuleDirs[key] {
 			fromModules++
@@ -872,17 +925,17 @@ func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[s
 	if len(keptFiles) > 0 {
 		ux.Warn(os.Stdout, "Kept %d deployed file(s) that were modified or are shared", len(keptFiles))
 	}
-	for _, t := range resolution.APMTargets {
+	for _, t := range plan.apmTargets {
 		section := "dependencies.apm"
 		if t.IsDev {
 			section = "devDependencies.apm"
 		}
 		ux.Info(os.Stdout, "Removed %s from %s in apm.yml", plan.moduleKey(t), section)
 	}
-	for _, t := range resolution.MCPTargets {
+	for _, t := range plan.mcpTargets {
 		ux.Info(os.Stdout, "Removed %s from dependencies.mcp in apm.yml", t.Name)
 	}
-	removedPackages := len(resolution.APMTargets) + len(resolution.MCPTargets)
+	removedPackages := len(plan.apmTargets) + len(plan.mcpTargets)
 	apmYMLPath := "apm.yml"
 	if abs, err := filepath.Abs("apm.yml"); err == nil {
 		apmYMLPath = abs

@@ -50,6 +50,14 @@ type uninstallSupplyChainRejection struct {
 	Canonical string // the identity the registry resolved to and that was rejected
 }
 
+// uninstallAmbiguous records a PACKAGE argument that matches more than one
+// apm.yml entry, which the Oracle refuses rather than guess (Matches is how
+// many).
+type uninstallAmbiguous struct {
+	Name    string
+	Matches int
+}
+
 // uninstallAPMTarget is a PACKAGE argument matched to an existing
 // dependencies.apm / devDependencies.apm entry (un-010/011/012).
 type uninstallAPMTarget struct {
@@ -67,12 +75,17 @@ type uninstallMCPTarget struct {
 }
 
 // uninstallResolution is resolveUninstallTargets's full result: every
-// PACKAGE argument ends up in exactly one of these four slices.
+// PACKAGE argument ends up in exactly one of these five slices.
 type uninstallResolution struct {
 	APMTargets          []uninstallAPMTarget
 	MCPTargets          []uninstallMCPTarget
 	NotFound            []uninstallNotFound
 	SupplyChainRejected []uninstallSupplyChainRejection
+	Ambiguous           []uninstallAmbiguous
+	// Arguments holds each argument's own resolution, with its one outcome,
+	// in command-line order: the Oracle prints each argument's line as it
+	// reaches it (commands/uninstall/engine.py:633-731).
+	Arguments []*uninstallResolution
 }
 
 // marketplaceRegistryResolver abstracts marketplace.ResolvePlugin so tests
@@ -102,7 +115,14 @@ func defaultMarketplaceRegistryResolver(plugin, mkt string, opts marketplace.Res
 func resolveUninstallTargets(names []string, m *manifest.Manifest, lock *lockfile.Lockfile, resolve marketplaceRegistryResolver, dryRun bool) *uninstallResolution {
 	res := &uninstallResolution{}
 	for _, name := range names {
-		resolveUninstallTarget(name, m, lock, resolve, dryRun, res)
+		arg := &uninstallResolution{}
+		resolveUninstallTarget(name, m, lock, resolve, dryRun, arg)
+		res.Arguments = append(res.Arguments, arg)
+		res.APMTargets = append(res.APMTargets, arg.APMTargets...)
+		res.MCPTargets = append(res.MCPTargets, arg.MCPTargets...)
+		res.NotFound = append(res.NotFound, arg.NotFound...)
+		res.SupplyChainRejected = append(res.SupplyChainRejected, arg.SupplyChainRejected...)
+		res.Ambiguous = append(res.Ambiguous, arg.Ambiguous...)
 	}
 	return res
 }
@@ -119,7 +139,7 @@ func resolveUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lo
 		resolveMarketplaceUninstallTarget(name, plugin, mkt, ref, m, lock, resolve, dryRun, res)
 		return
 	}
-	resolvePlainUninstallTarget(name, m, res)
+	resolvePlainUninstallTarget(name, m, lock, res)
 }
 
 // resolvePlainUninstallTarget handles a PACKAGE argument that is NOT
@@ -127,7 +147,7 @@ func resolveUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lo
 // (un-010/011), falling back to un-019's standalone-MCP match when it
 // doesn't parse as a dependency string at all, or parses fine but matches no
 // existing apm.yml entry.
-func resolvePlainUninstallTarget(name string, m *manifest.Manifest, res *uninstallResolution) {
+func resolvePlainUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lockfile, res *uninstallResolution) {
 	if d, err := manifest.ParseDepString(name); err == nil {
 		if identity, ok := uninstallIdentity(d); ok {
 			if isDev, found := findManifestAPMTarget(m, identity); found {
@@ -135,6 +155,14 @@ func resolvePlainUninstallTarget(name string, m *manifest.Manifest, res *uninsta
 				return
 			}
 		}
+	}
+	switch target, matches := localAliasTarget(name, m, lock); {
+	case matches == 1:
+		res.APMTargets = append(res.APMTargets, target)
+		return
+	case matches > 1:
+		res.Ambiguous = append(res.Ambiguous, uninstallAmbiguous{Name: name, Matches: matches})
+		return
 	}
 	// un-019 (apm-go enhancement): apm package identity not found (or the
 	// argument doesn't even parse as one) -- try it as a standalone MCP
@@ -144,6 +172,36 @@ func resolvePlainUninstallTarget(name string, m *manifest.Manifest, res *uninsta
 		return
 	}
 	res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundNoMatch})
+}
+
+// localAliasTarget selects the apm.yml entry a local package's lock name,
+// _local/<name>, stands for, and counts the entries it matches. As in the
+// Oracle (models/dependency/selection.py:69-86), only lock entries with
+// source local make the alias, through the paths they record, which are the
+// declared ones; every local entry declaring one of those paths matches, so
+// one path declared twice, or two paths that share a lock name, match twice.
+func localAliasTarget(name string, m *manifest.Manifest, lock *lockfile.Lockfile) (target uninstallAPMTarget, matches int) {
+	if lock == nil {
+		return target, 0
+	}
+	paths := map[string]bool{}
+	for _, dep := range lock.Dependencies {
+		if dep.Source == "local" && dep.RepoURL == name && dep.LocalPath != "" {
+			paths[dep.LocalPath] = true
+		}
+	}
+	for i, deps := range [][]*manifest.DependencyReference{m.ParsedDeps, m.ParsedDevDeps} {
+		for _, d := range deps {
+			if !d.IsLocal || !paths[d.LocalPath] {
+				continue
+			}
+			if matches == 0 {
+				target = uninstallAPMTarget{Name: name, IdentityKey: "local:" + d.LocalPath, IsDev: i == 1}
+			}
+			matches++
+		}
+	}
+	return target, matches
 }
 
 // resolveMarketplaceUninstallTarget handles a "PLUGIN@MARKETPLACE[#REF]"
