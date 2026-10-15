@@ -50,7 +50,7 @@ func TestCollectDependencyPrimitives(t *testing.T) {
 	mkFile(t, modDir, ".apm/skills/bar/SKILL.md", "bar skill")
 	mkFile(t, modDir, ".apm/instructions/setup.instructions.md", "setup")
 
-	prims := CollectDependencyPrimitives("acme/foo", modDir)
+	prims := collectDep(t, "acme/foo", modDir)
 
 	if len(prims) != 2 {
 		t.Fatalf("expected 2 primitives, got %d", len(prims))
@@ -73,7 +73,7 @@ func TestCollectDependencyPrimitives_SkillBundle(t *testing.T) {
 	// Skill bundle: SKILL.md at root
 	mkFile(t, modDir, "SKILL.md", "root skill")
 
-	prims := CollectDependencyPrimitives("acme/skill-pkg", modDir)
+	prims := collectDep(t, "acme/skill-pkg", modDir)
 
 	if len(prims) != 1 {
 		t.Fatalf("expected 1, got %d", len(prims))
@@ -94,7 +94,7 @@ func TestCollectDependencyPrimitives_SkillCollection(t *testing.T) {
 	mkFile(t, modDir, "skills/alpha/SKILL.md", "alpha")
 	mkFile(t, modDir, "skills/beta/SKILL.md", "beta")
 
-	prims := CollectDependencyPrimitives("acme/multi", modDir)
+	prims := collectDep(t, "acme/multi", modDir)
 
 	if len(prims) != 2 {
 		t.Fatalf("expected 2, got %d", len(prims))
@@ -157,4 +157,13 @@ func groupByType(prims []Primitive) map[PrimitiveType][]Primitive {
 		m[p.Type] = append(m[p.Type], p)
 	}
 	return m
+}
+
+func collectDep(t *testing.T, depKey, modulePath string) []Primitive {
+	t.Helper()
+	prims, err := CollectDependencyPrimitives(depKey, modulePath)
+	if err != nil {
+		t.Fatalf("CollectDependencyPrimitives(%s): %v", depKey, err)
+	}
+	return prims
 }

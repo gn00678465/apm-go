@@ -38,18 +38,23 @@ type pluginManifest struct {
 //
 // A missing file, invalid JSON, or a manifest without "name" all result in
 // (nil, false) -- entirely ignored, callers fall back to whatever
-// non-plugin.json discovery they already do.
-func collectPluginPrimitives(depKey, modulePath string) (prims []Primitive, skillsDeclared bool) {
-	data, err := os.ReadFile(filepath.Join(modulePath, ".claude-plugin", "plugin.json"))
+// non-plugin.json discovery they already do. The error is a symlink at the
+// manifest that leaves the package, or one in a declared skill directory.
+func collectPluginPrimitives(t sourceTree) (prims []Primitive, skillsDeclared bool, err error) {
+	data, err := readPluginManifest(t)
 	if err != nil {
-		return nil, false
+		return nil, false, err
+	}
+	if data == nil {
+		return nil, false, nil
 	}
 
 	var m pluginManifest
 	if err := json.Unmarshal(data, &m); err != nil || m.Name == "" {
-		return nil, false
+		return nil, false, nil
 	}
 
+	depKey, modulePath := t.depKey, t.dir
 	source := "dependency:" + depKey
 
 	for _, rel := range decodeStringOrList(m.Skills) {
@@ -63,6 +68,9 @@ func collectPluginPrimitives(depKey, modulePath string) (prims []Primitive, skil
 		}
 		if _, err := os.Stat(filepath.Join(abs, "SKILL.md")); err != nil {
 			continue
+		}
+		if err := t.checkSkill(filepath.ToSlash(rel)); err != nil {
+			return nil, false, err
 		}
 		prims = append(prims, Primitive{
 			Name:    filepath.Base(abs),
@@ -81,7 +89,22 @@ func collectPluginPrimitives(depKey, modulePath string) (prims []Primitive, skil
 		prims = append(prims, collectPluginFlatFiles(rel, modulePath, depKey, source, TypeCommands, extractBaseName)...)
 	}
 
-	return prims, isJSONKeyPresent(m.Skills)
+	return prims, isJSONKeyPresent(m.Skills), nil
+}
+
+// readPluginManifest returns the bytes of t's .claude-plugin/plugin.json, nil
+// when it cannot be read. The manifest is read through t, so a symlink at it
+// that leaves the package is an error.
+func readPluginManifest(t sourceTree) ([]byte, error) {
+	p, err := t.path(".claude-plugin/plugin.json")
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil, nil
+	}
+	return data, nil
 }
 
 // decodeStringOrList normalizes a manifest component field that the spec

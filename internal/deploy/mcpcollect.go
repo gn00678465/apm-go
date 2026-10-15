@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/apm-go/apm/internal/manifest"
@@ -106,15 +105,41 @@ func isSelfDefinedMCP(s *manifest.MCPDependency) bool {
 	return s.Registry == false
 }
 
-// loadDependencyMCP reads and parses a dependency's own apm.yml to collect
-// its prod MCP servers. A missing apm.yml is treated as "no MCP servers",
-// matching the lenience CollectDependencyPrimitives already applies to
-// missing module content. An apm.yml that exists but fails to parse is
+// readDependencyManifest returns the bytes of the dependency's own apm.yml,
+// nil when there is none or it cannot be read. A symlink at it that leaves
+// the package is an error.
+func readDependencyManifest(t sourceTree) ([]byte, error) {
+	p, err := t.path("apm.yml")
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil, nil
+	}
+	return data, nil
+}
+
+// readManifestLeniently is readDependencyManifest for a caller that must go on
+// without the manifest: uninstall cannot be stopped by the package it removes,
+// so an apm.yml it must not read is taken as one it cannot read.
+func readManifestLeniently(depKey, modulePath string) []byte {
+	t, ok := dependencyTree(depKey, modulePath)
+	if !ok {
+		return nil
+	}
+	data, _ := readDependencyManifest(t)
+	return data
+}
+
+// loadDependencyMCP parses a dependency's own apm.yml, data, to collect its
+// prod MCP servers. A missing apm.yml (nil data) is treated as "no MCP
+// servers", matching the lenience CollectDependencyPrimitives already applies
+// to missing module content. An apm.yml that exists but fails to parse is
 // surfaced as a diagnostic (it should already be valid from install-time
 // validation, so a failure here indicates a corrupted apm_modules tree).
-func loadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []string) {
-	data, err := os.ReadFile(filepath.Join(modulePath, "apm.yml"))
-	if err != nil {
+func loadDependencyMCP(depKey string, data []byte) ([]*manifest.MCPDependency, []string) {
+	if data == nil {
 		return nil, nil
 	}
 	node, err := yamlcore.SafeLoad(data)
@@ -133,7 +158,7 @@ func loadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []
 // stale-diff needs the same "read a dependency's own apm.yml prod MCP
 // servers" lenience rules) without duplicating its logic.
 func LoadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []string) {
-	return loadDependencyMCP(depKey, modulePath)
+	return loadDependencyMCP(depKey, readManifestLeniently(depKey, modulePath))
 }
 
 // LoadDependencyDeps reads a dependency's own apm.yml and returns the
@@ -149,8 +174,8 @@ func LoadDependencyMCP(depKey, modulePath string) ([]*manifest.MCPDependency, []
 // single parent and can't represent a diamond dependency shared by two root
 // packages.
 func LoadDependencyDeps(depKey, modulePath string) ([]string, []string) {
-	data, err := os.ReadFile(filepath.Join(modulePath, "apm.yml"))
-	if err != nil {
+	data := readManifestLeniently(depKey, modulePath)
+	if data == nil {
 		return nil, nil
 	}
 	node, err := yamlcore.SafeLoad(data)

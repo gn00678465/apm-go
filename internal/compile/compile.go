@@ -59,9 +59,10 @@ func HasCompilableContent(projectDir string) bool {
 // order, then transitive dependencies in lockfile sorted order (design.md
 // §3; mirrors deploy.Run's collection order, deploy.go:72-118) -- resolves
 // same-name conflicts via deploy.ResolvePrimitives (local wins, then
-// first-declared wins), drops any symlinked instruction file (defense in
-// depth: deploy.CollectLocalPrimitives/CollectDependencyPrimitives do not
-// themselves filter symlinks), and parses each winner's frontmatter.
+// first-declared wins), drops any symlinked instruction file of the
+// project's own (deploy.CollectLocalPrimitives does not filter symlinks; a
+// dependency's come resolved, or fail the collection when they leave the
+// package), and parses each winner's frontmatter.
 func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInstruction, error) {
 	var ordered []deploy.Primitive
 	ordered = append(ordered, deploy.CollectLocalPrimitives(projectDir)...)
@@ -77,14 +78,20 @@ func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInst
 			continue
 		}
 		directKeys[key] = true
-		modulePath := filepath.Join(projectDir, "apm_modules", key)
-		ordered = append(ordered, deploy.CollectDependencyPrimitives(key, modulePath)...)
+		prims, err := deploy.CollectDependencyPrimitives(key, filepath.Join(projectDir, "apm_modules", key))
+		if err != nil {
+			return nil, err
+		}
+		ordered = append(ordered, prims...)
 	}
 
 	for _, dep := range sortedTransitiveDeps(loadLockfileDeps(projectDir), directKeys) {
 		key := dep.UniqueKey()
-		modulePath := filepath.Join(projectDir, "apm_modules", key)
-		ordered = append(ordered, deploy.CollectDependencyPrimitives(key, modulePath)...)
+		prims, err := deploy.CollectDependencyPrimitives(key, filepath.Join(projectDir, "apm_modules", key))
+		if err != nil {
+			return nil, err
+		}
+		ordered = append(ordered, prims...)
 	}
 
 	var instructionPrims []deploy.Primitive

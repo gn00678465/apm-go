@@ -1430,8 +1430,11 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 		if !requestedKeys[dep.Key] {
 			continue
 		}
-		modulePath := filepath.Join("apm_modules", dep.Key)
-		for _, p := range deploy.CollectDependencyPrimitives(dep.Key, modulePath) {
+		prims, err := deploy.CollectDependencyPrimitives(dep.Key, filepath.Join("apm_modules", dep.Key))
+		if err != nil {
+			return fmt.Errorf("deploy: %w", err)
+		}
+		for _, p := range prims {
 			if p.Type == deploy.TypeSkills {
 				availableAnywhere[p.Name] = true
 			}

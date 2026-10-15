@@ -1,10 +1,13 @@
 package deploy
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/manifest"
 )
 
@@ -30,24 +33,116 @@ type Primitive struct {
 }
 
 func CollectLocalPrimitives(projectDir string) []Primitive {
-	apmDir := filepath.Join(projectDir, ".apm")
-	return collectFromAPMDir(apmDir, "local", "")
+	prims, _ := collectFromAPMDir(sourceTree{dir: projectDir}, ".apm")
+	return prims
 }
 
-func CollectDependencyPrimitives(depKey, modulePath string) []Primitive {
-	apmDir := filepath.Join(modulePath, ".apm")
-	prims := collectFromAPMDir(apmDir, "dependency:"+depKey, depKey)
+// sourceTree is a directory primitives are collected from. The project's own
+// content is read as it is. A dependency is read the way a remote package
+// must be (issue #89): a symlink in it is resolved, and one that leaves the
+// package, dangles or loops is an error, so nothing outside the package is
+// ever read through it.
+type sourceTree struct {
+	dir    string // as the caller names it
+	depKey string // "" for the project's own content
+	root   string // dir with symlinks resolved; set for a dependency
+}
+
+// dependencyTree returns the tree of the dependency vendored at modulePath,
+// and false when there is nothing there to read.
+func dependencyTree(depKey, modulePath string) (sourceTree, bool) {
+	abs, err := filepath.Abs(modulePath)
+	if err != nil {
+		return sourceTree{}, false
+	}
+	root, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return sourceTree{}, false
+	}
+	return sourceTree{dir: modulePath, depKey: depKey, root: root}, true
+}
+
+func (t sourceTree) source() string {
+	if t.depKey == "" {
+		return "local"
+	}
+	return "dependency:" + t.depKey
+}
+
+// path returns where rel, slash-separated below the tree, is read from. For a
+// dependency it is rel with its symlinks resolved, joined to dir: a package
+// without symlinks is read at the same paths as the project's own content.
+func (t sourceTree) path(rel string) (string, error) {
+	if t.depKey == "" {
+		return filepath.Join(t.dir, filepath.FromSlash(rel)), nil
+	}
+	resolved, err := archive.ResolveIn(t.root, rel)
+	if err != nil {
+		return "", fmt.Errorf("dependency %s: %w", t.depKey, err)
+	}
+	return filepath.Join(t.dir, filepath.FromSlash(resolved)), nil
+}
+
+// entry returns where the entry e of directory rel, listed at dir, is read
+// from, and whether it is a directory. The project's own symlinks are taken
+// as they are, as before issue #89.
+func (t sourceTree) entry(dir, rel string, e fs.DirEntry) (string, bool, error) {
+	if t.depKey == "" || e.Type()&fs.ModeSymlink == 0 {
+		return filepath.Join(dir, e.Name()), e.IsDir(), nil
+	}
+	p, err := t.path(rel + "/" + e.Name())
+	if err != nil {
+		return "", false, err
+	}
+	info, err := os.Stat(p)
+	return p, err == nil && info.IsDir(), nil
+}
+
+// checkSkill fails for a dependency skill directory holding a symlink that a
+// copy of it must not follow; the deploy copies, or links, the whole tree.
+func (t sourceTree) checkSkill(rel string) error {
+	if t.depKey == "" {
+		return nil
+	}
+	if err := archive.CheckTree(t.root, rel); err != nil {
+		return fmt.Errorf("dependency %s: %w", t.depKey, err)
+	}
+	return nil
+}
+
+// CollectDependencyPrimitives returns the primitives of the dependency
+// vendored at modulePath. The error is a symlink in it that leaves the
+// package, dangles or loops, found before anything is deployed.
+func CollectDependencyPrimitives(depKey, modulePath string) ([]Primitive, error) {
+	t, ok := dependencyTree(depKey, modulePath)
+	if !ok {
+		return nil, nil
+	}
+	return collectDependency(t)
+}
+
+func collectDependency(t sourceTree) ([]Primitive, error) {
+	prims, err := collectFromAPMDir(t, ".apm")
+	if err != nil {
+		return nil, err
+	}
 
 	// Skill bundle: SKILL.md at package root
-	skillMD := filepath.Join(modulePath, "SKILL.md")
+	skillMD, err := t.path("SKILL.md")
+	if err != nil {
+		return nil, err
+	}
 	if _, err := os.Stat(skillMD); err == nil {
-		name := skillNameFromDepKey(depKey)
+		if err := t.checkSkill("."); err != nil {
+			return nil, err
+		}
+		name := skillNameFromDepKey(t.depKey)
 		prims = append(prims, Primitive{
 			Name:    name,
 			Type:    TypeSkills,
-			Source:  "dependency:" + depKey,
-			DepKey:  depKey,
-			SrcPath: modulePath,
+			Source:  t.source(),
+			DepKey:  t.depKey,
+			SrcPath: t.dir,
 		})
 	}
 
@@ -58,36 +153,25 @@ func CollectDependencyPrimitives(depKey, modulePath string) []Primitive {
 	// nested layout like skills/<category>/<name>/ (which that scan can't
 	// see one level deep) is discovered correctly instead of silently
 	// deploying nothing.
-	pluginPrims, skillsDeclared := collectPluginPrimitives(depKey, modulePath)
+	pluginPrims, skillsDeclared, err := collectPluginPrimitives(t)
+	if err != nil {
+		return nil, err
+	}
 	prims = append(prims, pluginPrims...)
 	if skillsDeclared {
-		return prims
+		return prims, nil
 	}
 
 	// Skill collection: skills/<name>/SKILL.md
-	skillsDir := filepath.Join(modulePath, "skills")
-	if entries, err := os.ReadDir(skillsDir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			sm := filepath.Join(skillsDir, e.Name(), "SKILL.md")
-			if _, err := os.Stat(sm); err == nil {
-				prims = append(prims, Primitive{
-					Name:    e.Name(),
-					Type:    TypeSkills,
-					Source:  "dependency:" + depKey,
-					DepKey:  depKey,
-					SrcPath: filepath.Join(skillsDir, e.Name()),
-				})
-			}
-		}
+	skills, err := collectSkills(t, "skills")
+	if err != nil {
+		return nil, err
 	}
-
-	return prims
+	return append(prims, skills...), nil
 }
 
-func collectFromAPMDir(apmDir, source, depKey string) []Primitive {
+// collectFromAPMDir collects the primitives of the .apm directory apmRel of t.
+func collectFromAPMDir(t sourceTree, apmRel string) ([]Primitive, error) {
 	var prims []Primitive
 
 	typeMap := []struct {
@@ -103,7 +187,11 @@ func collectFromAPMDir(apmDir, source, depKey string) []Primitive {
 	}
 
 	for _, tm := range typeMap {
-		dir := filepath.Join(apmDir, tm.subdir)
+		rel := apmRel + "/" + tm.subdir
+		dir, err := t.path(rel)
+		if err != nil {
+			return nil, err
+		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -116,37 +204,65 @@ func collectFromAPMDir(apmDir, source, depKey string) []Primitive {
 			if name == "" {
 				continue
 			}
+			src, isDir, err := t.entry(dir, rel, e)
+			if err != nil {
+				return nil, err
+			}
+			if isDir {
+				continue
+			}
 			prims = append(prims, Primitive{
 				Name:    name,
 				Type:    tm.primType,
-				Source:  source,
-				DepKey:  depKey,
-				SrcPath: filepath.Join(dir, e.Name()),
+				Source:  t.source(),
+				DepKey:  t.depKey,
+				SrcPath: src,
 			})
 		}
 	}
 
 	// Skills: .apm/skills/<name>/SKILL.md
-	skillsDir := filepath.Join(apmDir, "skills")
-	if entries, err := os.ReadDir(skillsDir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			sm := filepath.Join(skillsDir, e.Name(), "SKILL.md")
-			if _, err := os.Stat(sm); err == nil {
-				prims = append(prims, Primitive{
-					Name:    e.Name(),
-					Type:    TypeSkills,
-					Source:  source,
-					DepKey:  depKey,
-					SrcPath: filepath.Join(skillsDir, e.Name()),
-				})
-			}
-		}
+	skills, err := collectSkills(t, apmRel+"/skills")
+	if err != nil {
+		return nil, err
 	}
+	return append(prims, skills...), nil
+}
 
-	return prims
+// collectSkills collects the skills <rel>/<name>/SKILL.md of t.
+func collectSkills(t sourceTree, rel string) ([]Primitive, error) {
+	skillsDir, err := t.path(rel)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return nil, nil
+	}
+	var prims []Primitive
+	for _, e := range entries {
+		src, isDir, err := t.entry(skillsDir, rel, e)
+		if err != nil {
+			return nil, err
+		}
+		if !isDir {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil {
+			continue
+		}
+		if err := t.checkSkill(rel + "/" + e.Name()); err != nil {
+			return nil, err
+		}
+		prims = append(prims, Primitive{
+			Name:    e.Name(),
+			Type:    TypeSkills,
+			Source:  t.source(),
+			DepKey:  t.depKey,
+			SrcPath: src,
+		})
+	}
+	return prims, nil
 }
 
 // extractInstructionName only accepts *.instructions.md: the
