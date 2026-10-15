@@ -128,3 +128,39 @@ func TestCheckTree(t *testing.T) {
 		})
 	}
 }
+
+// A relative root is compared in its absolute, resolved form: an absolute
+// symlink into it is inside, and a directory loop is still a loop.
+func TestRelativeRoot(t *testing.T) {
+	root, _ := symlinkFixture(t, map[string]string{"a/b.md": "b", "s/SKILL.md": "s"}, map[string]string{
+		"a/abs.md": "<root>/a/b.md",
+		"s/abs":    "<root>/a",
+	})
+	t.Chdir(filepath.Dir(root))
+
+	if got, err := ResolveIn("pkg", "a/abs.md"); err != nil || got != "a/b.md" {
+		t.Errorf(`ResolveIn("pkg", "a/abs.md") = %q, %v; want "a/b.md"`, got, err)
+	}
+	if err := CheckTree("pkg", "s"); err != nil {
+		t.Errorf(`CheckTree("pkg", "s") with an absolute symlink inside: %v`, err)
+	}
+
+	if err := os.Symlink(filepath.Join(root, "s"), filepath.Join(root, "s", "self")); err != nil {
+		t.Fatal(err)
+	}
+	want := "symlink s/self resolves to " + filepath.Join(root, "s") + ", a directory it is in (symlink loop)"
+	if err := CheckTree("pkg", "s"); err == nil || err.Error() != want {
+		t.Errorf(`CheckTree("pkg", "s") = %v; want %s`, err, want)
+	}
+}
+
+// A root that does not resolve is an error, not an empty package.
+func TestMissingRoot(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "gone")
+	if _, err := ResolveIn(missing, "a"); err == nil {
+		t.Error("ResolveIn on a missing root: no error")
+	}
+	if err := CheckTree(missing, "a"); err == nil {
+		t.Error("CheckTree on a missing root: no error")
+	}
+}

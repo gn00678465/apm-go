@@ -40,12 +40,33 @@ func (e *SymlinkError) Error() string {
 	}
 }
 
+// realRoot is root made absolute with its symlinks resolved. A symlink's
+// target is absolute and resolved too, so every comparison with it is made
+// against this form of root: a relative root, or one reached through a
+// symlinked ~/.apm, would otherwise put a target inside the package outside it.
+func realRoot(root string) (string, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
 // ResolveIn returns rel, a slash-separated path below root, with every symlink
-// on it resolved, still relative to root. root must have no symlinks in it. A
-// symlink that leaves root, dangles or loops is a *SymlinkError. A component
-// that cannot be read ends the resolution with the rest of rel unresolved, so
-// the caller's own read of the result fails as a read of rel would.
+// on it resolved, still relative to root. A symlink that leaves root, dangles
+// or loops is a *SymlinkError; a root that does not resolve is an error too. A
+// component that cannot be read ends the resolution with the rest of rel
+// unresolved, so the caller's own read of the result fails as a read of rel
+// would.
 func ResolveIn(root, rel string) (string, error) {
+	root, err := realRoot(root)
+	if err != nil {
+		return "", err
+	}
+	return resolveIn(root, rel)
+}
+
+func resolveIn(root, rel string) (string, error) {
 	cur, named := root, ""
 	parts := strings.Split(rel, "/")
 	for i, part := range parts {
@@ -83,7 +104,11 @@ func ResolveIn(root, rel string) (string, error) {
 // or has entered through another symlink. A copy that follows every symlink of
 // a tree CheckTree passed stays inside root and ends.
 func CheckTree(root, rel string) error {
-	resolved, err := ResolveIn(root, rel)
+	root, err := realRoot(root)
+	if err != nil {
+		return err
+	}
+	resolved, err := resolveIn(root, rel)
 	if err != nil {
 		return err
 	}

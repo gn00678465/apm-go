@@ -66,7 +66,10 @@ func collectPluginPrimitives(t sourceTree) (prims []Primitive, skillsDeclared bo
 		if err != nil || !info.IsDir() {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(abs, "SKILL.md")); err != nil {
+		if ok, err := t.hasSkillMD(filepath.ToSlash(rel)); !ok {
+			if err != nil {
+				return nil, false, err
+			}
 			continue
 		}
 		if err := t.checkSkill(filepath.ToSlash(rel)); err != nil {

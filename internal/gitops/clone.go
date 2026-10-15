@@ -109,20 +109,16 @@ func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolved
 	// The package root while the subdirectory is taken out is the clone, as
 	// in the Oracle (deps/github_downloader.py:1656-1670): a symlink may lead
 	// elsewhere in the repository, and is copied as what it points at.
-	cloneRoot, err := filepath.EvalSymlinks(tmpClone)
-	if err != nil {
-		return nil, err
-	}
-	rel, err := archive.ResolveIn(cloneRoot, virtualPath)
+	rel, err := archive.ResolveIn(tmpClone, virtualPath)
 	if err != nil {
 		return nil, fmt.Errorf("subdirectory %q: %w", virtualPath, err)
 	}
-	subdir := filepath.Join(cloneRoot, filepath.FromSlash(rel))
+	subdir := filepath.Join(tmpClone, filepath.FromSlash(rel))
 	info, err := os.Stat(subdir)
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("subdirectory %q not found in cloned repository", virtualPath)
 	}
-	if err := archive.CheckTree(cloneRoot, virtualPath); err != nil {
+	if err := archive.CheckTree(tmpClone, virtualPath); err != nil {
 		return nil, fmt.Errorf("subdirectory %q: %w", virtualPath, err)
 	}
 
@@ -731,11 +727,7 @@ func pyRepr(s string) string {
 // package fails, so the declared dependencies and MCP servers come from the
 // package only (issue #89).
 func parseModuleManifest(dir string) (*manifest.Manifest, error) {
-	root, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return nil, err
-	}
-	rel, err := archive.ResolveIn(root, "apm.yml")
+	rel, err := archive.ResolveIn(dir, "apm.yml")
 	if err != nil {
 		return nil, err
 	}

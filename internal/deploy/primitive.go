@@ -45,21 +45,15 @@ func CollectLocalPrimitives(projectDir string) []Primitive {
 type sourceTree struct {
 	dir    string // as the caller names it
 	depKey string // "" for the project's own content
-	root   string // dir with symlinks resolved; set for a dependency
 }
 
 // dependencyTree returns the tree of the dependency vendored at modulePath,
 // and false when there is nothing there to read.
 func dependencyTree(depKey, modulePath string) (sourceTree, bool) {
-	abs, err := filepath.Abs(modulePath)
-	if err != nil {
+	if _, err := archive.ResolveIn(modulePath, "."); err != nil {
 		return sourceTree{}, false
 	}
-	root, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return sourceTree{}, false
-	}
-	return sourceTree{dir: modulePath, depKey: depKey, root: root}, true
+	return sourceTree{dir: modulePath, depKey: depKey}, true
 }
 
 func (t sourceTree) source() string {
@@ -76,7 +70,7 @@ func (t sourceTree) path(rel string) (string, error) {
 	if t.depKey == "" {
 		return filepath.Join(t.dir, filepath.FromSlash(rel)), nil
 	}
-	resolved, err := archive.ResolveIn(t.root, rel)
+	resolved, err := archive.ResolveIn(t.dir, rel)
 	if err != nil {
 		return "", fmt.Errorf("dependency %s: %w", t.depKey, err)
 	}
@@ -98,13 +92,25 @@ func (t sourceTree) entry(dir, rel string, e fs.DirEntry) (string, bool, error) 
 	return p, err == nil && info.IsDir(), nil
 }
 
+// hasSkillMD reports whether the directory rel holds the SKILL.md that makes
+// it a skill. For a dependency the marker is resolved first: a dangling or
+// looping symlink there is an error, not a directory without a skill.
+func (t sourceTree) hasSkillMD(rel string) (bool, error) {
+	p, err := t.path(rel + "/SKILL.md")
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(p)
+	return err == nil, nil
+}
+
 // checkSkill fails for a dependency skill directory holding a symlink that a
 // copy of it must not follow; the deploy copies, or links, the whole tree.
 func (t sourceTree) checkSkill(rel string) error {
 	if t.depKey == "" {
 		return nil
 	}
-	if err := archive.CheckTree(t.root, rel); err != nil {
+	if err := archive.CheckTree(t.dir, rel); err != nil {
 		return fmt.Errorf("dependency %s: %w", t.depKey, err)
 	}
 	return nil
@@ -248,7 +254,10 @@ func collectSkills(t sourceTree, rel string) ([]Primitive, error) {
 		if !isDir {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(src, "SKILL.md")); err != nil {
+		if ok, err := t.hasSkillMD(rel + "/" + e.Name()); !ok {
+			if err != nil {
+				return nil, err
+			}
 			continue
 		}
 		if err := t.checkSkill(rel + "/" + e.Name()); err != nil {

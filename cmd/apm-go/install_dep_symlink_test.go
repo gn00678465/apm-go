@@ -692,3 +692,153 @@ func TestInstall_DependencySymlinkErrorOrder(t *testing.T) {
 		" x deploy: dependency ./second: symlink .apm/agents/a.agent.md resolves to "+outer+", outside the package",
 		"install", "--target", "claude")
 }
+
+// Review round 1, finding 1: the SKILL.md that makes a directory a skill is
+// resolved before it is looked at, so one that dangles or loops fails the
+// collection instead of hiding the directory from it.
+func TestInstall_DependencySkillMarkerSymlinkFails(t *testing.T) {
+	sibling := map[string]string{".apm/instructions/sib.instructions.md": "SIBLING\n"}
+	for _, tt := range []struct {
+		name  string
+		files map[string]string
+		links map[string]string
+		want  string
+	}{
+		{
+			name:  "skills dangling",
+			links: map[string]string{"skills/s/SKILL.md": "../../nope.md"},
+			want:  "symlink skills/s/SKILL.md -> ../../nope.md does not resolve: no such file or directory",
+		},
+		{
+			name:  ".apm/skills dangling",
+			links: map[string]string{".apm/skills/s/SKILL.md": "../../../nope.md"},
+			want:  "symlink .apm/skills/s/SKILL.md -> ../../../nope.md does not resolve: no such file or directory",
+		},
+		{
+			name:  "loop",
+			links: map[string]string{"skills/s/SKILL.md": "other.md", "skills/s/other.md": "SKILL.md"},
+			want:  "symlink skills/s/SKILL.md is a symlink loop",
+		},
+		{
+			name:  "plugin skill dangling",
+			files: map[string]string{".claude-plugin/plugin.json": `{"name":"p","skills":["./custom/s"]}` + "\n"},
+			links: map[string]string{"custom/s/SKILL.md": "nope.md"},
+			want:  "symlink custom/s/SKILL.md -> nope.md does not resolve: no such file or directory",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := symlinkDepProject(t)
+			files := map[string]string{}
+			for k, v := range sibling {
+				files[k] = v
+			}
+			for k, v := range tt.files {
+				files[k] = v
+			}
+			symlinkDepRepo(t, "repo", files, tt.links)
+			writeSymlinkDepManifest(t, "    - git: ./repo\n")
+
+			assertFailsBeforeWriting(t, dir, " x deploy: dependency ./repo: "+tt.want, "install", "--target", "claude")
+			for _, p := range []string{"apm.lock.yaml", ".gitignore", ".claude"} {
+				assertNoModule(t, p)
+			}
+		})
+	}
+}
+
+// A directory with no SKILL.md at all is still not a skill, and no error.
+func TestInstall_DependencyDirectoryWithoutSkillMarkerIsSkipped(t *testing.T) {
+	symlinkDepProject(t)
+	symlinkDepRepo(t, "repo", map[string]string{
+		"skills/notes/readme.md":     "notes\n",
+		".apm/agents/plain.agent.md": symlinkDepAgent,
+	}, nil)
+	writeSymlinkDepManifest(t, "    - git: ./repo\n")
+
+	mustRun(t, "install", "--target", "claude")
+
+	assertNoModule(t, ".claude/skills/notes")
+	if got := readText(t, ".claude/agents/plain.md"); got != symlinkDepAgent {
+		t.Errorf(".claude/agents/plain.md = %q", got)
+	}
+}
+
+// Review round 1, finding 2: the package root is compared in its absolute,
+// resolved form, so an absolute symlink into the checkout is inside the
+// package although the modules directory is the relative apm_modules.
+func TestInstall_DependencyManifestSymlinkIntoCheckout(t *testing.T) {
+	const metadata = "name: dep\nversion: 1.0.0\ndependencies:\n  mcp:\n    - name: from-metadata\n      registry: false\n      transport: stdio\n      command: metadata-cmd\n"
+	for _, absolute := range []bool{true, false} {
+		name := "relative"
+		if absolute {
+			name = "absolute"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := symlinkDepProject(t)
+			target := "metadata.yml"
+			if absolute {
+				target = filepath.Join(dir, "apm_modules", "repo", "metadata.yml")
+			}
+			symlinkDepRepo(t, "repo", map[string]string{"metadata.yml": metadata}, map[string]string{"apm.yml": target})
+			writeSymlinkDepManifest(t, "    - git: ./repo\n")
+
+			mustRun(t, "install", "--target", "claude")
+
+			if got := readText(t, ".mcp.json"); !strings.Contains(got, `"from-metadata"`) || !strings.Contains(got, `"metadata-cmd"`) {
+				t.Errorf(".mcp.json does not hold the server metadata.yml declares:\n%s", got)
+			}
+		})
+	}
+}
+
+// Review round 1, finding 2: with a relative TMPDIR the clone a subdirectory
+// package is taken from has a relative path, and an absolute symlink into the
+// clone is still inside it. The clone's directory name is random, so the
+// symlink leads there through <project>/clone, made as soon as the
+// temporary directory appears, while git is still cloning.
+func TestInstall_SubdirectoryAbsoluteSymlinkWithRelativeTMPDIR(t *testing.T) {
+	dir := symlinkDepProject(t)
+	if err := os.Mkdir("tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", "tmp")
+	symlinkDepRepo(t, "mono", map[string]string{
+		"pkg/apm.yml":            "name: pkg\nversion: 1.0.0\n",
+		"shared/shared.agent.md": symlinkDepAgent,
+	}, map[string]string{"pkg/.apm/agents/shared.agent.md": filepath.Join(dir, "clone", "repo", "shared", "shared.agent.md")})
+	writeSymlinkDepManifest(t, "    - git: ./mono\n      path: pkg\n")
+
+	done := make(chan struct{})
+	linked := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-done:
+				linked <- nil
+				return
+			default:
+			}
+			matches, _ := filepath.Glob(filepath.Join(dir, "tmp", "apm-subdir-*"))
+			if len(matches) == 1 {
+				linked <- os.Symlink(matches[0], filepath.Join(dir, "clone"))
+				return
+			}
+		}
+	}()
+	stdout, stderr, code := runCompileCLI(t, "install", "--target", "claude")
+	close(done)
+	if err := <-linked; err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 {
+		t.Fatalf("install: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	copied := filepath.Join("apm_modules", "mono", "pkg", ".apm", "agents", "shared.agent.md")
+	if info, err := os.Lstat(copied); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("%s is not a regular file (%v)", copied, err)
+	}
+	if got := readText(t, ".claude/agents/shared.md"); got != symlinkDepAgent {
+		t.Errorf(".claude/agents/shared.md = %q, want %q", got, symlinkDepAgent)
+	}
+}
