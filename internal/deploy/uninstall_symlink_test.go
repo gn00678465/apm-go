@@ -14,7 +14,7 @@ func TestCleanupDanglingSymlinks_RemovesDangling(t *testing.T) {
 	}
 
 	link := filepath.Join(parent, "show-me")
-	if err := os.Symlink(filepath.Join(root, "nonexistent-target"), link); err != nil {
+	if err := os.Symlink(filepath.Join(root, ".claude", "nonexistent-target"), link); err != nil {
 		t.Fatal(err)
 	}
 
@@ -22,6 +22,27 @@ func TestCleanupDanglingSymlinks_RemovesDangling(t *testing.T) {
 
 	if _, err := os.Lstat(link); !os.IsNotExist(err) {
 		t.Errorf("dangling symlink %s should have been removed", link)
+	}
+}
+
+// Issue #86: a dangling symlink that leads out of its target root is not
+// the deploy's to remove.
+func TestCleanupDanglingSymlinks_KeepsDanglingLinkOutsideTargetRoot(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, ".claude", "skills")
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	link := filepath.Join(parent, "show-me")
+	if err := os.Symlink(filepath.Join(root, "nonexistent-target"), link); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupDanglingSymlinks(root, link)
+
+	if _, err := os.Lstat(link); err != nil {
+		t.Errorf("dangling symlink %s outside .claude was removed (lstat %v)", link, err)
 	}
 }
 

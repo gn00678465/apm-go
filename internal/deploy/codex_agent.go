@@ -83,6 +83,9 @@ func deployCodexAgentTOML(p Primitive, projectDir string) ([]string, error) {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
 	destPath := fmt.Sprintf(".codex/agents/%s.toml", p.Name)
+	if err := CheckDeployPath(projectDir, destPath); err != nil {
+		return nil, err
+	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
 	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -261,6 +262,9 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		allRemovalKeys[k] = true
 	}
 	if err := checkUninstallModuleDirs(plan.removedModuleKeys, orphans, deployDir != ""); err != nil {
+		return err
+	}
+	if err := checkUninstallDeployPaths(lock, allRemovalKeys, deployDir); err != nil {
 		return err
 	}
 	if err := writeUninstallManifest(data, node, plan.removedIdentities, plan.mcpNames); err != nil {
@@ -620,6 +624,31 @@ func checkUninstallModuleDirs(direct, transitive map[string]bool, global bool) e
 		}
 	}
 	return nil
+}
+
+// checkUninstallDeployPaths refuses the uninstall before its first write when
+// a deployed path of a removed package (the hand-over to a package that stays
+// writes the same paths) leads out of its target root through a symlink
+// (deploy.CheckDeployPath), so a removal or a hand-over through it cannot act
+// outside the deploy root. The text is the Oracle's
+// (commands/uninstall/cli.py:175-184). Deliberate deviation: the
+// Oracle has removed the packages' directories by then; apm-go has written
+// nothing.
+func checkUninstallDeployPaths(lock *lockfile.Lockfile, removalKeys map[string]bool, deployDir string) error {
+	root := "."
+	if deployDir != "" {
+		root = deployDir
+	}
+	files, hashes := collectUninstallDeployedProvenance(lock, removalKeys)
+	outside := deploy.OutsideDeployPaths(root, files, hashes)
+	if len(outside) == 0 {
+		return nil
+	}
+	ux.Error(os.Stderr, "Uninstall could not remove tracked target files; manifest and lockfile ownership were preserved. Package directories may already have been removed.")
+	for _, f := range outside {
+		ux.Error(os.Stderr, "  - %s", f)
+	}
+	return errors.New("Resolve or remove the listed files, then retry uninstall.")
 }
 
 // uninstallCleanedByOwner counts the deployed files removed for each removed

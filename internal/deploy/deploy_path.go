@@ -1,0 +1,131 @@
+package deploy
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/apm-go/apm/internal/archive"
+)
+
+// DeployPathError is a path below the deploy root whose directory leads,
+// through the symlink Link, out of its target root (.claude, .github, ...):
+// removing or writing the path would act on what Link points at.
+type DeployPathError struct {
+	// Path is the path relative to the deploy root.
+	Path string
+	// Link is the first directory on Path, relative to the deploy root, that
+	// resolves outside Root: a symlink.
+	Link string
+	// Resolved is Link with every symlink resolved.
+	Resolved string
+	// Root is the target root, the first component of Path below the deploy
+	// root, with every symlink resolved.
+	Root string
+}
+
+func (e *DeployPathError) Error() string {
+	return fmt.Sprintf("%s: symlink %s resolves to %s, outside %s", e.Path, e.Link, e.Resolved, e.Root)
+}
+
+// CheckDeployPath refuses rel, a path relative to deployRoot that a deploy
+// writes or a cleanup removes, unless each directory on it, every symlink
+// resolved, is below its target root resolved, as Oracle 0.33.0's
+// validate_deploy_path refuses (integration/base_integrator.py:506-590). The
+// last component is not resolved: a symlink the deploy made there is removed,
+// not followed. A symlink at a skill's directory, skills/<name>, counts as
+// the last component, since the deploy makes one there and a copy deploy
+// replaces one there, and what lies below it is decided by that symlink. The
+// target root may itself be a symlink (~/.claude linked into a dotfiles
+// directory): both sides are compared resolved.
+func CheckDeployPath(deployRoot, rel string) error {
+	if !archive.ContainedKey(deployRoot, rel) {
+		return fmt.Errorf("%s: path escapes the deploy root", rel)
+	}
+	last := rel
+	if link := skillSymlink(deployRoot, rel); link != "" {
+		last = link
+	}
+	segs := strings.Split(filepath.ToSlash(filepath.Clean(filepath.FromSlash(last))), "/")
+	if len(segs) < 2 {
+		return nil
+	}
+	root, err := archive.RealPath(filepath.Join(deployRoot, segs[0]))
+	if err != nil {
+		return fmt.Errorf("%s: %w", rel, err)
+	}
+	for i := 2; i < len(segs); i++ {
+		dir := strings.Join(segs[:i], "/")
+		resolved, err := archive.RealPath(filepath.Join(deployRoot, filepath.FromSlash(dir)))
+		if err != nil {
+			return fmt.Errorf("%s: %w", rel, err)
+		}
+		if !archive.Within(root, resolved) {
+			return &DeployPathError{Path: rel, Link: dir, Resolved: resolved, Root: root}
+		}
+	}
+	return nil
+}
+
+// keepOutsideDiag is the one diagnostic of a cleanup that keeps the paths
+// below e.Link.
+func keepOutsideDiag(e *DeployPathError) string {
+	return fmt.Sprintf("keeping %q: it is a symlink to %s, outside %s, so nothing below it is removed", e.Link, e.Resolved, e.Root)
+}
+
+// withinTargetRoot reports whether the cleanup of empty parents may remove
+// dir, a directory below root: it resolves inside the target root it is in,
+// and it is not that target root when the target root is a symlink, which is
+// the user's.
+func withinTargetRoot(root, dir string) bool {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." || !archive.Within(root, dir) {
+		return false
+	}
+	first, _, deeper := strings.Cut(filepath.ToSlash(rel), "/")
+	targetRoot := filepath.Join(root, first)
+	if info, err := os.Lstat(targetRoot); !deeper && err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	realRoot, err := archive.RealPath(targetRoot)
+	if err != nil {
+		return false
+	}
+	resolved, err := archive.RealPath(dir)
+	return err == nil && archive.Within(realRoot, resolved)
+}
+
+// OutsideDeployPaths returns, sorted, each of files (lock paths relative to
+// deployRoot) that CheckDeployPath refuses because a symlink leads it out of
+// its target root, and each recorded skill directory (an entry with no hash)
+// with such a path below it: the paths Oracle 0.33.0's uninstall lists as
+// the tracked files it could not remove (measured, issue #86).
+func OutsideDeployPaths(deployRoot string, files []string, hashes map[string]string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	add := func(f string) {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	for _, f := range files {
+		var outside *DeployPathError
+		if !errors.As(CheckDeployPath(deployRoot, f), &outside) {
+			continue
+		}
+		add(f)
+		p := filepath.ToSlash(filepath.Clean(filepath.FromSlash(f)))
+		for _, d := range files {
+			dir := filepath.ToSlash(filepath.Clean(filepath.FromSlash(d)))
+			if _, hashed := hashes[d]; !hashed && strings.HasPrefix(p, dir+"/") {
+				add(d)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}

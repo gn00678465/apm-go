@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +33,10 @@ import (
 // Only once all three checks pass is the file removed, after which any
 // now-empty ancestor directories (up to but excluding projectDir) are
 // cleaned up.
+//
+// A path whose directory leads out of its target root through a symlink
+// (CheckDeployPath) is kept the same way, with one diagnostic per symlink:
+// os.Remove would follow it.
 //
 // A copy deploy never makes a symlink, so a symlink at a skill's directory,
 // skills/<name>, is the user's: no path at or below it is compared or
@@ -73,6 +78,18 @@ func RemoveDeployedFiles(projectDir string, files []string, hashes map[string]st
 		if !archive.ContainedKey(projectDir, f) {
 			kept = append(kept, f)
 			diags = append(diags, fmt.Sprintf("refusing to remove %q: path escapes project directory", f))
+			continue
+		}
+		var outside *DeployPathError
+		if errors.As(CheckDeployPath(projectDir, f), &outside) {
+			if !reported[outside.Link] {
+				reported[outside.Link] = true
+				diags = append(diags, keepOutsideDiag(outside))
+			}
+			_, hashed := hashes[f]
+			if _, err := os.Stat(filepath.Join(projectDir, filepath.FromSlash(f))); hashed && err == nil {
+				kept = append(kept, f)
+			}
 			continue
 		}
 
@@ -233,14 +250,15 @@ func CheckModuleDir(projectDir, identityKey string) error {
 
 // cleanupDanglingSymlinks walks from dir up toward projectDir, removing any
 // directory that is a dangling symlink (target no longer exists). Stops at
-// projectDir. This handles the case where a symlink deploy's target was
-// deleted (e.g. apm_modules removed), leaving a dangling directory symlink
-// in the deploy tree.
+// projectDir, and at a directory that leads out of its target root
+// (withinTargetRoot). This handles the case where a symlink deploy's target
+// was deleted (e.g. apm_modules removed), leaving a dangling directory
+// symlink in the deploy tree.
 func cleanupDanglingSymlinks(projectDir, dir string) {
 	root := filepath.Clean(projectDir)
 	for {
 		dir = filepath.Clean(dir)
-		if dir == root || !archive.Contained(root, dir) {
+		if dir == root || !archive.Contained(root, dir) || !withinTargetRoot(root, dir) {
 			return
 		}
 		info, err := os.Lstat(dir)
@@ -265,12 +283,19 @@ func cleanupDanglingSymlinks(projectDir, dir string) {
 }
 
 // cleanupEmptyParents removes dir and, walking upward, each ancestor that has
-// become empty, stopping at (and never removing) projectDir itself.
+// become empty, stopping at (and never removing) projectDir itself. It stops
+// at a symlink, which os.Remove would unlink, and at a directory that leads
+// out of its target root (withinTargetRoot). The target root itself goes
+// when it is an empty real directory, as Oracle 0.33.0 leaves no empty
+// .claude/ after uninstall.
 func cleanupEmptyParents(projectDir, dir string) {
 	root := filepath.Clean(projectDir)
 	for {
 		dir = filepath.Clean(dir)
-		if dir == root || !archive.Contained(root, dir) {
+		if dir == root || !archive.Contained(root, dir) || !withinTargetRoot(root, dir) {
+			return
+		}
+		if info, err := os.Lstat(dir); err != nil || info.Mode()&os.ModeSymlink != 0 {
 			return
 		}
 		entries, err := os.ReadDir(dir)

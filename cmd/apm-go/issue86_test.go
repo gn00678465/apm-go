@@ -98,12 +98,13 @@ func uninstallRefused86(label, reason, recovery string) string {
 		" x Uninstall incomplete: package deletion failed. apm.yml and lockfile ownership were retained; some package files may already have been removed. Resolve the unsafe package path and retry the same uninstall command, or run '" + recovery + "' to restore the declared packages. Run with --verbose for detailed diagnostics.\n"
 }
 
-// installedLocal86 installs ../dep, which deploys a rule and a skill, and
-// returns the directory holding proj/, dep/ and outside/.
+// installedLocal86 installs ../dep, which deploys a rule and a skill with a
+// data directory, and returns the directory holding proj/, dep/ and outside/.
 func installedLocal86(t *testing.T) string {
 	t.Helper()
 	root := upDepProject(t, "  apm:\n    - ../dep\n")
 	writeCompileFile(t, root, "dep/.apm/instructions/r.instructions.md", issue86Rule)
+	writeCompileFile(t, root, "dep/.apm/skills/sk/data/precious.txt", "precious\n")
 	writeCompileFile(t, root, "outside/other.txt", "other\n")
 	mustRunCLI(t, "install")
 	assertIssue50Exists(t, true, ".claude/rules/r.md", "apm_modules/_local/dep/apm.yml")
