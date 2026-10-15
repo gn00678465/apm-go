@@ -115,7 +115,7 @@ func deployClaudeInstructions(p Primitive, projectDir string) ([]string, error) 
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
 	destPath := fmt.Sprintf(".claude/rules/%s.md", p.Name)
-	if err := CheckDeployPath(projectDir, destPath); err != nil {
+	if err := CheckDeployWrite(projectDir, destPath); err != nil {
 		return nil, err
 	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))

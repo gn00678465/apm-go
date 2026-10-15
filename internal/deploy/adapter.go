@@ -219,25 +219,24 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		return symlinkSkillTo(p.SrcPath, absDestDir, destDir, p.DepKey != "")
 	}
 
-	// Every file is checked before the first write: a symlink the user put
-	// inside an existing skill directory would take a copy elsewhere.
-	err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(_, rel string, isDir bool) error {
-		if isDir {
-			return nil
-		}
-		return CheckDeployPath(projectDir, path.Join(destDir, rel))
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	// A symlink here is not the deploy's: a copy through it would write into
 	// the directory it leads to. It is replaced by the skill's own directory,
-	// as a symlink deploy replaces one (symlinkSkillTo).
-	if info, err := os.Lstat(absDestDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+	// as a symlink deploy replaces one (symlinkSkillTo), so nothing below it
+	// is written through it. In an existing directory every file is checked
+	// before the first write: a symlink the user put inside it, at a
+	// directory or at the file, would take a copy elsewhere.
+	info, err := os.Lstat(absDestDir)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if err := os.Remove(absDestDir); err != nil {
 			return nil, fmt.Errorf("replace skill destination: %w", err)
 		}
+	} else if err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(_, rel string, isDir bool) error {
+		if isDir {
+			return nil
+		}
+		return CheckDeployWrite(projectDir, path.Join(destDir, rel))
+	}); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(absDestDir, 0755); err != nil {
 		return nil, fmt.Errorf("create skill dir: %w", err)
@@ -355,7 +354,11 @@ func copyFile(src, dst string) error {
 }
 
 func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error) {
-	if err := CheckDeployPath(projectDir, destPath); err != nil {
+	check := CheckDeployWrite
+	if activeDeployMode.symlink {
+		check = CheckDeployPath
+	}
+	if err := check(projectDir, destPath); err != nil {
 		return nil, err
 	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))

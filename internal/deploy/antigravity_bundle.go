@@ -91,7 +91,7 @@ func (a *antigravityAdapter) FinalizeBundles(depKeys []string, projectDir string
 	for _, dk := range depKeys {
 		name := bundleNameFromDepKey(dk)
 		manifestRel := path.Join(antigravityBundleRoot, name, "plugin.json")
-		if err := CheckDeployPath(projectDir, manifestRel); err != nil {
+		if err := CheckDeployWrite(projectDir, manifestRel); err != nil {
 			return nil, fmt.Errorf("write plugin manifest for %s: %w", dk, err)
 		}
 		absManifest := filepath.Join(projectDir, filepath.FromSlash(manifestRel))

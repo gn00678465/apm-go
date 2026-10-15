@@ -11,14 +11,15 @@ import (
 	"github.com/apm-go/apm/internal/archive"
 )
 
-// DeployPathError is a path below the deploy root whose directory leads,
-// through the symlink Link, out of its target root (.claude, .github, ...):
-// removing or writing the path would act on what Link points at.
+// DeployPathError is a path below the deploy root that leads, through the
+// symlink Link (one of its directories, or for a write the path itself), out
+// of its target root (.claude, .github, ...): removing or writing the path
+// would act on what Link points at.
 type DeployPathError struct {
 	// Path is the path relative to the deploy root.
 	Path string
-	// Link is the first directory on Path, relative to the deploy root, that
-	// resolves outside Root: a symlink.
+	// Link is the first directory on Path, or Path itself, relative to the
+	// deploy root, that resolves outside Root: a symlink.
 	Link string
 	// Resolved is Link with every symlink resolved.
 	Resolved string
@@ -31,22 +32,36 @@ func (e *DeployPathError) Error() string {
 	return fmt.Sprintf("%s: symlink %s resolves to %s, outside %s", e.Path, e.Link, e.Resolved, e.Root)
 }
 
-// CheckDeployPath refuses rel, a path relative to deployRoot that a deploy
-// writes or a cleanup removes, unless each directory on it, every symlink
+// CheckDeployPath refuses rel, a path relative to deployRoot whose last
+// component a cleanup removes or a deploy replaces (os.Remove, os.RemoveAll,
+// os.Remove then os.Symlink), unless each directory on it, every symlink
 // resolved, is below its target root resolved, as Oracle 0.33.0's
 // validate_deploy_path refuses (integration/base_integrator.py:506-590). The
-// last component is not resolved: a symlink the deploy made there is removed,
-// not followed. A symlink at a skill's directory, skills/<name>, counts as
-// the last component, since the deploy makes one there and a copy deploy
+// last component is not resolved: those calls act on a symlink there, not on
+// what it points at. A symlink at a skill's directory, skills/<name>, counts
+// as the last component, since the deploy makes one there and a copy deploy
 // replaces one there, and what lies below it is decided by that symlink. The
 // target root may itself be a symlink (~/.claude linked into a dotfiles
 // directory): both sides are compared resolved.
 func CheckDeployPath(deployRoot, rel string) error {
+	return checkDeployPath(deployRoot, rel, false)
+}
+
+// CheckDeployWrite is CheckDeployPath for a path whose content a copy deploy
+// writes (os.WriteFile, copyFile): those follow a symlink at the last
+// component, so the whole path, that component included (a dangling one by
+// its target, where os.WriteFile would create the file), has to resolve
+// below the target root as well.
+func CheckDeployWrite(deployRoot, rel string) error {
+	return checkDeployPath(deployRoot, rel, true)
+}
+
+func checkDeployPath(deployRoot, rel string, write bool) error {
 	if !archive.ContainedKey(deployRoot, rel) {
 		return fmt.Errorf("%s: path escapes the deploy root", rel)
 	}
 	last := rel
-	if link := skillSymlink(deployRoot, rel); link != "" {
+	if link := skillSymlink(deployRoot, rel); link != "" && !write {
 		last = link
 	}
 	segs := strings.Split(filepath.ToSlash(filepath.Clean(filepath.FromSlash(last))), "/")
@@ -57,7 +72,11 @@ func CheckDeployPath(deployRoot, rel string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", rel, err)
 	}
-	for i := 2; i < len(segs); i++ {
+	end := len(segs)
+	if write {
+		end++
+	}
+	for i := 2; i < end; i++ {
 		dir := strings.Join(segs[:i], "/")
 		resolved, err := archive.RealPath(filepath.Join(deployRoot, filepath.FromSlash(dir)))
 		if err != nil {

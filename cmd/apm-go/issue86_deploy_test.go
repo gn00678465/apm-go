@@ -316,3 +316,74 @@ func TestInstall_DestinationParentOutside_NotWritten(t *testing.T) {
 		})
 	}
 }
+
+// Step 22 feedback test 2: leaf-rule and leaf-skill, install and update. The
+// deployed file is a symlink out of .claude; a copy would write through it,
+// so the deploy of that primitive fails with a warning and nothing outside,
+// the link included, changes.
+func TestInstall_DestinationLinksOutside_NotWritten(t *testing.T) {
+	tests := []struct {
+		name, prim, dest string
+		transcript       map[string]func(warning string) string
+	}{
+		{name: "rule", prim: "r", dest: ".claude/rules/r.md", transcript: map[string]func(string) string{
+			"install": func(w string) string {
+				return " > Installing dependencies from apm.yml...\n" +
+					" i Targets: claude  (source: apm.yml)\n" + w +
+					"   + ../dep (local)\n" +
+					"  |-- 1 skill(s) integrated -> .claude/skills/\n" +
+					" + Installed 1 APM dependency in <t>s.\n"
+			},
+			"update": func(w string) string {
+				return " i Targets: claude  (source: apm.yml)\n" + w +
+					"_local/dep\n" +
+					"└── 1 skill -> .claude/skills/\n" +
+					" i Already up to date\n"
+			},
+		}},
+		{name: "file in a skill", prim: "sk", dest: ".claude/skills/sk/data/precious.txt", transcript: map[string]func(string) string{
+			"install": func(w string) string {
+				return " > Installing dependencies from apm.yml...\n" +
+					" i Targets: claude  (source: apm.yml)\n" + w +
+					"   + ../dep (local)\n" +
+					"  |-- 1 rule(s) adopted -> .claude/rules/\n" +
+					"  |-- (files unchanged)\n" +
+					" + Installed 1 APM dependency in <t>s.\n"
+			},
+			"update": func(w string) string {
+				return " i Targets: claude  (source: apm.yml)\n" + w +
+					"_local/dep\n" +
+					"└── 1 instruction -> .claude/rules/\n" +
+					" i Already up to date\n"
+			},
+		}},
+	}
+	for _, tt := range tests {
+		for _, cmd := range []string{"install", "update"} {
+			t.Run(tt.name+" "+cmd, func(t *testing.T) {
+				root := installedLocal86(t)
+				lockBefore := readText(t, "apm.lock.yaml")
+				writeCompileFile(t, root, "outside/precious.txt", "precious unrelated user content\n")
+				dest := filepath.FromSlash(tt.dest)
+				if err := os.Remove(dest); err != nil {
+					t.Fatal(err)
+				}
+				link86(t, filepath.Join(root, "outside", "precious.txt"), dest)
+				before := tree86(t, root)
+
+				stdout, code := runCLI86(t, cmd)
+
+				real := realDir86(t, root)
+				warning := " ! deploy " + tt.prim + " to claude failed: " + tt.dest + ": symlink " + tt.dest + " resolves to " +
+					filepath.Join(real, "outside", "precious.txt") + ", outside " + filepath.Join(real, "proj", ".claude") + "\n"
+				if want := tt.transcript[cmd](warning); code != 0 || stdout != want {
+					t.Errorf("exit %d, stdout:\n%s\nwant exit 0, stdout:\n%s", code, stdout, want)
+				}
+				assertTree86(t, root, before)
+				if got := readText(t, "apm.lock.yaml"); got != lockBefore {
+					t.Errorf("apm.lock.yaml changed:\n%s\nwant:\n%s", got, lockBefore)
+				}
+			})
+		}
+	}
+}
