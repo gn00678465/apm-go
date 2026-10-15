@@ -1,0 +1,19 @@
+{
+  "mcp": {
+    "example": {
+      "command": [
+        "npx",
+        "-y",
+        "example"
+      ],
+      "enabled": true,
+      "type": "local"
+    },
+    "mine": {
+      "command": [
+        "mine"
+      ],
+      "type": "local"
+    }
+  }
+}

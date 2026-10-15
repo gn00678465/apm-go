@@ -1,0 +1,10 @@
+name: g8
+version: 1.0.0
+targets: [claude]
+dependencies:
+  mcp:
+    - name: keep
+      registry: false
+      transport: stdio
+      command: npx
+      args: ["-y", "keep"]

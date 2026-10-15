@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "example": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "example"
+      ]
+    }
+  }
+}

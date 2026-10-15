@@ -229,8 +229,9 @@ var managedMCPKeys = map[string]bool{
 // entries or was refused/skipped -- those names are fully replaced (dropped
 // entirely if refused/skipped, since a stale copy of a now-invalid server
 // must not survive a redeploy). Names outside considered are left completely
-// untouched: they are no longer declared at all, and stale-server cleanup is
-// explicitly out of scope for this task (design.md §5).
+// untouched: a server no longer declared is removed by install's stale-server
+// cleanup (RemoveStaleMCPServers), which knows from the old lock which names
+// apm-go wrote.
 func mergeMCPServers(existing map[string]any, entries map[string]map[string]any, considered map[string]bool) map[string]any {
 	merged := map[string]any{}
 	for name, v := range existing {

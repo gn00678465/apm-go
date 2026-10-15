@@ -1,0 +1,38 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies: []
+deployments:
+- kind: uri
+  target: mcp
+  value: example
+  runtime: claude
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: uri
+  target: mcp
+  value: example
+  runtime: opencode
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+mcp_servers:
+- example
+mcp_configs:
+  example:
+    name: example
+    transport: stdio
+    args:
+    - -y
+    - example
+    registry: false
+    command: npx
+mcp_target_servers:
+  claude:
+  - example
+  opencode:
+  - example

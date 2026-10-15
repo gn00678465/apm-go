@@ -36,6 +36,10 @@ type DeployResult struct {
 	Diags         []string
 	MCPFiles      map[string]string // relative path -> sha256 hash, for merged (multi-source) MCP config files
 	MCPProvenance []MCPProv
+	// MCPServers names, sorted, every MCP server this run evaluated: the
+	// ones a target refused or failed to write too. A server the old lock
+	// records and this list lacks is no longer declared.
+	MCPServers []string
 	// FailedBuckets holds the PerDep key of each bucket with a source that
 	// could not be read or a primitive that failed to deploy. Such a bucket's
 	// file list is incomplete, so a path missing from it is not evidence that
@@ -498,8 +502,10 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		if p.Type == TypeMCP {
 			mcpWinners = append(mcpWinners, p)
 			mcpSourceByName[p.Name] = p.Source
+			result.MCPServers = append(result.MCPServers, p.Name)
 		}
 	}
+	sort.Strings(result.MCPServers)
 	if len(mcpWinners) > 0 {
 		for _, target := range targets {
 			adapter, ok := Adapters[target]
