@@ -510,9 +510,11 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 			return err
 		}
 	}
+	var manifests pluginmanifest.Manifests
 	if doPluginManifest {
 		w := packLogWriter(cmd, opts)
-		if _, err := pluginmanifest.Produce(w, ".", apmYMLRoot, targets, opts.force, opts.dryRun); err != nil {
+		manifests, err = pluginmanifest.Produce(w, ".", apmYMLRoot, targets, opts.force, opts.dryRun)
+		if err != nil {
 			return err
 		}
 	}
@@ -567,6 +569,11 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 			metadata = gates.drift.Metadata
 			warnings = withoutStrings(warnings, metadata.Warnings())
 		}
+		pluginManifests := packJSONPluginManifests{
+			Written: append([]string{}, manifests.Written...),
+			Skipped: append([]string{}, manifests.Skipped...),
+			DryRun:  append([]string{}, manifests.DryRun...),
+		}
 		env := packJSONEnvelope{
 			OK:                 true,
 			DryRun:             opts.dryRun,
@@ -574,7 +581,7 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 			Errors:             []packJSONError{},
 			MetadataEnrichment: metadataEnrichmentJSON(metadata),
 			Marketplace:        packJSONMarketplace{Outputs: marketplaceOutputsJSON(mkt.renders)},
-			PluginManifests:    packJSONPluginManifests{Written: []string{}, Skipped: []string{}, DryRun: []string{}},
+			PluginManifests:    pluginManifests,
 			VersionAlignment:   versionAlignmentJSON(gates.version),
 			Drift:              driftJSON(gates.drift),
 		}

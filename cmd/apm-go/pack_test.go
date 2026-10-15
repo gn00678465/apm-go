@@ -2385,3 +2385,80 @@ func TestPackCmd_JSON_MarketplaceDrift_ErrorEnvelope(t *testing.T) {
 		t.Errorf("errors = %q, want %q", got, want)
 	}
 }
+
+// pack --json reports each plugin.json under the decision Write made for it,
+// as Oracle 0.33.0 does (core/build_orchestrator.py:411-438,
+// commands/pack.py:612): claude first, then copilot, absolute paths.
+func TestPackCmd_JSON_PluginManifestOutcomes(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(chdirTemp(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: my-plugin\nversion: 1.0.8\ndescription: d\ntargets: [claude, copilot]\nlicense: MIT\n")
+	if err := os.MkdirAll(filepath.Join("skills", "my-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("skills", "my-skill", "SKILL.md"), []byte("---\nname: my-skill\ndescription: d\n---\nx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	both := []string{
+		filepath.Join(dir, ".claude-plugin", "plugin.json"),
+		filepath.Join(dir, ".github", "plugin", "plugin.json"),
+	}
+	none := []string{}
+
+	steps := []struct {
+		args []string
+		want packJSONPluginManifests
+	}{
+		{[]string{"--dry-run", "--json"}, packJSONPluginManifests{Written: none, Skipped: none, DryRun: both}},
+		{[]string{"--json"}, packJSONPluginManifests{Written: both, Skipped: none, DryRun: none}},
+		{[]string{"--json"}, packJSONPluginManifests{Written: none, Skipped: both, DryRun: none}},
+		{[]string{"--dry-run", "--json"}, packJSONPluginManifests{Written: none, Skipped: both, DryRun: none}},
+		{[]string{"--dry-run", "--force", "--json"}, packJSONPluginManifests{Written: none, Skipped: none, DryRun: both}},
+	}
+	for i, s := range steps {
+		out, err := runPackCmd(t, s.args...)
+		if err != nil {
+			t.Fatalf("step %d pack %v: %v\n%s", i, s.args, err, out)
+		}
+		got := packJSONFromOutput(t, out).PluginManifests
+		if fmt.Sprintf("%#v", got) != fmt.Sprintf("%#v", s.want) {
+			t.Errorf("step %d pack %v: plugin_manifests =\n%#v\nwant\n%#v", i, s.args, got, s.want)
+		}
+	}
+}
+
+// The review's reproduction: a symlinked plugin.json is reported under its own
+// name, the path pack --force replaced, as Oracle 0.33.0 reports it.
+func TestPackCmd_JSON_SymlinkedPluginManifest_ReportsItsOwnPath(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(chdirTemp(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: my-plugin\nversion: 1.0.9\ndescription: d\nlicense: MIT\ntarget: claude\n")
+	if err := os.MkdirAll(filepath.Join("skills", "my-skill"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("skills", "my-skill", "SKILL.md"), []byte("---\nname: my-skill\ndescription: d\n---\nx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("custom.json", []byte(`{"name":"my-plugin","version":"1.0.8"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(".claude-plugin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "custom.json"), filepath.Join(".claude-plugin", "plugin.json")); err != nil {
+		t.Skipf("cannot create a symlink on this host: %v", err)
+	}
+
+	out, err := runPackCmd(t, "--force", "--json")
+	if err != nil {
+		t.Fatalf("pack --force --json: %v\n%s", err, out)
+	}
+	got := packJSONFromOutput(t, out).PluginManifests.Written
+	if want := []string{filepath.Join(dir, ".claude-plugin", "plugin.json")}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("plugin_manifests.written = %q, want %q", got, want)
+	}
+}
