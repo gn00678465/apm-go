@@ -312,7 +312,10 @@ func TestUninstall_LocalKeyAlias_Ambiguous_RefusedWithoutWrites(t *testing.T) {
 		{"two paths sharing a lock name", collidingLocal70,
 			[]string{"_local/dep"}, " > Uninstalling 1 package(s)...\n" + ambiguous70},
 		{"two paths sharing a lock name, with a path argument", collidingLocal70,
-			[]string{"_local/dep", "./a/dep"}, " > Uninstalling 2 package(s)...\n + _local/dep - found in apm.yml\n" + ambiguous70},
+			[]string{"_local/dep", "./a/dep"}, " > Uninstalling 2 package(s)...\n" +
+				" x Ambiguous dependency '_local/dep': it matches 2 declarations. Use one exact path from apm.yml to uninstall a single dependency.\n" +
+				" + _local/dep - found in apm.yml\n" +
+				" x Uninstall aborted: 1 requested package(s) could not be selected. Resolve the errors above and retry; no changes were made.\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -329,5 +332,53 @@ func TestUninstall_LocalKeyAlias_Ambiguous_RefusedWithoutWrites(t *testing.T) {
 			}
 			assertTree86(t, dir, before)
 		})
+	}
+}
+
+// Each argument's line comes at its place on the command line, as the Oracle
+// prints them (commands/uninstall/engine.py:633-731). A not-found argument
+// keeps the ruling's warning and does not abort.
+func TestUninstall_ArgumentLinesInArgumentOrder(t *testing.T) {
+	dir := chdirTemp(t)
+	for _, n := range []string{"my-local-skill", "other"} {
+		writeCompileFile(t, dir, "skills/"+n+"/apm.yml", "name: "+n+"\nversion: 1.0.0\n")
+		writeCompileFile(t, dir, "skills/"+n+"/SKILL.md", "---\nname: "+n+"\ndescription: d\n---\nx\n")
+	}
+	writeCompileFile(t, dir, "apm.yml", "name: repro\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./skills/my-local-skill\n    - ./skills/other\n")
+	mustRunCLI(t, "install", "--target", "claude")
+
+	stdout, stderr, exitCode := runCompileCLI(t, "uninstall", "acme/nope", "./skills/my-local-skill", "./nope-dir")
+
+	want := " > Uninstalling 3 package(s)...\n" +
+		" ! \"acme/nope\": not found in apm.yml\n" +
+		" + _local/my-local-skill - found in apm.yml\n" +
+		" ! \"./nope-dir\": not found in apm.yml\n" +
+		" i Removed _local/my-local-skill from apm_modules/\n" +
+		" i Cleaned 3 stale files from ./skills/my-local-skill\n" +
+		" i Removed _local/my-local-skill from dependencies.apm in apm.yml\n" +
+		" + Updated " + filepath.Join(dir, "apm.yml") + " (removed 1 package(s))\n" +
+		" + Uninstall complete: Removed 1 package(s) from apm.yml, Removed 1 package(s) from apm_modules/\n"
+	if exitCode != 0 || stderr != "" {
+		t.Errorf("exit = %d, stderr = %q", exitCode, stderr)
+	}
+	if stdout != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", stdout, want)
+	}
+}
+
+// The same holds for an MCP server name before a package argument.
+func TestUninstall_MCPAndPackageLinesInArgumentOrder(t *testing.T) {
+	twoServerProject(t)
+
+	want := " > Uninstalling 2 package(s)...\n" +
+		" + one - found in apm.yml\n" +
+		" + _local/dep - found in apm.yml\n" +
+		" i Dry run: Would remove 2 package(s):\n" +
+		" i   - _local/dep from apm.yml\n" +
+		" i   - _local/dep from apm_modules/\n" +
+		" i   - one from apm.yml\n" +
+		" + Dry run complete - no changes made\n"
+	if got := mustRunCLI(t, "uninstall", "--dry-run", "one", "./dep"); got != want {
+		t.Errorf("uninstall --dry-run one ./dep:\n%s\nwant:\n%s", got, want)
 	}
 }

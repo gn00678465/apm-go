@@ -82,6 +82,10 @@ type uninstallResolution struct {
 	NotFound            []uninstallNotFound
 	SupplyChainRejected []uninstallSupplyChainRejection
 	Ambiguous           []uninstallAmbiguous
+	// Arguments holds each argument's own resolution, with its one outcome,
+	// in command-line order: the Oracle prints each argument's line as it
+	// reaches it (commands/uninstall/engine.py:633-731).
+	Arguments []*uninstallResolution
 }
 
 // marketplaceRegistryResolver abstracts marketplace.ResolvePlugin so tests
@@ -111,7 +115,14 @@ func defaultMarketplaceRegistryResolver(plugin, mkt string, opts marketplace.Res
 func resolveUninstallTargets(names []string, m *manifest.Manifest, lock *lockfile.Lockfile, resolve marketplaceRegistryResolver, dryRun bool) *uninstallResolution {
 	res := &uninstallResolution{}
 	for _, name := range names {
-		resolveUninstallTarget(name, m, lock, resolve, dryRun, res)
+		arg := &uninstallResolution{}
+		resolveUninstallTarget(name, m, lock, resolve, dryRun, arg)
+		res.Arguments = append(res.Arguments, arg)
+		res.APMTargets = append(res.APMTargets, arg.APMTargets...)
+		res.MCPTargets = append(res.MCPTargets, arg.MCPTargets...)
+		res.NotFound = append(res.NotFound, arg.NotFound...)
+		res.SupplyChainRejected = append(res.SupplyChainRejected, arg.SupplyChainRejected...)
+		res.Ambiguous = append(res.Ambiguous, arg.Ambiguous...)
 	}
 	return res
 }

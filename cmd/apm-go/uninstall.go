@@ -75,25 +75,13 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	// engine.py:676-681), issue #50 ruling R10.
 	ux.Progress(os.Stdout, "Uninstalling %d package(s)...", len(args))
 	plan := prepareUninstallPlan(args, m, lock, opts.DryRun)
-	for _, t := range plan.resolution.APMTargets {
-		ux.Success(os.Stdout, "%s - found in apm.yml", plan.moduleKey(t))
-	}
-	for _, t := range plan.resolution.MCPTargets {
-		ux.Success(os.Stdout, "%s - found in apm.yml", t.Name)
-	}
-	for _, nf := range plan.resolution.NotFound {
-		printUninstallNotFound(nf)
-	}
-	for _, rej := range plan.resolution.SupplyChainRejected {
-		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
+	for _, arg := range plan.resolution.Arguments {
+		printUninstallArgument(plan, arg)
 	}
 	if ambiguous := plan.resolution.Ambiguous; len(ambiguous) > 0 {
-		// The Oracle's refusal (commands/uninstall/engine.py:694-698,
-		// cli.py:324), before anything is written; a not-found argument does
-		// not abort, by the ruling, so it is not counted.
-		for _, a := range ambiguous {
-			ux.Error(os.Stderr, "Ambiguous dependency '%s': it matches %d declarations. Use one exact path from apm.yml to uninstall a single dependency.", a.Name, a.Matches)
-		}
+		// The Oracle's refusal (cli.py:324), before anything is written; a
+		// not-found argument does not abort, by the ruling, so it is not
+		// counted.
 		return fmt.Errorf("Uninstall aborted: %d requested package(s) could not be selected. Resolve the errors above and retry; no changes were made.", len(ambiguous))
 	}
 	if len(plan.resolution.APMTargets) == 0 && len(plan.resolution.MCPTargets) == 0 {
@@ -817,6 +805,26 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 		return fmt.Errorf("serialize apm.lock.yaml: %w", err)
 	}
 	return writeLockfileBytes(out)
+}
+
+// printUninstallArgument prints the line of one argument's outcome.
+func printUninstallArgument(plan *uninstallPlan, arg *uninstallResolution) {
+	for _, t := range arg.APMTargets {
+		ux.Success(os.Stdout, "%s - found in apm.yml", plan.moduleKey(t))
+	}
+	for _, t := range arg.MCPTargets {
+		ux.Success(os.Stdout, "%s - found in apm.yml", t.Name)
+	}
+	for _, nf := range arg.NotFound {
+		printUninstallNotFound(nf)
+	}
+	for _, rej := range arg.SupplyChainRejected {
+		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
+	}
+	// The Oracle's words (commands/uninstall/engine.py:694-698).
+	for _, a := range arg.Ambiguous {
+		ux.Error(os.Stderr, "Ambiguous dependency '%s': it matches %d declarations. Use one exact path from apm.yml to uninstall a single dependency.", a.Name, a.Matches)
+	}
 }
 
 // printUninstallNotFound reports why one PACKAGE argument produced no
