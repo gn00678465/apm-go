@@ -71,6 +71,9 @@ func runCompile(targetFlag, projectDir string) error {
 	if err != nil {
 		return fmt.Errorf("compile: %w", err)
 	}
+	for _, s := range result.Skipped {
+		ux.Warn(os.Stdout, "Skipping %s: %v", s.RelPath, s.Err)
+	}
 	if result.Wrote {
 		// R12e: surface the compiled sources (Result.Sources, read-only
 		// data the collect pass already had). Instruction counts are small

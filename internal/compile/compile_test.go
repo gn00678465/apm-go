@@ -41,7 +41,7 @@ func TestCollectInstructions_LocalDependencySourcePaths(t *testing.T) {
 		},
 	}
 
-	got, err := CollectInstructions(dir, m)
+	got, _, err := CollectInstructions(dir, m)
 	if err != nil {
 		t.Fatalf("CollectInstructions: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestCollectInstructions_PriorityAndTransitiveOrder(t *testing.T) {
 		},
 	}
 
-	got, err := CollectInstructions(dir, m)
+	got, _, err := CollectInstructions(dir, m)
 	if err != nil {
 		t.Fatalf("CollectInstructions: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestCollectInstructions_IgnoresWrongSuffixAndSymlink(t *testing.T) {
 	}
 
 	m := &manifest.Manifest{}
-	got, err := CollectInstructions(dir, m)
+	got, _, err := CollectInstructions(dir, m)
 	if err != nil {
 		t.Fatalf("CollectInstructions: %v", err)
 	}
@@ -439,5 +439,33 @@ func TestWriteFile_AtomicFailurePreservesExisting(t *testing.T) {
 	}
 	if string(got) != existingContent {
 		t.Errorf("existing AGENTS.md was modified despite atomic-write failure: %q", got)
+	}
+}
+
+// An instruction whose frontmatter cannot be read is skipped before the
+// conflicts are resolved, so a dependency's instruction of the same name is
+// compiled in its place (measured with Oracle 0.33.0: the dependency's x is
+// compiled and the local x is reported as not parsed).
+func TestCollectInstructions_SkipsUnreadableFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/instructions/x.instructions.md", "---\napplyTo: **/*.go\n---\nbad local\n")
+	mkFile(t, dir, ".apm/instructions/ok.instructions.md", "---\napplyTo: \"ok/**\"\n---\nok local\n")
+	mkFile(t, dir, "apm_modules/acme/dep/.apm/instructions/x.instructions.md", "---\napplyTo: \"dep/**\"\n---\ngood dep\n")
+	m := &manifest.Manifest{
+		ParsedDeps: []*manifest.DependencyReference{
+			{RepoURL: "acme/dep", Owner: "acme", Repo: "dep", Source: "git"},
+		},
+	}
+
+	got, skipped, err := CollectInstructions(dir, m)
+	if err != nil {
+		t.Fatalf("CollectInstructions: %v", err)
+	}
+	want := []string{".apm/instructions/ok.instructions.md", "apm_modules/acme/dep/.apm/instructions/x.instructions.md"}
+	if paths := relPaths(got); strings.Join(paths, "|") != strings.Join(want, "|") {
+		t.Errorf("compiled %v, want %v", paths, want)
+	}
+	if len(skipped) != 1 || skipped[0].RelPath != ".apm/instructions/x.instructions.md" || !strings.Contains(skipped[0].Err.Error(), "YAML parse error") {
+		t.Errorf("skipped = %+v, want the local x with its YAML error", skipped)
 	}
 }

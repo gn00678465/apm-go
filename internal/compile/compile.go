@@ -62,8 +62,9 @@ func HasCompilableContent(projectDir string) bool {
 // first-declared wins), drops any symlinked instruction file of the
 // project's own (deploy.CollectLocalPrimitives does not filter symlinks; a
 // dependency's come resolved, or fail the collection when they leave the
-// package), and parses each winner's frontmatter.
-func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInstruction, error) {
+// package), and parses each one's frontmatter; the ones that cannot be
+// parsed are returned apart and take no part in the conflicts.
+func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInstruction, []SkippedInstruction, error) {
 	var ordered []deploy.Primitive
 	ordered = append(ordered, deploy.CollectLocalPrimitives(projectDir)...)
 
@@ -80,7 +81,7 @@ func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInst
 		directKeys[key] = true
 		prims, err := deploy.CollectDependencyPrimitives(key, filepath.Join(projectDir, "apm_modules", key))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ordered = append(ordered, prims...)
 	}
@@ -89,7 +90,7 @@ func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInst
 		key := dep.UniqueKey()
 		prims, err := deploy.CollectDependencyPrimitives(key, filepath.Join(projectDir, "apm_modules", key))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ordered = append(ordered, prims...)
 	}
@@ -102,24 +103,50 @@ func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInst
 	}
 	instructionPrims = filterSymlinks(instructionPrims)
 
-	winners, _ := deploy.ResolvePrimitives(instructionPrims)
+	// The Oracle parses each file before it resolves conflicts, so one it
+	// cannot read leaves its name to the next instruction that has it.
+	parsed := make(map[string]ParsedInstruction, len(instructionPrims))
+	var readable []deploy.Primitive
+	var skipped []SkippedInstruction
+	for _, p := range instructionPrims {
+		content, err := os.ReadFile(p.SrcPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		pi, err := ParseInstruction(content)
+		if err != nil {
+			skipped = append(skipped, SkippedInstruction{RelPath: displayPath(projectDir, p.SrcPath), Err: err})
+			continue
+		}
+		parsed[p.SrcPath] = pi
+		readable = append(readable, p)
+	}
+
+	winners, _ := deploy.ResolvePrimitives(readable)
 
 	result := make([]SourcedInstruction, 0, len(winners))
 	for _, p := range winners {
-		content, err := os.ReadFile(p.SrcPath)
-		if err != nil {
-			return nil, err
-		}
-		relPath := p.SrcPath
-		if rel, err := filepath.Rel(projectDir, p.SrcPath); err == nil {
-			relPath = rel
-		}
 		result = append(result, SourcedInstruction{
-			RelPath:           filepath.ToSlash(relPath),
-			ParsedInstruction: ParseInstruction(content),
+			RelPath:           displayPath(projectDir, p.SrcPath),
+			ParsedInstruction: parsed[p.SrcPath],
 		})
 	}
-	return result, nil
+	return result, skipped, nil
+}
+
+// SkippedInstruction is an instruction compile leaves out because its
+// frontmatter cannot be read; the Oracle skips it too.
+type SkippedInstruction struct {
+	RelPath string
+	Err     error
+}
+
+// displayPath is srcPath relative to projectDir, with forward slashes.
+func displayPath(projectDir, srcPath string) string {
+	if rel, err := filepath.Rel(projectDir, srcPath); err == nil {
+		srcPath = rel
+	}
+	return filepath.ToSlash(srcPath)
 }
 
 // filterSymlinks drops any primitive whose source file is a symlink (or is
@@ -189,6 +216,9 @@ type Result struct {
 	// output-parity gap was "sources are known but never surfaced" -- no
 	// compile decision, ordering, or rendering changes ride along).
 	Sources []string
+	// Skipped are the instructions left out for their frontmatter, for the
+	// command to report.
+	Skipped []SkippedInstruction
 }
 
 // sourcePaths projects the compiled instructions down to their
@@ -204,7 +234,7 @@ func sourcePaths(instructions []SourcedInstruction) []string {
 // Run collects instructions, renders AGENTS.md, stabilizes its Build ID,
 // and writes it idempotently to projectDir/AGENTS.md (design.md §3/§6).
 func Run(projectDir string, m *manifest.Manifest) (*Result, error) {
-	instructions, err := CollectInstructions(projectDir, m)
+	instructions, skipped, err := CollectInstructions(projectDir, m)
 	if err != nil {
 		return nil, err
 	}
@@ -213,5 +243,5 @@ func Run(projectDir string, m *manifest.Manifest) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Wrote: wrote, InstructionCount: len(instructions), Path: "AGENTS.md", Sources: sourcePaths(instructions)}, nil
+	return &Result{Wrote: wrote, InstructionCount: len(instructions), Path: "AGENTS.md", Sources: sourcePaths(instructions), Skipped: skipped}, nil
 }

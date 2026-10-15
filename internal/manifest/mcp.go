@@ -100,10 +100,11 @@ func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
 var (
 	// The plain scalars PyYAML's resolver (YAML 1.1) reads as bool, null and
 	// decimal int (yaml/resolver.py). apm-go's loader is YAML 1.2, where a
-	// plain no or off is a string.
-	pyyamlBoolRe = regexp.MustCompile(`^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF)$`)
-	pyyamlNullRe = regexp.MustCompile(`^(?:~|null|Null|NULL|)$`)
-	pyyamlIntRe  = regexp.MustCompile(`^[-+]?(?:0|[1-9][0-9_]*)$`)
+	// plain no or off is a string. deploy reads instruction frontmatter with
+	// them too.
+	PyYAMLBoolRe       = regexp.MustCompile(`^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF)$`)
+	PyYAMLNullRe       = regexp.MustCompile(`^(?:~|null|Null|NULL|)$`)
+	PyYAMLDecimalIntRe = regexp.MustCompile(`^[-+]?(?:0|[1-9][0-9_]*)$`)
 )
 
 // pyyaml11Value returns a detached copy of v with each scalar tagged and
@@ -121,7 +122,7 @@ func pyyaml11Value(v *yaml.Node) *yaml.Node {
 	}
 	scalar := func(tag, value string) *yaml.Node {
 		n := &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
-		if tag == "!!str" && pyyamlBoolRe.MatchString(value) {
+		if tag == "!!str" && PyYAMLBoolRe.MatchString(value) {
 			// The YAML 1.2 encoder writes the string no unquoted; PyYAML,
 			// and the Oracle's lock, quote it.
 			n.Style = yaml.SingleQuotedStyle
@@ -133,15 +134,15 @@ func pyyaml11Value(v *yaml.Node) *yaml.Node {
 		return scalar(v.ShortTag(), v.Value)
 	}
 	switch {
-	case pyyamlBoolRe.MatchString(v.Value):
+	case PyYAMLBoolRe.MatchString(v.Value):
 		switch strings.ToLower(v.Value) {
 		case "yes", "true", "on":
 			return scalar("!!bool", "true")
 		}
 		return scalar("!!bool", "false")
-	case pyyamlNullRe.MatchString(v.Value):
+	case PyYAMLNullRe.MatchString(v.Value):
 		return scalar("!!null", "null")
-	case pyyamlIntRe.MatchString(v.Value):
+	case PyYAMLDecimalIntRe.MatchString(v.Value):
 		n, _ := new(big.Int).SetString(strings.ReplaceAll(v.Value, "_", ""), 10)
 		return scalar("!!int", n.String())
 	}
