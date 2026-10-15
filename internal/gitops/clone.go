@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/lockfile"
@@ -512,33 +515,41 @@ func realPath(p string) (string, error) {
 // and its target copied as a regular file or directory when it lies inside
 // pkgRoot; a dangling symlink, one that resolves outside pkgRoot (its target is
 // not read), or one back to a directory already entered on the current path
-// (visited, per branch as in the Oracle) fails the copy with the Oracle's
-// reason. Devices, pipes and sockets are skipped: reading a FIFO would block.
+// (visited, per branch as in the Oracle) fails the copy. Every failure reading
+// the package carries the Oracle's reason, Python's own OSError and
+// RuntimeError texts included. Devices, pipes and sockets are skipped: reading
+// a FIFO would block.
 func copyTreeDereferencing(srcDir, dstDir, pkgRoot string, visited []string) error {
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return err
 	}
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("Cannot read package directory '%s': %s. Check that the package directory has read permissions. Local install aborted.", srcDir, pyOSError(err))
 	}
 	for _, e := range entries {
 		srcPath := filepath.Join(srcDir, e.Name())
 		dstPath := filepath.Join(dstDir, e.Name())
 		info, err := e.Info()
 		if err != nil {
-			return err
+			return errors.New(pyOSError(err))
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			resolved, err := filepath.EvalSymlinks(srcPath)
+			resolved, err := realpathStrict(srcPath)
 			if err != nil {
-				return fmt.Errorf("Symlink '%s' has a broken or unresolvable target: %v. Remove the dangling symlink or restore its target. Local install aborted.", srcPath, err)
+				// pathlib turns ELOOP into RuntimeError("Symlink loop from %r"),
+				// which the Oracle does not catch: it is the whole reason.
+				var pe *os.PathError
+				if errors.As(err, &pe) && errors.Is(pe.Err, syscall.ELOOP) {
+					return fmt.Errorf("Symlink loop from %s", pyRepr(pe.Path))
+				}
+				return fmt.Errorf("Symlink '%s' has a broken or unresolvable target: %s. Remove the dangling symlink or restore its target. Local install aborted.", srcPath, pyOSError(err))
 			}
 			if !within(pkgRoot, resolved) {
 				return fmt.Errorf("Symlink '%s' resolves to '%s', which escapes the package root '%s'. Only in-package symlinks are dereferenced. Remove the symlink or replace it with a real file copy. Local install aborted.", srcPath, resolved, pkgRoot)
 			}
 			if info, err = os.Stat(resolved); err != nil {
-				return err
+				return errors.New(pyOSError(err))
 			}
 			if info.IsDir() {
 				if slices.Contains(visited, resolved) {
@@ -562,13 +573,126 @@ func copyTreeDereferencing(srcDir, dstDir, pkgRoot string, visited []string) err
 		}
 		data, err := os.ReadFile(srcPath)
 		if err != nil {
-			return err
+			return errors.New(pyOSError(err))
 		}
 		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// realpathStrict is Python 3.12's os.path.realpath(path, strict=True) for an
+// absolute POSIX path (posixpath.py:420-496). It resolves one component at a
+// time, so an error names the component Python's names, and a symlink met
+// again while it is being resolved is ELOOP on that symlink; filepath.
+// EvalSymlinks gives up after 255 links and names no path. Every error is an
+// *os.PathError.
+func realpathStrict(path string) (string, error) {
+	return joinRealpath("", path, map[string]*string{})
+}
+
+// joinRealpath is posixpath._joinrealpath with strict=True. seen maps a
+// symlink to its resolved path, or to nil while it is being resolved.
+func joinRealpath(path, rest string, seen map[string]*string) (string, error) {
+	if strings.HasPrefix(rest, "/") {
+		rest, path = rest[1:], "/"
+	}
+	for rest != "" {
+		var name string
+		name, rest, _ = strings.Cut(rest, "/")
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			path = filepath.Dir(path)
+			continue
+		}
+		newpath := filepath.Join(path, name)
+		info, err := os.Lstat(newpath)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			path = newpath
+			continue
+		}
+		if resolved, ok := seen[newpath]; ok {
+			if resolved != nil {
+				path = *resolved
+				continue
+			}
+			if _, err := os.Stat(newpath); err != nil {
+				return "", err
+			}
+			return "", &os.PathError{Op: "stat", Path: newpath, Err: syscall.ELOOP}
+		}
+		seen[newpath] = nil
+		target, err := os.Readlink(newpath)
+		if err != nil {
+			return "", err
+		}
+		if path, err = joinRealpath(path, target, seen); err != nil {
+			return "", err
+		}
+		resolved := path
+		seen[newpath] = &resolved
+	}
+	return path, nil
+}
+
+// pyOSError is str(OSError) as Python 3.12 prints err:
+// "[Errno <n>] <strerror>: <repr(filename)>". Go's text for a Linux errno is
+// glibc's strerror with a lowercase first letter; the two differ only for
+// errno 41, 58 and 133, which no path operation returns.
+func pyOSError(err error) string {
+	var pe *os.PathError
+	var errno syscall.Errno
+	if !errors.As(err, &pe) || !errors.As(pe.Err, &errno) {
+		return err.Error()
+	}
+	text := errno.Error()
+	return fmt.Sprintf("[Errno %d] %s%s: %s", int(errno), strings.ToUpper(text[:1]), text[1:], pyRepr(pe.Path))
+}
+
+// pyRepr is Python's repr() of a str holding a path, an invalid UTF-8 byte b
+// being the lone surrogate U+DC00+b Python decodes it to. It follows the rule
+// of pythonReprPyStr (internal/marketplace/models.go), which gitops cannot
+// import.
+func pyRepr(s string) string {
+	quote := '\''
+	if strings.ContainsRune(s, '\'') && !strings.ContainsRune(s, '"') {
+		quote = '"'
+	}
+	var sb strings.Builder
+	sb.WriteRune(quote)
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&sb, `\u%04x`, 0xdc00+int(s[i]))
+		case r == quote || r == '\\':
+			sb.WriteByte('\\')
+			sb.WriteRune(r)
+		case r == '\n':
+			sb.WriteString(`\n`)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case unicode.IsPrint(r):
+			sb.WriteRune(r)
+		case r < 0x100:
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		case r < 0x10000:
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		default:
+			fmt.Fprintf(&sb, `\U%08x`, r)
+		}
+		i += size
+	}
+	sb.WriteRune(quote)
+	return sb.String()
 }
 
 func (r *RealPackageLoader) parseSubManifest(dir string) (*manifest.Manifest, error) {
