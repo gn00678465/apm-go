@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/apm-go/apm/internal/gitops"
@@ -508,5 +512,91 @@ mcp_target_servers:
 	}
 	if !strings.Contains(readStaleMCPFile(t, ".mcp.json"), `"keep"`) {
 		t.Error(".mcp.json lost keep")
+	}
+}
+
+// A declared server is not stale whatever became of it later in the run. The
+// expected output and files are what apm-go printed and wrote before issue
+// #71 for the same steps
+// (~/.cache/apm-go-verify/issue71/regold-step16/run-o4i5jyhd/old-*).
+
+const staleMCPRegistryOnlyHeaderLock = "lockfile_version: '1'\napm_version: dev\ndependencies: []\ndeployments: []\n"
+
+func staleMCPRegistryRerun(t *testing.T, mode string) {
+	t.Helper()
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	chdirTemp(t)
+	var current atomic.Value
+	current.Store("ok")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if current.Load() == "503" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		server := map[string]any{"name": "example", "remotes": []any{map[string]any{"type": "streamable-http", "url": "https://example.com/mcp"}}}
+		body := map[string]any{"server": server}
+		if r.URL.RawQuery != "" {
+			list := []any{map[string]any{"server": server}}
+			if current.Load() == "missing" {
+				list = []any{}
+			}
+			body = map[string]any{"servers": list}
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	writeStaleMCPFile(t, "apm.yml", "name: g8\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  mcp:\n    - name: example\n      registry: "+srv.URL+"\n")
+	mustStaleMCPInstall(t, "", "")
+	current.Store(mode)
+	out := mustStaleMCPInstall(t, "", "")
+	out = regexp.MustCompile(`in [0-9.]+s\.`).ReplaceAllString(out, "in Ns.")
+
+	reason := `mcp registry: registry returned HTTP 503`
+	if mode == "missing" {
+		reason = `MCP server "example" not found in registry`
+	}
+	want := " > Installing dependencies from apm.yml...\n" +
+		" ! mcp \"example\": " + reason + "; skipped\n" +
+		"\n" +
+		" i No changes -- install state already up to date in Ns.\n"
+	if out != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
+	}
+	if got := readStaleMCPFile(t, ".mcp.json"); got != "{\n  \"mcpServers\": {\n    \"example\": {\n      \"type\": \"streamable-http\",\n      \"url\": \"https://example.com/mcp\"\n    }\n  }\n}\n" {
+		t.Errorf(".mcp.json:\n%s", got)
+	}
+	if got := readStaleMCPFile(t, "apm.lock.yaml"); got != staleMCPRegistryOnlyHeaderLock {
+		t.Errorf("apm.lock.yaml:\n%s", got)
+	}
+}
+
+func TestInstall_StaleMCP_RegistryOutageKeepsDeclaredServer(t *testing.T) {
+	staleMCPRegistryRerun(t, "503")
+}
+
+func TestInstall_StaleMCP_RegistryNotFoundKeepsDeclaredServer(t *testing.T) {
+	staleMCPRegistryRerun(t, "missing")
+}
+
+func TestInstall_StaleMCP_ServerMovedToDevDependenciesIsKept(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	chdirTemp(t)
+	writeStaleMCPFile(t, "apm.yml", staleMCPManifest("claude", "keep"))
+	mustStaleMCPInstall(t, "", "")
+	before := readStaleMCPFile(t, ".mcp.json")
+	moved := strings.Replace(staleMCPManifest("claude", "keep"), "dependencies:\n  mcp:\n", "dependencies:\n  mcp: []\ndevDependencies:\n  mcp:\n", 1)
+	writeStaleMCPFile(t, "apm.yml", moved)
+
+	out := mustStaleMCPInstall(t, "", "")
+	out = regexp.MustCompile(`in [0-9.]+s\.`).ReplaceAllString(out, "in Ns.")
+	if want := " > Installing dependencies from apm.yml...\n\n i No changes -- install state already up to date in Ns.\n"; out != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
+	}
+	if got := readStaleMCPFile(t, ".mcp.json"); got != before {
+		t.Errorf(".mcp.json changed:\n%s", got)
+	}
+	if got := readStaleMCPFile(t, "apm.lock.yaml"); got != staleMCPRegistryOnlyHeaderLock {
+		t.Errorf("apm.lock.yaml:\n%s", got)
 	}
 }

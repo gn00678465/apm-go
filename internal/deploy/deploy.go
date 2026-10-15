@@ -36,10 +36,12 @@ type DeployResult struct {
 	Diags         []string
 	MCPFiles      map[string]string // relative path -> sha256 hash, for merged (multi-source) MCP config files
 	MCPProvenance []MCPProv
-	// MCPServers names, sorted, every MCP server this run evaluated: the
-	// ones a target refused or failed to write too. A server the old lock
-	// records and this list lacks is no longer declared.
-	MCPServers []string
+	// DeclaredMCPServers names, sorted, every MCP server declared for this
+	// run, taken before registry resolution: apm.yml's dependencies.mcp and
+	// devDependencies.mcp, and the dependencies.mcp of each direct
+	// dependency. A server whose lookup, resolution or write fails is still
+	// here, so the old lock's record of it is not stale.
+	DeclaredMCPServers []string
 	// FailedBuckets holds the PerDep key of each bucket with a source that
 	// could not be read or a primitive that failed to deploy. Such a bucket's
 	// file list is incomplete, so a path missing from it is not evidence that
@@ -145,6 +147,15 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	ordered = append(ordered, locals...)
 	noteSourceReadFailure("", "<local .apm/>", localSourceReadFailure(projectDir))
 
+	declaredMCP := map[string]bool{}
+	noteDeclaredMCP := func(servers []*manifest.MCPDependency) {
+		for _, s := range servers {
+			declaredMCP[s.Name] = true
+		}
+	}
+	// devDependencies.mcp is declared but not deployed (issue #97).
+	noteDeclaredMCP(m.MCPServers)
+	noteDeclaredMCP(m.MCPDevServers)
 	localMCP, localMCPDiags := collectMCPPrimitives(m.MCPServers, "local", "")
 	ordered = append(ordered, localMCP...)
 	mcpDiags = append(mcpDiags, localMCPDiags...)
@@ -195,6 +206,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		noteSourceReadFailure(key, key, dependencySourceReadFailure(modulePath))
 
 		// direct (depth==1) self-defined MCP servers are auto-trusted.
+		noteDeclaredMCP(depServers)
 		depMCP, depMCPDiags := collectMCPPrimitives(depServers, "dependency:"+key, key)
 		ordered = append(ordered, depMCP...)
 		mcpDiags = append(mcpDiags, loadDiags...)
@@ -351,6 +363,10 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		FailedBuckets: failedBuckets,
 		SkippedDeps:   skippedDeps,
 	}
+	for name := range declaredMCP {
+		result.DeclaredMCPServers = append(result.DeclaredMCPServers, name)
+	}
+	sort.Strings(result.DeclaredMCPServers)
 
 	deployedSkills := make(map[string]bool)
 	// Track which primitive first wrote each destination path, to warn on
@@ -502,10 +518,8 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		if p.Type == TypeMCP {
 			mcpWinners = append(mcpWinners, p)
 			mcpSourceByName[p.Name] = p.Source
-			result.MCPServers = append(result.MCPServers, p.Name)
 		}
 	}
-	sort.Strings(result.MCPServers)
 	if len(mcpWinners) > 0 {
 		for _, target := range targets {
 			adapter, ok := Adapters[target]

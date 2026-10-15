@@ -2143,10 +2143,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			}
 		}
 
-		// The lock below no longer records a server this run did not
-		// evaluate, so its entry has to leave the config files first. A frozen
-		// install writes no lock and does not come here.
-		if err := cleanStaleMCPServers(detectRoot, targets, deployResult.MCPServers, existingLock); err != nil {
+		// The lock below no longer records a server that is no longer
+		// declared, so its entry has to leave the config files first. A
+		// frozen install writes no lock and does not come here.
+		if err := cleanStaleMCPServers(detectRoot, targets, deployResult.DeclaredMCPServers, existingLock); err != nil {
 			return err
 		}
 	}

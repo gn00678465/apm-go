@@ -15,16 +15,17 @@ type staleMCPRemoval struct {
 	names  []string
 }
 
-// staleMCPRemovals compares the old lock with the MCP servers this run
-// evaluated (evaluated: deploy.DeployResult.MCPServers, a server a target
-// refused or failed to write included) and lists, in the order they are
-// printed, the servers apm-go wrote before that are no longer declared or no
-// longer go to a target: the Oracle's install/mcp/integration.py:256-370,
-// whose new set is the declared servers (:297), not the written ones.
+// staleMCPRemovals compares the old lock with the MCP servers declared for
+// this run (deploy.DeployResult.DeclaredMCPServers) and lists, in the order
+// they are printed, the servers apm-go wrote before that are no longer
+// declared or no longer go to a target: the Oracle's
+// install/mcp/integration.py:256-370, whose new set is the declared servers
+// (:297). A server is declared whatever became of it after: a registry
+// lookup that failed or a write that failed does not make it stale.
 //
-//   - With servers evaluated: every server the old mcp_target_servers lists
+//   - With servers declared: every server the old mcp_target_servers lists
 //     for a target that is no longer active, then every server of the old
-//     mcp_servers that this run did not evaluate, for every active target.
+//     mcp_servers that is no longer declared, for every active target.
 //   - With none: every server the old mcp_target_servers lists for a target,
 //     also an active one, that the old mcp_servers has.
 //
@@ -37,7 +38,7 @@ type staleMCPRemoval struct {
 // and a name is removed only as written: apm-go keys every config by the
 // full name, so the Oracle's extra removal of the part after the last "/"
 // would only reach an entry apm-go did not write.
-func staleMCPRemovals(targets, evaluated []string, existingLock *lockfile.Lockfile) []staleMCPRemoval {
+func staleMCPRemovals(targets, declared []string, existingLock *lockfile.Lockfile) []staleMCPRemoval {
 	var active []string
 	isActive := map[string]bool{}
 	for _, t := range targets {
@@ -61,7 +62,7 @@ func staleMCPRemovals(targets, evaluated []string, existingLock *lockfile.Lockfi
 			out = append(out, staleMCPRemoval{target: target, names: names})
 		}
 	}
-	if len(evaluated) == 0 {
+	if len(declared) == 0 {
 		old := stringSet(existingLock.MCPServers)
 		for _, t := range recorded {
 			var names []string
@@ -79,7 +80,7 @@ func staleMCPRemovals(targets, evaluated []string, existingLock *lockfile.Lockfi
 			add(t, existingLock.MCPTargetServers[t])
 		}
 	}
-	kept := stringSet(evaluated)
+	kept := stringSet(declared)
 	var stale []string
 	for _, name := range existingLock.MCPServers {
 		if !kept[name] {
@@ -109,11 +110,11 @@ func stringSet(names []string) map[string]bool {
 // and opencode.json only when .opencode/ is one; apm-go writes
 // opencode.json without making .opencode/, so it cleans both files whatever
 // the directories.
-func cleanStaleMCPServers(root string, targets, evaluated []string, existingLock *lockfile.Lockfile) error {
+func cleanStaleMCPServers(root string, targets, declared []string, existingLock *lockfile.Lockfile) error {
 	if existingLock == nil {
 		return nil
 	}
-	for _, r := range staleMCPRemovals(targets, evaluated, existingLock) {
+	for _, r := range staleMCPRemovals(targets, declared, existingLock) {
 		removed, err := deploy.RemoveStaleMCPServers(root, r.target, r.names)
 		if err != nil {
 			return err
