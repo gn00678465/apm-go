@@ -235,10 +235,6 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		oldMCP = append([]string(nil), lock.MCPServers...)
 	}
 
-	if err := writeUninstallManifest(data, node, plan.removedIdentities, plan.mcpNames); err != nil {
-		return err
-	}
-
 	// CRITICAL #1 fix: resolver.ActualOrphans (via TransitiveOrphans) only
 	// walks LockedDep.ResolvedBy, which records a single parent per
 	// dependency -- it can't represent a diamond dependency shared by two
@@ -263,6 +259,12 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	}
 	for k := range orphans {
 		allRemovalKeys[k] = true
+	}
+	if err := checkUninstallModuleDirs(plan.removedModuleKeys, orphans, deployDir != ""); err != nil {
+		return err
+	}
+	if err := writeUninstallManifest(data, node, plan.removedIdentities, plan.mcpNames); err != nil {
+		return err
 	}
 	removeRoot := "."
 	if deployDir != "" {
@@ -587,6 +589,39 @@ func removeUninstallModuleDirs(removalKeys map[string]bool) (removed map[string]
 	return removed, nil
 }
 
+// checkUninstallModuleDirs refuses the uninstall before its first write when
+// an apm_modules directory it would remove leads out of apm_modules through a
+// symlink, so apm.yml, the lock, the deployed files and apm_modules stay as
+// they were. Direct packages are checked first, then transitive ones, each by
+// key, and the first refusal is reported in the Oracle's words
+// (commands/uninstall/engine.py:931,951, cli.py:188-212). Deliberate
+// deviation: the Oracle checks while it removes, so a refused transitive
+// package comes after the direct packages' directories are gone.
+func checkUninstallModuleDirs(direct, transitive map[string]bool, global bool) error {
+	refuse := func(label string, err error) error {
+		ux.Error(os.Stderr, "Refusing to remove %s: %v", label, err)
+		recovery := "apm-go install"
+		if global {
+			recovery = "apm-go install --global"
+		}
+		return fmt.Errorf("Uninstall incomplete: package deletion failed. apm.yml and lockfile ownership were retained; some package files may already have been removed. Resolve the unsafe package path and retry the same uninstall command, or run '%s' to restore the declared packages. Run with --verbose for detailed diagnostics.", recovery)
+	}
+	for _, key := range sortedStringSet(direct) {
+		if err := deploy.CheckModuleDir(".", key); err != nil {
+			return refuse(key, err)
+		}
+	}
+	for _, key := range sortedStringSet(transitive) {
+		if direct[key] {
+			continue
+		}
+		if err := deploy.CheckModuleDir(".", key); err != nil {
+			return refuse("transitive dep "+key, err)
+		}
+	}
+	return nil
+}
+
 // uninstallCleanedByOwner counts the deployed files removed for each removed
 // package, named as the Oracle names the owner of a file: a local package by
 // its declared path, any other by its key.
@@ -758,6 +793,11 @@ func printUninstallDryRunPlan(plan *uninstallPlan) {
 	for _, t := range resolution.APMTargets {
 		key := plan.moduleKey(t)
 		ux.Info(os.Stdout, "  - %s from apm.yml", key)
+		// A directory that leads out of apm_modules is not one the real run
+		// would remove; the Oracle leaves it out too (engine.py:751-767).
+		if deploy.CheckModuleDir(".", key) != nil {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join("apm_modules", filepath.FromSlash(key))); err == nil {
 			ux.Info(os.Stdout, "  - %s from apm_modules/", key)
 		}

@@ -664,6 +664,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			if !archive.Contained("apm_modules", destDir) {
 				return fmt.Errorf("frozen install: refusing to extract %q outside apm_modules", dep.RepoURL)
 			}
+			if err := archive.CheckWithin("apm_modules", destDir); err != nil {
+				return fmt.Errorf("frozen install: refusing to extract %q: %w", dep.RepoURL, err)
+			}
 
 			archivePath := path.Base(dep.RepoURL) + ".tar.gz"
 			_, localErr := os.Stat(archivePath)

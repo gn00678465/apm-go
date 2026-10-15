@@ -56,6 +56,11 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 	if err != nil {
 		return nil, err
 	}
+	// Before the stale checkout is removed or a clone written: both follow a
+	// symlinked parent out of ModulesDir.
+	if err := archive.CheckWithin(r.ModulesDir, installDir); err != nil {
+		return nil, err
+	}
 
 	if info, statErr := os.Stat(installDir); statErr == nil && info.IsDir() {
 		if checkoutMatchesRef(installDir, resolvedRef) {
@@ -437,11 +442,11 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 // leaves earlier copies as they were; the loader runs it again for the paths
 // that skip that check. It is a no-op for a dependency that is not copied.
 //
-// Refused, in this order: a destination whose parent directories, symlinks
-// resolved, put it outside modulesDir (a symlinked apm_modules/_local); a
-// source that holds the project (the working directory); a source and
-// destination where one holds the other. The last component of the
-// destination is not resolved: a symlink there is removed, not followed.
+// Refused, in this order: a destination that, every symlink on it resolved,
+// the last one included, is not below modulesDir (a symlinked
+// apm_modules/_local, or apm_modules/_local/<name> linked outside: the
+// Oracle refuses both, issue #86); a source that holds the project (the
+// working directory); a source and destination where one holds the other.
 //
 // Deliberate deviation from the Oracle, which copies a source holding the
 // project into itself until "[Errno 36] File name too long", exits 1 and
@@ -466,31 +471,34 @@ func checkLocalCopy(modulesDir string, ref *manifest.DependencyReference) (strin
 	if err != nil {
 		return "", err
 	}
-	destParent, err := realPath(filepath.Dir(dest))
+	if err := archive.CheckWithin(modulesDir, dest); err != nil {
+		var outside *archive.ContainmentError
+		if errors.As(err, &outside) {
+			return "", fmt.Errorf("local dependency %s would be copied to %s, which resolves to %s outside %s/; refusing to replace it",
+				declared, filepath.ToSlash(dest), outside.Resolved, modules)
+		}
+		return "", fmt.Errorf("local dependency %s: %w", declared, err)
+	}
+	// The overlap is judged on the destination with its last component not
+	// resolved: a link there that stays inside modulesDir is removed, not
+	// written through.
+	destParent, err := archive.RealPath(filepath.Dir(dest))
 	if err != nil {
 		return "", fmt.Errorf("local dependency %s: %w", declared, err)
 	}
 	destReal := filepath.Join(destParent, filepath.Base(dest))
-	modulesReal, err := realPath(modulesDir)
-	if err != nil {
-		return "", fmt.Errorf("local dependency %s: %w", declared, err)
-	}
-	if !within(modulesReal, destReal) || destReal == modulesReal {
-		return "", fmt.Errorf("local dependency %s would be copied to %s, which resolves to %s outside %s/; refusing to replace it",
-			declared, filepath.ToSlash(dest), destReal, modules)
-	}
-	src, err := realPath(ref.LocalSourcePath)
+	src, err := archive.RealPath(ref.LocalSourcePath)
 	if err != nil {
 		return "", fmt.Errorf("local dependency source %s: %w", ref.LocalSourcePath, err)
 	}
-	project, err := realPath(".")
+	project, err := archive.RealPath(".")
 	if err != nil {
 		return "", fmt.Errorf("local dependency %s: %w", declared, err)
 	}
-	if within(src, project) {
+	if archive.Within(src, project) {
 		return "", fmt.Errorf("local dependency %s is the project directory or one of its parent directories; it cannot be copied into %s/", declared, modules)
 	}
-	if within(src, destReal) || within(destReal, src) {
+	if archive.Within(src, destReal) || archive.Within(destReal, src) {
 		return "", fmt.Errorf("local dependency %s overlaps its copy %s; a package cannot be copied into or over itself", declared, filepath.ToSlash(dest))
 	}
 	return src, nil
@@ -506,35 +514,6 @@ func absentDirs(dir string) []string {
 		}
 		absent = append(absent, dir)
 	}
-}
-
-// within reports whether path is dir or below it.
-func within(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
-}
-
-// realPath is p made absolute with every symlink resolved. The part of p
-// that does not exist yet (ModulesDir before the first install) is joined
-// to the real path of the nearest directory above it that does.
-func realPath(p string) (string, error) {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err == nil {
-		return resolved, nil
-	}
-	parent := filepath.Dir(abs)
-	if !os.IsNotExist(err) || parent == abs {
-		return "", err
-	}
-	resolved, err = realPath(parent)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(resolved, filepath.Base(abs)), nil
 }
 
 // copyTreeDereferencing copies srcDir to dstDir the way Oracle 0.33.0 copies a
@@ -572,7 +551,7 @@ func copyTreeDereferencing(srcDir, dstDir, pkgRoot string, visited []string) err
 				}
 				return fmt.Errorf("Symlink '%s' has a broken or unresolvable target: %s. Remove the dangling symlink or restore its target. Local install aborted.", srcPath, pyOSError(err))
 			}
-			if !within(pkgRoot, resolved) {
+			if !archive.Within(pkgRoot, resolved) {
 				return fmt.Errorf("Symlink '%s' resolves to '%s', which escapes the package root '%s'. Only in-package symlinks are dereferenced. Remove the symlink or replace it with a real file copy. Local install aborted.", srcPath, resolved, pkgRoot)
 			}
 			if info, err = os.Stat(resolved); err != nil {

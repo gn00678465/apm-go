@@ -189,7 +189,9 @@ func goneDirs(root string, dirs []string) []string {
 // still technically "inside" apm_modules but is the wrong directory
 // entirely -- the same threat model update.go's directGitSemverUpdateScope
 // already guards against for this identical key space, kept consistent here
-// (checklist's "path 防護全庫一致" caution).
+// (checklist's "path 防護全庫一致" caution). archive.CheckWithin then
+// refuses a key whose symlinks, resolved, lead out of apm_modules, since
+// os.RemoveAll follows a symlinked parent (issue #86).
 //
 // A missing target directory is a no-op (removed=false, err=nil) -- already
 // gone, or never materialized (e.g. a local-path dependency, which
@@ -201,11 +203,10 @@ func SafeRemoveModuleDir(projectDir, identityKey string) (removed bool, err erro
 	if identityKey == "" {
 		return false, nil
 	}
-	modulesRoot := filepath.Join(projectDir, "apm_modules")
-	target := filepath.Join(modulesRoot, filepath.FromSlash(identityKey))
-	if !archive.ContainedKey(modulesRoot, identityKey) {
-		return false, fmt.Errorf("refusing to remove apm_modules entry %q: path escapes apm_modules", identityKey)
+	if err := CheckModuleDir(projectDir, identityKey); err != nil {
+		return false, err
 	}
+	target := filepath.Join(projectDir, "apm_modules", filepath.FromSlash(identityKey))
 	if _, statErr := os.Stat(target); statErr != nil {
 		if os.IsNotExist(statErr) {
 			return false, nil
@@ -217,6 +218,17 @@ func SafeRemoveModuleDir(projectDir, identityKey string) (removed bool, err erro
 	}
 	cleanupEmptyParents(projectDir, filepath.Dir(target))
 	return true, nil
+}
+
+// CheckModuleDir refuses what SafeRemoveModuleDir refuses for identityKey,
+// without removing anything: uninstall runs it on every key before its first
+// write.
+func CheckModuleDir(projectDir, identityKey string) error {
+	modulesRoot := filepath.Join(projectDir, "apm_modules")
+	if !archive.ContainedKey(modulesRoot, identityKey) {
+		return fmt.Errorf("refusing to remove apm_modules entry %q: path escapes apm_modules", identityKey)
+	}
+	return archive.CheckWithin(modulesRoot, filepath.Join(modulesRoot, filepath.FromSlash(identityKey)))
 }
 
 // cleanupDanglingSymlinks walks from dir up toward projectDir, removing any
