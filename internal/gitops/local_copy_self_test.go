@@ -246,3 +246,52 @@ func TestMaterializeLocalCopy_CopiesSiblingOfTheProject(t *testing.T) {
 		t.Errorf("copied important.txt %q, error %v", got, err)
 	}
 }
+
+// A declared source that runs through the destination link is read where it
+// pointed when it was checked, not through the link the copy removes first.
+func TestMaterializeLocalCopy_SourceThroughDestinationLink(t *testing.T) {
+	tests := []struct {
+		name, declared string
+		link, src      func(root string) string
+	}{
+		{
+			name:     "source is the destination link",
+			declared: "./apm_modules/_local/dep",
+			link:     func(root string) string { return filepath.Join(root, "dep") },
+			src:      func(root string) string { return filepath.Join(root, "dep") },
+		},
+		{
+			name:     "source is below the destination link",
+			declared: "./apm_modules/_local/dep/x/dep",
+			link:     func(root string) string { return filepath.Join(root, "foo") },
+			src:      func(root string) string { return filepath.Join(root, "foo", "x", "dep") },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := localCopyRoot(t)
+			writePkg(t, filepath.Join(root, "foo", "x", "dep"))
+			symlink(t, tt.link(root), "apm_modules/_local/dep")
+			src := tt.src(root)
+			want := snapshot(t, src)
+			ref := localRef(tt.declared, filepath.Join(root, "proj", filepath.FromSlash(tt.declared)))
+
+			r := &RealPackageLoader{ModulesDir: "apm_modules"}
+			if _, err := r.LoadPackage(ref, ""); err != nil {
+				t.Fatal(err)
+			}
+			if info, err := os.Lstat("apm_modules/_local/dep"); err != nil || !info.IsDir() {
+				t.Fatalf("apm_modules/_local/dep is not a directory (lstat %v, error %v)", info, err)
+			}
+			for _, name := range []string{"apm.yml", "important.txt"} {
+				got, err := os.ReadFile(filepath.Join("apm_modules", "_local", "dep", name))
+				if err != nil || string(got) != want[filepath.Join(src, name)] {
+					t.Errorf("copied %s = %q (err %v), want %q", name, got, err, want[filepath.Join(src, name)])
+				}
+			}
+			if got := snapshot(t, src); !reflect.DeepEqual(got, want) {
+				t.Errorf("the source changed: %v, want %v", got, want)
+			}
+		})
+	}
+}

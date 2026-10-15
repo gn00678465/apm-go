@@ -358,16 +358,19 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 	if err != nil {
 		return nil, err
 	}
-	src := ref.LocalSourcePath
+	// The copy reads the source checked here, symlinks resolved: a declared
+	// path through the destination link would read whatever is left once
+	// RemoveAll has removed that link.
+	src, err := checkLocalCopy(r.ModulesDir, ref)
+	if err != nil {
+		return nil, err
+	}
 	info, err := os.Stat(src)
 	if err != nil {
-		return nil, fmt.Errorf("local dependency source %s: %w", src, err)
+		return nil, fmt.Errorf("local dependency source %s: %w", ref.LocalSourcePath, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("local dependency source %s is not a directory", src)
-	}
-	if err := CheckLocalCopy(r.ModulesDir, ref); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("local dependency source %s is not a directory", ref.LocalSourcePath)
 	}
 
 	// Replace any stale prior materialization so the result matches a fresh
@@ -380,7 +383,7 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 		return nil, err
 	}
 	if err := copyTreeNoSymlinks(src, installDir); err != nil {
-		return nil, fmt.Errorf("copy local dependency %s: %w", src, err)
+		return nil, fmt.Errorf("copy local dependency %s: %w", ref.LocalSourcePath, err)
 	}
 
 	return r.parseSubManifest(installDir)
@@ -406,6 +409,13 @@ func CheckLocalCopy(modulesDir string, ref *manifest.DependencyReference) error 
 	if ref.LocalSourcePath == "" {
 		return nil
 	}
+	_, err := checkLocalCopy(modulesDir, ref)
+	return err
+}
+
+// checkLocalCopy is CheckLocalCopy that also returns the source it checked,
+// with symlinks resolved.
+func checkLocalCopy(modulesDir string, ref *manifest.DependencyReference) (string, error) {
 	declared := ref.LocalDeclaredPath
 	if declared == "" {
 		declared = ref.LocalSourcePath
@@ -413,36 +423,36 @@ func CheckLocalCopy(modulesDir string, ref *manifest.DependencyReference) error 
 	modules := filepath.ToSlash(filepath.Clean(modulesDir))
 	dest, err := installPathIn(modulesDir, ref)
 	if err != nil {
-		return err
+		return "", err
 	}
 	destParent, err := realPath(filepath.Dir(dest))
 	if err != nil {
-		return fmt.Errorf("local dependency %s: %w", declared, err)
+		return "", fmt.Errorf("local dependency %s: %w", declared, err)
 	}
 	destReal := filepath.Join(destParent, filepath.Base(dest))
 	modulesReal, err := realPath(modulesDir)
 	if err != nil {
-		return fmt.Errorf("local dependency %s: %w", declared, err)
+		return "", fmt.Errorf("local dependency %s: %w", declared, err)
 	}
 	if !within(modulesReal, destReal) || destReal == modulesReal {
-		return fmt.Errorf("local dependency %s would be copied to %s, which resolves to %s outside %s/; refusing to replace it",
+		return "", fmt.Errorf("local dependency %s would be copied to %s, which resolves to %s outside %s/; refusing to replace it",
 			declared, filepath.ToSlash(dest), destReal, modules)
 	}
 	src, err := realPath(ref.LocalSourcePath)
 	if err != nil {
-		return fmt.Errorf("local dependency source %s: %w", ref.LocalSourcePath, err)
+		return "", fmt.Errorf("local dependency source %s: %w", ref.LocalSourcePath, err)
 	}
 	project, err := realPath(".")
 	if err != nil {
-		return fmt.Errorf("local dependency %s: %w", declared, err)
+		return "", fmt.Errorf("local dependency %s: %w", declared, err)
 	}
 	if within(src, project) {
-		return fmt.Errorf("local dependency %s is the project directory or one of its parent directories; it cannot be copied into %s/", declared, modules)
+		return "", fmt.Errorf("local dependency %s is the project directory or one of its parent directories; it cannot be copied into %s/", declared, modules)
 	}
 	if within(src, destReal) || within(destReal, src) {
-		return fmt.Errorf("local dependency %s overlaps its copy %s; a package cannot be copied into or over itself", declared, filepath.ToSlash(dest))
+		return "", fmt.Errorf("local dependency %s overlaps its copy %s; a package cannot be copied into or over itself", declared, filepath.ToSlash(dest))
 	}
-	return nil
+	return src, nil
 }
 
 // within reports whether path is dir or below it.

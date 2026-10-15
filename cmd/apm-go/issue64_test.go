@@ -227,3 +227,38 @@ func TestUpdate_LateRefusal_LeavesEarlierCopy(t *testing.T) {
 	_, copied, manifestBytes, lock := lateRefusalProject(t)
 	assertLateRefusal(t, []string{"update"}, copied, manifestBytes, lock)
 }
+
+// review of PR for issue #64, second round: after an install of ../dep, the
+// copy is replaced by a link to the source and apm.yml names the source
+// through that link. The copy must be made from the source the link pointed
+// to, not from the empty directory left once the link is removed.
+func TestInstall_SourceThroughItsDestinationLink_CopiesTheSource(t *testing.T) {
+	root := upDepProject(t, "  apm:\n    - ../dep\n")
+	writeCompileFile(t, root, "dep/important.txt", "original\n")
+	mustRunCLI(t, "install")
+	if err := os.RemoveAll(filepath.Join("apm_modules", "_local", "dep")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "dep"), filepath.Join("apm_modules", "_local", "dep")); err != nil {
+		t.Fatal(err)
+	}
+	writeCompileFile(t, root, "proj/apm.yml", "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n    - path: ./apm_modules/_local/dep\n")
+
+	mustRunCLI(t, "install")
+
+	if info, err := os.Lstat(filepath.Join("apm_modules", "_local", "dep")); err != nil || !info.IsDir() {
+		t.Fatalf("apm_modules/_local/dep is not a directory (lstat %v, error %v)", info, err)
+	}
+	for rel, want := range map[string]string{
+		"apm.yml":                 "name: dep\nversion: 1.0.0\n",
+		"important.txt":           "original\n",
+		".apm/skills/sk/SKILL.md": "---\nname: sk\ndescription: a skill\n---\nbody\n",
+	} {
+		for _, dir := range []string{filepath.Join("apm_modules", "_local", "dep"), filepath.Join(root, "dep")} {
+			if got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))); err != nil || string(got) != want {
+				t.Errorf("%s/%s = %q (err %v), want %q", dir, rel, got, err, want)
+			}
+		}
+	}
+	assertIssue50Exists(t, true, ".claude/skills/sk/SKILL.md")
+}
