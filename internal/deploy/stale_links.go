@@ -42,9 +42,13 @@ import (
 // deploy never writes a file below skills/<name>, so what is found there
 // through the user's symlink is the user's.
 //
-// A user's symlink on any other parent (~/.claude linked into a dotfiles
-// directory) is walked through and never removed, also not when the directory
-// behind it becomes empty.
+// Before any of that, a path whose directory leads out of its target root
+// (CheckDeployPath: a user's symlink at .claude/rules, or a deploy symlink
+// whose parent was linked elsewhere) is kept with one diagnostic per symlink,
+// and nothing on it is removed. A user's symlink that stays inside the target
+// root, and the target root itself as a symlink (~/.claude linked into a
+// dotfiles directory), is walked through and never removed, also not when the
+// directory behind it becomes empty.
 //
 // A path with no deploy symlink on it that is a file, or the lock's entry for
 // a skill directory, goes to RemoveDeployedFiles, unless a user symlink was walked through and the file
@@ -77,6 +81,14 @@ func RemoveStaleLinkedFiles(deployRoot, projectDir, bucketSource string, stale [
 		}
 		if !archive.ContainedKey(deployRoot, f) {
 			plain = append(plain, f) // RemoveDeployedFiles refuses and reports it
+			continue
+		}
+		var outside *DeployPathError
+		if errors.As(CheckDeployPath(deployRoot, f), &outside) {
+			if !decided[outside.Link] {
+				decided[outside.Link] = true
+				diags = append(diags, keepOutsideDiag(outside))
+			}
 			continue
 		}
 		loc, err := locateStalePath(deployRoot, bucketSource, f)
@@ -230,13 +242,18 @@ func resolveExisting(p string) string {
 }
 
 // TakenOver reports whether the lock path rel is at or below an entry the
-// user took over, so that what is there is not the deploy's any more. For a
-// copy deploy (bucketSource "") that is a symlink at a skill's directory. For
-// a symlink deploy it is a symlink, at the path itself or at a skill's
-// directory, that leads outside bucketSource.
+// user took over, so that what is there is not the deploy's any more. That is
+// a symlink on rel's directory that leads out of its target root
+// (CheckDeployPath), and also: for a copy deploy (bucketSource "") a symlink
+// at a skill's directory; for a symlink deploy a symlink, at the path itself
+// or at a skill's directory, that leads outside bucketSource.
 func TakenOver(deployRoot, bucketSource, rel string) bool {
 	if !archive.ContainedKey(deployRoot, rel) {
 		return false
+	}
+	var outside *DeployPathError
+	if errors.As(CheckDeployPath(deployRoot, rel), &outside) {
+		return true
 	}
 	if bucketSource == "" {
 		return skillSymlink(deployRoot, rel) != ""

@@ -137,6 +137,28 @@ func TestMaterializeLocalCopy_RefusesUnsafeCopy(t *testing.T) {
 			},
 		},
 		{
+			// Issue #86: the Oracle refuses this shape too.
+			name: "destination is a link outside apm_modules",
+			setup: func(t *testing.T, root string) (string, string) {
+				writePkg(t, filepath.Join(root, "other"))
+				symlink(t, filepath.Join(root, "other"), "apm_modules/_local/dep")
+				return "../dep", filepath.Join(root, "dep")
+			},
+			wantFrom: func(root string) string {
+				return "local dependency ../dep would be copied to apm_modules/_local/dep, which resolves to " + filepath.Join(root, "other") + " outside apm_modules/; refusing to replace it"
+			},
+		},
+		{
+			name: "destination is a dangling link outside apm_modules",
+			setup: func(t *testing.T, root string) (string, string) {
+				symlink(t, filepath.Join(root, "gone"), "apm_modules/_local/dep")
+				return "../dep", filepath.Join(root, "dep")
+			},
+			wantFrom: func(root string) string {
+				return "local dependency ../dep would be copied to apm_modules/_local/dep, which resolves to " + filepath.Join(root, "gone") + " outside apm_modules/; refusing to replace it"
+			},
+		},
+		{
 			name: "source is its own copy in apm_modules",
 			setup: func(t *testing.T, root string) (string, string) {
 				writePkg(t, filepath.Join(root, "proj", "apm_modules", "_local", "dep"))
@@ -214,13 +236,15 @@ func TestMaterializeLocalCopy_RefusesSourceHoldingModulesDir(t *testing.T) {
 	}
 }
 
-// A symlink at the destination itself is replaced, not followed: RemoveAll
-// removes the link and leaves its target alone.
+// A symlink at the destination that stays inside apm_modules is replaced,
+// not followed: RemoveAll removes the link and leaves its target alone. One
+// that leads outside is refused (TestMaterializeLocalCopy_RefusesUnsafeCopy).
 func TestMaterializeLocalCopy_ReplacesSymlinkAtDestination(t *testing.T) {
 	root := localCopyRoot(t)
-	writePkg(t, filepath.Join(root, "other"))
-	symlink(t, filepath.Join(root, "other"), "apm_modules/_local/dep")
-	other := snapshot(t, filepath.Join(root, "other"))
+	other := filepath.Join(root, "proj", "apm_modules", "other")
+	writePkg(t, other)
+	symlink(t, other, "apm_modules/_local/dep")
+	otherBefore := snapshot(t, other)
 
 	r := &RealPackageLoader{ModulesDir: "apm_modules"}
 	if _, err := r.LoadPackage(localRef("../dep", filepath.Join(root, "dep")), ""); err != nil {
@@ -229,8 +253,8 @@ func TestMaterializeLocalCopy_ReplacesSymlinkAtDestination(t *testing.T) {
 	if info, err := os.Lstat("apm_modules/_local/dep"); err != nil || !info.IsDir() {
 		t.Errorf("apm_modules/_local/dep is not a directory after the copy (lstat %v, error %v)", info, err)
 	}
-	if got := snapshot(t, filepath.Join(root, "other")); !reflect.DeepEqual(got, other) {
-		t.Errorf("the link's target changed: %v, want %v", got, other)
+	if got := snapshot(t, other); !reflect.DeepEqual(got, otherBefore) {
+		t.Errorf("the link's target changed: %v, want %v", got, otherBefore)
 	}
 }
 
@@ -249,6 +273,8 @@ func TestMaterializeLocalCopy_CopiesSiblingOfTheProject(t *testing.T) {
 
 // A declared source that runs through the destination link is read where it
 // pointed when it was checked, not through the link the copy removes first.
+// The link stays inside apm_modules: one that leads outside is refused
+// (issue #86).
 func TestMaterializeLocalCopy_SourceThroughDestinationLink(t *testing.T) {
 	tests := []struct {
 		name, declared string
@@ -257,20 +283,20 @@ func TestMaterializeLocalCopy_SourceThroughDestinationLink(t *testing.T) {
 		{
 			name:     "source is the destination link",
 			declared: "./apm_modules/_local/dep",
-			link:     func(root string) string { return filepath.Join(root, "dep") },
-			src:      func(root string) string { return filepath.Join(root, "dep") },
+			link:     func(root string) string { return filepath.Join(root, "proj", "apm_modules", "foo", "x", "dep") },
+			src:      func(root string) string { return filepath.Join(root, "proj", "apm_modules", "foo", "x", "dep") },
 		},
 		{
 			name:     "source is below the destination link",
 			declared: "./apm_modules/_local/dep/x/dep",
-			link:     func(root string) string { return filepath.Join(root, "foo") },
-			src:      func(root string) string { return filepath.Join(root, "foo", "x", "dep") },
+			link:     func(root string) string { return filepath.Join(root, "proj", "apm_modules", "foo") },
+			src:      func(root string) string { return filepath.Join(root, "proj", "apm_modules", "foo", "x", "dep") },
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := localCopyRoot(t)
-			writePkg(t, filepath.Join(root, "foo", "x", "dep"))
+			writePkg(t, filepath.Join(root, "proj", "apm_modules", "foo", "x", "dep"))
 			symlink(t, tt.link(root), "apm_modules/_local/dep")
 			src := tt.src(root)
 			want := snapshot(t, src)

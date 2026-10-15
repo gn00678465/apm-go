@@ -3,6 +3,7 @@ package deploy
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -36,6 +37,19 @@ func staleLinkRoots(t *testing.T) (deployRoot, sourceRoot string) {
 		writeStaleLinkFile(t, filepath.Join(sourceRoot, filepath.FromSlash(rel)), content)
 	}
 	return deployRoot, sourceRoot
+}
+
+// outsideDiag is the diagnostic for a symlink at link, below the target root
+// root, that leads to resolved outside it (issue #86): nothing below it is
+// removed. Both directories are spelled with their symlinks resolved.
+func outsideDiag(link, resolved, root string) string {
+	real := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+	return fmt.Sprintf("keeping %q: it is a symlink to %s, outside %s, so nothing below it is removed", link, real(resolved), real(root))
 }
 
 func writeStaleLinkFile(t *testing.T, full, content string) {
@@ -510,8 +524,8 @@ func TestRemoveStaleLinkedFiles_KeepsSourceFileWhenWorkingDirIsEnteredThroughSym
 		map[string]string{".claude/agents/sub/x.md": "sha256:eb9c26baee47f19e4993a77bca936d0ff09e355a82d3db79bf154ebff1a80604"}, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	if len(diags) == 1 && diags[0] != `keeping ".claude/agents/sub/x.md": it is a file in the apm project directory, reached through a symlink` {
-		t.Errorf("diag = %q", diags[0])
+	if want := outsideDiag(".claude/agents/sub", filepath.Join(base, "real", "apm", "agents"), filepath.Join(deployRoot, ".claude")); len(diags) == 1 && diags[0] != want {
+		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
 	assertStaleLinkContent(t, source, "demo\n")
 }
@@ -546,9 +560,12 @@ func TestRemoveStaleLinkedFiles_NestedTargetRootSymlinkIntoSourceRootIsUsers(t *
 	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".agents/skills/demo/SKILL.md"},
 		map[string]string{".agents/skills/demo/SKILL.md": staleLinkDemoHash}, nil)
 
-	assertStaleLinkResult(t, removed, []string{".agents/skills/demo"}, diags, 0)
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if want := outsideDiag(".agents/skills", shared, filepath.Join(deployRoot, ".agents")); len(diags) == 1 && diags[0] != want {
+		t.Errorf("diag = %q, want %q", diags[0], want)
+	}
 	assertStaleLinkIsSymlink(t, filepath.Join(deployRoot, ".agents", "skills"))
-	assertStaleLinkGone(t, filepath.Join(shared, "demo"))
+	assertStaleLinkIsSymlink(t, filepath.Join(shared, "demo"))
 	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
 }
 
@@ -561,9 +578,12 @@ func TestRemoveStaleLinkedFiles_SkillRootSymlinkIntoSourceRootIsUsers(t *testing
 	removed, diags := RemoveStaleLinkedFiles(deployRoot, sourceRoot, sourceRoot, []string{".claude/skills/demo/SKILL.md"},
 		map[string]string{".claude/skills/demo/SKILL.md": staleLinkDemoHash}, nil)
 
-	assertStaleLinkResult(t, removed, []string{".claude/skills/demo"}, diags, 0)
+	assertStaleLinkResult(t, removed, nil, diags, 1)
+	if want := outsideDiag(".claude/skills", shared, filepath.Join(deployRoot, ".claude")); len(diags) == 1 && diags[0] != want {
+		t.Errorf("diag = %q, want %q", diags[0], want)
+	}
 	assertStaleLinkIsSymlink(t, filepath.Join(deployRoot, ".claude", "skills"))
-	assertStaleLinkGone(t, filepath.Join(shared, "demo"))
+	assertStaleLinkIsSymlink(t, filepath.Join(shared, "demo"))
 	assertStaleLinkContent(t, filepath.Join(sourceRoot, "skills", "demo", "SKILL.md"), "demo\n")
 	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "keep.md"), "keep\n")
 	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "gone.md"), "gone\n")
@@ -594,8 +614,8 @@ func TestRemoveStaleLinkedFiles_ParentSymlinkThatIsNotSkillDirIsUsers(t *testing
 		map[string]string{".claude/agents/sub/gone.md": "sha256:4b9f2c32577beb1ebc8ab2a1e226faaa9176a81cd4eedbaa22f8a0db919972b5"}, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	if len(diags) == 1 && diags[0] != `keeping ".claude/agents/sub/gone.md": it is a file in the apm project directory, reached through a symlink` {
-		t.Errorf("diag = %q", diags[0])
+	if want := outsideDiag(".claude/agents/sub", filepath.Join(sourceRoot, "agents"), filepath.Join(deployRoot, ".claude")); len(diags) == 1 && diags[0] != want {
+		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
 	assertStaleLinkIsSymlink(t, sub)
 	assertStaleLinkContent(t, filepath.Join(sourceRoot, "agents", "gone.md"), "gone\n")
@@ -653,8 +673,8 @@ func TestRemoveStaleLinkedFiles_UserParentSymlinkIntoAnotherPlaceOfProjectDir_Ke
 		map[string]string{".claude/agents/sub/x.md": "sha256:eb9c26baee47f19e4993a77bca936d0ff09e355a82d3db79bf154ebff1a80604"}, nil)
 
 	assertStaleLinkResult(t, removed, nil, diags, 1)
-	if len(diags) == 1 && diags[0] != `keeping ".claude/agents/sub/x.md": it is a file in the apm project directory, reached through a symlink` {
-		t.Errorf("diag = %q", diags[0])
+	if want := outsideDiag(".claude/agents/sub", custom, filepath.Join(deployRoot, ".claude")); len(diags) == 1 && diags[0] != want {
+		t.Errorf("diag = %q, want %q", diags[0], want)
 	}
 	assertStaleLinkIsSymlink(t, link)
 	assertStaleLinkContent(t, filepath.Join(custom, "x.md"), "demo\n")

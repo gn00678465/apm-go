@@ -230,9 +230,10 @@ func TestUpdate_LateRefusal_LeavesEarlierCopy(t *testing.T) {
 
 // review of PR for issue #64, second round: after an install of ../dep, the
 // copy is replaced by a link to the source and apm.yml names the source
-// through that link. The copy must be made from the source the link pointed
-// to, not from the empty directory left once the link is removed.
-func TestInstall_SourceThroughItsDestinationLink_CopiesTheSource(t *testing.T) {
+// through that link. Issue #86 changed the outcome: the link leads out of
+// apm_modules, so the owner's ruling on #86 refuses it as Oracle 0.33.0 does,
+// and the source is left as it was.
+func TestInstall_SourceThroughItsDestinationLink_Refused(t *testing.T) {
 	root := upDepProject(t, "  apm:\n    - ../dep\n")
 	writeCompileFile(t, root, "dep/important.txt", "original\n")
 	mustRunCLI(t, "install")
@@ -243,22 +244,18 @@ func TestInstall_SourceThroughItsDestinationLink_CopiesTheSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeCompileFile(t, root, "proj/apm.yml", "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n    - path: ./apm_modules/_local/dep\n")
+	before := tree86(t, root)
 
-	mustRunCLI(t, "install")
+	stdout, _, code := runCompileCLI(t, "install")
 
-	if info, err := os.Lstat(filepath.Join("apm_modules", "_local", "dep")); err != nil || !info.IsDir() {
-		t.Fatalf("apm_modules/_local/dep is not a directory (lstat %v, error %v)", info, err)
+	real, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for rel, want := range map[string]string{
-		"apm.yml":                 "name: dep\nversion: 1.0.0\n",
-		"important.txt":           "original\n",
-		".apm/skills/sk/SKILL.md": "---\nname: sk\ndescription: a skill\n---\nbody\n",
-	} {
-		for _, dir := range []string{filepath.Join("apm_modules", "_local", "dep"), filepath.Join(root, "dep")} {
-			if got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))); err != nil || string(got) != want {
-				t.Errorf("%s/%s = %q (err %v), want %q", dir, rel, got, err, want)
-			}
-		}
+	want := " x local dependency ./apm_modules/_local/dep would be copied to apm_modules/_local/dep, which resolves to " +
+		filepath.Join(real, "dep") + " outside apm_modules/; refusing to replace it\n"
+	if code != 1 || stdout != want {
+		t.Errorf("exit %d, stdout:\n%s\nwant exit 1, stdout:\n%s", code, stdout, want)
 	}
-	assertIssue50Exists(t, true, ".claude/skills/sk/SKILL.md")
+	assertTree86(t, root, before)
 }

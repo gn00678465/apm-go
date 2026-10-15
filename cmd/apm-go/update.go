@@ -187,6 +187,9 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 			return fmt.Errorf("refusing to clear %q outside apm_modules", key)
 		}
 		installDir := filepath.Join("apm_modules", key)
+		if err := archive.CheckWithin("apm_modules", installDir); err != nil {
+			return fmt.Errorf("refusing to clear %q: %w", key, err)
+		}
 		if err := os.RemoveAll(installDir); err != nil {
 			return fmt.Errorf("clear %s before update: %w", key, err)
 		}

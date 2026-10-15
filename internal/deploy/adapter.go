@@ -211,6 +211,9 @@ func deploySkill(p Primitive, projectDir string) ([]string, error) {
 func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	destDir := path.Join(root, p.Name)
 	absDestDir := filepath.Join(projectDir, filepath.FromSlash(destDir))
+	if err := CheckDeployPath(projectDir, destDir); err != nil {
+		return nil, err
+	}
 
 	if activeDeployMode.symlink {
 		return symlinkSkillTo(p.SrcPath, absDestDir, destDir, p.DepKey != "")
@@ -218,17 +221,34 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 
 	// A symlink here is not the deploy's: a copy through it would write into
 	// the directory it leads to. It is replaced by the skill's own directory,
-	// as a symlink deploy replaces one (symlinkSkillTo).
-	if info, err := os.Lstat(absDestDir); err == nil && info.Mode()&os.ModeSymlink != 0 {
+	// as a symlink deploy replaces one (symlinkSkillTo), so nothing below it
+	// is written through it. In an existing directory every file, then every
+	// directory (an empty one has no file to catch it), is checked before the
+	// first write: a symlink the user put inside it would take a copy, or an
+	// os.MkdirAll, elsewhere.
+	info, err := os.Lstat(absDestDir)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if err := os.Remove(absDestDir); err != nil {
 			return nil, fmt.Errorf("replace skill destination: %w", err)
+		}
+	} else {
+		for _, dirs := range []bool{false, true} {
+			err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(_, rel string, isDir bool) error {
+				if isDir != dirs {
+					return nil
+				}
+				return CheckDeployWrite(projectDir, path.Join(destDir, rel))
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := os.MkdirAll(absDestDir, 0755); err != nil {
 		return nil, fmt.Errorf("create skill dir: %w", err)
 	}
 	var deployed []string
-	err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(src, rel string, isDir bool) error {
+	err = walkSkillDir(p.SrcPath, "", p.DepKey != "", func(src, rel string, isDir bool) error {
 		dst := filepath.Join(absDestDir, filepath.FromSlash(rel))
 		if isDir {
 			return os.MkdirAll(dst, 0755)
@@ -340,6 +360,13 @@ func copyFile(src, dst string) error {
 }
 
 func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error) {
+	check := CheckDeployWrite
+	if activeDeployMode.symlink {
+		check = CheckDeployPath
+	}
+	if err := check(projectDir, destPath); err != nil {
+		return nil, err
+	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
 	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
 		return nil, err

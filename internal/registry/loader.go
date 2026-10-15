@@ -118,6 +118,11 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 		return nil, fmt.Errorf("refusing to extract %q outside %s", key, l.ModulesDir)
 	}
 	destDir := filepath.Join(l.ModulesDir, filepath.FromSlash(key))
+	// SafeExtract removes destDir and renames into it, through a symlinked
+	// parent too.
+	if err := archive.CheckWithin(l.ModulesDir, destDir); err != nil {
+		return nil, err
+	}
 	if _, err := archive.SafeExtract(bytes.NewReader(body), destDir, archive.Limits{
 		MaxBytes:   l.MaxBytes,
 		MaxEntries: l.MaxEntries,
