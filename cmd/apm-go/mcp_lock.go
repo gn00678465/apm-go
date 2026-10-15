@@ -16,7 +16,8 @@ import (
 // mcpConfigNode is one mcp_configs value of the lock: the server's fields in
 // the order of the Oracle's MCPDependency.to_dict
 // (models/dependency/mcp.py:254). package, tools and cwd, which apm-go does
-// not model, are absent.
+// not model, are absent. enabled is recorded for every target, not only
+// OpenCode, as the Oracle records it.
 func mcpConfigNode(dep *manifest.MCPDependency) *yamllib.Node {
 	pairs := [][2]*yamllib.Node{{strNode("name"), strNode(dep.Name)}}
 	add := func(key string, val *yamllib.Node) {
@@ -56,6 +57,9 @@ func mcpConfigNode(dep *manifest.MCPDependency) *yamllib.Node {
 	}
 	if dep.Command != "" {
 		add("command", strNode(dep.Command))
+	}
+	if dep.Enabled != nil {
+		add("enabled", dep.Enabled)
 	}
 	return mapNode(pairs)
 }
@@ -155,7 +159,7 @@ func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, 
 		if !ok {
 			return false, false
 		}
-		if !lockfile.NodesEqual(old, newLock.MCPConfigs[server]) {
+		if !lockfile.MCPConfigEqual(old, newLock.MCPConfigs[server]) {
 			return false, true
 		}
 		for t := range targetsByServer[server] {

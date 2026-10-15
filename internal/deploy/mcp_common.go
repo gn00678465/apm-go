@@ -11,6 +11,7 @@ import (
 	"github.com/apm-go/apm/internal/manifest"
 
 	"github.com/apm-go/apm/internal/rootfs"
+	"go.yaml.in/yaml/v4"
 )
 
 // ResolvedMCPServer is a self-defined MCP server after mf-013 resolution for
@@ -24,6 +25,7 @@ type ResolvedMCPServer struct {
 	URL       string
 	Env       map[string]string
 	Headers   map[string]string
+	Enabled   *yaml.Node // manifest.MCPDependency.Enabled, unresolved
 	Refused   bool
 	Diags     []string
 }
@@ -41,7 +43,7 @@ func envLookup(name string) (string, bool) {
 // value with no placeholder is rewritten to ${<key>} so secrets never bake
 // into a translate-mode target's config (design.md §3).
 func resolveMCPServer(s *manifest.MCPDependency, mode, headerMode manifest.ResolveMode) *ResolvedMCPServer {
-	r := &ResolvedMCPServer{Name: s.Name, Transport: s.Transport, Command: s.Command}
+	r := &ResolvedMCPServer{Name: s.Name, Transport: s.Transport, Command: s.Command, Enabled: s.Enabled}
 
 	if s.Args != nil {
 		for _, a := range *s.Args {

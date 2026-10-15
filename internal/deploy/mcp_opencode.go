@@ -1,7 +1,10 @@
 package deploy
 
 import (
+	"encoding/json"
+
 	"github.com/apm-go/apm/internal/manifest"
+	"go.yaml.in/yaml/v4"
 )
 
 func (a *opencodeAdapter) MCPResolveMode() manifest.ResolveMode { return manifest.ResolveBake }
@@ -28,6 +31,11 @@ func (a *opencodeAdapter) WriteMCP(prims []Primitive, projectDir string) ([]stri
 
 func opencodeMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 	e := map[string]any{"enabled": true}
+	if r.Enabled != nil {
+		// Forwarded unchanged, whatever its type, as the Oracle does
+		// (adapters/client/opencode.py:124-127).
+		e["enabled"] = jsonValue(r.Enabled)
+	}
 	if r.Transport == "stdio" {
 		e["type"] = "local"
 		e["command"] = append([]string{r.Command}, r.Args...)
@@ -54,4 +62,34 @@ func translateOpencodeHeaders(headers map[string]string) map[string]string {
 		out[k] = manifest.EnvVarRe.ReplaceAllString(v, "{env:$1}")
 	}
 	return out
+}
+
+// jsonValue is the JSON value of a node manifest.ParseMCPEntry tagged. A
+// number JSON cannot spell (.inf, 0x1F) is written as its YAML text.
+func jsonValue(n *yaml.Node) any {
+	switch n.Kind {
+	case yaml.SequenceNode:
+		out := make([]any, 0, len(n.Content))
+		for _, c := range n.Content {
+			out = append(out, jsonValue(c))
+		}
+		return out
+	case yaml.MappingNode:
+		out := make(map[string]any, len(n.Content)/2)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			out[n.Content[i].Value] = jsonValue(n.Content[i+1])
+		}
+		return out
+	}
+	switch n.Tag {
+	case "!!null":
+		return nil
+	case "!!bool":
+		return n.Value == "true"
+	case "!!int", "!!float":
+		if json.Valid([]byte(n.Value)) {
+			return json.Number(n.Value)
+		}
+	}
+	return n.Value
 }

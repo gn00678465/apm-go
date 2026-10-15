@@ -334,7 +334,47 @@ func mcpConfigsEqual(a, b map[string]*yaml.Node) bool {
 	}
 	for name, cfg := range a {
 		other, ok := b[name]
-		if !ok || !NodesEqual(cfg, other) {
+		if !ok || !MCPConfigEqual(cfg, other) {
+			return false
+		}
+	}
+	return true
+}
+
+// MCPConfigEqual reports whether two mcp_configs values record the same
+// server. Only enabled is compared by type too, as the Oracle's
+// opencode_enabled_matches does (models/dependency/mcp.py:97-104): false,
+// 'false' and 0 are three values. Deviation: the Oracle's config comparison
+// still finds 0 == False, so changing enabled from false to 0 leaves its lock
+// as it was; apm-go records the 0 apm.yml declares. The other fields are not
+// compared by type, because apm-go reads args and env as strings where the
+// Oracle's lock keeps an integer.
+func MCPConfigEqual(a, b *yaml.Node) bool {
+	return NodesEqual(a, b) && tagsEqual(mappingValue(a, "enabled"), mappingValue(b, "enabled"))
+}
+
+func mappingValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// tagsEqual compares the resolved tags of two values NodesEqual found equal.
+func tagsEqual(a, b *yaml.Node) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.ShortTag() != b.ShortTag() {
+		return false
+	}
+	for i := range a.Content {
+		if !tagsEqual(a.Content[i], b.Content[i]) {
 			return false
 		}
 	}

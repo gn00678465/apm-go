@@ -73,6 +73,9 @@ func resolveRegistryMCP(s *manifest.MCPDependency) (*manifest.MCPDependency, []s
 	if rerr != nil {
 		return nil, []string{fmt.Sprintf("mcp %q: %v; skipped", s.Name, rerr)}
 	}
+	// The registry knows nothing of enabled; the Oracle overlays the apm.yml
+	// value on the resolved server (integration/mcp_integrator.py:508).
+	dep.Enabled = s.Enabled
 	var diags []string
 	if len(requiredHeaders) > 0 {
 		diags = append(diags, fmt.Sprintf(
