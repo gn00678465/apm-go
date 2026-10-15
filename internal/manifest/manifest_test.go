@@ -714,24 +714,3 @@ func TestParseManifest_NoAllowExecutables_NoWarning(t *testing.T) {
 		t.Errorf("stderr = %q, want no output when apm.yml has no allowExecutables: block", buf.String())
 	}
 }
-
-func TestContainsEscape(t *testing.T) {
-	tests := []struct {
-		path string
-		want bool
-	}{
-		{"./packages/foo", false},
-		{"../outside", true},
-		{"../../etc/passwd", true},
-		{"packages/../packages/foo", false},
-		{"packages/../../outside", true},
-		{"./foo/bar", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			if got := containsEscape(tt.path); got != tt.want {
-				t.Errorf("containsEscape(%q) = %v, want %v", tt.path, got, tt.want)
-			}
-		})
-	}
-}

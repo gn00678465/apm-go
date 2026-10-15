@@ -362,6 +362,9 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 	if !info.IsDir() {
 		return nil, fmt.Errorf("local dependency source %s is not a directory", src)
 	}
+	if err := r.refuseSelfCopy(ref); err != nil {
+		return nil, err
+	}
 
 	// Replace any stale prior materialization so the result matches a fresh
 	// copy of the current source (parity with the stale-checkout repair on the
@@ -377,6 +380,60 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 	}
 
 	return r.parseSubManifest(installDir)
+}
+
+// refuseSelfCopy refuses a source that is, or holds, the project directory
+// or ModulesDir: the copy would land inside its own source and recurse until
+// the path is too long. Deliberate deviation from the Oracle, which copies
+// until "[Errno 36] File name too long", exits 1 and leaves .claude/ behind.
+// Both sides are compared after symlinks are resolved, so a link to a parent
+// directory is refused too.
+func (r *RealPackageLoader) refuseSelfCopy(ref *manifest.DependencyReference) error {
+	declared := ref.LocalDeclaredPath
+	if declared == "" {
+		declared = ref.LocalSourcePath
+	}
+	src, err := realPath(ref.LocalSourcePath)
+	if err != nil {
+		return fmt.Errorf("local dependency source %s: %w", ref.LocalSourcePath, err)
+	}
+	modules := filepath.ToSlash(filepath.Clean(r.ModulesDir))
+	for _, held := range []struct{ dir, what string }{
+		{".", "the project directory"},
+		{r.ModulesDir, modules},
+	} {
+		dir, err := realPath(held.dir)
+		if err != nil {
+			return fmt.Errorf("local dependency %s: %w", declared, err)
+		}
+		if rel, err := filepath.Rel(src, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("local dependency %s is %s or one of its parent directories; it cannot be copied into %s/", declared, held.what, modules)
+		}
+	}
+	return nil
+}
+
+// realPath is p made absolute with every symlink resolved. The part of p
+// that does not exist yet (ModulesDir before the first install) is joined
+// to the real path of the nearest directory above it that does.
+func realPath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err == nil {
+		return resolved, nil
+	}
+	parent := filepath.Dir(abs)
+	if !os.IsNotExist(err) || parent == abs {
+		return "", err
+	}
+	resolved, err = realPath(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, filepath.Base(abs)), nil
 }
 
 // copyTreeNoSymlinks recursively copies srcDir to dstDir, copying regular files

@@ -266,16 +266,15 @@ func ParseDepString(s string) (*DependencyReference, error) {
 		}
 	}
 
-	// An OS-absolute filesystem path (POSIX "/...", Windows "C:\..."/"C:/...")
-	// is user-intended, not a path-traversal attempt -- accept it as a local
-	// dependency outright, WITHOUT running containsEscape (that guard only
-	// makes sense for a path meant to stay relative to -- and inside -- the
-	// project root). This also lets an absolute path resolved by mkt-025's
-	// local-marketplace fast path round-trip back through apm.yml when
-	// install.go can't relativize it into the project tree.
+	// A local path may point anywhere, also above the project root
+	// (`../pkg`, a monorepo sibling), as in the Oracle; a package downloaded
+	// from elsewhere cannot declare one (resolver isLocalFilesystemDep). Its
+	// last component has to name a directory, because that name is the
+	// package's apm_modules key (reference.py:1812-1821).
 	if p, ok := localPathOf(s); ok {
-		if !IsAbsoluteLocalPath(p) && containsEscape(p) {
-			return nil, fmt.Errorf("dependency path %q escapes project root", p)
+		if !namesDirectory(p) {
+			return nil, fmt.Errorf("Local path '%s' does not resolve to a named directory. "+
+				"Use a path that ends with a directory name (e.g., './my-package' instead of './').", p)
 		}
 		return &DependencyReference{IsLocal: true, LocalPath: p, Source: "local"}, nil
 	}
@@ -1073,6 +1072,27 @@ func localPathOf(s string) (string, bool) {
 		return "", false
 	}
 	return p, IsAbsoluteLocalPath(p) || isLocalPath(p)
+}
+
+// namesDirectory reports whether p's last component, read as Python's
+// pathlib reads it (reference.py:1815), is a name: not empty, `.` or `..`.
+// A path with a backslash is read as a Windows path, where `/` separates too
+// and a drive (`C:`) is not a component.
+func namesDirectory(p string) bool {
+	seps := "/"
+	if strings.Contains(p, `\`) {
+		seps = `/\`
+		if len(p) >= 2 && p[1] == ':' {
+			p = p[2:]
+		}
+	}
+	name := ""
+	for _, part := range strings.FieldsFunc(p, func(r rune) bool { return strings.ContainsRune(seps, r) }) {
+		if part != "." {
+			name = part
+		}
+	}
+	return name != "" && name != ".."
 }
 
 func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {

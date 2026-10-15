@@ -3059,11 +3059,9 @@ func localPathForManifest(abs string) string {
 	}
 	rel = filepath.ToSlash(rel)
 	if rel == ".." || strings.HasPrefix(rel, "../") {
-		// Outside the project tree -- relativizing would need a leading
-		// ".." escaping the root, which manifest.ParseDepString's
-		// containsEscape guard would then reject on the next read. Persist
-		// the absolute path instead (accepted by ParseDepString's dedicated
-		// absolute-path branch, which skips that guard entirely).
+		// Outside the project tree the absolute path is written, as the
+		// design of mkt-025 chose. A "../" path would parse too since issue
+		// #64; what the Oracle writes for this case has not been measured.
 		return abs
 	}
 	if !strings.HasPrefix(rel, "./") {

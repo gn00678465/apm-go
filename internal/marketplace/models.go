@@ -533,9 +533,7 @@ func jsonValueKind(raw json.RawMessage) string {
 // specific, deliberate remaining divergence (Oracle-only grammar
 // ParseDepString's simpler shorthand parser does not implement -- Azure
 // DevOps org/project/repo, GitLab nested groups, Artifactory paths -- or
-// apm-go's own pre-existing security hardening beyond the Oracle, such as
-// rejecting a "../"-climbing local path the Oracle accepts outright with
-// no traversal check). Regenerating the fixture (tools/depref_conformance_gen.py)
+// apm-go's own security hardening beyond the Oracle). Regenerating the fixture (tools/depref_conformance_gen.py)
 // against a newer Oracle pin, or extending its input list, is how this
 // scope statement gets kept honest going forward instead of accreting
 // another "ports X exactly" claim that quietly stops being true.

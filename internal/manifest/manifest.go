@@ -524,23 +524,6 @@ func isLocalPath(s string) bool {
 		strings.HasPrefix(s, "~\\")
 }
 
-func containsEscape(p string) bool {
-	p = strings.ReplaceAll(p, "\\", "/")
-	parts := strings.Split(p, "/")
-	depth := 0
-	for _, part := range parts {
-		if part == ".." {
-			depth--
-			if depth < 0 {
-				return true
-			}
-		} else if part != "." && part != "" {
-			depth++
-		}
-	}
-	return false
-}
-
 func validatePolicyBlock(val *yaml.Node) error {
 	if val.Kind != yaml.MappingNode {
 		return nil
