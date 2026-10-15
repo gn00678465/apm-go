@@ -119,7 +119,7 @@ func resolveUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lo
 		resolveMarketplaceUninstallTarget(name, plugin, mkt, ref, m, lock, resolve, dryRun, res)
 		return
 	}
-	resolvePlainUninstallTarget(name, m, res)
+	resolvePlainUninstallTarget(name, m, lock, res)
 }
 
 // resolvePlainUninstallTarget handles a PACKAGE argument that is NOT
@@ -127,13 +127,19 @@ func resolveUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lo
 // (un-010/011), falling back to un-019's standalone-MCP match when it
 // doesn't parse as a dependency string at all, or parses fine but matches no
 // existing apm.yml entry.
-func resolvePlainUninstallTarget(name string, m *manifest.Manifest, res *uninstallResolution) {
+func resolvePlainUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lockfile, res *uninstallResolution) {
 	if d, err := manifest.ParseDepString(name); err == nil {
 		if identity, ok := uninstallIdentity(d); ok {
 			if isDev, found := findManifestAPMTarget(m, identity); found {
 				res.APMTargets = append(res.APMTargets, uninstallAPMTarget{Name: name, IdentityKey: identity, IsDev: isDev})
 				return
 			}
+		}
+	}
+	if identity, ok := lockedLocalAlias(name, lock); ok {
+		if isDev, found := findManifestAPMTarget(m, identity); found {
+			res.APMTargets = append(res.APMTargets, uninstallAPMTarget{Name: name, IdentityKey: identity, IsDev: isDev})
+			return
 		}
 	}
 	// un-019 (apm-go enhancement): apm package identity not found (or the
@@ -144,6 +150,22 @@ func resolvePlainUninstallTarget(name string, m *manifest.Manifest, res *uninsta
 		return
 	}
 	res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundNoMatch})
+}
+
+// lockedLocalAlias maps a local package's lock name, _local/<name>, to the
+// identity of the apm.yml entry that declares it. As in the Oracle
+// (models/dependency/selection.py:69-86), only a lock entry with source local
+// makes the alias, through the path it records, which is the declared one.
+func lockedLocalAlias(name string, lock *lockfile.Lockfile) (string, bool) {
+	if lock == nil {
+		return "", false
+	}
+	for _, dep := range lock.Dependencies {
+		if dep.Source == "local" && dep.RepoURL == name && dep.LocalPath != "" {
+			return "local:" + dep.LocalPath, true
+		}
+	}
+	return "", false
 }
 
 // resolveMarketplaceUninstallTarget handles a "PLUGIN@MARKETPLACE[#REF]"

@@ -108,6 +108,12 @@ func runUninstall(args []string, opts uninstallOptions) error {
 // un-080 requires the dry-run preview to include "the orphan BFS result").
 type uninstallPlan struct {
 	resolution *uninstallResolution
+	// apmTargets and mcpTargets hold each selected entry once, in the order
+	// the arguments first select it: an entry is removed and counted once
+	// however many arguments name it (Oracle commands/uninstall/
+	// engine.py:630-731).
+	apmTargets []uninstallAPMTarget
+	mcpTargets []uninstallMCPTarget
 	// moduleKeyByIdentity is the apm_modules key of each matched target.
 	moduleKeyByIdentity map[string]string
 	removedIdentities   map[string]bool
@@ -141,15 +147,24 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	removedIdentities := make(map[string]bool, len(resolution.APMTargets))
 	removedModuleKeys := make(map[string]bool, len(resolution.APMTargets))
 	moduleKeyByIdentity := make(map[string]string, len(resolution.APMTargets))
+	var apmTargets []uninstallAPMTarget
 	for _, t := range resolution.APMTargets {
+		if removedIdentities[t.IdentityKey] {
+			continue
+		}
+		apmTargets = append(apmTargets, t)
 		removedIdentities[t.IdentityKey] = true
 		key := uninstallRemovalKey(t.IdentityKey, lock)
 		moduleKeyByIdentity[t.IdentityKey] = key
 		removedModuleKeys[key] = true
 	}
 	mcpNames := make(map[string]bool, len(resolution.MCPTargets))
+	var mcpTargets []uninstallMCPTarget
 	for _, t := range resolution.MCPTargets {
-		mcpNames[t.Name] = true
+		if !mcpNames[t.Name] {
+			mcpTargets = append(mcpTargets, t)
+			mcpNames[t.Name] = true
+		}
 	}
 
 	remainingRootKeys := uninstallRemainingRootKeys(m, removedIdentities, lock)
@@ -179,6 +194,8 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 
 	return &uninstallPlan{
 		resolution:          resolution,
+		apmTargets:          apmTargets,
+		mcpTargets:          mcpTargets,
 		moduleKeyByIdentity: moduleKeyByIdentity,
 		removedIdentities:   removedIdentities,
 		removedModuleKeys:   removedModuleKeys,
@@ -817,9 +834,8 @@ func printUninstallNotFound(nf uninstallNotFound) {
 // (commands/uninstall/engine.py:745-810); a matched MCP server, which the
 // Oracle does not uninstall, gets a line of the same shape.
 func printUninstallDryRunPlan(plan *uninstallPlan) {
-	resolution := plan.resolution
-	ux.Info(os.Stdout, "Dry run: Would remove %d package(s):", len(resolution.APMTargets)+len(resolution.MCPTargets))
-	for _, t := range resolution.APMTargets {
+	ux.Info(os.Stdout, "Dry run: Would remove %d package(s):", len(plan.apmTargets)+len(plan.mcpTargets))
+	for _, t := range plan.apmTargets {
 		key := plan.moduleKey(t)
 		ux.Info(os.Stdout, "  - %s from apm.yml", key)
 		// A directory that leads out of apm_modules is not one the real run
@@ -831,7 +847,7 @@ func printUninstallDryRunPlan(plan *uninstallPlan) {
 			ux.Info(os.Stdout, "  - %s from apm_modules/", key)
 		}
 	}
-	for _, t := range resolution.MCPTargets {
+	for _, t := range plan.mcpTargets {
 		ux.Info(os.Stdout, "  - %s from apm.yml", t.Name)
 	}
 	if len(plan.orphans) > 0 {
@@ -850,9 +866,8 @@ func printUninstallDryRunPlan(plan *uninstallPlan) {
 // the closing count. The
 // counts come from what was removed, not from what the lock listed.
 func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[string]bool, cleaned []uninstallCleaned, keptFiles []string, handedOver func()) {
-	resolution := plan.resolution
 	fromModules := 0
-	for _, t := range resolution.APMTargets {
+	for _, t := range plan.apmTargets {
 		key := plan.moduleKey(t)
 		if removedModuleDirs[key] {
 			fromModules++
@@ -872,17 +887,17 @@ func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[s
 	if len(keptFiles) > 0 {
 		ux.Warn(os.Stdout, "Kept %d deployed file(s) that were modified or are shared", len(keptFiles))
 	}
-	for _, t := range resolution.APMTargets {
+	for _, t := range plan.apmTargets {
 		section := "dependencies.apm"
 		if t.IsDev {
 			section = "devDependencies.apm"
 		}
 		ux.Info(os.Stdout, "Removed %s from %s in apm.yml", plan.moduleKey(t), section)
 	}
-	for _, t := range resolution.MCPTargets {
+	for _, t := range plan.mcpTargets {
 		ux.Info(os.Stdout, "Removed %s from dependencies.mcp in apm.yml", t.Name)
 	}
-	removedPackages := len(resolution.APMTargets) + len(resolution.MCPTargets)
+	removedPackages := len(plan.apmTargets) + len(plan.mcpTargets)
 	apmYMLPath := "apm.yml"
 	if abs, err := filepath.Abs("apm.yml"); err == nil {
 		apmYMLPath = abs

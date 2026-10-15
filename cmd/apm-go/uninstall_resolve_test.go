@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/apm-go/apm/internal/lockfile"
@@ -433,5 +434,48 @@ func TestUninstallIdentity_EmptyRepoURL(t *testing.T) {
 	d := &manifest.DependencyReference{Source: "git"}
 	if key, ok := uninstallIdentity(d); ok {
 		t.Fatalf("identity = (%q, %v), want ok=false", key, ok)
+	}
+}
+
+// A local package's lock name selects the apm.yml entry whose path the lock
+// records, and only through a lock entry with source local.
+func TestResolveUninstallTargets_LocalKeyAlias(t *testing.T) {
+	m := &manifest.Manifest{
+		ParsedDeps:    []*manifest.DependencyReference{{IsLocal: true, LocalPath: "./vendor/thing", Source: "local"}},
+		ParsedDevDeps: []*manifest.DependencyReference{{IsLocal: true, LocalPath: "../devthing", Source: "local"}},
+	}
+	lock := &lockfile.Lockfile{Dependencies: []lockfile.LockedDep{
+		{RepoURL: "_local/thing", Source: "local", LocalPath: "./vendor/thing"},
+		{RepoURL: "_local/devthing", Source: "local", LocalPath: "../devthing"},
+		{RepoURL: "_local/gone", Source: "local", LocalPath: "./gone"},
+		{RepoURL: "_local/legacy-0123abcd", Source: "git"},
+	}}
+
+	res := resolveUninstallTargets([]string{"_local/thing", "_local/devthing", "_local/gone", "_local/legacy-0123abcd", "_local/nope"}, m, lock, panicResolver, false)
+
+	wantAPM := []uninstallAPMTarget{
+		{Name: "_local/thing", IdentityKey: "local:./vendor/thing"},
+		{Name: "_local/devthing", IdentityKey: "local:../devthing", IsDev: true},
+	}
+	if !reflect.DeepEqual(res.APMTargets, wantAPM) {
+		t.Errorf("APMTargets = %+v, want %+v", res.APMTargets, wantAPM)
+	}
+	wantNotFound := []uninstallNotFound{
+		{Name: "_local/gone"}, {Name: "_local/legacy-0123abcd"}, {Name: "_local/nope"},
+	}
+	if !reflect.DeepEqual(res.NotFound, wantNotFound) {
+		t.Errorf("NotFound = %+v, want %+v", res.NotFound, wantNotFound)
+	}
+}
+
+func TestResolveUninstallTargets_LocalKeyAlias_NilLock(t *testing.T) {
+	m := &manifest.Manifest{
+		ParsedDeps: []*manifest.DependencyReference{{IsLocal: true, LocalPath: "./vendor/thing", Source: "local"}},
+	}
+
+	res := resolveUninstallTargets([]string{"_local/thing"}, m, nil, panicResolver, false)
+
+	if want := []uninstallNotFound{{Name: "_local/thing"}}; len(res.APMTargets) != 0 || !reflect.DeepEqual(res.NotFound, want) {
+		t.Errorf("APMTargets = %+v, NotFound = %+v, want no target and %+v", res.APMTargets, res.NotFound, want)
 	}
 }
