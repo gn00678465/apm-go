@@ -252,6 +252,12 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 					d.SkillSubset = append(d.SkillSubset, s.Value)
 				}
 			}
+		case "target_subset":
+			if val.Kind == yaml.SequenceNode {
+				for _, s := range val.Content {
+					d.TargetSubset = append(d.TargetSubset, s.Value)
+				}
+			}
 		case "deployed_files":
 			if val.Kind == yaml.SequenceNode {
 				for _, f := range val.Content {

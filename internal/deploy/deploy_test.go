@@ -723,7 +723,7 @@ func TestDeploySkill_BundleWithSiblings(t *testing.T) {
 		t.Fatal("no skill primitive")
 	}
 
-	files, err := deploySkill(*skillPrim, dir)
+	files, err := deploySkillTo(*skillPrim, dir, sharedSkillRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -775,7 +775,7 @@ func TestDeploySkill_SkipsSymlinkEntry(t *testing.T) {
 	}
 
 	prim := Primitive{Name: "demo", Type: TypeSkills, SrcPath: srcDir}
-	files, err := deploySkill(prim, dir)
+	files, err := deploySkillTo(prim, dir, sharedSkillRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

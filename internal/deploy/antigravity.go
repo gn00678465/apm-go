@@ -22,13 +22,17 @@ func (a *antigravityAdapter) SupportedTypes() []PrimitiveType {
 // hooks.json is isolated from every other package's -- the "documented
 // extension" this task adds ahead of the Python upstream, which has no
 // plugin bundle concept (task 07-11-antigravity-plugins-bundle).
+func (a *antigravityAdapter) skillRoot(p Primitive) string {
+	if p.DepKey == "" {
+		return sharedSkillRoot
+	}
+	return path.Join(antigravityBundleDir(p.DepKey), "skills")
+}
+
 func (a *antigravityAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
 	switch p.Type {
 	case TypeSkills:
-		if p.DepKey == "" {
-			return deploySkill(p, projectDir)
-		}
-		return deploySkillTo(p, projectDir, path.Join(antigravityBundleDir(p.DepKey), "skills"))
+		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	case TypeInstructions:
 		if p.DepKey == "" {
 			return deployFileToPath(p, fmt.Sprintf(".agents/rules/%s.md", p.Name), projectDir)

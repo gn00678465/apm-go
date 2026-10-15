@@ -89,6 +89,9 @@ type ResolvedDep struct {
 	Commit            string // resolved commit SHA
 	Depth             int
 	ResolvedBy        string // chain that contributed tightest constraint
+	// TargetSubset is the `targets:` of the reference the resolver kept for
+	// this key, the shallowest one (deps/apm_resolver.py:762-773).
+	TargetSubset []string
 }
 
 // ConstraintEntry records one constraint path to a package identity.

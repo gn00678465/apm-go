@@ -97,6 +97,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 			Commit:            d.ResolvedCommit,
 			Depth:             d.Depth,
 			ResolvedBy:        d.ResolvedBy,
+			TargetSubset:      d.TargetSubset,
 		})
 	}
 	var filter *deploy.SkillFilter

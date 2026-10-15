@@ -279,6 +279,7 @@ func Resolve(
 			dep.Port = ref.Port
 			dep.ArtifactoryPrefix = ref.ArtifactoryPrefix
 			dep.VirtualPath = ref.VirtualPath
+			dep.TargetSubset = ref.TargetSubset
 			if dep.VirtualPath != "" {
 				dep.RepoURL = strings.TrimSuffix(displayKey, "/"+dep.VirtualPath)
 			}

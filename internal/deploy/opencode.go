@@ -12,10 +12,12 @@ func (a *opencodeAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeAgents, TypeCommands, TypeSkills}
 }
 
+func (a *opencodeAdapter) skillRoot(Primitive) string { return sharedSkillRoot }
+
 func (a *opencodeAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
 	switch p.Type {
 	case TypeSkills:
-		return deploySkill(p, projectDir)
+		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	case TypeAgents:
 		return deployFileToPath(p, fmt.Sprintf(".opencode/agents/%s.md", p.Name), projectDir)
 	case TypeCommands:

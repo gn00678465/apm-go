@@ -196,15 +196,19 @@ func filterSupported(targets []string) []string {
 	return result
 }
 
-// deploySkill recursively copies a skill directory to .agents/skills/<name>/ (req-tg-003).
-// Shared by all adapters.
-func deploySkill(p Primitive, projectDir string) ([]string, error) {
-	return deploySkillTo(p, projectDir, ".agents/skills")
+// sharedSkillRoot is the canonical skills directory several targets copy a
+// skill into (req-tg-003), so two targets can write the same skill directory.
+const sharedSkillRoot = ".agents/skills"
+
+// skillRooter is implemented by every adapter: skillRoot is the directory its
+// DeployPrimitive copies skill p into, as <root>/<name>.
+type skillRooter interface {
+	skillRoot(p Primitive) string
 }
 
 // deploySkillTo recursively copies a skill directory to <root>/<name>/.
-// Extracted from deploySkill so adapters with a target-native skill root can
-// deploy there instead of the canonical path: claude deploys ONLY to
+// Adapters with a target-native skill root deploy there instead of the
+// canonical path: claude deploys ONLY to
 // .claude/skills/ (Claude Code does not discover skills from the cross-tool
 // .agents/skills/ canonical path -- see claude.go), and antigravity routes
 // dependency skills into per-package bundle directories.

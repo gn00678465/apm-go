@@ -22,10 +22,12 @@ func (a *claudeAdapter) SupportedTypes() []PrimitiveType {
 // has no deploy_root override). Claude Code only discovers skills under
 // .claude/skills anyway, so the canonical copy served no tool and confused
 // claude-only users with a stray .agents/ directory.
+func (a *claudeAdapter) skillRoot(Primitive) string { return ".claude/skills" }
+
 func (a *claudeAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
 	switch p.Type {
 	case TypeSkills:
-		return deploySkillTo(p, projectDir, ".claude/skills")
+		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	case TypeInstructions:
 		return deployClaudeInstructions(p, projectDir)
 	case TypeAgents:
