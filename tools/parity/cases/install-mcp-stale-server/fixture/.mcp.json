@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "foo-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "foo-mcp"
+      ]
+    },
+    "keep": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "keep"
+      ]
+    },
+    "mine": {
+      "command": "mine"
+    }
+  }
+}
