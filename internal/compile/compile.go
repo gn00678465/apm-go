@@ -191,12 +191,14 @@ func firstInvalidUTF8(b []byte) int {
 	return -1
 }
 
-// probeDecodes is the Oracle's _is_readable on content: the first chunk
-// decodes, a sequence the chunk cuts short not yet being an error.
+// probeDecodes is the Oracle's _is_readable on content: read(1) decodes
+// the first chunk, a sequence the chunk cuts short not yet being an error,
+// and returns once it has a character. A chunk with none is the whole file,
+// which it then decodes to the end and fails on.
 func probeDecodes(content []byte) bool {
 	chunk := content[:min(len(content), oracleProbeBytes)]
 	at := firstInvalidUTF8(chunk)
-	return at < 0 || !utf8.FullRune(chunk[at:])
+	return at < 0 || at > 0 && !utf8.FullRune(chunk[at:])
 }
 
 // displayPath is srcPath relative to projectDir, with forward slashes.

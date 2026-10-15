@@ -504,24 +504,30 @@ func TestCollectInstructions_SkipsWhatTheOracleSkips(t *testing.T) {
 			want:       []string{".apm/instructions/x.instructions.md: local x"},
 		},
 		{
-			name:  "e: dependency file not UTF-8 in its first 8192 bytes is skipped without a word",
-			files: map[string]string{dep + "v.instructions.md": "dep v \xff\n", dep + "e.instructions.md": pad[:8190] + "\xe0\x80\n"},
+			name: "e: dependency file not UTF-8 in its first 8192 bytes is skipped without a word",
+			files: map[string]string{
+				dep + "v.instructions.md":  "dep v \xff\n",
+				dep + "e.instructions.md":  pad[:8190] + "\xe0\x80\n",
+				dep + "c1.instructions.md": "\xc3",
+				dep + "e2.instructions.md": "\xe0\xa0",
+			},
 		},
 		{
 			name: "f: dependency file not UTF-8 only after byte 8192 is reported",
 			files: map[string]string{
 				dep + "f.instructions.md":  pad + "\xff\n",
+				dep + "ac.instructions.md": "A\xc3",
 				dep + "c.instructions.md":  pad[:8191] + "\xc3A\n",
 				dep + "ok.instructions.md": pad[:8191] + "\xc3\xa9\n",
 			},
 			want:       []string{dep + "ok.instructions.md: " + pad[:8191] + "\xc3\xa9"},
-			wantWarned: []string{dep + "c.instructions.md", dep + "f.instructions.md"},
+			wantWarned: []string{dep + "ac.instructions.md", dep + "c.instructions.md", dep + "f.instructions.md"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.unreadable != "" && os.Geteuid() == 0 {
-				t.Skip("root reads a file of mode 000")
+			if tt.unreadable != "" && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("needs a file that refuses a read: Windows ignores the read bits of mode 000 and root is not bound by them")
 			}
 			dir := t.TempDir()
 			for rel, content := range tt.files {
