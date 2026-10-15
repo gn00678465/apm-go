@@ -204,12 +204,78 @@ func TestWriteMCP_Codex_TOMLShapeAndSSESkipped(t *testing.T) {
 		t.Errorf("sse1 should not be written: %v", servers)
 	}
 	http1 := servers["http1"].(map[string]any)
-	if http1["url"] != "https://x/mcp" || http1["id"] != "http1" {
+	if http1["url"] != "https://x/mcp" {
 		t.Errorf("http1 = %v", http1)
+	}
+	for _, name := range []string{"http1", "stdio1"} {
+		if _, ok := servers[name].(map[string]any)["id"]; ok {
+			t.Errorf("%s must have no id key: %v", name, servers[name])
+		}
 	}
 	headers, ok := http1["http_headers"].(map[string]any)
 	if !ok || headers["Authorization"] != "Bearer tok" {
 		t.Errorf("http1.http_headers = %v", http1["http_headers"])
+	}
+}
+
+func TestWriteMCP_Codex_RedeployDropsOldID(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".codex"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	preexisting := `model = "o3"
+
+[mcp_servers.http1]
+url = "https://x/mcp"
+id = "http1"
+startup_timeout_sec = 30
+
+[mcp_servers.stdio1]
+command = "cmd"
+id = ""
+
+[mcp_servers.user-own]
+command = "mine"
+id = "user"
+`
+	path := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.WriteFile(path, []byte(preexisting), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	prims := []Primitive{
+		mcpPrim("local", &manifest.MCPDependency{Name: "http1", Registry: false, Transport: "http", URL: "https://x/mcp"}),
+		mcpPrim("local", &manifest.MCPDependency{Name: "stdio1", Registry: false, Transport: "stdio", Command: "cmd"}),
+	}
+	if _, _, diags, err := (&codexAdapter{}).WriteMCP(prims, dir); err != nil {
+		t.Fatalf("WriteMCP: %v (diags=%v)", err, diags)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := toml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("invalid TOML written: %v\n%s", err, data)
+	}
+	if root["model"] != "o3" {
+		t.Errorf("top-level model lost: %v", root)
+	}
+	servers := root["mcp_servers"].(map[string]any)
+	http1 := servers["http1"].(map[string]any)
+	if _, ok := http1["id"]; ok {
+		t.Errorf("http1 still has id: %v", http1)
+	}
+	if http1["startup_timeout_sec"] != int64(30) {
+		t.Errorf("http1.startup_timeout_sec = %#v, want 30", http1["startup_timeout_sec"])
+	}
+	if _, ok := servers["stdio1"].(map[string]any)["id"]; ok {
+		t.Errorf("stdio1 still has id: %v", servers["stdio1"])
+	}
+	userOwn := servers["user-own"].(map[string]any)
+	if len(userOwn) != 2 || userOwn["command"] != "mine" || userOwn["id"] != "user" {
+		t.Errorf("user-own = %v, want {command: mine, id: user}", userOwn)
 	}
 }
 

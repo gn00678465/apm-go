@@ -214,6 +214,8 @@ func placeholderAtStart(s string) bool {
 // user/foreign and always preserved across redeploys; a managed key that is
 // no longer produced this run (e.g. an env var became undefined and was
 // omitted) is dropped rather than left stale from a prior successful run.
+// No writer sets "id" any more; it stays listed so a redeploy drops the id
+// that older codex entries carry.
 var managedMCPKeys = map[string]bool{
 	"command": true, "args": true, "env": true, "headers": true,
 	"url": true, "serverUrl": true, "type": true, "id": true, "http_headers": true,
