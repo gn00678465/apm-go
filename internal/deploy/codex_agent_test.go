@@ -49,7 +49,7 @@ func TestCodexAgentTransform(t *testing.T) {
 			t.Skipf("symlink creation not permitted in this environment: %v", err)
 		}
 
-		if _, err := transformCodexAgent(link); err == nil {
+		if _, err := transformCodexAgent(link, "linked"); err == nil {
 			t.Fatal("expected error for symlink source, got nil")
 		}
 	})
@@ -61,7 +61,7 @@ func TestCodexAgentTransform(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		doc, err := transformCodexAgent(src)
+		doc, err := transformCodexAgent(src, "accessibility-runtime-tester")
 		if err != nil {
 			t.Fatalf("transformCodexAgent: %v", err)
 		}
@@ -84,7 +84,7 @@ func TestCodexAgentTransform(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		doc, err := transformCodexAgent(src)
+		doc, err := transformCodexAgent(src, "fm")
 		if err != nil {
 			t.Fatalf("transformCodexAgent: %v", err)
 		}
@@ -123,7 +123,7 @@ func TestCodexAgentTransform(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		doc, err := transformCodexAgent(src)
+		doc, err := transformCodexAgent(src, "bad-yaml")
 		if err != nil {
 			t.Fatalf("transformCodexAgent must not error on malformed frontmatter YAML: %v", err)
 		}
@@ -153,7 +153,7 @@ func TestCodexAgentTransform(t *testing.T) {
 				if err := os.WriteFile(src, []byte(tt.content), 0644); err != nil {
 					t.Fatal(err)
 				}
-				doc, err := transformCodexAgent(src)
+				doc, err := transformCodexAgent(src, tt.name)
 				if err != nil {
 					t.Fatalf("transformCodexAgent: %v", err)
 				}
@@ -184,7 +184,7 @@ func TestCodexAgentTransform(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		doc, err := transformCodexAgent(src)
+		doc, err := transformCodexAgent(src, "spacing")
 		if err != nil {
 			t.Fatalf("transformCodexAgent: %v", err)
 		}
@@ -208,7 +208,7 @@ func TestCodexAgentTransform(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		doc, err := transformCodexAgent(src)
+		doc, err := transformCodexAgent(src, "plain")
 		if err != nil {
 			t.Fatalf("transformCodexAgent: %v", err)
 		}
@@ -225,7 +225,7 @@ func TestCodexAgentTransform(t *testing.T) {
 		if err := os.WriteFile(srcNeg, []byte(negContent), 0644); err != nil {
 			t.Fatal(err)
 		}
-		negDoc, err := transformCodexAgent(srcNeg)
+		negDoc, err := transformCodexAgent(srcNeg, "leading-blank")
 		if err != nil {
 			t.Fatalf("transformCodexAgent: %v", err)
 		}

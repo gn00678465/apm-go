@@ -241,7 +241,7 @@ func TestCollectMCPPrimitives_RegistryBackedRequiredHeaders_Diagnosed(t *testing
 
 func TestLoadDependencyMCP_MissingFileIsSilent(t *testing.T) {
 	dir := t.TempDir()
-	servers, diags := loadDependencyMCP("acme/none", filepath.Join(dir, "apm_modules", "acme/none"))
+	servers, diags := LoadDependencyMCP("acme/none", filepath.Join(dir, "apm_modules", "acme/none"))
 	if servers != nil || diags != nil {
 		t.Errorf("missing apm.yml should be silent, got servers=%v diags=%v", servers, diags)
 	}
@@ -251,7 +251,7 @@ func TestLoadDependencyMCP_MalformedFileDiagnosed(t *testing.T) {
 	dir := t.TempDir()
 	modDir := filepath.Join(dir, "apm_modules", "acme/broken")
 	mkFile(t, modDir, "apm.yml", "not: [valid, yaml, manifest\n")
-	servers, diags := loadDependencyMCP("acme/broken", modDir)
+	servers, diags := LoadDependencyMCP("acme/broken", modDir)
 	if servers != nil {
 		t.Errorf("expected nil servers for malformed apm.yml, got %v", servers)
 	}
@@ -334,7 +334,7 @@ func TestRun_MCPCollection_DirectDepAutoTrusted(t *testing.T) {
 	// Positive assertion: the direct dep's self-defined server actually
 	// becomes a TypeMCP Primitive (not just "no negative diagnostic").
 	modulePath := filepath.Join(dir, "apm_modules", depKey)
-	servers, loadDiags := loadDependencyMCP(depKey, modulePath)
+	servers, loadDiags := LoadDependencyMCP(depKey, modulePath)
 	if len(loadDiags) != 0 {
 		t.Fatalf("unexpected load diagnostics: %v", loadDiags)
 	}

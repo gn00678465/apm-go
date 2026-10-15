@@ -59,7 +59,7 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 
 	if info, statErr := os.Stat(installDir); statErr == nil && info.IsDir() {
 		if checkoutMatchesRef(installDir, resolvedRef) {
-			return r.parseSubManifest(installDir)
+			return parseModuleManifest(installDir)
 		}
 		// Stale/mismatched checkout (req-lk-007): skipping the clone here
 		// would silently keep wrong content forever, changing the
@@ -82,7 +82,7 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
 	}
 
-	return r.parseSubManifest(installDir)
+	return parseModuleManifest(installDir)
 }
 
 // cloneAndExtractSubdir clones the full repo into a temp directory, then
@@ -106,17 +106,31 @@ func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolved
 		return nil, err
 	}
 
-	subdir := filepath.Join(tmpClone, filepath.FromSlash(virtualPath))
+	// The package root while the subdirectory is taken out is the clone, as
+	// in the Oracle (deps/github_downloader.py:1656-1670): a symlink may lead
+	// elsewhere in the repository, and is copied as what it points at.
+	rel, err := archive.ResolveIn(tmpClone, virtualPath)
+	if err != nil {
+		return nil, fmt.Errorf("subdirectory %q: %w", virtualPath, err)
+	}
+	subdir := filepath.Join(tmpClone, filepath.FromSlash(rel))
 	info, err := os.Stat(subdir)
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("subdirectory %q not found in cloned repository", virtualPath)
 	}
+	if err := archive.CheckTree(tmpClone, virtualPath); err != nil {
+		return nil, fmt.Errorf("subdirectory %q: %w", virtualPath, err)
+	}
 
+	created := absentDirs(installDir)
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		return nil, fmt.Errorf("create install dir: %w", err)
 	}
-
 	if err := copyDirContents(subdir, installDir); err != nil {
+		err = errors.Join(err, os.RemoveAll(installDir))
+		for _, dir := range created {
+			_ = os.Remove(dir)
+		}
 		return nil, fmt.Errorf("extract subdirectory %q: %w", virtualPath, err)
 	}
 
@@ -130,25 +144,38 @@ func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolved
 	return r.parseSubManifest(installDir)
 }
 
+// copyDirContents copies src into dst, a symlink as what it points at: src
+// has passed archive.CheckTree, so each one stays in the repository and none
+// loops.
 func copyDirContents(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath, dstPath := filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())
+		info, err := os.Stat(srcPath)
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, path)
+		if info.IsDir() {
+			if err := os.MkdirAll(dstPath, 0755); err != nil {
+				return err
+			}
+			if err := copyDirContents(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := os.ReadFile(srcPath)
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0755)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0644)
-	})
+	}
+	return nil
 }
 
 // checkoutMatchesRef reports whether installDir's current HEAD already
@@ -695,8 +722,23 @@ func pyRepr(s string) string {
 	return sb.String()
 }
 
+// parseModuleManifest is parseSubManifest for a git checkout, which keeps the
+// symlinks of the repository: an apm.yml that is a symlink leaving the
+// package fails, so the declared dependencies and MCP servers come from the
+// package only (issue #89).
+func parseModuleManifest(dir string) (*manifest.Manifest, error) {
+	rel, err := archive.ResolveIn(dir, "apm.yml")
+	if err != nil {
+		return nil, err
+	}
+	return parseManifestFile(filepath.Join(dir, filepath.FromSlash(rel)))
+}
+
 func (r *RealPackageLoader) parseSubManifest(dir string) (*manifest.Manifest, error) {
-	apmYml := filepath.Join(dir, "apm.yml")
+	return parseManifestFile(filepath.Join(dir, "apm.yml"))
+}
+
+func parseManifestFile(apmYml string) (*manifest.Manifest, error) {
 	data, err := os.ReadFile(apmYml)
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -159,12 +159,14 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		directKeys[key] = true
 		depCanonKeys[key] = CanonicalDepKey(dep)
 		modulePath := filepath.Join(projectDir, "apm_modules", key)
-		prims := CollectDependencyPrimitives(key, modulePath)
+		prims, depServers, loadDiags, err := collectDependencySources(key, modulePath)
+		if err != nil {
+			return nil, err
+		}
 		ordered = append(ordered, prims...)
 		noteSourceReadFailure(key, key, dependencySourceReadFailure(modulePath))
 
 		// direct (depth==1) self-defined MCP servers are auto-trusted.
-		depServers, loadDiags := loadDependencyMCP(key, modulePath)
 		depMCP, depMCPDiags := collectMCPPrimitives(depServers, "dependency:"+key, key)
 		ordered = append(ordered, depMCP...)
 		mcpDiags = append(mcpDiags, loadDiags...)
@@ -176,12 +178,14 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		transitive := sortedTransitiveDeps(resolved.Deps, directKeys)
 		for _, dep := range transitive {
 			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
-			prims := CollectDependencyPrimitives(dep.Key, modulePath)
+			prims, transitiveServers, loadDiags, err := collectDependencySources(dep.Key, modulePath)
+			if err != nil {
+				return nil, err
+			}
 			ordered = append(ordered, prims...)
 			noteSourceReadFailure(dep.Key, dep.Key, dependencySourceReadFailure(modulePath))
 
 			// transitive (depth>1) MCP servers are never auto-trusted (design §4).
-			transitiveServers, loadDiags := loadDependencyMCP(dep.Key, modulePath)
 			mcpDiags = append(mcpDiags, loadDiags...)
 			mcpDiags = append(mcpDiags, collectTransitiveMCPDiagnostics(transitiveServers, dep.Key)...)
 		}
@@ -482,6 +486,26 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 
 	return result, nil
+}
+
+// collectDependencySources reads the primitives and the MCP servers of the
+// dependency vendored at modulePath. Every check of its symlinks runs here,
+// before Run writes anything.
+func collectDependencySources(key, modulePath string) ([]Primitive, []*manifest.MCPDependency, []string, error) {
+	t, ok := dependencyTree(key, modulePath)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	prims, err := collectDependency(t)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	data, err := readDependencyManifest(t)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	servers, diags := loadDependencyMCP(key, data)
+	return prims, servers, diags, nil
 }
 
 // DepRefKey returns the unique dependency key (repo_url, or

@@ -213,7 +213,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	absDestDir := filepath.Join(projectDir, filepath.FromSlash(destDir))
 
 	if activeDeployMode.symlink {
-		return symlinkSkillTo(p.SrcPath, absDestDir, destDir)
+		return symlinkSkillTo(p.SrcPath, absDestDir, destDir, p.DepKey != "")
 	}
 
 	// A symlink here is not the deploy's: a copy through it would write into
@@ -228,7 +228,17 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		return nil, fmt.Errorf("create skill dir: %w", err)
 	}
 	var deployed []string
-	err := copyDirRecursive(p.SrcPath, absDestDir, destDir, &deployed)
+	err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(src, rel string, isDir bool) error {
+		dst := filepath.Join(absDestDir, filepath.FromSlash(rel))
+		if isDir {
+			return os.MkdirAll(dst, 0755)
+		}
+		if err := copyFile(src, dst); err != nil {
+			return err
+		}
+		deployed = append(deployed, path.Join(destDir, rel))
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("deploy skill %s: %w", p.Name, err)
 	}
@@ -238,8 +248,9 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 // symlinkSkillTo makes absDestDir a symlink to srcDir. A real directory at
 // absDestDir is the user's (the deploy only ever makes a symlink there), so it
 // is deleted only when the source has every file in it with the same bytes;
-// otherwise it is left as it is and the error is a *keptSkillDirError.
-func symlinkSkillTo(srcDir, absDestDir, destDir string) ([]string, error) {
+// otherwise it is left as it is and the error is a *keptSkillDirError. The
+// files it returns are those a copy deploy writes (follow as walkSkillDir).
+func symlinkSkillTo(srcDir, absDestDir, destDir string, follow bool) ([]string, error) {
 	absSrc, err := filepath.Abs(srcDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve source: %w", err)
@@ -264,6 +275,15 @@ func symlinkSkillTo(srcDir, absDestDir, destDir string) ([]string, error) {
 		return nil, fmt.Errorf("symlink skill: %w", err)
 	}
 	var deployed []string
+	if follow {
+		_ = walkSkillDir(srcDir, "", true, func(_, rel string, isDir bool) error {
+			if !isDir {
+				deployed = append(deployed, path.Join(destDir, rel))
+			}
+			return nil
+		})
+		return deployed, nil
+	}
 	_ = filepath.WalkDir(srcDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
@@ -275,35 +295,37 @@ func symlinkSkillTo(srcDir, absDestDir, destDir string) ([]string, error) {
 	return deployed, nil
 }
 
-func copyDirRecursive(srcDir, dstDir, relPrefix string, deployed *[]string) error {
+// walkSkillDir calls visit for each entry below srcDir, a directory before
+// what is in it, with its slash-separated path below relPrefix. A symlink is
+// skipped: a copy through it would read what it points at, e.g. /etc/passwd
+// from a malicious package. With follow it is visited as what it points at;
+// that is only for a dependency skill, whose tree collection has checked
+// (archive.CheckTree), so every symlink in it stays in the package and none
+// loops.
+func walkSkillDir(srcDir, relPrefix string, follow bool, visit func(src, rel string, isDir bool) error) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		// Skip symlink entries: os.ReadFile/copyFile would follow the link and
-		// copy the target's content (a file outside the skill tree, e.g.
-		// /etc/passwd) into the deployed skill -- an arbitrary file read from a
-		// malicious package. Type() reports the entry's own type without
-		// following, matching the symlink guards in plugin.go/codex_agent.go.
+		src, rel, isDir := filepath.Join(srcDir, e.Name()), path.Join(relPrefix, e.Name()), e.IsDir()
 		if e.Type()&os.ModeSymlink != 0 {
-			continue
+			if !follow {
+				continue
+			}
+			info, err := os.Stat(src)
+			if err != nil {
+				return err
+			}
+			isDir = info.IsDir()
 		}
-		srcPath := filepath.Join(srcDir, e.Name())
-		dstPath := filepath.Join(dstDir, e.Name())
-		relPath := path.Join(relPrefix, e.Name())
-		if e.IsDir() {
-			if err := os.MkdirAll(dstPath, 0755); err != nil {
+		if err := visit(src, rel, isDir); err != nil {
+			return err
+		}
+		if isDir {
+			if err := walkSkillDir(src, rel, follow, visit); err != nil {
 				return err
 			}
-			if err := copyDirRecursive(srcPath, dstPath, relPath, deployed); err != nil {
-				return err
-			}
-		} else {
-			if err := copyFile(srcPath, dstPath); err != nil {
-				return err
-			}
-			*deployed = append(*deployed, relPath)
 		}
 	}
 	return nil

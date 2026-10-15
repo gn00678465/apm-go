@@ -40,7 +40,7 @@ func TestCollectDependencyPrimitives_PluginJSON_NestedSkills(t *testing.T) {
 	mkFile(t, modDir, "skills/engineering/code-review/SKILL.md", "code review skill")
 	mkFile(t, modDir, "skills/productivity/grill-me/SKILL.md", "grill me skill")
 
-	prims := CollectDependencyPrimitives("mattpocock/skills", modDir)
+	prims := collectDep(t, "mattpocock/skills", modDir)
 
 	skills := onlyType(prims, TypeSkills)
 	if len(skills) != 2 {
@@ -89,7 +89,7 @@ func TestCollectDependencyPrimitives_PluginJSON_MattpocockShape(t *testing.T) {
 	manifest := `{"name": "skills", "skills": [` + joinQuoted(declared) + `]}`
 	writePluginJSON(t, modDir, manifest)
 
-	prims := CollectDependencyPrimitives("mattpocock/skills", modDir)
+	prims := collectDep(t, "mattpocock/skills", modDir)
 	skills := onlyType(prims, TypeSkills)
 	if len(skills) != len(mattpocockSkillLeafNames) {
 		t.Fatalf("expected %d skill primitives, got %d: %+v", len(mattpocockSkillLeafNames), len(skills), skills)
@@ -117,7 +117,7 @@ func TestCollectDependencyPrimitives_PluginJSON_EscapingSkillPathSkipped(t *test
 
 	writePluginJSON(t, modDir, `{"name": "evil", "skills": ["../secret", "./skills/good"]}`)
 
-	prims := CollectDependencyPrimitives("acme/evil", modDir)
+	prims := collectDep(t, "acme/evil", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 1 {
@@ -138,7 +138,7 @@ func TestCollectDependencyPrimitives_PluginJSON_AbsolutePathSkillSkipped(t *test
 	manifest := `{"name": "evil2", "skills": ["` + abs + `", "./skills/good"]}`
 	writePluginJSON(t, modDir, manifest)
 
-	prims := CollectDependencyPrimitives("acme/evil2", modDir)
+	prims := collectDep(t, "acme/evil2", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 1 || skills[0].Name != "good" {
@@ -161,7 +161,7 @@ func TestCollectDependencyPrimitives_PluginJSON_SymlinkedSkillSkipped(t *testing
 
 	writePluginJSON(t, modDir, `{"name": "symlinked", "skills": ["./skills/linked", "./skills/good"]}`)
 
-	prims := CollectDependencyPrimitives("acme/symlinked", modDir)
+	prims := collectDep(t, "acme/symlinked", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 1 || skills[0].Name != "good" {
@@ -178,7 +178,7 @@ func TestCollectDependencyPrimitives_PluginJSON_MissingNameFallsBackToLegacyScan
 	writePluginJSON(t, modDir, `{"skills": ["./skills/should-be-ignored"]}`)
 	mkFile(t, modDir, "skills/legacy/SKILL.md", "legacy skill")
 
-	prims := CollectDependencyPrimitives("acme/noname", modDir)
+	prims := collectDep(t, "acme/noname", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 1 || skills[0].Name != "legacy" {
@@ -196,7 +196,7 @@ func TestCollectDependencyPrimitives_PluginJSON_NoSkillsKeyFallsBackToLegacyScan
 	writePluginJSON(t, modDir, `{"name": "agentsonly"}`)
 	mkFile(t, modDir, "skills/legacy/SKILL.md", "legacy skill")
 
-	prims := CollectDependencyPrimitives("acme/agentsonly", modDir)
+	prims := collectDep(t, "acme/agentsonly", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 1 || skills[0].Name != "legacy" {
@@ -213,7 +213,7 @@ func TestCollectDependencyPrimitives_PluginJSON_EmptySkillsArrayIsAuthoritative(
 	writePluginJSON(t, modDir, `{"name": "emptyskills", "skills": []}`)
 	mkFile(t, modDir, "skills/legacy/SKILL.md", "legacy skill")
 
-	prims := CollectDependencyPrimitives("acme/emptyskills", modDir)
+	prims := collectDep(t, "acme/emptyskills", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 0 {
@@ -228,7 +228,7 @@ func TestCollectDependencyPrimitives_PluginJSON_InvalidJSONFallsBackToLegacyScan
 	writePluginJSON(t, modDir, `{not valid json`)
 	mkFile(t, modDir, "skills/legacy/SKILL.md", "legacy skill")
 
-	prims := CollectDependencyPrimitives("acme/badjson", modDir)
+	prims := collectDep(t, "acme/badjson", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 1 || skills[0].Name != "legacy" {
@@ -248,7 +248,7 @@ func TestCollectDependencyPrimitives_PluginJSON_SkillMissingSKILLmdSkipped(t *te
 
 	writePluginJSON(t, modDir, `{"name": "nomd", "skills": ["./skills/empty", "./skills/good"]}`)
 
-	prims := CollectDependencyPrimitives("acme/nomd", modDir)
+	prims := collectDep(t, "acme/nomd", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 1 || skills[0].Name != "good" {
@@ -265,7 +265,7 @@ func TestCollectDependencyPrimitives_PluginJSON_Agents(t *testing.T) {
 
 	writePluginJSON(t, modDir, `{"name": "withagents", "agents": ["./agents"]}`)
 
-	prims := CollectDependencyPrimitives("acme/withagents", modDir)
+	prims := collectDep(t, "acme/withagents", modDir)
 	agents := onlyType(prims, TypeAgents)
 
 	if len(agents) != 2 {
@@ -286,7 +286,7 @@ func TestCollectDependencyPrimitives_PluginJSON_AgentsSingleFile(t *testing.T) {
 
 	writePluginJSON(t, modDir, `{"name": "singleagent", "agents": ["./custom/solo.md"]}`)
 
-	prims := CollectDependencyPrimitives("acme/singleagent", modDir)
+	prims := collectDep(t, "acme/singleagent", modDir)
 	agents := onlyType(prims, TypeAgents)
 
 	if len(agents) != 1 || agents[0].Name != "solo" {
@@ -302,7 +302,7 @@ func TestCollectDependencyPrimitives_PluginJSON_Commands(t *testing.T) {
 
 	writePluginJSON(t, modDir, `{"name": "withcommands", "commands": ["./commands"]}`)
 
-	prims := CollectDependencyPrimitives("acme/withcommands", modDir)
+	prims := collectDep(t, "acme/withcommands", modDir)
 	commands := onlyType(prims, TypeCommands)
 
 	if len(commands) != 1 || commands[0].Name != "deploy" {
@@ -320,7 +320,7 @@ func TestCollectDependencyPrimitives_PluginJSON_SkillsAsSingleString(t *testing.
 	mkFile(t, modDir, "skills/solo/SKILL.md", "solo skill")
 	writePluginJSON(t, modDir, `{"name": "singleskillstring", "skills": "./skills/solo"}`)
 
-	prims := CollectDependencyPrimitives("acme/singleskillstring", modDir)
+	prims := collectDep(t, "acme/singleskillstring", modDir)
 	skills := onlyType(prims, TypeSkills)
 
 	if len(skills) != 1 || skills[0].Name != "solo" {
@@ -347,7 +347,7 @@ func TestCollectDependencyPrimitives_PluginJSON_AgentsDirSkipsSymlinkedEntry(t *
 
 	writePluginJSON(t, modDir, `{"name": "symlinkedagentfile", "agents": ["./agents"]}`)
 
-	prims := CollectDependencyPrimitives("acme/symlinkedagentfile", modDir)
+	prims := collectDep(t, "acme/symlinkedagentfile", modDir)
 	agents := onlyType(prims, TypeAgents)
 
 	if len(agents) != 1 || agents[0].Name != "real" {
@@ -366,7 +366,7 @@ func TestCollectDependencyPrimitives_PluginJSON_AgentsSingleFileUnsupportedExtSk
 	mkFile(t, modDir, "custom/notes.txt", "not a markdown agent file")
 	writePluginJSON(t, modDir, `{"name": "badext", "agents": ["./custom/notes.txt"]}`)
 
-	prims := CollectDependencyPrimitives("acme/badext", modDir)
+	prims := collectDep(t, "acme/badext", modDir)
 	agents := onlyType(prims, TypeAgents)
 
 	if len(agents) != 0 {

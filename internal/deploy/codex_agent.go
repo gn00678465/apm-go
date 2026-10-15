@@ -23,8 +23,10 @@ type codexAgentDoc struct {
 // transformCodexAgent reads sourcePath and converts it into a codexAgentDoc,
 // mirroring the Python oracle's exact semantics (agent_integrator.py:302-335):
 //  1. Symlink sources are rejected outright (Lstat, never followed).
-//  2. name defaults to the filename stem with a trailing ".agent" stripped
-//     (e.g. "foo.agent.md" -> "foo").
+//  2. name defaults to fileName, the primitive's name: the filename stem
+//     with a trailing ".agent" stripped (e.g. "foo.agent.md" -> "foo"). It
+//     is the name in the package; for a symlink in a dependency, sourcePath
+//     is the file the symlink points at.
 //  3. A frontmatter block matching ^---\s*\n(.*?)\n---\s*\n? (DOTALL) at the
 //     very start of the file is cut from the body regardless of whether it
 //     parses as YAML. When it does parse, string "name"/"description" keys
@@ -34,7 +36,7 @@ type codexAgentDoc struct {
 //  4. description defaults to "".
 //  5. developer_instructions = body with frontmatter removed, then
 //     strings.TrimSpace (Python .strip()).
-func transformCodexAgent(sourcePath string) (codexAgentDoc, error) {
+func transformCodexAgent(sourcePath, fileName string) (codexAgentDoc, error) {
 	info, err := os.Lstat(sourcePath)
 	if err != nil {
 		return codexAgentDoc{}, err
@@ -48,7 +50,7 @@ func transformCodexAgent(sourcePath string) (codexAgentDoc, error) {
 		return codexAgentDoc{}, err
 	}
 
-	doc := codexAgentDoc{Name: codexAgentNameFallback(sourcePath)}
+	doc := codexAgentDoc{Name: fileName}
 	text := string(data)
 	body := text
 	if loc := claudeFrontmatterRE.FindStringSubmatchIndex(text); loc != nil {
@@ -67,19 +69,12 @@ func transformCodexAgent(sourcePath string) (codexAgentDoc, error) {
 	return doc, nil
 }
 
-// codexAgentNameFallback derives the default agent name from the source
-// filename: the stem (extension removed) with a trailing ".agent" stripped.
-func codexAgentNameFallback(sourcePath string) string {
-	stem := strings.TrimSuffix(filepath.Base(sourcePath), filepath.Ext(sourcePath))
-	return strings.TrimSuffix(stem, ".agent")
-}
-
 // deployCodexAgentTOML converts a TypeAgents primitive from markdown to the
 // codexAgentDoc TOML document and writes it to .codex/agents/<p.Name>.toml.
 // Byte-copying the markdown source here would produce a file with a .toml
 // extension that Codex CLI cannot parse (research/findings.md).
 func deployCodexAgentTOML(p Primitive, projectDir string) ([]string, error) {
-	doc, err := transformCodexAgent(p.SrcPath)
+	doc, err := transformCodexAgent(p.SrcPath, p.Name)
 	if err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
