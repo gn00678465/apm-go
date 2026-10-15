@@ -150,6 +150,11 @@ func pyKeyEqual(a, b pyValue) bool {
 		return ok && x.Cmp(y) == 0
 	}
 	switch x := a.(type) {
+	case pyFloat:
+		// An infinity or NaN. PyYAML gives every .nan one float object,
+		// which a dict matches by identity, so NaN keys are one key too.
+		y, ok := b.(pyFloat)
+		return ok && (x == y || math.IsNaN(float64(x)) && math.IsNaN(float64(y)))
 	case pyNone:
 		_, ok := b.(pyNone)
 		return ok
@@ -169,8 +174,8 @@ func pyKeyEqual(a, b pyValue) bool {
 	return false
 }
 
-// pyNumber gives a bool, int or finite float as an exact number. NaN keys
-// are never equal and an infinity equals only itself, so they have none.
+// pyNumber gives a bool, int or finite float as an exact number. An
+// infinity and NaN equal no such number, so they have none.
 func pyNumber(v pyValue) (*big.Rat, bool) {
 	switch x := v.(type) {
 	case pyBool:
