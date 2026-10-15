@@ -1,0 +1,10 @@
+name: mcp-enabled-fixture
+version: 1.0.0
+targets: [claude]
+dependencies:
+  mcp:
+    - name: example
+      registry: false
+      transport: http
+      url: https://example.com/mcp
+      enabled: false

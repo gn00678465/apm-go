@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"math/big"
 	"net/url"
 	"regexp"
 	"sort"
@@ -25,6 +26,11 @@ type MCPDependency struct {
 	HeaderOrder []string
 	Registry    any    // nil=default, false=self-defined, string=custom URL
 	Version     string // pinned registry entry version; only meaningful when Registry is not false
+	// Enabled is nil when the entry has no enabled key, otherwise its value
+	// as PyYAML reads it (pyyaml11Value); an explicit null is a !!null node.
+	// Only OpenCode's config and the lock carry it, as in the Oracle
+	// (models/dependency/mcp.py:144).
+	Enabled *yaml.Node
 }
 
 func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
@@ -50,6 +56,8 @@ func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
 			m.URL = v.Value
 		case "version":
 			m.Version = v.Value
+		case "enabled":
+			m.Enabled = pyyaml11Value(v)
 		case "registry":
 			if v.Tag == "!!bool" || v.Value == "false" || v.Value == "true" {
 				if strings.EqualFold(v.Value, "false") {
@@ -87,6 +95,61 @@ func ParseMCPEntry(entry *yaml.Node) (*MCPDependency, error) {
 		}
 	}
 	return m, nil
+}
+
+var (
+	// The plain scalars PyYAML's resolver (YAML 1.1) reads as bool, null and
+	// decimal int (yaml/resolver.py). apm-go's loader is YAML 1.2, where a
+	// plain no or off is a string.
+	pyyamlBoolRe = regexp.MustCompile(`^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF)$`)
+	pyyamlNullRe = regexp.MustCompile(`^(?:~|null|Null|NULL|)$`)
+	pyyamlIntRe  = regexp.MustCompile(`^[-+]?(?:0|[1-9][0-9_]*)$`)
+)
+
+// pyyaml11Value returns a detached copy of v with each scalar tagged and
+// spelled as the Oracle's PyYAML loader reads it, so a value it forwards
+// unchanged reaches the lock and the target config with the Oracle's type.
+// Floats, octal and hexadecimal ints and timestamps keep the tag apm-go's
+// loader gives them.
+func pyyaml11Value(v *yaml.Node) *yaml.Node {
+	if v.Kind == yaml.SequenceNode || v.Kind == yaml.MappingNode {
+		out := &yaml.Node{Kind: v.Kind, Tag: v.ShortTag()}
+		for _, c := range v.Content {
+			out.Content = append(out.Content, pyyaml11Value(c))
+		}
+		return out
+	}
+	scalar := func(tag, value string) *yaml.Node {
+		n := &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
+		if tag == "!!str" && pyyamlBoolRe.MatchString(value) {
+			// The YAML 1.2 encoder writes the string no unquoted; PyYAML,
+			// and the Oracle's lock, quote it.
+			n.Style = yaml.SingleQuotedStyle
+		}
+		return n
+	}
+	if v.Style&^yaml.FlowStyle != 0 {
+		// Quoted, block or explicitly tagged: the loaders agree on the tag.
+		return scalar(v.ShortTag(), v.Value)
+	}
+	switch {
+	case pyyamlBoolRe.MatchString(v.Value):
+		switch strings.ToLower(v.Value) {
+		case "yes", "true", "on":
+			return scalar("!!bool", "true")
+		}
+		return scalar("!!bool", "false")
+	case pyyamlNullRe.MatchString(v.Value):
+		return scalar("!!null", "null")
+	case pyyamlIntRe.MatchString(v.Value):
+		n, _ := new(big.Int).SetString(strings.ReplaceAll(v.Value, "_", ""), 10)
+		return scalar("!!int", n.String())
+	}
+	switch tag := v.ShortTag(); tag {
+	case "!!float", "!!int", "!!timestamp":
+		return scalar(tag, v.Value)
+	}
+	return scalar("!!str", v.Value)
 }
 
 // allowedMCPURLSchemes mirrors Python's _ALLOWED_URL_SCHEMES
