@@ -14,7 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	yamllib "go.yaml.in/yaml/v4"
 
-	"github.com/apm-go/apm/internal/deploy"
+	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/marketplace"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
@@ -183,35 +183,54 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 	}
 	physicalToLogical := map[string]string{}
 
-	// A key is where install puts the package (deploy.DepRefKey after
-	// normalizeLocalDep), so a package apm-go installed is never an orphan.
+	// The keys follow the Oracle's placement, not apm-go's install, because
+	// the apm_modules read may be the Oracle's. A package apm-go installed
+	// elsewhere is still declared by its lock entry, repo_url plus
+	// virtual_path, which is where apm-go put it.
 	if m, err := loadStrictManifest(filepath.Join(dir, "apm.yml")); err == nil {
 		for _, dep := range m.ParsedDeps {
 			ref := *dep
 			normalizeLocalDep(&ref)
-			if key := deploy.DepRefKey(&ref); key != "" {
-				declare(key, depsSourceLabel(ref.Host, ref.LocalSourcePath != "" || ref.IsLocal, ref.Source))
+			local := ref.LocalSourcePath != "" || ref.IsLocal
+			source := depsSourceLabel(ref.Host, local, ref.Source)
+			if alias := strings.TrimSpace(ref.Alias); alias != "" {
+				key := ref.RepoURL
+				switch {
+				case local && ref.LocalDeclaredPath != "":
+					key = ref.LocalDeclaredPath
+				case ref.VirtualPath != "":
+					key += "/" + ref.VirtualPath
+				}
+				physicalToLogical[alias] = key
+				declare(key, source)
+				continue
+			}
+			if key := manifestDeclaredKey(&ref); key != "" {
+				declare(key, source)
 			}
 		}
 	}
 
-	type insecureDep struct{ resolvedBy string }
-	insecureDeps := map[string]insecureDep{}
-	lock, lockDoc := readScopeLock(dir)
-	if lock != nil {
-		flags := lockInsecureFlags(lockDoc)
-		for _, i := range lockDeps(lock) {
-			d := &lock.Dependencies[i]
-			key := d.UniqueKey()
-			if d.Source == "local" {
-				physicalToLogical[d.RepoURL] = d.RepoURL
+	lock := readScopeLock(dir)
+	insecureDeps := map[string]lockEntry{}
+	lockKeys := map[string]bool{}
+	for _, e := range lock {
+		key := e.canonicalString()
+		if e.Source == "local" || e.alias != "" {
+			physical := materializedAt(e.alias, e.Source == "local", e.LocalPath, e.declaringParent, e.anchoredLocalPath, e.RepoURL)
+			if e.Source == "local" {
+				key = e.RepoURL
 			}
-			if key != "" {
-				declare(key, depsSourceLabel(d.Host, false, d.Source))
-			}
-			if i < len(flags) && flags[i] {
-				insecureDeps[key] = insecureDep{resolvedBy: d.ResolvedBy}
-			}
+			physicalToLogical[physical] = key
+		}
+		if key != "" {
+			declare(key, depsSourceLabel(e.Host, false, e.Source))
+		}
+		if e.insecure {
+			insecureDeps[key] = e
+		}
+		if k := e.uniqueKey(); k != "" {
+			lockKeys[k] = true
 		}
 	}
 
@@ -234,14 +253,6 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 		return !nestedUnderPackage(path, modules)
 	})
 
-	lockKeys := map[string]bool{}
-	if lock != nil {
-		for _, i := range lockDeps(lock) {
-			if k := oracleUniqueKey(&lock.Dependencies[i]); k != "" {
-				lockKeys[k] = true
-			}
-		}
-	}
 	var standalone []string
 	for _, c := range candidates {
 		if lockKeys[c.rel] || c.hasManifest || isFile(filepath.Join(c.dir, "SKILL.md")) {
@@ -283,8 +294,8 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 		}
 		insec, isInsecure := insecureDeps[logical]
 		origin := "direct"
-		if isInsecure && insec.resolvedBy != "" {
-			origin = "via " + insec.resolvedBy
+		if isInsecure && insec.ResolvedBy != "" {
+			origin = "via " + insec.ResolvedBy
 		}
 		rows = append(rows, depsRow{
 			name: display, version: version, source: source, origin: origin,
@@ -297,31 +308,6 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 	}
 	slices.Sort(orphans)
 	return rows, orphans, true
-}
-
-// lockInsecureFlags reads is_insecure of each dependency of the lock document,
-// by position. lockfile.LockedDep does not model the key: apm-go's own
-// install --allow-insecure does not write it, so only a lock the Oracle wrote
-// has it. The Oracle tests the value for truth (deps/lockfile.py:548).
-func lockInsecureFlags(doc *yamllib.Node) []bool {
-	root := docRoot(doc)
-	if root == nil || root.Kind != yamllib.MappingNode {
-		return nil
-	}
-	deps := mappingValue(root, "dependencies")
-	if deps == nil || deps.Kind != yamllib.SequenceNode {
-		return nil
-	}
-	flags := make([]bool, len(deps.Content))
-	for i, entry := range deps.Content {
-		if entry.Kind != yamllib.MappingNode {
-			continue
-		}
-		if v := mappingValue(entry, "is_insecure"); v != nil {
-			flags[i] = pyYAMLTruthy(v)
-		}
-	}
-	return flags
 }
 
 // pyYAMLTruthy is Python's bool() of the value PyYAML loads for a scalar.
@@ -340,6 +326,42 @@ func pyYAMLTruthy(v *yamllib.Node) bool {
 		return true
 	}
 	return v.Value != ""
+}
+
+// manifestDeclaredKey is the key _resolve_scope_deps declares for an apm.yml
+// dependency with no alias (cli.py:256-288): owner/repo, or org/project/repo
+// on Azure DevOps, a subdirectory package's path below it, and for a virtual
+// file package <owner>/<repo>-<file name>, which is where the Oracle puts one
+// (models/dependency/materialization.py:171-176). A local package is
+// _local/<name>.
+func manifestDeclaredKey(ref *manifest.DependencyReference) string {
+	if ref.IsParent {
+		return ""
+	}
+	parts := strings.Split(ref.RepoURL, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	n := 2
+	if len(parts) >= 3 && ref.Host != "" && marketplace.IsAzureDevOpsHostname(ref.Host) {
+		n = 3
+	}
+	repo := strings.Join(parts[:n], "/")
+	switch manifest.VirtualTypeOf(ref.VirtualPath) {
+	case "":
+		return repo
+	case "subdirectory":
+		return repo + "/" + ref.VirtualPath
+	}
+	// get_virtual_package_name (models/dependency/reference.py:302-324).
+	file := ref.VirtualPath[strings.LastIndex(ref.VirtualPath, "/")+1:]
+	for _, ext := range []string{".prompt.md", ".instructions.md", ".agent.md"} {
+		if strings.HasSuffix(file, ext) {
+			file = strings.TrimSuffix(file, ext)
+			break
+		}
+	}
+	return strings.Join(parts[:n-1], "/") + "/" + parts[len(parts)-1] + "-" + file
 }
 
 // depsSourceLabel is _deps_list_source_label (cli.py:50-66). The Oracle also

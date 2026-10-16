@@ -13,6 +13,7 @@ import (
 // The expected tree is Rich 15.0.0 output: console.print(tree) on
 // Console(width=200, force_terminal=False, color_system=None).
 func TestRenderRichTree_MatchesRich(t *testing.T) {
+	plainOutput(t)
 	green := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	dim := lipgloss.NewStyle().Faint(true)
 	root := RichNode{

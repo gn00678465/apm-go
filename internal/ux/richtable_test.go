@@ -47,6 +47,7 @@ var globalRows = [][]string{
 // Every expected table is Rich 15.0.0 output: console.print(table) on
 // Console(width=<width>, force_terminal=False, color_system=None).
 func TestRenderRichTable_MatchesRich(t *testing.T) {
+	plainOutput(t)
 	cases := []struct {
 		name  string
 		table RichTable
@@ -199,6 +200,7 @@ func TestRenderRichTable_MatchesRich(t *testing.T) {
 // escape codes and nothing else. NO_COLOR removes the colors and
 // keeps bold and italic, as Rich and the other ux printers do.
 func TestRenderRichTable_ColorOnlyWhenAllowed(t *testing.T) {
+	plainOutput(t)
 	table := depsTable(" APM Dependencies (Project)", false, [][]string{
 		{"_local/dep", "2.3.4", "local", "1", "1", "1", "1", "1"},
 	})
@@ -228,6 +230,14 @@ func TestRenderRichTable_ColorOnlyWhenAllowed(t *testing.T) {
 	if got := ansi.Strip(noColor.String()); got != plain.String() {
 		t.Errorf("NO_COLOR table differs from the plain one once stripped:\n%q", got)
 	}
+}
+
+// plainOutput pins what decides whether lipgloss colors a buffer, so the
+// shell that runs the tests does not decide it.
+func plainOutput(t *testing.T) {
+	t.Helper()
+	t.Setenv("TTY_FORCE", "")
+	t.Setenv("NO_COLOR", "")
 }
 
 // sgrColor matches an SGR sequence that sets a foreground color.

@@ -1,0 +1,6 @@
+lockfile_version: '1'
+dependencies:
+- repo_url: acme/pkg
+  alias: custom
+  resolved_commit: abc1234def5678abc1234def5678abc1234def56
+  version: 1.0.0

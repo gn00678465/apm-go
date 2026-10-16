@@ -66,6 +66,7 @@ func runDeps(t *testing.T, proj, home string, args ...string) (string, error) {
 	t.Chdir(proj)
 	t.Setenv("HOME", home)
 	t.Setenv("COLUMNS", "")
+	t.Setenv("TTY_FORCE", "")
 	var err error
 	out := captureStdout(t, func() {
 		root := buildRootCmd()

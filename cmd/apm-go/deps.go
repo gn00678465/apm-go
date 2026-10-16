@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -85,7 +88,9 @@ func (c primitiveCounts) summary() string {
 // deploys (a root skills/<name>/SKILL.md is not counted). A root SKILL.md is
 // the skill deploy names after the last segment of the apm_modules key
 // (internal/deploy/primitive.go skillNameFromDepKey), so --skills and the
-// Skills column agree.
+// Skills column agree. The Oracle names an alias package's root skill after
+// the alias, which is that segment too (measured: {git: .../skill.git, alias:
+// custom} deploys .claude/skills/custom).
 func countPrimitives(dir, rel string) primitiveCounts {
 	var c primitiveCounts
 	apmDir := filepath.Join(dir, ".apm")
@@ -305,56 +310,126 @@ func isPyYAMLString(v *yamllib.Node) bool {
 	return !plain || !(manifest.PyYAMLBoolRe.MatchString(v.Value) || manifest.PyYAMLNullRe.MatchString(v.Value) || manifest.PyYAMLDecimalIntRe.MatchString(v.Value))
 }
 
-// readScopeLock reads <dir>/apm.lock.yaml with the document it came from, or
-// nil when there is none or it cannot be read; the Oracle goes on without it.
-func readScopeLock(dir string) (*lockfile.Lockfile, *yamllib.Node) {
+// lockEntry is a dependency of the scope's lock as the Oracle's LockFile.read
+// sees it: what lockfile.LockedDep models, plus the keys it does not, which
+// apm-go's own install never writes and which are read from the lock document
+// by position.
+type lockEntry struct {
+	*lockfile.LockedDep
+	alias             string
+	declaringParent   string
+	anchoredLocalPath string
+	insecure          bool
+}
+
+// readScopeLock reads <dir>/apm.lock.yaml, or nothing when there is none or it
+// cannot be read; the Oracle goes on without it. LockFile.read stores the
+// dependencies in a dict by unique key (deps/lockfile.py:791), so a later
+// entry with the same key replaces an earlier one in its place.
+func readScopeLock(dir string) []lockEntry {
 	data, err := os.ReadFile(filepath.Join(dir, "apm.lock.yaml"))
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 	doc, err := yamlcore.SafeLoad(data)
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 	lock, err := lockfile.ParseLockfile(doc)
 	if err != nil {
-		return nil, nil
+		return nil
 	}
-	return lock, doc
-}
-
-// lockDeps returns the indexes of the lock's dependencies the Oracle keeps:
-// LockFile.read stores them in a dict by unique key (deps/lockfile.py:791),
-// so a later entry with the same key replaces an earlier one in its place.
-func lockDeps(lock *lockfile.Lockfile) []int {
-	var order []int
+	var nodes []*yamllib.Node
+	if root := docRoot(doc); root != nil && root.Kind == yamllib.MappingNode {
+		if deps := mappingValue(root, "dependencies"); deps != nil {
+			nodes = deps.Content
+		}
+	}
+	var entries []lockEntry
 	at := map[string]int{}
 	for i := range lock.Dependencies {
-		key := oracleUniqueKey(&lock.Dependencies[i])
+		e := lockEntry{LockedDep: &lock.Dependencies[i]}
+		if i < len(nodes) && nodes[i].Kind == yamllib.MappingNode {
+			e.alias = scalarValue(nodes[i], "alias")
+			e.declaringParent = scalarValue(nodes[i], "declaring_parent")
+			e.anchoredLocalPath = scalarValue(nodes[i], "anchored_local_path")
+			// The Oracle tests is_insecure for truth (deps/lockfile.py:548).
+			if v := mappingValue(nodes[i], "is_insecure"); v != nil {
+				e.insecure = pyYAMLTruthy(v)
+			}
+		}
+		key := e.uniqueKey()
 		if j, seen := at[key]; seen {
-			order[j] = i
+			entries[j] = e
 			continue
 		}
-		at[key] = len(order)
-		order = append(order, i)
+		at[key] = len(entries)
+		entries = append(entries, e)
 	}
-	return order
+	return entries
 }
 
-// oracleUniqueKey is LockedDependency.get_unique_key
-// (models/dependency/identity.py:184-235): a local package is its local_path,
-// and a host other than github.com qualifies the key unless the package came
-// through a registry proxy. apm-go's LockedDep.UniqueKey is host-blind.
-func oracleUniqueKey(d *lockfile.LockedDep) string {
-	if d.Source == "local" && d.LocalPath != "" {
-		return d.LocalPath
+func scalarValue(m *yamllib.Node, key string) string {
+	if v := mappingValue(m, key); v != nil && v.Kind == yamllib.ScalarNode && v.ShortTag() != "!!null" {
+		return strings.TrimSpace(v.Value)
 	}
-	key := d.UniqueKey()
-	if d.RegistryPrefix != "" {
+	return ""
+}
+
+// uniqueKey is LockedDependency.get_unique_key
+// (models/dependency/identity.py:184-235): a local package is
+// local:<anchored_local_path> when another local package declared it, else its
+// local_path, and a host other than github.com qualifies the key unless the
+// package came through a registry proxy. apm-go's LockedDep.UniqueKey is
+// host-blind.
+func (e lockEntry) uniqueKey() string {
+	if e.Source == "local" && e.LocalPath != "" {
+		if e.anchoredLocalPath != "" {
+			return "local:" + e.anchoredLocalPath
+		}
+		return e.LocalPath
+	}
+	key := e.UniqueKey()
+	if e.RegistryPrefix != "" {
 		return key
 	}
-	if host := strings.ToLower(strings.TrimSpace(d.Host)); host != "" && host != "github.com" {
+	if host := strings.ToLower(strings.TrimSpace(e.Host)); host != "" && host != "github.com" {
 		return host + "/" + key
 	}
 	return key
+}
+
+// canonicalString is get_canonical_dependency_string (identity.py:238-261):
+// the host-blind name deps list matches against apm_modules.
+func (e lockEntry) canonicalString() string {
+	if e.Source == "local" && e.LocalPath != "" {
+		return e.LocalPath
+	}
+	return e.UniqueKey()
+}
+
+// materializedAt is the part of build_materialization_path
+// (models/dependency/materialization.py:114-150) that deps reaches, the only
+// placements the Oracle does not derive from the repository: an alias names
+// the directory, and a local package sits at _local/<name>, or, when another
+// local package declared it, in a slot named after its anchored path so that
+// two such packages of one name do not collide. apm-go's install uses neither
+// the alias nor the slot, so these are directories the Oracle wrote.
+func materializedAt(alias string, local bool, localPath, declaringParent, anchoredLocalPath, repoURL string) string {
+	if alias != "" {
+		return alias
+	}
+	if !local || localPath == "" {
+		return repoURL
+	}
+	name := path.Base(strings.TrimRight(localPath, "/"))
+	if declaringParent == "" {
+		return "_local/" + name
+	}
+	identity := anchoredLocalPath
+	if identity == "" {
+		identity = localPath
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return "_local/" + hex.EncodeToString(sum[:])[:12] + "/" + name
 }

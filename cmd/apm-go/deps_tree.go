@@ -12,7 +12,6 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/spf13/cobra"
 )
@@ -65,30 +64,28 @@ func buildDepsTree(dir string) ux.RichNode {
 	modules := filepath.Join(dir, "apm_modules")
 	noDeps := ux.RichNode{Label: "No dependencies installed", Style: treeDimStyle}
 
-	if lock, _ := readScopeLock(dir); lock != nil {
-		if deps := lockPackageDeps(lock); len(deps) > 0 {
-			direct, children, unresolved := placeLockDeps(deps)
-			if len(direct) == 0 {
-				root.Children = append(root.Children, noDeps)
-				return root
-			}
-			for _, d := range direct {
-				branch := ux.RichNode{Label: depDisplayName(d), Style: treeDirectStyle}
-				if p := oraclePathJoin(modules, oracleUniqueKey(d)); pathExists(p) {
-					if s := countPrimitives(p, filepath.ToSlash(p)).summary(); s != "" {
-						branch.Children = append(branch.Children, ux.RichNode{Label: s, Style: treeDimStyle})
-					}
-				}
-				branch.Children = append(branch.Children, treeChildren(oracleUniqueKey(d), children)...)
-				root.Children = append(root.Children, branch)
-			}
-			for _, d := range unresolved {
-				branch := ux.RichNode{Label: depDisplayName(d) + " (could not place in tree; run apm install to resolve)", Style: treeWarnStyle}
-				branch.Children = treeChildren(oracleUniqueKey(d), children)
-				root.Children = append(root.Children, branch)
-			}
+	if deps := lockPackageDeps(readScopeLock(dir)); len(deps) > 0 {
+		direct, children, unresolved := placeLockDeps(deps)
+		if len(direct) == 0 {
+			root.Children = append(root.Children, noDeps)
 			return root
 		}
+		for _, d := range direct {
+			branch := ux.RichNode{Label: depDisplayName(d), Style: treeDirectStyle}
+			if p := oraclePathJoin(modules, d.uniqueKey()); pathExists(p) {
+				if s := countPrimitives(p, filepath.ToSlash(p)).summary(); s != "" {
+					branch.Children = append(branch.Children, ux.RichNode{Label: s, Style: treeDimStyle})
+				}
+			}
+			branch.Children = append(branch.Children, treeChildren(d.uniqueKey(), children)...)
+			root.Children = append(root.Children, branch)
+		}
+		for _, d := range unresolved {
+			branch := ux.RichNode{Label: depDisplayName(d) + " (could not place in tree; run apm install to resolve)", Style: treeWarnStyle}
+			branch.Children = treeChildren(d.uniqueKey(), children)
+			root.Children = append(root.Children, branch)
+		}
+		return root
 	}
 
 	if !pathExists(modules) {
@@ -124,14 +121,14 @@ func buildDepsTree(dir string) ux.RichNode {
 
 // lockPackageDeps is LockFile.get_package_dependencies (deps/lockfile.py:815-821):
 // the dependencies by depth, then repo_url, without the self-entry.
-func lockPackageDeps(lock *lockfile.Lockfile) []*lockfile.LockedDep {
-	var deps []*lockfile.LockedDep
-	for _, i := range lockDeps(lock) {
-		if lock.Dependencies[i].LocalPath != "." {
-			deps = append(deps, &lock.Dependencies[i])
+func lockPackageDeps(lock []lockEntry) []lockEntry {
+	var deps []lockEntry
+	for _, e := range lock {
+		if e.LocalPath != "." {
+			deps = append(deps, e)
 		}
 	}
-	slices.SortStableFunc(deps, func(a, b *lockfile.LockedDep) int {
+	slices.SortStableFunc(deps, func(a, b lockEntry) int {
 		return cmp.Or(cmp.Compare(a.Depth, b.Depth), strings.Compare(a.RepoURL, b.RepoURL))
 	})
 	return deps
@@ -140,18 +137,18 @@ func lockPackageDeps(lock *lockfile.Lockfile) []*lockfile.LockedDep {
 // placeLockDeps hangs each transitive dependency under the one dependency of
 // the depth above that its resolved_by names, by unique key, else by
 // repo_url (cli.py:745-775); one with no single such parent is unresolved.
-func placeLockDeps(deps []*lockfile.LockedDep) (direct []*lockfile.LockedDep, children map[string][]*lockfile.LockedDep, unresolved []*lockfile.LockedDep) {
+func placeLockDeps(deps []lockEntry) (direct []lockEntry, children map[string][]lockEntry, unresolved []lockEntry) {
 	type slot struct {
 		depth int
 		key   string
 	}
-	byKey := map[slot][]*lockfile.LockedDep{}
-	byRepo := map[slot][]*lockfile.LockedDep{}
+	byKey := map[slot][]lockEntry{}
+	byRepo := map[slot][]lockEntry{}
 	for _, d := range deps {
-		byKey[slot{d.Depth, oracleUniqueKey(d)}] = append(byKey[slot{d.Depth, oracleUniqueKey(d)}], d)
+		byKey[slot{d.Depth, d.uniqueKey()}] = append(byKey[slot{d.Depth, d.uniqueKey()}], d)
 		byRepo[slot{d.Depth, d.RepoURL}] = append(byRepo[slot{d.Depth, d.RepoURL}], d)
 	}
-	children = map[string][]*lockfile.LockedDep{}
+	children = map[string][]lockEntry{}
 	for _, d := range deps {
 		if d.Depth <= 1 {
 			direct = append(direct, d)
@@ -165,7 +162,7 @@ func placeLockDeps(deps []*lockfile.LockedDep) (direct []*lockfile.LockedDep, ch
 			unresolved = append(unresolved, d)
 			continue
 		}
-		key := oracleUniqueKey(parents[0])
+		key := parents[0].uniqueKey()
 		children[key] = append(children[key], d)
 	}
 	return direct, children, unresolved
@@ -173,20 +170,20 @@ func placeLockDeps(deps []*lockfile.LockedDep) (direct []*lockfile.LockedDep, ch
 
 // treeChildren is _add_tree_children (cli.py:191-212): every descendant of
 // parentKey, with no depth limit. The Oracle's " (circular)" mark cannot
-// apply: the lock holds one dependency per unique key (lockDeps) and a child
+// apply: the lock holds one dependency per unique key (readScopeLock) and a child
 // is always one level deeper than its parent, so no dependency is its own
 // ancestor.
-func treeChildren(parentKey string, children map[string][]*lockfile.LockedDep) []ux.RichNode {
+func treeChildren(parentKey string, children map[string][]lockEntry) []ux.RichNode {
 	var nodes []ux.RichNode
 	for _, d := range children[parentKey] {
-		nodes = append(nodes, ux.RichNode{Label: depDisplayName(d), Style: treeDimStyle, Children: treeChildren(oracleUniqueKey(d), children)})
+		nodes = append(nodes, ux.RichNode{Label: depDisplayName(d), Style: treeDimStyle, Children: treeChildren(d.uniqueKey(), children)})
 	}
 	return nodes
 }
 
 // depDisplayName is _dep_display_name (cli.py:113-140).
-func depDisplayName(d *lockfile.LockedDep) string {
-	key := oracleUniqueKey(d)
+func depDisplayName(d lockEntry) string {
+	key := d.uniqueKey()
 	if d.Source == "local" {
 		switch {
 		case d.LocalPath != "" && !isAbsoluteLocalPath(d.LocalPath):
