@@ -6,10 +6,14 @@ import (
 	"runtime"
 )
 
+var osRename = os.Rename
+
 // replaceBinary replaces the binary at dst with the one at src.
 //
 // On Unix, os.Rename over the running binary works because the OS
-// keeps the old inode alive until the process exits.
+// keeps the old inode alive until the process exits. The rename succeeds
+// only because src is in the directory of dst, so both are on one file
+// system; across file systems it fails with EXDEV.
 //
 // On Windows, the running binary is locked. The strategy: rename the
 // running binary to dst+".old", copy the new binary to dst, then
@@ -23,16 +27,12 @@ func replaceBinary(dst, src string) error {
 }
 
 func replaceUnix(dst, src string) error {
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("stat new binary: %w", err)
-	}
-
-	if err := os.Chmod(src, srcInfo.Mode()|0o111); err != nil {
+	// os.CreateTemp made src 0600; a release binary is 0755.
+	if err := os.Chmod(src, 0o755); err != nil {
 		return fmt.Errorf("chmod new binary: %w", err)
 	}
 
-	if err := os.Rename(src, dst); err != nil {
+	if err := osRename(src, dst); err != nil {
 		return fmt.Errorf("replace binary: %w", err)
 	}
 	return nil

@@ -100,22 +100,6 @@ func (u *Updater) Apply(ctx context.Context, rel *Release) (string, error) {
 		return "", err
 	}
 
-	tmpDir, err := os.MkdirTemp("", "apm-go-self-update-*")
-	if err != nil {
-		return "", fmt.Errorf("create temp directory: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	tmpBinary := filepath.Join(tmpDir, assetName)
-	actualHash, err := u.downloadAsset(ctx, asset.BrowserDownloadURL, asset.Size, tmpBinary)
-	if err != nil {
-		return "", err
-	}
-
-	if actualHash != expectedHash {
-		return "", fmt.Errorf("SHA256 checksum mismatch: expected %s, got %s", expectedHash, actualHash)
-	}
-
 	currentBinary, err := osExecutable()
 	if err != nil {
 		return "", fmt.Errorf("locate current binary: %w", err)
@@ -123,6 +107,25 @@ func (u *Updater) Apply(ctx context.Context, rel *Release) (string, error) {
 	currentBinary, err = filepath.EvalSymlinks(currentBinary)
 	if err != nil {
 		return "", fmt.Errorf("resolve current binary path: %w", err)
+	}
+
+	// The new binary is staged in the directory of the current one so the
+	// final rename stays on one file system; $TMPDIR may be another (tmpfs).
+	binDir := filepath.Dir(currentBinary)
+	tmp, err := os.CreateTemp(binDir, ".apm-go-self-update-*")
+	if err != nil {
+		return "", fmt.Errorf("create temp file in %s: %w", binDir, err)
+	}
+	tmpBinary := tmp.Name()
+	defer os.Remove(tmpBinary)
+
+	actualHash, err := u.downloadAsset(ctx, asset.BrowserDownloadURL, asset.Size, tmp)
+	if err != nil {
+		return "", err
+	}
+
+	if actualHash != expectedHash {
+		return "", fmt.Errorf("SHA256 checksum mismatch: expected %s, got %s", expectedHash, actualHash)
 	}
 
 	if err := replaceBinary(currentBinary, tmpBinary); err != nil {
@@ -204,7 +207,10 @@ func (u *Updater) fetchExpectedHash(ctx context.Context, url, assetName string) 
 	return "", fmt.Errorf("no checksum entry for %s in SHA256SUMS", assetName)
 }
 
-func (u *Updater) downloadAsset(ctx context.Context, url string, size int64, dest string) (string, error) {
+// downloadAsset closes f before it returns, so the caller can rename it.
+func (u *Updater) downloadAsset(ctx context.Context, url string, size int64, f *os.File) (string, error) {
+	defer f.Close()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("create download request: %w", err)
@@ -225,12 +231,6 @@ func (u *Updater) downloadAsset(ctx context.Context, url string, size int64, des
 		total = size
 	}
 
-	f, err := os.Create(dest)
-	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
-	}
-	defer f.Close()
-
 	hasher := sha256.New()
 	var reader io.Reader = resp.Body
 	if u.OnProgress != nil {
@@ -240,6 +240,9 @@ func (u *Updater) downloadAsset(ctx context.Context, url string, size int64, des
 
 	if _, err := io.Copy(f, reader); err != nil {
 		return "", fmt.Errorf("download binary: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("write new binary: %w", err)
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil

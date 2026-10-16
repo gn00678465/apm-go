@@ -70,7 +70,7 @@ Leaves (import nothing in-module): `archive`, `credsec`, `experimental`, `pack`,
 | `ux` | all terminal output and interaction | `Init` `internal/ux/ux.go:33`; `CanPrompt` `:52`; printers `printer.go:21-92`; `SuccessAt` / `ProgressAt` / `WarnAt` `printer.go:136,141,146`; `Panel` `panel.go:28`; `Table` / `List` / `Tree` `output.go:74,144,201`; `Spinner` `spinner.go:42`; `NewClack` `clack.go:130`; `Confirm` / `InputForm` / `MultiSelect` `interactive.go:77,194,146`; Rich-identical `RenderRichTable` / `RichTable` / `TerminalColumns` `richtable.go:51,34,93` and `RenderRichTree` / `RichNode` `richtree.go:24,12` |
 | `semver` | range matching, max-satisfying | `Satisfies` / `MaxSatisfying` / `CompareVersions` `internal/semver/semver.go:20,79,71` |
 | `experimental` | opt-in feature flags persisted in the user config | `Known` / `IsEnabled` / `RequireEnabled` `internal/experimental/experimental.go:37,100,128` |
-| `selfupdate` | binary self-update from GitHub Releases: version check, download with progress, SHA256 verification, binary replacement | `Updater.CheckLatest` `internal/selfupdate/selfupdate.go:62`; `Updater.Apply` `:79`; `PlatformAssetName` `:175`; `replaceBinary` `replace.go:18` |
+| `selfupdate` | binary self-update from GitHub Releases: version check, download with progress, SHA256 verification, binary replacement | `Updater.CheckLatest` `internal/selfupdate/selfupdate.go:63`; `Updater.Apply` `:86`; `PlatformAssetName` `:252`; `replaceBinary` `replace.go:22` |
 | `version` | the release version, injected from the git tag at release link time (`dev` locally) | `Version` `internal/version/version.go:14` |
 
 ## 3. Data flows
@@ -175,11 +175,11 @@ flowchart LR
 
 ### 3.6 `apm-go self-update`
 
-1. `selfUpdateCmd` (`cmd/apm-go/self_update.go:23`) creates the cobra command with `--check`.
-2. `runSelfUpdate` (`:40`) creates a `selfupdate.Updater` and calls `CheckLatest` with a 30s context timeout.
-3. `CheckLatest` (`internal/selfupdate/selfupdate.go:62`) guards `version.Version == "dev"`, then queries `https://api.github.com/repos/{repo}/releases/latest` (excludes pre-releases by API design) and compares versions via `semver.CompareVersions`.
+1. `selfUpdateCmd` (`cmd/apm-go/self_update.go:20`) creates the cobra command with `--check`.
+2. `runSelfUpdate` (`:42`) creates a `selfupdate.Updater` and calls `CheckLatest` with a 30s context timeout.
+3. `CheckLatest` (`internal/selfupdate/selfupdate.go:63`) guards `version.Version == "dev"`, then queries `https://api.github.com/repos/{repo}/releases/latest` (excludes pre-releases by API design) and compares versions via `semver.CompareVersions`.
 4. If `--check` is set, the command prints the result and exits.
-5. Otherwise, `Apply` (`:79`) downloads `SHA256SUMS`, fetches the platform asset (`PlatformAssetName` `:175`), verifies the hash, and calls `replaceBinary` (`replace.go:18`). On Windows, the running binary is renamed to `.old` before the new one is written; on Unix, `os.Rename` replaces the inode directly. The download timeout is 5 minutes.
+5. Otherwise, `Apply` (`:86`) downloads `SHA256SUMS`, resolves the path of the running binary, and downloads the platform asset (`PlatformAssetName` `:252`) into a temporary file `.apm-go-self-update-*` in the binary's own directory (`os.CreateTemp`, `:115`), so a directory the user cannot write fails before the download, with the directory named in the error. It verifies the hash and calls `replaceBinary` (`replace.go:22`), which replaces the binary within that directory, so the update does not depend on the file system `$TMPDIR` is on (issue #83: a `/tmp` on tmpfs made the rename fail with `EXDEV`). The temporary file is removed on every path. On Windows, the running binary is renamed to `.old` before the new one is written; on Unix, the new binary is made `0755` and `os.Rename` replaces the inode directly. The download timeout is 5 minutes.
 6. Progress is reported through `Updater.OnProgress`, which the command wires to `ux.Spinner.Update` with a human-readable byte counter.
 
 This is an apm-go-only command with no Oracle equivalent.
