@@ -3555,6 +3555,22 @@ func clonedSubdirCommit(regLoader *registry.Loader, key string) string {
 	return ""
 }
 
+// lockedKind is the reference kind of a dependency the lock records, for a
+// resolution rebuilt from the lock: deploy.Run reads a registry package's
+// root skill whole.
+func lockedKind(d *lockfile.LockedDep) resolver.ReferenceKind {
+	switch {
+	case d.Source == "registry":
+		return resolver.KindRegistry
+	case d.Source == "local":
+		return resolver.KindLocal
+	case d.Constraint != "":
+		return resolver.KindGitSemver
+	default:
+		return resolver.KindGitLiteral
+	}
+}
+
 func kindToSource(k resolver.ReferenceKind) string {
 	switch k {
 	case resolver.KindRegistry:

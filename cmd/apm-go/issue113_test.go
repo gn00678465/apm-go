@@ -1,6 +1,11 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"slices"
@@ -8,7 +13,9 @@ import (
 	"testing"
 
 	"github.com/apm-go/apm/internal/lockfile"
+	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/yamlcore"
+	yamllib "go.yaml.in/yaml/v4"
 )
 
 // Issue #113: a git or registry package whose root is a skill deploys the
@@ -338,4 +345,201 @@ func TestInstallGlobal113_LocalRootSkill_KeepsGitRecords(t *testing.T) {
 	globalStaleInstall(t, "claude")
 
 	assertGlobalStaleLock(t, home, true, ".claude/skills/dep/.git/HEAD")
+}
+
+// A registry archive is extracted whole, its .git included, and Oracle 0.33.0
+// deploys and records that .git (deps/registry/extractor.py:151-170; card #113
+// step 11, probe-upgrade.py): only a cloned package's .git is left out.
+const registryGitConfig113 = "[core]\n\tbare = false\n"
+
+// registry113 serves acme/sample, a root skill whose archive holds .git/config,
+// and returns the registries block of an apm.yml that installs it.
+func registry113(t *testing.T) string {
+	t.Helper()
+	enableRegistries(t)
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, f := range [][2]string{{"SKILL.md", gitVersionSkill}, {".git/config", registryGitConfig113}} {
+		if err := tw.WriteHeader(&tar.Header{Name: f[0], Size: int64(len(f[1])), Mode: 0o644}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(f[1])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tw.Close()
+	gz.Close()
+	sum := sha256.Sum256(buf.Bytes())
+	srv := startE2EServer(t, buf.Bytes(), "sha256:"+hex.EncodeToString(sum[:]))
+	return "registries:\n  local:\n    url: " + srv.URL + "\n    insecure: true\n  default: local\ndependencies:\n  apm:\n    - id: acme/sample\n      version: 1.0.0\n"
+}
+
+func registryProject113(t *testing.T) string {
+	t.Helper()
+	block := registry113(t)
+	project := chdirTemp(t)
+	writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"), "name: consumer\nversion: 0.1.0\n"+block)
+	return project
+}
+
+func assertRecordsRegistryGit113(t *testing.T, lockPath string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(registryGitConfig113))
+	want := ".claude/skills/sample/.git/config: sha256:" + hex.EncodeToString(sum[:])
+	if lock := globalStaleRead(t, lockPath); !strings.Contains(lock, want) {
+		t.Errorf("lock lacks %q:\n%s", want, lock)
+	}
+}
+
+func TestInstall113_RegistryRootSkill_DeploysGit(t *testing.T) {
+	project := registryProject113(t)
+
+	install113(t, "claude", false, false)
+
+	if got := readText(t, filepath.Join(project, ".claude", "skills", "sample", ".git", "config")); got != registryGitConfig113 {
+		t.Errorf(".git/config = %q, want %q", got, registryGitConfig113)
+	}
+	assertRecordsRegistryGit113(t, filepath.Join(project, "apm.lock.yaml"))
+}
+
+func TestInstall113_RegistryRootSkill_UpgradeKeepsGit(t *testing.T) {
+	project := registryProject113(t)
+	install113(t, "claude", false, false)
+
+	out := install113(t, "claude", false, false)
+
+	assertExists113(t, filepath.Join(project, ".claude", "skills", "sample", ".git", "config"), true)
+	assertRecordsRegistryGit113(t, filepath.Join(project, "apm.lock.yaml"))
+	if strings.Contains(out, "Cleaned") || strings.Contains(out, ".git/config") {
+		t.Errorf("stdout cleans the registry .git:\n%s", out)
+	}
+}
+
+func TestInstallGlobal113_RegistryRootSkill_RecordsGit(t *testing.T) {
+	block := registry113(t)
+	chdirTemp(t)
+	home := t.TempDir()
+	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
+	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
+	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
+	writeGlobalStaleFile(t, filepath.Join(home, ".apm", "apm.yml"), "name: g\nversion: 0.1.0\n"+block)
+
+	install113(t, "claude", true, false)
+
+	assertRecordsRegistryGit113(t, filepath.Join(home, ".apm", "apm.lock.yaml"))
+}
+
+// The frozen install's trial deploy reads the registry package from the lock
+// as an install does: with .git, so the lock's record of it matches.
+func TestInstall113_RegistryRootSkill_FrozenRedeploysGit(t *testing.T) {
+	project := registryProject113(t)
+	install113(t, "claude", false, false)
+	if err := os.RemoveAll(filepath.Join(project, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	var err error
+	out := captureUninstallStdout(t, func() { err = runInstall(deps, true, true, "claude", "", nil, nil) })
+
+	if err != nil {
+		t.Fatalf("frozen install: %v\n%s", err, out)
+	}
+	if got := readText(t, filepath.Join(project, ".claude", "skills", "sample", ".git", "config")); got != registryGitConfig113 {
+		t.Errorf(".git/config = %q, want %q", got, registryGitConfig113)
+	}
+}
+
+// A frozen install rebuilds a transitive dependency from the lock: a registry
+// package there keeps its .git as the install that wrote the lock did.
+func TestInstall113_TransitiveRegistryRootSkill_FrozenRedeploysGit(t *testing.T) {
+	block := registry113(t)
+	project := chdirTemp(t)
+	registries, _, _ := strings.Cut(block, "dependencies:\n")
+	writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"), "name: consumer\nversion: 0.1.0\n"+registries+"dependencies:\n  apm:\n    - acme/parent\n")
+	parentYML := "name: parent\nversion: 1.0.0\ndependencies:\n  apm:\n    - id: acme/sample\n      version: 1.0.0\n"
+	writeGlobalStaleFile(t, filepath.Join(project, "apm_modules", "acme", "parent", "apm.yml"), parentYML)
+	parent, _, err := manifest.ParseManifest(mustSafeLoad113(t, parentYML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{packages: map[string]*manifest.Manifest{"acme/parent@": parent}}}
+	out := captureUninstallStdout(t, func() { err = runInstall(deps, false, true, "claude", "", nil, nil) })
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	assertRecordsRegistryGit113(t, filepath.Join(project, "apm.lock.yaml"))
+	if err := os.RemoveAll(filepath.Join(project, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+
+	out = captureUninstallStdout(t, func() { err = runInstall(deps, true, true, "claude", "", nil, nil) })
+
+	if err != nil {
+		t.Fatalf("frozen install: %v\n%s", err, out)
+	}
+	assertExists113(t, filepath.Join(project, ".claude", "skills", "sample", ".git", "config"), true)
+}
+
+func mustSafeLoad113(t *testing.T, text string) *yamllib.Node {
+	t.Helper()
+	node, err := yamlcore.SafeLoad([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return node
+}
+
+func TestInstallGlobal113_RegistryRootSkill_UpgradeKeepsGitRecord(t *testing.T) {
+	block := registry113(t)
+	chdirTemp(t)
+	home := t.TempDir()
+	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
+	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
+	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
+	writeGlobalStaleFile(t, filepath.Join(home, ".apm", "apm.yml"), "name: g\nversion: 0.1.0\n"+block)
+	install113(t, "claude", true, false)
+
+	out := install113(t, "claude", true, false)
+
+	assertRecordsRegistryGit113(t, filepath.Join(home, ".apm", "apm.lock.yaml"))
+	if got := readText(t, filepath.Join(home, ".claude", "skills", "sample", ".git", "config")); got != registryGitConfig113 {
+		t.Errorf(".git/config through the skill link = %q, want %q", got, registryGitConfig113)
+	}
+	if strings.Contains(out, "Cleaned") {
+		t.Errorf("stdout cleans the registry .git:\n%s", out)
+	}
+}
+
+// The uninstall hand-over rebuilds a transitive dependency from the lock: the
+// registry package that takes over a skill directory brings its .git.
+func TestUninstall113_HandoverToTransitiveRegistryRootSkill_KeepsGit(t *testing.T) {
+	block := registry113(t)
+	project := chdirTemp(t)
+	registries, _, _ := strings.Cut(block, "dependencies:\n")
+	writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"), "name: consumer\nversion: 0.1.0\n"+registries+"dependencies:\n  apm:\n    - acme/other\n    - acme/parent\n")
+	writeGlobalStaleFile(t, filepath.Join(project, "apm_modules", "acme", "other", "skills", "sample", "SKILL.md"), "---\nname: sample\ndescription: other\n---\nother\n")
+	parentYML := "name: parent\nversion: 1.0.0\ndependencies:\n  apm:\n    - id: acme/sample\n      version: 1.0.0\n"
+	writeGlobalStaleFile(t, filepath.Join(project, "apm_modules", "acme", "parent", "apm.yml"), parentYML)
+	parent, _, err := manifest.ParseManifest(mustSafeLoad113(t, parentYML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{packages: map[string]*manifest.Manifest{"acme/parent@": parent}}}
+	out := captureUninstallStdout(t, func() { err = runInstall(deps, false, true, "claude", "", nil, nil) })
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	assertExists113(t, filepath.Join(project, ".claude", "skills", "sample", ".git"), false)
+
+	out = captureUninstallStdout(t, func() { err = runUninstall([]string{"acme/other"}, uninstallOptions{}) })
+
+	if err != nil {
+		t.Fatalf("uninstall: %v\n%s", err, out)
+	}
+	if got := readText(t, filepath.Join(project, ".claude", "skills", "sample", ".git", "config")); got != registryGitConfig113 {
+		t.Errorf(".git/config = %q, want %q\n%s", got, registryGitConfig113, out)
+	}
+	assertRecordsRegistryGit113(t, filepath.Join(project, "apm.lock.yaml"))
 }

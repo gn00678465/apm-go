@@ -264,7 +264,7 @@ func TakenOver(deployRoot, bucketSource, rel string) bool {
 
 // RootGitThroughLink reports whether the lock path rel is at or below the .git
 // of a package root, reached through the skill symlink a symlink deploy made
-// to bucketSource itself: a file of the package's own .git, which a fetched
+// to bucketSource itself: a file of the package's own .git, which a cloned
 // package's root skill does not deploy (Primitive.SkipRootGit).
 func RootGitThroughLink(deployRoot, bucketSource, rel string) bool {
 	loc, err := locateStalePath(deployRoot, bucketSource, rel)
