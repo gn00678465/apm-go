@@ -59,9 +59,6 @@ func globalStaleInstall(t *testing.T, target string, packages ...string) string 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := ensureGlobalManifest(); err != nil {
-			t.Fatal(err)
-		}
 		if err := runInstall(deps, false, true, target, deployDir, nil, packages); err != nil {
 			t.Fatalf("install --global: %v", err)
 		}

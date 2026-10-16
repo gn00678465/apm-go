@@ -714,6 +714,7 @@ func TestInstallGlobal_Frozen_SkillWithInnerSymlink_RestoresDirectorySymlink(t *
 		notes   = "safe local notes\n"
 	)
 	home, _ := globalStaleScope(t, nil)
+	writeGlobalStaleFile(t, filepath.Join(home, ".apm", "apm.yml"), "name: global\nversion: 0.0.0\n")
 	source := filepath.Join(home, ".apm", ".apm", "skills", "style")
 	writeGlobalStaleFile(t, filepath.Join(source, "SKILL.md"), skillMD)
 	writeGlobalStaleFile(t, filepath.Join(source, "notes.md"), notes)

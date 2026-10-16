@@ -20,12 +20,13 @@ type manifestSpec struct {
 }
 
 // oracleManifestTargetNames is the sorted manifest target catalog used by
-// the Oracle's apm.yml comment (commands/_helpers.py:718-721 and
-// core/target_catalog.py:258-264). It is intentionally broader than
-// manifest.SupportedTargets, which is apm-go's adapter/--target whitelist.
+// the Oracle's apm.yml comment (commands/_helpers.py:718-721), Oracle
+// 0.33.0's manifest_target_names() (core/target_catalog.py:258-266). It is
+// intentionally broader than manifest.SupportedTargets, which is apm-go's
+// adapter/--target whitelist.
 var oracleManifestTargetNames = []string{
 	"agent-skills", "antigravity", "claude", "codex", "copilot",
-	"cursor", "gemini", "grok-build", "kiro", "opencode", "windsurf",
+	"cursor", "gemini", "grok-build", "hermes", "kiro", "opencode", "vscode", "windsurf",
 }
 
 // targetsCommentLines returns the three header lines placed above the
