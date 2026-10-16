@@ -262,6 +262,23 @@ func TakenOver(deployRoot, bucketSource, rel string) bool {
 	return err == nil && loc.userLink != ""
 }
 
+// RootGitThroughLink reports whether the lock path rel is at or below the .git
+// of a package root, reached through the skill symlink a symlink deploy made
+// to bucketSource itself: a file of the package's own .git, which a fetched
+// package's root skill does not deploy (Primitive.SkipRootGit).
+func RootGitThroughLink(deployRoot, bucketSource, rel string) bool {
+	loc, err := locateStalePath(deployRoot, bucketSource, rel)
+	if err != nil || loc.deployLink == "" {
+		return false
+	}
+	below := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))), loc.deployLink+"/")
+	if below != ".git" && !strings.HasPrefix(below, ".git/") {
+		return false
+	}
+	absSource, err := filepath.Abs(bucketSource)
+	return err == nil && resolveExisting(absSource) == resolveExisting(loc.linkTarget)
+}
+
 // lockPathsAtOrBelow returns the entries of stale that are link itself or
 // below it, as the lock spells them.
 func lockPathsAtOrBelow(stale []string, link string) []string {

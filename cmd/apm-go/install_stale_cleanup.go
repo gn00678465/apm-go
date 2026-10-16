@@ -296,6 +296,10 @@ func hasFileBelow(files []string, dir string) bool {
 // The stale cleanup has kept it and warned once; with the record gone the
 // warning is not repeated, and a frozen install and `audit` do not check a
 // file that is the user's. bucket is "" for the project's own content.
+// For a symlink deploy it also drops a package's .git seen through its root
+// skill's link (deploy.RootGitThroughLink): a lock written before #113 lists
+// the checkout's .git there, whose files are apm_modules/<key>/.git itself. A
+// local package's .git is deployed again, so its paths do not reach here.
 func notTakenOver(bucket string, files, targets []string, deployDir string) []string {
 	kind, source := deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(bucket))
 	if bucket == "" {
@@ -310,6 +314,9 @@ func notTakenOver(bucket string, files, targets []string, deployDir string) []st
 	out := files[:0:0]
 	for _, f := range files {
 		if deploy.TargetsGovernPath(targets, kind, f) && deploy.TakenOver(root, source, f) {
+			continue
+		}
+		if source != "" && kind == deploy.DependencyBucket && deploy.RootGitThroughLink(root, source, f) {
 			continue
 		}
 		out = append(out, f)

@@ -30,6 +30,9 @@ type Primitive struct {
 	DepKey  string                  // dependency unique key ("" for local)
 	SrcPath string                  // absolute path to source file or dir (for skills)
 	MCP     *manifest.MCPDependency // set only when Type == TypeMCP
+	// SkipRootGit marks a skill whose SrcPath is the root of a fetched
+	// package: the .git there is the checkout's, not the skill's.
+	SkipRootGit bool
 }
 
 // CollectLocalPrimitives returns the primitives of the project's own content
@@ -69,6 +72,16 @@ func dependencyTree(depKey, modulePath string) (sourceTree, bool) {
 		return sourceTree{}, false
 	}
 	return sourceTree{dir: modulePath, depKey: depKey}, true
+}
+
+// fetched reports whether t is a git or registry package. The Oracle drops
+// the .git of such a package's root when it puts it in apm_modules
+// (deps/github_downloader.py:1923-1925,2015-2018) and keeps the .git of a
+// local package, which it copies (key _local/<name>). apm-go keeps the
+// checkout's .git there for resolved_commit and tree_sha256, so a skill read
+// from the root leaves it out instead.
+func (t sourceTree) fetched() bool {
+	return t.depKey != "" && !strings.HasPrefix(t.depKey, "_local/")
 }
 
 func (t sourceTree) source() string {
@@ -161,11 +174,12 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 		}
 		name := skillNameFromDepKey(t.depKey)
 		prims = append(prims, Primitive{
-			Name:    name,
-			Type:    TypeSkills,
-			Source:  t.source(),
-			DepKey:  t.depKey,
-			SrcPath: t.dir,
+			Name:        name,
+			Type:        TypeSkills,
+			Source:      t.source(),
+			DepKey:      t.depKey,
+			SrcPath:     t.dir,
+			SkipRootGit: t.fetched(),
 		})
 	}
 
