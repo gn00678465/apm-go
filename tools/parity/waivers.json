@@ -968,5 +968,89 @@
     "owner": "gn00678465@gmail.com",
     "eval_plan_ref": ".scratch/parity-runner/issues/32-command-semantics-gaps.md",
     "tree_paths": ["cwd/apm.yml"]
+  },
+  {
+    "id": "install-mcp-codex",
+    "fields": [
+      "tree"
+    ],
+    "taxonomy": "F09",
+    "reason": "Issue #87, owner ruling https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282 (B1): stdout, stderr and exit code are compared and match the Oracle, with each target's adapter line, \"  + two\" and the targets in declared order. Only the MCP config files differ, as recorded: cwd/.codex/config.toml: apm-go writes no `id` (deliberate, PRODUCT.md \"Codex MCP config\", issue #66); its single quotes, alphabetical keys and leading `[mcp_servers]` line are #88 (the comment of issue #97, item 6); the Oracle's empty `[mcp_servers.two.env]` table is #88 (https://github.com/gn00678465/apm-go/issues/88#issuecomment-6213760047, item 6).",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282",
+    "tree_paths": [
+      "cwd/.codex/config.toml"
+    ]
+  },
+  {
+    "id": "install-mcp-copilot",
+    "fields": [
+      "tree"
+    ],
+    "taxonomy": "F09",
+    "reason": "Issue #87, owner ruling https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282 (B1): stdout, stderr and exit code are compared and match the Oracle, with each target's adapter line, \"  + two\" and the targets in declared order. Only the MCP config files differ, as recorded: cwd/.github/mcp.json and cwd/.github/mcp-config.json: apm-go writes copilot's MCP config to .github/mcp-config.json, the Oracle to .github/mcp.json (deliberate, internal/deploy/mcp_copilot.go and PRODUCT.md \"Stale MCP servers\").",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282",
+    "tree_paths": [
+      "cwd/.github/mcp-config.json",
+      "cwd/.github/mcp.json"
+    ]
+  },
+  {
+    "id": "install-mcp-opencode",
+    "fields": [
+      "tree"
+    ],
+    "taxonomy": "F09",
+    "reason": "Issue #87, owner ruling https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282 (B1): stdout, stderr and exit code are compared and match the Oracle, with each target's adapter line, \"  + two\" and the targets in declared order. Only the MCP config files differ, as recorded: cwd/opencode.json and cwd/.opencode: the key order of the server entry and the empty .opencode/ the Oracle leaves are #88 item 22.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282",
+    "tree_paths": [
+      "cwd/.opencode",
+      "cwd/opencode.json"
+    ]
+  },
+  {
+    "id": "install-mcp-antigravity",
+    "fields": [
+      "tree"
+    ],
+    "taxonomy": "F09",
+    "reason": "Issue #87, owner ruling https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282 (B1): stdout, stderr and exit code are compared and match the Oracle, with each target's adapter line, \"  + two\" and the targets in declared order. Only the MCP config files differ, as recorded: cwd/.agents/mcp_config.json: the Oracle writes `command` before `args`, apm-go sorts the keys; #88 (https://github.com/gn00678465/apm-go/issues/88#issuecomment-6213760047, item 1).",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282",
+    "tree_paths": [
+      "cwd/.agents/mcp_config.json"
+    ]
+  },
+  {
+    "id": "install-mcp-multi-target",
+    "fields": [
+      "tree"
+    ],
+    "taxonomy": "F09",
+    "reason": "Issue #87, owner ruling https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282 (B1): stdout, stderr and exit code are compared and match the Oracle, with each target's adapter line, \"  + two\" and the targets in declared order. Only the MCP config files differ, as recorded: cwd/.codex/config.toml: apm-go writes no `id` (deliberate, PRODUCT.md \"Codex MCP config\", issue #66); its single quotes, alphabetical keys and leading `[mcp_servers]` line are #88 (the comment of issue #97, item 6); the Oracle's empty `[mcp_servers.two.env]` table is #88 (https://github.com/gn00678465/apm-go/issues/88#issuecomment-6213760047, item 6). cwd/.github/mcp.json and cwd/.github/mcp-config.json: apm-go writes copilot's MCP config to .github/mcp-config.json, the Oracle to .github/mcp.json (deliberate, internal/deploy/mcp_copilot.go and PRODUCT.md \"Stale MCP servers\"). cwd/opencode.json and cwd/.opencode: the key order of the server entry and the empty .opencode/ the Oracle leaves are #88 item 22. .mcp.json and apm.lock.yaml are the same.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282",
+    "tree_paths": [
+      "cwd/.codex/config.toml",
+      "cwd/.github/mcp-config.json",
+      "cwd/.github/mcp.json",
+      "cwd/.opencode",
+      "cwd/opencode.json"
+    ]
+  },
+  {
+    "id": "mcp-install-codex-flag",
+    "fields": [
+      "tree"
+    ],
+    "taxonomy": "F09",
+    "reason": "Issue #87, owner ruling https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282 (B1): stdout, stderr and exit code are compared and match the Oracle, with each target's adapter line, \"  + two\" and the targets in declared order. Only the MCP config files differ, as recorded: cwd/.codex/config.toml: apm-go writes no `id` (deliberate, PRODUCT.md \"Codex MCP config\", issue #66); its single quotes, alphabetical keys and leading `[mcp_servers]` line are #88 (the comment of issue #97, item 6); the Oracle's empty `[mcp_servers.two.env]` table is #88 (https://github.com/gn00678465/apm-go/issues/88#issuecomment-6213760047, item 6). .mcp.json, apm.yml and apm.lock.yaml are the same.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "https://github.com/gn00678465/apm-go/issues/87#issuecomment-6213670282",
+    "tree_paths": [
+      "cwd/.codex/config.toml"
+    ]
   }
 ]

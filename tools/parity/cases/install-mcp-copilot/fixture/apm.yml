@@ -1,0 +1,11 @@
+name: mcp-fixture
+version: 1.0.0
+targets: [copilot]
+dependencies:
+  apm: []
+  mcp:
+  - name: two
+    registry: false
+    transport: stdio
+    command: npx
+    args: ["-y", "foo"]

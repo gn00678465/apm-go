@@ -1,0 +1,5 @@
+name: mcp-fixture
+version: 1.0.0
+dependencies:
+  apm: []
+  mcp: []

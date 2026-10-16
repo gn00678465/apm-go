@@ -2122,7 +2122,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 				ensureClaudeDir(detectRoot, mcpTargets)
 				mcpConfigured = printMCPBlock(manifestMCPOrder(m, newLock.MCPServers, targetsByServer), declaredMCP,
-					newLock, existingLock, targetsByServer, targetFlag != "", len(m.Target) > 0)
+					newLock, existingLock, targetsByServer, targets, targetFlag != "", len(m.Target) > 0)
 			} else {
 				mcpItems := make([]ux.Item, 0, len(newLock.MCPServers))
 				for _, server := range newLock.MCPServers {

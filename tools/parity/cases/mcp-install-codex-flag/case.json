@@ -1,0 +1,6 @@
+{
+  "id": "mcp-install-codex-flag",
+  "argv": ["install", "--mcp", "two", "--target", "codex,claude", "--", "npx", "-y", "foo"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

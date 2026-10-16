@@ -365,14 +365,11 @@ func TestInstallMCP_CodexTarget_LockAndNoClaudeDir(t *testing.T) {
 
 	got := mustRunCLI(t, "install", "--mcp", "one", "--target", "codex", "--", "npx")
 
-	// The Oracle prints two lines of its Codex adapter between these.
-	for _, want := range []string{
-		"+- MCP Servers (1)\n i Targeting specific runtime: codex\n|   >  one (self-defined, stdio)\n|     +- Configuring for Codex...\n",
-		"|   +  one -> Codex (configured)\n + Configured 1 server\n + Added MCP server 'one'\n  transport: stdio\n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("install --mcp one:\n%s\nwant it to contain:\n%s", got, want)
-		}
+	want := "+- MCP Servers (1)\n i Targeting specific runtime: codex\n|   >  one (self-defined, stdio)\n|     +- Configuring for Codex...\n" +
+		" + Configured MCP server 'one' for Codex CLI\n  + one\n" +
+		"|   +  one -> Codex (configured)\n + Configured 1 server\n + Added MCP server 'one'\n  transport: stdio\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("install --mcp one:\n%s\nwant it to contain:\n%s", got, want)
 	}
 	assertMCPCoverLock(t, "install --mcp one", mcpCoverBare("one", "codex"))
 	assertIssue50Exists(t, false, ".claude")

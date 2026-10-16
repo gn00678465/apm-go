@@ -561,6 +561,8 @@ func TestRealWaiversJSON_Validates(t *testing.T) {
 		"install-local-skill-subset",
 		"compile-instruction",
 		"uninstall-local", "marketplace-init",
+		"install-mcp-codex", "install-mcp-copilot", "install-mcp-opencode", "install-mcp-antigravity",
+		"install-mcp-multi-target", "mcp-install-codex-flag",
 	}
 	if !fieldsEqual(gotIDs, wantIDs) {
 		t.Errorf("waivers.json ids = %v, want exactly %v (ticket 02 attempt 2: no bulk waivers)", gotIDs, wantIDs)
