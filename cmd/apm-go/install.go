@@ -854,7 +854,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			// whenever there is ANYTHING to integrate -- deps or local
 			// primitives; task 07-11-instructions-applyto-parity req #2). An
 			// EMPTY project (no deps, no local primitives) keeps exiting 0.
-			if len(deploy.CollectLocalPrimitives(".")) > 0 {
+			if len(deploy.CollectScopeLocalPrimitives(".", deployDir != "")) > 0 {
 				return errNoDeployTarget()
 			}
 			return nil
@@ -1923,6 +1923,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	var keptDirs []string
 	var failedBuckets map[string]bool
 	var skippedDeps []deploy.SkippedDep
+	var commandNotes []deploy.CommandNote
 	// orphans are the lock entries step 6b carries over for packages this
 	// run no longer resolves: whole when they were not cleaned, else the
 	// paths the cleanup could not remove.
@@ -1985,6 +1986,18 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 		for _, d := range deployResult.Diags {
 			ux.Warn(os.Stderr, "%s", d)
+		}
+		commandNotes = deployResult.CommandNotes
+		if run == nil {
+			// update's output is its own (ruling R13): the notes go with the
+			// other deploy warnings.
+			for _, n := range commandNotes {
+				if n.Info {
+					ux.Info(os.Stdout, "%s", commandNoteText(n))
+				} else {
+					ux.Warn(os.Stderr, "%s", commandNoteText(n))
+				}
+			}
 		}
 		keptDirs, failedBuckets = deployResult.KeptDirs, deployResult.FailedBuckets
 		skippedDeps = deployResult.SkippedDeps
@@ -2271,7 +2284,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			manifestSectionMoved: manifestSectionMoved, result: result, targets: targets,
 			newLock: newLock, existingLock: existingLock, existingNode: existingNode,
 			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase,
-			skippedDeps: skippedDeps,
+			skippedDeps:  skippedDeps,
+			commandNotes: commandNotes,
 		})
 	}
 

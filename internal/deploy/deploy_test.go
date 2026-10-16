@@ -1302,11 +1302,11 @@ func TestNotDeployed_PerTarget(t *testing.T) {
 		mustDeploy    []PrimitiveType
 		mustNotDeploy []PrimitiveType
 	}{
-		{&claudeAdapter{}, []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands}, []PrimitiveType{TypePrompts, TypeHooks}},
+		{&claudeAdapter{}, []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands, TypePrompts}, []PrimitiveType{TypeHooks}},
 		{&codexAdapter{}, []PrimitiveType{TypeAgents, TypeSkills, TypeHooks}, []PrimitiveType{TypeInstructions, TypePrompts, TypeCommands}},
 		{&copilotAdapter{}, []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeSkills, TypeHooks}, []PrimitiveType{TypeCommands}},
 		{&antigravityAdapter{}, []PrimitiveType{TypeInstructions, TypeSkills, TypeHooks, TypeAgents}, []PrimitiveType{TypeCommands, TypePrompts}},
-		{&opencodeAdapter{}, []PrimitiveType{TypeAgents, TypeCommands, TypeSkills}, []PrimitiveType{TypeInstructions, TypeHooks, TypePrompts}},
+		{&opencodeAdapter{}, []PrimitiveType{TypeAgents, TypeCommands, TypeSkills, TypePrompts}, []PrimitiveType{TypeInstructions, TypeHooks}},
 		{&agentSkillsAdapter{}, []PrimitiveType{TypeSkills}, []PrimitiveType{TypeInstructions, TypePrompts, TypeAgents, TypeCommands, TypeHooks}},
 	}
 
@@ -1617,6 +1617,7 @@ func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
 		{"dependency .apm skills", []string{module + "/.apm/skills/s/SKILL.md"}, module + "/.apm/skills", depKey, true, depKey + ": read " + module + "/.apm/skills failed: "},
 		{"dependency .apm agents", []string{module + "/.apm/agents/a.md"}, module + "/.apm/agents", depKey, true, depKey + ": read " + module + "/.apm/agents failed: "},
 		{"dependency root skills", []string{module + "/skills/s/SKILL.md"}, module + "/skills", depKey, true, depKey + ": read " + module + "/skills failed: "},
+		{"dependency .apm prompts", []string{module + "/.apm/prompts/p.prompt.md"}, module + "/.apm/prompts", depKey, true, depKey + ": read " + module + "/.apm/prompts failed: "},
 		{"dependency root skill directory hides its SKILL.md", []string{module + "/skills/s/SKILL.md"}, module + "/skills/s", depKey, true, depKey + ": read " + module + "/skills/s/SKILL.md failed: "},
 		{"dependency plugin manifest directory", []string{module + "/.claude-plugin/plugin.json"}, module + "/.claude-plugin", depKey, true, depKey + ": read " + module + "/.claude-plugin/plugin.json failed: "},
 	}

@@ -32,8 +32,23 @@ type Primitive struct {
 	MCP     *manifest.MCPDependency // set only when Type == TypeMCP
 }
 
+// CollectLocalPrimitives returns the primitives of the project's own content
+// at projectDir.
 func CollectLocalPrimitives(projectDir string) []Primitive {
-	prims, _ := collectFromAPMDir(sourceTree{dir: projectDir}, ".apm")
+	return CollectScopeLocalPrimitives(projectDir, false)
+}
+
+// CollectScopeLocalPrimitives reads the own content a deploy of that scope
+// deploys: the project's .apm/ and the *.prompt.md files beside it, which the
+// Oracle reads only when the project has a .apm/ directory
+// (install/phases/local_content.py:44-56); for global, ~/.apm/.apm/ alone
+// (#88 item 68).
+func CollectScopeLocalPrimitives(projectDir string, global bool) []Primitive {
+	rootPrompts := !global
+	if info, err := os.Stat(filepath.Join(projectDir, ".apm")); err != nil || !info.IsDir() {
+		rootPrompts = false
+	}
+	prims, _ := collectFromAPMDir(sourceTree{dir: projectDir}, ".apm", rootPrompts)
 	return prims
 }
 
@@ -128,7 +143,7 @@ func CollectDependencyPrimitives(depKey, modulePath string) ([]Primitive, error)
 }
 
 func collectDependency(t sourceTree) ([]Primitive, error) {
-	prims, err := collectFromAPMDir(t, ".apm")
+	prims, err := collectFromAPMDir(t, ".apm", true)
 	if err != nil {
 		return nil, err
 	}
@@ -176,10 +191,9 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 	return append(prims, skills...), nil
 }
 
-// collectFromAPMDir collects the primitives of the .apm directory apmRel of t.
-func collectFromAPMDir(t sourceTree, apmRel string) ([]Primitive, error) {
-	var prims []Primitive
-
+// collectFromAPMDir collects the primitives of the .apm directory apmRel of
+// t, and with rootPrompts the prompts at t's root too.
+func collectFromAPMDir(t sourceTree, apmRel string, rootPrompts bool) ([]Primitive, error) {
 	typeMap := []struct {
 		subdir    string
 		primType  PrimitiveType
@@ -189,41 +203,35 @@ func collectFromAPMDir(t sourceTree, apmRel string) ([]Primitive, error) {
 		{"agents", TypeAgents, extractAgentName},
 		{"commands", TypeCommands, extractBaseName},
 		{"hooks", TypeHooks, extractHookName},
-		{"prompts", TypePrompts, extractPromptName},
 	}
-
+	var prims []Primitive
 	for _, tm := range typeMap {
-		rel := apmRel + "/" + tm.subdir
-		dir, err := t.path(rel)
+		found, err := collectFlat(t, apmRel+"/"+tm.subdir, tm.primType, tm.extractFn)
 		if err != nil {
 			return nil, err
 		}
-		entries, err := os.ReadDir(dir)
+		prims = append(prims, found...)
+	}
+
+	// Prompts as the Oracle finds them: find_files_by_glob(root,
+	// "*.prompt.md", subdirs=[".apm/prompts"]) (base_integrator.py:1031-1080),
+	// the root's first, each directory in name order, not recursive.
+	promptDirs := []string{apmRel + "/prompts"}
+	if rootPrompts {
+		promptDirs = []string{".", apmRel + "/prompts"}
+	}
+	for _, rel := range promptDirs {
+		found, err := collectFlat(t, rel, TypePrompts, extractPromptName)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
+		for _, p := range found {
+			// A workflow belongs to the Copilot App, which apm-go does not
+			// deploy to; every other target skips it (command_integrator.py:
+			// 524-538, prompt_integrator.py:288).
+			if !isWorkflowPrompt(p.SrcPath) {
+				prims = append(prims, p)
 			}
-			name := tm.extractFn(e.Name())
-			if name == "" {
-				continue
-			}
-			src, isDir, err := t.entry(dir, rel, e)
-			if err != nil {
-				return nil, err
-			}
-			if isDir {
-				continue
-			}
-			prims = append(prims, Primitive{
-				Name:    name,
-				Type:    tm.primType,
-				Source:  t.source(),
-				DepKey:  t.depKey,
-				SrcPath: src,
-			})
 		}
 	}
 
@@ -233,6 +241,44 @@ func collectFromAPMDir(t sourceTree, apmRel string) ([]Primitive, error) {
 		return nil, err
 	}
 	return append(prims, skills...), nil
+}
+
+// collectFlat collects the files of the directory rel of t that extractFn
+// names, as primitives of type pt.
+func collectFlat(t sourceTree, rel string, pt PrimitiveType, extractFn func(string) string) ([]Primitive, error) {
+	dir, err := t.path(rel)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil
+	}
+	var prims []Primitive
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := extractFn(e.Name())
+		if name == "" {
+			continue
+		}
+		src, isDir, err := t.entry(dir, rel, e)
+		if err != nil {
+			return nil, err
+		}
+		if isDir {
+			continue
+		}
+		prims = append(prims, Primitive{
+			Name:    name,
+			Type:    pt,
+			Source:  t.source(),
+			DepKey:  t.depKey,
+			SrcPath: src,
+		})
+	}
+	return prims, nil
 }
 
 // collectSkills collects the skills <rel>/<name>/SKILL.md of t.
@@ -309,12 +355,11 @@ func extractHookName(filename string) string {
 	return ""
 }
 
+// extractPromptName only accepts *.prompt.md, the Oracle's glob for a
+// prompt.
 func extractPromptName(filename string) string {
 	if strings.HasSuffix(filename, ".prompt.md") {
 		return strings.TrimSuffix(filename, ".prompt.md")
-	}
-	if strings.HasSuffix(filename, ".md") {
-		return strings.TrimSuffix(filename, ".md")
 	}
 	return ""
 }

@@ -59,6 +59,12 @@ type BundleTarget interface {
 	FinalizeBundles(depKeys []string, projectDir string) (map[string][]string, error)
 }
 
+// promptCommander is a target that deploys a prompt as a command, converted
+// the way the Oracle's CommandIntegrator converts it, to commandPath.
+type promptCommander interface {
+	commandPath(name string) string
+}
+
 var Adapters = map[string]TargetAdapter{
 	"claude":       &claudeAdapter{},
 	"codex":        &codexAdapter{},

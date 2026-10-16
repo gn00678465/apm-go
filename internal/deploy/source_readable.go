@@ -77,14 +77,24 @@ func apmDirReadFailure(apmDir string) *sourceReadFailure {
 }
 
 // localSourceReadFailure reports the first unreadable source location of the
-// project's own .apm/ content, or nil.
-func localSourceReadFailure(projectDir string) *sourceReadFailure {
+// own content CollectScopeLocalPrimitives reads, or nil: its .apm/, and
+// outside global the directory of its root prompts.
+func localSourceReadFailure(projectDir string, global bool) *sourceReadFailure {
+	if info, err := os.Stat(filepath.Join(projectDir, ".apm")); !global && err == nil && info.IsDir() {
+		if f := dirReadFailure(projectDir); f != nil {
+			return f
+		}
+	}
 	return apmDirReadFailure(filepath.Join(projectDir, ".apm"))
 }
 
 // dependencySourceReadFailure reports the first unreadable source location of
 // the dependency vendored at modulePath, or nil.
 func dependencySourceReadFailure(modulePath string) *sourceReadFailure {
+	// The package root holds its root prompts.
+	if f := dirReadFailure(modulePath); f != nil {
+		return f
+	}
 	if f := apmDirReadFailure(filepath.Join(modulePath, ".apm")); f != nil {
 		return f
 	}

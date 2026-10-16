@@ -11,6 +11,8 @@ import (
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/yamlcore"
+	"go.yaml.in/yaml/v4"
 )
 
 type DepDeployResult struct {
@@ -55,6 +57,9 @@ type DeployResult struct {
 	// SkippedDeps holds, in the order Run takes the dependencies, each one
 	// whose `targets:` names none of the active targets: it deployed nothing.
 	SkippedDeps []SkippedDep
+	// CommandNotes holds, for each target in turn, what the deploy of a
+	// prompt as a command has to tell, in the order the prompts deployed.
+	CommandNotes []CommandNote
 }
 
 // SkippedDep is a dependency whose `targets:` (Targets) has no active target.
@@ -142,10 +147,14 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		sourceDiags = append(sourceDiags, fmt.Sprintf("%s: read %s failed: %v", label, shown, f.err))
 	}
 
-	// Local primitives first (req-pr-002: always win)
-	locals := CollectLocalPrimitives(projectDir)
+	// Local primitives first (req-pr-002: always win). A symlink deploy is
+	// --global.
+	locals := CollectScopeLocalPrimitives(projectDir, symlink)
 	ordered = append(ordered, locals...)
-	noteSourceReadFailure("", "<local .apm/>", localSourceReadFailure(projectDir))
+	noteSourceReadFailure("", "<local .apm/>", localSourceReadFailure(projectDir, symlink))
+	// packageNames names each source in a note: the project's own content
+	// "_local", as the Oracle does.
+	packageNames := map[string]string{"": "_local"}
 
 	declaredMCP := map[string]bool{}
 	noteDeclaredMCP := func(servers []*manifest.MCPDependency) {
@@ -198,10 +207,11 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		depCanonKeys[key] = CanonicalDepKey(dep)
 		noteTargetSubset(key, dep.TargetSubset)
 		modulePath := filepath.Join(projectDir, "apm_modules", key)
-		prims, depServers, loadDiags, err := collectDependencySources(key, modulePath)
+		prims, depServers, loadDiags, name, err := collectDependencySources(key, modulePath)
 		if err != nil {
 			return nil, err
 		}
+		packageNames[key] = name
 		ordered = append(ordered, prims...)
 		noteSourceReadFailure(key, key, dependencySourceReadFailure(modulePath))
 
@@ -219,10 +229,11 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		for _, dep := range transitive {
 			noteTargetSubset(dep.Key, dep.TargetSubset)
 			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
-			prims, transitiveServers, loadDiags, err := collectDependencySources(dep.Key, modulePath)
+			prims, transitiveServers, loadDiags, name, err := collectDependencySources(dep.Key, modulePath)
 			if err != nil {
 				return nil, err
 			}
+			packageNames[dep.Key] = name
 			ordered = append(ordered, prims...)
 			noteSourceReadFailure(dep.Key, dep.Key, dependencySourceReadFailure(modulePath))
 
@@ -330,6 +341,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 		conflictDiags = unique
 	}
+	conflictDiags = appendUnique(conflictDiags, keepPromptOverCommand(targets, ordered, winnersByTarget)...)
 
 	// 3.5. Bundle-target dependency naming must be validated for every
 	// target BEFORE any primitive is deployed anywhere in this Run: a
@@ -389,7 +401,33 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				continue
 			}
 
-			files, err := adapter.DeployPrimitive(p, deployDir)
+			var files []string
+			var notes []CommandNote
+			var err error
+			if c, ok := adapter.(promptCommander); ok && p.Type == TypePrompts {
+				files, notes, err = deployPromptCommand(p, deployDir, c.commandPath(p.Name), target)
+			} else {
+				files, err = adapter.DeployPrimitive(p, deployDir)
+			}
+			for _, n := range notes {
+				n.DepKey, n.Package = p.DepKey, packageNames[p.DepKey]
+				result.CommandNotes = append(result.CommandNotes, n)
+			}
+			// The Oracle skips such a prompt with a warning and deploys the
+			// rest (command_integrator.py:548-562,606-627). The reason text of
+			// a frontmatter is apm-go's own.
+			var fmErr *frontmatterError
+			var nameErr *commandNameError
+			switch {
+			case errors.As(err, &fmErr):
+				result.CommandNotes = append(result.CommandNotes, CommandNote{DepKey: p.DepKey, Package: packageNames[p.DepKey],
+					Text: fmt.Sprintf("Skipped command %s.prompt.md: malformed or over-budget YAML frontmatter (%v).", p.Name, fmErr)})
+				continue
+			case errors.As(err, &nameErr):
+				result.CommandNotes = append(result.CommandNotes, CommandNote{DepKey: p.DepKey, Package: packageNames[p.DepKey],
+					Text: "Rejected command filename: " + nameErr.Error()})
+				continue
+			}
 			if err != nil {
 				var kept *keptSkillDirError
 				if errors.As(err, &kept) {
@@ -618,24 +656,97 @@ func keepFirstSharedSkill(targets []string, ordered []Primitive, winnersByTarget
 	return diags
 }
 
-// collectDependencySources reads the primitives and the MCP servers of the
-// dependency vendored at modulePath. Every check of its symlinks runs here,
-// before Run writes anything.
-func collectDependencySources(key, modulePath string) ([]Primitive, []*manifest.MCPDependency, []string, error) {
+// collectDependencySources reads the primitives, the MCP servers and the
+// package name of the dependency vendored at modulePath. Every check of its
+// symlinks runs here, before Run writes anything.
+func collectDependencySources(key, modulePath string) ([]Primitive, []*manifest.MCPDependency, []string, string, error) {
+	name := filepath.Base(modulePath)
 	t, ok := dependencyTree(key, modulePath)
 	if !ok {
-		return nil, nil, nil, nil
+		return nil, nil, nil, name, nil
 	}
 	prims, err := collectDependency(t)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	data, err := readDependencyManifest(t)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	servers, diags := loadDependencyMCP(key, data)
-	return prims, servers, diags, nil
+	if n := manifestName(data); n != "" {
+		name = n
+	}
+	return prims, servers, diags, name, nil
+}
+
+// manifestName is the name an apm.yml gives its package, "" when it gives
+// none. The Oracle names a package with no apm.yml after its repository or
+// directory (install/sources.py:466-472), which modulePath ends with.
+func manifestName(data []byte) string {
+	doc, err := yamlcore.SafeLoad(data)
+	if err != nil || len(doc.Content) == 0 {
+		return ""
+	}
+	root := doc.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "name" && root.Content[i+1].Kind == yaml.ScalarNode {
+			return root.Content[i+1].Value
+		}
+	}
+	return ""
+}
+
+// keepPromptOverCommand gives a command path that a prompt and a command of
+// .apm/commands/ (apm-go's own source, #88 item 67) both deploy to on a
+// promptCommander target to one of them: the prompt within one package, else
+// the first in priority order, as for two primitives of one type. It drops
+// the other from that target's winners and returns a diagnostic for each
+// one another package shadowed.
+func keepPromptOverCommand(targets []string, ordered []Primitive, winnersByTarget map[string][]Primitive) []string {
+	var diags []string
+	for _, target := range targets {
+		if _, ok := Adapters[target].(promptCommander); !ok {
+			continue
+		}
+		winners := winnersByTarget[target]
+		isWinner := func(p Primitive) bool {
+			return slices.ContainsFunc(winners, func(w Primitive) bool {
+				return w.Type == p.Type && w.Name == p.Name && w.Source == p.Source
+			})
+		}
+		owner := map[string]Primitive{}
+		for _, p := range ordered {
+			if (p.Type != TypePrompts && p.Type != TypeCommands) || !isWinner(p) {
+				continue
+			}
+			o, taken := owner[p.Name]
+			if !taken || (o.Source == p.Source && p.Type == TypePrompts) {
+				owner[p.Name] = p
+			}
+		}
+		var kept []Primitive
+		for _, w := range winners {
+			if o, ok := owner[w.Name]; ok && (w.Type == TypePrompts || w.Type == TypeCommands) && o.Type != w.Type {
+				if o.Source != w.Source {
+					diags = append(diags, fmt.Sprintf("%s %q from %s shadowed by %s %q from %s", w.Type, w.Name, w.Source, o.Type, o.Name, o.Source))
+				}
+				continue
+			}
+			kept = append(kept, w)
+		}
+		winnersByTarget[target] = kept
+	}
+	return diags
+}
+
+func appendUnique(list []string, items ...string) []string {
+	for _, item := range items {
+		if !slices.Contains(list, item) {
+			list = append(list, item)
+		}
+	}
+	return list
 }
 
 // DepRefKey returns the unique dependency key (repo_url, or

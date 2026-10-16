@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -40,11 +41,10 @@ func (r *installRun) elapsed() string {
 }
 
 // installKindLabels names a deployed-file kind the way the Oracle's per-kind
-// line does (_label_and_deploy_dir, install/services.py:105). The lines for
-// the four kinds the claude target deploys (rule, skill, agent, command) were
-// compared against the output of Oracle v0.33.0 for a local package;
-// "instruction(s)", "prompts" and "file(s)" belong to other targets and come
-// from the Oracle's source only.
+// line does (_label_and_deploy_dir, install/services.py:105). Every label but
+// "file(s)" was compared against the output of Oracle v0.33.0 for a local
+// package (the claude kinds, and copilot's "instruction(s)" and "prompts");
+// "file(s)" comes from the Oracle's source only.
 var installKindLabels = map[string]string{
 	"skill":       "skill(s)",
 	"agent":       "agents",
@@ -262,6 +262,7 @@ type installOutcome struct {
 	apmInstalled, mcpConfigured int
 	apmPhase                    bool
 	skippedDeps                 []deploy.SkippedDep
+	commandNotes                []deploy.CommandNote
 }
 
 // finish writes the lock and apm.yml of an install and prints its last lines.
@@ -316,8 +317,41 @@ func (r *installRun) finish(o installOutcome) error {
 		ux.WarnAt(os.Stdout, "  ", "[%s] Per-dependency targets [%s] do not overlap active install targets; skipping",
 			r.dependencyName(sd.Key, o.result), strings.Join(sd.Targets, ", "))
 	}
+	printCommandNotes(o.commandNotes, o.result)
 	r.printInstallSummary(o.apmInstalled, o.mcpConfigured)
 	return nil
+}
+
+// printCommandNotes prints what deploying prompts as commands had to tell,
+// as the Oracle's diagnostics summary does (utils/diagnostics.py:39-50,
+// 486-519): every warning, then every info, each in the order of the install
+// blocks.
+func printCommandNotes(notes []deploy.CommandNote, result *resolver.ResolutionResult) {
+	rank := map[string]int{"": len(result.Deps)}
+	for i, dep := range result.Deps {
+		rank[dep.Key] = i
+	}
+	sorted := slices.Clone(notes)
+	slices.SortStableFunc(sorted, func(a, b deploy.CommandNote) int { return rank[a.DepKey] - rank[b.DepKey] })
+	for _, n := range sorted {
+		if !n.Info {
+			ux.WarnAt(os.Stdout, "  ", "%s", commandNoteText(n))
+		}
+	}
+	for _, n := range sorted {
+		if n.Info {
+			ux.InfoAt(os.Stdout, "  ", "%s", commandNoteText(n))
+		}
+	}
+}
+
+// commandNoteText is a note with the package prefix the Oracle gives a
+// warning; an info has none.
+func commandNoteText(n deploy.CommandNote) string {
+	if n.Info || n.Package == "" {
+		return n.Text
+	}
+	return "[" + n.Package + "] " + n.Text
 }
 
 // lockHasAPMVersion reports whether the lock document has a top-level
