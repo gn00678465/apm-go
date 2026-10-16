@@ -678,6 +678,13 @@ func collectDependencySources(key, modulePath string) ([]Primitive, []*manifest.
 	if n := manifestName(data); n != "" {
 		name = n
 	}
+	pluginName, err := claudePluginName(t)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	if pluginName != "" {
+		name = pluginName
+	}
 	return prims, servers, diags, name, nil
 }
 

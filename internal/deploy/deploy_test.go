@@ -1724,3 +1724,61 @@ func TestRun_FailedBucketsRecordsUnreadablePluginComponent(t *testing.T) {
 		})
 	}
 }
+
+// A Claude plugin's default agents/ and commands/ are read as the declared
+// directories are, and only when the package is no APM package.
+func TestRun_FailedBucketsRecordsUnreadablePluginDefaultDir(t *testing.T) {
+	const depKey = "acme/foo"
+	const module = "apm_modules/" + depKey
+	m := &manifest.Manifest{
+		Name:       "test",
+		Version:    "1.0.0",
+		ParsedDeps: []*manifest.DependencyReference{{RepoURL: depKey, Owner: "acme", Repo: "foo", Source: "git"}},
+	}
+	tests := []struct {
+		name       string
+		apmPackage bool
+		unreadable string
+		wantFailed bool
+	}{
+		{name: "readable defaults"},
+		{name: "default agents directory", unreadable: module + "/agents", wantFailed: true},
+		{name: "default commands directory", unreadable: module + "/commands", wantFailed: true},
+		{name: "agents directory of an APM package is not read", apmPackage: true, unreadable: module + "/agents"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mkFile(t, dir, module+"/.claude-plugin/plugin.json", `{"name":"p"}`)
+			mkFile(t, dir, module+"/agents/a.md", "x\n")
+			mkFile(t, dir, module+"/commands/c.md", "x\n")
+			if tt.apmPackage {
+				mkFile(t, dir, module+"/apm.yml", "name: p\nversion: 1.0.0\n")
+				mkFile(t, dir, module+"/.apm/instructions/i.instructions.md", "x\n")
+			}
+			reason := ""
+			if tt.unreadable != "" {
+				reason = makeUnreadable(t, filepath.Join(dir, filepath.FromSlash(tt.unreadable)), true)
+			}
+
+			result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			if !tt.wantFailed {
+				if len(result.FailedBuckets) != 0 {
+					t.Errorf("FailedBuckets = %v, want empty; diags: %q", result.FailedBuckets, result.Diags)
+				}
+				return
+			}
+			if len(result.FailedBuckets) != 1 || !result.FailedBuckets[depKey] {
+				t.Errorf("FailedBuckets = %v, want only %q", result.FailedBuckets, depKey)
+			}
+			want := depKey + ": read " + tt.unreadable + " failed: " + reason
+			if !slices.Contains(result.Diags, want) {
+				t.Errorf("Diags = %q, want one equal to %q", result.Diags, want)
+			}
+		})
+	}
+}
