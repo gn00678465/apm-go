@@ -2263,18 +2263,25 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		if deployDir != "" {
 			effectiveDeployRoot = deployDir
 		}
+		claimed := claimedPaths(newLock)
 		merge := func(bucket string, oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string) ([]string, map[string]string) {
 			if failedBuckets[bucket] {
 				return mergeDeployedFilesIf(notKept(oldFiles), oldHashes, newFiles, newHashes,
 					func(string) bool { return true })
 			}
 			// A rejected path is the user's symlink, which notTakenOver
-			// drops on --global; its record follows the file it names.
+			// drops on --global; its record follows the file it names. A
+			// path this run deployed is recorded by the package that deployed
+			// it, so an old owner of it lets it go (the packages reordered,
+			// the project's own primitive of the same name), as the Oracle
+			// records one owner.
 			var userPaths, rest []string
 			for _, f := range notKept(oldFiles) {
-				if refused[normalizeDeployPath(f)] {
+				switch {
+				case refused[normalizeDeployPath(f)]:
 					userPaths = append(userPaths, f)
-				} else {
+				case claimed[normalizeDeployPath(f)]:
+				default:
 					rest = append(rest, f)
 				}
 			}

@@ -392,7 +392,7 @@ func copyFile(src, dst string) error {
 }
 
 func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error) {
-	if err := checkFileDest(p, destPath, projectDir); err != nil {
+	if err := checkFileDest(destPath, projectDir); err != nil {
 		return nil, err
 	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
@@ -419,11 +419,13 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 // checkFileDest is the check deployFileToPath makes before it writes
 // destPath. A copy is written through a symlink there, so it takes
 // CheckDeployWrite. A symlink deploy replaces what is there (os.Remove, then
-// os.Symlink), so it takes CheckDeployPath, and a symlink there that does not
-// lead into the bucket's source is the user's: it is refused, and kept, when
-// it leads out of the primitive's directory, as a copy deploy refuses to
+// os.Symlink), so it takes CheckDeployPath. A symlink there that leads into
+// apm_modules/ or .apm/ is a deploy's own, whichever package it was deployed
+// for, since the packages that have a primitive of this name change with
+// their order in apm.yml; any other symlink is the user's, refused and kept
+// when it leads out of the primitive's directory, as a copy deploy refuses to
 // write through it.
-func checkFileDest(p Primitive, destPath, deployDir string) error {
+func checkFileDest(destPath, deployDir string) error {
 	if !activeDeployMode.symlink {
 		return CheckDeployWrite(deployDir, destPath)
 	}
@@ -438,12 +440,11 @@ func checkFileDest(p Primitive, destPath, deployDir string) error {
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(filepath.Dir(abs), target)
 	}
-	source := filepath.Join(activeDeployMode.projectDir, ".apm")
-	if p.DepKey != "" {
-		source = filepath.Join(activeDeployMode.projectDir, "apm_modules", filepath.FromSlash(p.DepKey))
-	}
-	if archive.Contained(source, target) || containedReal(source, target) {
-		return nil
+	for _, source := range []string{"apm_modules", ".apm"} {
+		source = filepath.Join(activeDeployMode.projectDir, source)
+		if archive.Contained(source, target) || containedReal(source, target) {
+			return nil
+		}
 	}
 	return CheckDeployWrite(deployDir, destPath)
 }

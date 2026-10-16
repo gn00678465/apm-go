@@ -657,3 +657,182 @@ func TestInstall112_OnlyFileRejected_NoZeroFilesWarning(t *testing.T) {
 		t.Errorf("exit %d, stdout:\n%s", code, stdout)
 	}
 }
+
+// globalOwners112 makes HOME a fresh directory below a new root holding
+// ./dep-a and ./dep-b, each with the agent a and the copilot instruction r,
+// and returns the root.
+func globalOwners112(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, name := range []string{"dep-a", "dep-b"} {
+		writeCompileFile(t, root, name+"/apm.yml", "name: "+name+"\nversion: 1.0.0\n")
+		writeCompileFile(t, root, name+"/.apm/agents/a.agent.md", "---\nname: a\ndescription: agent\n---\nAGENT "+name+"\n")
+		writeCompileFile(t, root, name+"/.apm/instructions/r.instructions.md", "---\napplyTo: \"**/*.go\"\n---\nRULE "+name+"\n")
+	}
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	writeCompileFile(t, root, "gitconfig", "")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Chdir(root)
+	return root
+}
+
+// writeGlobalManifest112 writes ~/.apm/apm.yml with target and the packages
+// of root named in deps, in that order.
+func writeGlobalManifest112(t *testing.T, root, target string, deps ...string) {
+	t.Helper()
+	manifest := "name: g\nversion: 1.0.0\ntargets:\n  - " + target + "\ndependencies:\n  apm:\n"
+	for _, d := range deps {
+		manifest += "    - " + filepath.Join(root, d) + "\n"
+	}
+	writeCompileFile(t, filepath.Join(root, "home", ".apm"), "apm.yml", manifest)
+}
+
+// recordsPath112 reports which buckets of the --global lock record rel: the
+// dependency keys, and "" for the project's own content.
+func recordsPath112(t *testing.T, home, rel string) []string {
+	t.Helper()
+	t.Chdir(filepath.Join(home, ".apm"))
+	lock := readLockfile(t)
+	var owners []string
+	if slices.Contains(lock.LocalDeployedFiles, rel) {
+		owners = append(owners, "")
+	}
+	for _, dep := range lock.Dependencies {
+		if slices.Contains(dep.DeployedFiles, rel) {
+			owners = append(owners, dep.UniqueKey())
+		}
+	}
+	return owners
+}
+
+// A --global deploy's own symlink into apm_modules/ or .apm/ is replaced by
+// the new winner's when the owner of the path changes, as origin/main and
+// Oracle 0.33.0 deploy the new winner: no Rejected line, and the lock records
+// the path under the new winner alone (card #112 step 31, global-ownership.py).
+func TestInstallGlobal112_OwnerChanged_DeploySymlinkReplaced(t *testing.T) {
+	const agentLink = ".claude/agents/a.md"
+	cases := []struct {
+		name, target, link      string
+		before, after           []string
+		localBefore, localAfter bool
+		wantSource, wantOwner   string
+	}{
+		{"agent reordered", "claude", agentLink, []string{"dep-a", "dep-b"}, []string{"dep-b", "dep-a"}, false, false, "apm_modules/_local/dep-b/.apm/agents/a.agent.md", "_local/dep-b"},
+		{"agent owner removed", "claude", agentLink, []string{"dep-a", "dep-b"}, []string{"dep-b"}, false, false, "apm_modules/_local/dep-b/.apm/agents/a.agent.md", "_local/dep-b"},
+		{"agent taken by the project", "claude", agentLink, []string{"dep-a", "dep-b"}, []string{"dep-a", "dep-b"}, false, true, ".apm/agents/a.agent.md", ""},
+		{"agent given back by the project", "claude", agentLink, []string{"dep-a", "dep-b"}, []string{"dep-a", "dep-b"}, true, false, "apm_modules/_local/dep-a/.apm/agents/a.agent.md", "_local/dep-a"},
+		{"copilot instruction reordered", "copilot", ".github/instructions/r.instructions.md", []string{"dep-a", "dep-b"}, []string{"dep-b", "dep-a"}, false, false, "apm_modules/_local/dep-b/.apm/instructions/r.instructions.md", "_local/dep-b"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := globalOwners112(t)
+			home := filepath.Join(root, "home")
+			projectAgent := filepath.Join(home, ".apm", ".apm", "agents", "a.agent.md")
+			if c.localBefore {
+				writeCompileFile(t, filepath.Dir(projectAgent), "a.agent.md", "---\nname: a\ndescription: project agent\n---\nPROJECT AGENT\n")
+			}
+			writeGlobalManifest112(t, root, c.target, c.before...)
+			mustRunCLI(t, "install", "-g")
+			writeGlobalManifest112(t, root, c.target, c.after...)
+			if c.localAfter {
+				writeCompileFile(t, filepath.Dir(projectAgent), "a.agent.md", "---\nname: a\ndescription: project agent\n---\nPROJECT AGENT\n")
+			} else if err := os.RemoveAll(projectAgent); err != nil {
+				t.Fatal(err)
+			}
+
+			stdout, code := runCLI86(t, "install", "-g")
+
+			if code != 0 || strings.Contains(stdout, "Rejected") || strings.Contains(stdout, "resolves to") {
+				t.Errorf("exit %d, stdout:\n%s\nwant exit 0 and no refusal", code, stdout)
+			}
+			want := filepath.Join(home, ".apm", filepath.FromSlash(c.wantSource))
+			if got, _ := os.Readlink(filepath.Join(home, filepath.FromSlash(c.link))); !strings.HasSuffix(got, filepath.FromSlash(c.wantSource)) || !sameFile112(t, got, want) {
+				t.Errorf("%s -> %q, want -> %s", c.link, got, want)
+			}
+			if got := recordsPath112(t, home, c.link); !slices.Equal(got, []string{c.wantOwner}) {
+				t.Errorf("lock records %s under %q, want under %q alone", c.link, got, c.wantOwner)
+			}
+		})
+	}
+}
+
+func sameFile112(t *testing.T, a, b string) bool {
+	t.Helper()
+	ia, err1 := os.Stat(a)
+	ib, err2 := os.Stat(b)
+	return err1 == nil && err2 == nil && os.SameFile(ia, ib)
+}
+
+// The user's own symlink, out of ~/.apm and of the agent's directory, is
+// still refused and kept when the owner of the path changes (card #112 step
+// 24, gownership.py).
+func TestInstallGlobal112_OwnerChanged_UserSymlinkKept(t *testing.T) {
+	for _, after := range [][]string{{"dep-b", "dep-a"}, {"dep-b"}} {
+		t.Run(strings.Join(after, ","), func(t *testing.T) {
+			root := globalOwners112(t)
+			home := filepath.Join(root, "home")
+			writeGlobalManifest112(t, root, "claude", "dep-a", "dep-b")
+			mustRunCLI(t, "install", "-g")
+			target := replaceWithShared112(t, home, ".claude/agents/a.md", "same")
+			shared := readText(t, filepath.Join(home, ".claude", "shared", "a.md"))
+			writeGlobalManifest112(t, root, "claude", after...)
+
+			stdout, code := runCLI86(t, "install", "-g")
+
+			if code != 0 || !strings.Contains(stdout, "! [dep-b] Rejected agent target path") {
+				t.Errorf("exit %d, stdout:\n%s", code, stdout)
+			}
+			if got, _ := os.Readlink(filepath.Join(home, ".claude", "agents", "a.md")); got != target {
+				t.Errorf(".claude/agents/a.md -> %q, want -> %q", got, target)
+			}
+			if readText(t, filepath.Join(home, ".claude", "shared", "a.md")) != shared {
+				t.Errorf("user file .claude/shared/a.md changed")
+			}
+			if got := recordsPath112(t, home, ".claude/agents/a.md"); !slices.Equal(got, []string{"_local/dep-a"}) {
+				t.Errorf("lock records .claude/agents/a.md under %q, want under _local/dep-a alone", got)
+			}
+		})
+	}
+}
+
+// A path another package deploys after the owner changes is recorded by that
+// package alone, not also under its old owner (Oracle 0.33.0 for the packages
+// reordered; card #112 step 32, projowner.py).
+func TestInstall112_OwnerChanged_OneRecord(t *testing.T) {
+	cases := []struct {
+		name, apmYML, local, wantOwner string
+	}{
+		{"reordered", "    - ./dep-b\n    - ./dep-a\n", "", "_local/dep-b"},
+		{"project agent", "    - ./dep-a\n    - ./dep-b\n", "---\nname: a\ndescription: project agent\n---\nPROJECT AGENT\n", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			owners112(t)
+			if err := os.Remove(".claude/agents/a.md"); err != nil {
+				t.Fatal(err)
+			}
+			mustRunCLI(t, "install")
+			writeCompileFile(t, ".", "apm.yml", "name: proj\nversion: 1.0.0\ntargets:\n  - claude\ndependencies:\n  apm:\n"+c.apmYML)
+			if c.local != "" {
+				writeCompileFile(t, ".", ".apm/agents/a.agent.md", c.local)
+			}
+
+			mustRunCLI(t, "install")
+
+			lock := readLockfile(t)
+			var owners []string
+			if slices.Contains(lock.LocalDeployedFiles, ".claude/agents/a.md") {
+				owners = append(owners, "")
+			}
+			for _, dep := range lock.Dependencies {
+				if slices.Contains(dep.DeployedFiles, ".claude/agents/a.md") {
+					owners = append(owners, dep.UniqueKey())
+				}
+			}
+			if !slices.Equal(owners, []string{c.wantOwner}) {
+				t.Errorf("lock records .claude/agents/a.md under %q, want under %q alone", owners, c.wantOwner)
+			}
+		})
+	}
+}

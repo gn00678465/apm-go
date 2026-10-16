@@ -15,7 +15,7 @@ func (a *copilotAdapter) SupportedTypes() []PrimitiveType {
 func (a *copilotAdapter) skillRoot(Primitive) string { return sharedSkillRoot }
 
 func (a *copilotAdapter) checkInstruction(p Primitive, deployDir string) error {
-	return checkFileDest(p, copilotInstructionPath(p), deployDir)
+	return checkFileDest(copilotInstructionPath(p), deployDir)
 }
 
 func copilotInstructionPath(p Primitive) string {

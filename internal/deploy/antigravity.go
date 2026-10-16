@@ -16,7 +16,7 @@ func (a *antigravityAdapter) SupportedTypes() []PrimitiveType {
 }
 
 func (a *antigravityAdapter) checkInstruction(p Primitive, deployDir string) error {
-	return checkFileDest(p, antigravityRulePath(p), deployDir)
+	return checkFileDest(antigravityRulePath(p), deployDir)
 }
 
 func antigravityRulePath(p Primitive) string {
