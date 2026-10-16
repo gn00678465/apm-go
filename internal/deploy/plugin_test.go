@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -595,5 +596,78 @@ func TestCollectDependencyPrimitives_PluginJSON_APMYMLOutsideIsNotRead(t *testin
 
 	if len(agents) != 1 || agents[0].Name != "rev" {
 		t.Fatalf("agents = %+v, want rev from the default agents/", agents)
+	}
+}
+
+// A Claude plugin's agents and commands reach the deploy as the Oracle stages
+// them: copied into the package's .apm/agents/ and .apm/prompts/, a later
+// copy over an earlier one of the same file name, the package's own files
+// there first (deps/plugin_parser.py:1232-1296). The expected bodies are what
+// Oracle 0.33.0 deployed (~/.cache/apm-go-verify/issue107/col1/).
+func TestRun_PluginStagingLaterCopyWins(t *testing.T) {
+	cmd := func(body string) string { return "---\ndescription: d\n---\n" + body + "\n" }
+	wf := func(body string) string { return "---\ndescription: d\ninterval: 1h\n---\n" + body + "\n" }
+	ag := func(body string) string { return "---\nname: rev\n---\n" + body + "\n" }
+	tests := []struct {
+		name     string
+		manifest string
+		files    map[string]string
+		agent    string // body of .claude/agents/rev.md, "" for none
+		prompt   string // body of .github/prompts/hello.prompt.md, "" for none
+	}{
+		{name: "c1 hello.md and hello.prompt.md in the default commands/", manifest: `{"name":"plug"}`,
+			files: map[string]string{"commands/hello.md": cmd("A"), "commands/hello.prompt.md": cmd("B")}},
+		{name: "c2 default agents/ over the package's .apm/agents/", manifest: `{"name":"plug"}`,
+			files: map[string]string{".apm/agents/rev.md": ag("OLD"), "agents/rev.md": ag("NEW")}, agent: "NEW"},
+		{name: "c3 a later listed directory over an earlier listed file", manifest: `{"name":"plug","commands":["./x/hello.prompt.md","./commands"]}`,
+			files: map[string]string{"x/hello.prompt.md": cmd("X"), "commands/hello.md": cmd("C")}, prompt: "C"},
+		{name: "c4 default commands/ over the package's .apm/prompts/", manifest: `{"name":"plug"}`,
+			files: map[string]string{".apm/prompts/hello.prompt.md": cmd("OLD"), "commands/hello.md": cmd("NEW")}, prompt: "NEW"},
+		{name: "c5 a later listed agents directory", manifest: `{"name":"plug","agents":["./a1","./a2"]}`,
+			files: map[string]string{"a1/rev.md": ag("A1"), "a2/rev.md": ag("A2")}, agent: "A2"},
+		{name: "c6 a later workflow leaves no prompt", manifest: `{"name":"plug","commands":["./commands/hello.md","./commands/hello.prompt.md"]}`,
+			files: map[string]string{"commands/hello.md": cmd("NORMAL"), "commands/hello.prompt.md": wf("WF")}},
+		{name: "c7 another staged file name of the same agent", manifest: `{"name":"plug"}`,
+			files: map[string]string{".apm/agents/rev.agent.md": ag("OLD"), "agents/rev.md": ag("NEW")}, agent: "OLD"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mod := filepath.Join(dir, "apm_modules", "acme/plug")
+			writePluginJSON(t, mod, tt.manifest)
+			for rel, body := range tt.files {
+				mkFile(t, mod, rel, body)
+			}
+			if strings.HasPrefix(tt.name, "c1 ") {
+				// The Oracle copies a directory in the order the file system
+				// lists it, so the file listed last is the one staged.
+				f, err := os.Open(filepath.Join(mod, "commands"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				entries, err := f.ReadDir(-1)
+				f.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				tt.prompt = map[string]string{"hello.md": "A", "hello.prompt.md": "B"}[entries[len(entries)-1].Name()]
+			}
+			m, resolved := depManifest("acme/plug")
+
+			if _, err := Run([]string{"claude", "copilot"}, dir, m, resolved, nil, "", false); err != nil {
+				t.Fatal(err)
+			}
+
+			for rel, want := range map[string]string{".claude/agents/rev.md": tt.agent, ".github/prompts/hello.prompt.md": tt.prompt} {
+				data, err := os.ReadFile(filepath.Join(dir, rel))
+				lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+				switch {
+				case want == "" && !os.IsNotExist(err):
+					t.Errorf("%s = %q (err %v), want no file", rel, data, err)
+				case want != "" && (err != nil || lines[len(lines)-1] != want):
+					t.Errorf("%s = %q (err %v), want body %q", rel, data, err, want)
+				}
+			}
+		})
 	}
 }

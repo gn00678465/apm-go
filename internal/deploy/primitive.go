@@ -48,7 +48,7 @@ func CollectScopeLocalPrimitives(projectDir string, global bool) []Primitive {
 	if info, err := os.Stat(filepath.Join(projectDir, ".apm")); err != nil || !info.IsDir() {
 		rootPrompts = false
 	}
-	prims, _ := collectFromAPMDir(sourceTree{dir: projectDir}, ".apm", rootPrompts)
+	prims, _ := collectFromAPMDir(sourceTree{dir: projectDir}, ".apm", rootPrompts, false)
 	return prims
 }
 
@@ -143,7 +143,9 @@ func CollectDependencyPrimitives(depKey, modulePath string) ([]Primitive, error)
 }
 
 func collectDependency(t sourceTree) ([]Primitive, error) {
-	prims, err := collectFromAPMDir(t, ".apm", true)
+	m, manifestErr := loadPluginManifest(t)
+	staged := m != nil && !isAPMPackage(t)
+	prims, err := collectFromAPMDir(t, ".apm", true, staged)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +176,10 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 	// nested layout like skills/<category>/<name>/ (which that scan can't
 	// see one level deep) is discovered correctly instead of silently
 	// deploying nothing.
-	pluginPrims, skillsDeclared, err := collectPluginPrimitives(t)
+	if manifestErr != nil {
+		return nil, manifestErr
+	}
+	pluginPrims, skillsDeclared, err := collectPluginPrimitives(t, m, staged)
 	if err != nil {
 		return nil, err
 	}
@@ -192,8 +197,10 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 }
 
 // collectFromAPMDir collects the primitives of the .apm directory apmRel of
-// t, and with rootPrompts the prompts at t's root too.
-func collectFromAPMDir(t sourceTree, apmRel string, rootPrompts bool) ([]Primitive, error) {
+// t, and with rootPrompts the prompts at t's root too. With staged it leaves
+// out apmRel's agents and prompts, which a Claude plugin's collection reads
+// with the plugin's own (pluginStage).
+func collectFromAPMDir(t sourceTree, apmRel string, rootPrompts, staged bool) ([]Primitive, error) {
 	typeMap := []struct {
 		subdir    string
 		primType  PrimitiveType
@@ -206,6 +213,9 @@ func collectFromAPMDir(t sourceTree, apmRel string, rootPrompts bool) ([]Primiti
 	}
 	var prims []Primitive
 	for _, tm := range typeMap {
+		if staged && tm.primType == TypeAgents {
+			continue
+		}
 		found, err := collectFlat(t, apmRel+"/"+tm.subdir, tm.primType, tm.extractFn)
 		if err != nil {
 			return nil, err
@@ -216,9 +226,12 @@ func collectFromAPMDir(t sourceTree, apmRel string, rootPrompts bool) ([]Primiti
 	// Prompts as the Oracle finds them: find_files_by_glob(root,
 	// "*.prompt.md", subdirs=[".apm/prompts"]) (base_integrator.py:1031-1080),
 	// the root's first, each directory in name order, not recursive.
-	promptDirs := []string{apmRel + "/prompts"}
+	var promptDirs []string
 	if rootPrompts {
-		promptDirs = []string{".", apmRel + "/prompts"}
+		promptDirs = append(promptDirs, ".")
+	}
+	if !staged {
+		promptDirs = append(promptDirs, apmRel+"/prompts")
 	}
 	for _, rel := range promptDirs {
 		found, err := collectFlat(t, rel, TypePrompts, extractPromptName)
@@ -246,39 +259,43 @@ func collectFromAPMDir(t sourceTree, apmRel string, rootPrompts bool) ([]Primiti
 // collectFlat collects the files of the directory rel of t that extractFn
 // names, as primitives of type pt.
 func collectFlat(t sourceTree, rel string, pt PrimitiveType, extractFn func(string) string) ([]Primitive, error) {
-	dir, err := t.path(rel)
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, nil
-	}
 	var prims []Primitive
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := extractFn(e.Name())
-		if name == "" {
-			continue
-		}
-		src, isDir, err := t.entry(dir, rel, e)
-		if err != nil {
-			return nil, err
-		}
-		if isDir {
-			continue
-		}
+	err := eachFlatFile(t, rel, extractFn, func(file, src string) {
 		prims = append(prims, Primitive{
-			Name:    name,
+			Name:    extractFn(file),
 			Type:    pt,
 			Source:  t.source(),
 			DepKey:  t.depKey,
 			SrcPath: src,
 		})
+	})
+	return prims, err
+}
+
+// eachFlatFile calls visit with the name and source of each file of the
+// directory rel of t that extractFn names.
+func eachFlatFile(t sourceTree, rel string, extractFn func(string) string, visit func(file, src string)) error {
+	dir, err := t.path(rel)
+	if err != nil {
+		return err
 	}
-	return prims, nil
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if e.IsDir() || extractFn(e.Name()) == "" {
+			continue
+		}
+		src, isDir, err := t.entry(dir, rel, e)
+		if err != nil {
+			return err
+		}
+		if !isDir {
+			visit(e.Name(), src)
+		}
+	}
+	return nil
 }
 
 // collectSkills collects the skills <rel>/<name>/SKILL.md of t.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/apm-go/apm/internal/archive"
@@ -30,30 +31,28 @@ type pluginManifest struct {
 	Commands json.RawMessage `json:"commands"`
 }
 
-// collectPluginPrimitives reads <modulePath>/.claude-plugin/plugin.json, if
-// present and valid (has a non-empty "name", the spec's only required
-// field), and returns the skills, agents and commands, as prompts, its
-// component fields declare; for a package that is no APM package
-// (isAPMPackage), an agents or commands field that is neither a list nor a
-// string leaves the default directory. skillsDeclared reports whether the manifest's "skills"
+// collectPluginPrimitives returns the skills, agents and commands, as
+// prompts, that m, t's valid plugin.json, declares. staged is for a package
+// that is no APM package (isAPMPackage), a Claude plugin to the Oracle: its
+// agents and commands are staged with its own .apm/agents/ and .apm/prompts/
+// (stagePluginFiles), and an agents or commands field that is neither a list
+// nor a string leaves the default directory. skillsDeclared reports whether the manifest's "skills"
 // key was present at all (even as an empty array) -- callers use this to
 // decide whether the plugin.json declaration is authoritative for skills
 // (skip the legacy skills/<name>/SKILL.md scan) or whether the manifest
 // simply has no opinion on skills (legacy scan still applies).
 //
-// A missing file, invalid JSON, or a manifest without "name" all result in
-// (nil, false) -- entirely ignored, callers fall back to whatever
-// non-plugin.json discovery they already do. The error is a symlink at the
-// manifest that leaves the package, or one in a declared skill directory.
-func collectPluginPrimitives(t sourceTree) (prims []Primitive, skillsDeclared bool, err error) {
-	m, err := loadPluginManifest(t)
+// A nil m (no plugin.json, invalid JSON, or no "name") results in (nil,
+// false), so callers fall back to whatever non-plugin.json discovery they
+// already do. The error is a symlink in a declared skill directory, or in
+// the package's .apm/agents/ or .apm/prompts/ when staged.
+func collectPluginPrimitives(t sourceTree, m *pluginManifest, staged bool) (prims []Primitive, skillsDeclared bool, err error) {
 	if m == nil {
-		return nil, false, err
+		return nil, false, nil
 	}
 
 	depKey, modulePath := t.depKey, t.dir
 	source := "dependency:" + depKey
-	apmPackage := isAPMPackage(t)
 
 	for _, rel := range decodeStringOrList(m.Skills) {
 		abs, ok := resolvePluginPath(modulePath, rel)
@@ -82,14 +81,21 @@ func collectPluginPrimitives(t sourceTree) (prims []Primitive, skillsDeclared bo
 		})
 	}
 
-	for _, rel := range componentPaths(m.Agents, "agents", !apmPackage) {
-		prims = append(prims, collectPluginFlatFiles(rel, modulePath, depKey, source, TypeAgents, extractAgentName)...)
+	if staged {
+		staging, err := stagePluginFiles(t, m)
+		if err != nil {
+			return nil, false, err
+		}
+		return append(prims, staging...), isJSONKeyPresent(m.Skills), nil
 	}
 
-	// The Oracle copies each command to .apm/prompts/ and deploys it from
-	// there as any prompt (deps/plugin_parser.py:1264-1290).
-	for _, rel := range componentPaths(m.Commands, "commands", !apmPackage) {
-		for _, p := range collectPluginFlatFiles(rel, modulePath, depKey, source, TypePrompts, extractPluginCommandName) {
+	// An APM package's listed agents and commands follow its own .apm/; the
+	// Oracle reads no plugin.json of an APM package (#88).
+	for _, rel := range decodeStringOrList(m.Agents) {
+		prims = append(prims, collectPluginFlatFiles(rel, modulePath, depKey, source, TypeAgents, extractAgentName)...)
+	}
+	for _, rel := range decodeStringOrList(m.Commands) {
+		for _, p := range collectPluginFlatFiles(rel, modulePath, depKey, source, TypePrompts, pluginCommandName) {
 			if !isWorkflowPrompt(p.SrcPath) {
 				prims = append(prims, p)
 			}
@@ -97,6 +103,73 @@ func collectPluginPrimitives(t sourceTree) (prims []Primitive, skillsDeclared bo
 	}
 
 	return prims, isJSONKeyPresent(m.Skills), nil
+}
+
+// pluginStage is a staging directory of the Oracle, .apm/agents/ or
+// .apm/prompts/, as it stands once the plugin's files are copied into it:
+// each file name holds the source of the last copy, and the names keep the
+// order they first came in.
+type pluginStage struct {
+	names []string
+	src   map[string]string
+}
+
+func (s *pluginStage) put(name, src string) {
+	if s.src == nil {
+		s.src = map[string]string{}
+	}
+	if _, ok := s.src[name]; !ok {
+		s.names = append(s.names, name)
+	}
+	s.src[name] = src
+}
+
+// stagePluginFiles returns a Claude plugin's agents and prompts as the Oracle
+// stages them before it collects .apm/ (deps/plugin_parser.py:1232-1296): the
+// package's own .apm/agents/ and .apm/prompts/ first, then the agents
+// directories, then the agent files, then each command path in the order it
+// is listed, a later copy over an earlier one of the same name. A command is
+// staged as plugin_command_prompt_name names it. Only then are the staged
+// files named, and a workflow prompt dropped, so a workflow staged last over
+// a command leaves no prompt.
+func stagePluginFiles(t sourceTree, m *pluginManifest) ([]Primitive, error) {
+	var agents, prompts pluginStage
+	if err := eachFlatFile(t, ".apm/agents", extractAgentName, agents.put); err != nil {
+		return nil, err
+	}
+	if err := eachFlatFile(t, ".apm/prompts", extractPromptName, prompts.put); err != nil {
+		return nil, err
+	}
+
+	agentPaths := componentPaths(m.Agents, "agents", true)
+	for _, dirs := range []bool{true, false} {
+		for _, rel := range agentPaths {
+			if files, isDir := pluginSourceFiles(t.dir, rel); isDir == dirs {
+				for _, f := range files {
+					agents.put(filepath.Base(f), f)
+				}
+			}
+		}
+	}
+	for _, rel := range componentPaths(m.Commands, "commands", true) {
+		files, _ := pluginSourceFiles(t.dir, rel)
+		for _, f := range files {
+			prompts.put(pluginCommandPromptName(filepath.Base(f)), f)
+		}
+	}
+
+	var prims []Primitive
+	for _, name := range agents.names {
+		if n := extractAgentName(name); n != "" {
+			prims = append(prims, Primitive{Name: n, Type: TypeAgents, Source: t.source(), DepKey: t.depKey, SrcPath: agents.src[name]})
+		}
+	}
+	for _, name := range prompts.names {
+		if n := extractPromptName(name); n != "" && !isWorkflowPrompt(prompts.src[name]) {
+			prims = append(prims, Primitive{Name: n, Type: TypePrompts, Source: t.source(), DepKey: t.depKey, SrcPath: prompts.src[name]})
+		}
+	}
+	return prims, nil
 }
 
 // loadPluginManifest returns t's plugin.json, nil when it cannot be read, is
@@ -156,14 +229,20 @@ func decodeStringOrList(raw json.RawMessage) []string {
 	return nil
 }
 
-// extractPluginCommandName names a plugin command after the prompt the Oracle
-// copies it to, plugin_command_prompt_name (bundle/plugin_layout.py:44-50):
-// <name>.md and <name>.prompt.md are <name>, any other file is no prompt.
-func extractPluginCommandName(filename string) string {
-	if name := extractPromptName(filename); name != "" {
-		return name
+// pluginCommandPromptName is the Oracle's plugin_command_prompt_name
+// (bundle/plugin_layout.py:44-50): the file name a plugin command is staged
+// under in .apm/prompts/.
+func pluginCommandPromptName(filename string) string {
+	if !strings.HasSuffix(filename, ".prompt.md") && strings.HasSuffix(filename, ".md") {
+		return strings.TrimSuffix(filename, ".md") + ".prompt.md"
 	}
-	return extractBaseName(filename)
+	return filename
+}
+
+// pluginCommandName names a plugin command after the prompt it is staged as:
+// <name>.md and <name>.prompt.md are <name>, any other file is no prompt.
+func pluginCommandName(filename string) string {
+	return extractPromptName(pluginCommandPromptName(filename))
 }
 
 // componentPaths is what the Oracle's _resolve_sources reads for an agents or
@@ -257,50 +336,53 @@ func isJSONKeyPresent(raw json.RawMessage) bool {
 // file) into zero or more flat-file primitives -- matching how apm-go's
 // existing Primitive model represents agents/commands (one Primitive per
 // source file, SrcPath pointing at that file), not a directory copy. A
-// directory entry contributes one primitive per top-level .md file it
-// directly contains (not recursive -- deeper nesting isn't representable
-// by the flat-file model and isn't needed for the plugin.json shapes this
-// unblocks).
+// directory's files come in name order.
 func collectPluginFlatFiles(rel, modulePath, depKey, source string, pt PrimitiveType, nameFn func(string) string) []Primitive {
+	files, isDir := pluginSourceFiles(modulePath, rel)
+	if isDir {
+		slices.Sort(files)
+	}
+	var prims []Primitive
+	for _, f := range files {
+		if name := nameFn(filepath.Base(f)); name != "" {
+			prims = append(prims, Primitive{Name: name, Type: pt, Source: source, DepKey: depKey, SrcPath: f})
+		}
+	}
+	return prims
+}
+
+// pluginSourceFiles returns the files an agents or commands path of
+// plugin.json, rel, gives, and whether it is a directory: the file itself,
+// or each file directly in the directory, in the order the file
+// system lists them, the order of the Oracle's copy (os.walk). A file below
+// the directory is not deployed (#88), and a symlink in it is skipped.
+func pluginSourceFiles(modulePath, rel string) (files []string, isDir bool) {
 	abs, ok := resolvePluginPath(modulePath, rel)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		return nil
+		return nil, false
 	}
-
 	if !info.IsDir() {
-		name := nameFn(filepath.Base(abs))
-		if name == "" {
-			return nil
-		}
-		return []Primitive{{Name: name, Type: pt, Source: source, DepKey: depKey, SrcPath: abs}}
+		return []string{abs}, false
 	}
-
-	entries, err := os.ReadDir(abs)
+	d, err := os.Open(abs)
 	if err != nil {
-		return nil
+		return nil, true
 	}
-	var prims []Primitive
+	defer d.Close()
+	entries, err := d.ReadDir(-1)
+	if err != nil {
+		return nil, true
+	}
 	for _, e := range entries {
-		if e.IsDir() || e.Type()&os.ModeSymlink != 0 {
-			continue
+		if !e.IsDir() && e.Type()&os.ModeSymlink == 0 {
+			files = append(files, filepath.Join(abs, e.Name()))
 		}
-		name := nameFn(e.Name())
-		if name == "" {
-			continue
-		}
-		prims = append(prims, Primitive{
-			Name:    name,
-			Type:    pt,
-			Source:  source,
-			DepKey:  depKey,
-			SrcPath: filepath.Join(abs, e.Name()),
-		})
 	}
-	return prims
+	return files, true
 }
 
 // resolvePluginPath resolves a manifest-declared relative path against
