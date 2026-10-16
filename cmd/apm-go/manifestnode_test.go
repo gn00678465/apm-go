@@ -58,7 +58,7 @@ func TestBuildManifestNode_TargetsCommentThreeLines(t *testing.T) {
 
 	want := "# Which agent platforms to deploy to.\n" +
 		"# Resolution order: --target flag > this field > auto-detect from filesystem.\n" +
-		"# Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf\n" +
+		"# Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, hermes, kiro, opencode, vscode, windsurf\n" +
 		"targets:\n- claude\n"
 	if !strings.Contains(content, want) {
 		t.Fatalf("targets: comment block = %q, want it to contain:\n%s", content, want)
@@ -257,7 +257,7 @@ func TestTargetsCommentLines_MatchesOracle(t *testing.T) {
 	want := []string{
 		"Which agent platforms to deploy to.",
 		"Resolution order: --target flag > this field > auto-detect from filesystem.",
-		"Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf",
+		"Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, hermes, kiro, opencode, vscode, windsurf",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Errorf("targetsCommentLines() = %q, want %q", lines, want)
@@ -317,7 +317,7 @@ func TestBuildManifestNode_OracleScalarBytes(t *testing.T) {
 // TestBuildManifestNode_OracleSelectedAndPluginBytes locks both shared init
 // modes and the detected-target sequence observed from the pinned Oracle.
 func TestBuildManifestNode_OracleSelectedAndPluginBytes(t *testing.T) {
-	const selectedPrefix = "name: p\nversion: 1.0.0\ndescription: d\nauthor: 名😀<\n# Which agent platforms to deploy to.\n# Resolution order: --target flag > this field > auto-detect from filesystem.\n# Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, kiro, opencode, windsurf\ntargets:\n- claude\n- codex\n- copilot\n- opencode\ndependencies:\n  apm: []\n  mcp: []\nincludes: auto\n"
+	const selectedPrefix = "name: p\nversion: 1.0.0\ndescription: d\nauthor: 名😀<\n# Which agent platforms to deploy to.\n# Resolution order: --target flag > this field > auto-detect from filesystem.\n# Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, hermes, kiro, opencode, vscode, windsurf\ntargets:\n- claude\n- codex\n- copilot\n- opencode\ndependencies:\n  apm: []\n  mcp: []\nincludes: auto\n"
 	const consumerWant = selectedPrefix + "scripts: {}\n"
 	const pluginWant = selectedPrefix + "devDependencies:\n  apm: []\nscripts: {}\n"
 

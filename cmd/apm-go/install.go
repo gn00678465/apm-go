@@ -88,9 +88,6 @@ func installCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if err := ensureGlobalManifest(); err != nil {
-					return err
-				}
 			}
 
 			// Validate --target/-t up front, before any other flag routing
@@ -200,7 +197,7 @@ func installCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&frozen, "frozen", false, "frozen install mode: lockfile must exist and cover all deps")
 	cmd.Flags().BoolVar(&noProvenance, "no-provenance", false, "omit apm_version from lockfile")
-	cmd.Flags().StringVarP(&targetFlag, "target", "t", "", "explicit target(s) for deployment, comma-separated (overrides auto-detection)")
+	cmd.Flags().StringVarP(&targetFlag, "target", "t", "", "explicit target(s) for deployment; use commas for multiple targets; repeating the flag keeps only the last value (use commas instead); overrides auto-detection")
 	cmd.Flags().StringArrayVar(&skillFlags, "skill", nil, "install only named skills from the package (repeatable)")
 	cmd.Flags().IntVar(&maxEntries, "max-entries", archive.DefaultMaxEntries, "max archive entries before fail-closed (req-sc-004)")
 	cmd.Flags().Int64Var(&maxArchiveBytes, "max-archive-bytes", archive.DefaultMaxBytes, "max uncompressed archive bytes before fail-closed (req-sc-004)")
@@ -221,7 +218,7 @@ func installCmd() *cobra.Command {
 	return cmd
 }
 
-func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deployDir string, skillSubset []string, packages []string) error {
+func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deployDir string, skillSubset []string, packages []string) (runErr error) {
 	// Local-bundle early-exit (research/pack-parity-findings.md §6; design.md
 	// "install <bundle-path> 消費回路"), mirroring Python's install.py:1260's
 	// placement: checked before EVERYTHING else in this function -- before
@@ -280,12 +277,24 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	var m *manifest.Manifest
 	var node *yamllib.Node
 	data, err := os.ReadFile("apm.yml")
+	manifestCreated := false
+	if !frozen && len(packages) > 0 && os.IsNotExist(err) {
+		if data, err = createInstallManifest(targetFlag, deployDir != ""); err != nil {
+			return err
+		}
+		manifestCreated = true
+		defer func() {
+			if runErr != nil {
+				removeCreatedManifest()
+			}
+		}()
+	}
 	if err != nil {
 		switch {
 		case frozen && os.IsNotExist(err):
 			m = &manifest.Manifest{} // frozen verifies from lockfile + disk alone
-		case len(packages) > 0 && os.IsNotExist(err):
-			return fmt.Errorf("apm.yml not found; run 'apm-go init' first, then 'apm-go install <package>'")
+		case os.IsNotExist(err):
+			return errNoManifest(deployDir != "")
 		default:
 			return fmt.Errorf("read apm.yml: %w", err)
 		}
@@ -986,7 +995,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
 	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, len(requestedKeys) > 0, result, newLock, existingLock, existingNode, node,
-		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance})
+		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance, manifestCreated: manifestCreated})
 }
 
 // printFrozenVerifiedDeps lists every dependency a successful --frozen

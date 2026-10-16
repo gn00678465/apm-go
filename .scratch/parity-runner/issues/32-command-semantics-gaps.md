@@ -135,6 +135,9 @@ during the implementation.
 1. `install` with no `apm.yml`. Oracle: `[x] No apm.yml found` and two hint
    lines. apm-go: `read apm.yml: open apm.yml: no such file or directory`.
    Both exit 1.
+   Aligned by issue #81: apm-go prints the Oracle's three lines, with
+   `apm-go` in the hints, and exits 1; with a package it creates `apm.yml`
+   first, as the Oracle does (PRODUCT.md, "A missing `apm.yml`").
 2. `install ./nope`. Oracle: `[x] ./nope -- path does not exist`, then `All
    packages failed validation. Nothing to install.` apm-go: `resolve: loading
    package _local/nope: local dependency source ...: no such file or

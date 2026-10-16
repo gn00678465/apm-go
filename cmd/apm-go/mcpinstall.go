@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -41,7 +42,7 @@ type mcpInstallOpts struct {
 // runMCPInstall handles `apm install --mcp NAME [flags]`: a standalone
 // "declare + deploy this one MCP server" operation, independent of the
 // normal apm-package resolve/lockfile pipeline (apm.lock.yaml is untouched).
-func runMCPInstall(opts mcpInstallOpts) error {
+func runMCPInstall(opts mcpInstallOpts) (runErr error) {
 	deployRoot := "."
 	if opts.DeployDir != "" {
 		deployRoot = opts.DeployDir
@@ -52,11 +53,19 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	}
 
 	data, err := os.ReadFile("apm.yml")
+	createManifest := false
 	if err != nil {
-		if os.IsNotExist(err) {
+		switch {
+		case os.IsNotExist(err) && opts.DeployDir != "":
+			if data, err = newManifestBytes(manifestOwnerName(true), mcpManifestTargets(opts.TargetFlag, deployRoot), false); err != nil {
+				return err
+			}
+			createManifest = true
+		case os.IsNotExist(err):
 			return fmt.Errorf("apm.yml: no apm.yml found; run 'apm-go init' first")
+		default:
+			return fmt.Errorf("read apm.yml: %w", err)
 		}
-		return fmt.Errorf("read apm.yml: %w", err)
 	}
 	node, err := yamlcore.SafeLoad(data)
 	if err != nil {
@@ -137,8 +146,18 @@ func runMCPInstall(opts mcpInstallOpts) error {
 				return fmt.Errorf("serialize apm.yml: %w", err)
 			}
 		}
+		if createManifest {
+			defer func() {
+				if runErr != nil {
+					removeCreatedManifest()
+				}
+			}()
+		}
 		if err := os.WriteFile("apm.yml", manifestBytes, 0644); err != nil {
 			return fmt.Errorf("write apm.yml: %w", err)
+		}
+		if createManifest {
+			ux.Success(os.Stdout, "Created %s", manifestDisplay(true))
 		}
 	}
 
@@ -209,6 +228,25 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	ux.Plain(os.Stdout, "  transport: %s", deployDep.Transport)
 	ux.Plain(os.Stdout, "  apm.yml: %s", apmYMLPath)
 	return nil
+}
+
+// mcpManifestTargets is the targets: of the ~/.apm/apm.yml a user-scope MCP
+// install creates: the targets of --target it configures, in their order and
+// with all expanded, as the Oracle writes its supported_runtimes
+// (commands/install.py:829-834). With no --target there is none.
+func mcpManifestTargets(targetFlag, deployRoot string) []string {
+	if targetFlag == "" {
+		return nil
+	}
+	// The diagnostics are deployMCPEntry's to print.
+	resolved, _ := deploy.ResolveTargets(targetFlag, nil, deployRoot)
+	var targets []string
+	for _, t := range resolved {
+		if _, ok := deploy.Adapters[t].(deploy.MCPTarget); ok && !slices.Contains(targets, t) {
+			targets = append(targets, t)
+		}
+	}
+	return targets
 }
 
 // mcpListIsIndented reports whether dependencies.mcp already has items the

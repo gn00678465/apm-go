@@ -29,6 +29,10 @@ type installRun struct {
 	localDeclared map[string]string
 	targetFlag    string
 	noProvenance  bool
+	// manifestCreated: this run created apm.yml, which then has to get the
+	// packages also when the lock does not change (a lock left from an
+	// earlier install), as in the Oracle.
+	manifestCreated bool
 }
 
 func (r *installRun) elapsed() string {
@@ -285,7 +289,7 @@ func (r *installRun) finish(o installOutcome) error {
 		}
 		removeLegacyLocalModules(o.existingLock, lock)
 	}
-	if len(o.packages) > 0 && !unchanged {
+	if len(o.packages) > 0 && (!unchanged || r.manifestCreated) {
 		if err := persistPackagesToManifest(o.node, o.packages, o.effectiveSubsets, o.dev); err != nil {
 			return fmt.Errorf("update apm.yml: %w", err)
 		}

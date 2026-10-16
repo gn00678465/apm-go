@@ -25,10 +25,7 @@ func enterGlobalScope() (deployDir string, err error) {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 
-	dir := globalDirOverride
-	if dir == "" {
-		dir = filepath.Join(home, ".apm")
-	}
+	dir := globalDir(home)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("create %s: %w", dir, err)
 	}
@@ -43,12 +40,11 @@ func enterGlobalScope() (deployDir string, err error) {
 	return deployDir, nil
 }
 
-// ensureGlobalManifest creates a minimal apm.yml under the current directory
-// if one does not already exist, so that a first `install --global <pkg>`
-// succeeds without requiring `init --global` first.
-func ensureGlobalManifest() error {
-	if _, err := os.Stat("apm.yml"); err == nil {
-		return nil
+// globalDir is ~/.apm/, the directory of the user-scope apm.yml, as HOME
+// names it.
+func globalDir(home string) string {
+	if globalDirOverride != "" {
+		return globalDirOverride
 	}
-	return os.WriteFile("apm.yml", []byte("name: global\nversion: 0.0.0\n"), 0644)
+	return filepath.Join(home, ".apm")
 }
