@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -542,5 +543,117 @@ func TestInstallGlobal112_RejectedAfterInstall_Kept(t *testing.T) {
 	}
 	if got := readText(t, lockPath); got != lockBefore {
 		t.Errorf("lock:\n%s\nwant:\n%s", got, lockBefore)
+	}
+}
+
+// owners112 writes a project whose ./dep-a and ./dep-b both have the agent a,
+// dep-a also the agent x, installs it so dep-a owns .claude/agents/a.md, and
+// replaces that file by the user's symlink to a copy of its bytes. It returns
+// the symlink's target and dep-a's recorded hash of the path.
+func owners112(t *testing.T) (target, hash string) {
+	t.Helper()
+	root := t.TempDir()
+	for rel, content := range map[string]string{
+		"apm.yml":                      "name: proj\nversion: 1.0.0\ntargets:\n  - claude\ndependencies:\n  apm:\n    - ./dep-a\n    - ./dep-b\n",
+		"dep-a/apm.yml":                "name: dep-a\nversion: 1.0.0\n",
+		"dep-a/.apm/agents/a.agent.md": "---\nname: a\ndescription: agent of dep-a\n---\nAGENT A\n",
+		"dep-a/.apm/agents/x.agent.md": "---\nname: x\ndescription: other agent of dep-a\n---\nAGENT X\n",
+		"dep-b/apm.yml":                "name: dep-b\nversion: 1.0.0\n",
+		"dep-b/.apm/agents/a.agent.md": "---\nname: a\ndescription: agent of dep-b\n---\nAGENT B\n",
+	} {
+		writeCompileFile(t, root, rel, content)
+	}
+	t.Chdir(root)
+	mustRunCLI(t, "install")
+	hash = readLockfile(t).FindByKey("_local/dep-a").DeployedHashes[".claude/agents/a.md"]
+	if hash == "" {
+		t.Fatalf("dep-a does not record .claude/agents/a.md:\n%s", readText(t, "apm.lock.yaml"))
+	}
+	return replaceWithShared112(t, ".", ".claude/agents/a.md", "same"), hash
+}
+
+// The user's symlink stays whichever package now has the agent: no cleanup
+// of the run removes it, dep-a's record of it stays with its hash, and the
+// package refused at it records nothing and gets no deployed 0 files line,
+// as Oracle 0.33.0 (card #112 step 22, ownership.py).
+func TestInstall112_RejectedAfterInstall_OwnerChanged(t *testing.T) {
+	cases := []struct {
+		name, apmYML, local, refusedKey string
+	}{
+		{"reordered", "    - ./dep-b\n    - ./dep-a\n", "", "_local/dep-b"},
+		{"orphan", "    - ./dep-b\n", "", "_local/dep-b"},
+		{"local owner", "    - ./dep-a\n    - ./dep-b\n", "---\nname: a\ndescription: project agent\n---\nPROJECT AGENT\n", ""},
+	}
+	for _, c := range cases {
+		for _, cmd := range []string{"install", "update"} {
+			t.Run(c.name+"/"+cmd, func(t *testing.T) {
+				target, hash := owners112(t)
+				sharedBefore := readText(t, ".claude/shared/a.md")
+				writeCompileFile(t, ".", "apm.yml", "name: proj\nversion: 1.0.0\ntargets:\n  - claude\ndependencies:\n  apm:\n"+c.apmYML)
+				if c.local != "" {
+					writeCompileFile(t, ".", ".apm/agents/a.agent.md", c.local)
+				}
+
+				stdout, code := runCLI86(t, cmd)
+
+				if code != 0 {
+					t.Errorf("exit %d, stdout:\n%s", code, stdout)
+				}
+				if got, _ := os.Readlink(".claude/agents/a.md"); got != target {
+					t.Errorf(".claude/agents/a.md -> %q, want -> %q", got, target)
+				}
+				if readText(t, ".claude/shared/a.md") != sharedBefore {
+					t.Errorf("user file .claude/shared/a.md changed")
+				}
+				if !strings.Contains(stdout, "Rejected agent target path") || strings.Contains(stdout, "  - .claude/agents/a.md\n") {
+					t.Errorf("stdout:\n%s\nwant a Rejected line and no cleanup of .claude/agents/a.md", stdout)
+				}
+				if c.refusedKey != "" && strings.Contains(stdout, c.refusedKey+" deployed 0 files") {
+					t.Errorf("stdout:\n%s\nwant no deployed 0 files line for %s", stdout, c.refusedKey)
+				}
+				if c.local != "" && cmd == "install" && !strings.Contains(stdout, "   + <project root> (local)\n  |-- (files unchanged)\n") {
+					t.Errorf("stdout:\n%s\nwant the project's header with (files unchanged)", stdout)
+				}
+				lock := readLockfile(t)
+				depA := lock.FindByKey("_local/dep-a")
+				if depA == nil || depA.DeployedHashes[".claude/agents/a.md"] != hash {
+					t.Fatalf("_local/dep-a does not keep .claude/agents/a.md with %s:\n%s", hash, readText(t, "apm.lock.yaml"))
+				}
+				if b := lock.FindByKey("_local/dep-b"); b != nil && slices.Contains(b.DeployedFiles, ".claude/agents/a.md") {
+					t.Errorf("_local/dep-b records .claude/agents/a.md")
+				}
+				if slices.Contains(lock.LocalDeployedFiles, ".claude/agents/a.md") {
+					t.Errorf("the project records .claude/agents/a.md")
+				}
+				if c.name == "orphan" {
+					assertNoFile(t, ".claude/agents/x.md")
+					if !strings.Contains(stdout, " i Cleaned 1 file from packages no longer in apm.yml\n  - .claude/agents/x.md\n") {
+						t.Errorf("stdout:\n%s\nwant dep-a's x.md cleaned", stdout)
+					}
+					if !slices.Equal(depA.DeployedFiles, []string{".claude/agents/a.md"}) {
+						t.Errorf("_local/dep-a records %v, want only .claude/agents/a.md", depA.DeployedFiles)
+					}
+				}
+			})
+		}
+	}
+}
+
+// A package whose one file is refused prints its Rejected line and no
+// deployed 0 files line, as Oracle 0.33.0 prints its header and
+// "(files unchanged)".
+func TestInstall112_OnlyFileRejected_NoZeroFilesWarning(t *testing.T) {
+	root := t.TempDir()
+	writeCompileFile(t, root, "apm.yml", "name: proj\nversion: 1.0.0\ntargets:\n  - claude\ndependencies:\n  apm:\n    - ./dep\n")
+	writeCompileFile(t, root, "dep/apm.yml", "name: dep\nversion: 1.0.0\n")
+	writeCompileFile(t, root, "dep/.apm/agents/a.agent.md", "---\nname: a\ndescription: pkg agent\n---\nPACKAGE AGENT\n")
+	t.Chdir(root)
+	mustRunCLI(t, "install")
+	replaceWithShared112(t, ".", ".claude/agents/a.md", "diff")
+
+	stdout, code := runCLI86(t, "install")
+
+	if code != 0 || !strings.Contains(stdout, "Rejected agent target path") || strings.Contains(stdout, "deployed 0 files") {
+		t.Errorf("exit %d, stdout:\n%s", code, stdout)
 	}
 }

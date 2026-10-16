@@ -55,12 +55,13 @@ type DeployResult struct {
 	// package does not have. Nothing below one is this run's deploy output,
 	// and nothing below one is stale output of an earlier run either.
 	KeptDirs []string
-	// RejectedPaths holds, by the PerDep key of the bucket, the
-	// deploy-root-relative destination of each agent, command or prompt not
-	// deployed because a symlink there leads out of its directory. The path
-	// is the user's: no cleanup of this run removes it, and the lock keeps
-	// an old record of it while the file it names exists, as the Oracle
-	// keeps it (integration/agent_integrator.py:204).
+	// RejectedPaths holds, by the PerDep key of the bucket that was refused,
+	// the deploy-root-relative destination of each agent, command or prompt
+	// not deployed because a symlink there leads out of its directory. The
+	// path is the user's whichever package records it: no cleanup of this
+	// run removes it, and each old lock record of it stays with its owner
+	// while the file it names exists, as the Oracle keeps it
+	// (integration/agent_integrator.py:204).
 	RejectedPaths map[string][]string
 	// SkippedDeps holds, in the order Run takes the dependencies, each one
 	// whose `targets:` names none of the active targets: it deployed nothing.

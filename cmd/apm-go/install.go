@@ -11,7 +11,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1932,11 +1931,11 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	var apmInstalled, mcpConfigured int
 	// apmPhase: a dependency or the project's own content was deployed.
 	var apmPhase bool
-	// keptDirs, failedBuckets and rejectedPaths are deploy.DeployResult's
-	// KeptDirs, FailedBuckets and RejectedPaths, for the lock merge in step 6b.
+	// keptDirs and failedBuckets are deploy.DeployResult.KeptDirs and
+	// .FailedBuckets, and refused every path of .RejectedPaths, for the lock
+	// merge in step 6b.
 	var keptDirs []string
-	var failedBuckets map[string]bool
-	var rejectedPaths map[string][]string
+	var failedBuckets, refused map[string]bool
 	var skippedDeps []deploy.SkippedDep
 	var commandNotes []deploy.CommandNote
 	// orphans are the lock entries step 6b carries over for packages this
@@ -2019,7 +2018,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 			}
 		}
-		keptDirs, failedBuckets, rejectedPaths = deployResult.KeptDirs, deployResult.FailedBuckets, deployResult.RejectedPaths
+		keptDirs, failedBuckets, refused = deployResult.KeptDirs, deployResult.FailedBuckets, rejectedSet(deployResult.RejectedPaths)
 		skippedDeps = deployResult.SkippedDeps
 		skipped := make(map[string]bool, len(skippedDeps))
 		for _, sd := range skippedDeps {
@@ -2064,13 +2063,20 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			// compared against the Oracle.
 			apmInstalled++
 		}
-		if dr, ok := deployResult.PerDep[""]; ok {
-			// R14: name the local-primitives bucket after what it actually
-			// is (files integrated from this project's own .apm/ tree), not
-			// a bare, ambiguous "(local)".
-			if run == nil {
-				ux.Tree(os.Stdout, deployedFilesTree("<project root> (local)", dr.Files))
-			} else if printInstallBlock("<project root> (local)", dr.Files, dr.Hashes, beforeDeploy) > 0 {
+		// R14: name the local-primitives bucket after what it actually is
+		// (files integrated from this project's own .apm/ tree), not a bare,
+		// ambiguous "(local)".
+		if dr, ok := deployResult.PerDep[""]; ok && run == nil {
+			ux.Tree(os.Stdout, deployedFilesTree("<project root> (local)", dr.Files))
+		} else if ok || (run != nil && len(deployResult.RejectedPaths[""]) > 0) {
+			// The project's content refused at a path still gets its header,
+			// with "(files unchanged)", as the Oracle prints it.
+			var files []string
+			var hashes map[string]string
+			if ok {
+				files, hashes = dr.Files, dr.Hashes
+			}
+			if printInstallBlock("<project root> (local)", files, hashes, beforeDeploy) > 0 {
 				// The project's own content counts as one dependency when a
 				// file of it was integrated (install/phases/integrate.py:385).
 				apmInstalled++
@@ -2085,9 +2091,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// Warn about resolved dependencies that deployed zero files to any
 		// target -- otherwise "Installed N dependencies" reads as success
 		// even when a dependency's primitives went entirely undiscovered
-		// (e.g. an unrecognized manifest format).
+		// (e.g. an unrecognized manifest format). One with a refused path
+		// already has its Rejected line, and the Oracle prints no more.
 		for _, dep := range result.Deps {
-			if _, ok := deployResult.PerDep[dep.Key]; !ok && !skipped[dep.Key] {
+			if _, ok := deployResult.PerDep[dep.Key]; !ok && !skipped[dep.Key] && len(deployResult.RejectedPaths[dep.Key]) == 0 {
 				ux.Warn(os.Stderr, "%s deployed 0 files to any target", dep.Key)
 			}
 		}
@@ -2178,7 +2185,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				cleanRoot, linkSourceRoot = deployDir, "."
 			}
 			if !scoped {
-				oc := cleanOrphanedDeployedFiles(orphans, newLock, keptDirs, cleanRoot, linkSourceRoot)
+				oc := cleanOrphanedDeployedFiles(orphans, newLock, refused, keptDirs, cleanRoot, linkSourceRoot)
 				if n := len(oc.removed); n > 0 {
 					// Oracle sentence: core/command_logger.py:563-576. The
 					// paths are listed as for a stale file below (issue #30).
@@ -2194,7 +2201,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 				orphans = oc.kept
 			}
-			for _, c := range cleanStaleDeployedFiles(prevLock, newLock, deployResult.FailedBuckets, rejectedPaths, keptDirs, targets, cleanRoot, linkSourceRoot) {
+			for _, c := range cleanStaleDeployedFiles(prevLock, newLock, deployResult.FailedBuckets, refused, keptDirs, targets, cleanRoot, linkSourceRoot) {
 				if n := len(c.removed); n > 0 {
 					noun := "files"
 					if n == 1 {
@@ -2263,15 +2270,15 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			}
 			// A rejected path is the user's symlink, which notTakenOver
 			// drops on --global; its record follows the file it names.
-			var rejected, rest []string
+			var userPaths, rest []string
 			for _, f := range notKept(oldFiles) {
-				if slices.Contains(rejectedPaths[bucket], normalizeDeployPath(f)) {
-					rejected = append(rejected, f)
+				if refused[normalizeDeployPath(f)] {
+					userPaths = append(userPaths, f)
 				} else {
 					rest = append(rest, f)
 				}
 			}
-			return mergeDeployedFiles(append(notTakenOver(bucket, rest, targets, deployDir), rejected...), oldHashes, newFiles, newHashes, effectiveDeployRoot)
+			return mergeDeployedFiles(append(notTakenOver(bucket, rest, targets, deployDir), userPaths...), oldHashes, newFiles, newHashes, effectiveDeployRoot)
 		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
