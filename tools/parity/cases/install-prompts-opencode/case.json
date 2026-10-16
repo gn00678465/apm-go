@@ -1,0 +1,6 @@
+{
+  "id": "install-prompts-opencode",
+  "argv": ["install", "--target", "opencode"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}
