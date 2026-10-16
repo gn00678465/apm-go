@@ -178,15 +178,15 @@ func TestInstall_GitPluginWithoutVersion_LockRecordsShortCommit(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("APM_CONFIG_DIR", t.TempDir())
 			project := chdirTemp(t)
-			commit := subdirGitRepo(t, filepath.Join(project, "plugin"), map[string]string{
+			commit := subdirGitRepo(t, filepath.Join(project, "acme", "plugin"), map[string]string{
 				".claude-plugin/plugin.json": manifest,
 				"agents/a.md":                "# a\n",
 			})
-			writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"), "name: caller\nversion: 0.1.0\ndependencies:\n  apm:\n    - git: ./plugin\n")
-			if err := subdirInstall(t, subdirRealLoader(), false); err != nil {
+			writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"), "name: caller\nversion: 0.1.0\ndependencies:\n  apm:\n    - git: acme/plugin\n")
+			if err := subdirInstall(t, subdirPathLoader{subdirRealLoader()}, false); err != nil {
 				t.Fatalf("install: %v", err)
 			}
-			entry := subdirLockEntry(t, project, "./plugin")
+			entry := subdirLockEntry(t, project, "acme/plugin")
 			if entry.ResolvedCommit != commit {
 				t.Fatalf("resolved_commit = %q, want %q", entry.ResolvedCommit, commit)
 			}

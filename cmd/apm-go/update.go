@@ -39,7 +39,7 @@ apm_modules/, and without deploying any change to a target.`,
 			defer silenceUsageForRuntimeError(cmd, &runErr)
 			deps := &installDeps{
 				tags:   &gitops.RealTagLister{},
-				loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+				loader: newGitPackageLoader("apm_modules"),
 			}
 			pkg := ""
 			if len(args) == 1 {
@@ -216,7 +216,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	// fed to both buildLockfile and deployAndFinalize so update's lockfile
 	// and deploy filter never disagree.
 	effectiveSubsets := effectiveSkillSubsets(m, nil, nil)
-	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, nil, nil, false, marketplaceProvenance, localDeclaredPaths(m))
+	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, nil, nil, false, marketplaceProvenance, localDirectDeps(m))
 	if err != nil {
 		return err
 	}
@@ -268,7 +268,7 @@ func runUpdateDryRun(m *manifest.Manifest, existingLock *lockfile.Lockfile, deps
 	}
 	defer os.RemoveAll(scratchDir)
 
-	scratchLoader := &gitops.RealPackageLoader{ModulesDir: scratchDir}
+	scratchLoader := newGitPackageLoader(scratchDir)
 	scratchRegLoader := &registry.Loader{
 		Registries:      m.Registries,
 		DefaultRegistry: m.DefaultRegistry,
@@ -295,12 +295,17 @@ func runUpdateDryRun(m *manifest.Manifest, existingLock *lockfile.Lockfile, deps
 	// tree_sha256 from "apm_modules/<key>" (a hardcoded real path, not this
 	// scratch dir) and would either read stale content or fail outright.
 	displayLock := &lockfile.Lockfile{}
+	local := localDirectDeps(m)
 	for _, dep := range result.Deps {
+		ref := dep.ResolvedRef
+		if l, ok := local[dep.Key]; ok {
+			ref = l.LocalDeclaredRef
+		}
 		displayLock.Dependencies = append(displayLock.Dependencies, lockfile.LockedDep{
 			RepoURL:     dep.RepoURL,
 			VirtualPath: dep.VirtualPath,
 			ResolvedTag: dep.ResolvedTag,
-			ResolvedRef: dep.ResolvedRef,
+			ResolvedRef: ref,
 		})
 	}
 	printUpdateSummary(existingLock, displayLock)

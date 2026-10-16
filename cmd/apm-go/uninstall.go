@@ -70,6 +70,9 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	if err != nil {
 		return err
 	}
+	if lock != nil {
+		useLocalKeysForGitPaths(m, lock)
+	}
 
 	// The transcript of the Oracle (commands/uninstall/cli.py:288,
 	// engine.py:676-681), issue #50 ruling R10.

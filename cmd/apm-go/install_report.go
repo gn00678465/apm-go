@@ -506,14 +506,23 @@ func isLegacyLocalEntry(dep *lockfile.LockedDep) bool {
 
 // removeLegacyLocalModules deletes the apm_modules directory of each local
 // package the old lock names in the format before issue #50 and the new lock
-// no longer has. Only a directory an old repo_url names is removed.
+// no longer has, and the clone of each `git:` local path the old lock records
+// as a git source (isGitPathEntry) where the new lock records that path as a
+// local package. Only a directory an old repo_url names is removed.
 func removeLegacyLocalModules(oldLock, newLock *lockfile.Lockfile) {
 	if oldLock == nil {
 		return
 	}
+	nowLocal := map[string]bool{}
+	for i := range newLock.Dependencies {
+		if d := &newLock.Dependencies[i]; d.Source == "local" {
+			nowLocal[d.LocalPath] = true
+		}
+	}
 	for i := range oldLock.Dependencies {
 		dep := &oldLock.Dependencies[i]
-		if !isLegacyLocalEntry(dep) || newLock.FindByKey(dep.UniqueKey()) != nil {
+		gitPath := nowLocal[dep.RepoURL] && isGitPathEntry(dep, dep.RepoURL)
+		if (!isLegacyLocalEntry(dep) && !gitPath) || newLock.FindByKey(dep.UniqueKey()) != nil {
 			continue
 		}
 		if _, err := deploy.SafeRemoveModuleDir(".", dep.UniqueKey()); err != nil {

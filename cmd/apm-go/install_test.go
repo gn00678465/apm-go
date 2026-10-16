@@ -1387,7 +1387,7 @@ func TestRunInstall_SkillWildcardDeploysAllSkills(t *testing.T) {
 		}
 	}
 
-	remoteDir := filepath.Join(dir, "remote")
+	remoteDir := filepath.Join(dir, "acme", "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1403,13 +1403,13 @@ func TestRunInstall_SkillWildcardDeploysAllSkills(t *testing.T) {
 	git(remoteDir, "commit", "-m", "v1")
 	git(remoteDir, "tag", "v1.0.0")
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: ./remote\n      ref: v1.0.0\n"), 0644)
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: acme/remote\n      ref: v1.0.0\n"), 0644)
 
 	deps := &installDeps{
 		tags:   &mockInstallTagLister{},
-		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+		loader: subdirPathLoader{subdirRealLoader()},
 	}
-	if err := runInstall(deps, false, true, "claude", "", []string{"*"}, []string{"./remote"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", []string{"*"}, []string{"acme/remote"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 

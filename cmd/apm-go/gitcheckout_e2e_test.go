@@ -6,19 +6,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/apm-go/apm/internal/gitops"
 )
 
 // TestRunInstall_StaleCheckoutIsRepaired is the CLI-level req-lk-007
 // regression: it exercises the real cmd/apm-go -> resolver -> RealPackageLoader
-// path (no mocks) using a local git-path dependency (git: ./remote), which
-// is offline-friendly since it never contacts a real network host. A
-// realistic "acme/foo" shorthand reference would resolve Owner/Repo and
-// attempt a real https://github.com/... clone, which isn't feasible offline
-// in a unit test (see TestRunInstall_WithDeps's own comment on this) -- the
-// local git-path form sidesteps that while still exercising the real
-// RealPackageLoader.LoadPackage code path.
+// path, cloning acme/remote from a local repository (subdirPathLoader), so it
+// never contacts a network host.
 func TestRunInstall_StaleCheckoutIsRepaired(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -49,7 +42,7 @@ func TestRunInstall_StaleCheckoutIsRepaired(t *testing.T) {
 		return string(bytes.TrimSpace(out))
 	}
 
-	remoteDir := filepath.Join(dir, "remote")
+	remoteDir := filepath.Join(dir, "acme", "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -70,11 +63,11 @@ func TestRunInstall_StaleCheckoutIsRepaired(t *testing.T) {
 	git(remoteDir, "commit", "-m", "v2, unrelated to what's pinned")
 	unrelatedCommit := headOf(remoteDir)
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: ./remote\n      ref: v1.0.0\n"), 0644)
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - git: acme/remote\n      ref: v1.0.0\n"), 0644)
 
 	deps := &installDeps{
 		tags:   &mockInstallTagLister{},
-		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+		loader: subdirPathLoader{subdirRealLoader()},
 	}
 	// --target claude only satisfies the "dependencies present but no
 	// deployment target" exit-2 guard (F2); this test's subject is stale
@@ -83,7 +76,7 @@ func TestRunInstall_StaleCheckoutIsRepaired(t *testing.T) {
 		t.Fatalf("first runInstall: %v", err)
 	}
 
-	installDir := filepath.Join("apm_modules", "remote")
+	installDir := filepath.Join("apm_modules", "acme", "remote")
 	if headOf(installDir) != pinnedHead {
 		t.Fatalf("fresh install HEAD mismatch: got %s, want %s", headOf(installDir), pinnedHead)
 	}

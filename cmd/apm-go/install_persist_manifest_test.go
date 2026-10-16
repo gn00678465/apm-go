@@ -233,7 +233,7 @@ func persistLocalSubset(t *testing.T, src string, subset []string) string {
 }
 
 // Issue #61: a local package's skill subset is a `path:` entry, the bytes the
-// Oracle v0.33.0 writes; `git: ./dep` makes the next install clone the path.
+// Oracle v0.33.0 writes.
 func TestPersistPackagesToManifest_LocalSkillSubsetIsPathEntry(t *testing.T) {
 	const head = "name: proj\nversion: 1.0.0\ntarget: claude\n"
 	tests := []struct {
