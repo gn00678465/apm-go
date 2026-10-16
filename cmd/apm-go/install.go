@@ -644,8 +644,8 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		if existingLock == nil {
 			return fmt.Errorf("frozen install requires a lockfile but none was found")
 		}
-		useLocalKeysForGitPaths(m, existingLock)
 		useLegacyLocalKeys(m, existingLock)
+		useLocalKeysForGitPaths(allDirectDeps(m), existingLock)
 		if err := lockfile.CheckFrozenInstall(m, existingLock); err != nil {
 			return err
 		}

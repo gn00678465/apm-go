@@ -159,7 +159,7 @@ func lockUnderCurrentKeys(existingLock *lockfile.Lockfile, m *manifest.Manifest)
 			}
 		}
 	}
-	useLocalKeysForGitPaths(m, prev)
+	useLocalKeysForGitPaths(allDirectDeps(m), prev)
 	return prev
 }
 
