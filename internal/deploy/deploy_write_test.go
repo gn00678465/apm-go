@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/apm-go/apm/internal/archive"
 )
 
 func TestCheckDeployWrite(t *testing.T) {
@@ -22,7 +25,7 @@ func TestCheckDeployWrite(t *testing.T) {
 				deployPathLink(t, filepath.Join(root, "outside/precious.txt"), filepath.Join(root, "home/.claude/rules/r.md"))
 			},
 			want: func(root string) error {
-				return &DeployPathError{Path: ".claude/rules/r.md", Link: ".claude/rules/r.md", Resolved: filepath.Join(root, "outside/precious.txt"), Root: filepath.Join(root, "home/.claude")}
+				return &archive.ContainmentError{Path: filepath.Join(root, "home/.claude/rules/r.md"), Base: filepath.Join(root, "home/.claude/rules"), Resolved: filepath.Join(root, "outside/precious.txt")}
 			},
 		},
 		{
@@ -32,14 +35,24 @@ func TestCheckDeployWrite(t *testing.T) {
 				deployPathLink(t, filepath.Join(root, "outside/new.txt"), filepath.Join(root, "home/.claude/rules/r.md"))
 			},
 			want: func(root string) error {
-				return &DeployPathError{Path: ".claude/rules/r.md", Link: ".claude/rules/r.md", Resolved: filepath.Join(root, "outside/new.txt"), Root: filepath.Join(root, "home/.claude")}
+				return &archive.ContainmentError{Path: filepath.Join(root, "home/.claude/rules/r.md"), Base: filepath.Join(root, "home/.claude/rules"), Resolved: filepath.Join(root, "outside/new.txt")}
 			},
 		},
 		{
-			name: "last component links inside the target root",
+			name: "last component links to another place in the target root",
 			rel:  ".claude/rules/r.md",
 			setup: func(t *testing.T, root string) {
 				deployPathLink(t, "../shared/r.md", filepath.Join(root, "home/.claude/rules/r.md"))
+			},
+			want: func(root string) error {
+				return &archive.ContainmentError{Path: filepath.Join(root, "home/.claude/rules/r.md"), Base: filepath.Join(root, "home/.claude/rules"), Resolved: filepath.Join(root, "home/.claude/shared/r.md")}
+			},
+		},
+		{
+			name: "last component links inside its own directory",
+			rel:  ".claude/rules/r.md",
+			setup: func(t *testing.T, root string) {
+				deployPathLink(t, "other.md", filepath.Join(root, "home/.claude/rules/r.md"))
 			},
 		},
 		{
@@ -50,6 +63,30 @@ func TestCheckDeployWrite(t *testing.T) {
 			},
 			want: func(root string) error {
 				return &DeployPathError{Path: ".claude/rules/r.md", Link: ".claude/rules", Resolved: filepath.Join(root, "outside/rules"), Root: filepath.Join(root, "home/.claude")}
+			},
+		},
+		{
+			name: "parent links to another place in the target root",
+			rel:  ".claude/rules/r.md",
+			setup: func(t *testing.T, root string) {
+				deployPathLink(t, "shared", filepath.Join(root, "home/.claude/rules"))
+			},
+		},
+		{
+			name: "directory of a skill links out of the skill",
+			rel:  ".claude/skills/demo/sub/b.md",
+			setup: func(t *testing.T, root string) {
+				deployPathLink(t, "../../shared", filepath.Join(root, "home/.claude/skills/demo/sub"))
+			},
+			want: func(root string) error {
+				return &archive.ContainmentError{Path: filepath.Join(root, "home/.claude/skills/demo/sub/b.md"), Base: filepath.Join(root, "home/.claude/skills/demo"), Resolved: filepath.Join(root, "home/.claude/shared/b.md")}
+			},
+		},
+		{
+			name: "directory of a skill links inside the skill",
+			rel:  ".claude/skills/demo/sub/b.md",
+			setup: func(t *testing.T, root string) {
+				deployPathLink(t, "other", filepath.Join(root, "home/.claude/skills/demo/sub"))
 			},
 		},
 		{
@@ -130,95 +167,157 @@ func writeDeployFile(t *testing.T, p, content string) {
 	}
 }
 
-// Every place a copy deploy writes content refuses a destination that is a
-// symlink out of its target root: the write would follow it and overwrite
-// what it points at.
+// Every place a copy deploy writes a file refuses a destination that is a
+// symlink out of the primitive's directory, out of the target root or to
+// another place in it, as the Oracle refuses it: the write would follow it and
+// overwrite what it points at.
 func TestDeploy_DestinationLinksOutside_NotWritten(t *testing.T) {
 	const agent = "---\ndescription: reviewer\n---\nagent\n"
 	tests := []struct {
-		name, src, content, dest, root string
-		more                           map[string]string
-		deploy                         func(home, src string) error
+		name, src, content, dest string
+		deploy                   func(home, src string) error
 	}{
-		{name: "copied agent", src: "agents/r.md", content: agent, dest: ".claude/agents/r.md", root: ".claude",
+		{name: "copied agent", src: "agents/r.md", content: agent, dest: ".claude/agents/r.md",
 			deploy: func(home, src string) error {
 				_, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "r", Type: TypeAgents, DepKey: "o/dep", SrcPath: src}, home)
 				return err
 			}},
-		{name: "copied command", src: "commands/c.md", content: "command\n", dest: ".opencode/commands/c.md", root: ".opencode",
+		{name: "copied command", src: "commands/c.md", content: "command\n", dest: ".opencode/commands/c.md",
 			deploy: func(home, src string) error {
 				_, err := Adapters["opencode"].DeployPrimitive(Primitive{Name: "c", Type: TypeCommands, DepKey: "o/dep", SrcPath: src}, home)
 				return err
 			}},
-		{name: "codex agent TOML", src: "agents/r.md", content: agent, dest: ".codex/agents/r.toml", root: ".codex",
+		{name: "codex agent TOML", src: "agents/r.md", content: agent, dest: ".codex/agents/r.toml",
 			deploy: func(home, src string) error {
 				_, err := Adapters["codex"].DeployPrimitive(Primitive{Name: "r", Type: TypeAgents, DepKey: "o/dep", SrcPath: src}, home)
 				return err
 			}},
-		{name: "claude rule", src: "instructions/r.instructions.md", content: "---\napplyTo: \"**\"\n---\nrule\n", dest: ".claude/rules/r.md", root: ".claude",
+		{name: "claude rule", src: "instructions/r.instructions.md", content: "---\napplyTo: \"**\"\n---\nrule\n", dest: ".claude/rules/r.md",
 			deploy: func(home, src string) error {
 				_, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "r", Type: TypeInstructions, DepKey: "o/dep", SrcPath: src}, home)
 				return err
 			}},
-		{name: "file in a skill", src: "skills/demo/data/precious.txt", content: "precious\n", dest: ".claude/skills/demo/data/precious.txt", root: ".claude",
-			more: map[string]string{"skills/demo/SKILL.md": "---\nname: demo\ndescription: demo\n---\n"},
+		{name: "copilot prompt", src: "prompts/p.prompt.md", content: "prompt\n", dest: ".github/prompts/p.prompt.md",
 			deploy: func(home, src string) error {
-				skill := filepath.Dir(filepath.Dir(src))
-				_, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "demo", Type: TypeSkills, DepKey: "o/dep", SrcPath: skill}, home)
+				_, err := Adapters["copilot"].DeployPrimitive(Primitive{Name: "p", Type: TypePrompts, DepKey: "o/dep", SrcPath: src}, home)
 				return err
 			}},
-		{name: "antigravity plugin.json", dest: ".agents/plugins/dep/plugin.json", root: ".agents",
+		{name: "antigravity plugin.json", dest: ".agents/plugins/dep/plugin.json",
 			deploy: func(home, _ string) error {
 				_, err := Adapters["antigravity"].(BundleTarget).FinalizeBundles([]string{"o/dep"}, home)
 				return err
 			}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		for _, target := range []string{"outside", "shared"} {
+			t.Run(tt.name+" to "+target, func(t *testing.T) {
+				root := deployPathRoot(t)
+				home := filepath.Join(root, "home")
+				src := filepath.Join(root, "src", filepath.FromSlash(tt.src))
+				if tt.src != "" {
+					writeDeployFile(t, src, tt.content)
+				}
+				first, _, _ := strings.Cut(tt.dest, "/")
+				user := filepath.Join(root, "outside/precious.txt")
+				if target == "shared" {
+					user = filepath.Join(home, first, "shared/precious.txt")
+				}
+				writeDeployFile(t, user, "precious unrelated user content\n")
+				dest := filepath.Join(home, filepath.FromSlash(tt.dest))
+				deployPathLink(t, user, dest)
+				before := deployTree(t, root)
+
+				err := tt.deploy(home, src)
+
+				want := &archive.ContainmentError{Path: dest, Base: filepath.Dir(dest), Resolved: user}
+				var got *archive.ContainmentError
+				if !errors.As(err, &got) || !reflect.DeepEqual(got, want) {
+					t.Errorf("deploy = %v, want %v", err, want)
+				}
+				if after := deployTree(t, root); !reflect.DeepEqual(after, before) {
+					t.Errorf("tree changed:\n%v\nwant\n%v", after, before)
+				}
+			})
+		}
+	}
+}
+
+// A destination that links to another file of its own directory is written
+// there, as the Oracle writes it.
+func TestDeploy_DestinationLinksInsideItsDirectory_Written(t *testing.T) {
+	root := deployPathRoot(t)
+	home := filepath.Join(root, "home")
+	src := filepath.Join(root, "src/r.md")
+	writeDeployFile(t, src, "agent\n")
+	deployPathLink(t, "other.md", filepath.Join(home, ".claude/agents/r.md"))
+
+	if _, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "r", Type: TypeAgents, DepKey: "o/dep", SrcPath: src}, home); err != nil {
+		t.Fatalf("deploy = %v", err)
+	}
+	if got := deployTree(t, filepath.Join(home, ".claude")); got["agents/other.md"] != "agent\n" || got["agents/r.md"] != "-> other.md" {
+		t.Errorf(".claude = %v, want agents/r.md -> other.md holding agent", got)
+	}
+}
+
+// A file of a skill the user replaced by a symlink is replaced by the copy,
+// wherever the symlink points, and what it pointed at stays, as the Oracle
+// replaces the skill's directory.
+func TestDeploySkill_FileLinkReplaced(t *testing.T) {
+	for _, target := range []string{"outside", "shared"} {
+		t.Run(target, func(t *testing.T) {
 			root := deployPathRoot(t)
 			home := filepath.Join(root, "home")
-			src := filepath.Join(root, "src", filepath.FromSlash(tt.src))
-			if tt.src != "" {
-				writeDeployFile(t, src, tt.content)
+			skill := filepath.Join(root, "src/skills/demo")
+			writeDeployFile(t, filepath.Join(skill, "SKILL.md"), "---\nname: demo\ndescription: demo\n---\n")
+			writeDeployFile(t, filepath.Join(skill, "data/precious.txt"), "precious\n")
+			user := filepath.Join(root, "outside/precious.txt")
+			if target == "shared" {
+				user = filepath.Join(home, ".claude/shared/precious.txt")
 			}
-			for rel, content := range tt.more {
-				writeDeployFile(t, filepath.Join(root, "src", filepath.FromSlash(rel)), content)
-			}
-			writeDeployFile(t, filepath.Join(root, "outside/precious.txt"), "precious unrelated user content\n")
-			deployPathLink(t, filepath.Join(root, "outside/precious.txt"), filepath.Join(home, filepath.FromSlash(tt.dest)))
-			before := deployTree(t, root)
+			writeDeployFile(t, user, "USER SHARED CONTENT\n")
+			deployPathLink(t, user, filepath.Join(home, ".claude/skills/demo/data/precious.txt"))
 
-			err := tt.deploy(home, src)
-
-			want := &DeployPathError{Path: tt.dest, Link: tt.dest, Resolved: filepath.Join(root, "outside/precious.txt"), Root: filepath.Join(home, tt.root)}
-			var got *DeployPathError
-			if !errors.As(err, &got) || !reflect.DeepEqual(got, want) {
-				t.Errorf("deploy = %v, want %v", err, want)
+			files, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "demo", Type: TypeSkills, DepKey: "o/dep", SrcPath: skill}, home)
+			if err != nil {
+				t.Fatalf("deploy = %v", err)
 			}
-			if after := deployTree(t, root); !reflect.DeepEqual(after, before) {
-				t.Errorf("tree changed:\n%v\nwant\n%v", after, before)
+			if want := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/data/precious.txt"}; !reflect.DeepEqual(files, want) {
+				t.Errorf("files = %v, want %v", files, want)
+			}
+			got := deployTree(t, home)
+			if got[".claude/skills/demo/data/precious.txt"] != "precious\n" {
+				t.Errorf("skill file = %q, want the package's bytes in a regular file", got[".claude/skills/demo/data/precious.txt"])
+			}
+			if data, _ := os.ReadFile(user); string(data) != "USER SHARED CONTENT\n" {
+				t.Errorf("user file = %q, want it unchanged", data)
 			}
 		})
 	}
 }
 
-// A destination that links to another place in its target root is written
-// there, as it was.
-func TestDeploy_DestinationLinksInsideTargetRoot_Written(t *testing.T) {
+// A directory of a skill the user replaced by a symlink out of the skill's
+// directory, also to another place in the target root, is refused before
+// anything is written.
+func TestDeploySkill_DirLinkOutOfSkill_Refused(t *testing.T) {
 	root := deployPathRoot(t)
 	home := filepath.Join(root, "home")
-	src := filepath.Join(root, "src/r.md")
-	writeDeployFile(t, src, "agent\n")
-	deployPathLink(t, "../shared/r.md", filepath.Join(home, ".claude/agents/r.md"))
-	if err := os.MkdirAll(filepath.Join(home, ".claude/shared"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	skill := filepath.Join(root, "src/skills/demo")
+	writeDeployFile(t, filepath.Join(skill, "SKILL.md"), "---\nname: demo\ndescription: demo\n---\n")
+	writeDeployFile(t, filepath.Join(skill, "data/precious.txt"), "precious\n")
+	writeDeployFile(t, filepath.Join(home, ".claude/shared/data/precious.txt"), "USER SHARED CONTENT\n")
+	link := filepath.Join(home, ".claude/skills/demo/data")
+	deployPathLink(t, "../../shared/data", link)
+	before := deployTree(t, root)
 
-	if _, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "r", Type: TypeAgents, DepKey: "o/dep", SrcPath: src}, home); err != nil {
-		t.Fatalf("deploy = %v", err)
+	_, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "demo", Type: TypeSkills, DepKey: "o/dep", SrcPath: skill}, home)
+
+	want := &archive.ContainmentError{Path: link, Base: filepath.Join(home, ".claude/skills/demo"), Resolved: filepath.Join(home, ".claude/shared/data")}
+	var got *archive.ContainmentError
+	if !errors.As(err, &got) || !reflect.DeepEqual(got, want) {
+		t.Errorf("deploy = %v, want %v", err, want)
 	}
-	if got := deployTree(t, filepath.Join(home, ".claude")); got["shared/r.md"] != "agent\n" || got["agents/r.md"] != "-> ../shared/r.md" {
-		t.Errorf(".claude = %v, want agents/r.md -> ../shared/r.md holding agent", got)
+	if after := deployTree(t, root); !reflect.DeepEqual(after, before) {
+		t.Errorf("tree changed:\n%v\nwant\n%v", after, before)
 	}
 }
 
@@ -230,10 +329,11 @@ func TestDeploySymlink_ReplacesLeafLink(t *testing.T) {
 	home := filepath.Join(root, "home")
 	src := filepath.Join(root, "src/r.md")
 	writeDeployFile(t, src, "agent\n")
-	writeDeployFile(t, filepath.Join(root, "outside/old.md"), "old\n")
-	deployPathLink(t, filepath.Join(root, "outside/old.md"), filepath.Join(home, ".claude/agents/r.md"))
-	activeDeployMode.symlink = true
-	defer func() { activeDeployMode.symlink = false }()
+	old := filepath.Join(root, "src/apm_modules/o/dep/.apm/agents/r.agent.md")
+	writeDeployFile(t, old, "old\n")
+	deployPathLink(t, old, filepath.Join(home, ".claude/agents/r.md"))
+	activeDeployMode.symlink, activeDeployMode.projectDir = true, filepath.Join(root, "src")
+	defer func() { activeDeployMode.symlink, activeDeployMode.projectDir = false, "" }()
 
 	if _, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "r", Type: TypeAgents, DepKey: "o/dep", SrcPath: src}, home); err != nil {
 		t.Fatalf("deploy = %v", err)
@@ -241,7 +341,35 @@ func TestDeploySymlink_ReplacesLeafLink(t *testing.T) {
 	if got, _ := os.Readlink(filepath.Join(home, ".claude/agents/r.md")); got != src {
 		t.Errorf(".claude/agents/r.md -> %q, want %q", got, src)
 	}
-	if got := deployTree(t, filepath.Join(root, "outside")); got["old.md"] != "old\n" {
-		t.Errorf("outside = %v, want old.md unchanged", got)
+	if data, _ := os.ReadFile(old); string(data) != "old\n" {
+		t.Errorf("old source = %q, want it unchanged", data)
+	}
+}
+
+// A symlink deploy keeps a symlink the user put at the destination, one that
+// leads outside the bucket's source and out of the primitive's directory, as
+// the Oracle keeps it (measured with install -g).
+func TestDeploySymlink_UserLeafLink_Refused(t *testing.T) {
+	root := deployPathRoot(t)
+	home := filepath.Join(root, "home")
+	src := filepath.Join(root, "src/apm_modules/o/dep/.apm/agents/r.agent.md")
+	writeDeployFile(t, src, "agent\n")
+	user := filepath.Join(home, ".claude/shared/r.md")
+	writeDeployFile(t, user, "USER SHARED CONTENT\n")
+	dest := filepath.Join(home, ".claude/agents/r.md")
+	deployPathLink(t, "../shared/r.md", dest)
+	activeDeployMode.symlink, activeDeployMode.projectDir = true, filepath.Join(root, "src")
+	defer func() { activeDeployMode.symlink, activeDeployMode.projectDir = false, "" }()
+	before := deployTree(t, root)
+
+	_, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "r", Type: TypeAgents, DepKey: "o/dep", SrcPath: src}, home)
+
+	want := &archive.ContainmentError{Path: dest, Base: filepath.Dir(dest), Resolved: user}
+	var got *archive.ContainmentError
+	if !errors.As(err, &got) || !reflect.DeepEqual(got, want) {
+		t.Errorf("deploy = %v, want %v", err, want)
+	}
+	if after := deployTree(t, root); !reflect.DeepEqual(after, before) {
+		t.Errorf("tree changed:\n%v\nwant\n%v", after, before)
 	}
 }

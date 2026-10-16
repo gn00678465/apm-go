@@ -318,42 +318,45 @@ func TestInstall_DestinationParentOutside_NotWritten(t *testing.T) {
 }
 
 // Step 22 feedback test 2: leaf-rule and leaf-skill, install and update. The
-// deployed file is a symlink out of .claude; a copy would write through it,
-// so the deploy of that primitive fails with a warning and nothing outside,
-// the link included, changes.
+// deployed file is a symlink out of .claude, so nothing outside changes. A
+// rule refused that way fails the command before anything is written, with
+// the Oracle's text and exit 1 (measured for install, also for a rule linked
+// into the project outside .claude); a file of a skill is replaced by the
+// package's file, as the Oracle replaces the skill's directory.
 func TestInstall_DestinationLinksOutside_NotWritten(t *testing.T) {
 	tests := []struct {
-		name, prim, dest string
-		transcript       map[string]func(warning string) string
+		name, dest string
+		code       int
+		transcript map[string]func(reason string) string
 	}{
-		{name: "rule", prim: "r", dest: ".claude/rules/r.md", transcript: map[string]func(string) string{
-			"install": func(w string) string {
+		{name: "rule", dest: ".claude/rules/r.md", code: 1, transcript: map[string]func(string) string{
+			"install": func(reason string) string {
 				return " > Installing dependencies from apm.yml...\n" +
-					" i Targets: claude  (source: apm.yml)\n" + w +
+					" i Targets: claude  (source: apm.yml)\n" +
 					"   + ../dep (local)\n" +
+					"   x 1 package failed:\n" +
+					"    +- ../dep -- Failed to integrate primitives from local package: " + reason + "\n" +
+					" x Installation failed with 1 error(s) in <t>s. No install transaction changes were committed.\n"
+			},
+			"update": func(reason string) string {
+				return " i Targets: claude  (source: apm.yml)\n" +
+					" x deploy: " + reason + "\n"
+			},
+		}},
+		{name: "file in a skill", dest: ".claude/skills/sk/data/precious.txt", transcript: map[string]func(string) string{
+			"install": func(string) string {
+				return " > Installing dependencies from apm.yml...\n" +
+					" i Targets: claude  (source: apm.yml)\n" +
+					"   + ../dep (local)\n" +
+					"  |-- 1 rule(s) adopted -> .claude/rules/\n" +
 					"  |-- 1 skill(s) integrated -> .claude/skills/\n" +
 					" + Installed 1 APM dependency in <t>s.\n"
 			},
-			"update": func(w string) string {
-				return " i Targets: claude  (source: apm.yml)\n" + w +
+			"update": func(string) string {
+				return " i Targets: claude  (source: apm.yml)\n" +
 					"_local/dep\n" +
+					"├── 1 instruction -> .claude/rules/\n" +
 					"└── 1 skill -> .claude/skills/\n" +
-					" i Already up to date\n"
-			},
-		}},
-		{name: "file in a skill", prim: "sk", dest: ".claude/skills/sk/data/precious.txt", transcript: map[string]func(string) string{
-			"install": func(w string) string {
-				return " > Installing dependencies from apm.yml...\n" +
-					" i Targets: claude  (source: apm.yml)\n" + w +
-					"   + ../dep (local)\n" +
-					"  |-- 1 rule(s) adopted -> .claude/rules/\n" +
-					"  |-- (files unchanged)\n" +
-					" + Installed 1 APM dependency in <t>s.\n"
-			},
-			"update": func(w string) string {
-				return " i Targets: claude  (source: apm.yml)\n" + w +
-					"_local/dep\n" +
-					"└── 1 instruction -> .claude/rules/\n" +
 					" i Already up to date\n"
 			},
 		}},
@@ -374,10 +377,12 @@ func TestInstall_DestinationLinksOutside_NotWritten(t *testing.T) {
 				stdout, code := runCLI86(t, cmd)
 
 				real := realDir86(t, root)
-				warning := " ! deploy " + tt.prim + " to claude failed: " + tt.dest + ": symlink " + tt.dest + " resolves to " +
-					filepath.Join(real, "outside", "precious.txt") + ", outside " + filepath.Join(real, "proj", ".claude") + "\n"
-				if want := tt.transcript[cmd](warning); code != 0 || stdout != want {
-					t.Errorf("exit %d, stdout:\n%s\nwant exit 0, stdout:\n%s", code, stdout, want)
+				reason := containment86(filepath.Join(cwd86(t), dest), filepath.Join(real, "proj", filepath.Dir(dest)), filepath.Join(real, "outside", "precious.txt"))
+				if want := tt.transcript[cmd](reason); code != tt.code || stdout != want {
+					t.Errorf("exit %d, stdout:\n%s\nwant exit %d, stdout:\n%s", code, stdout, tt.code, want)
+				}
+				if tt.code == 0 {
+					before[filepath.Join("proj", dest)] = "precious\n"
 				}
 				assertTree86(t, root, before)
 				if got := readText(t, "apm.lock.yaml"); got != lockBefore {

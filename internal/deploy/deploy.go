@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/resolver"
@@ -61,6 +62,18 @@ type DeployResult struct {
 	// prompt as a command has to tell, in the order the prompts deployed.
 	CommandNotes []CommandNote
 }
+
+// RejectedInstructionError is an instruction whose destination a symlink takes
+// out of its directory. Run returns it before it writes anything: the Oracle
+// fails the install on it (integration/instruction_integrator.py:237,440).
+type RejectedInstructionError struct {
+	DepKey string // "" for the project's own content
+	Err    *archive.ContainmentError
+}
+
+func (e *RejectedInstructionError) Error() string { return e.Err.Error() }
+
+func (e *RejectedInstructionError) Unwrap() error { return e.Err }
 
 // SkippedDep is a dependency whose `targets:` (Targets) has no active target.
 type SkippedDep struct {
@@ -124,8 +137,8 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	if deployDir == "" {
 		deployDir = projectDir
 	}
-	activeDeployMode.symlink = symlink
-	defer func() { activeDeployMode.symlink = false }()
+	activeDeployMode.symlink, activeDeployMode.projectDir = symlink, projectDir
+	defer func() { activeDeployMode.symlink, activeDeployMode.projectDir = false, "" }()
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
 	var mcpDiags []string
@@ -364,6 +377,10 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 	}
 
+	if err := checkInstructions(targets, ordered, winnersByTarget, deployDir); err != nil {
+		return nil, err
+	}
+
 	// 4. Deploy to each target
 	allDiags := make([]string, 0, len(sourceDiags)+len(mcpDiags)+len(conflictDiags)+len(skillSubsetDiags))
 	allDiags = append(allDiags, sourceDiags...)
@@ -427,6 +444,16 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			case errors.As(err, &nameErr):
 				result.CommandNotes = append(result.CommandNotes, CommandNote{DepKey: p.DepKey, Package: packageNames[p.DepKey],
 					Text: "Rejected command filename: " + nameErr.Error()})
+				continue
+			}
+			// The Oracle skips such an agent, command or prompt with a
+			// warning, and the user's symlink stays
+			// (integration/agent_integrator.py:204, command_integrator.py:569,
+			// prompt_integrator.py:299).
+			var outside *archive.ContainmentError
+			if kind, phase := rejectedKind(adapter, p); kind != "" && errors.As(err, &outside) {
+				result.CommandNotes = append(result.CommandNotes, CommandNote{DepKey: p.DepKey, Package: packageNames[p.DepKey],
+					Text: fmt.Sprintf("Rejected %s target path: %v", kind, outside), phase: phase})
 				continue
 			}
 			if err != nil {
@@ -600,8 +627,64 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	for _, dr := range result.PerDep {
 		sort.Strings(dr.Files)
 	}
+	slices.SortStableFunc(result.CommandNotes, func(a, b CommandNote) int { return a.phase - b.phase })
 
 	return result, nil
+}
+
+// checkInstructions runs, before the first write, the check each target's
+// deploy of an instruction makes, and returns the first refusal: the
+// dependencies first, in the order they were collected, then the project's
+// own content, each target in turn, as the Oracle integrates them
+// (install/phases/integrate.py:716). Any other error is the deploy's to
+// report.
+func checkInstructions(targets []string, ordered []Primitive, winnersByTarget map[string][]Primitive, deployDir string) error {
+	var buckets []string
+	seen := map[string]bool{"": true}
+	for _, p := range ordered {
+		if !seen[p.DepKey] {
+			seen[p.DepKey] = true
+			buckets = append(buckets, p.DepKey)
+		}
+	}
+	for _, key := range append(buckets, "") {
+		for _, target := range targets {
+			checker, ok := Adapters[target].(instructionChecker)
+			if !ok {
+				continue
+			}
+			for _, p := range winnersByTarget[target] {
+				if p.DepKey != key || p.Type != TypeInstructions {
+					continue
+				}
+				var outside *archive.ContainmentError
+				if errors.As(checker.checkInstruction(p, deployDir), &outside) {
+					return &RejectedInstructionError{DepKey: key, Err: outside}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// rejectedKind names a primitive the Oracle skips with a warning when a
+// symlink takes its destination out of its directory, and the phase of its
+// integration that warning comes in: prompts, agents, then commands, each
+// over every target (install/services.py:416-424). A prompt a target deploys
+// as a command is a command. Every other kind has "".
+func rejectedKind(adapter TargetAdapter, p Primitive) (string, int) {
+	switch p.Type {
+	case TypePrompts:
+		if _, ok := adapter.(promptCommander); ok {
+			return "command", phaseCommands
+		}
+		return "prompt", phasePrompts
+	case TypeAgents:
+		return "agent", phaseAgents
+	case TypeCommands:
+		return "command", phaseCommands
+	}
+	return "", 0
 }
 
 // keepFirstSharedSkill makes a skill directory that several targets write

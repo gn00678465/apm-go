@@ -233,6 +233,17 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		}
 	}
 	started := time.Now()
+	// newModuleDirs are the apm_modules directories of the packages this run
+	// fetched; an install the deploy refuses removes them.
+	var newModuleDirs []string
+	defer func() {
+		var refused *installRefusedError
+		if errors.As(runErr, &refused) {
+			removeNewLocalCopies(newModuleDirs)
+			refused.printEnd()
+			runErr = withSilentExitCode(1, runErr)
+		}
+	}()
 
 	// Determine frozen mode up front (explicit flag or CI default) so apm.yml can
 	// be optional in frozen verify-only mode (integrity is checked from lockfile+disk).
@@ -916,7 +927,8 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		}
 
 		newLocalCopies := absentLocalCopies(m)
-		result, err = resolver.Resolve(m, existingLock, deps.tags, regLoader, resolver.ResolverConfig{
+		fetched := &fetchedDirsLoader{next: regLoader}
+		result, err = resolver.Resolve(m, existingLock, deps.tags, fetched, resolver.ResolverConfig{
 			MarketplaceResolve: newMarketplaceResolveFunc(),
 		})
 		printHeldLines(heldLines, err == nil)
@@ -924,6 +936,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			removeNewLocalCopies(newLocalCopies)
 			return fmt.Errorf("resolve: %w", err)
 		}
+		newModuleDirs = fetched.keys
 		// mkt-029/033/F1: apm.yml dict-form marketplace dependencies
 		// (dependencies.apm entries {name, marketplace, version}) are
 		// resolved by the BFS itself now (root and transitive alike), not
@@ -1974,6 +1987,11 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 
 		beforeDeploy := hashesOnDisk(existingLock, detectRoot)
 		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir, deployDir != "")
+		var rejected *deploy.RejectedInstructionError
+		if run != nil && errors.As(err, &rejected) {
+			printTargets()
+			return run.rejectedInstall(rejected, result)
+		}
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}
@@ -3412,14 +3430,34 @@ func absentLocalCopies(m *manifest.Manifest) []string {
 	return absent
 }
 
-// removeNewLocalCopies deletes the copies absentLocalCopies listed, and the
-// _local and apm_modules directories when that leaves them empty.
+// removeNewLocalCopies deletes the directories absentLocalCopies or
+// fetchedDirsLoader listed, and the parent directories that leaves empty,
+// apm_modules included.
 func removeNewLocalCopies(keys []string) {
 	for _, key := range keys {
 		if _, err := deploy.SafeRemoveModuleDir(".", key); err != nil {
 			ux.Warn(os.Stderr, "could not remove apm_modules/%s: %v", key, err)
 		}
 	}
+}
+
+// fetchedDirsLoader records the apm_modules directory of each package the
+// resolve loads, direct or transitive, that did not exist before its load.
+// An install the deploy refuses removes them, as the Oracle's install leaves
+// no package it fetched (measured for a local, a git and a registry package,
+// and for a registry package's dependency).
+type fetchedDirsLoader struct {
+	next resolver.PackageLoader
+	keys []string
+}
+
+func (l *fetchedDirsLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
+	if key := deploy.DepRefKey(ref); key != "" {
+		if _, err := os.Lstat(filepath.Join("apm_modules", filepath.FromSlash(key))); os.IsNotExist(err) {
+			l.keys = append(l.keys, key)
+		}
+	}
+	return l.next.LoadPackage(ref, resolvedRef)
 }
 
 // localDeclaredPaths maps the apm_modules key of each direct local package

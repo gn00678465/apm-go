@@ -40,6 +40,57 @@ func (r *installRun) elapsed() string {
 	return fmt.Sprintf("%.1fs", time.Since(r.started).Seconds())
 }
 
+// installRefusedError is an install the deploy refused before it wrote
+// anything (deploy.RejectedInstructionError). The block of the refused
+// package is printed; runInstall prints the rest with printEnd, after it
+// removed what the install created.
+type installRefusedError struct {
+	run *installRun
+	// name and reason are the Oracle's failure line: the package's name, and
+	// the reason with the prefix its source gives (install/sources.py:85,
+	// 115,283).
+	name, reason string
+	err          error
+}
+
+func (e *installRefusedError) Error() string { return e.err.Error() }
+
+func (e *installRefusedError) Unwrap() error { return e.err }
+
+// rejectedInstall prints the header of the package whose instruction the
+// deploy refused, and for the project's own content the Oracle's line about
+// it (install/phases/integrate.py:396-407).
+func (r *installRun) rejectedInstall(e *deploy.RejectedInstructionError, result *resolver.ResolutionResult) error {
+	refused := &installRefusedError{run: r, err: e}
+	if e.DepKey == "" {
+		ux.SuccessAt(os.Stdout, "  ", "<project root> (local)")
+		ux.Error(os.Stdout, "Root project primitives could not be integrated: %v", e.Err)
+		refused.name, refused.reason = "<root>", "Failed to integrate root project primitives: "+e.Err.Error()
+		return refused
+	}
+	for _, dep := range result.Deps {
+		if dep.Key == e.DepKey {
+			ux.SuccessAt(os.Stdout, "  ", "%s", r.installBlockLabel(dep))
+		}
+	}
+	// A git package the Oracle names "from cached package" also when this
+	// run fetched it (measured).
+	prefix := "Failed to integrate primitives from cached package"
+	if _, local := r.localDeclared[e.DepKey]; local {
+		prefix = "Failed to integrate primitives from local package"
+	}
+	refused.name, refused.reason = r.dependencyName(e.DepKey, result), prefix+": "+e.Err.Error()
+	return refused
+}
+
+// printEnd prints the Oracle's last lines of a refused install
+// (utils/diagnostics.py:500-507, core/command_logger.py:925-931).
+func (e *installRefusedError) printEnd() {
+	ux.ErrorAt(os.Stdout, "  ", "1 package failed:")
+	ux.Plain(os.Stdout, "    +- %s -- %s", e.name, e.reason)
+	ux.Error(os.Stdout, "Installation failed with 1 error(s) in %s. No install transaction changes were committed.", e.run.elapsed())
+}
+
 // installKindLabels names a deployed-file kind the way the Oracle's per-kind
 // line does (_label_and_deploy_dir, install/services.py:105). Every label but
 // "file(s)" was compared against the output of Oracle v0.33.0 for a local

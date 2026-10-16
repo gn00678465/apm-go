@@ -1,0 +1,7 @@
+name: proj
+version: 1.0.0
+targets:
+  - claude
+dependencies:
+  apm:
+    - ./dep

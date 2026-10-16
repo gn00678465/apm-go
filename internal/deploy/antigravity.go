@@ -15,6 +15,17 @@ func (a *antigravityAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeHooks}
 }
 
+func (a *antigravityAdapter) checkInstruction(p Primitive, deployDir string) error {
+	return checkFileDest(p, antigravityRulePath(p), deployDir)
+}
+
+func antigravityRulePath(p Primitive) string {
+	if p.DepKey == "" {
+		return fmt.Sprintf(".agents/rules/%s.md", p.Name)
+	}
+	return path.Join(antigravityBundleDir(p.DepKey), "rules", p.Name+".md")
+}
+
 // DeployPrimitive routes local primitives (p.DepKey == "") to the flat,
 // shared workspace paths as before. Dependency primitives (p.DepKey != "")
 // instead land under that dependency's plugin bundle directory,
@@ -34,10 +45,7 @@ func (a *antigravityAdapter) DeployPrimitive(p Primitive, projectDir string) ([]
 	case TypeSkills:
 		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	case TypeInstructions:
-		if p.DepKey == "" {
-			return deployFileToPath(p, fmt.Sprintf(".agents/rules/%s.md", p.Name), projectDir)
-		}
-		return deployFileToPath(p, path.Join(antigravityBundleDir(p.DepKey), "rules", p.Name+".md"), projectDir)
+		return deployFileToPath(p, antigravityRulePath(p), projectDir)
 	case TypeAgents:
 		// Static custom-agent format of Antigravity CLI >=1.0.16
 		// (research/cli-subagents.md): one directory per agent, named after

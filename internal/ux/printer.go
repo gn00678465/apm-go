@@ -151,3 +151,8 @@ func InfoAt(w io.Writer, prefix, format string, a ...any) {
 func WarnAt(w io.Writer, prefix, format string, a ...any) {
 	lipgloss.Fprintln(errWriter(w), prefix+symbolLine(warnStyle, SymbolWarn, format, a...))
 }
+
+// ErrorAt is SuccessAt for an error record.
+func ErrorAt(w io.Writer, prefix, format string, a ...any) {
+	lipgloss.Fprintln(errWriter(w), prefix+symbolLine(errorStyle, SymbolError, format, a...))
+}

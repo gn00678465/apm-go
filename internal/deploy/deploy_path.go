@@ -14,14 +14,14 @@ import (
 )
 
 // DeployPathError is a path below the deploy root that leads, through the
-// symlink Link (one of its directories, or for a write the path itself), out
-// of its target root (.claude, .github, ...): removing or writing the path
-// would act on what Link points at.
+// symlink Link (one of its directories), out of its target root (.claude,
+// .github, ...): removing or writing the path would act on what Link points
+// at.
 type DeployPathError struct {
 	// Path is the path relative to the deploy root.
 	Path string
-	// Link is the first directory on Path, or Path itself, relative to the
-	// deploy root, that resolves outside Root: a symlink.
+	// Link is the first directory on Path, relative to the deploy root, that
+	// resolves outside Root: a symlink.
 	Link string
 	// Resolved is Link with every symlink resolved.
 	Resolved string
@@ -49,15 +49,32 @@ func CheckDeployPath(deployRoot, rel string) error {
 	return checkDeployPath(deployRoot, rel, false)
 }
 
-// CheckDeployWrite is CheckDeployPath for a path whose content a copy deploy
-// writes (os.WriteFile, copyFile): those follow a symlink at the last
-// component, so the whole path, that component included (a dangling one by
-// its target, where os.WriteFile would create the file), has to resolve
-// below the target root as well.
+// CheckDeployWrite refuses rel, a path relative to deployRoot whose content a
+// copy deploy writes (os.WriteFile, copyFile) or which a deploy makes as a
+// directory (os.MkdirAll), unless each directory above it passes as for
+// CheckDeployPath and rel, every symlink resolved (a dangling one by its
+// target, where os.WriteFile would create the file), stays in the directory
+// it is in, resolved: those calls follow a symlink at the last component. The
+// bound is the primitive's own directory (.claude/rules, .github/prompts), or
+// for a path below a skill's directory (skills/<name>) that directory, as
+// Oracle 0.33.0's ensure_path_within bounds it (utils/path_security.py:
+// 190-219), so a symlink to another place in the target root is refused too,
+// with the Oracle's text (*archive.ContainmentError).
 func CheckDeployWrite(deployRoot, rel string) error {
-	return checkDeployPath(deployRoot, rel, true)
+	if err := checkDeployPath(deployRoot, rel, true); err != nil {
+		return err
+	}
+	slash := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+	base := path.Dir(slash)
+	if skill := SkillDirOf(slash); skill != "" && skill != slash {
+		base = skill
+	}
+	return archive.CheckWithin(filepath.Join(deployRoot, filepath.FromSlash(base)), filepath.Join(deployRoot, filepath.FromSlash(rel)))
 }
 
+// checkDeployPath checks each directory on rel against its target root. For
+// a removal a symlink at a skill's directory ends the walk (CheckDeployPath);
+// a write checks every directory, since it never goes through such a symlink.
 func checkDeployPath(deployRoot, rel string, write bool) error {
 	if !archive.ContainedKey(deployRoot, rel) {
 		return fmt.Errorf("%s: path escapes the deploy root", rel)
@@ -74,11 +91,7 @@ func checkDeployPath(deployRoot, rel string, write bool) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", rel, err)
 	}
-	end := len(segs)
-	if write {
-		end++
-	}
-	for i := 2; i < end; i++ {
+	for i := 2; i < len(segs); i++ {
 		dir := strings.Join(segs[:i], "/")
 		resolved, err := archive.RealPath(filepath.Join(deployRoot, filepath.FromSlash(dir)))
 		if err != nil {

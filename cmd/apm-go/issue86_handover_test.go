@@ -72,8 +72,10 @@ func TestUninstall_SkillHandoverThroughSymlinkOutside_Refused(t *testing.T) {
 }
 
 // Feedback test 2: sub linked to another directory of .claude stays inside
-// the target root, so the hand-over writes b/sub/b.md there as before.
-func TestUninstall_SkillHandoverThroughSymlinkInside_HandsOver(t *testing.T) {
+// the target root, so the uninstall goes on, but it leads out of the skill's
+// directory, so the hand-over does not write b/sub/b.md through it (issue
+// #112): one warning, and the lock does not record the path.
+func TestUninstall_SkillHandoverThroughSymlinkInside_NotWritten(t *testing.T) {
 	root := handover86(t, func(string) string { return filepath.Join("..", "..", "elsewhere") })
 	if err := os.Mkdir(filepath.Join(".claude", "elsewhere"), 0o755); err != nil {
 		t.Fatal(err)
@@ -81,8 +83,12 @@ func TestUninstall_SkillHandoverThroughSymlinkInside_HandsOver(t *testing.T) {
 
 	stdout, code := runCLI86(t, "uninstall", "../a")
 
+	real := realDir86(t, root)
+	b := filepath.Join(".claude", "skills", "demo", "sub", "b.md")
+	reason := containment86(filepath.Join(cwd86(t), b), filepath.Join(real, "proj", ".claude", "skills", "demo"), filepath.Join(real, "proj", ".claude", "elsewhere", "b.md"))
 	want := " > Uninstalling 1 package(s)...\n" +
 		" + _local/a - found in apm.yml\n" +
+		" ! Re-integration skipped: restore .claude/skills/demo/sub/b.md: " + reason + ". Run 'apm-go install' to rebuild integrated files.\n" +
 		" i Removed _local/a from apm_modules/\n" +
 		" i Removed _local/a from dependencies.apm in apm.yml\n" +
 		" + Updated " + filepath.Join(cwd86(t), "apm.yml") + " (removed 1 package(s))\n" +
@@ -92,7 +98,7 @@ func TestUninstall_SkillHandoverThroughSymlinkInside_HandsOver(t *testing.T) {
 		t.Errorf("exit %d, stdout:\n%s\nwant exit 0, stdout:\n%s", code, stdout, want)
 	}
 	wantClaude := map[string]string{
-		".": "dir", "elsewhere": "dir", "elsewhere/b.md": "from b\n",
+		".": "dir", "elsewhere": "dir",
 		"skills": "dir", "skills/demo": "dir", "skills/demo/SKILL.md": handoverBSkill, "skills/demo/sub": "-> ../../elsewhere",
 	}
 	if got := tree86(t, ".claude"); !reflect.DeepEqual(got, wantClaude) {
@@ -102,10 +108,9 @@ func TestUninstall_SkillHandoverThroughSymlinkInside_HandsOver(t *testing.T) {
 		t.Errorf("outside = %v, want only the empty sub", got)
 	}
 	assertTransferRecord(t, transferLockDep(t, "apm.lock.yaml", "_local/b"),
-		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md", ".claude/skills/demo/sub/b.md"},
+		[]string{".claude/skills/demo", ".claude/skills/demo/SKILL.md"},
 		map[string]string{
 			".claude/skills/demo/SKILL.md": transferSHA(handoverBSkill),
-			".claude/skills/demo/sub/b.md": transferSHA("from b\n"),
 		})
 }
 
@@ -167,8 +172,7 @@ func TestInstall_SkillEmptyDirLinksOutside_NotMade(t *testing.T) {
 	real := realDir86(t, root)
 	want := " > Installing dependencies from apm.yml...\n" +
 		" i Targets: claude  (source: apm.yml)\n" +
-		" ! deploy sk to claude failed: .claude/skills/sk/empty: symlink .claude/skills/sk/empty resolves to " +
-		filepath.Join(real, "outside") + ", outside " + filepath.Join(real, "proj", ".claude") + "\n" +
+		" ! deploy sk to claude failed: " + containment86(filepath.Join(cwd86(t), empty), filepath.Join(real, "proj", ".claude", "skills", "sk"), filepath.Join(real, "outside")) + "\n" +
 		"   + ../dep (local)\n" +
 		"  |-- (files unchanged)\n" +
 		" ! _local/dep deployed 0 files to any target\n" +

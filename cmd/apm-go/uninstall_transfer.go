@@ -246,7 +246,7 @@ func (h *uninstallHandover) restore(root string) {
 // dotfiles directory) is walked through, as deploy and removal walk it, but
 // each segment is checked before it is made (deploy.CheckDeployWrite; for a
 // symlink, deploy.CheckDeployPath), since os.Mkdir and the copy follow a
-// parent that leads out of the target root.
+// parent that leads out of the target root, or out of the skill's directory.
 func restoreFromTrial(trialDir, root, p string) error {
 	segs := strings.Split(p, "/")
 	for i := range segs {

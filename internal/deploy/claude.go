@@ -14,6 +14,12 @@ func (a *claudeAdapter) SupportedTypes() []PrimitiveType {
 	return []PrimitiveType{TypeInstructions, TypeAgents, TypeSkills, TypeCommands, TypePrompts}
 }
 
+func (a *claudeAdapter) checkInstruction(p Primitive, deployDir string) error {
+	return CheckDeployWrite(deployDir, claudeRulePath(p))
+}
+
+func claudeRulePath(p Primitive) string { return fmt.Sprintf(".claude/rules/%s.md", p.Name) }
+
 func (a *claudeAdapter) commandPath(name string) string {
 	return fmt.Sprintf(".claude/commands/%s.md", name)
 }
@@ -33,7 +39,7 @@ func (a *claudeAdapter) DeployPrimitive(p Primitive, projectDir string) ([]strin
 	case TypeSkills:
 		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	case TypeInstructions:
-		return deployClaudeInstructions(p, projectDir)
+		return deployClaudeInstructions(p, projectDir, claudeRulePath(p))
 	case TypeAgents:
 		return deployFileToPath(p, fmt.Sprintf(".claude/agents/%s.md", p.Name), projectDir)
 	case TypeCommands:
