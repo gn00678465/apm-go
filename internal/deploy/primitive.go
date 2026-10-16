@@ -30,6 +30,9 @@ type Primitive struct {
 	DepKey  string                  // dependency unique key ("" for local)
 	SrcPath string                  // absolute path to source file or dir (for skills)
 	MCP     *manifest.MCPDependency // set only when Type == TypeMCP
+	// SkipRootGit marks a skill whose SrcPath is the root of a cloned
+	// package: the .git there is the checkout's, not the skill's.
+	SkipRootGit bool
 }
 
 // CollectLocalPrimitives returns the primitives of the project's own content
@@ -58,8 +61,9 @@ func CollectScopeLocalPrimitives(projectDir string, global bool) []Primitive {
 // package, dangles or loops is an error, so nothing outside the package is
 // ever read through it.
 type sourceTree struct {
-	dir    string // as the caller names it
-	depKey string // "" for the project's own content
+	dir      string // as the caller names it
+	depKey   string // "" for the project's own content
+	registry bool   // a registry package: its archive's .git is its content
 }
 
 // dependencyTree returns the tree of the dependency vendored at modulePath,
@@ -69,6 +73,17 @@ func dependencyTree(depKey, modulePath string) (sourceTree, bool) {
 		return sourceTree{}, false
 	}
 	return sourceTree{dir: modulePath, depKey: depKey}, true
+}
+
+// cloned reports whether t is a package apm-go took with git. The Oracle
+// drops the .git of a cloned package's root when it puts it in apm_modules
+// (deps/github_downloader.py:1923-1925,2015-2018), and keeps it for a local
+// package, which it copies (key _local/<name>), and for a registry package,
+// whose archive it extracts whole (deps/registry/extractor.py:151-170).
+// apm-go keeps the checkout's .git there for resolved_commit and
+// tree_sha256, so a skill read from the root leaves it out instead.
+func (t sourceTree) cloned() bool {
+	return t.depKey != "" && !t.registry && !strings.HasPrefix(t.depKey, "_local/")
 }
 
 func (t sourceTree) source() string {
@@ -161,11 +176,12 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 		}
 		name := skillNameFromDepKey(t.depKey)
 		prims = append(prims, Primitive{
-			Name:    name,
-			Type:    TypeSkills,
-			Source:  t.source(),
-			DepKey:  t.depKey,
-			SrcPath: t.dir,
+			Name:        name,
+			Type:        TypeSkills,
+			Source:      t.source(),
+			DepKey:      t.depKey,
+			SrcPath:     t.dir,
+			SkipRootGit: t.cloned(),
 		})
 	}
 

@@ -229,7 +229,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		depCanonKeys[key] = CanonicalDepKey(dep)
 		noteTargetSubset(key, dep.TargetSubset)
 		modulePath := filepath.Join(projectDir, "apm_modules", key)
-		prims, depServers, loadDiags, name, err := collectDependencySources(key, modulePath)
+		prims, depServers, loadDiags, name, err := collectDependencySources(key, modulePath, dep.Source == "registry")
 		if err != nil {
 			return nil, err
 		}
@@ -251,7 +251,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		for _, dep := range transitive {
 			noteTargetSubset(dep.Key, dep.TargetSubset)
 			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
-			prims, transitiveServers, loadDiags, name, err := collectDependencySources(dep.Key, modulePath)
+			prims, transitiveServers, loadDiags, name, err := collectDependencySources(dep.Key, modulePath, dep.Kind == resolver.KindRegistry)
 			if err != nil {
 				return nil, err
 			}
@@ -757,14 +757,16 @@ func keepFirstSharedSkill(targets []string, ordered []Primitive, winnersByTarget
 }
 
 // collectDependencySources reads the primitives, the MCP servers and the
-// package name of the dependency vendored at modulePath. Every check of its
-// symlinks runs here, before Run writes anything.
-func collectDependencySources(key, modulePath string) ([]Primitive, []*manifest.MCPDependency, []string, string, error) {
+// package name of the dependency vendored at modulePath, a registry package
+// when registry. Every check of its symlinks runs here, before Run writes
+// anything.
+func collectDependencySources(key, modulePath string, registry bool) ([]Primitive, []*manifest.MCPDependency, []string, string, error) {
 	name := filepath.Base(modulePath)
 	t, ok := dependencyTree(key, modulePath)
 	if !ok {
 		return nil, nil, nil, name, nil
 	}
+	t.registry = registry
 	prims, err := collectDependency(t)
 	if err != nil {
 		return nil, nil, nil, "", err

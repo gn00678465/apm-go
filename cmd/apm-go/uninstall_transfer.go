@@ -89,6 +89,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		}
 		result.Deps = append(result.Deps, resolver.ResolvedDep{
 			Key:               d.UniqueKey(),
+			Kind:              lockedKind(d),
 			RepoURL:           d.RepoURL,
 			Host:              d.Host,
 			Port:              d.Port,

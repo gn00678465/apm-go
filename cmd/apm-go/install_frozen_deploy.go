@@ -132,6 +132,7 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 		d := &lock.Dependencies[i]
 		result.Deps = append(result.Deps, resolver.ResolvedDep{
 			Key:               d.UniqueKey(),
+			Kind:              lockedKind(d),
 			RepoURL:           d.RepoURL,
 			Host:              d.Host,
 			Port:              d.Port,

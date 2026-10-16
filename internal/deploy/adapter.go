@@ -238,7 +238,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	}
 
 	if activeDeployMode.symlink {
-		return symlinkSkillTo(p.SrcPath, absDestDir, destDir, p.DepKey != "")
+		return symlinkSkillTo(p.SrcPath, absDestDir, destDir, p.DepKey != "", p.SkipRootGit)
 	}
 
 	// A symlink here is not the deploy's: a copy through it would write into
@@ -257,7 +257,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		}
 	} else {
 		for _, dirs := range []bool{false, true} {
-			err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(_, rel string, isDir bool) error {
+			err := walkSkillDir(p.SrcPath, "", p.DepKey != "", p.SkipRootGit, func(_, rel string, isDir bool) error {
 				if isDir != dirs {
 					return nil
 				}
@@ -275,7 +275,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		return nil, fmt.Errorf("create skill dir: %w", err)
 	}
 	var deployed []string
-	err = walkSkillDir(p.SrcPath, "", p.DepKey != "", func(src, rel string, isDir bool) error {
+	err = walkSkillDir(p.SrcPath, "", p.DepKey != "", p.SkipRootGit, func(src, rel string, isDir bool) error {
 		dst := filepath.Join(absDestDir, filepath.FromSlash(rel))
 		if isDir {
 			return os.MkdirAll(dst, 0755)
@@ -301,8 +301,9 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 // absDestDir is the user's (the deploy only ever makes a symlink there), so it
 // is deleted only when the source has every file in it with the same bytes;
 // otherwise it is left as it is and the error is a *keptSkillDirError. The
-// files it returns are those a copy deploy writes (follow as walkSkillDir).
-func symlinkSkillTo(srcDir, absDestDir, destDir string, follow bool) ([]string, error) {
+// files it returns are those a copy deploy writes (follow and skipRootGit as
+// walkSkillDir); the link still shows a skipped .git (#113).
+func symlinkSkillTo(srcDir, absDestDir, destDir string, follow, skipRootGit bool) ([]string, error) {
 	absSrc, err := filepath.Abs(srcDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve source: %w", err)
@@ -328,7 +329,7 @@ func symlinkSkillTo(srcDir, absDestDir, destDir string, follow bool) ([]string, 
 	}
 	var deployed []string
 	if follow {
-		_ = walkSkillDir(srcDir, "", true, func(_, rel string, isDir bool) error {
+		_ = walkSkillDir(srcDir, "", true, skipRootGit, func(_, rel string, isDir bool) error {
 			if !isDir {
 				deployed = append(deployed, path.Join(destDir, rel))
 			}
@@ -353,13 +354,17 @@ func symlinkSkillTo(srcDir, absDestDir, destDir string, follow bool) ([]string, 
 // from a malicious package. With follow it is visited as what it points at;
 // that is only for a dependency skill, whose tree collection has checked
 // (archive.CheckTree), so every symlink in it stays in the package and none
-// loops.
-func walkSkillDir(srcDir, relPrefix string, follow bool, visit func(src, rel string, isDir bool) error) error {
+// loops. With skipRootGit the entry .git of srcDir itself is not visited
+// (Primitive.SkipRootGit); one deeper down is.
+func walkSkillDir(srcDir, relPrefix string, follow, skipRootGit bool, visit func(src, rel string, isDir bool) error) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
+		if skipRootGit && e.Name() == ".git" {
+			continue
+		}
 		src, rel, isDir := filepath.Join(srcDir, e.Name()), path.Join(relPrefix, e.Name()), e.IsDir()
 		if e.Type()&os.ModeSymlink != 0 {
 			if !follow {
@@ -375,7 +380,7 @@ func walkSkillDir(srcDir, relPrefix string, follow bool, visit func(src, rel str
 			return err
 		}
 		if isDir {
-			if err := walkSkillDir(src, rel, follow, visit); err != nil {
+			if err := walkSkillDir(src, rel, follow, false, visit); err != nil {
 				return err
 			}
 		}

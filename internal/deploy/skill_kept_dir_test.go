@@ -217,7 +217,7 @@ func TestSymlinkSkillTo_RealDirectory(t *testing.T) {
 			}
 			before := keptDirFiles(t, dest)
 
-			files, err := symlinkSkillTo(src, dest, ".claude/skills/s1", false)
+			files, err := symlinkSkillTo(src, dest, ".claude/skills/s1", false, false)
 
 			if tc.wantMismatch == "" {
 				if err != nil {
@@ -286,7 +286,7 @@ func TestSymlinkSkillTo_ReplacesSymlinkAndRegularFile(t *testing.T) {
 			}
 			tc.prepare(t, dest)
 
-			if _, err := symlinkSkillTo(src, dest, ".claude/skills/s1", false); err != nil {
+			if _, err := symlinkSkillTo(src, dest, ".claude/skills/s1", false, false); err != nil {
 				t.Fatalf("symlinkSkillTo: %v", err)
 			}
 
@@ -442,7 +442,7 @@ func TestSymlinkSkillTo_KeepsDirectoryWhenAFileCannotBeRead(t *testing.T) {
 			}
 			keptDirDenyAccess(t, unreadable, 0)
 
-			_, err := symlinkSkillTo(src, dest, ".claude/skills/s1", false)
+			_, err := symlinkSkillTo(src, dest, ".claude/skills/s1", false, false)
 
 			var kept *keptSkillDirError
 			if !errors.As(err, &kept) {
@@ -469,7 +469,7 @@ func TestSymlinkSkillTo_DestinationThatCannotBeInspectedIsAnError(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	files, err := symlinkSkillTo(src, filepath.Join(notADir, "s1"), "skills/s1", false)
+	files, err := symlinkSkillTo(src, filepath.Join(notADir, "s1"), "skills/s1", false, false)
 
 	var kept *keptSkillDirError
 	if err == nil || errors.As(err, &kept) {
@@ -491,7 +491,7 @@ func TestSymlinkSkillTo_DestinationThatCannotBeRemovedIsAnError(t *testing.T) {
 	writeKeptDirFiles(t, parent, map[string]string{"s1": "MY OWN NOTES\n"})
 	keptDirDenyAccess(t, parent, 0o555)
 
-	files, err := symlinkSkillTo(src, dest, "skills/s1", false)
+	files, err := symlinkSkillTo(src, dest, "skills/s1", false, false)
 
 	var kept *keptSkillDirError
 	if err == nil || errors.As(err, &kept) {
