@@ -128,12 +128,29 @@ func recordMCPState(lock *lockfile.Lockfile, declared map[string]*manifest.MCPDe
 	}
 }
 
+// mcpAdapterLine is the line an Oracle MCP adapter prints once it has
+// written a server's config; success says it carries the success symbol.
+// Copilot prints none (adapters/client/copilot.py:291-296).
+type mcpAdapterLine struct {
+	success bool
+	format  string
+}
+
+var mcpAdapterLines = map[string]mcpAdapterLine{
+	"claude":      {false, "Successfully configured MCP server '%s' for Claude Code"}, // adapters/client/claude.py:304
+	"codex":       {true, "Configured MCP server '%s' for Codex CLI"},                 // adapters/client/codex.py:206-209
+	"opencode":    {false, "Successfully configured MCP server '%s' for OpenCode"},    // adapters/client/opencode.py:129
+	"antigravity": {true, "Configured MCP server '%s' for antigravity"},               // adapters/client/gemini.py:310-313
+}
+
 // printMCPBlock prints the MCP section of an install the way the Oracle's
 // console does (integration/mcp_integrator_install.py:825, :950-1081, :1175)
 // and returns how many servers this run configured or updated. A server is
 // already configured when the old lock holds the same config for it and
-// lists it for every target.
-func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, newLock, existingLock *lockfile.Lockfile, targetsByServer map[string]map[string]bool, explicitTarget, declaredTarget bool) int {
+// lists it for every target. targetOrder is the order deploy.ResolveTargets
+// gave: the Oracle lists targets in the order --target or targets: names
+// them (mcp_integrator_install.py:635-835), not sorted.
+func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, newLock, existingLock *lockfile.Lockfile, targetsByServer map[string]map[string]bool, targetOrder []string, explicitTarget, declaredTarget bool) int {
 
 	targetSet := map[string]bool{}
 	for _, set := range targetsByServer {
@@ -141,7 +158,7 @@ func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, 
 			targetSet[t] = true
 		}
 	}
-	targets := sortedStringSet(targetSet)
+	targets := orderedTargets(targetSet, targetOrder)
 
 	ux.Plain(os.Stdout, "+- MCP Servers (%d)", len(order))
 	switch {
@@ -187,7 +204,7 @@ func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, 
 			// A self-defined server always has a transport (manifest.ValidateMCP).
 			label = " (self-defined, " + dep.Transport + ")"
 		}
-		serverTargets := sortedStringSet(targetsByServer[server])
+		serverTargets := orderedTargets(targetsByServer[server], targetOrder)
 		titles := make([]string, len(serverTargets))
 		for i, t := range serverTargets {
 			titles[i] = titleCase(t)
@@ -201,14 +218,18 @@ func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, 
 		}
 		ux.ProgressAt(os.Stdout, "|  ", " %s%s", server, label)
 		ux.Plain(os.Stdout, "|     +- %s for %s...", action, strings.Join(titles, ", "))
+		// Each target's adapter line, then core/safe_installer.py:153-157's
+		// "  + <name>". The Oracle's config key of a registry server is the
+		// last segment of its name; apm-go keys the config by the full name.
 		for _, t := range serverTargets {
-			// The Claude adapter's own two lines (adapters/client/claude.py:304).
-			// The lines of the other adapters were not compared against the
-			// Oracle and are not printed.
-			if t == "claude" {
-				ux.Plain(os.Stdout, "Successfully configured MCP server '%s' for Claude Code", server)
-				ux.Plain(os.Stdout, "  + %s", server)
+			if line, ok := mcpAdapterLines[t]; ok {
+				if line.success {
+					ux.Success(os.Stdout, line.format, server)
+				} else {
+					ux.Plain(os.Stdout, line.format, server)
+				}
 			}
+			ux.Plain(os.Stdout, "  + %s", server)
 		}
 		ux.SuccessAt(os.Stdout, "|  ", " %s -> %s (%s)", server, strings.Join(titles, ", "), done)
 	}
@@ -227,6 +248,20 @@ func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, 
 	summary := strings.Join(parts, ", ")
 	ux.Success(os.Stdout, "%s", strings.ToUpper(summary[:1])+summary[1:])
 	return configuredCount + updatedCount
+}
+
+// orderedTargets returns the targets of set in the order of targetOrder, each
+// at its first place there.
+func orderedTargets(set map[string]bool, targetOrder []string) []string {
+	out := make([]string, 0, len(set))
+	seen := make(map[string]bool, len(set))
+	for _, t := range targetOrder {
+		if set[t] && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func countNoun(n int, noun string) string {

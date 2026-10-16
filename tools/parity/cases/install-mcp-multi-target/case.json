@@ -1,0 +1,6 @@
+{
+  "id": "install-mcp-multi-target",
+  "argv": ["install"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

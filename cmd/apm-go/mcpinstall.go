@@ -195,7 +195,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	recordMCPServer(lock, deployDep, deployed)
 	ensureClaudeDir(deployRoot, targetSet)
 	printMCPBlock([]string{opts.Name}, map[string]*manifest.MCPDependency{opts.Name: deployDep}, lock, oldLock,
-		map[string]map[string]bool{opts.Name: targetSet}, opts.TargetFlag != "", len(m.Target) > 0)
+		map[string]map[string]bool{opts.Name: targetSet}, deployed, opts.TargetFlag != "", len(m.Target) > 0)
 
 	lock.APMVersion = apmVersionFor(lock, lock.APMVersion, lockHasAPMVersion(lockNode), opts.NoProvenance)
 	lockBytes, err := lockfile.WriteLockfile(lock, lockNode)
