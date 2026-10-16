@@ -162,10 +162,11 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			declaredMCP[s.Name] = true
 		}
 	}
-	// devDependencies.mcp is declared but not deployed (issue #97).
-	noteDeclaredMCP(m.MCPServers)
-	noteDeclaredMCP(m.MCPDevServers)
-	localMCP, localMCPDiags := collectMCPPrimitives(m.MCPServers, "local", "")
+	// The project's devDependencies.mcp deploys like its dependencies.mcp; a
+	// dependency's does not (Oracle integration/mcp_config_view.py:84-88).
+	rootMCP := slices.Concat(m.MCPServers, m.MCPDevServers)
+	noteDeclaredMCP(rootMCP)
+	localMCP, localMCPDiags := collectMCPPrimitives(rootMCP, "local", "")
 	ordered = append(ordered, localMCP...)
 	mcpDiags = append(mcpDiags, localMCPDiags...)
 
