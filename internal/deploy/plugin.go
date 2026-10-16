@@ -3,6 +3,7 @@ package deploy
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -106,34 +107,24 @@ func collectPluginPrimitives(t sourceTree, m *pluginManifest, staged bool) (prim
 }
 
 // pluginStage is a staging directory of the Oracle, .apm/agents/ or
-// .apm/prompts/, as it stands once the plugin's files are copied into it:
-// each file name holds the source of the last copy, and the names keep the
-// order they first came in.
-type pluginStage struct {
-	names []string
-	src   map[string]string
-}
+// .apm/prompts/, once the plugin's files are copied into it: each file name
+// holds the source of the last copy.
+type pluginStage map[string]string
 
-func (s *pluginStage) put(name, src string) {
-	if s.src == nil {
-		s.src = map[string]string{}
-	}
-	if _, ok := s.src[name]; !ok {
-		s.names = append(s.names, name)
-	}
-	s.src[name] = src
-}
+func (s pluginStage) put(name, src string) { s[name] = src }
 
 // stagePluginFiles returns a Claude plugin's agents and prompts as the Oracle
 // stages them before it collects .apm/ (deps/plugin_parser.py:1232-1296): the
 // package's own .apm/agents/ and .apm/prompts/ first, then the agents
 // directories, then the agent files, then each command path in the order it
 // is listed, a later copy over an earlier one of the same name. A command is
-// staged as plugin_command_prompt_name names it. Only then are the staged
-// files named, and a workflow prompt dropped, so a workflow staged last over
-// a command leaves no prompt.
+// staged as plugin_command_prompt_name names it. The Oracle then finds the
+// staged files in name order (integration/base_integrator.py:1059), so they
+// are named in that order, and of two staged names of one agent the first
+// one is kept by the conflict resolution. A workflow prompt is dropped only
+// then, so a workflow staged last over a command leaves no prompt.
 func stagePluginFiles(t sourceTree, m *pluginManifest) ([]Primitive, error) {
-	var agents, prompts pluginStage
+	agents, prompts := pluginStage{}, pluginStage{}
 	if err := eachFlatFile(t, ".apm/agents", extractAgentName, agents.put); err != nil {
 		return nil, err
 	}
@@ -159,14 +150,14 @@ func stagePluginFiles(t sourceTree, m *pluginManifest) ([]Primitive, error) {
 	}
 
 	var prims []Primitive
-	for _, name := range agents.names {
+	for _, name := range slices.Sorted(maps.Keys(agents)) {
 		if n := extractAgentName(name); n != "" {
-			prims = append(prims, Primitive{Name: n, Type: TypeAgents, Source: t.source(), DepKey: t.depKey, SrcPath: agents.src[name]})
+			prims = append(prims, Primitive{Name: n, Type: TypeAgents, Source: t.source(), DepKey: t.depKey, SrcPath: agents[name]})
 		}
 	}
-	for _, name := range prompts.names {
-		if n := extractPromptName(name); n != "" && !isWorkflowPrompt(prompts.src[name]) {
-			prims = append(prims, Primitive{Name: n, Type: TypePrompts, Source: t.source(), DepKey: t.depKey, SrcPath: prompts.src[name]})
+	for _, name := range slices.Sorted(maps.Keys(prompts)) {
+		if n := extractPromptName(name); n != "" && !isWorkflowPrompt(prompts[name]) {
+			prims = append(prims, Primitive{Name: n, Type: TypePrompts, Source: t.source(), DepKey: t.depKey, SrcPath: prompts[name]})
 		}
 	}
 	return prims, nil

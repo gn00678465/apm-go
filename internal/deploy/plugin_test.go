@@ -602,8 +602,11 @@ func TestCollectDependencyPrimitives_PluginJSON_APMYMLOutsideIsNotRead(t *testin
 // A Claude plugin's agents and commands reach the deploy as the Oracle stages
 // them: copied into the package's .apm/agents/ and .apm/prompts/, a later
 // copy over an earlier one of the same file name, the package's own files
-// there first (deps/plugin_parser.py:1232-1296). The expected bodies are what
-// Oracle 0.33.0 deployed (~/.cache/apm-go-verify/issue107/col1/).
+// there first (deps/plugin_parser.py:1232-1296); it then finds the staged
+// files in name order (integration/base_integrator.py:1059), so of two staged
+// names of one agent the one sorted first wins. The expected bodies are what
+// Oracle 0.33.0 deployed (~/.cache/apm-go-verify/issue107/col1/ and
+// issue107-review-step19/matrix.log).
 func TestRun_PluginStagingLaterCopyWins(t *testing.T) {
 	cmd := func(body string) string { return "---\ndescription: d\n---\n" + body + "\n" }
 	wf := func(body string) string { return "---\ndescription: d\ninterval: 1h\n---\n" + body + "\n" }
@@ -629,6 +632,12 @@ func TestRun_PluginStagingLaterCopyWins(t *testing.T) {
 			files: map[string]string{"commands/hello.md": cmd("NORMAL"), "commands/hello.prompt.md": wf("WF")}},
 		{name: "c7 another staged file name of the same agent", manifest: `{"name":"plug"}`,
 			files: map[string]string{".apm/agents/rev.agent.md": ag("OLD"), "agents/rev.md": ag("NEW")}, agent: "OLD"},
+		{name: "c7 reversed: the staged name sorted first wins", manifest: `{"name":"plug"}`,
+			files: map[string]string{".apm/agents/rev.md": ag("Old"), "agents/rev.agent.md": ag("New")}, agent: "New"},
+		{name: "two listed agent files of one name", manifest: `{"name":"plug","agents":["./a/rev.md","./b/rev.agent.md"]}`,
+			files: map[string]string{"a/rev.md": ag("A"), "b/rev.agent.md": ag("B")}, agent: "B"},
+		{name: "rev.md and rev.agent.md in the default agents/", manifest: `{"name":"plug"}`,
+			files: map[string]string{"agents/rev.md": ag("MD"), "agents/rev.agent.md": ag("AGENT")}, agent: "AGENT"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
