@@ -42,7 +42,7 @@ type mcpInstallOpts struct {
 // runMCPInstall handles `apm install --mcp NAME [flags]`: a standalone
 // "declare + deploy this one MCP server" operation, independent of the
 // normal apm-package resolve/lockfile pipeline (apm.lock.yaml is untouched).
-func runMCPInstall(opts mcpInstallOpts) (runErr error) {
+func runMCPInstall(opts mcpInstallOpts) error {
 	deployRoot := "."
 	if opts.DeployDir != "" {
 		deployRoot = opts.DeployDir
@@ -145,13 +145,6 @@ func runMCPInstall(opts mcpInstallOpts) (runErr error) {
 			if err != nil {
 				return fmt.Errorf("serialize apm.yml: %w", err)
 			}
-		}
-		if createManifest {
-			defer func() {
-				if runErr != nil {
-					removeCreatedManifest()
-				}
-			}()
 		}
 		if err := os.WriteFile("apm.yml", manifestBytes, 0644); err != nil {
 			return fmt.Errorf("write apm.yml: %w", err)

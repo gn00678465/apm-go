@@ -408,25 +408,57 @@ func TestInstallGlobalMCP_NoManifest_CreatesIt(t *testing.T) {
 	}
 }
 
-// TestInstallGlobalMCP_NoManifest_FailureRemovesIt: an `install -g --mcp`
-// that created ~/.apm/apm.yml and then fails removes it.
-func TestInstallGlobalMCP_NoManifest_FailureRemovesIt(t *testing.T) {
-	root := bootstrapProject(t, "proj")
-	// A lock that cannot be read fails the install after apm.yml is written.
-	if err := os.MkdirAll(filepath.Join(root, "home", ".apm", "apm.lock.yaml"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+// TestInstallGlobalMCP_NoManifest_FailureKeepsIt: an `install -g --mcp`
+// that fails after it wrote ~/.apm/apm.yml keeps the file, as Oracle 0.33.0
+// does: its MCP path has no install transaction (install/mcp/command.py:
+// 189-194, :312). The bytes are the Oracle's (mcp-fail/oracle).
+func TestInstallGlobalMCP_NoManifest_FailureKeepsIt(t *testing.T) {
+	const want = "name: home\n" +
+		"version: 1.0.0\n" +
+		"description: APM project for home\n" +
+		"author: Developer\n" +
+		"targets:\n" +
+		"- claude\n" +
+		"dependencies:\n" +
+		"  apm: []\n" +
+		"  mcp:\n" +
+		"  - name: srv\n" +
+		"    registry: false\n" +
+		"    transport: stdio\n" +
+		"    command: echo\n" +
+		"    args:\n" +
+		"    - hi\n" +
+		"includes: auto\n" +
+		"scripts: {}\n"
+	for _, tt := range []struct {
+		name string
+		lock func(t *testing.T, root string)
+	}{
+		{"lock is a directory", func(t *testing.T, root string) {
+			if err := os.MkdirAll(filepath.Join(root, "home", ".apm", "apm.lock.yaml"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"lock is malformed YAML", func(t *testing.T, root string) {
+			writeCompileFile(t, root, "home/.apm/apm.lock.yaml", "broken: [\n")
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := bootstrapProject(t, "proj")
+			tt.lock(t, root)
 
-	stdout, _, code := runCompileCLI(t, "install", "-g", "--mcp", "srv", "--target", "claude", "--", "echo", "hi")
-	if code != 1 {
-		t.Errorf("exit %d, want 1; stdout:\n%s", code, stdout)
+			stdout, _, code := runCompileCLI(t, "install", "-g", "--mcp", "srv", "--target", "claude", "--", "echo", "hi")
+			if code != 1 {
+				t.Errorf("exit %d, want 1; stdout:\n%s", code, stdout)
+			}
+			if strings.Contains(stdout, "Removed apm.yml") {
+				t.Errorf("stdout:\n%s\nwant no Removed line", stdout)
+			}
+			if got := readFileString(t, filepath.Join(root, "home", ".apm", "apm.yml")); got != want {
+				t.Errorf("~/.apm/apm.yml:\n%s\nwant:\n%s", got, want)
+			}
+		})
 	}
-	removed := strings.Index(stdout, " i Removed apm.yml created by the failed install.\n")
-	failed := strings.Index(stdout, " x ")
-	if removed < 0 || failed < 0 || removed > failed {
-		t.Errorf("stdout:\n%s\nwant the Removed line before the error line", stdout)
-	}
-	assertNoFile(t, filepath.Join(root, "home", ".apm", "apm.yml"))
 }
 
 // TestInstallHelp_TargetRepeatKeepsLast: the --target help says what the
@@ -455,4 +487,20 @@ func TestRemoveCreatedManifest_FailureWarns(t *testing.T) {
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
+}
+
+// TestInstallGlobalMCP_NoManifest_FailureBeforeWrite_CreatesNothing: an
+// `install -g --mcp` that fails before it writes ~/.apm/apm.yml leaves no
+// file, as the Oracle's prevalidation does (mg-vscode, mg-opencode).
+func TestInstallGlobalMCP_NoManifest_FailureBeforeWrite_CreatesNothing(t *testing.T) {
+	root := bootstrapProject(t, "proj")
+
+	stdout, _, code := runCompileCLI(t, "install", "-g", "--mcp", "srv", "--target", "claude", "--env", "NOEQUALS", "--", "echo", "hi")
+	if code == 0 {
+		t.Errorf("exit 0, want a failure; stdout:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Created") {
+		t.Errorf("stdout:\n%s\nwant no Created line", stdout)
+	}
+	assertNoFile(t, filepath.Join(root, "home", ".apm", "apm.yml"))
 }
