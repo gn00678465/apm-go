@@ -1,0 +1,21 @@
+name: g8
+version: 1.0.0
+targets: [claude]
+dependencies:
+  mcp:
+    - name: prodsrv
+      registry: false
+      transport: stdio
+      command: npx
+      args: ["-y", "prod"]
+devDependencies:
+  mcp:
+    - name: devsrv
+      registry: false
+      transport: stdio
+      command: npx
+      args: ["-y", "dev"]
+    - name: devhttp
+      registry: false
+      transport: http
+      url: https://example.com/mcp

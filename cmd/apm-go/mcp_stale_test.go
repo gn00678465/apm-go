@@ -585,18 +585,27 @@ func TestInstall_StaleMCP_ServerMovedToDevDependenciesIsKept(t *testing.T) {
 	writeStaleMCPFile(t, "apm.yml", staleMCPManifest("claude", "keep"))
 	mustStaleMCPInstall(t, "", "")
 	before := readStaleMCPFile(t, ".mcp.json")
+	lockBefore := readStaleMCPFile(t, "apm.lock.yaml")
 	moved := strings.Replace(staleMCPManifest("claude", "keep"), "dependencies:\n  mcp:\n", "dependencies:\n  mcp: []\ndevDependencies:\n  mcp:\n", 1)
 	writeStaleMCPFile(t, "apm.yml", moved)
 
 	out := mustStaleMCPInstall(t, "", "")
 	out = regexp.MustCompile(`in [0-9.]+s\.`).ReplaceAllString(out, "in Ns.")
-	if want := " > Installing dependencies from apm.yml...\n\n i No changes -- install state already up to date in Ns.\n"; out != want {
+	// Oracle 0.33.0 prints this for the same move.
+	want := " > Installing dependencies from apm.yml...\n" +
+		"+- MCP Servers (1)\n" +
+		" i Targeting declared target from apm.yml: claude\n" +
+		"|   + keep (already configured)\n" +
+		" + All servers up to date\n" +
+		"\n" +
+		" i No changes -- install state already up to date in Ns.\n"
+	if out != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
 	if got := readStaleMCPFile(t, ".mcp.json"); got != before {
 		t.Errorf(".mcp.json changed:\n%s", got)
 	}
-	if got := readStaleMCPFile(t, "apm.lock.yaml"); got != staleMCPRegistryOnlyHeaderLock {
-		t.Errorf("apm.lock.yaml:\n%s", got)
+	if got := readStaleMCPFile(t, "apm.lock.yaml"); got != lockBefore {
+		t.Errorf("apm.lock.yaml changed:\n%s\nwant:\n%s", got, lockBefore)
 	}
 }

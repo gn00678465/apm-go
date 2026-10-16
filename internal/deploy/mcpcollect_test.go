@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -344,5 +345,85 @@ func TestRun_MCPCollection_DirectDepAutoTrusted(t *testing.T) {
 	}
 	if len(prims) != 1 || prims[0].Name != "trusted" || prims[0].Type != TypeMCP || prims[0].MCP == nil {
 		t.Fatalf("expected one TypeMCP primitive named %q, got %+v", "trusted", prims)
+	}
+}
+
+// readMCPServers returns the mcpServers object of the .mcp.json under dir.
+func readMCPServers(t *testing.T, dir string) map[string]map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse .mcp.json: %v\n%s", err, data)
+	}
+	return doc.MCPServers
+}
+
+func TestRun_MCPDevServersOfProjectDeploy(t *testing.T) {
+	dir := t.TempDir()
+	m := &manifest.Manifest{
+		Name:    "test",
+		Version: "1.0.0",
+		MCPDevServers: []*manifest.MCPDependency{
+			{Name: "devsrv", Registry: false, Transport: "stdio", Command: "npx"},
+		},
+	}
+	if _, err := Run([]string{"claude"}, dir, m, nil, nil, "", false); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	servers := readMCPServers(t, dir)
+	if len(servers) != 1 || servers["devsrv"]["command"] != "npx" {
+		t.Errorf(".mcp.json mcpServers = %v, want devsrv alone", servers)
+	}
+}
+
+func TestRun_MCPProdServerWinsOverDevServerOfSameName(t *testing.T) {
+	dir := t.TempDir()
+	m := &manifest.Manifest{
+		Name:    "test",
+		Version: "1.0.0",
+		MCPServers: []*manifest.MCPDependency{
+			{Name: "same", Registry: false, Transport: "stdio", Command: "prod-cmd"},
+		},
+		MCPDevServers: []*manifest.MCPDependency{
+			{Name: "same", Registry: false, Transport: "stdio", Command: "dev-cmd"},
+		},
+	}
+	if _, err := Run([]string{"claude"}, dir, m, nil, nil, "", false); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	servers := readMCPServers(t, dir)
+	if len(servers) != 1 || servers["same"]["command"] != "prod-cmd" {
+		t.Errorf(".mcp.json mcpServers = %v, want same with prod-cmd", servers)
+	}
+}
+
+func TestRun_MCPDevServersOfDependencyDoNotDeploy(t *testing.T) {
+	dir := t.TempDir()
+	depKey := "acme/foo"
+	mkFile(t, filepath.Join(dir, "apm_modules", depKey), "apm.yml",
+		"name: dep\nversion: 1.0.0\ndependencies:\n  mcp:\n    - name: depprod\n      registry: false\n      transport: stdio\n      command: prod-cmd\n"+
+			"devDependencies:\n  mcp:\n    - name: depdev\n      registry: false\n      transport: stdio\n      command: dev-cmd\n")
+	m := &manifest.Manifest{
+		Name:    "test",
+		Version: "1.0.0",
+		ParsedDeps: []*manifest.DependencyReference{
+			{RepoURL: depKey, Owner: "acme", Repo: "foo", Source: "git"},
+		},
+	}
+	resolved := &resolver.ResolutionResult{
+		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
+	}
+	if _, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	servers := readMCPServers(t, dir)
+	if _, ok := servers["depdev"]; ok || len(servers) != 1 || servers["depprod"] == nil {
+		t.Errorf(".mcp.json mcpServers = %v, want depprod alone", servers)
 	}
 }
