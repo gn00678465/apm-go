@@ -33,6 +33,9 @@ type uninstallHandover struct {
 	// hashes holds the trial's hash of each handed-over file; a skill
 	// directory entry has none.
 	hashes map[string]string
+	// before holds the hash each handed-over file had on disk before the
+	// removal; a path with nothing readable there has none.
+	before map[string]string
 	// order lists the buckets as install prints them: the direct dependencies
 	// in the order apm.yml declares them, then the others in lock order, then
 	// the project's own content.
@@ -108,7 +111,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 	if err != nil {
 		return nil, err
 	}
-	h := &uninstallHandover{trialDir: trialDir, owner: map[string]string{}, hashes: map[string]string{}, parentLinks: map[string]string{}}
+	h := &uninstallHandover{trialDir: trialDir, owner: map[string]string{}, hashes: map[string]string{}, before: map[string]string{}, parentLinks: map[string]string{}}
 	listed := map[string]bool{}
 	for _, d := range allDirectDeps(m) {
 		if key := deploy.DepRefKey(d); key != "" && !listed[key] {
@@ -167,6 +170,9 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		root = deployDir
 	}
 	for p := range h.owner {
+		if hash, err := lockfile.HashFileBytes(filepath.Join(root, filepath.FromSlash(p))); err == nil {
+			h.before[p] = hash
+		}
 		segs := strings.Split(p, "/")
 		for i := 0; i < len(segs)-1 && (i == 0 || segs[i-1] != "skills"); i++ {
 			rel := strings.Join(segs[:i+1], "/")
@@ -363,8 +369,12 @@ func (h *uninstallHandover) record(lock *lockfile.Lockfile) {
 // printBlocks prints, for each package that received a path, the lines of its
 // install block without the header, as the Oracle prints them after
 // "Updated <apm.yml>" (commands/uninstall/engine.py:1106-1419). They count
-// every file the lock now records for the package; one that has the recorded
-// hash on disk is adopted. The Oracle prints them for every remaining
+// every file the lock now records for the package. A file is adopted when it
+// had the recorded hash on disk before the removal, as the Oracle's redeploy
+// adopts a file already there with the bytes it would write and integrates
+// any other (integration/instruction_integrator.py:452-485,
+// base_integrator.py:429); a handed-over file is judged by h.before, since
+// restore has rewritten it. The Oracle prints them for every remaining
 // package; apm-go prints them only for one that received a path, so an
 // uninstall that hands nothing over prints what it printed before.
 func (h *uninstallHandover) printBlocks(lock *lockfile.Lockfile, root string) {
@@ -387,13 +397,17 @@ func (h *uninstallHandover) printBlocks(lock *lockfile.Lockfile, root string) {
 			}
 			files, hashes = dep.DeployedFiles, dep.DeployedHashes
 		}
-		onDisk := map[string]string{}
+		before := map[string]string{}
 		for _, f := range files {
-			if hash, err := lockfile.HashFileBytes(filepath.Join(root, filepath.FromSlash(f))); err == nil {
-				onDisk[f] = hash
+			if _, handedOver := h.owner[f]; handedOver {
+				if hash, ok := h.before[f]; ok {
+					before[f] = hash
+				}
+			} else if hash, err := lockfile.HashFileBytes(filepath.Join(root, filepath.FromSlash(f))); err == nil {
+				before[f] = hash
 			}
 		}
-		printInstallBlockLines(files, hashes, onDisk)
+		printInstallBlockLines(files, hashes, before)
 	}
 }
 

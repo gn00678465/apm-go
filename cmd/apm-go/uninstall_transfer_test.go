@@ -672,3 +672,74 @@ func TestUninstallGlobal_SharedRuleAndSkillOwner_PrintsSurvivorBlock(t *testing.
 		t.Errorf("lines before Uninstall complete =\n%q\nwant\n%q", got, want)
 	}
 }
+
+// threeHandoverFiles are the packages of the issue #80 steps: m shares rule
+// "shared" with a and agent "shared" with z, each with other content, and z
+// has a rule of its own. under prefixes each path ("" for the project).
+func threeHandoverFiles(under string) map[string]string {
+	files := map[string]string{
+		"m/apm.yml": "name: m\nversion: 1.0.0\n",
+		"a/apm.yml": "name: a\nversion: 1.0.0\n",
+		"z/apm.yml": "name: z\nversion: 1.0.0\n",
+		"z/.apm/instructions/z-only.instructions.md": "---\napplyTo: \"**\"\n---\n\n# z only\n",
+	}
+	for _, p := range []string{"m", "a"} {
+		files[p+"/.apm/instructions/shared.instructions.md"] = "---\napplyTo: \"**\"\n---\n\n# Rule R from " + p + "\n"
+	}
+	for _, p := range []string{"m", "z"} {
+		files[p+"/.apm/agents/shared.agent.md"] = "---\nname: shared\ndescription: " + p + "\n---\n\n# Agent G from " + p + "\n"
+	}
+	out := map[string]string{}
+	for rel, content := range files {
+		out[filepath.Join(under, filepath.FromSlash(rel))] = content
+	}
+	return out
+}
+
+const threeHandoverManifest = "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n    - ./m\n    - ./a\n    - ./z\n"
+
+// A handed-over file that the survivor's version replaces is integrated, as
+// the Oracle rewrites it. The lines are the output of Oracle 0.33.0 for the
+// same steps (issue #80), with apm-go's status symbols.
+func TestUninstall_HandedOverFileWithOtherContent_IsIntegrated(t *testing.T) {
+	staleCleanupProject(t, threeHandoverManifest, threeHandoverFiles(""))
+	staleCleanupInstall(t, "")
+
+	out := transferUninstall(t, uninstallOptions{}, "./m")
+
+	want := "  |-- 1 rule(s) integrated -> .claude/rules/\n" +
+		"  |-- 1 agents integrated -> .claude/agents/\n" +
+		"  |-- 1 rule(s) adopted -> .claude/rules/\n"
+	if got := transferBlockLines(t, out); got != want {
+		t.Errorf("lines before Uninstall complete =\n%q\nwant\n%q\n%s", got, want, out)
+	}
+}
+
+// The same steps under --global, with the packages declared by absolute path,
+// since Oracle 0.33.0 rejects a relative local path at user scope
+// (install/phases/resolve.py:551-563). The lines are its output for them.
+func TestUninstallGlobal_HandedOverFileWithOtherContent_IsIntegrated(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	chdirTemp(t)
+	home := t.TempDir()
+	apmDir := filepath.Join(home, ".apm")
+	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
+	globalDirOverride, globalDeployDirOverride = apmDir, home
+	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
+	for rel, content := range threeHandoverFiles(apmDir) {
+		writeGlobalStaleFile(t, rel, content)
+	}
+	pkg := func(p string) string { return filepath.Join(apmDir, p) }
+	writeGlobalStaleFile(t, filepath.Join(apmDir, "apm.yml"),
+		"name: global\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n    - "+pkg("m")+"\n    - "+pkg("a")+"\n    - "+pkg("z")+"\n")
+	globalStaleInstall(t, "")
+
+	out := transferUninstall(t, uninstallOptions{Global: true}, pkg("m"))
+
+	want := "  |-- 1 rule(s) integrated -> .claude/rules/\n" +
+		"  |-- 1 agents integrated -> .claude/agents/\n" +
+		"  |-- 1 rule(s) adopted -> .claude/rules/\n"
+	if got := transferBlockLines(t, out); got != want {
+		t.Errorf("lines before Uninstall complete =\n%q\nwant\n%q\n%s", got, want, out)
+	}
+}
