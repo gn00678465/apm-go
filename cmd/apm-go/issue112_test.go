@@ -412,3 +412,135 @@ func TestInstall112_TransitiveRuleRefused_RemovesFetchedModules(t *testing.T) {
 		})
 	}
 }
+
+// replaceWithShared112 replaces the deployed file link (relative to root) by
+// a symlink to ../shared/<its name>: a copy of the deployed bytes for "same",
+// userShared112 for "diff", and nothing for "dangling".
+func replaceWithShared112(t *testing.T, root, link, content string) string {
+	t.Helper()
+	target := "../shared/" + filepath.Base(link)
+	abs := filepath.Join(root, link)
+	shared := filepath.Join(filepath.Dir(abs), target)
+	switch content {
+	case "same":
+		writeCompileFile(t, filepath.Dir(shared), filepath.Base(shared), readText(t, abs))
+	case "diff":
+		writeCompileFile(t, filepath.Dir(shared), filepath.Base(shared), userShared112)
+	}
+	if err := os.Remove(abs); err != nil {
+		t.Fatal(err)
+	}
+	link86(t, target, abs)
+	return target
+}
+
+// A deployed agent, command or prompt that the user then replaced by a
+// symlink out of its directory is the user's: install and update leave it,
+// print only the Rejected line, and keep its lock record while the file it
+// names exists, as Oracle 0.33.0 does (card #112 step 16, s16/after).
+func TestInstall112_RejectedAfterInstall_Kept(t *testing.T) {
+	kinds := []struct{ name, target, link, kind string }{
+		{"claude agent", "claude", ".claude/agents/a.md", "agent"},
+		{"claude command", "claude", ".claude/commands/p.md", "command"},
+		{"opencode command", "opencode", ".opencode/commands/p.md", "command"},
+		{"copilot prompt", "copilot", ".github/prompts/p.prompt.md", "prompt"},
+		{"codex agent", "codex", ".codex/agents/a.toml", "agent"},
+	}
+	for _, k := range kinds {
+		for _, content := range []string{"same", "diff", "dangling"} {
+			for _, cmd := range []string{"install", "update"} {
+				t.Run(k.name+"/"+content+"/"+cmd, func(t *testing.T) {
+					project112(t, k.target)
+					mustRunCLI(t, "install")
+					lockBefore := readText(t, "apm.lock.yaml")
+					shared := filepath.Join(filepath.Dir(k.link), "..", "shared", filepath.Base(k.link))
+					var sharedBefore string
+					target := replaceWithShared112(t, ".", k.link, content)
+					if content != "dangling" {
+						sharedBefore = readText(t, shared)
+					}
+
+					stdout, code := runCLI86(t, cmd)
+
+					if code != 0 {
+						t.Errorf("exit %d, stdout:\n%s", code, stdout)
+					}
+					if got, _ := os.Readlink(k.link); got != target {
+						t.Errorf("%s -> %q, want -> %q", k.link, got, target)
+					}
+					if content != "dangling" && readText(t, shared) != sharedBefore {
+						t.Errorf("user file %s changed", shared)
+					}
+					want := "! [dep] Rejected " + k.kind + " target path: " + reason112(t, k.link, filepath.Clean(shared)) + "\n"
+					if !strings.Contains(stdout, want) || strings.Contains(stdout, " i Cleaned") || strings.Contains(stdout, "hash mismatch") {
+						t.Errorf("stdout:\n%s\nwant the Rejected line %q and no Cleaned or hash mismatch line", stdout, want)
+					}
+					lock := readText(t, "apm.lock.yaml")
+					if content == "dangling" {
+						if strings.Contains(lock, k.link) {
+							t.Errorf("apm.lock.yaml still records %s:\n%s", k.link, lock)
+						}
+					} else if lock != lockBefore {
+						t.Errorf("apm.lock.yaml:\n%s\nwant:\n%s", lock, lockBefore)
+					}
+				})
+			}
+		}
+	}
+}
+
+// A rejected path does not stop the rest of its bucket's cleanup: the agent
+// the package no longer has is removed, the user's symlink stays (s16/after
+// cagent-same-stale, as Oracle 0.33.0).
+func TestInstall112_RejectedAfterInstall_OtherStaleCleaned(t *testing.T) {
+	project112(t, "claude")
+	writeCompileFile(t, ".", "dep/.apm/agents/b.agent.md", "---\nname: b\ndescription: other agent\n---\nOTHER AGENT\n")
+	mustRunCLI(t, "install")
+	target := replaceWithShared112(t, ".", ".claude/agents/a.md", "same")
+	if err := os.Remove("dep/.apm/agents/b.agent.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, code := runCLI86(t, "install")
+
+	if code != 0 || !strings.Contains(stdout, " i Cleaned 1 stale file from _local/dep\n  - .claude/agents/b.md\n") {
+		t.Errorf("exit %d, stdout:\n%s", code, stdout)
+	}
+	assertNoFile(t, ".claude/agents/b.md")
+	if got, _ := os.Readlink(".claude/agents/a.md"); got != target {
+		t.Errorf(".claude/agents/a.md -> %q, want -> %q", got, target)
+	}
+	lock := readText(t, "apm.lock.yaml")
+	if !strings.Contains(lock, ".claude/agents/a.md") || strings.Contains(lock, ".claude/agents/b.md") {
+		t.Errorf("apm.lock.yaml:\n%s", lock)
+	}
+}
+
+// --global: the deploy's own symlink to the agent replaced by the user's
+// symlink to a copy of the same bytes stays, with its lock record
+// (s16/after gagent-same-global, as Oracle 0.33.0).
+func TestInstallGlobal112_RejectedAfterInstall_Kept(t *testing.T) {
+	root := project112(t, "claude")
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+	writeCompileFile(t, root, "gitconfig", "")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	mustRunCLI(t, "install", "-g", "--target", "claude", filepath.Join(root, "proj", "dep"))
+	lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
+	lockBefore := readText(t, lockPath)
+	link := filepath.Join(home, ".claude", "agents", "a.md")
+	target := replaceWithShared112(t, home, ".claude/agents/a.md", "same")
+
+	stdout, code := runCLI86(t, "install", "-g")
+
+	if code != 0 || !strings.Contains(stdout, "Rejected agent target path") || strings.Contains(stdout, " i Cleaned") {
+		t.Errorf("exit %d, stdout:\n%s", code, stdout)
+	}
+	if got, _ := os.Readlink(link); got != target {
+		t.Errorf("%s -> %q, want -> %q", link, got, target)
+	}
+	if got := readText(t, lockPath); got != lockBefore {
+		t.Errorf("lock:\n%s\nwant:\n%s", got, lockBefore)
+	}
+}

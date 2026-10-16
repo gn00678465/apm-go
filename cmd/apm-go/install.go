@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1931,10 +1932,11 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	var apmInstalled, mcpConfigured int
 	// apmPhase: a dependency or the project's own content was deployed.
 	var apmPhase bool
-	// keptDirs and failedBuckets are deploy.DeployResult.KeptDirs and
-	// .FailedBuckets, for the lock merge in step 6b.
+	// keptDirs, failedBuckets and rejectedPaths are deploy.DeployResult's
+	// KeptDirs, FailedBuckets and RejectedPaths, for the lock merge in step 6b.
 	var keptDirs []string
 	var failedBuckets map[string]bool
+	var rejectedPaths map[string][]string
 	var skippedDeps []deploy.SkippedDep
 	var commandNotes []deploy.CommandNote
 	// orphans are the lock entries step 6b carries over for packages this
@@ -2017,7 +2019,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 			}
 		}
-		keptDirs, failedBuckets = deployResult.KeptDirs, deployResult.FailedBuckets
+		keptDirs, failedBuckets, rejectedPaths = deployResult.KeptDirs, deployResult.FailedBuckets, deployResult.RejectedPaths
 		skippedDeps = deployResult.SkippedDeps
 		skipped := make(map[string]bool, len(skippedDeps))
 		for _, sd := range skippedDeps {
@@ -2192,7 +2194,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 				orphans = oc.kept
 			}
-			for _, c := range cleanStaleDeployedFiles(prevLock, newLock, deployResult.FailedBuckets, keptDirs, targets, cleanRoot, linkSourceRoot) {
+			for _, c := range cleanStaleDeployedFiles(prevLock, newLock, deployResult.FailedBuckets, rejectedPaths, keptDirs, targets, cleanRoot, linkSourceRoot) {
 				if n := len(c.removed); n > 0 {
 					noun := "files"
 					if n == 1 {
@@ -2259,7 +2261,17 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				return mergeDeployedFilesIf(notKept(oldFiles), oldHashes, newFiles, newHashes,
 					func(string) bool { return true })
 			}
-			return mergeDeployedFiles(notTakenOver(bucket, notKept(oldFiles), targets, deployDir), oldHashes, newFiles, newHashes, effectiveDeployRoot)
+			// A rejected path is the user's symlink, which notTakenOver
+			// drops on --global; its record follows the file it names.
+			var rejected, rest []string
+			for _, f := range notKept(oldFiles) {
+				if slices.Contains(rejectedPaths[bucket], normalizeDeployPath(f)) {
+					rejected = append(rejected, f)
+				} else {
+					rest = append(rest, f)
+				}
+			}
+			return mergeDeployedFiles(append(notTakenOver(bucket, rest, targets, deployDir), rejected...), oldHashes, newFiles, newHashes, effectiveDeployRoot)
 		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]

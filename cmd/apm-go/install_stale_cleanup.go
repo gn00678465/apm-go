@@ -39,6 +39,8 @@ type staleCleanup struct {
 // A path at or below one of keptDirs (deploy.DeployResult.KeptDirs) is not
 // stale and gets no warning: the deploy left that directory to the user, so
 // the files in it are the user's, also one that still has the recorded hash.
+// So is a path of the bucket's rejected (deploy.DeployResult.RejectedPaths):
+// its symlink is the user's, and the Oracle leaves it.
 //
 // deployRoot is the directory lock paths are relative to. A non-empty
 // linkSourceRoot says the deploy made symlinks into that project directory (a
@@ -49,14 +51,14 @@ type staleCleanup struct {
 //
 // newLock must already carry this run's deployed files. Results are ordered
 // local bucket first, then newLock.Dependencies order.
-func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, keptDirs, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
+func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, rejected map[string][]string, keptDirs, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
 	claimed := claimedPaths(newLock)
 
 	var results []staleCleanup
-	clean := func(label string, bucket deploy.DeployBucket, source string, oldFiles []string, oldHashes map[string]string) {
+	clean := func(label string, bucket deploy.DeployBucket, source string, oldFiles []string, oldHashes map[string]string, refused []string) {
 		var stale []string
 		for _, f := range oldFiles {
-			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(targets, bucket, f) || deploy.UnderKeptDir(keptDirs, f) {
+			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(targets, bucket, f) || deploy.UnderKeptDir(keptDirs, f) || slices.Contains(refused, normalizeDeployPath(f)) {
 				continue
 			}
 			stale = append(stale, f)
@@ -77,7 +79,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 	}
 
 	if !failed[""] {
-		clean("<local .apm/>", deploy.LocalBucket, ".apm", existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes)
+		clean("<local .apm/>", deploy.LocalBucket, ".apm", existingLock.LocalDeployedFiles, existingLock.LocalDeployedHashes, rejected[""])
 	}
 	for i := range newLock.Dependencies {
 		key := newLock.Dependencies[i].UniqueKey()
@@ -85,7 +87,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		if old == nil || failed[key] {
 			continue
 		}
-		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(key)), old.DeployedFiles, old.DeployedHashes)
+		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(key)), old.DeployedFiles, old.DeployedHashes, rejected[key])
 	}
 	return results
 }

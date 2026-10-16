@@ -55,6 +55,13 @@ type DeployResult struct {
 	// package does not have. Nothing below one is this run's deploy output,
 	// and nothing below one is stale output of an earlier run either.
 	KeptDirs []string
+	// RejectedPaths holds, by the PerDep key of the bucket, the
+	// deploy-root-relative destination of each agent, command or prompt not
+	// deployed because a symlink there leads out of its directory. The path
+	// is the user's: no cleanup of this run removes it, and the lock keeps
+	// an old record of it while the file it names exists, as the Oracle
+	// keeps it (integration/agent_integrator.py:204).
+	RejectedPaths map[string][]string
 	// SkippedDeps holds, in the order Run takes the dependencies, each one
 	// whose `targets:` names none of the active targets: it deployed nothing.
 	SkippedDeps []SkippedDep
@@ -454,6 +461,14 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			if kind, phase := rejectedKind(adapter, p); kind != "" && errors.As(err, &outside) {
 				result.CommandNotes = append(result.CommandNotes, CommandNote{DepKey: p.DepKey, Package: packageNames[p.DepKey],
 					Text: fmt.Sprintf("Rejected %s target path: %v", kind, outside), phase: phase})
+				if root, absErr := filepath.Abs(deployDir); absErr == nil {
+					if rel, relErr := filepath.Rel(root, outside.Path); relErr == nil {
+						if result.RejectedPaths == nil {
+							result.RejectedPaths = make(map[string][]string)
+						}
+						result.RejectedPaths[p.DepKey] = append(result.RejectedPaths[p.DepKey], filepath.ToSlash(rel))
+					}
+				}
 				continue
 			}
 			if err != nil {
