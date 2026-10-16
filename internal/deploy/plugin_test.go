@@ -303,10 +303,13 @@ func TestCollectDependencyPrimitives_PluginJSON_Commands(t *testing.T) {
 	writePluginJSON(t, modDir, `{"name": "withcommands", "commands": ["./commands"]}`)
 
 	prims := collectDep(t, "acme/withcommands", modDir)
-	commands := onlyType(prims, TypeCommands)
 
-	if len(commands) != 1 || commands[0].Name != "deploy" {
-		t.Fatalf("expected 1 command 'deploy', got %+v", commands)
+	if commands := onlyType(prims, TypeCommands); len(commands) != 0 {
+		t.Errorf("commands = %+v, want none: a plugin command is a prompt", commands)
+	}
+	prompts := onlyType(prims, TypePrompts)
+	if len(prompts) != 1 || prompts[0].Name != "deploy" {
+		t.Fatalf("expected 1 prompt 'deploy', got %+v", prompts)
 	}
 }
 
@@ -413,4 +416,184 @@ func joinQuoted(parts []string) string {
 		out += p
 	}
 	return out
+}
+
+// A plugin.json without an "agents" key deploys the plugin's agents/
+// directory, as the Oracle's _resolve_sources falls back to it
+// (deps/plugin_parser.py:1180-1214).
+func TestCollectDependencyPrimitives_PluginJSON_DefaultAgentsDir(t *testing.T) {
+	modDir := filepath.Join(t.TempDir(), "apm_modules", "_local/plug")
+	writePluginJSON(t, modDir, `{"name":"plug","version":"1.0.0"}`)
+	mkFile(t, modDir, "agents/rev.md", "rev agent\n")
+
+	agents := onlyType(collectDep(t, "_local/plug", modDir), TypeAgents)
+
+	if len(agents) != 1 || agents[0].Name != "rev" || agents[0].SrcPath != filepath.Join(modDir, "agents", "rev.md") {
+		t.Fatalf("agents = %+v, want rev from agents/rev.md", agents)
+	}
+}
+
+// The default directories are a Claude plugin's alone: the Oracle takes a
+// package whose apm.yml has a .apm/ or declares a dependency for an APM
+// package and reads no plugin.json there (models/format_detection.py:451-460).
+// An apm.yml with metadata alone does not make one.
+func TestCollectDependencyPrimitives_PluginJSON_DefaultDirsNeedNoEligibleAPMYML(t *testing.T) {
+	tests := []struct {
+		name     string
+		apmYML   string // "" for none
+		apmDir   bool
+		wantDefs bool
+	}{
+		{name: "no apm.yml", wantDefs: true},
+		{name: "metadata-only apm.yml", apmYML: "name: m\nversion: 2.0.0\n", wantDefs: true},
+		{name: "apm.yml with .apm/", apmYML: "name: m\nversion: 2.0.0\n", apmDir: true},
+		{name: "apm.yml declaring an apm dependency", apmYML: "name: m\ndependencies:\n  apm:\n    - acme/x\n"},
+		{name: "apm.yml declaring a dev mcp dependency", apmYML: "name: m\ndevDependencies:\n  mcp:\n    - name: s\n"},
+		{name: "apm.yml with an empty dependency list", apmYML: "name: m\ndependencies:\n  apm: []\n", wantDefs: true},
+		{name: "apm.yml that does not parse", apmYML: "name: [\n", wantDefs: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			modDir := filepath.Join(t.TempDir(), "apm_modules", "_local/plug")
+			writePluginJSON(t, modDir, `{"name":"plug"}`)
+			mkFile(t, modDir, "agents/rev.md", "rev agent\n")
+			if tt.apmYML != "" {
+				mkFile(t, modDir, "apm.yml", tt.apmYML)
+			}
+			if tt.apmDir {
+				if err := os.MkdirAll(filepath.Join(modDir, ".apm"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			agents := onlyType(collectDep(t, "_local/plug", modDir), TypeAgents)
+
+			if got := len(agents) == 1; got != tt.wantDefs {
+				t.Fatalf("agents = %+v, want the default agents/ read: %v", agents, tt.wantDefs)
+			}
+		})
+	}
+}
+
+// A plugin command is the prompt the Oracle copies it to: <name>.md and
+// <name>.prompt.md become .apm/prompts/<name>.prompt.md
+// (bundle/plugin_layout.py:44-50, deps/plugin_parser.py:1264-1290), found
+// as a prompt is, at the top level only and without a Copilot App workflow.
+func TestCollectDependencyPrimitives_PluginJSON_CommandsArePrompts(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+		want     []string
+	}{
+		{"default commands directory", `{"name":"plug"}`, []string{"hello", "three"}},
+		{"declared commands directory", `{"name":"plug","commands":"./commands"}`, []string{"hello", "three"}},
+		{"declared command file", `{"name":"plug","commands":["./commands/three.prompt.md"]}`, []string{"three"}},
+		{"declared workflow file", `{"name":"plug","commands":["./commands/two.md"]}`, nil},
+		{"empty list", `{"name":"plug","commands":[]}`, nil},
+		{"value that is neither a list nor a string", `{"name":"plug","commands":7}`, []string{"hello", "three"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			modDir := filepath.Join(t.TempDir(), "apm_modules", "_local/plug")
+			writePluginJSON(t, modDir, tt.manifest)
+			mkFile(t, modDir, "commands/hello.md", "---\ndescription: hi\n---\nHello\n")
+			mkFile(t, modDir, "commands/two.md", "---\ninterval: 1h\n---\nTwo\n")
+			mkFile(t, modDir, "commands/three.prompt.md", "Three\n")
+			mkFile(t, modDir, "commands/notes.txt", "notes\n")
+			mkFile(t, modDir, "commands/sub/deep.md", "Deep\n")
+
+			prims := collectDep(t, "_local/plug", modDir)
+
+			if commands := onlyType(prims, TypeCommands); len(commands) != 0 {
+				t.Errorf("commands = %+v, want none", commands)
+			}
+			got := namesOf(onlyType(prims, TypePrompts))
+			sort.Strings(got)
+			if !equalStrings(got, tt.want) {
+				t.Errorf("prompts = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// The Oracle names a Claude plugin by the apm.yml it builds from plugin.json
+// (deps/plugin_parser.py:1370), so the warning about its command carries the
+// name of plugin.json; an APM package keeps the name of its own apm.yml.
+func TestRun_PluginCommandNotesNameThePlugin(t *testing.T) {
+	tests := []struct {
+		name   string
+		apmYML string
+		apmDir bool
+		want   string
+	}{
+		{name: "no apm.yml", want: "other"},
+		{name: "metadata-only apm.yml", apmYML: "name: meta\nversion: 2.0.0\n", want: "other"},
+		{name: "APM package", apmYML: "name: meta\nversion: 2.0.0\n", apmDir: true, want: "meta"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mod := filepath.Join(dir, "apm_modules", "acme/pkg")
+			writePluginJSON(t, mod, `{"name":"other","commands":"./commands"}`)
+			mkFile(t, mod, "commands/hello.md", "---\ndescription: hi\nname: hello\n---\nHello\n")
+			if tt.apmYML != "" {
+				mkFile(t, mod, "apm.yml", tt.apmYML)
+			}
+			if tt.apmDir {
+				mkFile(t, mod, ".apm/instructions/a.instructions.md", "a\n")
+			}
+			m, resolved := depManifest("acme/pkg")
+
+			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := CommandNote{DepKey: "acme/pkg", Package: tt.want, Text: "Claude command hello: frontmatter keys not supported for claude commands and were dropped: name. Supported keys: allowed-tools, argument-hint, description, input, model."}
+			if len(result.CommandNotes) != 1 || result.CommandNotes[0] != want {
+				t.Errorf("notes = %+v, want [%+v]", result.CommandNotes, want)
+			}
+		})
+	}
+}
+
+// A default directory that is a symlink is not read, also one that stays in
+// the plugin: the Oracle's _resolve_sources refuses any symlink on the way
+// (deps/plugin_parser.py:1208-1215).
+func TestCollectDependencyPrimitives_PluginJSON_SymlinkedDefaultDirSkipped(t *testing.T) {
+	modDir := filepath.Join(t.TempDir(), "apm_modules", "_local/plug")
+	writePluginJSON(t, modDir, `{"name":"plug"}`)
+	mkFile(t, modDir, "real-agents/rev.md", "rev agent\n")
+	mkFile(t, modDir, "real-commands/hello.md", "Hello\n")
+	for _, link := range []string{"agents", "commands"} {
+		if err := os.Symlink("real-"+link, filepath.Join(modDir, link)); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+	}
+
+	prims := collectDep(t, "_local/plug", modDir)
+
+	if got := append(onlyType(prims, TypeAgents), onlyType(prims, TypePrompts)...); len(got) != 0 {
+		t.Errorf("primitives = %+v, want none from a symlinked default directory", got)
+	}
+}
+
+// Telling a Claude plugin from an APM package reads no apm.yml that leaves
+// the package, and is no error either: the collection compile does stays as it
+// was, and install refuses that apm.yml where it reads the package's manifest.
+func TestCollectDependencyPrimitives_PluginJSON_APMYMLOutsideIsNotRead(t *testing.T) {
+	dir := t.TempDir()
+	modDir := filepath.Join(dir, "apm_modules", "acme/plug")
+	writePluginJSON(t, modDir, `{"name":"plug"}`)
+	mkFile(t, modDir, "agents/rev.md", "rev agent\n")
+	mkFile(t, dir, "outside.yml", "name: x\ndependencies:\n  apm:\n    - acme/x\n")
+	if err := os.Symlink(filepath.Join("..", "..", "..", "outside.yml"), filepath.Join(modDir, "apm.yml")); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+
+	agents := onlyType(collectDep(t, "acme/plug", modDir), TypeAgents)
+
+	if len(agents) != 1 || agents[0].Name != "rev" {
+		t.Fatalf("agents = %+v, want rev from the default agents/", agents)
+	}
 }

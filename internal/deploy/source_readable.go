@@ -146,7 +146,8 @@ func pluginSourceReadFailure(modulePath string) (skillsDeclared bool, failure *s
 		}
 	}
 
-	flat := append(decodeStringOrList(m.Agents), decodeStringOrList(m.Commands)...)
+	apmPackage := isAPMPackage(sourceTree{dir: modulePath})
+	flat := append(componentPaths(m.Agents, "agents", !apmPackage), componentPaths(m.Commands, "commands", !apmPackage)...)
 	for _, rel := range flat {
 		abs, ok := resolvePluginPath(modulePath, rel)
 		if !ok {

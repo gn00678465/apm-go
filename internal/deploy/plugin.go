@@ -1,12 +1,15 @@
 package deploy
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/apm-go/apm/internal/archive"
+	"github.com/apm-go/apm/internal/yamlcore"
+	"go.yaml.in/yaml/v4"
 )
 
 // pluginManifest is the subset of a Claude Code plugin manifest
@@ -29,8 +32,10 @@ type pluginManifest struct {
 
 // collectPluginPrimitives reads <modulePath>/.claude-plugin/plugin.json, if
 // present and valid (has a non-empty "name", the spec's only required
-// field), and returns the skill/agent/command primitives its component
-// arrays declare. skillsDeclared reports whether the manifest's "skills"
+// field), and returns the skills, agents and commands, as prompts, its
+// component fields declare; for a package that is no APM package
+// (isAPMPackage), an agents or commands field that is neither a list nor a
+// string leaves the default directory. skillsDeclared reports whether the manifest's "skills"
 // key was present at all (even as an empty array) -- callers use this to
 // decide whether the plugin.json declaration is authoritative for skills
 // (skip the legacy skills/<name>/SKILL.md scan) or whether the manifest
@@ -41,21 +46,14 @@ type pluginManifest struct {
 // non-plugin.json discovery they already do. The error is a symlink at the
 // manifest that leaves the package, or one in a declared skill directory.
 func collectPluginPrimitives(t sourceTree) (prims []Primitive, skillsDeclared bool, err error) {
-	data, err := readPluginManifest(t)
-	if err != nil {
+	m, err := loadPluginManifest(t)
+	if m == nil {
 		return nil, false, err
-	}
-	if data == nil {
-		return nil, false, nil
-	}
-
-	var m pluginManifest
-	if err := json.Unmarshal(data, &m); err != nil || m.Name == "" {
-		return nil, false, nil
 	}
 
 	depKey, modulePath := t.depKey, t.dir
 	source := "dependency:" + depKey
+	apmPackage := isAPMPackage(t)
 
 	for _, rel := range decodeStringOrList(m.Skills) {
 		abs, ok := resolvePluginPath(modulePath, rel)
@@ -84,15 +82,46 @@ func collectPluginPrimitives(t sourceTree) (prims []Primitive, skillsDeclared bo
 		})
 	}
 
-	for _, rel := range decodeStringOrList(m.Agents) {
+	for _, rel := range componentPaths(m.Agents, "agents", !apmPackage) {
 		prims = append(prims, collectPluginFlatFiles(rel, modulePath, depKey, source, TypeAgents, extractAgentName)...)
 	}
 
-	for _, rel := range decodeStringOrList(m.Commands) {
-		prims = append(prims, collectPluginFlatFiles(rel, modulePath, depKey, source, TypeCommands, extractBaseName)...)
+	// The Oracle copies each command to .apm/prompts/ and deploys it from
+	// there as any prompt (deps/plugin_parser.py:1264-1290).
+	for _, rel := range componentPaths(m.Commands, "commands", !apmPackage) {
+		for _, p := range collectPluginFlatFiles(rel, modulePath, depKey, source, TypePrompts, extractPluginCommandName) {
+			if !isWorkflowPrompt(p.SrcPath) {
+				prims = append(prims, p)
+			}
+		}
 	}
 
 	return prims, isJSONKeyPresent(m.Skills), nil
+}
+
+// loadPluginManifest returns t's plugin.json, nil when it cannot be read, is
+// not valid JSON or has no name.
+func loadPluginManifest(t sourceTree) (*pluginManifest, error) {
+	data, err := readPluginManifest(t)
+	if data == nil {
+		return nil, err
+	}
+	var m pluginManifest
+	if err := json.Unmarshal(data, &m); err != nil || m.Name == "" {
+		return nil, nil
+	}
+	return &m, nil
+}
+
+// claudePluginName is the name of t's plugin.json when the Oracle takes t for
+// a Claude plugin, "" otherwise: it names the package by the apm.yml it builds
+// from plugin.json (deps/plugin_parser.py:1370).
+func claudePluginName(t sourceTree) (string, error) {
+	m, err := loadPluginManifest(t)
+	if m == nil || isAPMPackage(t) {
+		return "", err
+	}
+	return m.Name, nil
 }
 
 // readPluginManifest returns the bytes of t's .claude-plugin/plugin.json, nil
@@ -123,6 +152,94 @@ func decodeStringOrList(raw json.RawMessage) []string {
 	var single string
 	if err := json.Unmarshal(raw, &single); err == nil && single != "" {
 		return []string{single}
+	}
+	return nil
+}
+
+// extractPluginCommandName names a plugin command after the prompt the Oracle
+// copies it to, plugin_command_prompt_name (bundle/plugin_layout.py:44-50):
+// <name>.md and <name>.prompt.md are <name>, any other file is no prompt.
+func extractPluginCommandName(filename string) string {
+	if name := extractPromptName(filename); name != "" {
+		return name
+	}
+	return extractBaseName(filename)
+}
+
+// componentPaths is what the Oracle's _resolve_sources reads for an agents or
+// commands component (deps/plugin_parser.py:1180-1215): the path or paths a
+// list or a string declares, else, when useDefault, the default directory.
+func componentPaths(raw json.RawMessage, defaultDir string, useDefault bool) []string {
+	if v := bytes.TrimSpace(raw); len(v) > 0 && (v[0] == '[' || v[0] == '"') {
+		return decodeStringOrList(raw)
+	}
+	if useDefault {
+		return []string{defaultDir}
+	}
+	return nil
+}
+
+// isAPMPackage is the Oracle's has_eligible_apm_yml
+// (models/format_detection.py:207-229,451): an apm.yml beside a .apm/
+// directory, or one that declares a dependency. The Oracle takes such a
+// package for an APM package, not a Claude plugin, so it gets no default
+// component directories. cmd/apm-go's packageVersion has its own copy (#88).
+// A path that leaves the package is not read and counts as missing, as for
+// uninstall (readManifestLeniently): install refuses that apm.yml where it
+// reads the package's manifest, and compile, which reads no apm.yml, must
+// not start to fail on it.
+func isAPMPackage(t sourceTree) bool {
+	manifestPath, err := t.path("apm.yml")
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(manifestPath); err != nil {
+		return false
+	}
+	if apmDir, err := t.path(".apm"); err == nil {
+		if info, err := os.Stat(apmDir); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	data, err := os.ReadFile(manifestPath)
+	return err == nil && declaresDependencies(data)
+}
+
+// declaresDependencies is the Oracle's _apm_yml_declares_dependencies
+// (models/validation.py:298-335): a list under dependencies or
+// devDependencies, apm or mcp, with a string or mapping entry.
+func declaresDependencies(data []byte) bool {
+	doc, err := yamlcore.SafeLoad(data)
+	if err != nil || len(doc.Content) == 0 {
+		return false
+	}
+	for _, section := range []string{"dependencies", "devDependencies"} {
+		block := mappingValue(doc.Content[0], section)
+		for _, key := range []string{"apm", "mcp"} {
+			list := mappingValue(block, key)
+			if list == nil || list.Kind != yaml.SequenceNode {
+				continue
+			}
+			for _, entry := range list.Content {
+				if entry.Kind == yaml.MappingNode || (entry.Kind == yaml.ScalarNode && entry.ShortTag() == "!!str") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// mappingValue is the value of key in the mapping n, nil when n is no mapping
+// or has no such key.
+func mappingValue(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
 	}
 	return nil
 }
