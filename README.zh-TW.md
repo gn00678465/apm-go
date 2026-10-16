@@ -113,6 +113,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | `self-update` | 將 apm-go 二進位檔更新至最新穩定版本 |
 | `compile` | 將已安裝的 instructions 編譯為專案 `AGENTS.md` |
 | `audit` | 依 `apm.lock.yaml` 重新驗證已部署檔案完整性 |
+| `deps` | 查看已安裝的套件：`list`（套件與 primitive 數量的表格；`-g`、`--all`、`--insecure`）、`tree`（依賴樹；`-g`） |
 | `search` | 在 marketplace 搜尋 plugin（`QUERY@MARKETPLACE`） |
 | `marketplace` | 使用 marketplace：`add`、`list`、`browse`、`update`、`remove`、`validate`、`check`、`outdated` |
 | `marketplace`（作者側） | 製作 marketplace：`init`、`package add/set/remove/update`、`audit`、`migrate` |
@@ -138,6 +139,7 @@ apm-go compile               # 將已安裝的 instructions 編譯為 AGENTS.md
 | `install --mcp` | `--force` | 不詢問直接覆寫衝突的既有 MCP 條目 |
 | `init` | `--force` | 不詢問直接覆寫既有 `apm.yml` |
 | `audit` | `--content` | 掃描每個已部署檔案的隱藏 Unicode 字元 |
+| `deps list` | `--skills` | 在每張表格之後列出每個套件的 skill 名稱（只列名稱，不篩選套件） |
 | `update` | `--frozen` / `--no-frozen` | 對 frozen 安裝拒絕範圍更新（CI 自動開啟）／覆寫 CI 自動偵測 |
 | `marketplace package add` | `--category` | 套件分類，Codex 輸出在 `pack` 時必填 |
 | `marketplace package` | 指令名稱 | 作者側子指令位於 `package` 之下（`add`、`set`、`remove`） |

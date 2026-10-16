@@ -1,0 +1,9 @@
+tproj (local)
+├── a/one@3.0.0
+│   └── e/five@latest
+│       └── f/six@latest
+├── x/dup/p1@main
+├── x/dup/p2@latest
+├── b/two@bbbb222 (could not place in tree; run apm install to resolve)
+│   └── d/four@latest
+└── c/three@latest (could not place in tree; run apm install to resolve)

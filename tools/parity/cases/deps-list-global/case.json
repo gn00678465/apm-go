@@ -1,0 +1,1 @@
+{"id": "deps-list-global", "argv": ["deps", "list", "-g"], "rewrite_binary_name": true}

@@ -1,0 +1,4 @@
+lproj (local)
+├── _local/absdep@0.1.0
+│   └── 1 agents, 1 skills
+└── ./reldep@0.2.0

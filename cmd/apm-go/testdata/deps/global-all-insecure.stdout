@@ -1,0 +1,8 @@
+ i No APM dependencies installed (Project scope)
+
+                                 Insecure APM Dependencies (Global)                                
+┏━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
+┃ Package    ┃ Version ┃ Source ┃ Origin       ┃ Prompts ┃ Instructions ┃ Agents ┃ Skills ┃ Hooks ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━┩
+│ acme/child │ unknown │ github │ via acme/pkg │    -    │      -       │   -    │   1    │   -   │
+└────────────┴─────────┴────────┴──────────────┴─────────┴──────────────┴────────┴────────┴───────┘

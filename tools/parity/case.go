@@ -94,6 +94,16 @@ func (c Case) FixtureDir() string {
 	return ""
 }
 
+// HomeFixtureDir returns the case's optional home_fixture/ tree, copied into
+// the sandbox HOME before setup_argv runs, or "" if none exists.
+func (c Case) HomeFixtureDir() string {
+	dir := filepath.Join(c.Dir, "home_fixture")
+	if info, err := os.Stat(dir); err == nil && info.IsDir() {
+		return dir
+	}
+	return ""
+}
+
 // LoadCases globs every immediate subdirectory of casesDir containing a
 // case.json and parses it. Cases are returned sorted by directory name so a
 // run is deterministic and reproducible across invocations.

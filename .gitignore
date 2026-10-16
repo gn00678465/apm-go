@@ -33,6 +33,9 @@ go.work.sum
 
 # apm
 apm_modules/
+# A global parity case's HOME holds the installed packages under
+# .apm/apm_modules/; without them the case compares two empty listings.
+!tools/parity/cases/*/home_fixture/.apm/apm_modules/
 
 # Claude
 .claude/settings.local.json

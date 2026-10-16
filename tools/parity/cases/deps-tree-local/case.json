@@ -1,0 +1,1 @@
+{"id": "deps-tree-local", "argv": ["deps", "tree"], "setup_argv": [["install", "./dep", "--target", "claude"]], "env": {"CI": "0"}, "rewrite_binary_name": true}

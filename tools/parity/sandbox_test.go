@@ -14,7 +14,7 @@ func TestNewSandbox_MaterialisesFixtureIntoCwd(t *testing.T) {
 	mustWriteFile(t, filepath.Join(fixtureDir, "sub", "nested.txt"), "nested content")
 	mustWriteFile(t, filepath.Join(fixtureDir, "empty.txt"), "")
 
-	sb, err := newSandbox(fixtureDir)
+	sb, err := newSandbox(fixtureDir, "")
 	if err != nil {
 		t.Fatalf("newSandbox: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestNewSandbox_MaterialisesFixtureIntoCwd(t *testing.T) {
 }
 
 func TestNewSandbox_NoFixtureLeavesCwdEmpty(t *testing.T) {
-	sb, err := newSandbox("")
+	sb, err := newSandbox("", "")
 	if err != nil {
 		t.Fatalf("newSandbox: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestNewSandbox_NoFixtureLeavesCwdEmpty(t *testing.T) {
 }
 
 func TestSandbox_CleanupRemovesEverything(t *testing.T) {
-	sb, err := newSandbox("")
+	sb, err := newSandbox("", "")
 	if err != nil {
 		t.Fatalf("newSandbox: %v", err)
 	}
@@ -88,7 +88,7 @@ exit 0
 
 	// Drive the sandbox directly (not via runCaseSide, which cleans up
 	// before returning) so the marker can still be inspected afterward.
-	sb, err := newSandbox("")
+	sb, err := newSandbox("", "")
 	if err != nil {
 		t.Fatalf("newSandbox: %v", err)
 	}
@@ -130,5 +130,42 @@ func assertFileContent(t *testing.T, path, want string) {
 	}
 	if string(got) != want {
 		t.Errorf("%s content = %q, want %q", path, got, want)
+	}
+}
+
+func TestNewSandbox_MaterialisesHomeFixtureIntoHome(t *testing.T) {
+	homeFixture := t.TempDir()
+	mustWriteFile(t, filepath.Join(homeFixture, ".apm", "config.json"), "{}\n")
+	if err := os.Symlink("config.json", filepath.Join(homeFixture, ".apm", "link.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	sb, err := newSandbox("", homeFixture)
+	if err != nil {
+		t.Fatalf("newSandbox: %v", err)
+	}
+	defer sb.cleanup()
+
+	assertFileContent(t, filepath.Join(sb.Home, ".apm", "config.json"), "{}\n")
+	got, err := os.Readlink(filepath.Join(sb.Home, ".apm", "link.json"))
+	if err != nil || got != "config.json" {
+		t.Errorf("Readlink = %q, %v; want symlink to config.json", got, err)
+	}
+	entries, err := os.ReadDir(sb.Cwd)
+	if err != nil || len(entries) != 0 {
+		t.Errorf("cwd expected empty, got %d entries, err %v", len(entries), err)
+	}
+}
+
+func TestNewSandbox_NoHomeFixtureLeavesHomeEmpty(t *testing.T) {
+	sb, err := newSandbox("", "")
+	if err != nil {
+		t.Fatalf("newSandbox: %v", err)
+	}
+	defer sb.cleanup()
+
+	entries, err := os.ReadDir(sb.Home)
+	if err != nil || len(entries) != 0 {
+		t.Errorf("home expected empty, got %d entries, err %v", len(entries), err)
 	}
 }

@@ -1474,3 +1474,15 @@ func parseManifestOwner(raw json.RawMessage) string {
 	}
 	return ""
 }
+
+// IsGitLabHostname reports whether host is GitLab SaaS or a self-managed
+// GitLab host named by GITLAB_HOST or APM_GITLAB_HOSTS.
+func IsGitLabHostname(host string) bool {
+	return isGitLabFamilyHost(strings.ToLower(strings.TrimSpace(host)))
+}
+
+// IsAzureDevOpsHostname reports whether host is Azure DevOps (cloud or
+// legacy visualstudio.com).
+func IsAzureDevOpsHostname(host string) bool {
+	return isAzureDevOpsHostname(strings.TrimSpace(host))
+}

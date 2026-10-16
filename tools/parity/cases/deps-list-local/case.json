@@ -1,0 +1,1 @@
+{"id": "deps-list-local", "argv": ["deps", "list"], "setup_argv": [["install", "./dep", "--target", "claude"]], "env": {"CI": "0"}, "rewrite_binary_name": true}

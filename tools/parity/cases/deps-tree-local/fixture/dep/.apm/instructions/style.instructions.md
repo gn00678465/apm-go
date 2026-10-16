@@ -1,0 +1,4 @@
+---
+applyTo: "**"
+---
+Keep it short.

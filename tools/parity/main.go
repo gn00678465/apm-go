@@ -311,7 +311,7 @@ func writeRunHeader(cfg Config, preflight Preflight) error {
 // recorded as an empty string rather than aborting the whole run — the
 // evidence's absence is itself informative to a reviewer.
 func getVersion(binPath []string, timeout time.Duration) string {
-	sb, err := newSandbox("")
+	sb, err := newSandbox("", "")
 	if err != nil {
 		return ""
 	}
