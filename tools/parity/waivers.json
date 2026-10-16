@@ -1052,5 +1052,25 @@
     "tree_paths": [
       "cwd/.codex/config.toml"
     ]
+  },
+  {
+    "id": "install-rule-symlink-refused",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "rendering",
+    "reason": "Issue #112, owner ruling https://github.com/gn00678465/apm-go/issues/112#issuecomment-6215906800: the words, stderr, exit code 1 and file tree are the same; only Rich's line wrap at column 80 in the Oracle's long failure line (the containment reason) and in its last line differs, where apm-go prints each line whole.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "https://github.com/gn00678465/apm-go/issues/112#issuecomment-6215906800"
+  },
+  {
+    "id": "install-agent-symlink-refused",
+    "fields": [
+      "stdout"
+    ],
+    "taxonomy": "rendering",
+    "reason": "Issue #112, owner ruling https://github.com/gn00678465/apm-go/issues/112#issuecomment-6215906800: the words, stderr, exit code 0 and file tree, with apm.lock.yaml, are the same; only Rich's line wrap at column 80 in the Oracle's Rejected agent target path warning, and the Oracle's two lines \"Skipped inactive experimental resolver for target 'copilot-cowork'/'copilot-app' during lockfile reconciliation.\" that apm-go does not print (issue #50 ruling R10), differ.",
+    "owner": "gn00678465@gmail.com",
+    "eval_plan_ref": "https://github.com/gn00678465/apm-go/issues/112#issuecomment-6215906800"
   }
 ]

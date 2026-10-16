@@ -39,10 +39,10 @@ func convertToClaudeRules(content []byte) ([]byte, error) {
 	return []byte(strings.Join(parts, "\n") + "\n\n" + strings.TrimLeft(body, "\n")), nil
 }
 
-// deployClaudeInstructions writes an instruction primitive to
-// .claude/rules/<name>.md transformed via convertToClaudeRules (unlike the
+// deployClaudeInstructions writes an instruction primitive to destPath,
+// .claude/rules/<name>.md, transformed via convertToClaudeRules (unlike the
 // byte-copy deployFileToPath used by other targets' instructions).
-func deployClaudeInstructions(p Primitive, projectDir string) ([]string, error) {
+func deployClaudeInstructions(p Primitive, projectDir, destPath string) ([]string, error) {
 	data, err := os.ReadFile(p.SrcPath)
 	if err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
@@ -51,7 +51,6 @@ func deployClaudeInstructions(p Primitive, projectDir string) ([]string, error) 
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", p.SrcPath, err)
 	}
-	destPath := fmt.Sprintf(".claude/rules/%s.md", p.Name)
 	if err := CheckDeployWrite(projectDir, destPath); err != nil {
 		return nil, err
 	}

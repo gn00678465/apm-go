@@ -8,14 +8,17 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/manifest"
 )
 
 // activeDeployMode is set by Run() for the duration of a deploy pipeline.
 // symlink=true makes per-primitive deploys create symlinks to apm_modules
-// sources instead of copying.
+// sources instead of copying. projectDir is the directory the sources are
+// read from.
 var activeDeployMode struct {
-	symlink bool
+	symlink    bool
+	projectDir string
 }
 
 type TargetAdapter interface {
@@ -63,6 +66,15 @@ type BundleTarget interface {
 // the way the Oracle's CommandIntegrator converts it, to commandPath.
 type promptCommander interface {
 	commandPath(name string) string
+}
+
+// instructionChecker is a target that deploys instructions: checkInstruction
+// is the check its deploy of p makes before it writes. Run calls it for every
+// instruction before the first write, because a refused instruction fails the
+// whole install, as the Oracle's instruction integrator raises
+// (integration/instruction_integrator.py:237,440).
+type instructionChecker interface {
+	checkInstruction(p Primitive, deployDir string) error
 }
 
 var Adapters = map[string]TargetAdapter{
@@ -234,8 +246,10 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	// as a symlink deploy replaces one (symlinkSkillTo), so nothing below it
 	// is written through it. In an existing directory every file, then every
 	// directory (an empty one has no file to catch it), is checked before the
-	// first write: a symlink the user put inside it would take a copy, or an
-	// os.MkdirAll, elsewhere.
+	// first write: a directory the user linked elsewhere would take a copy, or
+	// an os.MkdirAll, there, so it has to stay in the skill's directory. A
+	// file that is a symlink is replaced by the copy, wherever it points, as
+	// the Oracle replaces the whole directory.
 	info, err := os.Lstat(absDestDir)
 	if err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if err := os.Remove(absDestDir); err != nil {
@@ -246,6 +260,9 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 			err := walkSkillDir(p.SrcPath, "", p.DepKey != "", func(_, rel string, isDir bool) error {
 				if isDir != dirs {
 					return nil
+				}
+				if !isDir {
+					return CheckDeployPath(projectDir, path.Join(destDir, rel))
 				}
 				return CheckDeployWrite(projectDir, path.Join(destDir, rel))
 			})
@@ -262,6 +279,11 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		dst := filepath.Join(absDestDir, filepath.FromSlash(rel))
 		if isDir {
 			return os.MkdirAll(dst, 0755)
+		}
+		if info, err := os.Lstat(dst); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			if err := os.Remove(dst); err != nil {
+				return err
+			}
 		}
 		if err := copyFile(src, dst); err != nil {
 			return err
@@ -370,11 +392,7 @@ func copyFile(src, dst string) error {
 }
 
 func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error) {
-	check := CheckDeployWrite
-	if activeDeployMode.symlink {
-		check = CheckDeployPath
-	}
-	if err := check(projectDir, destPath); err != nil {
+	if err := checkFileDest(destPath, projectDir); err != nil {
 		return nil, err
 	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
@@ -396,4 +414,37 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
 	return []string{destPath}, nil
+}
+
+// checkFileDest is the check deployFileToPath makes before it writes
+// destPath. A copy is written through a symlink there, so it takes
+// CheckDeployWrite. A symlink deploy replaces what is there (os.Remove, then
+// os.Symlink), so it takes CheckDeployPath. A symlink there that leads into
+// apm_modules/ or .apm/ is a deploy's own, whichever package it was deployed
+// for, since the packages that have a primitive of this name change with
+// their order in apm.yml; any other symlink is the user's, refused and kept
+// when it leads out of the primitive's directory, as a copy deploy refuses to
+// write through it.
+func checkFileDest(destPath, deployDir string) error {
+	if !activeDeployMode.symlink {
+		return CheckDeployWrite(deployDir, destPath)
+	}
+	if err := CheckDeployPath(deployDir, destPath); err != nil {
+		return err
+	}
+	abs := filepath.Join(deployDir, filepath.FromSlash(destPath))
+	target, err := os.Readlink(abs)
+	if err != nil {
+		return nil
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(abs), target)
+	}
+	for _, source := range []string{"apm_modules", ".apm"} {
+		source = filepath.Join(activeDeployMode.projectDir, source)
+		if archive.Contained(source, target) || containedReal(source, target) {
+			return nil
+		}
+	}
+	return CheckDeployWrite(deployDir, destPath)
 }

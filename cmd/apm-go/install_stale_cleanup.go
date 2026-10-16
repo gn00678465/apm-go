@@ -39,6 +39,9 @@ type staleCleanup struct {
 // A path at or below one of keptDirs (deploy.DeployResult.KeptDirs) is not
 // stale and gets no warning: the deploy left that directory to the user, so
 // the files in it are the user's, also one that still has the recorded hash.
+// So is a path in rejected (rejectedSet of deploy.DeployResult.RejectedPaths),
+// whichever bucket records it: its symlink is the user's, and the Oracle
+// leaves it.
 //
 // deployRoot is the directory lock paths are relative to. A non-empty
 // linkSourceRoot says the deploy made symlinks into that project directory (a
@@ -49,14 +52,14 @@ type staleCleanup struct {
 //
 // newLock must already carry this run's deployed files. Results are ordered
 // local bucket first, then newLock.Dependencies order.
-func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed map[string]bool, keptDirs, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
+func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed, rejected map[string]bool, keptDirs, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
 	claimed := claimedPaths(newLock)
 
 	var results []staleCleanup
 	clean := func(label string, bucket deploy.DeployBucket, source string, oldFiles []string, oldHashes map[string]string) {
 		var stale []string
 		for _, f := range oldFiles {
-			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(targets, bucket, f) || deploy.UnderKeptDir(keptDirs, f) {
+			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(targets, bucket, f) || deploy.UnderKeptDir(keptDirs, f) || rejected[normalizeDeployPath(f)] {
 				continue
 			}
 			stale = append(stale, f)
@@ -88,6 +91,18 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed ma
 		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(key)), old.DeployedFiles, old.DeployedHashes)
 	}
 	return results
+}
+
+// rejectedSet is every path of deploy.DeployResult.RejectedPaths, normalized:
+// a refused path is the user's whichever package records it.
+func rejectedSet(byBucket map[string][]string) map[string]bool {
+	set := make(map[string]bool)
+	for _, paths := range byBucket {
+		for _, f := range paths {
+			set[normalizeDeployPath(f)] = true
+		}
+	}
+	return set
 }
 
 // claimedPaths is every path newLock records for this run, normalized.
@@ -158,7 +173,9 @@ type orphanCleanup struct {
 // target apm-go deploys to, not this run's, because the Oracle passes
 // targets=None there: a file of a target this run no longer names goes too.
 // A path this run deployed, an MCP config file, a path at or below keptDirs
-// and a path no apm-go target writes are not touched and leave the record.
+// and a path no apm-go target writes are not touched and leave the record. A
+// path in rejected is not touched either and keeps the record while the file
+// it names exists, as the Oracle keeps it under the orphan.
 //
 // An orphan with a path that is still on disk after the delete (a hash
 // mismatch, a failed delete) is returned in kept with only those paths and
@@ -166,7 +183,7 @@ type orphanCleanup struct {
 // later run can still clean them. deployRoot and linkSourceRoot are as for
 // cleanStaleDeployedFiles; newLock must already carry this run's deployed
 // files.
-func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.Lockfile, keptDirs []string, deployRoot, linkSourceRoot string) orphanCleanup {
+func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.Lockfile, rejected map[string]bool, keptDirs []string, deployRoot, linkSourceRoot string) orphanCleanup {
 	claimed := claimedPaths(newLock)
 	allTargets := deploy.AllTargets()
 	takenOverRoot := ""
@@ -175,19 +192,25 @@ func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.
 	}
 	var out orphanCleanup
 	for _, dep := range orphans {
-		var candidates []string
+		var candidates, refused []string
 		for _, f := range dep.DeployedFiles {
+			if rejected[normalizeDeployPath(f)] {
+				refused = append(refused, f)
+				continue
+			}
 			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(allTargets, deploy.DependencyBucket, f) || deploy.UnderKeptDir(keptDirs, f) {
 				continue
 			}
 			candidates = append(candidates, f)
 		}
-		if len(candidates) == 0 {
+		if len(candidates) == 0 && len(refused) == 0 {
 			continue
 		}
 		key := dep.UniqueKey()
 		var removed, diags []string
-		if linkSourceRoot != "" {
+		switch {
+		case len(candidates) == 0:
+		case linkSourceRoot != "":
 			// A removed skill link counts every path of the skill, as the
 			// Oracle, which copies the files, counts them; uninstall
 			// --global counts them the same way.
@@ -198,12 +221,12 @@ func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.
 					removed = append(removed, f)
 				}
 			}
-		} else {
+		default:
 			removed, _, diags = deploy.RemoveDeployedFiles(deployRoot, candidates, dep.DeployedHashes)
 		}
 		out.removed = append(out.removed, removed...)
 		out.diags = append(out.diags, diags...)
-		left, hashes := mergeDeployedFiles(notTakenOver(key, candidates, allTargets, takenOverRoot), dep.DeployedHashes, nil, nil, deployRoot)
+		left, hashes := mergeDeployedFiles(append(notTakenOver(key, candidates, allTargets, takenOverRoot), refused...), dep.DeployedHashes, nil, nil, deployRoot)
 		if len(left) > 0 {
 			dep.DeployedFiles, dep.DeployedHashes = left, hashes
 			out.kept = append(out.kept, dep)

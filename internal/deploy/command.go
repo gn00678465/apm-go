@@ -124,7 +124,16 @@ type CommandNote struct {
 	Package string
 	Info    bool
 	Text    string
+	// phase orders the notes of one package as the Oracle's integration
+	// phases come (rejectedKind); every other note is a command's.
+	phase int
 }
+
+const (
+	phasePrompts = iota - 2
+	phaseAgents
+	phaseCommands
+)
 
 // convertPromptToCommand ports CommandIntegrator._transform_prompt_to_command
 // and the frontmatter.dumps of its result (command_integrator.py:196-273,
