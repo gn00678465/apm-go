@@ -637,9 +637,8 @@ func TestParseDepDict_NameBranch_AcceptsShorthand(t *testing.T) {
 
 // TestParseDepDict_GitBranch_LocalShapeAndFileSchemeRejected locks two facts
 // the resolver's transitive-local supply-chain guard (HIGH-B) depends on:
-//  1. `git: <localpath>` parses to exactly the shape resolveCloneURL and the
-//     guard treat as local -- Source=git, Owner=="" && Repo=="", RepoURL==path,
-//     IsLocal=false.
+//  1. `git: <localpath>` parses to a local package, IsLocal with that path,
+//     which the guard refuses from a transitive package.
 //  2. `git: file://...` is rejected at parse, so a file-transport URL can never
 //     reach the resolver or the git clone in the first place.
 func TestParseDepDict_GitBranch_LocalShapeAndFileSchemeRejected(t *testing.T) {
@@ -648,9 +647,8 @@ func TestParseDepDict_GitBranch_LocalShapeAndFileSchemeRejected(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseDepDict{git: %q}: %v", p, err)
 		}
-		if ref.Source != "git" || ref.Owner != "" || ref.Repo != "" || ref.RepoURL != p || ref.IsLocal {
-			t.Errorf("git: %q -> Source=%q Owner=%q Repo=%q RepoURL=%q IsLocal=%v; want git/\"\"/\"\"/%q/false",
-				p, ref.Source, ref.Owner, ref.Repo, ref.RepoURL, ref.IsLocal, p)
+		if !ref.IsLocal || ref.LocalPath != p {
+			t.Errorf("git: %q -> IsLocal=%v LocalPath=%q; want true, %q", p, ref.IsLocal, ref.LocalPath, p)
 		}
 	}
 	for _, bad := range []string{"file:///abs/repo", "file://host/repo"} {

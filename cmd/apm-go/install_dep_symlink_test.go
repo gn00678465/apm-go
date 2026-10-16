@@ -84,6 +84,40 @@ func writeSymlinkDepManifest(t *testing.T, deps string) {
 	writeGlobalStaleFile(t, "apm.yml", "name: e\nversion: 1.0.0\ndependencies:\n  apm:\n"+deps)
 }
 
+// writeSymlinkGitDep declares the repository in dir, below the working
+// directory, as the git dependency acme/<dir>, cloned from there through the
+// link acme/<dir> (useLocalGitRemotes).
+func writeSymlinkGitDep(t *testing.T, dir string) {
+	t.Helper()
+	linkGitRemote(t, ".", dir)
+	writeSymlinkDepManifest(t, "    - acme/"+dir+"\n")
+}
+
+// writeGlobalGitDep declares the repository <root>/.apm/repo in
+// <root>/.apm/apm.yml as the git dependency acme/repo.
+func writeGlobalGitDep(t *testing.T, root string) {
+	t.Helper()
+	linkGitRemote(t, filepath.Join(root, ".apm"), "repo")
+	writeGlobalStaleFile(t, filepath.Join(root, ".apm", "apm.yml"), "name: global\nversion: 0.0.0\ndependencies:\n  apm:\n    - acme/repo\n")
+}
+
+// linkGitRemote makes <base>/acme/<dir> a link to the repository <base>/<dir>,
+// the path subdirPathLoader clones acme/<dir> from.
+func linkGitRemote(t *testing.T, base, dir string) {
+	t.Helper()
+	useLocalGitRemotes(t)
+	link := filepath.Join(base, "acme", dir)
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(link); err == nil {
+		return
+	}
+	if err := os.Symlink(filepath.Join("..", dir), link); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // treeOutsideModules records every path below dir except apm_modules/ (also
 // ~/.apm/apm_modules/ of a HOME): a
 // file's content hash, a symlink's link text, a directory.
@@ -193,10 +227,10 @@ func TestInstall_DependencyFileSymlinkOutsideFails(t *testing.T) {
 			outer := filepath.Join(dir, "outside", tt.name)
 			symlinkDepRepo(t, "repo", map[string]string{"agents/oracle.agent.md": symlinkDepAgent},
 				map[string]string{".apm/" + tt.subdir + "/" + tt.name: outer})
-			writeSymlinkDepManifest(t, "    - git: ./repo\n")
+			writeSymlinkGitDep(t, "repo")
 
 			assertFailsBeforeWriting(t, dir,
-				" x deploy: dependency ./repo: symlink .apm/"+tt.subdir+"/"+tt.name+" resolves to "+outer+", outside the package",
+				" x deploy: dependency acme/repo: symlink .apm/"+tt.subdir+"/"+tt.name+" resolves to "+outer+", outside the package",
 				"install", "--target", "claude,copilot")
 		})
 	}
@@ -213,10 +247,10 @@ func TestInstall_DependencyDirSymlinkOutsideFails(t *testing.T) {
 			dir := symlinkDepProject(t)
 			target := filepath.Join(dir, "outside", tt.target)
 			symlinkDepRepo(t, "repo", map[string]string{}, map[string]string{tt.link: target})
-			writeSymlinkDepManifest(t, "    - git: ./repo\n")
+			writeSymlinkGitDep(t, "repo")
 
 			assertFailsBeforeWriting(t, dir,
-				" x deploy: dependency ./repo: symlink "+tt.link+" resolves to "+target+", outside the package",
+				" x deploy: dependency acme/repo: symlink "+tt.link+" resolves to "+target+", outside the package",
 				"install", "--target", "claude")
 		})
 	}
@@ -255,10 +289,10 @@ func TestInstall_DependencyDanglingOrLoopingSymlinkFails(t *testing.T) {
 				files = map[string]string{}
 			}
 			symlinkDepRepo(t, "repo", files, tt.links)
-			writeSymlinkDepManifest(t, "    - git: ./repo\n")
+			writeSymlinkGitDep(t, "repo")
 
-			want := strings.ReplaceAll(tt.want, "<modules>", filepath.Join(dir, "apm_modules", "repo"))
-			assertFailsBeforeWriting(t, dir, " x deploy: dependency ./repo: "+want, "install", "--target", "claude")
+			want := strings.ReplaceAll(tt.want, "<modules>", filepath.Join(dir, "apm_modules", "acme", "repo"))
+			assertFailsBeforeWriting(t, dir, " x deploy: dependency acme/repo: "+want, "install", "--target", "claude")
 		})
 	}
 }
@@ -270,7 +304,7 @@ func TestInstall_DependencyInPackageSymlinksAreDeployed(t *testing.T) {
 		symlinkDepProject(t)
 		symlinkDepRepo(t, "repo", map[string]string{"agents/oracle.agent.md": symlinkDepAgent},
 			map[string]string{".apm/agents/inpkg.agent.md": "../../agents/oracle.agent.md"})
-		writeSymlinkDepManifest(t, "    - git: ./repo\n")
+		writeSymlinkGitDep(t, "repo")
 
 		mustRun(t, "install", "--target", "claude,codex")
 
@@ -281,7 +315,7 @@ func TestInstall_DependencyInPackageSymlinksAreDeployed(t *testing.T) {
 		if got := readText(t, ".codex/agents/inpkg.toml"); got != wantTOML {
 			t.Errorf(".codex/agents/inpkg.toml = %q, want %q", got, wantTOML)
 		}
-		dep := subdirLockEntry(t, ".", "./repo")
+		dep := subdirLockEntry(t, ".", "acme/repo")
 		if got := dep.DeployedHashes[".claude/agents/inpkg.md"]; got != sha256Of(symlinkDepAgent) {
 			t.Errorf("lock hash of .claude/agents/inpkg.md = %q, want %q", got, sha256Of(symlinkDepAgent))
 		}
@@ -293,14 +327,14 @@ func TestInstall_DependencyInPackageSymlinksAreDeployed(t *testing.T) {
 		symlinkDepProject(t)
 		symlinkDepRepo(t, "repo", map[string]string{"agents/oracle.agent.md": symlinkDepAgent},
 			map[string]string{".apm/agents": "../agents"})
-		writeSymlinkDepManifest(t, "    - git: ./repo\n")
+		writeSymlinkGitDep(t, "repo")
 
 		mustRun(t, "install", "--target", "claude")
 
 		if got := readText(t, ".claude/agents/oracle.md"); got != symlinkDepAgent {
 			t.Errorf(".claude/agents/oracle.md = %q, want %q", got, symlinkDepAgent)
 		}
-		dep := subdirLockEntry(t, ".", "./repo")
+		dep := subdirLockEntry(t, ".", "acme/repo")
 		if got := dep.DeployedHashes[".claude/agents/oracle.md"]; got != sha256Of(symlinkDepAgent) {
 			t.Errorf("lock hash of .claude/agents/oracle.md = %q, want %q", got, sha256Of(symlinkDepAgent))
 		}
@@ -328,7 +362,7 @@ func TestInstall_DependencySkillSymlinks(t *testing.T) {
 	t.Run("copy", func(t *testing.T) {
 		symlinkDepProject(t)
 		symlinkDepSkillRepo(t, "repo")
-		writeSymlinkDepManifest(t, "    - git: ./repo\n")
+		writeSymlinkGitDep(t, "repo")
 
 		mustRun(t, "install", "--target", "claude")
 
@@ -343,7 +377,7 @@ func TestInstall_DependencySkillSymlinks(t *testing.T) {
 				t.Errorf("%s is not a regular file (%v)", p, err)
 			}
 		}
-		dep := subdirLockEntry(t, ".", "./repo")
+		dep := subdirLockEntry(t, ".", "acme/repo")
 		if got := dep.DeployedHashes[".claude/skills/s/ref.md"]; got != sha256Of("reference\n") {
 			t.Errorf("lock hash of .claude/skills/s/ref.md = %q", got)
 		}
@@ -351,11 +385,11 @@ func TestInstall_DependencySkillSymlinks(t *testing.T) {
 	t.Run("global", func(t *testing.T) {
 		home := symlinkDepGlobal(t)
 		symlinkDepSkillRepo(t, filepath.Join(home, ".apm", "repo"))
-		writeGlobalStaleFile(t, filepath.Join(home, ".apm", "apm.yml"), "name: global\nversion: 0.0.0\ndependencies:\n  apm:\n    - git: ./repo\n")
+		writeGlobalGitDep(t, home)
 
 		mustRun(t, "install", "--global", "--target", "claude")
 
-		modules := filepath.Join(home, ".apm", "apm_modules", "repo")
+		modules := filepath.Join(home, ".apm", "apm_modules", "acme", "repo")
 		for link, want := range map[string]string{
 			".claude/skills/linked": filepath.Join(modules, "realskills", "linked"),
 			".claude/skills/s":      filepath.Join(modules, "skills", "s"),
@@ -367,7 +401,7 @@ func TestInstall_DependencySkillSymlinks(t *testing.T) {
 		if got := readText(t, filepath.Join(home, ".claude/skills/s/ref.md")); got != "reference\n" {
 			t.Errorf(".claude/skills/s/ref.md = %q", got)
 		}
-		dep := subdirLockEntry(t, filepath.Join(home, ".apm"), "./repo")
+		dep := subdirLockEntry(t, filepath.Join(home, ".apm"), "acme/repo")
 		want := map[string]string{
 			".claude/skills/linked/SKILL.md": sha256Of(symlinkDepSkill),
 			".claude/skills/s/SKILL.md":      sha256Of("---\nname: s\ndescription: d\n---\ns\n"),
@@ -393,17 +427,17 @@ func TestInstall_DependencySkillSymlinks(t *testing.T) {
 			if global {
 				root = symlinkDepGlobalIn(t, dir)
 				repo = filepath.Join(root, ".apm", "repo")
-				writeGlobalStaleFile(t, filepath.Join(root, ".apm", "apm.yml"), "name: global\nversion: 0.0.0\ndependencies:\n  apm:\n    - git: ./repo\n")
+				writeGlobalGitDep(t, root)
 				args = []string{"install", "--global", "--target", "claude"}
 			} else {
-				writeSymlinkDepManifest(t, "    - git: ./repo\n")
+				writeSymlinkGitDep(t, "repo")
 			}
 			secret := filepath.Join(dir, "outside", "secret.txt")
 			symlinkDepRepo(t, repo, map[string]string{"skills/real/SKILL.md": "---\nname: real\ndescription: d\n---\nr\n"},
 				map[string]string{"skills/real/secret.txt": secret})
 
 			assertFailsBeforeWriting(t, root,
-				" x deploy: dependency ./repo: symlink skills/real/secret.txt resolves to "+secret+", outside the package", args...)
+				" x deploy: dependency acme/repo: symlink skills/real/secret.txt resolves to "+secret+", outside the package", args...)
 		})
 	}
 }
@@ -434,51 +468,53 @@ func TestInstall_GlobalDependencySymlinks(t *testing.T) {
 		outer := filepath.Join(dir, "outside", "outer.agent.md")
 		symlinkDepRepo(t, filepath.Join(home, ".apm", "repo"), map[string]string{"agents/oracle.agent.md": symlinkDepAgent},
 			map[string]string{".apm/agents/outer.agent.md": outer})
-		writeGlobalStaleFile(t, filepath.Join(home, ".apm", "apm.yml"), "name: global\nversion: 0.0.0\ndependencies:\n  apm:\n    - git: ./repo\n")
+		writeGlobalGitDep(t, home)
 
 		assertFailsBeforeWriting(t, home,
-			" x deploy: dependency ./repo: symlink .apm/agents/outer.agent.md resolves to "+outer+", outside the package",
+			" x deploy: dependency acme/repo: symlink .apm/agents/outer.agent.md resolves to "+outer+", outside the package",
 			"install", "--global", "--target", "claude")
 	})
 	t.Run("in package", func(t *testing.T) {
 		home := symlinkDepGlobal(t)
 		symlinkDepRepo(t, filepath.Join(home, ".apm", "repo"), map[string]string{"agents/oracle.agent.md": symlinkDepAgent},
 			map[string]string{".apm/agents/inpkg.agent.md": "../../agents/oracle.agent.md"})
-		writeGlobalStaleFile(t, filepath.Join(home, ".apm", "apm.yml"), "name: global\nversion: 0.0.0\ndependencies:\n  apm:\n    - git: ./repo\n")
+		writeGlobalGitDep(t, home)
 
 		mustRun(t, "install", "--global", "--target", "claude")
 
-		want := filepath.Join(home, ".apm", "apm_modules", "repo", "agents", "oracle.agent.md")
+		want := filepath.Join(home, ".apm", "apm_modules", "acme", "repo", "agents", "oracle.agent.md")
 		if got, err := os.Readlink(filepath.Join(home, ".claude", "agents", "inpkg.md")); err != nil || got != want {
 			t.Errorf(".claude/agents/inpkg.md -> %q (%v), want -> %q", got, err, want)
 		}
 	})
 }
 
-// Test 7: a subdirectory package (git: ./mono with path:).
+// Test 7: a subdirectory package (acme/mono with path:).
 func TestInstall_SubdirectoryPackageSymlinks(t *testing.T) {
 	t.Run("file outside", func(t *testing.T) {
 		dir := symlinkDepProject(t)
 		outer := filepath.Join(dir, "outside", "outer.agent.md")
 		symlinkDepRepo(t, "mono", map[string]string{"pkg/apm.yml": "name: pkg\nversion: 1.0.0\n"},
 			map[string]string{"pkg/.apm/agents/outer.agent.md": outer})
-		writeSymlinkDepManifest(t, "    - git: ./mono\n      path: pkg\n")
+		linkGitRemote(t, ".", "mono")
+		writeSymlinkDepManifest(t, "    - git: acme/mono\n      path: pkg\n")
 
 		assertFailsBeforeWriting(t, dir,
-			` x resolve: loading package ./mono/pkg: subdirectory "pkg": symlink pkg/.apm/agents/outer.agent.md resolves to `+outer+", outside the package",
+			` x resolve: loading package acme/mono/pkg: subdirectory "pkg": symlink pkg/.apm/agents/outer.agent.md resolves to `+outer+", outside the package",
 			"install", "--target", "claude")
-		assertNoModule(t, "apm_modules/mono")
+		assertNoModule(t, "apm_modules/acme/mono")
 	})
 	t.Run("path through a symlink outside", func(t *testing.T) {
 		dir := symlinkDepProject(t)
 		target := filepath.Join(dir, "outside")
 		symlinkDepRepo(t, "mono", map[string]string{"README.md": "mono\n"}, map[string]string{"pkgroot": target})
-		writeSymlinkDepManifest(t, "    - git: ./mono\n      path: pkgroot/pkgdir\n")
+		linkGitRemote(t, ".", "mono")
+		writeSymlinkDepManifest(t, "    - git: acme/mono\n      path: pkgroot/pkgdir\n")
 
 		assertFailsBeforeWriting(t, dir,
-			` x resolve: loading package ./mono/pkgroot/pkgdir: subdirectory "pkgroot/pkgdir": symlink pkgroot resolves to `+target+", outside the package",
+			` x resolve: loading package acme/mono/pkgroot/pkgdir: subdirectory "pkgroot/pkgdir": symlink pkgroot resolves to `+target+", outside the package",
 			"install", "--target", "claude")
-		assertNoModule(t, "apm_modules/mono")
+		assertNoModule(t, "apm_modules/acme/mono")
 	})
 	t.Run("in repository", func(t *testing.T) {
 		symlinkDepProject(t)
@@ -486,11 +522,12 @@ func TestInstall_SubdirectoryPackageSymlinks(t *testing.T) {
 			"pkg/apm.yml":            "name: pkg\nversion: 1.0.0\n",
 			"shared/shared.agent.md": symlinkDepAgent,
 		}, map[string]string{"pkg/.apm/agents/shared.agent.md": "../../../shared/shared.agent.md"})
-		writeSymlinkDepManifest(t, "    - git: ./mono\n      path: pkg\n")
+		linkGitRemote(t, ".", "mono")
+		writeSymlinkDepManifest(t, "    - git: acme/mono\n      path: pkg\n")
 
 		mustRun(t, "install", "--target", "claude")
 
-		copied := filepath.Join("apm_modules", "mono", "pkg", ".apm", "agents", "shared.agent.md")
+		copied := filepath.Join("apm_modules", "acme", "mono", "pkg", ".apm", "agents", "shared.agent.md")
 		if info, err := os.Lstat(copied); err != nil || !info.Mode().IsRegular() {
 			t.Errorf("%s is not a regular file (%v)", copied, err)
 		}
@@ -515,10 +552,10 @@ func TestInstall_DependencyManifestSymlinkOutside(t *testing.T) {
 		dir := symlinkDepProject(t)
 		outer := filepath.Join(dir, "outside", "apm.yml")
 		symlinkDepRepo(t, "repo", map[string]string{}, map[string]string{"apm.yml": outer})
-		writeSymlinkDepManifest(t, "    - git: ./repo\n")
+		writeSymlinkGitDep(t, "repo")
 
 		assertFailsBeforeWriting(t, dir,
-			" x resolve: loading package ./repo: symlink apm.yml resolves to "+outer+", outside the package",
+			" x resolve: loading package acme/repo: symlink apm.yml resolves to "+outer+", outside the package",
 			"install", "--target", "claude")
 	})
 	t.Run("uninstall", func(t *testing.T) {
@@ -557,10 +594,10 @@ func TestInstall_DependencyPluginManifestSymlinkOutsideFails(t *testing.T) {
 	outer := filepath.Join(dir, "outside", "plugin.json")
 	symlinkDepRepo(t, "repo", map[string]string{"agents/plain.md": symlinkDepAgent},
 		map[string]string{".claude-plugin/plugin.json": outer})
-	writeSymlinkDepManifest(t, "    - git: ./repo\n")
+	writeSymlinkGitDep(t, "repo")
 
 	assertFailsBeforeWriting(t, dir,
-		" x deploy: dependency ./repo: symlink .claude-plugin/plugin.json resolves to "+outer+", outside the package",
+		" x deploy: dependency acme/repo: symlink .claude-plugin/plugin.json resolves to "+outer+", outside the package",
 		"install", "--target", "claude")
 }
 
@@ -568,27 +605,27 @@ func TestInstall_DependencyPluginManifestSymlinkOutsideFails(t *testing.T) {
 func TestCompile_DependencySymlinks(t *testing.T) {
 	t.Run("outside", func(t *testing.T) {
 		dir := symlinkDepProject(t)
-		writeSymlinkDepManifest(t, "    - git: ./repo\n")
+		writeSymlinkGitDep(t, "repo")
 		target := filepath.Join(dir, "outside", "apmdir")
-		writeGlobalStaleFile(t, "apm_modules/repo/apm.yml", "name: dep\nversion: 1.0.0\n")
-		if err := os.Symlink(target, filepath.Join("apm_modules", "repo", ".apm")); err != nil {
+		writeGlobalStaleFile(t, "apm_modules/acme/repo/apm.yml", "name: dep\nversion: 1.0.0\n")
+		if err := os.Symlink(target, filepath.Join("apm_modules", "acme", "repo", ".apm")); err != nil {
 			t.Fatal(err)
 		}
 
 		assertFailsBeforeWriting(t, dir,
-			" x compile: dependency ./repo: symlink .apm resolves to "+target+", outside the package",
+			" x compile: dependency acme/repo: symlink .apm resolves to "+target+", outside the package",
 			"compile", "--target", "codex")
 		assertNoModule(t, "AGENTS.md")
 	})
 	t.Run("in package", func(t *testing.T) {
 		symlinkDepProject(t)
-		writeSymlinkDepManifest(t, "    - git: ./repo\n")
-		writeGlobalStaleFile(t, "apm_modules/repo/apm.yml", "name: dep\nversion: 1.0.0\n")
-		writeGlobalStaleFile(t, "apm_modules/repo/docs/c.instructions.md", "IN-PACKAGE-INSTRUCTION\n")
-		if err := os.MkdirAll(filepath.Join("apm_modules", "repo", ".apm", "instructions"), 0o755); err != nil {
+		writeSymlinkGitDep(t, "repo")
+		writeGlobalStaleFile(t, "apm_modules/acme/repo/apm.yml", "name: dep\nversion: 1.0.0\n")
+		writeGlobalStaleFile(t, "apm_modules/acme/repo/docs/c.instructions.md", "IN-PACKAGE-INSTRUCTION\n")
+		if err := os.MkdirAll(filepath.Join("apm_modules", "acme", "repo", ".apm", "instructions"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink("../../docs/c.instructions.md", filepath.Join("apm_modules", "repo", ".apm", "instructions", "c.instructions.md")); err != nil {
+		if err := os.Symlink("../../docs/c.instructions.md", filepath.Join("apm_modules", "acme", "repo", ".apm", "instructions", "c.instructions.md")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -686,10 +723,12 @@ func TestInstall_DependencySymlinkErrorOrder(t *testing.T) {
 	links := map[string]string{".apm/agents/b.agent.md": outer, ".apm/agents/a.agent.md": outer}
 	symlinkDepRepo(t, "first", map[string]string{}, links)
 	symlinkDepRepo(t, "second", map[string]string{}, links)
-	writeSymlinkDepManifest(t, "    - git: ./second\n    - git: ./first\n")
+	linkGitRemote(t, ".", "second")
+	linkGitRemote(t, ".", "first")
+	writeSymlinkDepManifest(t, "    - acme/second\n    - acme/first\n")
 
 	assertFailsBeforeWriting(t, dir,
-		" x deploy: dependency ./second: symlink .apm/agents/a.agent.md resolves to "+outer+", outside the package",
+		" x deploy: dependency acme/second: symlink .apm/agents/a.agent.md resolves to "+outer+", outside the package",
 		"install", "--target", "claude")
 }
 
@@ -736,9 +775,9 @@ func TestInstall_DependencySkillMarkerSymlinkFails(t *testing.T) {
 				files[k] = v
 			}
 			symlinkDepRepo(t, "repo", files, tt.links)
-			writeSymlinkDepManifest(t, "    - git: ./repo\n")
+			writeSymlinkGitDep(t, "repo")
 
-			assertFailsBeforeWriting(t, dir, " x deploy: dependency ./repo: "+tt.want, "install", "--target", "claude")
+			assertFailsBeforeWriting(t, dir, " x deploy: dependency acme/repo: "+tt.want, "install", "--target", "claude")
 			for _, p := range []string{"apm.lock.yaml", ".gitignore", ".claude"} {
 				assertNoModule(t, p)
 			}
@@ -753,7 +792,7 @@ func TestInstall_DependencyDirectoryWithoutSkillMarkerIsSkipped(t *testing.T) {
 		"skills/notes/readme.md":     "notes\n",
 		".apm/agents/plain.agent.md": symlinkDepAgent,
 	}, nil)
-	writeSymlinkDepManifest(t, "    - git: ./repo\n")
+	writeSymlinkGitDep(t, "repo")
 
 	mustRun(t, "install", "--target", "claude")
 
@@ -777,10 +816,10 @@ func TestInstall_DependencyManifestSymlinkIntoCheckout(t *testing.T) {
 			dir := symlinkDepProject(t)
 			target := "metadata.yml"
 			if absolute {
-				target = filepath.Join(dir, "apm_modules", "repo", "metadata.yml")
+				target = filepath.Join(dir, "apm_modules", "acme", "repo", "metadata.yml")
 			}
 			symlinkDepRepo(t, "repo", map[string]string{"metadata.yml": metadata}, map[string]string{"apm.yml": target})
-			writeSymlinkDepManifest(t, "    - git: ./repo\n")
+			writeSymlinkGitDep(t, "repo")
 
 			mustRun(t, "install", "--target", "claude")
 
@@ -806,7 +845,8 @@ func TestInstall_SubdirectoryAbsoluteSymlinkWithRelativeTMPDIR(t *testing.T) {
 		"pkg/apm.yml":            "name: pkg\nversion: 1.0.0\n",
 		"shared/shared.agent.md": symlinkDepAgent,
 	}, map[string]string{"pkg/.apm/agents/shared.agent.md": filepath.Join(dir, "clone", "repo", "shared", "shared.agent.md")})
-	writeSymlinkDepManifest(t, "    - git: ./mono\n      path: pkg\n")
+	linkGitRemote(t, ".", "mono")
+	writeSymlinkDepManifest(t, "    - git: acme/mono\n      path: pkg\n")
 
 	done := make(chan struct{})
 	linked := make(chan error, 1)
@@ -834,7 +874,7 @@ func TestInstall_SubdirectoryAbsoluteSymlinkWithRelativeTMPDIR(t *testing.T) {
 		t.Fatalf("install: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 
-	copied := filepath.Join("apm_modules", "mono", "pkg", ".apm", "agents", "shared.agent.md")
+	copied := filepath.Join("apm_modules", "acme", "mono", "pkg", ".apm", "agents", "shared.agent.md")
 	if info, err := os.Lstat(copied); err != nil || !info.Mode().IsRegular() {
 		t.Errorf("%s is not a regular file (%v)", copied, err)
 	}

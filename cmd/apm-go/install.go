@@ -168,10 +168,8 @@ func installCmd() *cobra.Command {
 			}
 
 			deps := &installDeps{
-				tags: &gitops.RealTagLister{},
-				loader: &gitops.RealPackageLoader{
-					ModulesDir: "apm_modules",
-				},
+				tags:            &gitops.RealTagLister{},
+				loader:          newGitPackageLoader("apm_modules"),
 				maxEntries:      maxEntries,
 				maxArchiveBytes: maxArchiveBytes,
 				allowInsecure:   allowInsecure,
@@ -647,6 +645,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			return fmt.Errorf("frozen install requires a lockfile but none was found")
 		}
 		useLegacyLocalKeys(m, existingLock)
+		useLocalKeysForGitPaths(allDirectDeps(m), existingLock)
 		if err := lockfile.CheckFrozenInstall(m, existingLock); err != nil {
 			return err
 		}
@@ -961,7 +960,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		return err
 	}
 
-	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, skillSubset, requestedKeys, noProvenance, marketplaceProvenance, localDeclaredPaths(m))
+	newLock, err := buildLockfile(result, existingLock, regLoader, effectiveSubsets, skillSubset, requestedKeys, noProvenance, marketplaceProvenance, localDirectDeps(m))
 	if err != nil {
 		return err
 	}
@@ -1720,7 +1719,7 @@ func hasMarketplaceProvenance(d *lockfile.LockedDep) bool {
 // buildLockfile converts a resolution result into the lockfile that would be
 // written for it, without touching disk (steps 5). Shared by runInstall and
 // runUpdate so both build the same lockfile shape from a resolution result.
-func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys map[string]bool, noProvenance bool, marketplaceProvenance map[string]*marketplace.Provenance, localDeclared map[string]string) (*lockfile.Lockfile, error) {
+func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Lockfile, regLoader *registry.Loader, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys map[string]bool, noProvenance bool, marketplaceProvenance map[string]*marketplace.Provenance, localDeps map[string]*manifest.DependencyReference) (*lockfile.Lockfile, error) {
 	existingVersion := ""
 	if existingLock != nil {
 		existingVersion = existingLock.Version
@@ -1754,11 +1753,13 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 		// version, collected out-of-band by the registry loader.
 		// A local package: the Oracle records where it came from and what
 		// its own apm.yml says, and no commit (install/sources.py:246).
-		declaredPath, isLocal := localDeclared[dep.Key]
+		// A `git:` entry's ref is recorded as resolved_ref
+		// (deps/lockfile.py:647).
+		local, isLocal := localDeps[dep.Key]
 		if isLocal {
 			ld.Source = "local"
-			ld.LocalPath = declaredPath
-			ld.ResolvedRef = ""
+			ld.LocalPath = local.LocalDeclaredPath
+			ld.ResolvedRef = local.LocalDeclaredRef
 			ld.ResolvedCommit = ""
 			ld.Name, ld.Version, ld.PackageType = localPackageIdentity(filepath.Join("apm_modules", filepath.FromSlash(dep.Key)))
 		}
@@ -3258,8 +3259,8 @@ func extractDepByKey(refs []*manifest.DependencyReference, key string) (*manifes
 // model: apm_modules/_local/<name>/), instead of git-cloning it. It targets
 // two indistinguishable-downstream shapes:
 //
-//	(a) a genuine local dep (IsLocal, from a bare path in apm.yml or a CLI
-//	    positional arg like "./pkg" or "/abs/pkg"); and
+//	(a) a genuine local dep (IsLocal, from a path in apm.yml, under `path:`
+//	    or `git:` too, or a CLI positional arg like "./pkg" or "/abs/pkg"); and
 //	(b) mkt-025's local-marketplace fast path result (Source=="git" with an
 //	    empty Owner/Repo and an ABSOLUTE RepoURL, no git ref).
 //
@@ -3269,11 +3270,10 @@ func extractDepByKey(refs []*manifest.DependencyReference, key string) (*manifes
 // and the lockfile (repo_url) all use, so no filepath.Join(apm_modules, key)
 // ever sees an absolute path. The real source path rides on LocalSourcePath
 // for the loader's copy step and is never persisted; LocalDeclaredPath is what
-// the lock records as local_path. RELATIVE git-local paths (git: ./remote,
-// which may pin a ref and clone) are deliberately NOT matched -- only absolute
-// ones, which the clone path cannot handle at all. No-op (returns without
-// change) for anything else, and idempotent (an already-"_local/…" ref matches
-// neither shape).
+// the lock records as local_path, and LocalDeclaredRef the ref a `git:` entry
+// declares, which the copy does not use. No-op (returns without change) for
+// anything else, and idempotent (an already-"_local/…" ref matches neither
+// shape).
 func normalizeLocalDep(ref *manifest.DependencyReference) {
 	var src string
 	switch {
@@ -3293,6 +3293,7 @@ func normalizeLocalDep(ref *manifest.DependencyReference) {
 	ref.Repo = ""
 	ref.VirtualPath = ""
 	ref.VirtualType = ""
+	ref.LocalDeclaredRef = ref.Reference
 	ref.Reference = ""
 	ref.Source = "git"
 	ref.RepoURL = localModulesKey(abs)
@@ -3484,6 +3485,25 @@ func (l *fetchedDirsLoader) LoadPackage(ref *manifest.DependencyReference, resol
 		}
 	}
 	return l.next.LoadPackage(ref, resolvedRef)
+}
+
+// newGitPackageLoader is the loader install and update fetch packages into
+// modulesDir with. Tests replace it to clone a git dependency from a path
+// below the working directory instead of from its host.
+var newGitPackageLoader = func(modulesDir string) resolver.PackageLoader {
+	return &gitops.RealPackageLoader{ModulesDir: modulesDir}
+}
+
+// localDirectDeps maps the apm_modules key of each direct local package to
+// its reference, after normalizeLocalDep.
+func localDirectDeps(m *manifest.Manifest) map[string]*manifest.DependencyReference {
+	local := make(map[string]*manifest.DependencyReference)
+	for _, d := range allDirectDeps(m) {
+		if d.LocalSourcePath != "" {
+			local[deploy.DepRefKey(d)] = d
+		}
+	}
+	return local
 }
 
 // localDeclaredPaths maps the apm_modules key of each direct local package

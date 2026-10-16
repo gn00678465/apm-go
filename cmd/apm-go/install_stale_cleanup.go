@@ -137,10 +137,11 @@ func orphanDeps(existingLock, newLock *lockfile.Lockfile) []lockfile.LockedDep {
 // lockUnderCurrentKeys returns the old lock's records with each local entry
 // in the format before issue #50 that a local dependency of m still declares
 // under that dependency's current key, matched as useLegacyLocalKeys matches
-// it, so the stale cleanup and the lock merge find the package's old record.
-// An old-format entry no dependency declares keeps its key and is an orphan.
-// existingLock is not changed: the lock write and removeLegacyLocalModules
-// read the keys it was written with.
+// it, and each git entry of a `git:` local path as useLocalKeysForGitPaths
+// turns it, so the stale cleanup and the lock merge find the package's old
+// record. An old-format entry no dependency declares keeps its key and is an
+// orphan. existingLock is not changed: the lock write and
+// removeLegacyLocalModules read the keys it was written with.
 func lockUnderCurrentKeys(existingLock *lockfile.Lockfile, m *manifest.Manifest) *lockfile.Lockfile {
 	prev := &lockfile.Lockfile{
 		Dependencies:        slices.Clone(existingLock.Dependencies),
@@ -158,6 +159,7 @@ func lockUnderCurrentKeys(existingLock *lockfile.Lockfile, m *manifest.Manifest)
 			}
 		}
 	}
+	useLocalKeysForGitPaths(allDirectDeps(m), prev)
 	return prev
 }
 

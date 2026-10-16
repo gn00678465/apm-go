@@ -7,15 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/apm-go/apm/internal/gitops"
 )
 
 // TestRunUpdate_RealGitSemver_ResolvesToNewTag is the CLI-level end-to-end
 // req-rs-011 regression: it exercises the real cmd/apm-go -> resolver ->
 // RealTagLister -> RealPackageLoader path (no mocks) for a git-semver
-// dependency, using a local git-path remote (git: ./remote) to stay
-// offline-friendly (same rationale as TestRunInstall_StaleCheckoutIsRepaired).
+// dependency, cloning and listing acme/remote from a local repository
+// (subdirPathLoader, subdirPathTagLister) to stay offline.
 // Mocked tests alone previously missed a real integration bug in this area
 // (the req-lk-007 raw-SHA clone regression), so this proves the update
 // command's wiring -- buildLockfile/deployAndFinalize extraction included --
@@ -50,7 +48,7 @@ func TestRunUpdate_RealGitSemver_ResolvesToNewTag(t *testing.T) {
 		return string(bytes.TrimSpace(out))
 	}
 
-	remoteDir := filepath.Join(dir, "remote")
+	remoteDir := filepath.Join(dir, "acme", "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -68,17 +66,17 @@ func TestRunUpdate_RealGitSemver_ResolvesToNewTag(t *testing.T) {
 	// reads m.Target -- can resolve a target too; before that fix runUpdate
 	// had no target gate at all, so this real-git resolution assertion
 	// didn't need m.Target set for update to reach the lockfile write.
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: ./remote\n      ref: \"^1.0.0\"\n"), 0644)
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: acme/remote\n      ref: \"^1.0.0\"\n"), 0644)
 
 	deps := &installDeps{
-		tags:   &gitops.RealTagLister{},
-		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+		tags:   subdirPathTagLister{},
+		loader: subdirPathLoader{subdirRealLoader()},
 	}
 	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 
-	installDir := filepath.Join("apm_modules", "remote")
+	installDir := filepath.Join("apm_modules", "acme", "remote")
 	v1Head := headOf(installDir)
 
 	// A newer release appears on the remote, still within ^1.0.0.
@@ -102,7 +100,7 @@ func TestRunUpdate_RealGitSemver_ResolvesToNewTag(t *testing.T) {
 
 	got := headOf(installDir)
 	if got != v15Head {
-		t.Errorf("expected apm_modules/remote to be re-cloned at v1.5.0 (%s), got %s (was %s before update)", v15Head, got, v1Head)
+		t.Errorf("expected apm_modules/acme/remote to be re-cloned at v1.5.0 (%s), got %s (was %s before update)", v15Head, got, v1Head)
 	}
 }
 
@@ -131,7 +129,7 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 		}
 	}
 
-	remoteDir := filepath.Join(dir, "remote")
+	remoteDir := filepath.Join(dir, "acme", "remote")
 	if err := os.MkdirAll(remoteDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -147,17 +145,17 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 	// TestRunUpdate_RealGitSemver_ResolvesToNewTag above) is required so
 	// runUpdate's own C2 zero-target gate (07-11-update-local-deps) can
 	// resolve a target too.
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: ./remote\n      ref: \"^1.0.0\"\n"), 0644)
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: acme/remote\n      ref: \"^1.0.0\"\n"), 0644)
 
 	deps := &installDeps{
-		tags:   &gitops.RealTagLister{},
-		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+		tags:   subdirPathTagLister{},
+		loader: subdirPathLoader{subdirRealLoader()},
 	}
 	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)
 	}
 
-	installDir := filepath.Join("apm_modules", "remote")
+	installDir := filepath.Join("apm_modules", "acme", "remote")
 	markerPath := filepath.Join(installDir, "marker.txt")
 	if err := os.WriteFile(markerPath, []byte("simulated tampering, untracked by git"), 0644); err != nil {
 		t.Fatal(err)
@@ -168,7 +166,7 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 	}
 
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
-		t.Errorf("expected apm_modules/remote to be cleared and re-cloned even though the tag (v1.0.0) didn't change (req-lk-010); marker still present (stat err: %v)", err)
+		t.Errorf("expected apm_modules/acme/remote to be cleared and re-cloned even though the tag (v1.0.0) didn't change (req-lk-010); marker still present (stat err: %v)", err)
 	}
 }
 
@@ -180,6 +178,7 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 // against the real cmd/apm-go -> resolver -> RealTagLister -> RealPackageLoader
 // path (no mocks), mirroring TestRunUpdate_RealGitSemver_ResolvesToNewTag.
 func TestRunUpdate_DryRunPlanNoSideEffects(t *testing.T) {
+	useLocalGitRemotes(t)
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(dir)
@@ -199,7 +198,7 @@ func TestRunUpdate_DryRunPlanNoSideEffects(t *testing.T) {
 		}
 	}
 
-	remoteDir := filepath.Join(dir, "remote")
+	remoteDir := filepath.Join(dir, "acme", "remote")
 	if err := os.MkdirAll(filepath.Join(remoteDir, ".apm", "skills", "demo"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -212,11 +211,11 @@ func TestRunUpdate_DryRunPlanNoSideEffects(t *testing.T) {
 	git(remoteDir, "commit", "-m", "v1")
 	git(remoteDir, "tag", "v1.0.0")
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: ./remote\n      ref: \"^1.0.0\"\n"), 0644)
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ntarget:\n  - claude\ndependencies:\n  apm:\n    - git: acme/remote\n      ref: \"^1.0.0\"\n"), 0644)
 
 	deps := &installDeps{
-		tags:   &gitops.RealTagLister{},
-		loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"},
+		tags:   subdirPathTagLister{},
+		loader: subdirPathLoader{subdirRealLoader()},
 	}
 	if err := runInstall(deps, false, true, "", "", nil, nil); err != nil {
 		t.Fatalf("initial runInstall: %v", err)

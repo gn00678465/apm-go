@@ -81,6 +81,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		normalizeLocalDep(d)
 	}
 	useLegacyLocalKeys(m, lock)
+	useGitPathKeys(m, lock)
 	result := &resolver.ResolutionResult{}
 	for i := range lock.Dependencies {
 		d := &lock.Dependencies[i]

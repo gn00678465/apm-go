@@ -506,18 +506,48 @@ func isLegacyLocalEntry(dep *lockfile.LockedDep) bool {
 
 // removeLegacyLocalModules deletes the apm_modules directory of each local
 // package the old lock names in the format before issue #50 and the new lock
-// no longer has. Only a directory an old repo_url names is removed.
+// no longer has, and the clone of each `git:` local path the old lock records
+// as a git source (isGitPathEntry) where the new lock records that path as a
+// local package. Only a directory an old repo_url names is removed, and not
+// one that is, holds or lies in the directory of a package the new lock has:
+// another key can name the same place (`git: ./_local/repo` was cloned to the
+// apm_modules/_local/repo its local copy now takes).
 func removeLegacyLocalModules(oldLock, newLock *lockfile.Lockfile) {
 	if oldLock == nil {
 		return
 	}
+	nowLocal := map[string]bool{}
+	for i := range newLock.Dependencies {
+		if d := &newLock.Dependencies[i]; d.Source == "local" {
+			nowLocal[d.LocalPath] = true
+		}
+	}
 	for i := range oldLock.Dependencies {
 		dep := &oldLock.Dependencies[i]
-		if !isLegacyLocalEntry(dep) || newLock.FindByKey(dep.UniqueKey()) != nil {
+		gitPath := nowLocal[dep.RepoURL] && isGitPathEntry(dep, dep.RepoURL)
+		if (!isLegacyLocalEntry(dep) && !gitPath) || overlapsModuleDir(newLock, dep.UniqueKey()) {
 			continue
 		}
 		if _, err := deploy.SafeRemoveModuleDir(".", dep.UniqueKey()); err != nil {
 			ux.Warn(os.Stderr, "could not remove apm_modules/%s: %v", dep.UniqueKey(), err)
 		}
 	}
+}
+
+// overlapsModuleDir reports whether apm_modules/<key>, cleaned as
+// deploy.SafeRemoveModuleDir resolves it, is the directory of a package lock
+// has, or holds it, or lies in it.
+func overlapsModuleDir(lock *lockfile.Lockfile, key string) bool {
+	dir := moduleDirOf(key)
+	for i := range lock.Dependencies {
+		pkg := moduleDirOf(lock.Dependencies[i].UniqueKey())
+		if dir == pkg || strings.HasPrefix(pkg, dir+string(filepath.Separator)) || strings.HasPrefix(dir, pkg+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func moduleDirOf(key string) string {
+	return filepath.Join("apm_modules", filepath.FromSlash(key))
 }

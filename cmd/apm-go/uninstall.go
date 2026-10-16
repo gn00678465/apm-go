@@ -162,6 +162,19 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 		moduleKeyByIdentity[t.IdentityKey] = key
 		removedModuleKeys[key] = true
 	}
+	// An entry of a removed package that a lock before issue #114 records
+	// under its `git:` path is removed under its current key, as install
+	// would have recorded it; the entries that stay are written back as they
+	// are, since uninstall copies no package to its current key.
+	if lock != nil {
+		var removed []*manifest.DependencyReference
+		for _, d := range allDirectDeps(m) {
+			if id, ok := uninstallIdentity(d); ok && removedIdentities[id] {
+				removed = append(removed, d)
+			}
+		}
+		useLocalKeysForGitPaths(removed, lock)
+	}
 	mcpNames := make(map[string]bool, len(resolution.MCPTargets))
 	var mcpTargets []uninstallMCPTarget
 	for _, t := range resolution.MCPTargets {

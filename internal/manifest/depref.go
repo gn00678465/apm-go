@@ -42,11 +42,16 @@ type DependencyReference struct {
 	// command line wrote it ("./dep"). The lock records it as local_path.
 	// Runtime-only, like LocalSourcePath.
 	LocalDeclaredPath string
-	IsParent          bool
-	Port              int
-	Scheme            string // "https", "http", "ssh", "git" (SCP)
-	Source            string // "git", "registry", "local", "marketplace", "" (inferred)
-	RegistryName      string // registry name for source=="registry" (empty = use default)
+	// LocalDeclaredRef is the `ref` a `git:` entry with a local path
+	// declares. A local package is copied as it is, so the ref is only
+	// recorded in the lock, as resolved_ref. Runtime-only, like
+	// LocalSourcePath.
+	LocalDeclaredRef string
+	IsParent         bool
+	Port             int
+	Scheme           string // "https", "http", "ssh", "git" (SCP)
+	Source           string // "git", "registry", "local", "marketplace", "" (inferred)
+	RegistryName     string // registry name for source=="registry" (empty = use default)
 
 	// SSHUser is the parsed userinfo for an ssh:// or SCP-form dependency
 	// whose git remote needs a non-default user (e.g. an EMU/self-hosted
@@ -1236,16 +1241,13 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 				Alias:       kv["alias"],
 			}, nil
 		}
+		// A local path here is the local package it names, as in the string
+		// form (reference.py:904 parses the value with cls.parse). Its `ref`
+		// is only recorded in the lock (deps/lockfile.py:647), and a `path`
+		// does not change its content.
 		d, err := ParseDepString(gitVal)
 		if err != nil {
 			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
-		}
-		// git: key forces source=git even for local filesystem paths
-		if d.IsLocal {
-			d.IsLocal = false
-			d.RepoURL = d.LocalPath
-			d.LocalPath = ""
-			d.Source = "git"
 		}
 		if kv["ref"] != "" {
 			d.Reference = kv["ref"]
@@ -1253,7 +1255,7 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 		if kv["alias"] != "" {
 			d.Alias = kv["alias"]
 		}
-		if kv["path"] != "" {
+		if kv["path"] != "" && !d.IsLocal {
 			d.VirtualPath = kv["path"]
 			d.VirtualType = classifyVirtualPath(kv["path"])
 		}

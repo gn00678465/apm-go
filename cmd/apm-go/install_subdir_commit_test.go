@@ -9,6 +9,8 @@ import (
 	"github.com/apm-go/apm/internal/gitops"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/semver"
 	"github.com/apm-go/apm/internal/yamlcore"
 )
 
@@ -56,6 +58,31 @@ func (l subdirPathLoader) LoadPackage(ref *manifest.DependencyReference, resolve
 	local := *ref
 	local.Owner, local.Repo = "", ""
 	return l.RealPackageLoader.LoadPackage(&local, resolvedRef)
+}
+
+// subdirPathTagLister lists the tags of a git dependency from the same path
+// subdirPathLoader clones it from.
+type subdirPathTagLister struct{}
+
+func (subdirPathTagLister) ListTags(repoURL string) ([]semver.TagInfo, error) {
+	return subdirPathTagLister{}.ListTagsForRef(&manifest.DependencyReference{RepoURL: repoURL})
+}
+
+func (subdirPathTagLister) ListTagsForRef(ref *manifest.DependencyReference) ([]semver.TagInfo, error) {
+	local := *ref
+	local.Owner, local.Repo = "", ""
+	return (&gitops.RealTagLister{}).ListTagsForRef(&local)
+}
+
+// useLocalGitRemotes makes the install and update commands load packages
+// with subdirPathLoader for the rest of the test.
+func useLocalGitRemotes(t *testing.T) {
+	t.Helper()
+	prev := newGitPackageLoader
+	newGitPackageLoader = func(modulesDir string) resolver.PackageLoader {
+		return subdirPathLoader{&gitops.RealPackageLoader{ModulesDir: modulesDir}}
+	}
+	t.Cleanup(func() { newGitPackageLoader = prev })
 }
 
 func subdirInstall(t *testing.T, loader interface {
@@ -127,25 +154,25 @@ func subdirClone(t *testing.T, project string, sources ...string) string {
 func TestInstall_SubdirectoryPackage_LockPinsSourceCommit(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	project := chdirTemp(t)
-	sourceCommit := subdirMonoRepo(t, filepath.Join(project, "mono"))
+	sourceCommit := subdirMonoRepo(t, filepath.Join(project, "acme", "mono"))
 	projectCommit := subdirGitRepo(t, project, map[string]string{
-		"apm.yml": "name: caller\nversion: 0.1.0\ndependencies:\n  apm:\n    - git: ./mono\n      path: skills/alpha\n",
+		"apm.yml": "name: caller\nversion: 0.1.0\ndependencies:\n  apm:\n    - git: acme/mono\n      path: skills/alpha\n",
 	})
 	if sourceCommit == projectCommit {
 		t.Fatal("the source and the project have the same commit")
 	}
 
-	if err := subdirInstall(t, subdirRealLoader(), false); err != nil {
+	if err := subdirInstall(t, subdirPathLoader{subdirRealLoader()}, false); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 
-	assertSubdirPinned(t, project, "./mono/skills/alpha", sourceCommit, projectCommit)
+	assertSubdirPinned(t, project, "acme/mono/skills/alpha", sourceCommit, projectCommit)
 	if got := globalStaleRead(t, filepath.Join(project, ".claude", "skills", "alpha", "SKILL.md")); got != subdirAlphaSkill {
 		t.Errorf("deployed alpha skill = %q, want %q", got, subdirAlphaSkill)
 	}
 	lock := globalStaleRead(t, filepath.Join(project, "apm.lock.yaml"))
 
-	if err := subdirInstall(t, subdirRealLoader(), false); err != nil {
+	if err := subdirInstall(t, subdirPathLoader{subdirRealLoader()}, false); err != nil {
 		t.Fatalf("second install: %v", err)
 	}
 	if got := globalStaleRead(t, filepath.Join(project, "apm.lock.yaml")); got != lock {
