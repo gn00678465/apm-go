@@ -36,6 +36,7 @@ func buildRootCmd() *cobra.Command {
 	root.AddCommand(installCmd())
 	root.AddCommand(updateCmd())
 	root.AddCommand(uninstallCmd())
+	root.AddCommand(depsCmd())
 	root.AddCommand(auditCmd())
 	root.AddCommand(experimentalCmd())
 	root.AddCommand(marketplaceCmd())

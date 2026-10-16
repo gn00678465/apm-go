@@ -1,0 +1,1 @@
+{"id": "deps-list-global-insecure", "argv": ["deps", "list", "-g", "--insecure"], "rewrite_binary_name": true}

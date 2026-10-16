@@ -210,3 +210,18 @@ func writeCase(t *testing.T, casesDir, id, manifest string) {
 		t.Fatalf("writing case.json: %v", err)
 	}
 }
+
+func TestCase_HomeFixtureDir(t *testing.T) {
+	dir := t.TempDir()
+	c := Case{Dir: dir}
+	if got := c.HomeFixtureDir(); got != "" {
+		t.Errorf("HomeFixtureDir() without dir = %q, want empty", got)
+	}
+	want := filepath.Join(dir, "home_fixture")
+	if err := os.Mkdir(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.HomeFixtureDir(); got != want {
+		t.Errorf("HomeFixtureDir() = %q, want %q", got, want)
+	}
+}

@@ -113,6 +113,7 @@ apm-go compile               # compile installed instructions into AGENTS.md
 | `self-update` | Update the apm-go binary to the latest stable release |
 | `compile` | Compile installed instructions into a project `AGENTS.md` |
 | `audit` | Re-verify deployed-file integrity against `apm.lock.yaml` |
+| `deps` | Show installed packages: `list` (a table of packages and their primitive counts; `-g`, `--all`, `--insecure`), `tree` (the dependency tree; `-g`) |
 | `search` | Search plugins in a marketplace (`QUERY@MARKETPLACE`) |
 | `marketplace` | Consume marketplaces: `add`, `list`, `browse`, `update`, `remove`, `validate`, `check`, `outdated` |
 | `marketplace` (authoring) | Author a marketplace: `init`, `package add/set/remove/update`, `audit`, `migrate` |
@@ -138,6 +139,7 @@ These commands and flags exist only in apm-go. Their defaults keep the standard 
 | `install --mcp` | `--force` | Overwrite a conflicting existing MCP entry non-interactively |
 | `init` | `--force` | Overwrite an existing `apm.yml` without prompting |
 | `audit` | `--content` | Scan every deployed file for hidden Unicode characters |
+| `deps list` | `--skills` | After each table, list every package's skill names (names only; no package is filtered out) |
 | `update` | `--frozen` / `--no-frozen` | Refuse a scoped update against a frozen install (auto-enabled in CI) / override the CI detection |
 | `marketplace package add` | `--category` | Package category, required for Codex output at `pack` time |
 | `marketplace package` | command name | The authoring subcommands live under `package` (`add`, `set`, `remove`) |

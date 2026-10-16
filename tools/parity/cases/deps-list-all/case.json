@@ -1,0 +1,1 @@
+{"id": "deps-list-all", "argv": ["deps", "list", "--all"], "rewrite_binary_name": true}

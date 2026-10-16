@@ -16,7 +16,7 @@ import (
 // is the resolved command (binary + any leading wrapper args, e.g. `uv run
 // --project … apm`); c.Argv is appended as the tail.
 func runCaseSide(binPath []string, c Case, outDir, side string, timeout time.Duration) (Record, error) {
-	sb, err := newSandbox(c.FixtureDir())
+	sb, err := newSandbox(c.FixtureDir(), c.HomeFixtureDir())
 	if err != nil {
 		return Record{}, fmt.Errorf("case %s (%s): %w", c.ID, side, err)
 	}

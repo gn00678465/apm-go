@@ -1,0 +1,16 @@
+ ! Failed to inspect package acme/bad. Check its package files and rerun.
+ ! Failed to inspect package acme/nov. Check its package files and rerun.
+                               APM Dependencies (Project)                              
+┏━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
+┃ Package     ┃ Version ┃ Source   ┃ Prompts ┃ Instructions ┃ Agents ┃ Skills ┃ Hooks ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━┩
+│ acme/good   │ 1.0.0   │ orphaned │    1    │      -       │   -    │   -    │   -   │
+│ acme/sk     │ unknown │ orphaned │    -    │      -       │   -    │   1    │   -   │
+│ .hidden/pkg │ 1.0.0   │ orphaned │    -    │      -       │   -    │   -    │   -   │
+│ acme-b/z    │ 9.9.9   │ orphaned │    -    │      -       │   -    │   -    │   -   │
+└─────────────┴─────────┴──────────┴─────────┴──────────────┴────────┴────────┴───────┘
+ ! 4 orphaned package(s) found (not in resolved dependency graph):
+ !   - .hidden/pkg
+ !   - acme-b/z
+ !   - acme/good
+ !   - acme/sk

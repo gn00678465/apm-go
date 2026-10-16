@@ -1,0 +1,9 @@
+my-project (local)
+├── h@1.0.0
+├── bad@error
+├── goodname@1.0.0
+│   └── 1 prompts
+├── novname@unknown
+├── sk@unknown
+│   └── 1 skills
+└── z@9.9.9

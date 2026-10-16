@@ -1838,6 +1838,10 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			}
 		}
 
+		if isGit {
+			ld.Version = gitDependencyVersion(dep, filepath.Join("apm_modules", filepath.FromSlash(dep.Key)), ld.ResolvedCommit)
+		}
+
 		// req-lk-015: compute tree_sha256 for git-sourced deps (required)
 		if isGit && !isSubdir {
 			installDir := filepath.Join("apm_modules", dep.Key)

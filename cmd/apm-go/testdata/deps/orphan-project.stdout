@@ -1,0 +1,12 @@
+ ! Failed to inspect package acme/noversion. Check its package files and rerun.
+ ! Failed to inspect package acme/badyaml. Check its package files and rerun.
+ ! Failed to inspect package acme/emptyver. Check its package files and rerun.
+                                APM Dependencies (Project)                                
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
+┃ Package        ┃ Version ┃ Source   ┃ Prompts ┃ Instructions ┃ Agents ┃ Skills ┃ Hooks ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━┩
+│ _local/dep     │ 2.3.4   │ local    │    1    │      1       │   1    │   1    │   1   │
+│ acme/skillonly │ unknown │ orphaned │    -    │      -       │   -    │   1    │   -   │
+└────────────────┴─────────┴──────────┴─────────┴──────────────┴────────┴────────┴───────┘
+ ! 1 orphaned package(s) found (not in resolved dependency graph):
+ !   - acme/skillonly

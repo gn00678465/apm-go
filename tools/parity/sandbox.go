@@ -29,8 +29,9 @@ type sandbox struct {
 }
 
 // newSandbox creates a fresh sandbox and, if fixtureDir is non-empty, copies
-// its tree into the sandbox cwd.
-func newSandbox(fixtureDir string) (*sandbox, error) {
+// its tree into the sandbox cwd; likewise homeFixtureDir into the sandbox
+// HOME, so a case can start from state under $HOME (a user config file).
+func newSandbox(fixtureDir, homeFixtureDir string) (*sandbox, error) {
 	root, err := os.MkdirTemp("", "apm-parity-*")
 	if err != nil {
 		return nil, fmt.Errorf("creating sandbox root: %w", err)
@@ -53,6 +54,13 @@ func newSandbox(fixtureDir string) (*sandbox, error) {
 		if err := copyTree(fixtureDir, sb.Cwd); err != nil {
 			os.RemoveAll(root)
 			return nil, fmt.Errorf("materialising fixture: %w", err)
+		}
+	}
+
+	if homeFixtureDir != "" {
+		if err := copyTree(homeFixtureDir, sb.Home); err != nil {
+			os.RemoveAll(root)
+			return nil, fmt.Errorf("materialising home fixture: %w", err)
 		}
 	}
 

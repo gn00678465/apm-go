@@ -33,6 +33,10 @@ go.work.sum
 
 # apm
 apm_modules/
+# A deps parity case starts from installed packages, in the project's or
+# HOME's apm_modules/; without them it compares two empty listings.
+!tools/parity/cases/*/fixture/apm_modules/
+!tools/parity/cases/*/home_fixture/.apm/apm_modules/
 
 # Claude
 .claude/settings.local.json

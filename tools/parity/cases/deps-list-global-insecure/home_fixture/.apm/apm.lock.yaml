@@ -1,0 +1,9 @@
+lockfile_version: '1'
+dependencies:
+- repo_url: acme/pkg
+  resolved_commit: abc1234def5678abc1234def5678abc1234def56
+- repo_url: acme/child
+  resolved_commit: fed9876cba5432fed9876cba5432fed9876cba54
+  depth: 2
+  resolved_by: acme/pkg
+  is_insecure: true

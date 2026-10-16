@@ -1,0 +1,4 @@
+home (local)
+└── acme/pkg@abc1234
+    ├── 1 prompts, 1 agents, 1 skills
+    └── acme/child@fed9876
