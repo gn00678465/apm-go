@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -286,6 +288,171 @@ func TestApply_ChecksumMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Errorf("expected 'checksum mismatch', got: %s", err)
+	}
+	assertBinary(t, currentBinary, "old")
+	assertOnlyEntry(t, tmpDir, filepath.Base(currentBinary))
+}
+
+// A rename that crosses directories fails as it does across file systems
+// (EXDEV), so the update succeeds only when the new binary is staged beside
+// the current one.
+func TestApply_StagesBesideBinaryAcrossFileSystems(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows replaces the binary by copying, not by rename")
+	}
+	origRename := osRename
+	osRename = func(src, dst string) error {
+		if filepath.Dir(src) != filepath.Dir(dst) {
+			return &os.LinkError{Op: "rename", Old: src, New: dst, Err: syscall.EXDEV}
+		}
+		return os.Rename(src, dst)
+	}
+	defer func() { osRename = origRename }()
+
+	newBinary := []byte("new-binary\n")
+	rel, _ := newReleaseServer(t, newBinary, "")
+	dir := t.TempDir()
+	currentBinary := fakeCurrentBinary(t, dir)
+
+	if _, err := (&Updater{}).Apply(context.Background(), rel); err != nil {
+		t.Fatalf("Apply failed: %s", err)
+	}
+	assertBinary(t, currentBinary, string(newBinary))
+	assertOnlyEntry(t, dir, filepath.Base(currentBinary))
+	assertMode(t, currentBinary, 0o755)
+}
+
+func TestApply_DoesNotUseTMPDIR(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", filepath.Join(dir, "missing-tmpdir"))
+	t.Setenv("TMP", filepath.Join(dir, "missing-tmpdir"))
+	t.Setenv("TEMP", filepath.Join(dir, "missing-tmpdir"))
+
+	newBinary := []byte("new-binary\n")
+	rel, _ := newReleaseServer(t, newBinary, "")
+	currentBinary := fakeCurrentBinary(t, dir)
+
+	if _, err := (&Updater{}).Apply(context.Background(), rel); err != nil {
+		t.Fatalf("Apply failed: %s", err)
+	}
+	assertBinary(t, currentBinary, string(newBinary))
+	assertOnlyEntry(t, dir, filepath.Base(currentBinary))
+	assertMode(t, currentBinary, 0o755)
+}
+
+func TestApply_UnwritableBinaryDirFailsBeforeDownload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits do not apply on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to a 0555 directory")
+	}
+	rel, assetRequests := newReleaseServer(t, []byte("new-binary\n"), "")
+	dir := t.TempDir()
+	currentBinary := fakeCurrentBinary(t, dir)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+	_, err := (&Updater{}).Apply(context.Background(), rel)
+	if err == nil {
+		t.Fatal("expected an error for an unwritable directory")
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("error does not name %s: %s", dir, err)
+	}
+	if n := assetRequests.Load(); n != 0 {
+		t.Errorf("asset was requested %d time(s), want 0", n)
+	}
+	assertBinary(t, currentBinary, "old-binary")
+}
+
+// newReleaseServer serves asset and a SHA256SUMS for it (sums overrides the
+// file when non-empty) and counts the requests for the asset.
+func newReleaseServer(t *testing.T, asset []byte, sums string) (*Release, *atomic.Int32) {
+	t.Helper()
+	assetName := PlatformAssetName()
+	if sums == "" {
+		hash := sha256.Sum256(asset)
+		sums = fmt.Sprintf("%s  %s\n", hex.EncodeToString(hash[:]), assetName)
+	}
+	var assetRequests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + assetName:
+			assetRequests.Add(1)
+			w.Write(asset)
+		case "/SHA256SUMS":
+			w.Write([]byte(sums))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return &Release{
+		TagName: "v2.0.0",
+		Assets: []Asset{
+			{Name: assetName, BrowserDownloadURL: srv.URL + "/" + assetName, Size: int64(len(asset))},
+			{Name: "SHA256SUMS", BrowserDownloadURL: srv.URL + "/SHA256SUMS"},
+		},
+	}, &assetRequests
+}
+
+// fakeCurrentBinary writes an "old-binary" in dir and makes it the binary
+// Apply replaces.
+func fakeCurrentBinary(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "apm-go")
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
+	if err := os.WriteFile(path, []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	origExec := osExecutable
+	osExecutable = func() (string, error) { return path, nil }
+	t.Cleanup(func() { osExecutable = origExec })
+	return path
+}
+
+func assertBinary(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read binary: %s", err)
+	}
+	if string(got) != want {
+		t.Errorf("binary content = %q, want %q", got, want)
+	}
+}
+
+func assertOnlyEntry(t *testing.T, dir, name string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 1 || names[0] != name {
+		t.Errorf("%s holds %v, want only [%s]", dir, names, name)
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("mode of %s = %v, want %v", path, got, want)
 	}
 }
 
