@@ -120,6 +120,7 @@ Lessons seen on 3 separate days in `LESSONS.md`. These rules are mandatory: ever
 
 1. **Run every check this machine can run before you list it under "Not verified".** The Windows sandbox, a local fake registry, a local-directory marketplace and an installed agent CLI all count. Before writing "cannot be verified here", try it once and write the command that failed. (Promoted 2026-10-17.)
 2. **When a PR changes what an existing user sees after upgrading, add one line for it to the release-notes issue of the next tag in the same step that opens the PR**; open that issue (`Release notes: vX.Y.Z`) when none exists. A PR's Risks section alone is not a record. (Promoted 2026-10-17.)
+3. **Write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line, and write what PRODUCT.md says only with the item quoted.** This holds in issue bodies and comments too. A statement copied from an earlier issue or comment needs the same check, because that record can claim more than its run showed. (Promoted 2026-10-17.)
 
 ## Lessons review
 

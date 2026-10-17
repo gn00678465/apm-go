@@ -1,4 +1,4 @@
-<!-- reviewed-through: fc634f1 (2026-10-17 16:43 +0800) -->
+<!-- reviewed-through: 6e2c6fd (2026-10-17 17:42 +0800) -->
 
 # Lessons
 
@@ -13,6 +13,28 @@ Rules and lessons differ in status:
 - A lesson seen on 3 separate days is promoted. The rule goes into AGENTS.md "Promoted rules"; the entry and its evidence move to "Moved to AGENTS.md" below and stay there as the record.
 
 How to run a review is in AGENTS.md "Lessons review". Findings about the board tooling itself are not entered here.
+
+## Review of 2026-10-17 16:43 to 2026-10-17 17:42 (+0800)
+
+Range `fc634f1..6e2c6fd`: 2 merged PRs (#141, #142), 5 commits (3 non-merge, 2 merges), 12 files changed. No tag. PR #141 is the previous review and had no card. The acting owner added `882d6e8` to it after it was opened (PR opened 08:51:43Z, commit 08:52:34Z). PR #142 came from card 127: no stop (board 127 events 3747-3750: every symbol it changes is LOW, and the CRITICAL ones are not changed), and a pass on the first review (event 3772). The card was claimed at 08:44:32Z (event 3745), before PR #141 merged at 08:55:17Z, and `f1008b3` has `fc634f1` as its parent. So the four lessons that the previous review added were not in the card's LESSONS.md. Card files cited below are under `~/.config/board/projects/apm-go/cards/issue-127/`.
+
+What went wrong:
+
+- Issue #127 said that the Oracle always writes Windows-native paths in its warnings. The card ran Oracle 0.33.0 on Windows, found that the Oracle writes relative paths with `/`, and `f1008b3` aligned the one warning that did not. This is the third day for that lesson, and it is promoted (below).
+- PR #142 closed issue #127 with all 10 boxes unticked. The conclusions for the items closed without a code change are in a card file only (new lesson below).
+- The LESSONS.md section of PR #142 leaves out a lesson that applies and that the implementer's report covers (existing rule missed below).
+- The previous review cited a local session transcript as evidence, and `882d6e8` replaced it (existing rule missed below).
+
+No merged change was found broken.
+
+Done right:
+
+- Before it closed an item that the Oracle has a counterpart for, the investigation ran Oracle 0.33.0 in the Windows sandbox for that item. Self-update has no counterpart, and the items with no file-system code were compared byte for byte with the same steps on Linux (`investigation.md`, "第 4 項", "第 5 項"). This includes the item marked "先查清楚", which it ran with a remote git package under `core.symlinks` false and true (PR #142 Verified; the header of issue #127 comment 6232075969 names the Oracle 0.33.0 runs). The investigation ended (board 127 event 3751) before any code was written.
+- The deviation lesson: the PR step found two new Windows differences (`- C:dep` accepted, the path of a `subst` drive). It put both to the owner in issue #127 comment 6232075969 (edited at 09:36:19Z) and did not write them into PRODUCT.md. The only new deviation in PRODUCT.md is the `pack` junction one, ruled in comment 6229756422.
+- The porting lesson, which was not yet in the card's base: `f1008b3` ports the form of Python 3.12's `ntpath.realpath(strict=True)` (one open of the whole path, and `check_eloop`'s 1921) in place of the POSIX walk one component at a time. Its comment cites the Oracle's `install/phases/local_content.py:139-148` (`internal/gitops/realpath_windows.go`).
+- Promoted rule 1: the implementer's report lists three checks it did not run (`out/report.md`, "沒有驗證的"). Before the PR opened, the `subst` drive was run (PR #142 Verified), `C:dep` was run (comment 6232075969), and the English system language was tried, with the command that failed written in PR #142's Not verified section (`Set-WinUILanguageOverride -Language en-US`). The other Not verified item is macOS, and this machine has no macOS host or VM.
+- Promoted rule 2: PR #142 was opened at 09:37:17Z, and its line was added to issue #133 at 09:37:25Z. The edit added only that line (the issue's edit history).
+- The Windows and lock-upgrade lessons: PR #142 Verified lists symlinks and junctions, and install, update, frozen install, `deps tree` and uninstall on locks written by Oracle 0.33.0 and by main. The reviewer ran them again on a new build (board 127 events 3770-3772). Again main, not `v0.4.0`, wrote the old lock.
 
 ## Review of 2026-10-17 14:35 to 2026-10-17 16:43 (+0800)
 
@@ -96,28 +118,22 @@ Done right: the Windows and registry checks were run before the merge and posted
 - Done right on 2026-10-16: after the `use_skill` intervention, board 112 event 3351 passed on the first round. Done right on 2026-10-17: card 116 listed every check built on resolving symlinks before the first round (board 116 event 3546), fixed them all with one `go.mod` setting, named them in ARCHITECTURE.md "Windows links" (`cef28e5`), and passed on the first review (event 3579).
 Seen 2× (2026-10-15, 2026-10-16)
 
-**Write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line, and write what PRODUCT.md says only with the item quoted.**
-- Issue bodies, comments and PRODUCT.md lines that stated the Oracle's behavior from memory were wrong, and each one sent a card or a reviewer to disprove it.
-- Evidence: issue #89 body on what the Oracle deploys, corrected in issue #89 comment 6187796986; issue #67 exit code, corrected in issue #67 comment 6186847177; issue #112 body "PRODUCT.md has no rule for rule files", corrected in issue #112 comment 6215906800 and issue #88 comment 6215726615; `00b5975` comment and PRODUCT.md "Oracle removes registry `.git`", refuted by board 113 event 3391 and fixed in `300568e`; `1b84146` "as the Oracle prints them" (2026-10-14), corrected by `eb3de05`.
-- Done right on 2026-10-15: the #67 and #89 investigations measured the Oracle and corrected the issue before any code was written. Done right on 2026-10-17: `ea217bf` cites the Oracle's `utils/github_host.py:437-532` and `reference.py:593-595,1690-1694`, and PR #134 Verified compares the lock fields of the https port cases with an Oracle 0.33.0 run; the PRODUCT.md item of `cef28e5` cites the Oracle's `utils/path_security.py:222-245`, `integration/mcp_integrator.py:78` and `compilation/inventory.py:61`, and board 116 event 3558 reports Oracle 0.33.0 run on Windows with a junction and with a symlink.
-Seen 2× (2026-10-15, 2026-10-16)
-
 **Run a change that splits, joins or resolves paths, or that checks symlinks, in the Windows sandbox before merge, with a junction as well as a symlink.**
 - CI runs only `ubuntu-latest`. Code that splits paths on `/`, or that relies on `os.Lstat` and `filepath.EvalSymlinks` to see links, passes on Linux and fails on Windows. Go reports a junction as `ModeIrregular`.
 - Evidence: `22e71c6` (PR #90, `joinRealpath`) and `0636bf8` (PR #105, `oraclePathJoin`) fail on `\` paths, found in issue #88 comment 6216218590 and now in issue #127; PR #91/#92 containment checks bypassed by junctions, issue #116 (opened 2026-10-16, about 23 h after PR #92 merged).
-- Done right on 2026-10-16: PR #117 comment 6218591422. Done right on 2026-10-17: PR #121 (Windows sandbox runs listed under Verified); PR #136 Verified (25 scenarios, each with a junction and a symlink, on main, the branch and Oracle 0.33.0), run again by the reviewer in board 116 events 3575-3578.
+- Done right on 2026-10-16: PR #117 comment 6218591422. Done right on 2026-10-17: PR #121 (Windows sandbox runs listed under Verified); PR #136 Verified (25 scenarios, each with a junction and a symlink, on main, the branch and Oracle 0.33.0), run again by the reviewer in board 116 events 3575-3578; PR #142 Verified (relative, dangling and looping symlinks, and a junction that leads out, each compared with Oracle 0.33.0 on Windows), run again by the reviewer in board 127 events 3770-3772.
 Seen 2× (2026-10-15, 2026-10-16)
 
 **For any change that reads the lock, cleans stale or orphan files, or renames module keys, run install, update, frozen install and uninstall on a lock written by the previous release and on one written by Oracle 0.33.0 before handing over.**
 - Each of these three cards passed its own tests and broke only on an upgrade path, which the reviewer found by running the old binary first.
 - Evidence: board 75 event 2692 (`150bef8`: removed packages from legacy locks leave files); board 113 event 3391 (`00b5975`: upgrading an Oracle lock deletes a registry package's `.git/config`); board 114 event 3462 (`ce7a1b2`: old-clone cleanup deletes the new package; uninstall rewrites surviving keys), fixed in `ca1cf45`.
-- Done right on 2026-10-17: PR #120 comment 6219879113 (upgrade run with the main and PR binaries on a main-written and an Oracle-written lock); PR #134 Verified (install, update and frozen install on a lock with `port: 443` written by the previous release and on an Oracle-written lock with a port; uninstall was not run), run again by the reviewer in board 115 event 3534; PR #136 Verified (install, update, frozen install and uninstall in the Windows sandbox on locks written by main and by Oracle 0.33.0; main, not `v0.4.0`, wrote the old lock).
+- Done right on 2026-10-17: PR #120 comment 6219879113 (upgrade run with the main and PR binaries on a main-written and an Oracle-written lock); PR #134 Verified (install, update and frozen install on a lock with `port: 443` written by the previous release and on an Oracle-written lock with a port; uninstall was not run), run again by the reviewer in board 115 event 3534; PR #136 Verified (install, update, frozen install and uninstall in the Windows sandbox on locks written by main and by Oracle 0.33.0; main, not `v0.4.0`, wrote the old lock); PR #142 Verified (install, update, frozen install, `deps tree` and uninstall in the Windows sandbox on locks written by Oracle 0.33.0 and by main, with a relative symlink and a `C:\` local dependency).
 Seen 2× (2026-10-16, 2026-10-17)
 
 **Do not write a new deviation from the Oracle into PRODUCT.md unless an owner ruling names it; when the fix needs one, stop with `board ask`.**
 - PRODUCT.md is the contract that later cards follow. An unruled deviation there is read as a ruling, and reversing it the next day cost a full card.
 - Evidence: `9968ee5` (PR #92) added "a deployed file that is a symlink to another place in its target root … is written where it points"; issue #112 comment 6215906800 ("#86 has no owner ruling on this point"); reversed by `cf8aa7a` (PR #117). `b168eeb` (PR #140) wrote into PRODUCT.md that a bare CR, text with a NUL and text with a CR before a CRLF keep the source's bytes, citing issue #119 comment 6230883992 and issue #118 comment 6229823230, neither of which names it; the orchestrator's feedback asked for it (card 119 `rounds/feedback-step-12.md:35`) and no `board ask` was sent (board 119 events 3691-3717); the review failed it (event 3717), issue #119 comment 6231670262 limited it to the `--global` copy fallback, and `c9c833b` rewrote it.
-- Done right on 2026-10-17: board 116 event 3558 (a deviation the ruling did not name, asked before it was written), ruled in issue #116 comment 6229603360, then written by `cef28e5`.
+- Done right on 2026-10-17: board 116 event 3558 (a deviation the ruling did not name, asked before it was written), ruled in issue #116 comment 6229603360, then written by `cef28e5`. Card 127 put two new Windows differences to the owner in issue #127 comment 6232075969 (edited at 09:36:19Z) and kept them out of PRODUCT.md; `f1008b3` writes only the `pack` deviation, ruled in comment 6229756422.
 Seen 2× (2026-10-15, 2026-10-17)
 
 **Before committing new test fixtures, run `git status --short --ignored` and confirm that none of them is ignored (`*.out`, `apm_modules/`).**
@@ -150,6 +166,7 @@ Seen 1× (2026-10-17)
 **When you port a mechanism from the Oracle, port the form its cited lines use, not only the setting; where apm-go's form differs, test the case the Oracle's form handles.**
 - A setting in the right value and the wrong place passes every ordinary test. Here `git clone -c` writes repository config, which a value a parent process passes in `GIT_CONFIG_COUNT` outranks; the Oracle passes `-c` before the subcommand, and its comment says why.
 - Evidence: card 119 `investigation.md:66` reports that the Oracle adds `-c core.autocrlf=false` to each git subprocess (`cache/git_cache.py:63-92`); the fix it proposes (`investigation.md:81`) and the brief (`brief.md:46`) use `git clone -c`; `0b61a7c` wrote that form into PRODUCT.md "as in the Oracle's git cache"; board 119 event 3691 (finding 2, reproduced with the real loader and in the Windows sandbox); fixed in `b168eeb`.
+- Done right on 2026-10-17: `f1008b3` ports Python 3.12's `ntpath.realpath(strict=True)` on Windows in its own form, one open of the whole path and `check_eloop`'s error 1921, not the POSIX walk one component at a time, and its comment says why (`internal/gitops/realpath_windows.go`). The card's base did not have this lesson yet.
 Seen 1× (2026-10-17)
 
 **Before handing over, check the PR body against each handoff condition of the owner ruling, one by one, and carry over the implementer's result for each.**
@@ -160,6 +177,12 @@ Seen 1× (2026-10-17)
 **Before you write a PR or issue body back from a file, check that the command that produced the file succeeded and that the file is not empty; run every `gh` command with `-R gn00678465/apm-go`.**
 - Outside a git checkout `gh pr view <N>` fails and leaves an empty file, and writing that file back blanks the body. Every card edits the release-notes issue the same way (`gh api -X PATCH ... -F body=@<file>`).
 - Evidence: PR #140's body edit history: empty at 08:41:09Z, restored at 08:41:26Z, then edited again at 08:41:40Z. The acting owner ran `gh pr view 140` without `-R` in a scratch directory, where it failed with `not a git repository`, and wrote the empty output file back with `gh pr edit --body-file`; the edit at 08:41:40Z checked the file's length first.
+- Done right on 2026-10-17: the PR #142 line of issue #133 was added in one edit that left every earlier line as it was (edit history, 09:37:25Z).
+Seen 1× (2026-10-17)
+
+**When a PR closes an issue that lists items, account for every item where `gh` can read it: tick the box of each item that is done, and write the conclusion and its evidence for each item closed without a code change in the PR body or in a comment on the issue.**
+- The issue closes when the PR merges. A conclusion that is only in a card file cannot be read on GitHub, so a later reader sees open boxes and cannot tell a checked item from a forgotten one.
+- Evidence: issue #127 lists 10 items as `- [ ]`. PR #142 closed it at 09:42:33Z, and the body of the issue was never edited (edit history empty), so all 10 boxes are still open. The body of PR #142 covers the items it fixes, self-update and the `core.symlinks` item. It does not cover the Windows runs of the non-file-system fixes (c20-1, c23-1, c57-9, c62-8) or of the stale cleanup and command files (62, 72), the `pack --json` paths (58, c38-1), or why the claim of item 新-Windows 實測-6 was narrowed. The two comments on the issue (6229756422, 6232075969) do not cover them either. They are only in the card's `investigation.md` ("各項結論"), and the card notes asked to tick off those items with evidence (board 127 event 3745, `orchestrate`).
 Seen 1× (2026-10-17)
 
 ## Existing rules missed
@@ -178,7 +201,12 @@ Seen 1× (2026-10-16)
 
 **AGENTS.md "Canonical documents": for each lesson that applies, say in the PR description what you did.**
 - The reviewer cannot check a lesson that the body does not mention. The board's notes for card 119 repeated the rule (board 119 events 3649, 3657).
-- Evidence: PR #140's body said nothing about the lessons until 08:41:57Z (edit history), although the implementer's report had a section for them (card 119 `rounds/report-step-5.md:64-69`). The bodies of PR #136 and #138, both merged after the rule landed (`94d85b8`, PR #132), do not mention a lesson either (`gh pr view <N> --json body`).
+- Evidence: PR #140's body said nothing about the lessons until 08:41:57Z (edit history), although the implementer's report had a section for them (card 119 `rounds/report-step-5.md:64-69`). The bodies of PR #136 and #138, both merged after the rule landed (`94d85b8`, PR #132), do not mention a lesson either (`gh pr view <N> --json body`). PR #142's body has a LESSONS.md section that names the Windows, lock-upgrade and deviation lessons. It leaves out the lesson on writing what the Oracle does, which applies because `f1008b3` states the Oracle's behavior in code comments and in PRODUCT.md, and which the implementer's report covers (card 127 `out/report.md`, "LESSONS.md 裡適用的教訓").
+Seen 1× (2026-10-17)
+
+**AGENTS.md "Lessons review" step 5: check every reference with `git`, `gh` or `board log`; a finding whose evidence cannot be checked is not entered.**
+- A path to a local session transcript can be read only on one machine and by one person, so neither a reviewer nor the owner can check the claim that rests on it.
+- Evidence: `5834106` (PR #141) cited the acting owner's session transcript (`~/.claude/projects/.../369ffdad-....jsonl`) as the evidence for the empty-body lesson. `882d6e8` replaced it with the edit history of PR #140 before PR #141 merged.
 Seen 1× (2026-10-17)
 
 ## Moved to AGENTS.md
@@ -196,6 +224,13 @@ Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
 - Release notes are written from one list. A change that is written only in a PR body is easy to miss. Of the PRs below, only PR #101's item reached #88.
 - Evidence: Risks with upgrade-visible changes and no tracking entry: PR #91, PR #92 (2026-10-15); PR #94, #100, #105, #106, #109, #110, #117 (2026-10-16); PR #120, #121 (2026-10-17). The only one in a tracking issue: issue #88 comment 6203884235 (PR #101). No open issue collects 0.4.1 release notes (`gh issue list --search "0.4.1"`).
 - Done right on 2026-10-16: issue #88 comment 6203884235.
+Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
+
+**Write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line, and write what PRODUCT.md says only with the item quoted.**
+- Moved to AGENTS.md "Promoted rules" on 2026-10-17; kept here as the evidence.
+- Issue bodies, comments and PRODUCT.md lines that stated the Oracle's behavior from memory were wrong, and each one sent a card or a reviewer to disprove it. The third day shows that a statement copied from an earlier record is no safer, because the record can claim more than its run showed.
+- Evidence: issue #89 body on what the Oracle deploys, corrected in issue #89 comment 6187796986; issue #67 exit code, corrected in issue #67 comment 6186847177; issue #112 body "PRODUCT.md has no rule for rule files", corrected in issue #112 comment 6215906800 and issue #88 comment 6215726615; `00b5975` comment and PRODUCT.md "Oracle removes registry `.git`", refuted by board 113 event 3391 and fixed in `300568e`; `1b84146` "as the Oracle prints them" (2026-10-14), corrected by `eb3de05`. On 2026-10-17, issue #127 item 新-Windows 實測-6 (opened 2026-10-17 07:09 +0800) says "Oracle 一律用 Windows 原生路徑" for the paths in warnings. It neither ran the Oracle nor cited a line, and copies issue #88 comment 6216218590 ("Oracle 一律用 Windows 原生的絕對路徑"). That comment reports a Windows sandbox run, but its "一律" also covers relative paths. Card 127 ran Oracle 0.33.0 on Windows and found relative paths written with `/` (`investigation.md`, "第 2、9 項"). `f1008b3` prints the relative path of the claude rule warning with `/` "as the Oracle and compile's Skipping line print one" (`internal/deploy/instructions_claude.go`).
+- Done right on 2026-10-15: the #67 and #89 investigations measured the Oracle and corrected the issue before any code was written. Done right on 2026-10-17: `ea217bf` cites the Oracle's `utils/github_host.py:437-532` and `reference.py:593-595,1690-1694`, and PR #134 Verified compares the lock fields of the https port cases with an Oracle 0.33.0 run; the PRODUCT.md item of `cef28e5` cites the Oracle's `utils/path_security.py:222-245`, `integration/mcp_integrator.py:78` and `compilation/inventory.py:61`, and board 116 event 3558 reports Oracle 0.33.0 run on Windows with a junction and with a symlink; card 127 ran Oracle 0.33.0 on Windows for each item of issue #127 that the Oracle has a counterpart for before closing it, and found the issue's claim wrong before writing code (PR #142 Verified, issue #127 comment 6232075969, board 127 event 3751).
 Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
 
 ## Observed, not entered
