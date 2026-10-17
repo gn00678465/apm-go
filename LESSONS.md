@@ -1,4 +1,4 @@
-<!-- reviewed-through: 0cf2bd2 (2026-10-17 07:08 +0800) -->
+<!-- reviewed-through: 456df11 (2026-10-17 11:49 +0800) -->
 
 # Lessons
 
@@ -13,6 +13,18 @@ Rules and lessons differ in status:
 - A lesson seen on 3 separate days is promoted. The rule goes into AGENTS.md "Promoted rules"; the entry and its evidence move to "Moved to AGENTS.md" below and stay there as the record.
 
 How to run a review is in AGENTS.md "Lessons review". Findings about the board tooling itself are not entered here.
+
+## Review of 2026-10-17 07:08 to 2026-10-17 11:49 (+0800)
+
+Range `0cf2bd2..456df11`: 2 merged PRs (#132, #134), 9 commits (7 non-merge, 2 merges), 11 files changed. No tag. PR #132 (the lessons loop) had no card. PR #134 came from card 115: one stop on rule 1 for the CRITICAL blast radius of `resolveCloneURL` and `listTags` (board 115 event 3502), ruled in issue #115 comment 6228958193, then a pass on the first review (event 3536).
+
+What went wrong: nothing in this range had to be fixed again, and no merged change was found broken. Issue #133, opened in this range, misses five upgrade-visible changes merged since `v0.4.0` (PR #85, #91, #92, #93, #94), three of which the previous review lists under "Moved to AGENTS.md".
+
+Done right:
+
+- Promoted rule 2 was followed from the first PR after it. Issue #133 (`Release notes: v0.4.1`) was opened 73 s after PR #132 merged, with the items of 11 earlier PRs filled in. PR #134 was opened at 03:42:06Z and its line was added to issue #133 at 03:42:23Z (the issue's edit history).
+- Promoted rule 1: PR #134 lists one Not verified item, the `:80` normalization over a real http connection, and its Verified section names the command that fails (`--allow-insecure`: `transport 'http' not allowed`, issue #124).
+- PR #134 ran the lock-upgrade lesson and named it, compared the no-port output, lock and file tree of the main and PR binaries byte for byte, and installed a dependency with a port in the Windows sandbox. The reviewer ran the old-lock and no-port comparisons again (board 115 event 3534).
 
 ## Review of 2026-10-15 14:24 to 2026-10-17 07:08 (+0800)
 
@@ -43,7 +55,7 @@ Seen 2× (2026-10-15, 2026-10-16)
 **Write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line, and write what PRODUCT.md says only with the item quoted.**
 - Issue bodies, comments and PRODUCT.md lines that stated the Oracle's behavior from memory were wrong, and each one sent a card or a reviewer to disprove it.
 - Evidence: issue #89 body on what the Oracle deploys, corrected in issue #89 comment 6187796986; issue #67 exit code, corrected in issue #67 comment 6186847177; issue #112 body "PRODUCT.md has no rule for rule files", corrected in issue #112 comment 6215906800 and issue #88 comment 6215726615; `00b5975` comment and PRODUCT.md "Oracle removes registry `.git`", refuted by board 113 event 3391 and fixed in `300568e`; `1b84146` "as the Oracle prints them" (2026-10-14), corrected by `eb3de05`.
-- Done right on 2026-10-15: the #67 and #89 investigations measured the Oracle and corrected the issue before any code was written.
+- Done right on 2026-10-15: the #67 and #89 investigations measured the Oracle and corrected the issue before any code was written. Done right on 2026-10-17: `ea217bf` cites the Oracle's `utils/github_host.py:437-532` and `reference.py:593-595,1690-1694`, and PR #134 Verified compares the lock fields of the https port cases with an Oracle 0.33.0 run.
 Seen 2× (2026-10-15, 2026-10-16)
 
 **Run a change that splits, joins or resolves paths, or that checks symlinks, in the Windows sandbox before merge, with a junction as well as a symlink.**
@@ -55,7 +67,7 @@ Seen 2× (2026-10-15, 2026-10-16)
 **For any change that reads the lock, cleans stale or orphan files, or renames module keys, run install, update, frozen install and uninstall on a lock written by the previous release and on one written by Oracle 0.33.0 before handing over.**
 - Each of these three cards passed its own tests and broke only on an upgrade path, which the reviewer found by running the old binary first.
 - Evidence: board 75 event 2692 (`150bef8`: removed packages from legacy locks leave files); board 113 event 3391 (`00b5975`: upgrading an Oracle lock deletes a registry package's `.git/config`); board 114 event 3462 (`ce7a1b2`: old-clone cleanup deletes the new package; uninstall rewrites surviving keys), fixed in `ca1cf45`.
-- Done right on 2026-10-17: PR #120 comment 6219879113 (upgrade run with the main and PR binaries on a main-written and an Oracle-written lock).
+- Done right on 2026-10-17: PR #120 comment 6219879113 (upgrade run with the main and PR binaries on a main-written and an Oracle-written lock); PR #134 Verified (install, update and frozen install on a lock with `port: 443` written by the previous release and on an Oracle-written lock with a port; uninstall was not run), run again by the reviewer in board 115 event 3534.
 Seen 2× (2026-10-16, 2026-10-17)
 
 **Do not write a new deviation from the Oracle into PRODUCT.md unless an owner ruling names it; when the fix needs one, stop with `board ask`.**
@@ -67,6 +79,11 @@ Seen 1× (2026-10-15)
 - An ignored fixture is not committed, so the test passes locally and fails or tests nothing in CI.
 - Evidence: board 82 event 2920 (orchestrator reject: 10 `testdata/deps/*.out` files and four parity `home_fixture/.apm/apm_modules/` trees ignored).
 Seen 1× (2026-10-16)
+
+**When you open or fill a release-notes issue, list every PR merged since the previous tag (`git log --first-parent <tag>..origin/main`) and check each one's Behavior and Risks for an upgrade-visible change; do not fill it from memory or from one list.**
+- Release notes are written from that issue, so a change missing there is missing from the release notes.
+- Evidence: issue #133, opened on 2026-10-17, holds the items of PR #100, #101, #103, #105, #106, #108-#110, #117, #120 and #121. It has no item for PR #85 (the next `install` drops `id` from `.codex/config.toml`), PR #91 (a package with a symlink that leaves it no longer installs), PR #92 (`uninstall` fails and `install` skips paths when a directory or file below `apm_modules/` or `.claude/` is linked outside), PR #93 (`enabled` written to `opencode.json` and the lock) or PR #94 (a `targets:` list removes the package's files on other targets). All five merged after `v0.4.0` (`34dfa71`); PR #91, #92 and #94 are listed in this file under "Moved to AGENTS.md".
+Seen 1× (2026-10-17)
 
 ## Existing rules missed
 
@@ -102,3 +119,4 @@ Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
 ## Observed, not entered
 
 - The instruction files have outgrown Claude Code's limit. ARCHITECTURE.md grew from 69,071 to 121,598 characters and PRODUCT.md from 21,890 to 76,231 in this range (`git show 34dfa71:ARCHITECTURE.md | wc -m` against `0cf2bd2`). Claude Code warned "over the 150.0k-char total limit" (163.5k on 2026-10-16, 216.7k on 2026-10-17). Its effect on the agents is not measured.
+- PR #132 rewrote its new sections of LESSONS.md and AGENTS.md in Traditional Chinese (`f0b8025`, 10:21:46 +0800) and back to English 83 s later (`94d85b8`). No PR comment or review records why, so it is not entered.
