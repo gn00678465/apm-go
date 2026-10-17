@@ -270,33 +270,25 @@ func (r *RealPackageLoader) resolveCloneURL(ref *manifest.DependencyReference) s
 	if ref.ArtifactoryPrefix != "" {
 		repoPath = ref.ArtifactoryPrefix + "/" + repoPath
 	}
-	if ref.Scheme != "" {
-		switch ref.Scheme {
-		case "https", "http":
-			host := ref.Host
-			if host == "" {
-				host = r.defaultHost()
-			}
-			return ref.Scheme + "://" + host + "/" + repoPath + ".git"
-		case "ssh":
-			host := ref.Host
-			if host == "" {
-				host = r.defaultHost()
-			}
-			return "ssh://git@" + host + "/" + repoPath + ".git"
-		case "git":
-			host := ref.Host
-			if host == "" {
-				host = r.defaultHost()
-			}
-			return "git@" + host + ":" + repoPath + ".git"
-		}
-	}
 	host := ref.Host
 	if host == "" {
 		host = r.defaultHost()
 	}
-	return "https://" + host + "/" + repoPath + ".git"
+	// The Oracle's netloc (utils/github_host.py:437-532): a default port was
+	// already dropped when the reference was parsed. An SCP URL has no port.
+	netloc := host
+	if ref.Port > 0 {
+		netloc = fmt.Sprintf("%s:%d", host, ref.Port)
+	}
+	switch ref.Scheme {
+	case "https", "http":
+		return ref.Scheme + "://" + netloc + "/" + repoPath + ".git"
+	case "ssh":
+		return "ssh://git@" + netloc + "/" + repoPath + ".git"
+	case "git":
+		return "git@" + host + ":" + repoPath + ".git"
+	}
+	return "https://" + netloc + "/" + repoPath + ".git"
 }
 
 func (r *RealPackageLoader) defaultHost() string {
