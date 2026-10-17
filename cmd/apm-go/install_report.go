@@ -141,14 +141,30 @@ var installKindLabels = map[string]string{
 // project's own content when a file of it was integrated
 // (install/sources.py:74,395, install/phases/integrate.py:385).
 func (r *installRun) printBlocks(result *resolver.ResolutionResult, dr *deploy.DeployResult, oldLock, newLock *lockfile.Lockfile, before map[string]string, skipped, listed map[string]bool) int {
-	adopted := map[string][]string{}
+	managed := managedPaths(oldLock)
+	shadow := map[string]*blockFiles{}
 	for _, s := range dr.Shadowed {
-		if s.Same {
-			adopted[s.DepKey] = append(adopted[s.DepKey], s.Paths...)
+		b := shadow[s.DepKey]
+		if b == nil {
+			b = &blockFiles{skills: map[string][]string{}}
+			shadow[s.DepKey] = b
+		}
+		switch shadowedOutcome(s, managed) {
+		case shadowAdopted:
+			b.adopted = append(b.adopted, s.Paths...)
+		case shadowIntegrated:
+			if s.Type == deploy.TypeSkills {
+				b.skills[s.Name] = append(b.skills[s.Name], s.Paths...)
+			} else {
+				b.integrated = append(b.integrated, s.Paths...)
+			}
 		}
 	}
 	files := func(key string) blockFiles {
-		b := blockFiles{adopted: adopted[key]}
+		var b blockFiles
+		if s := shadow[key]; s != nil {
+			b = *s
+		}
 		if d, ok := dr.PerDep[key]; ok {
 			b.files, b.hashes = d.Files, d.Hashes
 		}
@@ -442,7 +458,7 @@ func (r *installRun) finish(o installOutcome) error {
 func (r *installRun) printDiagnostics(o installOutcome) {
 	diagnosed := r.diagnosed
 	listed := o.listed
-	if n := collisionCount(o.shadowed, listed, o.existingLock); n > 0 {
+	if n := collisionCount(o.shadowed, listed, managedPaths(o.existingLock)); n > 0 {
 		// Deliberate deviation by owner ruling (issue #122 comment
 		// 6232421913): the Oracle's second line, "Use 'apm install --force'
 		// to overwrite" (utils/diagnostics.py:459-463), is not printed;

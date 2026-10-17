@@ -444,6 +444,171 @@ func TestInstallSummary_SameBytesAdopted(t *testing.T) {
 	})
 }
 
+// A primitive that lost its name to another package's is adopted when what
+// the Oracle compares is on disk: what it deploys, an agent read with its
+// CRLF as LF, or for a command its prompt's own text, which a converted
+// command never has (integration/base_integrator.py:378-405,429-495,
+// command_integrator.py:581). A same skill is integrated. A path the lock
+// records is written over, and the disk keeps what it has when the loser
+// deploys that (install/pipeline.py:723-728). Each want is Oracle 0.33.0's
+// stdout for the case of the same name under the card's
+// review122/probes/, rerun as issue122-s17/runs1/ and runs2/ (the opencode
+// and codex cases); the Oracle's Resolving
+// order changes from run to run, apm-go's is the order of apm.yml.
+func TestInstallSummary_ShadowedOutcomes(t *testing.T) {
+	agent := "---\nname: ag\ndescription: d\n---\nbody\n"
+	prompt := "---\ndescription: d\n---\nhello $ARGUMENTS\n"
+	rule := "---\napplyTo: \"**/*.go\"\n---\nhello\n"
+	skill := "---\nname: sk\ndescription: d\n---\nhello\n"
+	head := func(targets string, fetched bool) string {
+		h := " > Installing dependencies from apm.yml...\n"
+		if fetched {
+			h += " > Resolving ./a...\n > Resolving ./z...\n"
+		}
+		return h + " i Targets: " + targets + "  (source: --target flag)\n   + ./a (local)\n   + ./z (local)\n"
+	}
+	const gitignore = " i Added apm_modules/ to .gitignore\n"
+	const skipped = "   ! 1 file skipped -- local files exist, not managed by APM\n"
+	const last = " + Installed 2 APM dependencies in <t>s.\n"
+	for _, tt := range []struct {
+		name, target, i1, i2 string
+		a, z                 map[string]string
+	}{
+		{"crlfagent", "claude",
+			head("claude", true) + "  |-- 1 agents integrated -> .claude/agents/\n  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n" + gitignore + "\n" + last,
+			head("claude", false) + "  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n\n" + last,
+			map[string]string{".apm/agents/ag.agent.md": agent}, map[string]string{".apm/agents/ag.agent.md": strings.ReplaceAll(agent, "\n", "\r\n")}},
+		{"sameprompt", "claude",
+			head("claude", true) + "  |-- 1 commands integrated -> .claude/commands/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
+			head("claude", false) + "  |-- 1 commands integrated -> .claude/commands/\n  |-- 1 commands integrated -> .claude/commands/\n\n" + last,
+			map[string]string{".apm/prompts/p.prompt.md": prompt}, map[string]string{".apm/prompts/p.prompt.md": prompt}},
+		{"samepromptmulti", "claude,copilot",
+			head("claude, copilot", true) + "  |-- 1 prompts integrated -> .github/prompts/\n  |-- 1 commands integrated -> .claude/commands/\n  |-- 1 prompts adopted -> .github/prompts/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
+			head("claude, copilot", false) + "  |-- 1 prompts adopted -> .github/prompts/\n  |-- 1 commands integrated -> .claude/commands/\n  |-- 1 prompts adopted -> .github/prompts/\n  |-- 1 commands integrated -> .claude/commands/\n\n" + last,
+			map[string]string{".apm/prompts/p.prompt.md": prompt}, map[string]string{".apm/prompts/p.prompt.md": prompt}},
+		{"sameskill", "claude",
+			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n" + gitignore + "\n" + last,
+			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n\n" + last,
+			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill}},
+		{"samerule", "claude",
+			head("claude", true) + "  |-- 1 rule(s) integrated -> .claude/rules/\n  |-- 1 rule(s) adopted -> .claude/rules/\n  |-- (files unchanged)\n" + gitignore + "\n" + last,
+			head("claude", false) + "  |-- 1 rule(s) adopted -> .claude/rules/\n  |-- (files unchanged)\n  |-- 1 rule(s) adopted -> .claude/rules/\n  |-- (files unchanged)\n\n" + last,
+			map[string]string{".apm/instructions/ru.instructions.md": rule}, map[string]string{".apm/instructions/ru.instructions.md": rule}},
+		{"samerulemulti", "claude,copilot",
+			head("claude, copilot", true) + "  |-- 2 instruction(s) integrated -> .claude/rules/, .github/instructions/\n  |-- 2 instruction(s) adopted -> .claude/rules/, .github/instructions/\n  |-- (files unchanged)\n" + gitignore + "\n" + last,
+			head("claude, copilot", false) + "  |-- 2 instruction(s) adopted -> .claude/rules/, .github/instructions/\n  |-- (files unchanged)\n  |-- 2 instruction(s) adopted -> .claude/rules/, .github/instructions/\n  |-- (files unchanged)\n\n" + last,
+			map[string]string{".apm/instructions/ru.instructions.md": rule}, map[string]string{".apm/instructions/ru.instructions.md": rule}},
+		{"crlfagentopencode", "opencode",
+			head("opencode", true) + "  |-- 1 agents integrated -> .opencode/agents/\n  |-- 1 agents adopted -> .opencode/agents/\n  |-- (files unchanged)\n" + gitignore + "\n" + last,
+			head("opencode", false) + "  |-- 1 agents adopted -> .opencode/agents/\n  |-- (files unchanged)\n  |-- 1 agents adopted -> .opencode/agents/\n  |-- (files unchanged)\n\n" + last,
+			map[string]string{".apm/agents/ag.agent.md": agent}, map[string]string{".apm/agents/ag.agent.md": strings.ReplaceAll(agent, "\n", "\r\n")}},
+		// codex writes the agent as TOML, which never has the source's text.
+		{"sameagentcodex", "codex",
+			head("codex", true) + "  |-- 1 agents integrated -> .codex/agents/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
+			head("codex", false) + "  |-- 1 agents integrated -> .codex/agents/\n  |-- 1 agents integrated -> .codex/agents/\n\n" + last,
+			map[string]string{".apm/agents/ag.agent.md": agent}, map[string]string{".apm/agents/ag.agent.md": agent}},
+		// A skill of other bytes is one skipped file. On the rerun the Oracle
+		// writes the second package's skill over the first's and prints
+		// "1 skill(s) integrated" and "1 skill replaced by a different
+		// package (last installed wins)"; apm-go keeps the first package's,
+		// the owner-pick deviation of the uninstall item of PRODUCT.md.
+		{"skilldiff", "claude",
+			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
+			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n\n" + last,
+			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill + "z\n"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			files := map[string]string{"a/apm.yml": "name: a\nversion: 1.0.0\n", "z/apm.yml": "name: z\nversion: 1.0.0\n"}
+			for rel, content := range tt.a {
+				files["a/"+rel] = content
+			}
+			for rel, content := range tt.z {
+				files["z/"+rel] = content
+			}
+			onePkgProject(t, "    - ./a\n    - ./z\n", files)
+			args := []string{"install", "--target", tt.target}
+			runSummary(t, []summaryRun{{args, tt.i1}, {args, tt.i2}})
+		})
+	}
+}
+
+// A path the lock records for the project's own content is managed too, as
+// the Oracle reads that content as a dependency of its own
+// (deps/lockfile.py:951-963): a package that loses it is no skipped file.
+// The want is Oracle 0.33.0's for review122/local-owner, rerun as
+// issue122-s17/runs1/localowner, but for the second package: the Oracle
+// writes its agent over the first's and prints it integrated, with two
+// warnings that it kept the project's old file, where apm-go keeps the
+// first package's agent (the owner-pick deviation of the uninstall item of
+// PRODUCT.md) and so prints the empty line of a run without diagnostics.
+func TestInstallSummary_ShadowedLocalOwner(t *testing.T) {
+	agent := func(body string) string { return "---\nname: ag\ndescription: d\n---\n" + body + "\n" }
+	summaryProject(t, map[string]string{
+		"apm.yml":                 "name: proj\nversion: 1.0.0\n",
+		".apm/agents/ag.agent.md": agent("local"),
+	})
+	runSummary(t, []summaryRun{{[]string{"install", "--target", "claude"}, " > Installing dependencies from apm.yml...\n" +
+		" i Targets: claude  (source: --target flag)\n" +
+		"   + <project root> (local)\n" +
+		"  |-- 1 agents integrated -> .claude/agents/\n" +
+		" i Added apm_modules/ to .gitignore\n" +
+		"\n" +
+		" + Installed 1 APM dependency in <t>s.\n"}})
+	if err := os.Remove(filepath.Join(".apm", "agents", "ag.agent.md")); err != nil {
+		t.Fatal(err)
+	}
+	for rel, content := range map[string]string{
+		"apm.yml":                   "name: proj\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./a\n    - ./z\n",
+		"a/apm.yml":                 "name: a\nversion: 1.0.0\n",
+		"a/.apm/agents/ag.agent.md": agent("a"),
+		"z/apm.yml":                 "name: z\nversion: 1.0.0\n",
+		"z/.apm/agents/ag.agent.md": agent("z"),
+	} {
+		writeCompileFile(t, ".", rel, content)
+	}
+	runSummary(t, []summaryRun{{[]string{"install", "--target", "claude"}, " > Installing dependencies from apm.yml...\n" +
+		" > Resolving ./a...\n" +
+		" > Resolving ./z...\n" +
+		" i Targets: claude  (source: --target flag)\n" +
+		"   + ./a (local)\n" +
+		"   + ./z (local)\n" +
+		"  |-- 1 agents integrated -> .claude/agents/\n" +
+		"  |-- (files unchanged)\n" +
+		"   + <project root> (local)\n" +
+		"  |-- (files unchanged)\n" +
+		"\n" +
+		" + Installed 2 APM dependencies in <t>s.\n"}})
+}
+
+// A package whose root is a skill prints its skill alone: the Oracle counts
+// sub-skills only below .github/skills/, which no target writes
+// (integration/skill_integrator.py:1241-1245; review122/probes/rootskill,
+// rerun as issue122-s17/runs1/rootskill).
+func TestInstallSummary_RootSkillHidesSubSkills(t *testing.T) {
+	onePkgProject(t, "    - ./a\n", map[string]string{
+		"a/apm.yml":                    "name: a\nversion: 1.0.0\n",
+		"a/SKILL.md":                   "---\nname: sk\ndescription: d\n---\nhello\n",
+		"a/.apm/skills/other/SKILL.md": "---\nname: other\ndescription: d\n---\nhello\n",
+	})
+	args := []string{"install", "--target", "claude,copilot"}
+	runSummary(t, []summaryRun{
+		{args, " > Installing dependencies from apm.yml...\n" +
+			" > Resolving ./a...\n" +
+			" i Targets: claude, copilot  (source: --target flag)\n" +
+			"   + ./a (local)\n" +
+			"  |-- Skill integrated -> .agents/skills/, .claude/skills/\n" +
+			" i Added apm_modules/ to .gitignore\n" +
+			"\n" +
+			" + Installed 1 APM dependency in <t>s.\n"},
+		{args, " > Installing dependencies from apm.yml...\n" +
+			" i Targets: claude, copilot  (source: --target flag)\n" +
+			"   + ./a (local)\n" +
+			"  |-- (files unchanged)\n" +
+			"\n" +
+			" + Installed 1 APM dependency in <t>s.\n"},
+	})
+}
+
 // summaryGitRepo makes dir, below the working directory, a git repository on
 // branch main with files in one commit, tags it with each of tags, and
 // returns the commit.

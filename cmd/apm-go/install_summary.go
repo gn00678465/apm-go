@@ -152,13 +152,15 @@ func printSummaryLine(phrase string, paths []string, verbose bool) {
 }
 
 // blockFiles is what one package of the install summary deployed: files
-// with their hashes now, and adopted, the paths of a shadowed primitive
-// whose bytes are on disk already.
+// with their hashes now, and the paths of its shadowed primitives that count
+// as adopted or integrated, a skill's by its name.
 type blockFiles struct {
-	files     []string
-	hashes    map[string]string
-	adopted   []string
-	rootSkill *deploy.RootSkill
+	files      []string
+	hashes     map[string]string
+	adopted    []string
+	integrated []string
+	skills     map[string][]string
+	rootSkill  *deploy.RootSkill
 }
 
 // printSummaryLines prints the lines of one package of the install summary
@@ -167,9 +169,9 @@ type blockFiles struct {
 // whose hash the lock recorded and still finds on disk adopted, the
 // directories in target order, and the label of instructions the last
 // target's. A command is integrated on every run, and so is each skill
-// below .apm/skills/; the skill of a package whose root is a skill is
-// integrated only when its directory was new. It returns the number of
-// integrated files.
+// below .apm/skills/; a package whose root is a skill prints its skill
+// alone, integrated only when its directory was new. It returns the number
+// of integrated files.
 func printSummaryLines(b blockFiles, before map[string]string, verbose bool) int {
 	type perTarget struct {
 		integrated, adopted int
@@ -207,6 +209,15 @@ func printSummaryLines(b blockFiles, before map[string]string, verbose bool) int
 	}
 	for _, f := range b.adopted {
 		note(f, true)
+	}
+	for _, f := range b.integrated {
+		note(f, false)
+	}
+	for name, dirs := range b.skills {
+		skillNames[name] = true
+		for _, d := range dirs {
+			skillRoots[path.Dir(d)+"/"] = true
+		}
 	}
 
 	total := 0
@@ -250,7 +261,10 @@ func printSummaryLines(b blockFiles, before map[string]string, verbose bool) int
 	}
 	sort.Strings(roots)
 	if b.rootSkill != nil {
-		delete(skillNames, b.rootSkill.Name)
+		// The Oracle counts a package's sub-skills only below
+		// .github/skills/, where no target writes them
+		// (integration/skill_integrator.py:1241-1245).
+		skillNames = nil
 		if b.rootSkill.Created {
 			total++
 			printSummaryLine("Skill integrated", roots, verbose)
@@ -376,33 +390,93 @@ func listedDeps(result *resolver.ResolutionResult, requestedKeys map[string]bool
 	return listed
 }
 
-// collisionCount is the Oracle's count of files it skipped because a file
-// it does not manage was there (integration/base_integrator.py:198-241,
-// install/pipeline.py:723-728): each path a listed package lost to another
-// package's file of the same name, unless the lock before the run records
-// the path for a dependency (managed) or the loser's bytes are the ones on
-// disk. A claude rule is written over, not skipped
-// (integration/instruction_integrator.py:450-485), and a skill counts once
-// whatever its directories.
-func collisionCount(shadowed []deploy.Shadowed, listed map[string]bool, oldLock *lockfile.Lockfile) int {
+// shadowOutcome is what the Oracle reports for a primitive that another
+// dependency's primitive of the same name kept off a path.
+type shadowOutcome int
+
+const (
+	shadowNone shadowOutcome = iota
+	shadowAdopted
+	shadowIntegrated
+	shadowCollision
+)
+
+// managedPaths is the Oracle's managed set (install/pipeline.py:723-728):
+// every path the lock before the run records, for a dependency and for the
+// project's own content, which the Oracle reads as a dependency of its own
+// (deps/lockfile.py:951-963).
+func managedPaths(oldLock *lockfile.Lockfile) map[string]bool {
 	managed := map[string]bool{}
-	if oldLock != nil {
-		for i := range oldLock.Dependencies {
-			for _, f := range oldLock.Dependencies[i].DeployedFiles {
-				managed[normalizeDeployPath(f)] = true
+	if oldLock == nil {
+		return managed
+	}
+	for i := range oldLock.Dependencies {
+		for _, f := range oldLock.Dependencies[i].DeployedFiles {
+			managed[normalizeDeployPath(f)] = true
+		}
+	}
+	for _, f := range oldLock.LocalDeployedFiles {
+		managed[normalizeDeployPath(f)] = true
+	}
+	return managed
+}
+
+// shadowedOutcome decides it as the Oracle's integrators do
+// (integration/base_integrator.py:198-241,429-495): what the Oracle compares
+// on disk adopts the file, or for a skill integrates it
+// (skill_integrator.py, measured as review122/probes/sameskill); a managed
+// path is written over, which leaves the disk as it is when the primitive
+// deploys what is there and is the owner-pick deviation otherwise; anything
+// else is a skipped file, but a claude rule, which the Oracle writes over
+// (integration/instruction_integrator.py:450-485).
+func shadowedOutcome(s deploy.Shadowed, managed map[string]bool) shadowOutcome {
+	switch {
+	case s.Same && s.Type == deploy.TypeSkills:
+		return shadowIntegrated
+	case s.Same:
+		return shadowAdopted
+	case anyManaged(s.Paths, managed):
+		if s.Deployed {
+			return shadowIntegrated
+		}
+		return shadowNone
+	}
+	for _, p := range s.Paths {
+		if strings.HasPrefix(p, ".claude/rules/") {
+			return shadowNone
+		}
+	}
+	return shadowCollision
+}
+
+// anyManaged tells whether a path, or for a skill's directory a path below
+// it, is managed.
+func anyManaged(paths []string, managed map[string]bool) bool {
+	for _, p := range paths {
+		p = normalizeDeployPath(p)
+		if managed[p] {
+			return true
+		}
+		for m := range managed {
+			if strings.HasPrefix(m, p+"/") {
+				return true
 			}
 		}
 	}
+	return false
+}
+
+// collisionCount is the Oracle's count of files it skipped because a file
+// it does not manage was there (install/pipeline.py:723-728), over the
+// listed packages; a skill counts once whatever its directories.
+func collisionCount(shadowed []deploy.Shadowed, listed map[string]bool, managed map[string]bool) int {
 	seen := map[string]bool{}
 	count := 0
 	for _, s := range shadowed {
-		if !listed[s.DepKey] || s.Same {
+		if !listed[s.DepKey] || shadowedOutcome(s, managed) != shadowCollision {
 			continue
 		}
 		for _, p := range s.Paths {
-			if managed[normalizeDeployPath(p)] || strings.HasPrefix(p, ".claude/rules/") {
-				continue
-			}
 			key := s.DepKey + "\x00" + p
 			if s.Type == deploy.TypeSkills {
 				key = s.DepKey + "\x00skill\x00" + s.Name

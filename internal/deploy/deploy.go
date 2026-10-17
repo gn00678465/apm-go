@@ -104,9 +104,26 @@ type Shadowed struct {
 	// Paths are the deploy-root-relative paths the target holds for the
 	// winner: the file it wrote, or for a skill its directory.
 	Paths []string
-	// Same is a single-file primitive whose source has the winner's bytes:
-	// what it would write is on disk already.
+	// Same is what the Oracle compares with the winner's file on disk
+	// before it writes this primitive (integration/base_integrator.py:
+	// 378-405,429-495): what this primitive deploys, or for a command and a
+	// codex agent its source read as text (command_integrator.py:581,
+	// agent_integrator.py:262), and for a skill its whole directory.
 	Same bool
+	// Deployed is what this primitive deploys being on disk at Paths: the
+	// Oracle's overwrite of a path it manages leaves the disk as it is.
+	Deployed bool
+}
+
+// deployOne writes p for adapter below deployDir: a prompt converted to a
+// command on a target that has commands, any other primitive through the
+// adapter.
+func deployOne(adapter TargetAdapter, p Primitive, deployDir string) ([]string, []CommandNote, error) {
+	if c, ok := adapter.(promptCommander); ok && p.Type == TypePrompts {
+		return deployPromptCommand(p, deployDir, c.commandPath(p.Name), adapter.Name())
+	}
+	files, err := adapter.DeployPrimitive(p, deployDir)
+	return files, nil, err
 }
 
 // RejectedInstructionError is an instruction whose destination a symlink takes
@@ -474,14 +491,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				continue
 			}
 
-			var files []string
-			var notes []CommandNote
-			var err error
-			if c, ok := adapter.(promptCommander); ok && p.Type == TypePrompts {
-				files, notes, err = deployPromptCommand(p, deployDir, c.commandPath(p.Name), target)
-			} else {
-				files, err = adapter.DeployPrimitive(p, deployDir)
-			}
+			files, notes, err := deployOne(adapter, p, deployDir)
 			for _, n := range notes {
 				n.DepKey, n.Package = p.DepKey, packageNames[p.DepKey]
 				result.CommandNotes = append(result.CommandNotes, n)
@@ -695,7 +705,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 
 	result.Conflicts = conflictDiags
-	result.Shadowed = shadowedPrimitives(targets, ordered, targetSubsets, winnersByTarget, written)
+	result.Shadowed = shadowedPrimitives(targets, ordered, targetSubsets, winnersByTarget, written, deployDir)
 
 	// Sort deployed files within each dep for determinism
 	for _, dr := range result.PerDep {
