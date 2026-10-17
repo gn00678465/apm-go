@@ -82,7 +82,7 @@ Seen 1× (2026-10-16)
 
 **When you open or fill a release-notes issue, list every PR merged since the previous tag (`git log --first-parent <tag>..origin/main`) and check each one's Behavior and Risks for an upgrade-visible change; do not fill it from memory or from one list.**
 - Release notes are written from that issue, so a change missing there is missing from the release notes.
-- Evidence: issue #133, opened on 2026-10-17, holds the items of PR #100, #101, #103, #105, #106, #108-#110, #117, #120 and #121. It has no item for PR #85 (the next `install` drops `id` from `.codex/config.toml`), PR #91 (a package with a symlink that leaves it no longer installs), PR #92 (`uninstall` fails and `install` skips paths when a directory or file below `apm_modules/` or `.claude/` is linked outside), PR #93 (`enabled` written to `opencode.json` and the lock) or PR #94 (a `targets:` list removes the package's files on other targets). All five merged after `v0.4.0` (`34dfa71`); PR #91, #92 and #94 are listed in this file under "Moved to AGENTS.md".
+- Evidence: issue #133, opened on 2026-10-17, holds the items of PR #100, #101, #103, #105, #106, #108-#110, #117, #120 and #121. It has no item for PR #85 (the next `install` drops `id` from `.codex/config.toml`), PR #91 (a package with a symlink that leaves it no longer installs), PR #92 (`uninstall` fails and `install` skips paths when a directory or file below `apm_modules/` or `.claude/` is linked outside), PR #93 (`enabled` written to `opencode.json` and the lock) or PR #94 (a `targets:` list removes the package's files on other targets). All five merged after `v0.4.0` (`34dfa71`); PR #91, #92 and #94 are listed in this file under "Moved to AGENTS.md". The five items, and those of PR #84 and #111, were added to issue #133 after this review.
 Seen 1× (2026-10-17)
 
 ## Existing rules missed
@@ -119,4 +119,3 @@ Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
 ## Observed, not entered
 
 - The instruction files have outgrown Claude Code's limit. ARCHITECTURE.md grew from 69,071 to 121,598 characters and PRODUCT.md from 21,890 to 76,231 in this range (`git show 34dfa71:ARCHITECTURE.md | wc -m` against `0cf2bd2`). Claude Code warned "over the 150.0k-char total limit" (163.5k on 2026-10-16, 216.7k on 2026-10-17). Its effect on the agents is not measured.
-- PR #132 rewrote its new sections of LESSONS.md and AGENTS.md in Traditional Chinese (`f0b8025`, 10:21:46 +0800) and back to English 83 s later (`94d85b8`). No PR comment or review records why, so it is not entered.
