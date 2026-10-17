@@ -332,8 +332,10 @@ func TestDeploySymlink_ReplacesLeafLink(t *testing.T) {
 	old := filepath.Join(root, "src/apm_modules/o/dep/.apm/agents/r.agent.md")
 	writeDeployFile(t, old, "old\n")
 	deployPathLink(t, old, filepath.Join(home, ".claude/agents/r.md"))
-	activeDeployMode.symlink, activeDeployMode.projectDir = true, filepath.Join(root, "src")
-	defer func() { activeDeployMode.symlink, activeDeployMode.projectDir = false, "" }()
+	activeDeployMode.symlink, activeDeployMode.global, activeDeployMode.projectDir = true, true, filepath.Join(root, "src")
+	defer func() {
+		activeDeployMode.symlink, activeDeployMode.global, activeDeployMode.projectDir = false, false, ""
+	}()
 
 	if _, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "r", Type: TypeAgents, DepKey: "o/dep", SrcPath: src}, home); err != nil {
 		t.Fatalf("deploy = %v", err)
@@ -358,8 +360,10 @@ func TestDeploySymlink_UserLeafLink_Refused(t *testing.T) {
 	writeDeployFile(t, user, "USER SHARED CONTENT\n")
 	dest := filepath.Join(home, ".claude/agents/r.md")
 	deployPathLink(t, "../shared/r.md", dest)
-	activeDeployMode.symlink, activeDeployMode.projectDir = true, filepath.Join(root, "src")
-	defer func() { activeDeployMode.symlink, activeDeployMode.projectDir = false, "" }()
+	activeDeployMode.symlink, activeDeployMode.global, activeDeployMode.projectDir = true, true, filepath.Join(root, "src")
+	defer func() {
+		activeDeployMode.symlink, activeDeployMode.global, activeDeployMode.projectDir = false, false, ""
+	}()
 	before := deployTree(t, root)
 
 	_, err := Adapters["claude"].DeployPrimitive(Primitive{Name: "r", Type: TypeAgents, DepKey: "o/dep", SrcPath: src}, home)

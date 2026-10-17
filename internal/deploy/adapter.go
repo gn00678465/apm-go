@@ -14,12 +14,17 @@ import (
 
 // activeDeployMode is set by Run() for the duration of a deploy pipeline.
 // symlink=true makes per-primitive deploys create symlinks to apm_modules
-// sources instead of copying. projectDir is the directory the sources are
-// read from.
+// sources instead of copying. global is a --global deploy, by symlink or, on
+// a Windows account that cannot make one, by copy. projectDir is the
+// directory the sources are read from.
 var activeDeployMode struct {
 	symlink    bool
+	global     bool
 	projectDir string
 }
+
+// symlinkProbe is canSymlink, replaced in tests.
+var symlinkProbe = canSymlink
 
 type TargetAdapter interface {
 	Name() string
@@ -415,6 +420,13 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 		}
 		return []string{destPath}, nil
 	}
+	// os.WriteFile follows a symlink: through an earlier symlink deploy's
+	// link the copy would overwrite the package source it points at.
+	if activeDeployMode.global && isDeployLink(absDest) {
+		if err := os.Remove(absDest); err != nil {
+			return nil, fmt.Errorf("replace %s %s: %w", p.Type, p.Name, err)
+		}
+	}
 	if err := copyFile(p.SrcPath, absDest); err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
@@ -423,24 +435,36 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 
 // checkFileDest is the check deployFileToPath makes before it writes
 // destPath. A copy is written through a symlink there, so it takes
-// CheckDeployWrite. A symlink deploy replaces what is there (os.Remove, then
-// os.Symlink), so it takes CheckDeployPath. A symlink there that leads into
-// apm_modules/ or .apm/ is a deploy's own, whichever package it was deployed
-// for, since the packages that have a primitive of this name change with
-// their order in apm.yml; any other symlink is the user's, refused and kept
-// when it leads out of the primitive's directory, as a copy deploy refuses to
-// write through it.
+// CheckDeployWrite. A --global deploy replaces a symlink there that leads into
+// apm_modules/ or .apm/, a deploy's own whichever package it was deployed for,
+// since the packages that have a primitive of this name change with their
+// order in apm.yml; a symlink deploy replaces whatever is there (os.Remove,
+// then os.Symlink). Both take CheckDeployPath. Any other symlink is the
+// user's, refused and kept when it leads out of the primitive's directory, as
+// a copy deploy refuses to write through it.
 func checkFileDest(destPath, deployDir string) error {
-	if !activeDeployMode.symlink {
+	if !activeDeployMode.global {
 		return CheckDeployWrite(deployDir, destPath)
 	}
 	if err := CheckDeployPath(deployDir, destPath); err != nil {
 		return err
 	}
 	abs := filepath.Join(deployDir, filepath.FromSlash(destPath))
+	if isDeployLink(abs) {
+		return nil
+	}
+	if _, err := os.Readlink(abs); err != nil && activeDeployMode.symlink {
+		return nil
+	}
+	return CheckDeployWrite(deployDir, destPath)
+}
+
+// isDeployLink reports whether abs is a symlink into apm_modules/ or .apm/ of
+// the global project directory, dangling or not.
+func isDeployLink(abs string) bool {
 	target, err := os.Readlink(abs)
 	if err != nil {
-		return nil
+		return false
 	}
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(filepath.Dir(abs), target)
@@ -448,8 +472,8 @@ func checkFileDest(destPath, deployDir string) error {
 	for _, source := range []string{"apm_modules", ".apm"} {
 		source = filepath.Join(activeDeployMode.projectDir, source)
 		if archive.Contained(source, target) || containedReal(source, target) {
-			return nil
+			return true
 		}
 	}
-	return CheckDeployWrite(deployDir, destPath)
+	return false
 }

@@ -138,15 +138,20 @@ func skillNameInSubset(subset []string, name string) bool {
 // FinalizeBundles and their post-write hashes). When empty it defaults to
 // projectDir, preserving the existing single-root behavior. projectDir is
 // always used for reading primitives and apm_modules.
-// symlink makes per-primitive deploys create symlinks to apm_modules sources
-// instead of copying files. Merged outputs (WriteMCP, FinalizeBundles) always
+// global is a --global deploy: per-primitive deploys create symlinks to
+// apm_modules sources instead of copying files, unless the process cannot
+// make a symlink (canSymlink), when the whole Run copies, as the Oracle's
+// user scope always does. Merged outputs (WriteMCP, FinalizeBundles) always
 // write regardless of this flag.
-func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string, symlink bool) (*DeployResult, error) {
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string, global bool) (*DeployResult, error) {
 	if deployDir == "" {
 		deployDir = projectDir
 	}
-	activeDeployMode.symlink, activeDeployMode.projectDir = symlink, projectDir
-	defer func() { activeDeployMode.symlink, activeDeployMode.projectDir = false, "" }()
+	activeDeployMode.symlink = global && symlinkProbe()
+	activeDeployMode.global, activeDeployMode.projectDir = global, projectDir
+	defer func() {
+		activeDeployMode.symlink, activeDeployMode.global, activeDeployMode.projectDir = false, false, ""
+	}()
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
 	var mcpDiags []string
@@ -168,11 +173,10 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		sourceDiags = append(sourceDiags, fmt.Sprintf("%s: read %s failed: %v", label, shown, f.err))
 	}
 
-	// Local primitives first (req-pr-002: always win). A symlink deploy is
-	// --global.
-	locals := CollectScopeLocalPrimitives(projectDir, symlink)
+	// Local primitives first (req-pr-002: always win).
+	locals := CollectScopeLocalPrimitives(projectDir, global)
 	ordered = append(ordered, locals...)
-	noteSourceReadFailure("", "<local .apm/>", localSourceReadFailure(projectDir, symlink))
+	noteSourceReadFailure("", "<local .apm/>", localSourceReadFailure(projectDir, global))
 	// packageNames names each source in a note: the project's own content
 	// "_local", as the Oracle does.
 	packageNames := map[string]string{"": "_local"}
