@@ -8,9 +8,9 @@ import (
 
 func setSymlinkMode(t *testing.T, on bool) {
 	t.Helper()
-	old := activeDeployMode.symlink
-	activeDeployMode.symlink = on
-	t.Cleanup(func() { activeDeployMode.symlink = old })
+	oldSymlink, oldGlobal := activeDeployMode.symlink, activeDeployMode.global
+	activeDeployMode.symlink, activeDeployMode.global = on, on
+	t.Cleanup(func() { activeDeployMode.symlink, activeDeployMode.global = oldSymlink, oldGlobal })
 }
 
 func makeSkillSource(t *testing.T, dir, name string, files map[string]string) string {

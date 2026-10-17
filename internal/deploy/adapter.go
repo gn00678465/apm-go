@@ -14,12 +14,17 @@ import (
 
 // activeDeployMode is set by Run() for the duration of a deploy pipeline.
 // symlink=true makes per-primitive deploys create symlinks to apm_modules
-// sources instead of copying. projectDir is the directory the sources are
-// read from.
+// sources instead of copying. global is a --global deploy, by symlink or, on
+// a Windows account that cannot make one, by copy. projectDir is the
+// directory the sources are read from.
 var activeDeployMode struct {
 	symlink    bool
+	global     bool
 	projectDir string
 }
+
+// symlinkProbe is canSymlink, replaced in tests.
+var symlinkProbe = canSymlink
 
 type TargetAdapter interface {
 	Name() string
@@ -250,6 +255,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	// an os.MkdirAll, there, so it has to stay in the skill's directory. A
 	// file that is a symlink is replaced by the copy, wherever it points, as
 	// the Oracle replaces the whole directory.
+	links := skillLinksOf(p)
 	info, err := os.Lstat(absDestDir)
 	if err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if err := os.Remove(absDestDir); err != nil {
@@ -257,7 +263,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		}
 	} else {
 		for _, dirs := range []bool{false, true} {
-			err := walkSkillDir(p.SrcPath, "", p.DepKey != "", p.SkipRootGit, func(_, rel string, isDir bool) error {
+			err := walkSkillDir(p.SrcPath, "", links, p.SkipRootGit, func(_, rel string, isDir bool) error {
 				if isDir != dirs {
 					return nil
 				}
@@ -275,7 +281,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		return nil, fmt.Errorf("create skill dir: %w", err)
 	}
 	var deployed []string
-	err = walkSkillDir(p.SrcPath, "", p.DepKey != "", p.SkipRootGit, func(src, rel string, isDir bool) error {
+	err = walkSkillDir(p.SrcPath, "", links, p.SkipRootGit, func(src, rel string, isDir bool) error {
 		dst := filepath.Join(absDestDir, filepath.FromSlash(rel))
 		if isDir {
 			return os.MkdirAll(dst, 0755)
@@ -329,7 +335,7 @@ func symlinkSkillTo(srcDir, absDestDir, destDir string, follow, skipRootGit bool
 	}
 	var deployed []string
 	if follow {
-		_ = walkSkillDir(srcDir, "", true, skipRootGit, func(_, rel string, isDir bool) error {
+		_ = walkSkillDir(srcDir, "", followLinks, skipRootGit, func(_, rel string, isDir bool) error {
 			if !isDir {
 				deployed = append(deployed, path.Join(destDir, rel))
 			}
@@ -348,15 +354,40 @@ func symlinkSkillTo(srcDir, absDestDir, destDir string, follow, skipRootGit bool
 	return deployed, nil
 }
 
+// skillLinks is what walkSkillDir does with a symlink in a skill.
+type skillLinks int
+
+const (
+	// skipLinks skips it: a copy through it would read what it points at,
+	// e.g. /etc/passwd from a malicious package.
+	skipLinks skillLinks = iota
+	// followLinks visits it as what it points at. That is only for a
+	// dependency skill, whose tree collection has checked (archive.CheckTree),
+	// so every symlink in it stays in the package and none loops.
+	followLinks
+	// fileLinks visits a symlink to a regular file as that file and skips any
+	// other. That is for the project's own skill in a --global copy deploy,
+	// which has to record the paths and hashes a symlink deploy records
+	// through its link to the skill directory, so one lock serves both.
+	fileLinks
+)
+
+// skillLinksOf is how a copy deploy walks the skill p.
+func skillLinksOf(p Primitive) skillLinks {
+	switch {
+	case p.DepKey != "":
+		return followLinks
+	case activeDeployMode.global:
+		return fileLinks
+	}
+	return skipLinks
+}
+
 // walkSkillDir calls visit for each entry below srcDir, a directory before
-// what is in it, with its slash-separated path below relPrefix. A symlink is
-// skipped: a copy through it would read what it points at, e.g. /etc/passwd
-// from a malicious package. With follow it is visited as what it points at;
-// that is only for a dependency skill, whose tree collection has checked
-// (archive.CheckTree), so every symlink in it stays in the package and none
-// loops. With skipRootGit the entry .git of srcDir itself is not visited
-// (Primitive.SkipRootGit); one deeper down is.
-func walkSkillDir(srcDir, relPrefix string, follow, skipRootGit bool, visit func(src, rel string, isDir bool) error) error {
+// what is in it, with its slash-separated path below relPrefix, and a
+// symlink as links says. With skipRootGit the entry .git of srcDir itself is
+// not visited (Primitive.SkipRootGit); one deeper down is.
+func walkSkillDir(srcDir, relPrefix string, links skillLinks, skipRootGit bool, visit func(src, rel string, isDir bool) error) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return err
@@ -367,20 +398,26 @@ func walkSkillDir(srcDir, relPrefix string, follow, skipRootGit bool, visit func
 		}
 		src, rel, isDir := filepath.Join(srcDir, e.Name()), path.Join(relPrefix, e.Name()), e.IsDir()
 		if e.Type()&os.ModeSymlink != 0 {
-			if !follow {
+			switch links {
+			case skipLinks:
 				continue
+			case fileLinks:
+				if info, err := os.Stat(src); err != nil || !info.Mode().IsRegular() {
+					continue
+				}
+			case followLinks:
+				info, err := os.Stat(src)
+				if err != nil {
+					return err
+				}
+				isDir = info.IsDir()
 			}
-			info, err := os.Stat(src)
-			if err != nil {
-				return err
-			}
-			isDir = info.IsDir()
 		}
 		if err := visit(src, rel, isDir); err != nil {
 			return err
 		}
 		if isDir {
-			if err := walkSkillDir(src, rel, follow, false, visit); err != nil {
+			if err := walkSkillDir(src, rel, links, false, visit); err != nil {
 				return err
 			}
 		}
@@ -415,6 +452,13 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 		}
 		return []string{destPath}, nil
 	}
+	// os.WriteFile follows a symlink: through an earlier symlink deploy's
+	// link the copy would overwrite the package source it points at.
+	if activeDeployMode.global && isDeployLink(absDest) {
+		if err := os.Remove(absDest); err != nil {
+			return nil, fmt.Errorf("replace %s %s: %w", p.Type, p.Name, err)
+		}
+	}
 	if err := copyFile(p.SrcPath, absDest); err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
@@ -423,24 +467,36 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 
 // checkFileDest is the check deployFileToPath makes before it writes
 // destPath. A copy is written through a symlink there, so it takes
-// CheckDeployWrite. A symlink deploy replaces what is there (os.Remove, then
-// os.Symlink), so it takes CheckDeployPath. A symlink there that leads into
-// apm_modules/ or .apm/ is a deploy's own, whichever package it was deployed
-// for, since the packages that have a primitive of this name change with
-// their order in apm.yml; any other symlink is the user's, refused and kept
-// when it leads out of the primitive's directory, as a copy deploy refuses to
-// write through it.
+// CheckDeployWrite. A --global deploy replaces a symlink there that leads into
+// apm_modules/ or .apm/, a deploy's own whichever package it was deployed for,
+// since the packages that have a primitive of this name change with their
+// order in apm.yml; a symlink deploy replaces whatever is there (os.Remove,
+// then os.Symlink). Both take CheckDeployPath. Any other symlink is the
+// user's, refused and kept when it leads out of the primitive's directory, as
+// a copy deploy refuses to write through it.
 func checkFileDest(destPath, deployDir string) error {
-	if !activeDeployMode.symlink {
+	if !activeDeployMode.global {
 		return CheckDeployWrite(deployDir, destPath)
 	}
 	if err := CheckDeployPath(deployDir, destPath); err != nil {
 		return err
 	}
 	abs := filepath.Join(deployDir, filepath.FromSlash(destPath))
+	if isDeployLink(abs) {
+		return nil
+	}
+	if _, err := os.Readlink(abs); err != nil && activeDeployMode.symlink {
+		return nil
+	}
+	return CheckDeployWrite(deployDir, destPath)
+}
+
+// isDeployLink reports whether abs is a symlink into apm_modules/ or .apm/ of
+// the global project directory, dangling or not.
+func isDeployLink(abs string) bool {
 	target, err := os.Readlink(abs)
 	if err != nil {
-		return nil
+		return false
 	}
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(filepath.Dir(abs), target)
@@ -448,8 +504,8 @@ func checkFileDest(destPath, deployDir string) error {
 	for _, source := range []string{"apm_modules", ".apm"} {
 		source = filepath.Join(activeDeployMode.projectDir, source)
 		if archive.Contained(source, target) || containedReal(source, target) {
-			return nil
+			return true
 		}
 	}
-	return CheckDeployWrite(deployDir, destPath)
+	return false
 }
