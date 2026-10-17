@@ -14,7 +14,7 @@ Three files are the project's long-term memory. Read the relevant one before des
 
 Each topic lives in exactly one of them; reference, do not restate. When a change alters a fact recorded there, update that file in the same change.
 
-**`LESSONS.md`** 是合併後的復盤紀錄，記下出錯的地方、證據與出現的日子。改程式前先讀。其中的教訓是候選規則：不擋 PR，但適用的要照做，並在 PR 說明寫出做了什麼。教訓移進下方「升格規則」後才是規則。
+**`LESSONS.md`** is the review log of merged work: what went wrong, with evidence and the days it was seen. Its lessons are candidate rules: breaking one does not block a PR, but read them before changing code, follow each one that applies, and say in the PR description what you did. A lesson becomes a mandatory rule only when it moves into "Promoted rules" below.
 
 ## GitNexus — code intelligence
 
@@ -94,7 +94,7 @@ internal/
 
 **Exit codes.** Commands needing a specific exit code wrap errors with `withExitCode()` in `cmd/apm-go/exitcode.go`; the root error handler unwraps it. Usage errors (the oracle's `click.UsageError`) are 2.
 
-**合併 PR。** 用 `gh pr merge <N> --merge --match-head-commit <審查過的 head> --delete-branch` 合併，GitHub 上的 head branch 在同一步刪除。接著刪除本機 branch 與它的 worktree。PR 還沒合併的 branch 不刪。
+**Merging a PR.** Merge with `gh pr merge <N> --merge --match-head-commit <reviewed head> --delete-branch`, so the head branch is deleted on GitHub in the same step; then remove the local branch and its worktree. A branch whose PR has not merged is not deleted.
 
 **Security scanning.** `internal/security/` is a credential/secret scanner with a policy gate (`ScanPolicy`: block, warn, or report; fail-closed — an unknown policy blocks). Today it runs in two places only: `pack` scans bundled sources under `WarnPolicy` (`internal/pack/bundle/producer.go`), and `audit` scans deployed files and reports critical/warning counts (`cmd/apm-go/audit_content.go`). It is **not** on the install/deploy path; do not describe or rely on it as a pre-deploy gate.
 
@@ -104,9 +104,7 @@ internal/
 
 ## Testing patterns
 
-Tests use `t.TempDir()` for filesystem isolation. No global test fixtures — each test builds its own `apm.yml` / directory tree inline. External seams are injected, not mocked globally: `installDeps`, `doctorDeps` (git/env), and the `*ForTest` hooks in `internal/ux/testhooks.go` and `internal/pluginjson/testhooks.go`. Expected values come from the oracle's source or output, never recomputed the way the code does.
-
-測試建立的 git repo，一律用以 `-c maintenance.auto=false` 執行 git 的 helper 建立（例如 `cmd/apm-go/marketplace_authoring_test.go` 的 `gitCmd`）。git 在 commit 後會在背景重新打包，前後比對中的 fixture 會在中途改變。
+Tests use `t.TempDir()` for filesystem isolation. A git repository a test creates is made through a helper that runs git with `-c maintenance.auto=false` (for example `gitCmd` in `cmd/apm-go/marketplace_authoring_test.go`): git repacks in the background after a commit, which changes a fixture in the middle of a before/after comparison. No global test fixtures — each test builds its own `apm.yml` / directory tree inline. External seams are injected, not mocked globally: `installDeps`, `doctorDeps` (git/env), and the `*ForTest` hooks in `internal/ux/testhooks.go` and `internal/pluginjson/testhooks.go`. Expected values come from the oracle's source or output, never recomputed the way the code does.
 
 **CI detection is pinned, never inherited.** `cmd/apm-go` and `internal/ux` each have a `TestMain` that unsets `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `TF_BUILD`, and `JENKINS_URL` before running their tests. Both packages have production code that branches on those variables — `install` defaults to frozen under CI (`lockfile.IsCIEnvironment`, req-lk-018) and `ux.isCI` suppresses interactivity — so without the pin the same test suite is green on a workstation and red in Actions. A test that wants CI semantics opts in with `t.Setenv("CI", "1")`, which overrides the baseline for that test only. Any new package whose code reads those variables needs the same `TestMain`.
 
@@ -116,22 +114,23 @@ Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depen
 
 `go test ./...` passing is not the parity gate — `.github/workflows/parity.yml` runs `tools/parity` against the latest stable upstream release of the Oracle on every push/PR, resolving the version when the job runs, and is the authority on Oracle byte-for-byte parity; `go test` only verifies apm-go's own Go-level correctness (ticket 09).
 
-## 升格規則
+## Promoted rules
 
-`LESSONS.md` 中在 3 個不同日子出現的教訓。這些是正式規則，必須遵守。每份 PR 說明與每次審查都逐條檢查；違反任一條的 PR 尚未就緒。原教訓與證據在 `LESSONS.md`「已升格到 AGENTS.md」。
+Lessons seen on 3 separate days in `LESSONS.md`. These rules are mandatory: every PR description and every review checks each one, and a PR that breaks one is not ready. The original entries and their evidence stay in `LESSONS.md` under "Moved to AGENTS.md".
 
-1. **這台機器能跑的檢查，跑過才交出，不列進 Not verified。** Windows sandbox、本機的假 registry、本機目錄的 marketplace、已安裝的 agent CLI 都算。寫「這裡無法驗證」之前先試一次，並寫出失敗的指令。（2026-10-17 升格）
-2. **PR 改變升級後使用者看到的結果時，開 PR 的同一步，在下一版的發布說明 issue 記一行。** 沒有這個 issue 就開一個（`Release notes: vX.Y.Z`）。只寫在 PR 的 Risks 不算紀錄。（2026-10-17 升格）
+1. **Run every check this machine can run before you list it under "Not verified".** The Windows sandbox, a local fake registry, a local-directory marketplace and an installed agent CLI all count. Before writing "cannot be verified here", try it once and write the command that failed. (Promoted 2026-10-17.)
+2. **When a PR changes what an existing user sees after upgrading, add one line for it to the release-notes issue of the next tag in the same step that opens the PR**; open that issue (`Release notes: vX.Y.Z`) when none exists. A PR's Risks section alone is not a record. (Promoted 2026-10-17.)
 
-## 教訓復盤
+## Lessons review
 
-board 卡片的 PR 合併後，或有合併的那天結束前，做一次復盤。範圍是 `<reviewed-through>..origin/main`，游標在 `LESSONS.md` 第一行。
+Run a review after a board card's PR merges, or at the end of a day with merges. It covers `<reviewed-through>..origin/main`, the cursor on the first line of `LESSONS.md`.
 
-1. 讀範圍內的 commit、每個 PR 的說明與留言、每張卡的 `board log <issue> --project apm-go`，以及範圍內新開、重開或更正的 issue。
-2. 找出四種情況：修完又返工、不該合併、驗證太粗、做對值得照做。
-3. 每項發現寫成一條教訓：一句 agent 能照做的規則（祈使句）、原因、證據、可選的 `Done right on <date>: <ref>`、`Seen N× (<dates>)`。`Seen` 計算不同的日子（UTC+8），同一天多次只算一次。既有教訓出現新案例時補上證據；若是新的日子，次數加一。
-4. 違反本檔或專案指示中既有規則的發現，連同證據記在 `LESSONS.md`「再次違反的既有規則」，不當成新教訓。board 工具本身的問題不記進 `LESSONS.md`。
-5. 寫入前逐一查證引用：SHA 用 `git cat-file -t`，PR、issue、留言用 `gh`，board event 用 `board log`。證據查不到的發現不列為教訓。
-6. 在 3 個不同日子出現的教訓，在同一個 commit 升格：規則加進「升格規則」，`LESSONS.md` 的原條目連同證據移到「已升格到 AGENTS.md」。
-7. 在同一個 commit 把游標移到復盤到的 head。沒移游標的復盤不算完成。
-8. 開 PR 送出，標題為 `lessons: <from>..<to> (<N> PRs)`，說明列出新教訓、增加的次數與升格項目。
+1. Read the range: commits, each PR's body and comments, `board log <issue> --project apm-go` of each card, and issues opened, reopened or corrected in the range.
+2. Look for work that had to be fixed again, work that should not have merged, verification that was too thin, and work done right that is worth repeating.
+3. Write each finding as a lesson: a rule an agent can follow (imperative), why, evidence, an optional `Done right on <date>: <ref>`, and `Seen N× (<dates>)`. Seen counts separate days (UTC+8); several instances on one day count once. A new instance of an existing lesson adds its evidence and, on a new day, raises the count.
+4. A finding that breaks a rule already written in this file or in the project's instructions goes under "Existing rules missed" in `LESSONS.md` with its evidence, not as a new lesson. A finding about the board tooling itself is not entered in `LESSONS.md`.
+5. Check every reference before writing it: each sha with `git cat-file -t`, each PR, issue and comment with `gh`, each board event with `board log`. A finding whose evidence cannot be checked is not entered as a lesson.
+6. A lesson seen on 3 separate days moves into "Promoted rules" in the same commit: the rule is added here, and its entry in `LESSONS.md` moves under "Moved to AGENTS.md" with its evidence.
+7. Move the cursor to the reviewed head in the same commit. A review that does not move the cursor is not done.
+8. Land it through a PR titled `lessons: <from>..<to> (<N> PRs)` whose description lists the new lessons, the raised counts and the promotions.
+
