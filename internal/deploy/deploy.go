@@ -538,7 +538,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 
 				for _, f := range files {
 					absPath := filepath.Join(deployDir, f)
-					hash, err := lockfile.HashFileBytes(absPath)
+					hash, err := lockfile.HashDeployedFile(absPath)
 					if err != nil {
 						return nil, fmt.Errorf("hash deployed file %s: %w", f, err)
 					}
@@ -586,7 +586,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				result.PerDep[depKey] = depResult
 			}
 			for _, f := range files {
-				hash, err := lockfile.HashFileBytes(filepath.Join(deployDir, f))
+				hash, err := lockfile.HashDeployedFile(filepath.Join(deployDir, f))
 				if err != nil {
 					return nil, fmt.Errorf("hash bundle manifest %s: %w", f, err)
 				}
@@ -623,7 +623,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			}
 			result.Diags = append(result.Diags, mcpWriteDiags...)
 			for _, f := range files {
-				hash, err := lockfile.HashFileBytes(filepath.Join(deployDir, f))
+				hash, err := lockfile.HashDeployedFile(filepath.Join(deployDir, f))
 				if err != nil {
 					return nil, fmt.Errorf("hash mcp file %s: %w", f, err)
 				}

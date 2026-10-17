@@ -69,7 +69,7 @@ func ComputeDeployedFileHashes(files []string, rootDir string) (map[string]strin
 			continue
 		}
 		full := filepath.Join(rootDir, filepath.FromSlash(f))
-		h, err := HashFileBytes(full)
+		h, err := HashDeployedFile(full)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +92,7 @@ func VerifyDeployedHashes(hashes map[string]string, rootDir string) error {
 			return fmt.Errorf("integrity check failed for %s: unsupported algorithm %q (only sha256 supported)", path, algo)
 		}
 		full := filepath.Join(rootDir, filepath.FromSlash(path))
-		actual, err := HashFileBytes(full)
+		actual, err := HashDeployedFile(full)
 		if err != nil {
 			return fmt.Errorf("integrity check failed for %s: %w", path, err)
 		}

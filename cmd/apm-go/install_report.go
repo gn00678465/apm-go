@@ -227,7 +227,7 @@ func hashesOnDisk(lock *lockfile.Lockfile, root string) map[string]string {
 	}
 	record := func(files []string) {
 		for _, f := range files {
-			if h, err := lockfile.HashFileBytes(filepath.Join(root, filepath.FromSlash(f))); err == nil {
+			if h, err := lockfile.HashDeployedFile(filepath.Join(root, filepath.FromSlash(f))); err == nil {
 				before[f] = h
 			}
 		}
@@ -476,11 +476,13 @@ func syncLockProvenance(noProvenance bool) error {
 // lockIsCanonical reports whether apm.lock.yaml on disk is what apm-go would
 // write for the lock it parsed from it. A lock in the format before issue #50
 // is not, and is written again in the current format even when it records
-// the same state (ruling R16).
+// the same state (ruling R16). Line endings are not the format: git checks a
+// committed lock out with CRLF under core.autocrlf=true, and writing it again
+// would change the file on every Windows checkout (issue #119).
 func lockIsCanonical(lock *lockfile.Lockfile, node *yamllib.Node) bool {
 	onDisk, readErr := os.ReadFile("apm.lock.yaml")
 	canonical, err := lockfile.WriteLockfile(lock, node)
-	return readErr == nil && err == nil && string(canonical) == string(onDisk)
+	return readErr == nil && err == nil && string(canonical) == strings.ReplaceAll(string(onDisk), "\r\n", "\n")
 }
 
 // writeLockfileBytes replaces apm.lock.yaml through a temporary file in the

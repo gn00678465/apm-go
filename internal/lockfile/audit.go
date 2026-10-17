@@ -32,7 +32,7 @@ func VerifyDeployedState(lock *Lockfile, root string) []Violation {
 				continue
 			}
 			full := filepath.Join(root, filepath.FromSlash(path))
-			actual, err := HashFileBytes(full)
+			actual, err := HashDeployedFile(full)
 			if err != nil {
 				viol = append(viol, Violation{Path: path, Expected: expected, Observed: ""})
 				continue

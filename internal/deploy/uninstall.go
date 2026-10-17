@@ -111,15 +111,13 @@ func RemoveDeployedFiles(projectDir string, files []string, hashes map[string]st
 			continue
 		}
 
-		actual, err := lockfile.HashFileBytes(target)
+		same, err := lockfile.DeployedFileMatches(target, expected)
 		if err != nil {
 			kept = append(kept, f)
 			diags = append(diags, fmt.Sprintf("keeping %q: %v", f, err))
 			continue
 		}
-		_, expHex, expErr := lockfile.ParseHashEnvelope(expected)
-		_, actHex, _ := lockfile.ParseHashEnvelope(actual)
-		if expErr != nil || expHex != actHex {
+		if !same {
 			kept = append(kept, f)
 			diags = append(diags, fmt.Sprintf("keeping %q: modified since deploy (hash mismatch)", f))
 			continue
