@@ -1,0 +1,104 @@
+<!-- reviewed-through: 0cf2bd2 (2026-10-17 07:08 +0800) -->
+
+# Lessons
+
+This file is the review log of merged apm-go work. A review reads what landed and records work that had to be fixed again, work that should not have merged, verification that was too thin, and work done right that is worth repeating.
+
+Each lesson is a rule, then why, then evidence that `git`, `gh` or `board log <issue> --project apm-go` can check, then `Seen N×` with the dates. Seen counts separate days (UTC+8).
+
+Rules and lessons differ in status:
+
+- The rules in AGENTS.md "Promoted rules" are mandatory. A PR that breaks one is not ready.
+- A lesson here is a candidate rule. Breaking one does not block a PR, but no lesson is optional: read the lessons before changing code, follow each one that applies to your change, and say in the PR description what you did for it.
+- A lesson seen on 3 separate days is promoted. The rule goes into AGENTS.md "Promoted rules"; the entry and its evidence move to "Moved to AGENTS.md" below and stay there as the record.
+
+How to run a review is in AGENTS.md "Lessons review". Findings about the board tooling itself are not entered here.
+
+## Review of 2026-10-15 14:24 to 2026-10-17 07:08 (+0800)
+
+Range `34dfa71..0cf2bd2`: 24 merged PRs (#84, #85, #90-#96, #98-#103, #105, #106, #108-#111, #117, #120, #121), 75 commits (51 non-merge, 24 merges), 326 files changed. No tag: `v0.4.0` is on `34dfa71`, the start of the range. Every PR came from a board card and was merged under the owner's authorization. 16 of the 24 cards had at least one failed review (30 failed verdicts out of 52), 18 stopped on stop rule 1 for an acting-owner ruling, 6 needed an intervention, and 2 timed out (#80, #114).
+
+What went wrong:
+
+- Not verified sections listed checks this machine could run: `normalize`/`validate` on `../dep` (PR #84), a local registry (#69 review), an offline marketplace (#70), Windows after the sandbox existed (PR #117), and a registry `--global` upgrade (PR #120). The last two were run separately and posted on the PR before the merge.
+- One PR wrote a deviation into PRODUCT.md with no owner ruling: writing through a user's in-root symlink (`9968ee5`, PR #92). The next day #112 reversed it (`cf8aa7a`, PR #117).
+- Merged code broke on Windows. `joinRealpath` (`22e71c6`, PR #90) and `oraclePathJoin` (`0636bf8`, PR #105) split paths only on `/`. The containment checks of PR #91/#92 do not see junctions (#116). All three were listed under Not verified, and the first Windows sandbox run found them (#88 comment 6216218590).
+- A test from PR #91 (`c73e914`) was flaky because git repacked in the background. The gate of the next card caught it, and `4cda93d` fixed it.
+- A test from PR #96 (`b901778`) asserted the bug's output as the expected value. PR #109 (`33b05f1`) replaced it with the Oracle's output.
+- Some fixes were not applied to the whole class. Card #86 needed three rounds, card #70 three, and card #112 three, until a `use_skill` intervention. Upgrades from old or Oracle-written locks broke in three cards (#75, #113, #114). Reviewers caught each of these before merge.
+- Some statements about the Oracle or PRODUCT.md were wrong. The issue bodies of #67, #89 and #112 were corrected by the card investigations, and a claim about registry `.git` was corrected by the #113 review.
+- Upgrade-visible changes were written only in each PR's Risks section. #88 holds the release-note item of PR #101 alone, and no other place collects them.
+- An agent ran `rm` on a shell-variable path again (#104, #97), against an existing project rule.
+
+Done right: the Windows and registry checks were run before the merge and posted on PR #117 and PR #120, and PR #121 shipped with Linux and Windows Oracle matrices and no Not verified section. Each card investigation checked its issue against the Oracle before any code was written.
+
+## Lessons
+
+**When a reviewer names one path that breaks a rule, list every path that rests on the same premise, fix them all in the same round, and write the list in the round's report.**
+- A fix that covers only the case the reviewer named lets the next review find the next case. Each card below needed three rounds, and #70's intervention says its rules "only covered the case in front of it".
+- Evidence: board 64 events 1884, 1907 (self-copy check: final destination, then source through the destination link); board 86 events 2141, 2165, 2201 (cleanup outside root, then write through a final symlink, then hand-over through a skill symlink); board 70 events 2412, 2437, 2460, intervene 2463; board 112 events 3281, 3304, 3328, intervene 3331 ("every failure came from the same premise: the owner of a path is the bucket that deploys it this run").
+- Done right on 2026-10-16: after the `use_skill` intervention, board 112 event 3351 passed on the first round.
+Seen 2× (2026-10-15, 2026-10-16)
+
+**Write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line, and write what PRODUCT.md says only with the item quoted.**
+- Issue bodies, comments and PRODUCT.md lines that stated the Oracle's behavior from memory were wrong, and each one sent a card or a reviewer to disprove it.
+- Evidence: issue #89 body on what the Oracle deploys, corrected in issue #89 comment 6187796986; issue #67 exit code, corrected in issue #67 comment 6186847177; issue #112 body "PRODUCT.md has no rule for rule files", corrected in issue #112 comment 6215906800 and issue #88 comment 6215726615; `00b5975` comment and PRODUCT.md "Oracle removes registry `.git`", refuted by board 113 event 3391 and fixed in `300568e`; `1b84146` "as the Oracle prints them" (2026-10-14), corrected by `eb3de05`.
+- Done right on 2026-10-15: the #67 and #89 investigations measured the Oracle and corrected the issue before any code was written.
+Seen 2× (2026-10-15, 2026-10-16)
+
+**Run a change that splits, joins or resolves paths, or that checks symlinks, in the Windows sandbox before merge, with a junction as well as a symlink.**
+- CI runs only `ubuntu-latest`. Code that splits paths on `/`, or that relies on `os.Lstat` and `filepath.EvalSymlinks` to see links, passes on Linux and fails on Windows. Go reports a junction as `ModeIrregular`.
+- Evidence: `22e71c6` (PR #90, `joinRealpath`) and `0636bf8` (PR #105, `oraclePathJoin`) fail on `\` paths, found in issue #88 comment 6216218590 and now in issue #127; PR #91/#92 containment checks bypassed by junctions, issue #116 (opened 2026-10-16, about 23 h after PR #92 merged).
+- Done right on 2026-10-16: PR #117 comment 6218591422. Done right on 2026-10-17: PR #121 (Windows sandbox runs listed under Verified).
+Seen 2× (2026-10-15, 2026-10-16)
+
+**For any change that reads the lock, cleans stale or orphan files, or renames module keys, run install, update, frozen install and uninstall on a lock written by the previous release and on one written by Oracle 0.33.0 before handing over.**
+- Each of these three cards passed its own tests and broke only on an upgrade path, which the reviewer found by running the old binary first.
+- Evidence: board 75 event 2692 (`150bef8`: removed packages from legacy locks leave files); board 113 event 3391 (`00b5975`: upgrading an Oracle lock deletes a registry package's `.git/config`); board 114 event 3462 (`ce7a1b2`: old-clone cleanup deletes the new package; uninstall rewrites surviving keys), fixed in `ca1cf45`.
+- Done right on 2026-10-17: PR #120 comment 6219879113 (upgrade run with the main and PR binaries on a main-written and an Oracle-written lock).
+Seen 2× (2026-10-16, 2026-10-17)
+
+**Do not write a new deviation from the Oracle into PRODUCT.md unless an owner ruling names it; when the fix needs one, stop with `board ask`.**
+- PRODUCT.md is the contract that later cards follow. An unruled deviation there is read as a ruling, and reversing it the next day cost a full card.
+- Evidence: `9968ee5` (PR #92) added "a deployed file that is a symlink to another place in its target root … is written where it points"; issue #112 comment 6215906800 ("#86 has no owner ruling on this point"); reversed by `cf8aa7a` (PR #117).
+Seen 1× (2026-10-15)
+
+**Before committing new test fixtures, run `git status --short --ignored` and confirm that none of them is ignored (`*.out`, `apm_modules/`).**
+- An ignored fixture is not committed, so the test passes locally and fails or tests nothing in CI.
+- Evidence: board 82 event 2920 (orchestrator reject: 10 `testdata/deps/*.out` files and four parity `home_fixture/.apm/apm_modules/` trees ignored).
+Seen 1× (2026-10-16)
+
+## Existing rules missed
+
+A rule that already exists in AGENTS.md or the project's instructions and was broken again. These are not new lessons; each one is evidence that the rule is not being checked.
+
+**AGENTS.md "Testing patterns": expected values come from the Oracle's source or output, never recomputed the way the code does.**
+- A test that asserts current output protects the bug. The next card had to change it before its fix could pass.
+- Evidence: `b901778` (PR #96) `TestInstall_StaleMCP_ServerMovedToDevDependenciesIsKept`; issue #97 comment 6211906602; corrected in `33b05f1` (PR #109).
+Seen 1× (2026-10-16)
+
+**Project rule: never run `rm` on a path built from a shell variable; delete with a literal absolute path, or write each rerun into a new directory.**
+- The command stops at a permission prompt that no one answers, and the whole card waits for the user. The rule existed before this round (PR #63 for scripts, and the card notes).
+- Evidence: board 104 event 3023 and board 97 event 3060 (`agent_blocked`); board 97 event 3069 (owner note naming the cause).
+Seen 1× (2026-10-16)
+
+## Moved to AGENTS.md
+
+**Run every check this machine can run before you list it under "Not verified"; the Windows sandbox, the local fake registry, a local-directory marketplace and the installed `codex` CLI all count.**
+- Moved to AGENTS.md "Promoted rules" on 2026-10-17; kept here as the evidence.
+- An item left in Not verified moves the check to the merge step or to the next release. Here it was run separately before merge on two PRs, reviewers failed three rounds over it, and three of the Windows items left unverified turned out to be bugs.
+- Before writing "cannot be verified here", try it once and write the command that failed. Two such claims were wrong and were corrected the same night.
+- Evidence: PR #84 Not verified lists `normalize` and `validate` on `../dep` entries (board 64 event 1923); PR #85 Not verified "did not have Codex connect to the MCP server" while `codex` was installed and used as the review harness (board 68 event 2271); board 69 events 2335, 2355 (review fail: registry parity "testable locally"); issue #88 comment 6197554849 (item 34 "no registry server" was wrong); board 70 events 2460, 2463 and issue #88 comment 6199489219 (item 49 "no offline marketplace" was wrong); board 112 event 3259 (orchestrator reject: both Not verified items were doable); PR #117 Not verified "this machine has no Windows" after the sandbox run in issue #88 comment 6216218590; PR #120 Not verified "registry `--global` upgrade only has Go tests" (board 113 event 3407).
+- Done right on 2026-10-16: PR #117 comment 6218591422 (Windows sandbox run, posted before merge). Done right on 2026-10-17: PR #120 comment 6219879113; PR #121 Verified section with Linux and Windows Oracle matrices (board 114 events 3442, 3443).
+Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
+
+**When a PR changes what an existing user sees after upgrading, add one line for it to the release-notes issue of the next tag in the same step that opens the PR; the PR's Risks section alone is not a record.**
+- Moved to AGENTS.md "Promoted rules" on 2026-10-17; kept here as the evidence.
+- Release notes are written from one list. A change that is written only in a PR body is easy to miss. Of the PRs below, only PR #101's item reached #88.
+- Evidence: Risks with upgrade-visible changes and no tracking entry: PR #91, PR #92 (2026-10-15); PR #94, #100, #105, #106, #109, #110, #117 (2026-10-16); PR #120, #121 (2026-10-17). The only one in a tracking issue: issue #88 comment 6203884235 (PR #101). No open issue collects 0.4.1 release notes (`gh issue list --search "0.4.1"`).
+- Done right on 2026-10-16: issue #88 comment 6203884235.
+Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
+
+## Observed, not entered
+
+- The instruction files have outgrown Claude Code's limit. ARCHITECTURE.md grew from 69,071 to 121,598 characters and PRODUCT.md from 21,890 to 76,231 in this range (`git show 34dfa71:ARCHITECTURE.md | wc -m` against `0cf2bd2`). Claude Code warned "over the 150.0k-char total limit" (163.5k on 2026-10-16, 216.7k on 2026-10-17). Its effect on the agents is not measured.

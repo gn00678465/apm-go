@@ -14,6 +14,8 @@ Three files are the project's long-term memory. Read the relevant one before des
 
 Each topic lives in exactly one of them; reference, do not restate. When a change alters a fact recorded there, update that file in the same change.
 
+**`LESSONS.md`** is the review log of merged work: what went wrong, with evidence and the days it was seen. Its lessons are candidate rules: breaking one does not block a PR, but read them before changing code, follow each one that applies, and say in the PR description what you did. A lesson becomes a mandatory rule only when it moves into "Promoted rules" below.
+
 ## GitNexus — code intelligence
 
 This repo is indexed as **apm-go**. Use the MCP tools to navigate and to gate edits:
@@ -92,6 +94,8 @@ internal/
 
 **Exit codes.** Commands needing a specific exit code wrap errors with `withExitCode()` in `cmd/apm-go/exitcode.go`; the root error handler unwraps it. Usage errors (the oracle's `click.UsageError`) are 2.
 
+**Merging a PR.** Merge with `gh pr merge <N> --merge --match-head-commit <reviewed head> --delete-branch`, so the head branch is deleted on GitHub in the same step; then remove the local branch and its worktree. A branch whose PR has not merged is not deleted.
+
 **Security scanning.** `internal/security/` is a credential/secret scanner with a policy gate (`ScanPolicy`: block, warn, or report; fail-closed — an unknown policy blocks). Today it runs in two places only: `pack` scans bundled sources under `WarnPolicy` (`internal/pack/bundle/producer.go`), and `audit` scans deployed files and reports critical/warning counts (`cmd/apm-go/audit_content.go`). It is **not** on the install/deploy path; do not describe or rely on it as a pre-deploy gate.
 
 **UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI; user-facing text uses the `ux` printers, not `fmt.Print`. The status-symbol vocabulary, the interactive `init` / `plugin init` frame rules, and the rest of the terminal UI design live in `PRODUCT.md` ("Terminal UI design") — the single source; do not restate them here.
@@ -100,7 +104,7 @@ internal/
 
 ## Testing patterns
 
-Tests use `t.TempDir()` for filesystem isolation. No global test fixtures — each test builds its own `apm.yml` / directory tree inline. External seams are injected, not mocked globally: `installDeps`, `doctorDeps` (git/env), and the `*ForTest` hooks in `internal/ux/testhooks.go` and `internal/pluginjson/testhooks.go`. Expected values come from the oracle's source or output, never recomputed the way the code does.
+Tests use `t.TempDir()` for filesystem isolation. A git repository a test creates is made through a helper that runs git with `-c maintenance.auto=false` (for example `gitCmd` in `cmd/apm-go/marketplace_authoring_test.go`): git repacks in the background after a commit, which changes a fixture in the middle of a before/after comparison. No global test fixtures — each test builds its own `apm.yml` / directory tree inline. External seams are injected, not mocked globally: `installDeps`, `doctorDeps` (git/env), and the `*ForTest` hooks in `internal/ux/testhooks.go` and `internal/pluginjson/testhooks.go`. Expected values come from the oracle's source or output, never recomputed the way the code does.
 
 **CI detection is pinned, never inherited.** `cmd/apm-go` and `internal/ux` each have a `TestMain` that unsets `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `TF_BUILD`, and `JENKINS_URL` before running their tests. Both packages have production code that branches on those variables — `install` defaults to frozen under CI (`lockfile.IsCIEnvironment`, req-lk-018) and `ux.isCI` suppresses interactivity — so without the pin the same test suite is green on a workstation and red in Actions. A test that wants CI semantics opts in with `t.Setenv("CI", "1")`, which overrides the baseline for that test only. Any new package whose code reads those variables needs the same `TestMain`.
 
@@ -109,3 +113,23 @@ Tests use `t.TempDir()` for filesystem isolation. No global test fixtures — ea
 Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depend on conformance spec files under `spec/conformance/` — runtime inputs tracked in git, not generated. `TestParseDepString_AbsolutePath` in `internal/manifest` skips its two windows-drive-letter subtests outside `GOOS=windows` (ticket 09); everything else in it runs everywhere.
 
 `go test ./...` passing is not the parity gate — `.github/workflows/parity.yml` runs `tools/parity` against the latest stable upstream release of the Oracle on every push/PR, resolving the version when the job runs, and is the authority on Oracle byte-for-byte parity; `go test` only verifies apm-go's own Go-level correctness (ticket 09).
+
+## Promoted rules
+
+Lessons seen on 3 separate days in `LESSONS.md`. These rules are mandatory: every PR description and every review checks each one, and a PR that breaks one is not ready. The original entries and their evidence stay in `LESSONS.md` under "Moved to AGENTS.md".
+
+1. **Run every check this machine can run before you list it under "Not verified".** The Windows sandbox, a local fake registry, a local-directory marketplace and an installed agent CLI all count. Before writing "cannot be verified here", try it once and write the command that failed. (Promoted 2026-10-17.)
+2. **When a PR changes what an existing user sees after upgrading, add one line for it to the release-notes issue of the next tag in the same step that opens the PR**; open that issue (`Release notes: vX.Y.Z`) when none exists. A PR's Risks section alone is not a record. (Promoted 2026-10-17.)
+
+## Lessons review
+
+Run a review after a board card's PR merges, or at the end of a day with merges. It covers `<reviewed-through>..origin/main`, the cursor on the first line of `LESSONS.md`.
+
+1. Read the range: commits, each PR's body and comments, `board log <issue> --project apm-go` of each card, and issues opened, reopened or corrected in the range.
+2. Look for work that had to be fixed again, work that should not have merged, verification that was too thin, and work done right that is worth repeating.
+3. Write each finding as a lesson: a rule an agent can follow (imperative), why, evidence, an optional `Done right on <date>: <ref>`, and `Seen N× (<dates>)`. Seen counts separate days (UTC+8); several instances on one day count once. A new instance of an existing lesson adds its evidence and, on a new day, raises the count.
+4. A finding that breaks a rule already written in this file or in the project's instructions goes under "Existing rules missed" in `LESSONS.md` with its evidence, not as a new lesson. A finding about the board tooling itself is not entered in `LESSONS.md`.
+5. Check every reference before writing it: each sha with `git cat-file -t`, each PR, issue and comment with `gh`, each board event with `board log`. A finding whose evidence cannot be checked is not entered as a lesson.
+6. A lesson seen on 3 separate days moves into "Promoted rules" in the same commit: the rule is added here, and its entry in `LESSONS.md` moves under "Moved to AGENTS.md" with its evidence.
+7. Move the cursor to the reviewed head in the same commit. A review that does not move the cursor is not done.
+8. Land it through a PR titled `lessons: <from>..<to> (<N> PRs)` whose description lists the new lessons, the raised counts and the promotions.
