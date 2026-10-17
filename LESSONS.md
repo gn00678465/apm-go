@@ -1,4 +1,4 @@
-<!-- reviewed-through: 6e2c6fd (2026-10-17 17:42 +0800) -->
+<!-- reviewed-through: 04f7b53 (2026-10-17 22:54 +0800) -->
 
 # Lessons
 
@@ -13,6 +13,31 @@ Rules and lessons differ in status:
 - A lesson seen on 3 separate days is promoted. The rule goes into AGENTS.md "Promoted rules"; the entry and its evidence move to "Moved to AGENTS.md" below and stay there as the record.
 
 How to run a review is in AGENTS.md "Lessons review". Findings about the board tooling itself are not entered here.
+
+## Review of 2026-10-17 17:42 to 2026-10-17 22:54 (+0800)
+
+Range `6e2c6fd..04f7b53`: 5 merged PRs (#143, #145-#148), 13 commits (8 non-merge, 5 merges), 93 files changed. No tag. PR #143 is the previous review, and PR #146 is a documentation change by the acting owner. Neither had a card. PR #145 came from card 122: one stop on rule 1 (board 122 event 3781), ruled in issue #122 comment 6232580233; two orchestrator rejects (events 3801, 3868); two failed reviews (event 3821 on `5ecc718`, event 3846 on `d7586bd`); a pass on the third review (event 3923). PR #147 came from card 144: one stop on rule 1 (board 144 event 3949), ruled in issue #144 comment 6234185763; one orchestrator reject (event 3983); one failed review (event 4001 on `22df9d3`); a supplementary ruling (comment 6234603992); a pass on the second review (event 4022). PR #148 came from card 124: one stop on rule 1 (board 124 event 4031), ruled in issue #124 comment 6234962470; one orchestrator reject (event 4049); a pass on the first review (event 4070). PR #148 says `Refs #124`, and #124 stays open for its 0.4.2 items. Card files cited below are under `~/.config/board/projects/apm-go/cards/issue-<N>/` of the card named.
+
+What went wrong:
+
+- Card 122 replaced the Oracle's comparison with rules of its own twice, and each review found the next case where they differ. `3a8f5b8` then ported `filecmp.dircmp` (existing porting lesson, below).
+- Card 122 wrote what the Oracle does from inference twice: in PRODUCT.md and ARCHITECTURE.md, and in a code comment. The orchestrator rejected both (existing rule missed, below).
+- Card 122's lesson account was in a PR comment, not the PR body, so two reviews failed it (existing rule missed, below).
+- An orchestrator turn of card 122 stopped at a permission prompt for `rm` (existing rule missed, below).
+- Cards 144 and 124 each broke `install --frozen` in a state that their scenario runs did not reach. The orchestrator caught both before the PR opened (new lesson below).
+- Card 144's brief read ruling 6234185763 in a way its words do not say, and PR #147 left that reading under To confirm. The review failed on the ruling's words, and then the owner accepted the reading (new lesson below).
+- PR #147 was opened while it conflicted with main, so CI ran no `pull_request` workflow until the rebase (new lesson below).
+
+No merged change was found broken.
+
+Done right:
+
+- Promoted rule 2 and the fix-round lesson: each PR's line in issue #133 was added in the step that opened the PR (PR #145 11:16:35Z, issue 11:16:55Z; PR #147 13:42:47Z, issue 13:43:13Z; PR #148 14:49:46Z, issue 14:50:04Z). Each fix round that changed a Behavior section changed the line too (PR #145 body 11:43:58Z, issue 11:44:07Z, and issue 12:43:53Z, body 12:44:19Z; PR #147 body 13:53:09Z, issue 13:53:28Z; edit histories).
+- Promoted rule 1: the second Not verified item of PR #148 needs a repository on github.com, which the owner had not authorized. Comment 6235321357 ruled on it before the merge, and the body links that comment (edit history, 14:51:04Z). The other Not verified items are macOS only.
+- The same-premise lesson: card 122 `rounds/feedback-step-27.md` lists two other paths that rest on the premise of its first item (the `--global` copy fallback, and a symlink at a project path). Card 124 `rounds/feedback-step-7.md` lists `update`, `update --dry-run` and the `uninstall` hand-over. The next review of each passed (events 3923, 4070).
+- The handoff-condition lesson: PR #145, #147 and #148 Verified carry the results that rulings 6232580233 (item 1), 6234185763 (condition 3) and 6234962470 (condition 3) ask for.
+- The issue-items lesson: PR #145 closed issue #122 with 19 of its 20 boxes ticked. The 20th item, 新-113-4, moved to #124 by ruling 6232421913 (item 3), and PR #145 comment 6233259713 says so.
+- The deviation lesson: PR #146 wrote only the items that rulings name. It put the new differences that it measured on #123 (comment 6233978732), not into PRODUCT.md. The deviation that PR #147 adds is the one that ruling 6234185763 names.
 
 ## Review of 2026-10-17 16:43 to 2026-10-17 17:42 (+0800)
 
@@ -115,7 +140,7 @@ Done right: the Windows and registry checks were run before the merge and posted
 **When a reviewer names one path that breaks a rule, list every path that rests on the same premise, fix them all in the same round, and write the list in the round's report.**
 - A fix that covers only the case the reviewer named lets the next review find the next case. Each card below needed three rounds, and #70's intervention says its rules "only covered the case in front of it".
 - Evidence: board 64 events 1884, 1907 (self-copy check: final destination, then source through the destination link); board 86 events 2141, 2165, 2201 (cleanup outside root, then write through a final symlink, then hand-over through a skill symlink); board 70 events 2412, 2437, 2460, intervene 2463; board 112 events 3281, 3304, 3328, intervene 3331 ("every failure came from the same premise: the owner of a path is the bucket that deploys it this run").
-- Done right on 2026-10-16: after the `use_skill` intervention, board 112 event 3351 passed on the first round. Done right on 2026-10-17: card 116 listed every check built on resolving symlinks before the first round (board 116 event 3546), fixed them all with one `go.mod` setting, named them in ARCHITECTURE.md "Windows links" (`cef28e5`), and passed on the first review (event 3579).
+- Done right on 2026-10-16: after the `use_skill` intervention, board 112 event 3351 passed on the first round. Done right on 2026-10-17: card 116 listed every check built on resolving symlinks before the first round (board 116 event 3546), fixed them all with one `go.mod` setting, named them in ARCHITECTURE.md "Windows links" (`cef28e5`), and passed on the first review (event 3579). Card 122 `rounds/feedback-step-27.md` lists two other paths on the premise of its first item, the `--global` copy fallback and a symlink at a project path, and the next review passed (board 122 event 3923). Card 124 `rounds/feedback-step-7.md` lists `update`, `update --dry-run` and the `uninstall` hand-over for the checkout reuse it rejects, and the next review passed (board 124 event 4070).
 Seen 2× (2026-10-15, 2026-10-16)
 
 **Run a change that splits, joins or resolves paths, or that checks symlinks, in the Windows sandbox before merge, with a junction as well as a symlink.**
@@ -133,7 +158,7 @@ Seen 2× (2026-10-16, 2026-10-17)
 **Do not write a new deviation from the Oracle into PRODUCT.md unless an owner ruling names it; when the fix needs one, stop with `board ask`.**
 - PRODUCT.md is the contract that later cards follow. An unruled deviation there is read as a ruling, and reversing it the next day cost a full card.
 - Evidence: `9968ee5` (PR #92) added "a deployed file that is a symlink to another place in its target root … is written where it points"; issue #112 comment 6215906800 ("#86 has no owner ruling on this point"); reversed by `cf8aa7a` (PR #117). `b168eeb` (PR #140) wrote into PRODUCT.md that a bare CR, text with a NUL and text with a CR before a CRLF keep the source's bytes, citing issue #119 comment 6230883992 and issue #118 comment 6229823230, neither of which names it; the orchestrator's feedback asked for it (card 119 `rounds/feedback-step-12.md:35`) and no `board ask` was sent (board 119 events 3691-3717); the review failed it (event 3717), issue #119 comment 6231670262 limited it to the `--global` copy fallback, and `c9c833b` rewrote it.
-- Done right on 2026-10-17: board 116 event 3558 (a deviation the ruling did not name, asked before it was written), ruled in issue #116 comment 6229603360, then written by `cef28e5`. Card 127 put two new Windows differences to the owner in issue #127 comment 6232075969 (edited at 09:36:19Z) and kept them out of PRODUCT.md; `f1008b3` writes only the `pack` deviation, ruled in comment 6229756422.
+- Done right on 2026-10-17: board 116 event 3558 (a deviation the ruling did not name, asked before it was written), ruled in issue #116 comment 6229603360, then written by `cef28e5`. Card 127 put two new Windows differences to the owner in issue #127 comment 6232075969 (edited at 09:36:19Z) and kept them out of PRODUCT.md; `f1008b3` writes only the `pack` deviation, ruled in comment 6229756422. PR #146 writes only the deviations that rulings name, and puts the new differences that it measured on issue #123 (comment 6233978732), not into PRODUCT.md. The deviation that `13127e6` (PR #147) writes is the one that issue #144 comment 6234185763 names.
 Seen 2× (2026-10-15, 2026-10-17)
 
 **Before committing new test fixtures, run `git status --short --ignored` and confirm that none of them is ignored (`*.out`, `apm_modules/`).**
@@ -167,11 +192,13 @@ Seen 1× (2026-10-17)
 - A setting in the right value and the wrong place passes every ordinary test. Here `git clone -c` writes repository config, which a value a parent process passes in `GIT_CONFIG_COUNT` outranks; the Oracle passes `-c` before the subcommand, and its comment says why.
 - Evidence: card 119 `investigation.md:66` reports that the Oracle adds `-c core.autocrlf=false` to each git subprocess (`cache/git_cache.py:63-92`); the fix it proposes (`investigation.md:81`) and the brief (`brief.md:46`) use `git clone -c`; `0b61a7c` wrote that form into PRODUCT.md "as in the Oracle's git cache"; board 119 event 3691 (finding 2, reproduced with the real loader and in the Windows sandbox); fixed in `b168eeb`.
 - Done right on 2026-10-17: `f1008b3` ports Python 3.12's `ntpath.realpath(strict=True)` on Windows in its own form, one open of the whole path and `check_eloop`'s error 1921, not the POSIX walk one component at a time, and its comment says why (`internal/gitops/realpath_windows.go`). The card's base did not have this lesson yet.
+- Evidence (second instance): card 122 decided whether a losing primitive is "the same" by rules of its own twice. The first compared the bytes of the two sources (`5ecc718`; review failed, board 122 event 3821). The second, from the orchestrator's feedback (`rounds/feedback-step-16.md`, section A), compared file paths and bytes, and deployed the loser into a temporary directory (`d7586bd`). The next review failed it for a skill with an empty directory and for an unwritable `TMPDIR` (event 3846). `rounds/feedback-step-24.md` names the cause: 「「相同」的判斷沒有照 Oracle 的比較函式移植」. `3a8f5b8` ports Python 3.12's `filecmp.dircmp` (`skillDirsEqual`) and computes in memory, and the third review passed (event 3923).
 Seen 1× (2026-10-17)
 
 **Before handing over, check the PR body against each handoff condition of the owner ruling, one by one, and carry over the implementer's result for each.**
 - The reviewer and the owner read the body, not the card's report. A result left in the report is not handed over, and a body rewritten in a fix round can drop a result the earlier body had.
 - Evidence: issue #119 comment 6230883992 asks for CRLF Go tests run on Linux and Windows, and for install, frozen install and uninstall on an old Windows lock, an Oracle lock and a CRLF checkout, with the results in the PR body. The implementer's report had them (card 119 `rounds/report-step-5.md:48-51,60`). The first body of PR #140 (07:37:54Z, edit history) has no frozen install on the old locks and no Windows run of the Go tests; the second (08:14:33Z) also drops the uninstall, and the third (08:39:27Z) also drops whether the stale cleanup left files. They were added at 08:41:57Z, after the third review had begun (board 119 event 3736, 08:39:48Z).
+- Done right on 2026-10-17: the Verified sections of PR #145, #147 and #148 carry the results that issue #122 comment 6232580233 (item 1), issue #144 comment 6234185763 (condition 3) and issue #124 comment 6234962470 (condition 3) ask for.
 Seen 1× (2026-10-17)
 
 **Before you write a PR or issue body back from a file, check that the command that produced the file succeeded and that the file is not empty; run every `gh` command with `-R gn00678465/apm-go`.**
@@ -183,6 +210,22 @@ Seen 1× (2026-10-17)
 **When a PR closes an issue that lists items, account for every item where `gh` can read it: tick the box of each item that is done, and write the conclusion and its evidence for each item closed without a code change in the PR body or in a comment on the issue.**
 - The issue closes when the PR merges. A conclusion that is only in a card file cannot be read on GitHub, so a later reader sees open boxes and cannot tell a checked item from a forgotten one.
 - Evidence: issue #127 lists 10 items as `- [ ]`. PR #142 closed it at 09:42:33Z, and the body of the issue was never edited (edit history empty), so all 10 boxes are still open. The body of PR #142 covers the items it fixes, self-update and the `core.symlinks` item. It does not cover the Windows runs of the non-file-system fixes (c20-1, c23-1, c57-9, c62-8) or of the stale cleanup and command files (62, 72), the `pack --json` paths (58, c38-1), or why the claim of item 新-Windows 實測-6 was narrowed. The two comments on the issue (6229756422, 6232075969) do not cover them either. They are only in the card's `investigation.md` ("各項結論"), and the card notes asked to tick off those items with evidence (board 127 event 3745, `orchestrate`).
+- Done right on 2026-10-17: PR #145 closed issue #122 with 19 of its 20 boxes ticked. The 20th item, 新-113-4, moved to #124 by issue #122 comment 6232421913 (item 3), and PR #145 comment 6233259713 says so.
+Seen 1× (2026-10-17)
+
+**When a change alters what install writes, adopts or reuses, run `install --frozen` on each state the change leaves, with the network off as well, and compare it with main before handing over.**
+- A frozen install writes no lock, checks each deployed hash against the lock, and reuses the checkouts in `apm_modules/`. A state that an ordinary install handles can fail it. Both cards below ran frozen installs, but only on states that an ordinary run had just written, with the git server up.
+- Evidence: card 144 `rounds/feedback-step-7.md` (orchestrator reject, board 144 event 3983): the install skips a user file, the user then makes it equal to the source, and `install --frozen` exits 1 with `expected <not in lockfile>`. Handoff condition 3 of issue #144 comment 6234185763 forbids that. Card 124 `rounds/feedback-step-7.md` (orchestrator reject, board 124 event 4049): after an install of `ref: main`, every `install --frozen` removed the checkout and cloned it again, so it failed with the network off, where main reuses the checkout. The brief requires a frozen install of a branch to stay as on main. Both were fixed before the PR opened.
+Seen 1× (2026-10-17)
+
+**When the brief or the implementation reads an owner ruling in a way its words do not say, stop with `board ask` before the PR opens. Do not leave the reading under To confirm for the reviewer.**
+- The reviewer checks the PR against the ruling's words, so the round fails even when the owner then accepts the reading. The fix round then changes no code and waits for the ruling.
+- Evidence: issue #144 comment 6234185763 (13:01:17Z) protects a skill directory when "舊 lock 在這個 bucket 沒有記錄". The brief was written after it (the investigation ended at board 144 event 3967, 13:05:09Z) and took the paths of every bucket as managed (card 144 `rounds/feedback-step-15.md`: "造成這次爭議的是 brief 規則 1 的解讀"). The first body of PR #147 (edit history, 13:42:47Z) put that reading under To confirm. The review began at 13:43:27Z (event 3997). Comment 6234603992, which accepts the reading, was posted at 13:44:13Z, and the review failed on the ruling's words at 13:46:53Z (event 4001, on `22df9d3`). The fix round changed no Go code (`rounds/feedback-step-15.md`), and the next review passed (event 4022).
+Seen 1× (2026-10-17)
+
+**Rebase onto `origin/main` and resolve every conflict before you open a PR. Do not open a PR that GitHub reports as conflicting.**
+- GitHub runs no `pull_request` workflow for a PR that does not merge cleanly, so CI tests only the branch head. The tree that the reviewer reads also changes at the rebase.
+- Evidence: PR #146 changed PRODUCT.md and merged at 12:54:10Z. Card 144 committed `22df9d3` on `c4bbd68` at 13:40:56Z (board 144 event 3992). The first body of PR #147 (edit history, 13:42:47Z) says under Risks "本分支和 main 的 `PRODUCT.md` 衝突（#146 改了同一項），合併前要 rebase 並重新解決". `gh run list -R gn00678465/apm-go --branch fix/144-skip-unmanaged-user-files` shows only a `push` run for `22df9d3`. The first `pull_request` run is on `13127e6` (13:51:22Z), after the fix round rebased the branch onto `c4fc40d` (card 144 `rounds/feedback-step-15.md`, item 1).
 Seen 1× (2026-10-17)
 
 ## Existing rules missed
@@ -196,12 +239,17 @@ Seen 1× (2026-10-16)
 
 **Project rule: never run `rm` on a path built from a shell variable; delete with a literal absolute path, or write each rerun into a new directory.**
 - The command stops at a permission prompt that no one answers, and the whole card waits for the user. The rule existed before this round (PR #63 for scripts, and the card notes).
-- Evidence: board 104 event 3023 and board 97 event 3060 (`agent_blocked`); board 97 event 3069 (owner note naming the cause).
-Seen 1× (2026-10-16)
+- Evidence: board 104 event 3023 and board 97 event 3060 (`agent_blocked`); board 97 event 3069 (owner note naming the cause). Board 122 event 3778 (`agent_blocked`, the orchestrator's investigation, although the card notes repeat the rule in event 3776); board 122 event 3780 (the note that resumed it: the command ran `rm -rf dep` and `rm -f apm.lock.yaml` inside `sh -c`).
+Seen 2× (2026-10-16, 2026-10-17)
 
 **AGENTS.md "Canonical documents": for each lesson that applies, say in the PR description what you did.**
 - The reviewer cannot check a lesson that the body does not mention. The board's notes for card 119 repeated the rule (board 119 events 3649, 3657).
-- Evidence: PR #140's body said nothing about the lessons until 08:41:57Z (edit history), although the implementer's report had a section for them (card 119 `rounds/report-step-5.md:64-69`). The bodies of PR #136 and #138, both merged after the rule landed (`94d85b8`, PR #132), do not mention a lesson either (`gh pr view <N> --json body`). PR #142's body has a LESSONS.md section that names the Windows, lock-upgrade and deviation lessons. It leaves out the lesson on writing what the Oracle does, which applies because `f1008b3` states the Oracle's behavior in code comments and in PRODUCT.md, and which the implementer's report covers (card 127 `out/report.md`, "LESSONS.md 裡適用的教訓").
+- Evidence: PR #140's body said nothing about the lessons until 08:41:57Z (edit history), although the implementer's report had a section for them (card 119 `rounds/report-step-5.md:64-69`). The bodies of PR #136 and #138, both merged after the rule landed (`94d85b8`, PR #132), do not mention a lesson either (`gh pr view <N> --json body`). PR #142's body has a LESSONS.md section that names the Windows, lock-upgrade and deviation lessons. It leaves out the lesson on writing what the Oracle does, which applies because `f1008b3` states the Oracle's behavior in code comments and in PRODUCT.md, and which the implementer's report covers (card 127 `out/report.md`, "LESSONS.md 裡適用的教訓"). PR #145 put its lesson account in comment 6233259713 (created 11:17:38Z), not in the body, because "說明欄限 25 行". Two reviews failed it for that (board 122 events 3821 and 3846; card 122 `rounds/findings-step-15.md` finding 4, `rounds/findings-step-23.md` finding 3). The acting owner added a `## LESSONS.md` section to the body at 11:50:52Z (edit history).
+Seen 1× (2026-10-17)
+
+**AGENTS.md "Promoted rules" 3: write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line.**
+- A statement inferred from apm-go's code reads like a measurement. The next round must disprove it, and the orchestrator rejected the round each time.
+- Evidence: card 122 `rounds/feedback-step-8.md` (orchestrator reject, board 122 event 3801): PRODUCT.md and ARCHITECTURE.md said that a local package "is copied on every run, so it always has" a `Resolving` line, but Oracle 0.33.0 prints none for a package already in `apm_modules/`. Card 122 `rounds/feedback-step-27.md`, item 2 (orchestrator reject, event 3868): the `dirsEqual` comment and the report said that Python raises `RecursionError` on a symlink loop, but Oracle 0.33.0's `is_skill_dir_identical_to_source` returns True for that probe. The same file says that two statements of the orchestrator's own earlier feedback were wrong: the table that called the comparison `oracleText` (`rounds/feedback-step-24.md`, section A.2), and the rule there to read a file through its symlink, which caused the first item of that reject.
 Seen 1× (2026-10-17)
 
 **AGENTS.md "Lessons review" step 5: check every reference with `git`, `gh` or `board log`; a finding whose evidence cannot be checked is not entered.**
