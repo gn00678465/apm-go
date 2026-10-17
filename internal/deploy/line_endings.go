@@ -3,13 +3,15 @@ package deploy
 import (
 	"bytes"
 	"os"
+	"unicode/utf8"
 
 	"github.com/apm-go/apm/internal/lockfile"
 )
 
 // copyPrimitiveFile copies p's source to dst. An agent, an instruction, a
-// prompt and a command are written through deployText; a hook is copied as it
-// is (integration/base_integrator.py:266-270).
+// prompt and a command are written through oracleText, or, by the copy a
+// --global deploy makes when it cannot link, through globalCopyText; a hook
+// is copied as it is (integration/base_integrator.py:266-270).
 func copyPrimitiveFile(p Primitive, dst string) error {
 	switch p.Type {
 	case TypeAgents, TypeInstructions, TypePrompts, TypeCommands:
@@ -20,18 +22,32 @@ func copyPrimitiveFile(p Primitive, dst string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, deployText(data), 0644)
+	text := oracleText
+	if activeDeployMode.global {
+		text = globalCopyText
+	}
+	return os.WriteFile(dst, text(data), 0644)
 }
 
-// deployText is a primitive's content with each CRLF written as LF, by the
-// conversion lockfile.HashDeployedFile hashes, so a copy hashes as the source
-// a --global symlink shows; one lock has to restore under a copy deploy and a
-// symlink deploy alike (issue #118 comment 6229823230). Content that this
-// conversion would leave with a CRLF (a CR before a CRLF) is kept as it is, as
-// are a bare CR, content with a NUL and content that is not UTF-8. The Oracle
-// writes the first three as LF (Path.read_text, then write_text_lf,
-// utils/atomic_io.py:28-48); its user scope only copies.
-func deployText(b []byte) []byte {
+// oracleText is a primitive's content as the Oracle writes it: Path.read_text
+// reads each CRLF and bare CR as a line end, NUL included, and write_text_lf
+// writes LF (integration/agent_integrator.py:358-362, utils/atomic_io.py:
+// 28-48). Content that is not UTF-8, which the Oracle cannot read, is kept as
+// it is (issue #119 comment 6231670262).
+func oracleText(b []byte) []byte {
+	if !utf8.Valid(b) {
+		return b
+	}
+	return bytes.ReplaceAll(bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")), []byte("\r"), []byte("\n"))
+}
+
+// globalCopyText is oracleText for the copy a --global deploy makes when it
+// cannot link (issue #118): a link shows the source's bytes, and one lock has
+// to restore under both (issue #118 comment 6229823230), so the copy changes
+// only what the lock hash changes, each CRLF, and keeps content where that
+// would leave a CRLF (a CR before a CRLF). A bare CR and content with a NUL
+// stay as they are.
+func globalCopyText(b []byte) []byte {
 	lf := lockfile.CanonicalDeployedBytes(b)
 	if bytes.Contains(lf, []byte("\r\n")) {
 		return b

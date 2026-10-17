@@ -47,7 +47,7 @@ func deployClaudeInstructions(p Primitive, projectDir, destPath string) ([]strin
 	if err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
-	rule, err := convertToClaudeRules(deployText(data))
+	rule, err := convertToClaudeRules(oracleText(data))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", p.SrcPath, err)
 	}

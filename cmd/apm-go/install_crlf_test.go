@@ -534,3 +534,122 @@ func TestInstallGlobalFrozen_CRLFSourcesRestoreAcrossModes(t *testing.T) {
 		}
 	}
 }
+
+// oracleTextCases are bodies Oracle 0.33.0 reads with Path.read_text and
+// writes with write_text_lf (measured), as src and the bytes it writes.
+var oracleTextCases = map[string]struct{ src, oracle string }{
+	"bare cr":        {"a\rb\r\n", "a\nb\n"},
+	"cr before crlf": {"a\r\r\nb\r\n", "a\n\nb\n"},
+	"nul":            {"a\x00\r\nb\r\n", "a\x00\nb\n"},
+}
+
+// oracleTextFiles is a package whose agent, instruction, prompt and command
+// have body as their body.
+func oracleTextFiles(body string) map[string]string {
+	return map[string]string{
+		".apm/agents/rev.agent.md":                "---\ndescription: r\n---\n" + body,
+		".apm/instructions/style.instructions.md": "---\napplyTo: \"**/*.go\"\n---\n" + body,
+		".apm/prompts/hello.prompt.md":            "---\ndescription: p\n---\n" + body,
+		".apm/commands/ship.md":                   "---\ndescription: c\n---\n" + body,
+	}
+}
+
+// A project deploy writes these files as the Oracle does: a bare CR, a CR
+// before a CRLF and text with a NUL all become LF (issue #119 comment
+// 6231670262). A claude rule and a codex agent are converted from that text,
+// so they come out as the same package with the Oracle's LF body gives.
+func TestInstall_OracleLineEndings_ProjectDeploy(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	for name, tc := range oracleTextCases {
+		t.Run(name, func(t *testing.T) {
+			install := func(body string) string {
+				project := chdirTemp(t)
+				files := oracleTextFiles(body)
+				files["apm.yml"] = "name: own\nversion: 1.0.0\n"
+				writeCRLFFiles(t, project, files)
+				if out, err := crlfInstall(t, false); err != nil {
+					t.Fatalf("install: %v\n%s", err, out)
+				}
+				return project
+			}
+			lfProject := install(tc.oracle)
+			project := install(tc.src)
+
+			copies := map[string]string{
+				".claude/agents/rev.md":                      "---\ndescription: r\n---\n" + tc.oracle,
+				".github/agents/rev.agent.md":                "---\ndescription: r\n---\n" + tc.oracle,
+				".github/instructions/style.instructions.md": "---\napplyTo: \"**/*.go\"\n---\n" + tc.oracle,
+				".github/prompts/hello.prompt.md":            "---\ndescription: p\n---\n" + tc.oracle,
+				".claude/commands/ship.md":                   "---\ndescription: c\n---\n" + tc.oracle,
+			}
+			for rel, want := range copies {
+				if got := globalStaleRead(t, filepath.Join(project, filepath.FromSlash(rel))); got != want {
+					t.Errorf("%s = %q, want %q", rel, got, want)
+				}
+			}
+			for _, rel := range []string{".claude/rules/style.md", ".codex/agents/rev.toml"} {
+				want := globalStaleRead(t, filepath.Join(lfProject, filepath.FromSlash(rel)))
+				if got := globalStaleRead(t, filepath.Join(project, filepath.FromSlash(rel))); got != want {
+					t.Errorf("%s = %q, want %q", rel, got, want)
+				}
+			}
+			hashes := crlfBucketHashes(t, project)
+			for rel := range copies {
+				if want := sha256Of(globalStaleRead(t, filepath.Join(project, filepath.FromSlash(rel)))); hashes[rel] != want {
+					t.Errorf("lock records %s as %s, want the hash of its bytes %s", rel, hashes[rel], want)
+				}
+			}
+		})
+	}
+}
+
+// A claude rule and a codex agent are files in both --global modes, so both
+// write the Oracle's LF text, as a project deploy does.
+func TestInstallGlobal_OracleLineEndings_ConvertedFiles(t *testing.T) {
+	for name, tc := range oracleTextCases {
+		for _, symlink := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/symlink %v", name, symlink), func(t *testing.T) {
+				install := func(body string) string {
+					home, src := globalStaleScope(t, oracleTextFiles(body))
+					setSymlinkProbe(t, symlink)
+					if out, err := copyModeInstall(t, false, "claude,codex", src); err != nil {
+						t.Fatalf("install --global: %v\n%s", err, out)
+					}
+					return home
+				}
+				lfHome := install(tc.oracle)
+				home := install(tc.src)
+				for _, rel := range []string{".claude/rules/style.md", ".codex/agents/rev.toml"} {
+					want := globalStaleRead(t, filepath.Join(lfHome, filepath.FromSlash(rel)))
+					if got := globalStaleRead(t, filepath.Join(home, filepath.FromSlash(rel))); got != want {
+						t.Errorf("%s = %q, want %q", rel, got, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+// Content that is not UTF-8, which the Oracle cannot read, is copied as it is
+// and recorded with the hash of its bytes (issue #119 comment 6231670262).
+func TestInstall_NotUTF8Agent_CopiedAsItIs(t *testing.T) {
+	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	const agent = "---\ndescription: r\n---\na\xff\r\nb\rc\r\n"
+	project := chdirTemp(t)
+	writeCRLFFiles(t, project, map[string]string{
+		"apm.yml":                  "name: own\nversion: 1.0.0\n",
+		".apm/agents/rev.agent.md": agent,
+	})
+	if out, err := crlfInstall(t, false); err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	hashes := crlfBucketHashes(t, project)
+	for _, rel := range []string{".claude/agents/rev.md", ".github/agents/rev.agent.md"} {
+		if got := globalStaleRead(t, filepath.Join(project, filepath.FromSlash(rel))); got != agent {
+			t.Errorf("%s = %q, want the source's bytes %q", rel, got, agent)
+		}
+		if hashes[rel] != sha256Of(agent) {
+			t.Errorf("lock records %s as %s, want the hash of the raw bytes %s", rel, hashes[rel], sha256Of(agent))
+		}
+	}
+}

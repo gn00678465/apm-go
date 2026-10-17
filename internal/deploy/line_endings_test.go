@@ -8,10 +8,10 @@ import (
 	"github.com/apm-go/apm/internal/lockfile"
 )
 
-// A copy deploy writes deployText's bytes where a --global symlink deploy
-// shows the source's, and one lock has to restore under both (issue #118), so
-// the two hash alike.
-func TestDeployText_HashesAsSource(t *testing.T) {
+// The copy a --global deploy makes when it cannot link writes globalCopyText's
+// bytes where a symlink deploy shows the source's, and one lock has to restore
+// under both (issue #118), so the two hash alike.
+func TestGlobalCopyText_HashesAsSource(t *testing.T) {
 	cases := []struct {
 		name, src, want string
 	}{
@@ -26,9 +26,9 @@ func TestDeployText_HashesAsSource(t *testing.T) {
 	dir := t.TempDir()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := deployText([]byte(tc.src))
+			got := globalCopyText([]byte(tc.src))
 			if string(got) != tc.want {
-				t.Errorf("deployText(%q) = %q, want %q", tc.src, got, tc.want)
+				t.Errorf("globalCopyText(%q) = %q, want %q", tc.src, got, tc.want)
 			}
 			src := filepath.Join(dir, tc.name+".src")
 			dst := filepath.Join(dir, tc.name+".dst")
