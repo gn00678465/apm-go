@@ -1,4 +1,4 @@
-<!-- reviewed-through: ad865d7 (2026-10-17 14:35 +0800) -->
+<!-- reviewed-through: fc634f1 (2026-10-17 16:43 +0800) -->
 
 # Lessons
 
@@ -13,6 +13,25 @@ Rules and lessons differ in status:
 - A lesson seen on 3 separate days is promoted. The rule goes into AGENTS.md "Promoted rules"; the entry and its evidence move to "Moved to AGENTS.md" below and stay there as the record.
 
 How to run a review is in AGENTS.md "Lessons review". Findings about the board tooling itself are not entered here.
+
+## Review of 2026-10-17 14:35 to 2026-10-17 16:43 (+0800)
+
+Range `ad865d7..fc634f1`: 2 merged PRs (#139, #140), 6 commits (4 non-merge, 2 merges), 22 files changed. No tag. PR #139 is the previous review and had no card. PR #140 came from card 119: one stop on rule 1 for the CRITICAL blast radius of `HashFileBytes` (board 119 event 3651), ruled in issue #119 comment 6230883992; two failed reviews (event 3691 on `0b61a7c`, event 3717 on `b168eeb`), fixed in `b168eeb` and `c9c833b`; a supplementary ruling after the second (comment 6231670262); a pass on the third review (event 3741). Card files cited below are under `~/.config/board/projects/apm-go/cards/issue-119/`.
+
+What went wrong:
+
+- The first review found two regressions. The copy fallback of `install -g` wrote a bare CR as LF where the symlink deploy shows the source, so a lock written in one mode failed a frozen install in the other (new lesson below). The clone pin `git clone -c core.autocrlf=false` lost to a `core.autocrlf` that a parent process passes in `GIT_CONFIG_*`, where the Oracle code the brief cites passes `-c` before the subcommand (new lesson below).
+- The fix round for the first finding kept the source's bytes in three cases for every deploy, not only for the `--global` copy fallback that needed it, and wrote this into PRODUCT.md as a deviation citing two rulings that do not name it, and into the PR's To confirm section. The orchestrator's feedback for that round asked for it. The second review failed it, and comment 6231670262 limited the exception to the copy fallback (existing lessons below, no count raised for the second).
+- The PR body sent to each review left out results that the handoff conditions of comment 6230883992 ask for and the implementer's report had, and said nothing about the lessons. The acting owner added them after the third review began (new lesson and existing rule missed below). During that edit the body was written back empty for 17 s (new lesson below).
+
+No merged change was found broken.
+
+Done right:
+
+- Promoted rule 2: PR #140 was opened at 07:37:54Z and its line was added to issue #133 at 07:38:04Z. Each fix round updated that line with the body (body 08:14:33Z, issue 08:14:44Z; body 08:39:27Z, issue 08:39:29Z), as the fix-round lesson asks.
+- Promoted rule 1: the one Not verified item of PR #140 is a macOS run, and this machine has no macOS host or VM.
+- The lock-upgrade and Windows lessons: the first round ran install, frozen install and uninstall on an old Windows lock, an Oracle lock and a CRLF checkout, with autocrlf true and false, in the Windows sandbox (`rounds/report-step-5.md:46-51`). The old lock was written by main, not `v0.4.0`, and the report says so (`:69`).
+- The same-premise lesson: the feedback for the second round listed every git call that writes a working tree, three in all (`rounds/feedback-step-12.md`, section 2), and the second review found none left (event 3717).
 
 ## Review of 2026-10-17 12:37 to 2026-10-17 14:35 (+0800)
 
@@ -97,9 +116,9 @@ Seen 2× (2026-10-16, 2026-10-17)
 
 **Do not write a new deviation from the Oracle into PRODUCT.md unless an owner ruling names it; when the fix needs one, stop with `board ask`.**
 - PRODUCT.md is the contract that later cards follow. An unruled deviation there is read as a ruling, and reversing it the next day cost a full card.
-- Evidence: `9968ee5` (PR #92) added "a deployed file that is a symlink to another place in its target root … is written where it points"; issue #112 comment 6215906800 ("#86 has no owner ruling on this point"); reversed by `cf8aa7a` (PR #117).
+- Evidence: `9968ee5` (PR #92) added "a deployed file that is a symlink to another place in its target root … is written where it points"; issue #112 comment 6215906800 ("#86 has no owner ruling on this point"); reversed by `cf8aa7a` (PR #117). `b168eeb` (PR #140) wrote into PRODUCT.md that a bare CR, text with a NUL and text with a CR before a CRLF keep the source's bytes, citing issue #119 comment 6230883992 and issue #118 comment 6229823230, neither of which names it; the orchestrator's feedback asked for it (card 119 `rounds/feedback-step-12.md:35`) and no `board ask` was sent (board 119 events 3691-3717); the review failed it (event 3717), issue #119 comment 6231670262 limited it to the `--global` copy fallback, and `c9c833b` rewrote it.
 - Done right on 2026-10-17: board 116 event 3558 (a deviation the ruling did not name, asked before it was written), ruled in issue #116 comment 6229603360, then written by `cef28e5`.
-Seen 1× (2026-10-15)
+Seen 2× (2026-10-15, 2026-10-17)
 
 **Before committing new test fixtures, run `git status --short --ignored` and confirm that none of them is ignored (`*.out`, `apm_modules/`).**
 - An ignored fixture is not committed, so the test passes locally and fails or tests nothing in CI.
@@ -113,12 +132,34 @@ Seen 1× (2026-10-17)
 
 **Check each limitation you find against the handoff conditions of the owner ruling before you hand over. When it breaks one, fix it in the same round: do not write it into PRODUCT.md or the PR as a known limitation, and do not put it to the owner as a question.**
 - The handoff condition has already decided the question, so the reviewer fails the round and the fix costs a full review cycle. Here the limitation came from a fallback that records other lock paths than the primary way: a lock moves between accounts and machines, so a frozen install with one way fails on a lock the other way wrote.
-- Evidence: issue #118 comment 6229823230 requires `install -g --frozen` to succeed under a restricted token. `230e9df` wrote into PRODUCT.md "A symlink inside a local skill is not deployed and not recorded in the lock, where a symlink deploy records it."; the first body of PR #138 (edit history, 05:20:12Z) listed the resulting frozen failure under To confirm; the first version of issue #118 comment 6230006003 (05:11:03Z) asked the owner whether to accept it. The reviewer reproduced it in the Windows sandbox and failed the round (board 118 event 3625, on `230e9df`). `27f95f3` makes the copy deploy record the same paths and hashes as a symlink deploy, and the next review passed (event 3644).
+- Evidence: issue #118 comment 6229823230 requires `install -g --frozen` to succeed under a restricted token. `230e9df` wrote into PRODUCT.md "A symlink inside a local skill is not deployed and not recorded in the lock, where a symlink deploy records it."; the first body of PR #138 (edit history, 05:20:12Z) listed the resulting frozen failure under To confirm; the first version of issue #118 comment 6230006003 (05:11:03Z) asked the owner whether to accept it. The reviewer reproduced it in the Windows sandbox and failed the round (board 118 event 3625, on `230e9df`). `27f95f3` makes the copy deploy record the same paths and hashes as a symlink deploy, and the next review passed (event 3644). The second body of PR #140 (edit history, 08:14:33Z) put under To confirm that three kinds of text keep the source's bytes where the Oracle writes LF, although ruling (c) of issue #119 comment 6230883992 had already decided it (issue #119 comment 6231670262, items 1 and 5).
 Seen 1× (2026-10-17)
 
 **When a fix round changes what a PR's Behavior section says, update the PR's line in the release-notes issue in the same step.**
 - Release notes are written from that issue (promoted rule 2), so a case added only to the PR body is missing from them.
 - Evidence: PR #138's body edit at 06:31:25Z (edit history) adds "或 skill 裡有 symlink 時" to the case where a skill directory is kept with a warning. Issue #133 was last edited at 05:20:29Z, and its PR #138 line names only "目錄裡有自己加的檔案或套件改過時".
+- Done right on 2026-10-17: both fix rounds of PR #140 rewrote its Behavior section, and its line in issue #133 changed with it each time (body 08:14:33Z, issue 08:14:44Z; body 08:39:27Z, issue 08:39:29Z; both edit histories).
+Seen 1× (2026-10-17)
+
+**When a change alters what a deploy writes or records, run `install -g` by symlink and then `install -g --frozen` by the copy fallback (the restricted token in the Windows sandbox), and the reverse, before handing over.**
+- PRODUCT.md promises that one lock restores under both ways of a `--global` deploy (issue #118). Each way has its own code, so a change can move one and not the other, and only a frozen install in the other mode shows it.
+- Evidence: board 119 event 3691 (review of `0b61a7c`: with a bare CR in an agent, the frozen install exits 1 in both directions, and main exits 0); the first round's report has no restricted-token run (card 119 `rounds/report-step-5.md`); fixed in `b168eeb`. Board 118 event 3625 (`230e9df`, the copy fallback recorded other paths than the symlink deploy) was found the same way on the same day.
+- Done right on 2026-10-17: from its second body on (edit history, 08:14:33Z), PR #140 lists the run "以管理員用連結部署 `install -g`、再以受限權限用複製跑 `--frozen`（以及反方向）" under Verified.
+Seen 1× (2026-10-17)
+
+**When you port a mechanism from the Oracle, port the form its cited lines use, not only the setting; where apm-go's form differs, test the case the Oracle's form handles.**
+- A setting in the right value and the wrong place passes every ordinary test. Here `git clone -c` writes repository config, which a value a parent process passes in `GIT_CONFIG_COUNT` outranks; the Oracle passes `-c` before the subcommand, and its comment says why.
+- Evidence: card 119 `investigation.md:66` reports that the Oracle adds `-c core.autocrlf=false` to each git subprocess (`cache/git_cache.py:63-92`); the fix it proposes (`investigation.md:81`) and the brief (`brief.md:46`) use `git clone -c`; `0b61a7c` wrote that form into PRODUCT.md "as in the Oracle's git cache"; board 119 event 3691 (finding 2, reproduced with the real loader and in the Windows sandbox); fixed in `b168eeb`.
+Seen 1× (2026-10-17)
+
+**Before handing over, check the PR body against each handoff condition of the owner ruling, one by one, and carry over the implementer's result for each.**
+- The reviewer and the owner read the body, not the card's report. A result left in the report is not handed over, and a body rewritten in a fix round can drop a result the earlier body had.
+- Evidence: issue #119 comment 6230883992 asks for CRLF Go tests run on Linux and Windows, and for install, frozen install and uninstall on an old Windows lock, an Oracle lock and a CRLF checkout, with the results in the PR body. The implementer's report had them (card 119 `rounds/report-step-5.md:48-51,60`). The first body of PR #140 (07:37:54Z, edit history) has no frozen install on the old locks and no Windows run of the Go tests; the second (08:14:33Z) also drops the uninstall, and the third (08:39:27Z) also drops whether the stale cleanup left files. They were added at 08:41:57Z, after the third review had begun (board 119 event 3736, 08:39:48Z).
+Seen 1× (2026-10-17)
+
+**Before you write a PR or issue body back from a file, check that the command that produced the file succeeded and that the file is not empty; run every `gh` command with `-R gn00678465/apm-go`.**
+- Outside a git checkout `gh pr view <N>` fails and leaves an empty file, and writing that file back blanks the body. Every card edits the release-notes issue the same way (`gh api -X PATCH ... -F body=@<file>`).
+- Evidence: PR #140's body edit history: empty at 08:41:09Z, restored at 08:41:26Z. In the acting owner's session (`~/.claude/projects/-home-madao-Projects-apm-go/369ffdad-c792-4bb5-b9c7-dd0b8f8c21e1.jsonl`), the command at 08:41:07Z ran `gh pr view 140` without `-R` in a scratch directory (`fatal: not a git repository`) and wrote its output back. The restore and the next edit (08:41:40Z) checked the file's length first.
 Seen 1× (2026-10-17)
 
 ## Existing rules missed
@@ -134,6 +175,11 @@ Seen 1× (2026-10-16)
 - The command stops at a permission prompt that no one answers, and the whole card waits for the user. The rule existed before this round (PR #63 for scripts, and the card notes).
 - Evidence: board 104 event 3023 and board 97 event 3060 (`agent_blocked`); board 97 event 3069 (owner note naming the cause).
 Seen 1× (2026-10-16)
+
+**AGENTS.md "Canonical documents": for each lesson that applies, say in the PR description what you did.**
+- The reviewer cannot check a lesson that the body does not mention. The board's notes for card 119 repeated the rule (board 119 events 3649, 3657).
+- Evidence: PR #140's body said nothing about the lessons until 08:41:57Z (edit history), although the implementer's report had a section for them (card 119 `rounds/report-step-5.md:64-69`). The bodies of PR #136 and #138, both merged after the rule landed (`94d85b8`, PR #132), do not mention a lesson either (`gh pr view <N> --json body`).
+Seen 1× (2026-10-17)
 
 ## Moved to AGENTS.md
 
