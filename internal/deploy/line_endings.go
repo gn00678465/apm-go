@@ -3,12 +3,12 @@ package deploy
 import (
 	"bytes"
 	"os"
-	"unicode/utf8"
+
+	"github.com/apm-go/apm/internal/lockfile"
 )
 
 // copyPrimitiveFile copies p's source to dst. An agent, an instruction, a
-// prompt and a command are written with LF line endings, as the Oracle reads
-// them in text mode and writes them with write_text_lf; a hook is copied as it
+// prompt and a command are written through deployText; a hook is copied as it
 // is (integration/base_integrator.py:266-270).
 func copyPrimitiveFile(p Primitive, dst string) error {
 	switch p.Type {
@@ -20,17 +20,21 @@ func copyPrimitiveFile(p Primitive, dst string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, lfText(data), 0644)
+	return os.WriteFile(dst, deployText(data), 0644)
 }
 
-// lfText is content as the Oracle reads a primitive it writes back with
-// write_text_lf: Path.read_text reads CRLF and a bare CR as LF
-// (integration/agent_integrator.py:360-362, instruction_integrator.py:117-119,
-// prompt_integrator.py:51-53, utils/atomic_io.py:28-48). Content that is not
-// valid UTF-8, which the Oracle cannot read, is kept as it is.
-func lfText(b []byte) []byte {
-	if !utf8.Valid(b) {
+// deployText is a primitive's content with each CRLF written as LF, by the
+// conversion lockfile.HashDeployedFile hashes, so a copy hashes as the source
+// a --global symlink shows; one lock has to restore under a copy deploy and a
+// symlink deploy alike (issue #118 comment 6229823230). Content that this
+// conversion would leave with a CRLF (a CR before a CRLF) is kept as it is, as
+// are a bare CR, content with a NUL and content that is not UTF-8. The Oracle
+// writes the first three as LF (Path.read_text, then write_text_lf,
+// utils/atomic_io.py:28-48); its user scope only copies.
+func deployText(b []byte) []byte {
+	lf := lockfile.CanonicalDeployedBytes(b)
+	if bytes.Contains(lf, []byte("\r\n")) {
 		return b
 	}
-	return bytes.ReplaceAll(bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")), []byte("\r"), []byte("\n"))
+	return lf
 }

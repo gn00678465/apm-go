@@ -25,6 +25,15 @@ func autocrlfTrueGlobal(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 }
 
+// autocrlfTrueInherited sets core.autocrlf=true the way a parent process
+// passes configuration down, which outranks the checkout's .git/config.
+func autocrlfTrueInherited(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.autocrlf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "true")
+}
+
 func readCheckoutFile(t *testing.T, r *RealPackageLoader, ref *manifest.DependencyReference) string {
 	t.Helper()
 	installDir, err := r.installPath(ref)
@@ -39,26 +48,32 @@ func readCheckoutFile(t *testing.T, r *RealPackageLoader, ref *manifest.Dependen
 }
 
 func TestLoadPackage_CheckoutKeepsLFUnderAutocrlfTrue(t *testing.T) {
-	for _, byCommit := range []bool{false, true} {
-		t.Run(map[bool]string{false: "tag", true: "commit"}[byCommit], func(t *testing.T) {
-			ref, remoteDir := chdirToFakeRemote(t)
-			autocrlfTrueGlobal(t)
-			resolved := initRepoWithTag(t, remoteDir, autocrlfFile, "v1.0.0")
-			if !byCommit {
-				resolved = "v1.0.0"
-			}
-			r := &RealPackageLoader{ModulesDir: t.TempDir()}
-			if _, err := r.LoadPackage(ref, resolved); err != nil {
-				t.Fatalf("LoadPackage: %v", err)
-			}
-			if got := readCheckoutFile(t, r, ref); got != autocrlfFile {
-				t.Errorf("checkout file.txt = %q, want %q", got, autocrlfFile)
-			}
-			installDir, _ := r.installPath(ref)
-			if got := gitCmd(t, installDir, "config", "--local", "--get", "core.autocrlf"); got != "false" {
-				t.Errorf("checkout core.autocrlf = %q, want false", got)
-			}
-		})
+	setups := []struct {
+		name string
+		set  func(*testing.T)
+	}{{"global config", autocrlfTrueGlobal}, {"inherited config", autocrlfTrueInherited}}
+	for _, setup := range setups {
+		for _, byCommit := range []bool{false, true} {
+			t.Run(setup.name+"/"+map[bool]string{false: "tag", true: "commit"}[byCommit], func(t *testing.T) {
+				ref, remoteDir := chdirToFakeRemote(t)
+				setup.set(t)
+				resolved := initRepoWithTag(t, remoteDir, autocrlfFile, "v1.0.0")
+				if !byCommit {
+					resolved = "v1.0.0"
+				}
+				r := &RealPackageLoader{ModulesDir: t.TempDir()}
+				if _, err := r.LoadPackage(ref, resolved); err != nil {
+					t.Fatalf("LoadPackage: %v", err)
+				}
+				if got := readCheckoutFile(t, r, ref); got != autocrlfFile {
+					t.Errorf("checkout file.txt = %q, want %q", got, autocrlfFile)
+				}
+				installDir, _ := r.installPath(ref)
+				if got := gitCmd(t, installDir, "config", "--local", "--get", "core.autocrlf"); got != "false" {
+					t.Errorf("checkout core.autocrlf = %q, want false", got)
+				}
+			})
+		}
 	}
 }
 

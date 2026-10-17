@@ -480,3 +480,57 @@ func TestInstall_LockCheckedOutWithCRLF_NotRewritten(t *testing.T) {
 		t.Errorf("install on the CRLF lock printed:\n%s\nwant what it prints on the LF lock:\n%s", a, b)
 	}
 }
+
+// A --global lock written by a symlink deploy restores under a copy deploy and
+// the other way round (issue #118), also for sources whose bytes the copy has
+// to keep: a bare CR, a CR before a CRLF, and a NUL.
+func TestInstallGlobalFrozen_CRLFSourcesRestoreAcrossModes(t *testing.T) {
+	// copied is what a copy deploy writes; a symlink shows the source.
+	sources := map[string]struct{ content, copied string }{
+		"bare cr":        {"---\ndescription: r\n---\r\nbody\rline\r\n", "---\ndescription: r\n---\nbody\rline\n"},
+		"cr before crlf": {"---\ndescription: r\n---\r\nbody\r\r\nline\r\n", "---\ndescription: r\n---\r\nbody\r\r\nline\r\n"},
+		"nul":            {"---\ndescription: r\n---\r\nbody\x00\r\nline\r\n", "---\ndescription: r\n---\r\nbody\x00\r\nline\r\n"},
+	}
+	for name, src := range sources {
+		content := src.content
+		for _, firstSymlink := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/first symlink %v", name, firstSymlink), func(t *testing.T) {
+				home, srcDir := globalStaleScope(t, map[string]string{
+					".apm/agents/rev.agent.md":            content,
+					".apm/instructions/r.instructions.md": content,
+					".apm/prompts/p.prompt.md":            content,
+				})
+				setSymlinkProbe(t, firstSymlink)
+				if out, err := copyModeInstall(t, false, "claude,copilot", srcDir); err != nil {
+					t.Fatalf("install --global: %v\n%s", err, out)
+				}
+				lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
+				lockBefore := globalStaleRead(t, lockPath)
+				for _, root := range []string{".claude", ".github"} {
+					if err := os.RemoveAll(filepath.Join(home, root)); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				setSymlinkProbe(t, !firstSymlink)
+				out, err := copyModeInstall(t, true, "claude,copilot")
+
+				if err != nil {
+					t.Fatalf("frozen install --global: %v\n%s", err, out)
+				}
+				want := src.copied
+				if !firstSymlink {
+					want = content
+				}
+				for _, rel := range []string{".claude/agents/rev.md", ".github/agents/rev.agent.md", ".github/instructions/r.instructions.md", ".github/prompts/p.prompt.md"} {
+					if got := globalStaleRead(t, filepath.Join(home, filepath.FromSlash(rel))); got != want {
+						t.Errorf("%s = %q, want %q", rel, got, want)
+					}
+				}
+				if got := globalStaleRead(t, lockPath); got != lockBefore {
+					t.Errorf("lock changed:\n%s\nwant:\n%s", got, lockBefore)
+				}
+			})
+		}
+	}
+}

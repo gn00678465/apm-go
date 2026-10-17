@@ -19,10 +19,11 @@ func HashDeployedFile(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("hash file %s: %w", path, err)
 	}
-	return HashBytes(canonicalDeployedBytes(data)), nil
+	return HashBytes(CanonicalDeployedBytes(data)), nil
 }
 
-func canonicalDeployedBytes(b []byte) []byte {
+// CanonicalDeployedBytes is the content HashDeployedFile hashes.
+func CanonicalDeployedBytes(b []byte) []byte {
 	if bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {
 		return b
 	}
@@ -46,7 +47,7 @@ func DeployedFileMatches(path, recorded string) (bool, error) {
 	if err != nil || algo != "sha256" {
 		return false, nil
 	}
-	for _, b := range [][]byte{canonicalDeployedBytes(data), data} {
+	for _, b := range [][]byte{CanonicalDeployedBytes(data), data} {
 		sum := sha256.Sum256(b)
 		if hex.EncodeToString(sum[:]) == want {
 			return true, nil

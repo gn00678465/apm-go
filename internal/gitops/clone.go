@@ -303,7 +303,7 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
 		return r.cloneRepoAtCommit(url, dir, ref)
 	}
 
-	args := []string{"clone", "-c", autocrlfOff, "--depth", "1"}
+	args := []string{"-c", autocrlfOff, "clone", "-c", autocrlfOff, "--depth", "1"}
 	if ref != "" {
 		args = append(args, "--branch", ref)
 	}
@@ -332,11 +332,11 @@ func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, commit string) error {
 	if err := ValidateURLRewriteSafety(url); err != nil {
 		return err
 	}
-	cloneCmd := cloneCommandFor(url, "clone", "-c", autocrlfOff, "--", url, dir)
+	cloneCmd := cloneCommandFor(url, "-c", autocrlfOff, "clone", "-c", autocrlfOff, "--", url, dir)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
 	}
-	checkoutCmd := gitCommand("checkout", commit)
+	checkoutCmd := gitCommand("-c", autocrlfOff, "checkout", commit)
 	checkoutCmd.Dir = dir
 	if out, err := checkoutCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
