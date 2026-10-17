@@ -84,6 +84,10 @@ type DeployResult struct {
 	// RootSkills holds, by DepKey, the skill of each package whose root is a
 	// skill.
 	RootSkills map[string]RootSkill
+	// Adopted holds, by deploy-root-relative path, whether each agent,
+	// prompt or instruction file the deploy wrote was, before it wrote it,
+	// what the Oracle compares there and adopts (noteAdopted).
+	Adopted map[string]bool
 }
 
 // RootSkill is the skill of a package whose root is a skill. Created is
@@ -104,26 +108,16 @@ type Shadowed struct {
 	// Paths are the deploy-root-relative paths the target holds for the
 	// winner: the file it wrote, or for a skill its directory.
 	Paths []string
-	// Same is what the Oracle compares with the winner's file on disk
-	// before it writes this primitive (integration/base_integrator.py:
-	// 378-405,429-495): what this primitive deploys, or for a command and a
-	// codex agent its source read as text (command_integrator.py:581,
-	// agent_integrator.py:262), and for a skill its whole directory.
+	// ManagedAs are Paths as the Oracle looks them up in its managed set
+	// (oracleRels).
+	ManagedAs []string
+	// Same is whether the winner's file on disk equals what the Oracle
+	// compares it with before it writes this primitive (shadowedContent,
+	// skillDirsEqual).
 	Same bool
-	// Deployed is what this primitive deploys being on disk at Paths: the
-	// Oracle's overwrite of a path it manages leaves the disk as it is.
+	// Deployed is whether it equals what this primitive's deploy writes:
+	// the Oracle's overwrite of a path it manages leaves the disk as it is.
 	Deployed bool
-}
-
-// deployOne writes p for adapter below deployDir: a prompt converted to a
-// command on a target that has commands, any other primitive through the
-// adapter.
-func deployOne(adapter TargetAdapter, p Primitive, deployDir string) ([]string, []CommandNote, error) {
-	if c, ok := adapter.(promptCommander); ok && p.Type == TypePrompts {
-		return deployPromptCommand(p, deployDir, c.commandPath(p.Name), adapter.Name())
-	}
-	files, err := adapter.DeployPrimitive(p, deployDir)
-	return files, nil, err
 }
 
 // RejectedInstructionError is an instruction whose destination a symlink takes
@@ -204,8 +198,10 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 	activeDeployMode.symlink = global && symlinkProbe()
 	activeDeployMode.global, activeDeployMode.projectDir = global, projectDir
+	activeDeployMode.adopted = map[string]bool{}
 	defer func() {
 		activeDeployMode.symlink, activeDeployMode.global, activeDeployMode.projectDir = false, false, ""
+		activeDeployMode.adopted = nil
 	}()
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
@@ -491,7 +487,14 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				continue
 			}
 
-			files, notes, err := deployOne(adapter, p, deployDir)
+			var files []string
+			var notes []CommandNote
+			var err error
+			if c, ok := adapter.(promptCommander); ok && p.Type == TypePrompts {
+				files, notes, err = deployPromptCommand(p, deployDir, c.commandPath(p.Name), target)
+			} else {
+				files, err = adapter.DeployPrimitive(p, deployDir)
+			}
 			for _, n := range notes {
 				n.DepKey, n.Package = p.DepKey, packageNames[p.DepKey]
 				result.CommandNotes = append(result.CommandNotes, n)
@@ -705,6 +708,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 
 	result.Conflicts = conflictDiags
+	result.Adopted = activeDeployMode.adopted
 	result.Shadowed = shadowedPrimitives(targets, ordered, targetSubsets, winnersByTarget, written, deployDir)
 
 	// Sort deployed files within each dep for determinism

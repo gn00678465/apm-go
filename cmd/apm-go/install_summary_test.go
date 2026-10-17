@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/apm-go/apm/internal/deploy"
 )
 
 // Issue #122: the install transcript is Oracle 0.33.0's. Each want below is
@@ -453,9 +455,46 @@ func TestInstallSummary_SameBytesAdopted(t *testing.T) {
 // deploys that (install/pipeline.py:723-728). Each want is Oracle 0.33.0's
 // stdout for the case of the same name under the card's
 // review122/probes/, rerun as issue122-s17/runs1/ and runs2/ (the opencode
-// and codex cases); the Oracle's Resolving
+// and codex cases) and issue122-s25/runs1/ (the skill-*, crflagent cases);
+// a key that ends in "/" is an empty directory. The Oracle's Resolving
 // order changes from run to run, apm-go's is the order of apm.yml.
 func TestInstallSummary_ShadowedOutcomes(t *testing.T) {
+	for _, tt := range shadowedCases() {
+		t.Run(tt.name, func(t *testing.T) { runShadowedCase(t, tt, nil) })
+	}
+}
+
+// The comparison writes no file, so a temporary directory that is missing or
+// cannot be written changes nothing (issue122-s25/tmp-missing, tmp-ro).
+func TestInstallSummary_ShadowedOutcomesWithoutTempDir(t *testing.T) {
+	for _, tmp := range []string{"missing", "readonly"} {
+		for _, tt := range shadowedCases() {
+			if tt.name != "sameskill" && tt.name != "crlfagent" && tt.name != "sameprompt" {
+				continue
+			}
+			t.Run(tmp+"/"+tt.name, func(t *testing.T) {
+				dir := filepath.Join(t.TempDir(), tmp)
+				if tmp == "readonly" {
+					if err := os.Mkdir(dir, 0o500); err != nil {
+						t.Fatal(err)
+					}
+				}
+				runShadowedCase(t, tt, func() {
+					for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+						t.Setenv(key, dir)
+					}
+				})
+			})
+		}
+	}
+}
+
+type shadowedCase struct {
+	name, target, i1, i2 string
+	a, z                 map[string]string
+}
+
+func shadowedCases() []shadowedCase {
 	agent := "---\nname: ag\ndescription: d\n---\nbody\n"
 	prompt := "---\ndescription: d\n---\nhello $ARGUMENTS\n"
 	rule := "---\napplyTo: \"**/*.go\"\n---\nhello\n"
@@ -470,10 +509,7 @@ func TestInstallSummary_ShadowedOutcomes(t *testing.T) {
 	const gitignore = " i Added apm_modules/ to .gitignore\n"
 	const skipped = "   ! 1 file skipped -- local files exist, not managed by APM\n"
 	const last = " + Installed 2 APM dependencies in <t>s.\n"
-	for _, tt := range []struct {
-		name, target, i1, i2 string
-		a, z                 map[string]string
-	}{
+	return []shadowedCase{
 		{"crlfagent", "claude",
 			head("claude", true) + "  |-- 1 agents integrated -> .claude/agents/\n  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n" + gitignore + "\n" + last,
 			head("claude", false) + "  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n\n" + last,
@@ -516,20 +552,230 @@ func TestInstallSummary_ShadowedOutcomes(t *testing.T) {
 			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
 			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n\n" + last,
 			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill + "z\n"}},
+		// A name on one side alone, an empty directory included, makes two
+		// skills differ, as filecmp.dircmp compares them
+		// (integration/skill_integrator.py:531-550). The rerun is skilldiff's.
+		{"skill-empty-dir", "claude",
+			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
+			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n\n" + last,
+			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill, ".apm/skills/sk/data/": ""}},
+		{"skill-onefile", "claude",
+			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
+			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n\n" + last,
+			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill, ".apm/skills/sk/notes.txt": "n\n"}},
+		// The names of filecmp.DEFAULT_IGNORES are not compared.
+		{"skill-pycache", "claude",
+			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n" + gitignore + "\n" + last,
+			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n\n" + last,
+			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill, ".apm/skills/sk/__pycache__/c.pyc": "x"}},
+		{"skill-gitdir", "claude",
+			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n" + gitignore + "\n" + last,
+			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n\n" + last,
+			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill, ".apm/skills/sk/.git/HEAD": "ref: refs/heads/main\n"}},
+		// A name that is a file on one side and a directory on the other is
+		// dircmp's common_funny, which the Oracle does not look at.
+		{"skill-funny", "claude",
+			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n" + gitignore + "\n" + last,
+			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n\n" + last,
+			map[string]string{".apm/skills/sk/SKILL.md": skill, ".apm/skills/sk/x": "file\n"}, map[string]string{".apm/skills/sk/SKILL.md": skill, ".apm/skills/sk/x/f": "in dir\n"}},
+		// The Oracle turns only a CRLF into LF before it compares
+		// (utils/atomic_io.py:28-37), so an agent with bare CRs differs from
+		// the LF file it writes; on the rerun the path is the lock's, and the
+		// agent deploys what is on disk.
+		{"crflagent", "claude",
+			head("claude", true) + "  |-- 1 agents integrated -> .claude/agents/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
+			head("claude", false) + "  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n  |-- 1 agents integrated -> .claude/agents/\n\n" + last,
+			map[string]string{".apm/agents/ag.agent.md": agent}, map[string]string{".apm/agents/ag.agent.md": strings.ReplaceAll(agent, "\n", "\r")}},
+	}
+}
+
+// At user scope the Oracle copies an agent with its line ends written as
+// LF; apm-go links it, or copies it with a bare CR kept when it cannot link.
+// What the Oracle compares is then its copy, and the summary is the same in
+// both modes. Each want is Oracle 0.33.0's for issue122-s28/runs-or2/g-crlf
+// and g-cr; it prints a warning about which targets support user scope,
+// which apm-go leaves out (issue #122 comment 6232580233 item 2).
+func TestInstallSummary_GlobalShadowed(t *testing.T) {
+	agent := "---\nname: ag\ndescription: d\n---\nbody\n"
+	for _, tt := range []struct {
+		name, body string
+		i1, i2     func(root string) string
+	}{
+		{"crlf", strings.ReplaceAll(agent, "\n", "\r\n"),
+			func(root string) string {
+				return globalHead(root, true) + "  |-- 1 agents integrated -> .claude/agents/\n  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n" +
+					"   + <project root> (local)\n  |-- (files unchanged)\n\n + Installed 2 APM dependencies in <t>s.\n"
+			},
+			func(root string) string {
+				return globalHead(root, false) + "  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n" +
+					"   + <project root> (local)\n  |-- (files unchanged)\n\n + Installed 2 APM dependencies in <t>s.\n"
+			}},
+		{"cr", strings.ReplaceAll(agent, "\n", "\r"),
+			func(root string) string {
+				return globalHead(root, true) + "  |-- 1 agents integrated -> .claude/agents/\n  |-- (files unchanged)\n" +
+					"   + <project root> (local)\n  |-- (files unchanged)\n   ! 1 file skipped -- local files exist, not managed by APM\n + Installed 2 APM dependencies in <t>s.\n"
+			},
+			func(root string) string {
+				return globalHead(root, false) + "  |-- 1 agents integrated -> .claude/agents/\n  |-- 1 agents integrated -> .claude/agents/\n" +
+					"   + <project root> (local)\n  |-- (files unchanged)\n\n + Installed 2 APM dependencies in <t>s.\n"
+			}},
+	} {
+		for _, link := range []bool{true, false} {
+			mode := map[bool]string{true: "link", false: "copy"}[link]
+			t.Run(tt.name+"/"+mode, func(t *testing.T) {
+				if link {
+					if err := os.Symlink("x", filepath.Join(t.TempDir(), "l")); err != nil {
+						t.Skipf("this account cannot make a symlink: %v", err)
+					}
+				}
+				t.Cleanup(deploy.SetSymlinkProbeForTest(func() bool { return link }))
+				root := summaryProject(t, map[string]string{
+					"pkg/apm.yml": "name: pkg\nversion: 1.0.0\n", "pkg/.apm/agents/ag.agent.md": tt.body,
+					"z/apm.yml": "name: z\nversion: 1.0.0\n", "z/.apm/agents/ag.agent.md": tt.body,
+				})
+				proj := filepath.Join(root, "proj")
+				writeCompileFile(t, filepath.Join(root, "home"), ".apm/apm.yml", "name: g\nversion: 1.0.0\ndependencies:\n  apm:\n    - "+
+					filepath.Join(proj, "pkg")+"\n    - "+filepath.Join(proj, "z")+"\n")
+				args := []string{"install", "-g", "--target", "claude"}
+				runSummary(t, []summaryRun{{args, tt.i1(proj)}, {args, tt.i2(proj)}})
+			})
+		}
+	}
+}
+
+func globalHead(proj string, fetched bool) string {
+	h := " i Installing to user scope (~/.apm/)\n > Installing dependencies from apm.yml...\n"
+	if fetched {
+		h += " > Resolving " + filepath.Join(proj, "pkg") + "...\n > Resolving " + filepath.Join(proj, "z") + "...\n"
+	}
+	return h + "   + " + filepath.Join(proj, "pkg") + " (local)\n   + " + filepath.Join(proj, "z") + " (local)\n"
+}
+
+// A package's own agent is adopted when the file on disk before the install
+// is what the Oracle compares: the agent with each CRLF as LF, a bare CR
+// kept, against the bytes on disk as they are
+// (integration/base_integrator.py:337-374,429-495). So an agent with a bare
+// CR is integrated on every run, an agent the user turned to CRLF is
+// integrated, and a file that was there with the same bytes is adopted
+// before any lock records it. A claude rule is compared as converted
+// (integration/instruction_integrator.py:450-485), so one the user turned to
+// CRLF is integrated too. Each want is Oracle 0.33.0's for
+// issue122-s28/runs-w1/w-cr, w-crlfdisk, w-pre and runs-r1/r-crlfdisk.
+func TestInstallSummary_AdoptedAsOracleCompares(t *testing.T) {
+	agent := "---\nname: ag\ndescription: d\n---\nbody\n"
+	head := func(fetched bool) string {
+		h := " > Installing dependencies from apm.yml...\n"
+		if fetched {
+			h += " > Resolving ./a...\n"
+		}
+		return h + " i Targets: claude  (source: --target flag)\n   + ./a (local)\n"
+	}
+	const gitignore = " i Added apm_modules/ to .gitignore\n"
+	const last = "\n + Installed 1 APM dependency in <t>s.\n"
+	integrated := "  |-- 1 agents integrated -> .claude/agents/\n"
+	adopted := "  |-- 1 agents adopted -> .claude/agents/\n  |-- (files unchanged)\n"
+	toCRLF := func(rel string) func() {
+		return func() {
+			data, err := os.ReadFile(rel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(rel, bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n")), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, tt := range []struct {
+		name, src, body string
+		pre, before     func()
+		i1, i2          string
+	}{
+		{"barecr", "agents/ag.agent.md", strings.ReplaceAll(agent, "\n", "\r"), nil, nil,
+			head(true) + integrated + gitignore + last, head(false) + integrated + last},
+		{"crlfdisk", "agents/ag.agent.md", agent, nil, toCRLF(filepath.Join(".claude", "agents", "ag.md")),
+			head(true) + integrated + gitignore + last, head(false) + integrated + last},
+		{"preexisting", "agents/ag.agent.md", agent, func() { writeCompileFile(t, ".", ".claude/agents/ag.md", agent) }, nil,
+			head(true) + adopted + gitignore + last, head(false) + adopted + last},
+		{"rulecrlfdisk", "instructions/ru.instructions.md", "---\napplyTo: \"**/*.go\"\n---\nhello\n", nil, toCRLF(filepath.Join(".claude", "rules", "ru.md")),
+			head(true) + "  |-- 1 rule(s) integrated -> .claude/rules/\n" + gitignore + last, head(false) + "  |-- 1 rule(s) integrated -> .claude/rules/\n" + last},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			files := map[string]string{"a/apm.yml": "name: a\nversion: 1.0.0\n", "z/apm.yml": "name: z\nversion: 1.0.0\n"}
-			for rel, content := range tt.a {
-				files["a/"+rel] = content
+			onePkgProject(t, "    - ./a\n", map[string]string{"a/apm.yml": "name: a\nversion: 1.0.0\n", "a/.apm/" + tt.src: tt.body})
+			if tt.pre != nil {
+				tt.pre()
 			}
-			for rel, content := range tt.z {
-				files["z/"+rel] = content
+			args := []string{"install", "--target", "claude"}
+			runSummary(t, []summaryRun{{args, tt.i1}})
+			if tt.before != nil {
+				tt.before()
 			}
-			onePkgProject(t, "    - ./a\n    - ./z\n", files)
-			args := []string{"install", "--target", tt.target}
-			runSummary(t, []summaryRun{{args, tt.i1}, {args, tt.i2}})
+			runSummary(t, []summaryRun{{args, tt.i2}})
 		})
 	}
+}
+
+// When the user replaced the winner's agent by a symlink to another file of
+// its directory, what the Oracle compares is never there
+// (integration/base_integrator.py:342-343), and it looks the path up in its
+// managed set with the symlink resolved (utils/paths.py:14-29), so the loser
+// is a skipped file. The want is Oracle 0.33.0's for
+// issue122-s28/runs-or2/p-symlink but for the first package: apm-go writes
+// its agent through the symlink, which CheckDeployWrite allows, and prints
+// it integrated, where the Oracle skips it as a second skipped file and
+// warns that it kept the file the lock records under the second package
+// (the owner-pick deviation of the uninstall item of PRODUCT.md).
+func TestInstallSummary_ShadowedSymlinkOnDisk(t *testing.T) {
+	agent := "---\nname: ag\ndescription: d\n---\nbody\n"
+	onePkgProject(t, "    - ./a\n    - ./z\n", map[string]string{
+		"a/apm.yml": "name: a\nversion: 1.0.0\n", "a/.apm/agents/ag.agent.md": agent,
+		"z/apm.yml": "name: z\nversion: 1.0.0\n", "z/.apm/agents/ag.agent.md": agent,
+	})
+	args := []string{"install", "--target", "claude"}
+	runCLI86(t, args...)
+	dest := filepath.Join(".claude", "agents", "ag.md")
+	writeCompileFile(t, ".", ".claude/agents/other.md", agent)
+	if err := os.Remove(dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("other.md", dest); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	want := " > Installing dependencies from apm.yml...\n" +
+		" i Targets: claude  (source: --target flag)\n" +
+		"   + ./a (local)\n" +
+		"   + ./z (local)\n" +
+		"  |-- 1 agents integrated -> .claude/agents/\n" +
+		"  |-- (files unchanged)\n" +
+		"   ! 1 file skipped -- local files exist, not managed by APM\n" +
+		" + Installed 2 APM dependencies in <t>s.\n"
+	runSummary(t, []summaryRun{{args, want}, {args, want}})
+}
+
+// runShadowedCase installs ./a and ./z, each with its files, twice; before
+// runs it sets up what the environment of the runs needs.
+func runShadowedCase(t *testing.T, tt shadowedCase, before func()) {
+	files := map[string]string{"a/apm.yml": "name: a\nversion: 1.0.0\n", "z/apm.yml": "name: z\nversion: 1.0.0\n"}
+	var dirs []string
+	for pkg, pkgFiles := range map[string]map[string]string{"a": tt.a, "z": tt.z} {
+		for rel, content := range pkgFiles {
+			if strings.HasSuffix(rel, "/") {
+				dirs = append(dirs, pkg+"/"+rel)
+				continue
+			}
+			files[pkg+"/"+rel] = content
+		}
+	}
+	onePkgProject(t, "    - ./a\n    - ./z\n", files)
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if before != nil {
+		before()
+	}
+	args := []string{"install", "--target", tt.target}
+	runSummary(t, []summaryRun{{args, tt.i1}, {args, tt.i2}})
 }
 
 // A path the lock records for the project's own content is managed too, as

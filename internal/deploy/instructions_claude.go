@@ -40,9 +40,32 @@ func convertToClaudeRules(content []byte) ([]byte, error) {
 }
 
 // deployClaudeInstructions writes an instruction primitive to destPath,
-// .claude/rules/<name>.md, transformed via convertToClaudeRules (unlike the
-// byte-copy deployFileToPath used by other targets' instructions).
+// .claude/rules/<name>.md, as claudeRule gives it (unlike the byte-copy
+// deployFileToPath used by other targets' instructions).
 func deployClaudeInstructions(p Primitive, projectDir, destPath string) ([]string, error) {
+	rule, err := claudeRule(p)
+	if err != nil {
+		return nil, err
+	}
+	if err := CheckDeployWrite(projectDir, destPath); err != nil {
+		return nil, err
+	}
+	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
+	// The Oracle adopts a rule whose bytes, read through a symlink, are
+	// the rule (integration/instruction_integrator.py:450-485).
+	noteAdopted(destPath, absDest, rule, false)
+	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
+		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
+	}
+	if err := os.WriteFile(absDest, rule, 0644); err != nil {
+		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
+	}
+	return []string{destPath}, nil
+}
+
+// claudeRule is the rule the instruction p deploys to claude: its source
+// through oracleText, then convertToClaudeRules.
+func claudeRule(p Primitive) ([]byte, error) {
 	data, err := os.ReadFile(p.SrcPath)
 	if err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
@@ -58,15 +81,5 @@ func deployClaudeInstructions(p Primitive, projectDir, destPath string) ([]strin
 		}
 		return nil, fmt.Errorf("%s: %w", src, err)
 	}
-	if err := CheckDeployWrite(projectDir, destPath); err != nil {
-		return nil, err
-	}
-	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
-	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
-		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
-	}
-	if err := os.WriteFile(absDest, rule, 0644); err != nil {
-		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
-	}
-	return []string{destPath}, nil
+	return rule, nil
 }

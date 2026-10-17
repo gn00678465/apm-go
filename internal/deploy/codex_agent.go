@@ -69,18 +69,12 @@ func transformCodexAgent(sourcePath, fileName string) (codexAgentDoc, error) {
 	return doc, nil
 }
 
-// deployCodexAgentTOML converts a TypeAgents primitive from markdown to the
-// codexAgentDoc TOML document and writes it to .codex/agents/<p.Name>.toml.
-// Byte-copying the markdown source here would produce a file with a .toml
-// extension that Codex CLI cannot parse (research/findings.md).
+// deployCodexAgentTOML writes the TypeAgents primitive p, as codexAgentTOML
+// gives it, to .codex/agents/<p.Name>.toml.
 func deployCodexAgentTOML(p Primitive, projectDir string) ([]string, error) {
-	doc, err := transformCodexAgent(p.SrcPath, p.Name)
+	data, err := codexAgentTOML(p)
 	if err != nil {
-		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
-	}
-	data, err := toml.Marshal(doc)
-	if err != nil {
-		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
+		return nil, err
 	}
 	destPath := fmt.Sprintf(".codex/agents/%s.toml", p.Name)
 	if err := CheckDeployWrite(projectDir, destPath); err != nil {
@@ -94,4 +88,19 @@ func deployCodexAgentTOML(p Primitive, projectDir string) ([]string, error) {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
 	return []string{destPath}, nil
+}
+
+// codexAgentTOML converts the agent p from markdown to the codexAgentDoc TOML
+// document. Byte-copying the markdown source would produce a file with a
+// .toml extension that Codex CLI cannot parse (research/findings.md).
+func codexAgentTOML(p Primitive) ([]byte, error) {
+	doc, err := transformCodexAgent(p.SrcPath, p.Name)
+	if err != nil {
+		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
+	}
+	data, err := toml.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
+	}
+	return data, nil
 }

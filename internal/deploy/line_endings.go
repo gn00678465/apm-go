@@ -8,25 +8,30 @@ import (
 	"github.com/apm-go/apm/internal/lockfile"
 )
 
-// copyPrimitiveFile copies p's source to dst. An agent, an instruction, a
-// prompt and a command are written through oracleText, or, by the copy a
-// --global deploy makes when it cannot link, through globalCopyText; a hook
-// is copied as it is (integration/base_integrator.py:266-270).
+// copyPrimitiveFile copies p's source to dst, as copiedBytes gives it.
 func copyPrimitiveFile(p Primitive, dst string) error {
-	switch p.Type {
-	case TypeAgents, TypeInstructions, TypePrompts, TypeCommands:
-	default:
-		return copyFile(p.SrcPath, dst)
-	}
 	data, err := os.ReadFile(p.SrcPath)
 	if err != nil {
 		return err
 	}
-	text := oracleText
-	if activeDeployMode.global {
-		text = globalCopyText
+	return os.WriteFile(dst, copiedBytes(p, data), 0644)
+}
+
+// copiedBytes is what a copy of p's source data writes. An agent, an
+// instruction, a prompt and a command are written through oracleText, or, by
+// the copy a --global deploy makes when it cannot link, through
+// globalCopyText; a hook is copied as it is
+// (integration/base_integrator.py:266-270).
+func copiedBytes(p Primitive, data []byte) []byte {
+	switch p.Type {
+	case TypeAgents, TypeInstructions, TypePrompts, TypeCommands:
+	default:
+		return data
 	}
-	return os.WriteFile(dst, text(data), 0644)
+	if activeDeployMode.global {
+		return globalCopyText(data)
+	}
+	return oracleText(data)
 }
 
 // oracleText is a primitive's content as the Oracle writes it: Path.read_text

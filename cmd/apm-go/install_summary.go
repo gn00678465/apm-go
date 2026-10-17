@@ -47,21 +47,6 @@ func (e *resolveRefusedError) print() {
 // last, from their own integrator (install/services.py:597-660).
 var summaryKinds = []string{"prompts", "agents", "commands", "instructions", "hooks", "files"}
 
-// adoptable tells whether a deployed file can count as adopted. The Oracle
-// adopts a file whose bytes on disk are its source's
-// (integration/base_integrator.py:378-405), so a command and a codex agent,
-// which are converted, and a hook, which it merges, are integrated on every
-// run (integration/agent_integrator.py:259-283, install/services.py:534-537).
-func adoptable(f string) bool {
-	switch summaryKindOf(f) {
-	case "commands", "hooks":
-		return false
-	case "agents":
-		return !strings.HasPrefix(f, ".codex/")
-	}
-	return true
-}
-
 func summaryKindOf(f string) string {
 	switch deployedFileKind(f) {
 	case "prompt":
@@ -152,11 +137,13 @@ func printSummaryLine(phrase string, paths []string, verbose bool) {
 }
 
 // blockFiles is what one package of the install summary deployed: files
-// with their hashes now, and the paths of its shadowed primitives that count
-// as adopted or integrated, a skill's by its name.
+// with their hashes now and whether the deploy found each adopted
+// (deploy.DeployResult.Adopted), and the paths of its shadowed primitives
+// that count as adopted or integrated, a skill's by its name.
 type blockFiles struct {
 	files      []string
 	hashes     map[string]string
+	found      map[string]bool
 	adopted    []string
 	integrated []string
 	skills     map[string][]string
@@ -166,9 +153,8 @@ type blockFiles struct {
 // printSummaryLines prints the lines of one package of the install summary
 // as the Oracle aggregates them (install/services.py:440-689): one line per
 // kind in dispatch order, the files of every target added together, a file
-// whose hash the lock recorded and still finds on disk adopted, the
-// directories in target order, and the label of instructions the last
-// target's. A command is integrated on every run, and so is each skill
+// the deploy found adopted, the directories in target order, and the label
+// of instructions the last target's. A command is integrated on every run, and so is each skill
 // below .apm/skills/; a package whose root is a skill prints its skill
 // alone, integrated only when its directory was new. It returns the number
 // of integrated files.
@@ -204,8 +190,17 @@ func printSummaryLines(b blockFiles, before map[string]string, verbose bool) int
 			skillRoots[strings.SplitN(f, "/", 2)[0]+"/skills/"] = true
 			continue
 		}
-		h, recorded := before[f]
-		note(f, recorded && h == b.hashes[f] && adoptable(f))
+		adopted, checked := b.found[f]
+		if !checked && summaryKindOf(f) == "files" {
+			// antigravity's plugin.json, which the Oracle does not deploy:
+			// adopted when the deploy did not change it. A command, a codex
+			// agent and a hook are integrated on every run, as the Oracle
+			// converts or merges them (integration/agent_integrator.py:
+			// 259-283, install/services.py:534-537).
+			h, recorded := before[f]
+			adopted = recorded && h == b.hashes[f]
+		}
+		note(f, adopted)
 	}
 	for _, f := range b.adopted {
 		note(f, true)
@@ -435,7 +430,7 @@ func shadowedOutcome(s deploy.Shadowed, managed map[string]bool) shadowOutcome {
 		return shadowIntegrated
 	case s.Same:
 		return shadowAdopted
-	case anyManaged(s.Paths, managed):
+	case anyManaged(s.ManagedAs, managed):
 		if s.Deployed {
 			return shadowIntegrated
 		}

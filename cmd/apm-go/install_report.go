@@ -166,7 +166,7 @@ func (r *installRun) printBlocks(result *resolver.ResolutionResult, dr *deploy.D
 			b = *s
 		}
 		if d, ok := dr.PerDep[key]; ok {
-			b.files, b.hashes = d.Files, d.Hashes
+			b.files, b.hashes, b.found = d.Files, d.Hashes, dr.Adopted
 		}
 		if rs, ok := dr.RootSkills[key]; ok {
 			b.rootSkill = &rs
