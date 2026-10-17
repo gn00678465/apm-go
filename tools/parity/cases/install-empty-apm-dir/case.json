@@ -1,0 +1,6 @@
+{
+  "id": "install-empty-apm-dir",
+  "argv": ["install", "--target", "claude"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

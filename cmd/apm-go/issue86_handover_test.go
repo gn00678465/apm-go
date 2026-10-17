@@ -175,7 +175,6 @@ func TestInstall_SkillEmptyDirLinksOutside_NotMade(t *testing.T) {
 		" ! deploy sk to claude failed: " + containment86(filepath.Join(cwd86(t), empty), filepath.Join(real, "proj", ".claude", "skills", "sk"), filepath.Join(real, "outside")) + "\n" +
 		"   + ../dep (local)\n" +
 		"  |-- (files unchanged)\n" +
-		" ! _local/dep deployed 0 files to any target\n" +
 		" + Installed 1 APM dependency in <t>s.\n"
 	if code != 0 || stdout != want {
 		t.Errorf("exit %d, stdout:\n%s\nwant exit 0, stdout:\n%s", code, stdout, want)

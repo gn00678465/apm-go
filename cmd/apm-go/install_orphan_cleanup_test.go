@@ -440,7 +440,7 @@ func TestInstall_StaleCleanup_LegacyLocalEntryOfDeclaredPackage(t *testing.T) {
 	if strings.Contains(stdout, "no longer in apm.yml") {
 		t.Errorf("a declared package is no orphan, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "Cleaned 2 stale files from _local/b\n  - .claude/skills/sb\n  - .claude/skills/sb/SKILL.md\n") {
+	if !strings.Contains(stdout, "Cleaned 2 stale files from ./b\n  - .claude/skills/sb\n  - .claude/skills/sb/SKILL.md\n") {
 		t.Errorf("stdout must report the removed skill, got:\n%s", stdout)
 	}
 }

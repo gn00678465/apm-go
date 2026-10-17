@@ -327,17 +327,28 @@ func TestRegistry_ModuleDirOutsideApmModules_Refused(t *testing.T) {
 			before := tree86(t, root)
 
 			deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-			err := runInstall(deps, frozen, false, "", "", nil, nil)
+			var err error
+			stdout := captureInstallStdout(t, func() { err = runInstall(deps, frozen, false, "", "", nil, nil) })
 
 			real := realDir86(t, root)
 			reason := containment86(filepath.Join(cwd86(t), "apm_modules", "acme", "sample"),
 				filepath.Join(real, "proj", "apm_modules"), filepath.Join(real, "outside", "acme", "sample"))
-			want := `resolve: loading package registry:"":"acme/sample": ` + reason
 			if frozen {
-				want = `frozen install: refusing to extract "acme/sample": ` + reason
-			}
-			if err == nil || err.Error() != want || exitCodeOf(err) != 1 {
-				t.Errorf("runInstall: %v (exit %d)\nwant exit 1: %s", err, exitCodeOf(err), want)
+				want := `frozen install: refusing to extract "acme/sample": ` + reason
+				if err == nil || err.Error() != want || exitCodeOf(err) != 1 {
+					t.Errorf("runInstall: %v (exit %d)\nwant exit 1: %s", err, exitCodeOf(err), want)
+				}
+			} else {
+				// The Oracle's lines (r4-or/gitrefuse/i1.out,
+				// commands/install.py:1948-1957), with no Resolving line.
+				want := " > Installing dependencies from apm.yml...\n" +
+					" x Failed to install APM dependencies: " + reason + "\n" +
+					" i Run with --verbose for detailed diagnostics\n" +
+					" x Install failed after "
+				if !strings.HasPrefix(stdout, want) || !strings.HasSuffix(stdout, "s.\n") || strings.Count(stdout, "\n") != 4 ||
+					!isSilentExit(err) || exitCodeOf(err) != 1 {
+					t.Errorf("runInstall: %v (exit %d), stdout:\n%s\nwant exit 1, stdout:\n%s<t>s.", err, exitCodeOf(err), stdout, want)
+				}
 			}
 			assertTree86(t, root, before)
 		})

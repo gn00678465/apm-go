@@ -62,8 +62,13 @@ func TestRunInstall_SummaryDistinguishesNewFromExisting(t *testing.T) {
 	for _, want := range []string{
 		" + org/monorepo/skills/b\n",
 		" + org/monorepo/skills/a (already in apm.yml)\n",
-		"   + org/monorepo/skills/a\n",
-		"   + org/monorepo/skills/b\n",
+		// A subdirectory package is headed by str(dep_ref), host included,
+		// and "#default" when no ref was asked for (measured with Oracle
+		// 0.33.0: "127.0.0.1/o/m/sub #default @0395c819";
+		// deps/github_downloader.py:1746). The mock loader has no commit.
+		"   + github.com/org/monorepo/skills/a #default\n",
+		"   + github.com/org/monorepo/skills/b #default\n",
+		" > Resolving monorepo-a...\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)

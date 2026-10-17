@@ -273,7 +273,10 @@ func TestInstall_NoManifestNoPackage_Refused(t *testing.T) {
 		root := bootstrapProject(t, "proj")
 		manifestPath := filepath.Join(root, "home", ".apm", "apm.yml")
 		stdout, stderr, code := runCompileCLI(t, "install", "-g")
-		want := " x No " + manifestPath + " found\n" +
+		// r4-or/global: the Oracle announces the scope first
+		// (install/manifest_helpers.py:63-74, commands/install.py:1436).
+		want := " i Installing to user scope (~/.apm/)\n" +
+			" x No " + manifestPath + " found\n" +
 			" i Run 'apm-go install -g <org/repo>' to auto-create + install\n"
 		if code != 1 || stdout != want || stderr != "" {
 			t.Errorf("exit %d, stdout:\n%s\nstderr:\n%s\nwant exit 1, stdout:\n%s", code, stdout, stderr, want)
@@ -318,7 +321,8 @@ func TestInstallGlobal_NoManifest_TargetsPersisted(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("first install: exit %d, stdout:\n%s", code, stdout)
 	}
-	wantHead := " + Created " + manifestPath + "\n" +
+	wantHead := " i Installing to user scope (~/.apm/)\n" +
+		" + Created " + manifestPath + "\n" +
 		" i Targets set: claude, codex (persisted to " + manifestPath + ")\n" +
 		" + Validating 1 package...\n"
 	if !strings.HasPrefix(stdout, wantHead) {

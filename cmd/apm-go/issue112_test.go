@@ -504,7 +504,7 @@ func TestInstall112_RejectedAfterInstall_OtherStaleCleaned(t *testing.T) {
 
 	stdout, code := runCLI86(t, "install")
 
-	if code != 0 || !strings.Contains(stdout, " i Cleaned 1 stale file from _local/dep\n  - .claude/agents/b.md\n") {
+	if code != 0 || !strings.Contains(stdout, " i Cleaned 1 stale file from ./dep\n  - .claude/agents/b.md\n") {
 		t.Errorf("exit %d, stdout:\n%s", code, stdout)
 	}
 	assertNoFile(t, ".claude/agents/b.md")

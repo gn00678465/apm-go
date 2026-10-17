@@ -1,0 +1,7 @@
+{
+  "id": "install-multi-target-rerun",
+  "setup_argv": [["install", "--target", "claude,copilot"]],
+  "argv": ["install", "--target", "claude,copilot"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

@@ -141,7 +141,7 @@ func TestInstallGlobal_StaleCleanup_RemovesAgentSymlink(t *testing.T) {
 	if got := globalStaleRead(t, filepath.Join(home, ".claude", "agents", "keep.md")); got != globalStaleKeepAgent {
 		t.Errorf("keep.md through its symlink = %q, want %q", got, globalStaleKeepAgent)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") {
+	if !strings.Contains(out, "Cleaned 1 stale file from "+src+"\n") {
 		t.Errorf("missing cleaned line:\n%s", out)
 	}
 	if strings.Count(out, ".claude/agents/gone.md\n") != 1 {
@@ -185,7 +185,7 @@ func TestInstallGlobal_StaleCleanup_RemovesWholeSkillSymlink(t *testing.T) {
 	if _, err := os.Lstat(filepath.Dir(skill)); !os.IsNotExist(err) {
 		t.Errorf("empty .claude/skills still present (Lstat err = %v)", err)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") {
+	if !strings.Contains(out, "Cleaned 1 stale file from "+src+"\n") {
 		t.Errorf("missing cleaned line:\n%s", out)
 	}
 	if strings.Count(out, ".claude/skills/demo\n") != 1 || strings.Contains(out, ".claude/skills/demo/SKILL.md") {
@@ -249,7 +249,7 @@ func TestInstallGlobal_StaleCleanup_RemovesGeneratedRegularFile(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(home, ".codex", "agents", "keep.toml")); err != nil {
 		t.Errorf(".codex/agents/keep.toml: %v", err)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") || strings.Count(out, ".codex/agents/gone.toml\n") != 1 {
+	if !strings.Contains(out, "Cleaned 1 stale file from "+src+"\n") || strings.Count(out, ".codex/agents/gone.toml\n") != 1 {
 		t.Errorf("want one cleaned line listing .codex/agents/gone.toml:\n%s", out)
 	}
 	assertGlobalStaleLock(t, home, false, ".codex/agents/gone.toml")
@@ -335,7 +335,7 @@ func TestInstallGlobal_StaleCleanup_AgentAndSkillThenUpToDate(t *testing.T) {
 	}
 	out := globalStaleInstall(t, "claude")
 
-	if !strings.Contains(out, "Cleaned 2 stale files from _local/dep\n") {
+	if !strings.Contains(out, "Cleaned 2 stale files from "+src+"\n") {
 		t.Errorf("missing cleaned line:\n%s", out)
 	}
 	if strings.Count(out, ".claude/agents/gone.md\n") != 1 || strings.Count(out, ".claude/skills/demo\n") != 1 {
@@ -377,7 +377,7 @@ func TestInstallGlobal_StaleCleanup_DeployDirIsUsersOwnSymlink(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(dotfiles, "agents", "gone.md")); !os.IsNotExist(err) {
 		t.Errorf("agents/gone.md still present (Lstat err = %v)", err)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") || strings.Count(out, ".claude/agents/gone.md\n") != 1 {
+	if !strings.Contains(out, "Cleaned 1 stale file from "+src+"\n") || strings.Count(out, ".claude/agents/gone.md\n") != 1 {
 		t.Errorf("want one cleaned line listing .claude/agents/gone.md:\n%s", out)
 	}
 	if got := globalStaleRead(t, filepath.Join(home, ".claude", "agents", "keep.md")); got != globalStaleKeepAgent {
@@ -417,7 +417,7 @@ func TestInstallGlobal_StaleCleanup_DeployDirIsUsersSymlinkIntoGlobalDir(t *test
 	if _, err := os.Lstat(filepath.Join(dotfiles, "agents", "gone.md")); !os.IsNotExist(err) {
 		t.Errorf("agents/gone.md still present (Lstat err = %v)", err)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") || strings.Count(out, ".claude/agents/gone.md\n") != 1 {
+	if !strings.Contains(out, "Cleaned 1 stale file from "+src+"\n") || strings.Count(out, ".claude/agents/gone.md\n") != 1 {
 		t.Errorf("want one cleaned line listing .claude/agents/gone.md:\n%s", out)
 	}
 	for _, line := range strings.Split(out, "\n") {

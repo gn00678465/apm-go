@@ -69,6 +69,44 @@ type DeployResult struct {
 	// CommandNotes holds, for each target in turn, what the deploy of a
 	// prompt as a command has to tell, in the order the prompts deployed.
 	CommandNotes []CommandNote
+	// Conflicts holds the entries of Diags that name a primitive another
+	// one of the same name shadowed. install reports Shadowed in their
+	// place, as the Oracle's count of skipped files.
+	Conflicts []string
+	// MCPDiags holds the entries of Diags about MCP servers. The Oracle
+	// reports those in its MCP block, not among the diagnostics whose
+	// absence install marks with an empty line (install/summary.py:115-118).
+	MCPDiags []string
+	// Shadowed holds, for each target, each dependency primitive that the
+	// primitive of another dependency, or another of its own, kept off that
+	// target by name.
+	Shadowed []Shadowed
+	// RootSkills holds, by DepKey, the skill of each package whose root is a
+	// skill.
+	RootSkills map[string]RootSkill
+}
+
+// RootSkill is the skill of a package whose root is a skill. Created is
+// whether its directory on the first target by name that deploys it was
+// absent before the Run: the Oracle's skill_created
+// (integration/skill_integrator.py:1150-1156).
+type RootSkill struct {
+	Name    string
+	Created bool
+}
+
+// Shadowed is a primitive of the dependency DepKey that lost its name on a
+// target to Winner.
+type Shadowed struct {
+	DepKey string
+	Type   PrimitiveType
+	Name   string
+	// Paths are the deploy-root-relative paths the target holds for the
+	// winner: the file it wrote, or for a skill its directory.
+	Paths []string
+	// Same is a single-file primitive whose source has the winner's bytes:
+	// what it would write is on disk already.
+	Same bool
 }
 
 // RejectedInstructionError is an instruction whose destination a symlink takes
@@ -404,11 +442,16 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		Diags:         allDiags,
 		FailedBuckets: failedBuckets,
 		SkippedDeps:   skippedDeps,
+		MCPDiags:      slices.Clone(mcpDiags),
 	}
 	for name := range declaredMCP {
 		result.DeclaredMCPServers = append(result.DeclaredMCPServers, name)
 	}
 	sort.Strings(result.DeclaredMCPServers)
+
+	result.RootSkills = rootSkillsCreated(targets, winnersByTarget, deployDir)
+	// written holds, by target, the files each primitive deployed there.
+	written := make(map[string]map[primitiveID][]string, len(targets))
 
 	deployedSkills := make(map[string]bool)
 	// Track which primitive first wrote each destination path, to warn on
@@ -495,6 +538,11 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				result.FailedBuckets[p.DepKey] = true
 				continue
 			}
+
+			if written[target] == nil {
+				written[target] = make(map[primitiveID][]string)
+			}
+			written[target][idOf(p)] = files
 
 			// Deduplicate skill file writes across targets: convergent
 			// targets (codex/copilot/opencode/...) share the same canonical
@@ -618,10 +666,13 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			}
 			files, written, mcpWriteDiags, err := mcpAdapter.WriteMCP(mcpWinners, deployDir)
 			if err != nil {
-				result.Diags = append(result.Diags, fmt.Sprintf("write mcp config for %s failed: %v", target, err))
+				d := fmt.Sprintf("write mcp config for %s failed: %v", target, err)
+				result.Diags = append(result.Diags, d)
+				result.MCPDiags = append(result.MCPDiags, d)
 				continue
 			}
 			result.Diags = append(result.Diags, mcpWriteDiags...)
+			result.MCPDiags = append(result.MCPDiags, mcpWriteDiags...)
 			for _, f := range files {
 				hash, err := lockfile.HashDeployedFile(filepath.Join(deployDir, f))
 				if err != nil {
@@ -642,6 +693,9 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			}
 		}
 	}
+
+	result.Conflicts = conflictDiags
+	result.Shadowed = shadowedPrimitives(targets, ordered, targetSubsets, winnersByTarget, written)
 
 	// Sort deployed files within each dep for determinism
 	for _, dr := range result.PerDep {

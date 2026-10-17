@@ -86,13 +86,23 @@ func assertTransferRecord(t *testing.T, dep *lockfile.LockedDep, files []string,
 // records (adopted). A local package is counted on every run, as the Oracle
 // counts it, so the last line is "Installed", not "No changes". A skill is
 // counted integrated on every run, so its line is passed in.
-func assertTransferSteadyInstall(t *testing.T, out, lastBlockLine string) {
+func assertTransferSteadyInstall(t *testing.T, out string, global bool, lastBlockLine string) {
 	t.Helper()
-	want := " > Installing dependencies from apm.yml...\n" +
-		" i Targets: claude  (source: --target flag)\n" +
+	// A project install names its targets; a user-scope one announces the
+	// scope in their place, and always has a <project root> block
+	// (r4-or/global2, install/manifest_helpers.py:63-74). Nothing is
+	// diagnosed, so an empty line comes before the last one
+	// (install/summary.py:115-118).
+	head := " > Installing dependencies from apm.yml...\n i Targets: claude  (source: --target flag)\n"
+	root := ""
+	if global {
+		head = " i Installing to user scope (~/.apm/)\n > Installing dependencies from apm.yml...\n"
+		root = "   + <project root> (local)\n  |-- (files unchanged)\n"
+	}
+	want := head +
 		"   + ./b (local)\n" +
 		"  |-- 1 rule(s) adopted -> .claude/rules/\n" +
-		lastBlockLine +
+		lastBlockLine + root + "\n" +
 		" + Installed 1 APM dependency in "
 	if !strings.HasPrefix(out, want) || strings.Count(out, "\n") != strings.Count(want, "\n")+1 {
 		t.Errorf("install after the uninstall =\n%s\nwant\n%s<elapsed>s.", out, want)
@@ -227,7 +237,7 @@ func TestUninstallGlobal_SharedRuleAndSkillOwner_HandsBothToSurvivor(t *testing.
 
 	before := globalStaleRead(t, lockPath)
 	again := globalStaleInstall(t, "claude")
-	assertTransferSteadyInstall(t, again, "  |-- 1 skill(s) integrated -> .claude/skills/\n")
+	assertTransferSteadyInstall(t, again, true, "  |-- 1 skill(s) integrated -> .claude/skills/\n")
 	if got := globalStaleRead(t, lockPath); got != before {
 		t.Errorf("install after the uninstall rewrote the lock:\n%s\nwas\n%s", got, before)
 	}
@@ -305,7 +315,7 @@ func TestUninstall_SharedRuleOwner_NextInstallChangesNothing(t *testing.T) {
 		}
 	})
 
-	assertTransferSteadyInstall(t, out, "  |-- (files unchanged)\n")
+	assertTransferSteadyInstall(t, out, false, "  |-- (files unchanged)\n")
 	if got := globalStaleRead(t, lockPath); got != before {
 		t.Errorf("install rewrote the lock:\n%s\nwas\n%s", got, before)
 	}

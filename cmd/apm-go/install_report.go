@@ -34,6 +34,34 @@ type installRun struct {
 	// packages also when the lock does not change (a lock left from an
 	// earlier install), as in the Oracle.
 	manifestCreated bool
+	// global is a user-scope install (install -g).
+	global, verbose bool
+	// manifestTargets: apm.yml declares targets, for which the Oracle's
+	// lockfile reconciliation has two info diagnostics whenever a package or
+	// the project's own content is integrated (install/manifest_reconcile.py:
+	// 438-487); apm-go does not print them (ruling R10).
+	manifestTargets bool
+	// fetched holds the key of each package this run fetched
+	// (fetchedDirsLoader); every other one is cached.
+	fetched map[string]bool
+	// diagnosed: a warning the Oracle collects as a diagnostic was printed.
+	diagnosed bool
+}
+
+func (r *installRun) noteDiagnostic() {
+	if r != nil {
+		r.diagnosed = true
+	}
+}
+
+// declaredPath is the path apm.yml declares a local package by, when key is
+// one.
+func (r *installRun) declaredPath(key string) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	declared, ok := r.localDeclared[key]
+	return declared, ok
 }
 
 func (r *installRun) elapsed() string {
@@ -60,7 +88,7 @@ func (e *installRefusedError) Unwrap() error { return e.err }
 // rejectedInstall prints the header of the package whose instruction the
 // deploy refused, and for the project's own content the Oracle's line about
 // it (install/phases/integrate.py:396-407).
-func (r *installRun) rejectedInstall(e *deploy.RejectedInstructionError, result *resolver.ResolutionResult) error {
+func (r *installRun) rejectedInstall(e *deploy.RejectedInstructionError, result *resolver.ResolutionResult, newLock, oldLock *lockfile.Lockfile) error {
 	refused := &installRefusedError{run: r, err: e}
 	if e.DepKey == "" {
 		ux.SuccessAt(os.Stdout, "  ", "<project root> (local)")
@@ -70,7 +98,7 @@ func (r *installRun) rejectedInstall(e *deploy.RejectedInstructionError, result 
 	}
 	for _, dep := range result.Deps {
 		if dep.Key == e.DepKey {
-			ux.SuccessAt(os.Stdout, "  ", "%s", r.installBlockLabel(dep))
+			ux.SuccessAt(os.Stdout, "  ", "%s", r.blockHeader(dep, newLock, oldLock))
 		}
 	}
 	// A git package the Oracle names "from cached package" also when this
@@ -105,11 +133,60 @@ var installKindLabels = map[string]string{
 	"file":        "file(s)",
 }
 
-// printInstallBlock prints one package of the install summary: its header and
-// its printInstallBlockLines. It returns the number of integrated files.
-func printInstallBlock(label string, files []string, hashes, before map[string]string) int {
-	ux.SuccessAt(os.Stdout, "  ", "%s", label)
-	return printInstallBlockLines(files, hashes, before)
+// printBlocks prints the package blocks of the install summary as the
+// Oracle does (install/phases/integrate.py:614-674): the header of every
+// listed dependency, then the lines of each in the same order, then the
+// project's own content, header and lines together. It returns the count of
+// the last line: each local package, each package this run fetched, and the
+// project's own content when a file of it was integrated
+// (install/sources.py:74,395, install/phases/integrate.py:385).
+func (r *installRun) printBlocks(result *resolver.ResolutionResult, dr *deploy.DeployResult, oldLock, newLock *lockfile.Lockfile, before map[string]string, skipped, listed map[string]bool) int {
+	adopted := map[string][]string{}
+	for _, s := range dr.Shadowed {
+		if s.Same {
+			adopted[s.DepKey] = append(adopted[s.DepKey], s.Paths...)
+		}
+	}
+	files := func(key string) blockFiles {
+		b := blockFiles{adopted: adopted[key]}
+		if d, ok := dr.PerDep[key]; ok {
+			b.files, b.hashes = d.Files, d.Hashes
+		}
+		if rs, ok := dr.RootSkills[key]; ok {
+			b.rootSkill = &rs
+		}
+		return b
+	}
+	count := 0
+	var shown []resolver.ResolvedDep
+	for _, dep := range result.Deps {
+		if !listed[dep.Key] {
+			continue
+		}
+		shown = append(shown, dep)
+		ux.SuccessAt(os.Stdout, "  ", "%s", r.blockHeader(dep, newLock, oldLock))
+		if _, local := r.localDeclared[dep.Key]; local || r.fetched[dep.Key] {
+			count++
+		}
+	}
+	for _, dep := range shown {
+		// One whose targets: has no active target gets the header alone
+		// (install/services.py:321).
+		if !skipped[dep.Key] {
+			printSummaryLines(files(dep.Key), before, r.verbose)
+		}
+	}
+	// The Oracle integrates the project's own content when the source root
+	// has a .apm directory, ~/.apm itself for the user scope
+	// (install/phases/local_content.py:45-56).
+	_, deployed := dr.PerDep[""]
+	if info, err := os.Stat(".apm"); r.global || deployed || len(dr.RejectedPaths[""]) > 0 || (err == nil && info.IsDir()) {
+		ux.SuccessAt(os.Stdout, "  ", "<project root> (local)")
+		if printSummaryLines(files(""), before, r.verbose) > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 // printInstallBlockLines prints one line per kind of deployed file, the
@@ -188,17 +265,6 @@ func containsString(items []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// installBlockLabel names a dependency in the install summary: a local
-// package by its declared path, as the Oracle does; any other by its key and
-// version, which was not compared against the Oracle (no remote was
-// reachable).
-func (r *installRun) installBlockLabel(dep resolver.ResolvedDep) string {
-	if declared, ok := r.localDeclared[dep.Key]; ok {
-		return declared + " (local)"
-	}
-	return dep.Key + depVersionLabel(dep)
 }
 
 // dependencyName is the Oracle's get_unique_key (models/dependency/
@@ -311,9 +377,14 @@ type installOutcome struct {
 	newLock, existingLock       *lockfile.Lockfile
 	existingNode                *yamllib.Node
 	apmInstalled, mcpConfigured int
-	apmPhase                    bool
-	skippedDeps                 []deploy.SkippedDep
-	commandNotes                []deploy.CommandNote
+	// apmPhase: a dependency or the project's own content was integrated.
+	apmPhase     bool
+	skippedDeps  []deploy.SkippedDep
+	commandNotes []deploy.CommandNote
+	shadowed     []deploy.Shadowed
+	// listed holds the keys of the packages the summary lists ("" for the
+	// project's own content).
+	listed map[string]bool
 }
 
 // finish writes the lock and apm.yml of an install and prints its last lines.
@@ -357,43 +428,82 @@ func (r *installRun) finish(o installOutcome) error {
 	if o.apmInstalled > 0 {
 		printCompileHint(o.targets, o.result)
 	}
-	if !o.apmPhase {
-		// The Oracle leaves one empty line when it had no package and no
-		// project content to integrate.
-		ux.Plain(os.Stdout, "")
-	}
-	for _, sd := range o.skippedDeps {
-		// The Oracle's diagnostic (install/target_filter.py:62-67), printed
-		// with the other warnings before the last line.
-		ux.WarnAt(os.Stdout, "  ", "[%s] Per-dependency targets [%s] do not overlap active install targets; skipping",
-			r.dependencyName(sd.Key, o.result), strings.Join(sd.Targets, ", "))
-	}
-	printCommandNotes(o.commandNotes, o.result)
+	r.printDiagnostics(o)
 	r.printInstallSummary(o.apmInstalled, o.mcpConfigured)
 	return nil
 }
 
+// printDiagnostics prints the Oracle's diagnostics before the last line, by
+// category: collisions, then warnings, then infos (utils/diagnostics.py:
+// 39-50,334-374), each warning in the order the Oracle collects it. With
+// none it leaves one empty line (install/summary.py:115-118); a manifest
+// with targets has the two infos of ruling R10, so it gets no empty line
+// either.
+func (r *installRun) printDiagnostics(o installOutcome) {
+	diagnosed := r.diagnosed
+	listed := o.listed
+	if n := collisionCount(o.shadowed, listed, o.existingLock); n > 0 {
+		// Deliberate deviation by owner ruling (issue #122 comment
+		// 6232421913): the Oracle's second line, "Use 'apm install --force'
+		// to overwrite" (utils/diagnostics.py:459-463), is not printed;
+		// apm-go's install --force overwrites a conflicting --mcp entry only.
+		ux.WarnAt(os.Stdout, "  ", "%d %s skipped -- local files exist, not managed by APM", n, pluralWord(n, "file", "files"))
+		diagnosed = true
+	}
+	for _, sd := range o.skippedDeps {
+		if !listed[sd.Key] {
+			continue
+		}
+		// install/target_filter.py:62-67.
+		ux.WarnAt(os.Stdout, "  ", "[%s] Per-dependency targets [%s] do not overlap active install targets; skipping",
+			r.dependencyName(sd.Key, o.result), strings.Join(sd.Targets, ", "))
+		diagnosed = true
+	}
+	var notes []deploy.CommandNote
+	for _, n := range o.commandNotes {
+		if listed[n.DepKey] {
+			notes = append(notes, n)
+		}
+	}
+	if printCommandNotes(notes, o.result, false) {
+		diagnosed = true
+	}
+	if line := r.unpinnedLine(o.result, listed); line != "" {
+		ux.WarnAt(os.Stdout, "  ", "%s", line)
+		diagnosed = true
+	}
+	if printCommandNotes(notes, o.result, true) {
+		diagnosed = true
+	}
+	if !diagnosed && !(r.manifestTargets && o.apmPhase) {
+		ux.Plain(os.Stdout, "")
+	}
+}
+
 // printCommandNotes prints what deploying prompts as commands had to tell,
 // as the Oracle's diagnostics summary does (utils/diagnostics.py:39-50,
-// 486-519): every warning, then every info, each in the order of the install
-// blocks.
-func printCommandNotes(notes []deploy.CommandNote, result *resolver.ResolutionResult) {
+// 486-519), in the order of the install blocks: it prints the infos, or the warnings, of notes and reports
+// whether it printed any.
+func printCommandNotes(notes []deploy.CommandNote, result *resolver.ResolutionResult, info bool) bool {
 	rank := map[string]int{"": len(result.Deps)}
 	for i, dep := range result.Deps {
 		rank[dep.Key] = i
 	}
 	sorted := slices.Clone(notes)
 	slices.SortStableFunc(sorted, func(a, b deploy.CommandNote) int { return rank[a.DepKey] - rank[b.DepKey] })
+	printed := false
 	for _, n := range sorted {
-		if !n.Info {
+		if n.Info != info {
+			continue
+		}
+		printed = true
+		if info {
+			ux.InfoAt(os.Stdout, "  ", "%s", commandNoteText(n))
+		} else {
 			ux.WarnAt(os.Stdout, "  ", "%s", commandNoteText(n))
 		}
 	}
-	for _, n := range sorted {
-		if n.Info {
-			ux.InfoAt(os.Stdout, "  ", "%s", commandNoteText(n))
-		}
-	}
+	return printed
 }
 
 // commandNoteText is a note with the package prefix the Oracle gives a

@@ -174,7 +174,7 @@ func TestInstallGlobal_KeptSkillDirDoesNotStopCleanupOfAnotherSkill(t *testing.T
 	if _, err := os.Lstat(other); !os.IsNotExist(err) {
 		t.Errorf(".claude/skills/other still present (Lstat err = %v)", err)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") || strings.Count(out, ".claude/skills/other\n") != 1 {
+	if !strings.Contains(out, "Cleaned 1 stale file from "+src+"\n") || strings.Count(out, ".claude/skills/other\n") != 1 {
 		t.Errorf("want one cleaned line listing .claude/skills/other:\n%s", out)
 	}
 	if strings.Count(out, keptSkillWarning) != 1 {

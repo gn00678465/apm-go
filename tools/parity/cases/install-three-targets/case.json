@@ -1,0 +1,6 @@
+{
+  "id": "install-three-targets",
+  "argv": ["install", "--target", "claude,copilot,opencode"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}
