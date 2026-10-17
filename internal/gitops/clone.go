@@ -80,10 +80,10 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 	}
 
 	if ref.VirtualPath != "" && ref.VirtualType == "subdirectory" {
-		return r.cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, ref.VirtualPath)
+		return r.cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, ref.RepoURL, ref.VirtualPath)
 	}
 
-	if err := r.cloneRepo(cloneURL, installDir, resolvedRef); err != nil {
+	if err := r.cloneRepo(cloneURL, installDir, resolvedRef, ref.RepoURL); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
 	}
 
@@ -94,7 +94,7 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 // moves only the VirtualPath subdirectory into installDir. This mirrors the
 // Oracle's download_subdirectory_package (github_downloader.py:1363):
 // clone to temp, locate subdir, copy contents to target, delete temp.
-func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, virtualPath string) (*manifest.Manifest, error) {
+func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, repo, virtualPath string) (*manifest.Manifest, error) {
 	tmpDir, err := os.MkdirTemp("", "apm-subdir-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir for subdirectory clone: %w", err)
@@ -102,7 +102,7 @@ func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolved
 	defer os.RemoveAll(tmpDir)
 
 	tmpClone := filepath.Join(tmpDir, "repo")
-	if err := r.cloneRepo(cloneURL, tmpClone, resolvedRef); err != nil {
+	if err := r.cloneRepo(cloneURL, tmpClone, resolvedRef, repo); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
 	}
 
@@ -196,6 +196,15 @@ func copyDirContents(src, dst string) error {
 // versus a fresh install.
 func checkoutMatchesRef(installDir, resolvedRef string) bool {
 	if resolvedRef == "" || !pinsAutocrlfFalse(installDir) {
+		return false
+	}
+	// An apm-go before issue #124 cloned a commit ref that is not 40
+	// characters with `--branch <ref>`, which leaves HEAD on a local branch
+	// of exactly that name; the ref names a commit now. The comparison is
+	// exact because git matched --branch against the remote's ref name
+	// exactly. A checkout on another branch, such as a frozen install's
+	// commit over a `ref: main` clone, is judged by its commit as before.
+	if IsCommitRef(resolvedRef) && CheckedOutBranch(installDir) == resolvedRef {
 		return false
 	}
 	head, err := ResolveCommit(installDir)
@@ -298,9 +307,11 @@ func (r *RealPackageLoader) defaultHost() string {
 	return "github.com"
 }
 
-func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
-	if isCommitSHA(ref) {
-		return r.cloneRepoAtCommit(url, dir, ref)
+// cloneRepo clones url into dir at ref. repo is the dependency's repository
+// path, which the Oracle names when a commit ref does not resolve.
+func (r *RealPackageLoader) cloneRepo(url, dir, ref, repo string) error {
+	if IsCommitRef(ref) {
+		return r.cloneRepoAtCommit(url, dir, ref, repo)
 	}
 
 	args := []string{"-c", autocrlfOff, "clone", "-c", autocrlfOff, "--depth", "1"}
@@ -322,13 +333,14 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref string) error {
 	return nil
 }
 
-// cloneRepoAtCommit clones a repo pinned to an exact commit SHA. A shallow
-// `git clone --depth 1 --branch <ref>` only accepts a branch/tag name -- git
-// rejects a raw SHA with "Remote branch <sha> not found in upstream origin"
-// -- so a SHA-shaped ref needs a full clone (fetches all branch/tag history,
-// so the commit is guaranteed present if it's reachable from any of them)
-// followed by an explicit checkout instead of the shallow-clone shorthand.
-func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, commit string) error {
+// cloneRepoAtCommit is the Oracle's commit path (deps/git_reference_resolver.py:
+// 559-571, utils/git_env.py:1479-1501): a full clone, `rev-parse --verify
+// <ref>^{commit}` in it, then a detached checkout of the full commit. A name
+// in refs comes before a commit prefix there, so a tag of that name wins and
+// a branch other than the default one does not; a ref that resolves to
+// nothing fails, and is not tried as a branch. The short ref is never given
+// to checkout, whose DWIM would make a local branch of origin/<ref>.
+func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, ref, repo string) error {
 	if err := ValidateURLRewriteSafety(url); err != nil {
 		return err
 	}
@@ -336,7 +348,16 @@ func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, commit string) error {
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
 	}
-	checkoutCmd := gitCommand("-c", autocrlfOff, "checkout", commit)
+	revParse := gitCommand("rev-parse", "--verify", ref+"^{commit}")
+	revParse.Dir = dir
+	var stderr strings.Builder
+	revParse.Stderr = &stderr
+	out, err := revParse.Output()
+	if err != nil {
+		return errors.Join(fmt.Errorf("Could not resolve commit '%s' in repository %s: %s",
+			ref, repo, strings.TrimSpace(SanitizeGitOutput(stderr.String()))), os.RemoveAll(dir))
+	}
+	checkoutCmd := gitCommand("-c", autocrlfOff, "checkout", "--detach", strings.TrimSpace(string(out)))
 	checkoutCmd.Dir = dir
 	if out, err := checkoutCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
@@ -344,10 +365,11 @@ func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, commit string) error {
 	return nil
 }
 
-// isCommitSHA reports whether ref is a 40-character hex string (a full git
-// SHA-1 commit hash), as opposed to a branch or tag name.
-func isCommitSHA(ref string) bool {
-	if len(ref) != 40 {
+// IsCommitRef reports whether ref names a commit for the Oracle: 7 to 40 hex
+// characters in either case (deps/git_reference_resolver.py:553,
+// models/dependency/types.py:65-67).
+func IsCommitRef(ref string) bool {
+	if len(ref) < 7 || len(ref) > 40 {
 		return false
 	}
 	for _, c := range ref {

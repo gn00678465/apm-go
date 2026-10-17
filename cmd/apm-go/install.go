@@ -664,6 +664,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		if err := lockfile.CheckFrozenInstall(m, existingLock); err != nil {
 			return err
 		}
+		if err := checkFrozenCommitPins(m.Name, existingLock); err != nil {
+			return err
+		}
 
 		// (A) Disk-only integrity — verified from lockfile + disk, before any
 		// network fetch or source materialization, without requiring apm.yml.
