@@ -1,3 +1,4 @@
 @AGENTS.md
 @PRODUCT.md
 @ARCHITECTURE.md
+@LESSONS.md

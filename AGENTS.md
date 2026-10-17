@@ -10,9 +10,11 @@ Three files are the project's long-term memory. Read the relevant one before des
 
 - **`PRODUCT.md`** — product facts: users, purpose, positioning, operating constraints, output contract, and the **Terminal UI design** (status-symbol vocabulary, `init` / `plugin init` frame rules). Any user-visible output must match it.
 - **`ARCHITECTURE.md`** — package layout, layer responsibilities, the internal import graph and its dependency rules, the data flows (install, compile, pack, marketplace, init, error/exit-code path), and cross-cutting concerns. New code goes in the layer that owns the concern; a new import edge that the graph forbids is a design change and needs a ruling.
-- **`AGENTS.md`** (this file) — engineering rules and testing patterns.
+- **`AGENTS.md`** (this file) — engineering rules, testing patterns, and the rules promoted from `LESSONS.md`.
 
 Each topic lives in exactly one of them; reference, do not restate. When a change alters a fact recorded there, update that file in the same change.
+
+**`LESSONS.md`** is the review log, not a fourth source of rules: it records what went wrong in merged work, with evidence and the days it was seen. Read it before changing code. A lesson becomes a rule only when it moves into "Promoted rules" below.
 
 ## GitNexus — code intelligence
 
@@ -109,3 +111,23 @@ Tests use `t.TempDir()` for filesystem isolation. No global test fixtures — ea
 Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depend on conformance spec files under `spec/conformance/` — runtime inputs tracked in git, not generated. `TestParseDepString_AbsolutePath` in `internal/manifest` skips its two windows-drive-letter subtests outside `GOOS=windows` (ticket 09); everything else in it runs everywhere.
 
 `go test ./...` passing is not the parity gate — `.github/workflows/parity.yml` runs `tools/parity` against the latest stable upstream release of the Oracle on every push/PR, resolving the version when the job runs, and is the authority on Oracle byte-for-byte parity; `go test` only verifies apm-go's own Go-level correctness (ticket 09).
+
+## Promoted rules
+
+Lessons seen on 3 separate days in `LESSONS.md`. Every PR description and every review checks each rule; a PR that breaks one is not ready.
+
+1. **Run every check this machine can run before you list it under "Not verified".** The Windows sandbox, a local fake registry, a local-directory marketplace and an installed agent CLI all count. Before writing "cannot be verified here", try it once and write the command that failed; a PR whose Not verified section lists a check this machine can run is not ready for review. (Promoted 2026-10-17.)
+2. **When a PR changes what an existing user sees after upgrading, add one line for it to the release-notes issue of the next tag in the same step that opens the PR**; open that issue (`Release notes: vX.Y.Z`) when none exists. A PR's Risks section alone is not a record. (Promoted 2026-10-17.)
+
+## Lessons review
+
+Run a review after a board card's PR merges, or at the end of a day with merges. It covers `<reviewed-through>..origin/main`, the cursor on the first line of `LESSONS.md`.
+
+1. Read the range: commits, each PR's body and comments, `board log <issue> --project apm-go` of each card, and issues opened, reopened or corrected in the range.
+2. Look for work that had to be fixed again, work that should not have merged, verification that was too thin, and work done right that is worth repeating.
+3. Write each finding as a lesson: a rule an agent can follow (imperative), why, evidence, an optional `Done right on <date>: <ref>`, and `Seen N× (<dates>)`. Seen counts separate days (UTC+8); several instances on one day count once. A new instance of an existing lesson adds its evidence and, on a new day, raises the count.
+4. Check every reference before writing it: each sha with `git cat-file -t`, each PR, issue and comment with `gh`, each board event with `board log`. A finding whose evidence cannot be checked is not entered as a lesson.
+5. A lesson seen on 3 separate days moves into "Promoted rules" in the same commit: the rule is added here, and its entry in `LESSONS.md` moves under "Moved to AGENTS.md" with its evidence.
+6. Move the cursor to the reviewed head in the same commit. A review that does not move the cursor is not done.
+7. Land it through a PR titled `lessons: <from>..<to> (<N> PRs)` whose description lists the new lessons, the raised counts and the promotions.
+
