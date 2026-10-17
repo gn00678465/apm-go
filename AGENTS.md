@@ -94,6 +94,8 @@ internal/
 
 **Exit codes.** Commands needing a specific exit code wrap errors with `withExitCode()` in `cmd/apm-go/exitcode.go`; the root error handler unwraps it. Usage errors (the oracle's `click.UsageError`) are 2.
 
+**Merging a PR.** Merge with `gh pr merge <N> --merge --match-head-commit <reviewed head> --delete-branch`, so the head branch is deleted on GitHub in the same step; then remove the local branch and its worktree. A branch whose PR has not merged is not deleted.
+
 **Security scanning.** `internal/security/` is a credential/secret scanner with a policy gate (`ScanPolicy`: block, warn, or report; fail-closed — an unknown policy blocks). Today it runs in two places only: `pack` scans bundled sources under `WarnPolicy` (`internal/pack/bundle/producer.go`), and `audit` scans deployed files and reports critical/warning counts (`cmd/apm-go/audit_content.go`). It is **not** on the install/deploy path; do not describe or rely on it as a pre-deploy gate.
 
 **UX layer.** All terminal output (colors, spinners, prompts, tables) goes through `internal/ux/`, which auto-detects TTY, NO_COLOR, and CI; user-facing text uses the `ux` printers, not `fmt.Print`. The status-symbol vocabulary, the interactive `init` / `plugin init` frame rules, and the rest of the terminal UI design live in `PRODUCT.md` ("Terminal UI design") — the single source; do not restate them here.
