@@ -159,7 +159,7 @@ Seen 1× (2026-10-17)
 
 **Before you write a PR or issue body back from a file, check that the command that produced the file succeeded and that the file is not empty; run every `gh` command with `-R gn00678465/apm-go`.**
 - Outside a git checkout `gh pr view <N>` fails and leaves an empty file, and writing that file back blanks the body. Every card edits the release-notes issue the same way (`gh api -X PATCH ... -F body=@<file>`).
-- Evidence: PR #140's body edit history: empty at 08:41:09Z, restored at 08:41:26Z. In the acting owner's session (`~/.claude/projects/-home-madao-Projects-apm-go/369ffdad-c792-4bb5-b9c7-dd0b8f8c21e1.jsonl`), the command at 08:41:07Z ran `gh pr view 140` without `-R` in a scratch directory (`fatal: not a git repository`) and wrote its output back. The restore and the next edit (08:41:40Z) checked the file's length first.
+- Evidence: PR #140's body edit history: empty at 08:41:09Z, restored at 08:41:26Z, then edited again at 08:41:40Z. The acting owner ran `gh pr view 140` without `-R` in a scratch directory, where it failed with `not a git repository`, and wrote the empty output file back with `gh pr edit --body-file`; the edit at 08:41:40Z checked the file's length first.
 Seen 1× (2026-10-17)
 
 ## Existing rules missed
