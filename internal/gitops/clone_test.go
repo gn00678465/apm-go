@@ -13,7 +13,7 @@ import (
 
 func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", append([]string{"-c", "maintenance.auto=false"}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
@@ -26,9 +26,12 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 	return string(bytes.TrimSpace(out))
 }
 
+// initRepoWithTag makes dir a repository with one commit, pinned to
+// core.autocrlf=false as a checkout apm-go cloned is.
 func initRepoWithTag(t *testing.T, dir, content, tag string) string {
 	t.Helper()
 	gitCmd(t, dir, "init")
+	gitCmd(t, dir, "config", "core.autocrlf", "false")
 	gitCmd(t, dir, "config", "user.name", "test")
 	gitCmd(t, dir, "config", "user.email", "test@test.com")
 	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte(content), 0644); err != nil {
@@ -170,6 +173,7 @@ func TestCheckoutMatchesRef_FalseWhenIgnoredFilePresent(t *testing.T) {
 	// alone, not to HEAD having moved past the tag.
 	dir := t.TempDir()
 	gitCmd(t, dir, "init")
+	gitCmd(t, dir, "config", "core.autocrlf", "false")
 	gitCmd(t, dir, "config", "user.name", "test")
 	gitCmd(t, dir, "config", "user.email", "test@test.com")
 	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("v1"), 0644); err != nil {
@@ -197,6 +201,7 @@ func TestCheckoutMatchesRef_TrueForAnnotatedTag(t *testing.T) {
 	// peel this would always report a false mismatch (safe but wasteful).
 	dir := t.TempDir()
 	gitCmd(t, dir, "init")
+	gitCmd(t, dir, "config", "core.autocrlf", "false")
 	gitCmd(t, dir, "config", "user.name", "test")
 	gitCmd(t, dir, "config", "user.email", "test@test.com")
 	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("v1"), 0644); err != nil {

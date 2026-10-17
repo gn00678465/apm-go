@@ -172,7 +172,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		root = deployDir
 	}
 	for p := range h.owner {
-		if hash, err := lockfile.HashFileBytes(filepath.Join(root, filepath.FromSlash(p))); err == nil {
+		if hash, err := lockfile.HashDeployedFile(filepath.Join(root, filepath.FromSlash(p))); err == nil {
 			h.before[p] = hash
 		}
 		segs := strings.Split(p, "/")
@@ -405,7 +405,7 @@ func (h *uninstallHandover) printBlocks(lock *lockfile.Lockfile, root string) {
 				if hash, ok := h.before[f]; ok {
 					before[f] = hash
 				}
-			} else if hash, err := lockfile.HashFileBytes(filepath.Join(root, filepath.FromSlash(f))); err == nil {
+			} else if hash, err := lockfile.HashDeployedFile(filepath.Join(root, filepath.FromSlash(f))); err == nil {
 				before[f] = hash
 			}
 		}

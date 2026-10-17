@@ -51,7 +51,7 @@ func transformCodexAgent(sourcePath, fileName string) (codexAgentDoc, error) {
 	}
 
 	doc := codexAgentDoc{Name: fileName}
-	text := string(data)
+	text := string(lfText(data))
 	body := text
 	if loc := claudeFrontmatterRE.FindStringSubmatchIndex(text); loc != nil {
 		body = text[loc[1]:]

@@ -459,7 +459,7 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 			return nil, fmt.Errorf("replace %s %s: %w", p.Type, p.Name, err)
 		}
 	}
-	if err := copyFile(p.SrcPath, absDest); err != nil {
+	if err := copyPrimitiveFile(p, absDest); err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
 	return []string{destPath}, nil

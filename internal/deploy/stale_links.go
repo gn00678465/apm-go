@@ -311,16 +311,14 @@ func holdsDeployedContent(deployRoot, full string, lockPaths []string, hashes ma
 		if recordedDir(deployRoot, f, hashes) {
 			continue
 		}
-		actual, err := lockfile.HashFileBytes(filepath.Join(deployRoot, filepath.FromSlash(f)))
+		same, err := lockfile.DeployedFileMatches(filepath.Join(deployRoot, filepath.FromSlash(f)), hashes[f])
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return false, err
 		}
-		_, wantHex, wantErr := lockfile.ParseHashEnvelope(hashes[f])
-		_, gotHex, _ := lockfile.ParseHashEnvelope(actual)
-		if wantErr != nil || wantHex != gotHex {
+		if !same {
 			return false, nil
 		}
 		found = true
