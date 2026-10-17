@@ -330,3 +330,93 @@ func TestInstallGlobal_CopyMode_UninstallHandsOverSharedFile(t *testing.T) {
 		t.Errorf("lock still records the removed package:\n%s", lock)
 	}
 }
+
+// The project's own skill holds a symlink to a file in it and one to a file
+// outside it. A symlink deploy records both through its link to the skill
+// directory; a copy deploy writes each as a file with its target's bytes, so
+// a frozen install on an account that cannot make a symlink restores the
+// lock a symlink deploy wrote, and an install leaves it as it is.
+func TestInstallGlobal_CopyMode_OwnSkillFileLinksMatchSymlinkLock(t *testing.T) {
+	const (
+		data    = "UNCHANGED SOURCE\n"
+		outside = "user notes outside the skill\n"
+	)
+	home, _ := globalStaleScope(t, nil)
+	writeGlobalStaleFile(t, filepath.Join(home, ".apm", "apm.yml"), "name: global\nversion: 1.0.0\n")
+	source := filepath.Join(home, ".apm", ".apm", "skills", "local")
+	writeGlobalStaleFile(t, filepath.Join(source, "SKILL.md"), "---\nname: local\ndescription: d\n---\nbody\n")
+	writeGlobalStaleFile(t, filepath.Join(source, "data.txt"), data)
+	notes := filepath.Join(home, "notes", "o.txt")
+	writeGlobalStaleFile(t, notes, outside)
+	if err := os.Symlink("data.txt", filepath.Join(source, "alias.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(notes, filepath.Join(source, "outside.txt")); err != nil {
+		t.Fatal(err)
+	}
+	setSymlinkProbe(t, true)
+	if out, err := copyModeInstall(t, false, "claude"); err != nil {
+		t.Fatalf("symlink install --global: %v\n%s", err, out)
+	}
+	lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
+	lockBefore := globalStaleRead(t, lockPath)
+	for _, rel := range []string{".claude/skills/local/alias.txt", ".claude/skills/local/outside.txt"} {
+		if !strings.Contains(lockBefore, rel+": sha256:") {
+			t.Fatalf("precondition: the symlink deploy's lock does not record %s:\n%s", rel, lockBefore)
+		}
+	}
+	deployed := filepath.Join(home, ".claude", "skills", "local")
+	if err := os.Remove(deployed); err != nil {
+		t.Fatal(err)
+	}
+
+	setSymlinkProbe(t, false)
+	out, err := copyModeInstall(t, true, "claude")
+
+	if err != nil {
+		t.Fatalf("frozen install --global: %v\n%s", err, out)
+	}
+	assertRegularFile(t, filepath.Join(deployed, "alias.txt"), data)
+	assertRegularFile(t, filepath.Join(deployed, "outside.txt"), outside)
+	assertRegularFile(t, filepath.Join(deployed, "data.txt"), data)
+	if got := globalStaleRead(t, lockPath); got != lockBefore {
+		t.Errorf("lock changed by the frozen install:\n%s\nwant:\n%s", got, lockBefore)
+	}
+
+	if out, err := copyModeInstall(t, false, "claude"); err != nil {
+		t.Fatalf("copy install --global: %v\n%s", err, out)
+	}
+	if got := globalStaleRead(t, lockPath); got != lockBefore {
+		t.Errorf("lock changed by the copy install:\n%s\nwant:\n%s", got, lockBefore)
+	}
+}
+
+// A symlink in the project's own skill that leads to a directory, or
+// dangles, is neither written nor recorded by a copy deploy.
+func TestInstallGlobal_CopyMode_OwnSkillDirAndDanglingLinksSkipped(t *testing.T) {
+	setSymlinkProbe(t, false)
+	home, _ := globalStaleScope(t, nil)
+	writeGlobalStaleFile(t, filepath.Join(home, ".apm", "apm.yml"), "name: global\nversion: 1.0.0\n")
+	source := filepath.Join(home, ".apm", ".apm", "skills", "local")
+	writeGlobalStaleFile(t, filepath.Join(source, "SKILL.md"), "---\nname: local\ndescription: d\n---\nbody\n")
+	writeGlobalStaleFile(t, filepath.Join(home, "notes", "n.md"), "notes\n")
+	if err := os.Symlink(filepath.Join(home, "notes"), filepath.Join(source, "dir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing.txt", filepath.Join(source, "dangling.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := copyModeInstall(t, false, "claude"); err != nil {
+		t.Fatalf("install --global: %v\n%s", err, out)
+	}
+
+	deployed := filepath.Join(home, ".claude", "skills", "local")
+	assertRegularFile(t, filepath.Join(deployed, "SKILL.md"), "")
+	for _, name := range []string{"dir", "dangling.txt"} {
+		if _, err := os.Lstat(filepath.Join(deployed, name)); !os.IsNotExist(err) {
+			t.Errorf("%s deployed (Lstat err = %v)", name, err)
+		}
+		assertGlobalStaleLock(t, home, false, ".claude/skills/local/"+name)
+	}
+}
