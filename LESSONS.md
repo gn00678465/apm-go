@@ -1,4 +1,4 @@
-<!-- reviewed-through: 456df11 (2026-10-17 11:49 +0800) -->
+<!-- reviewed-through: 4fb095a (2026-10-17 12:37 +0800) -->
 
 # Lessons
 
@@ -13,6 +13,19 @@ Rules and lessons differ in status:
 - A lesson seen on 3 separate days is promoted. The rule goes into AGENTS.md "Promoted rules"; the entry and its evidence move to "Moved to AGENTS.md" below and stay there as the record.
 
 How to run a review is in AGENTS.md "Lessons review". Findings about the board tooling itself are not entered here.
+
+## Review of 2026-10-17 11:49 to 2026-10-17 12:37 (+0800)
+
+Range `456df11..4fb095a`: 2 merged PRs (#135, #136), 5 commits (3 non-merge, 2 merges), 7 files changed. No tag. PR #135 is the previous review and had no card. PR #136 came from card 116: one stop on rule 1 for the Windows effect of `godebug winsymlink=0` on every symlink check (board 116 event 3546), ruled in issue #116 comment 6229460753; one question about a deviation that ruling did not name (event 3558), ruled in comment 6229603360; a pass on the first review (event 3579).
+
+What went wrong: nothing in this range had to be fixed again, and no merged change was found broken.
+
+Done right:
+
+- The deviation lesson was followed. The Windows runs found a third case where apm-go is stricter than Oracle 0.33.0 (`compile` on a junction in a dependency that leaves the package). The implementer stopped with `board ask` (event 3558), and `cef28e5` wrote it into PRODUCT.md only after comment 6229603360 ruled it.
+- Promoted rule 2: PR #136 was opened at 04:29:30Z and its line was added to issue #133 at 04:29:42Z (the issue's edit history).
+- Promoted rule 1: PR #136 has no Not verified section. The Windows, Oracle 0.33.0 and lock-upgrade runs are under Verified.
+- The Windows lesson: PR #136 ran 25 scenarios in the Windows sandbox, each with a junction and with a symlink, on main, the branch and Oracle 0.33.0, and reproduced the deletions on main. The reviewer ran them again on a new build (board 116 events 3575-3578).
 
 ## Review of 2026-10-17 07:08 to 2026-10-17 11:49 (+0800)
 
@@ -49,30 +62,31 @@ Done right: the Windows and registry checks were run before the merge and posted
 **When a reviewer names one path that breaks a rule, list every path that rests on the same premise, fix them all in the same round, and write the list in the round's report.**
 - A fix that covers only the case the reviewer named lets the next review find the next case. Each card below needed three rounds, and #70's intervention says its rules "only covered the case in front of it".
 - Evidence: board 64 events 1884, 1907 (self-copy check: final destination, then source through the destination link); board 86 events 2141, 2165, 2201 (cleanup outside root, then write through a final symlink, then hand-over through a skill symlink); board 70 events 2412, 2437, 2460, intervene 2463; board 112 events 3281, 3304, 3328, intervene 3331 ("every failure came from the same premise: the owner of a path is the bucket that deploys it this run").
-- Done right on 2026-10-16: after the `use_skill` intervention, board 112 event 3351 passed on the first round.
+- Done right on 2026-10-16: after the `use_skill` intervention, board 112 event 3351 passed on the first round. Done right on 2026-10-17: card 116 listed every check built on resolving symlinks before the first round (board 116 event 3546), fixed them all with one `go.mod` setting, named them in ARCHITECTURE.md "Windows links" (`cef28e5`), and passed on the first review (event 3579).
 Seen 2× (2026-10-15, 2026-10-16)
 
 **Write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line, and write what PRODUCT.md says only with the item quoted.**
 - Issue bodies, comments and PRODUCT.md lines that stated the Oracle's behavior from memory were wrong, and each one sent a card or a reviewer to disprove it.
 - Evidence: issue #89 body on what the Oracle deploys, corrected in issue #89 comment 6187796986; issue #67 exit code, corrected in issue #67 comment 6186847177; issue #112 body "PRODUCT.md has no rule for rule files", corrected in issue #112 comment 6215906800 and issue #88 comment 6215726615; `00b5975` comment and PRODUCT.md "Oracle removes registry `.git`", refuted by board 113 event 3391 and fixed in `300568e`; `1b84146` "as the Oracle prints them" (2026-10-14), corrected by `eb3de05`.
-- Done right on 2026-10-15: the #67 and #89 investigations measured the Oracle and corrected the issue before any code was written. Done right on 2026-10-17: `ea217bf` cites the Oracle's `utils/github_host.py:437-532` and `reference.py:593-595,1690-1694`, and PR #134 Verified compares the lock fields of the https port cases with an Oracle 0.33.0 run.
+- Done right on 2026-10-15: the #67 and #89 investigations measured the Oracle and corrected the issue before any code was written. Done right on 2026-10-17: `ea217bf` cites the Oracle's `utils/github_host.py:437-532` and `reference.py:593-595,1690-1694`, and PR #134 Verified compares the lock fields of the https port cases with an Oracle 0.33.0 run; the PRODUCT.md item of `cef28e5` cites the Oracle's `utils/path_security.py:222-245`, `integration/mcp_integrator.py:78` and `compilation/inventory.py:61`, and board 116 event 3558 reports Oracle 0.33.0 run on Windows with a junction and with a symlink.
 Seen 2× (2026-10-15, 2026-10-16)
 
 **Run a change that splits, joins or resolves paths, or that checks symlinks, in the Windows sandbox before merge, with a junction as well as a symlink.**
 - CI runs only `ubuntu-latest`. Code that splits paths on `/`, or that relies on `os.Lstat` and `filepath.EvalSymlinks` to see links, passes on Linux and fails on Windows. Go reports a junction as `ModeIrregular`.
 - Evidence: `22e71c6` (PR #90, `joinRealpath`) and `0636bf8` (PR #105, `oraclePathJoin`) fail on `\` paths, found in issue #88 comment 6216218590 and now in issue #127; PR #91/#92 containment checks bypassed by junctions, issue #116 (opened 2026-10-16, about 23 h after PR #92 merged).
-- Done right on 2026-10-16: PR #117 comment 6218591422. Done right on 2026-10-17: PR #121 (Windows sandbox runs listed under Verified).
+- Done right on 2026-10-16: PR #117 comment 6218591422. Done right on 2026-10-17: PR #121 (Windows sandbox runs listed under Verified); PR #136 Verified (25 scenarios, each with a junction and a symlink, on main, the branch and Oracle 0.33.0), run again by the reviewer in board 116 events 3575-3578.
 Seen 2× (2026-10-15, 2026-10-16)
 
 **For any change that reads the lock, cleans stale or orphan files, or renames module keys, run install, update, frozen install and uninstall on a lock written by the previous release and on one written by Oracle 0.33.0 before handing over.**
 - Each of these three cards passed its own tests and broke only on an upgrade path, which the reviewer found by running the old binary first.
 - Evidence: board 75 event 2692 (`150bef8`: removed packages from legacy locks leave files); board 113 event 3391 (`00b5975`: upgrading an Oracle lock deletes a registry package's `.git/config`); board 114 event 3462 (`ce7a1b2`: old-clone cleanup deletes the new package; uninstall rewrites surviving keys), fixed in `ca1cf45`.
-- Done right on 2026-10-17: PR #120 comment 6219879113 (upgrade run with the main and PR binaries on a main-written and an Oracle-written lock); PR #134 Verified (install, update and frozen install on a lock with `port: 443` written by the previous release and on an Oracle-written lock with a port; uninstall was not run), run again by the reviewer in board 115 event 3534.
+- Done right on 2026-10-17: PR #120 comment 6219879113 (upgrade run with the main and PR binaries on a main-written and an Oracle-written lock); PR #134 Verified (install, update and frozen install on a lock with `port: 443` written by the previous release and on an Oracle-written lock with a port; uninstall was not run), run again by the reviewer in board 115 event 3534; PR #136 Verified (install, update, frozen install and uninstall in the Windows sandbox on locks written by main and by Oracle 0.33.0; main, not `v0.4.0`, wrote the old lock).
 Seen 2× (2026-10-16, 2026-10-17)
 
 **Do not write a new deviation from the Oracle into PRODUCT.md unless an owner ruling names it; when the fix needs one, stop with `board ask`.**
 - PRODUCT.md is the contract that later cards follow. An unruled deviation there is read as a ruling, and reversing it the next day cost a full card.
 - Evidence: `9968ee5` (PR #92) added "a deployed file that is a symlink to another place in its target root … is written where it points"; issue #112 comment 6215906800 ("#86 has no owner ruling on this point"); reversed by `cf8aa7a` (PR #117).
+- Done right on 2026-10-17: board 116 event 3558 (a deviation the ruling did not name, asked before it was written), ruled in issue #116 comment 6229603360, then written by `cef28e5`.
 Seen 1× (2026-10-15)
 
 **Before committing new test fixtures, run `git status --short --ignored` and confirm that none of them is ignored (`*.out`, `apm_modules/`).**
@@ -119,3 +133,4 @@ Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
 ## Observed, not entered
 
 - The instruction files have outgrown Claude Code's limit. ARCHITECTURE.md grew from 69,071 to 121,598 characters and PRODUCT.md from 21,890 to 76,231 in this range (`git show 34dfa71:ARCHITECTURE.md | wc -m` against `0cf2bd2`). Claude Code warned "over the 150.0k-char total limit" (163.5k on 2026-10-16, 216.7k on 2026-10-17). Its effect on the agents is not measured.
+- GitNexus does not find Go top-level functions, so the AGENTS.md `impact` gate cannot run on them. On the index of `4fb095a`, `node .gitnexus/run.cjs impact CheckWithin --direction upstream` and `context ParseManifest` return "not found", and `context materializeLocalCopy`, a method, is found. Board 116 event 3546 reports 38 of 5535 Function nodes named; card 116 gave the blast radius of the methods it could find.
