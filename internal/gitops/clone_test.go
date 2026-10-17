@@ -73,6 +73,42 @@ func TestResolveCloneURL_UsesArtifactoryPrefixAndRepositoryPath(t *testing.T) {
 	}
 }
 
+// The clone URL keeps the dependency's port and drops a default one, as the
+// Oracle builds it: netloc = f"{host}:{port}" if port else host
+// (utils/github_host.py:437-532, models/dependency/reference.py:1983-2003).
+func TestResolveCloneURL_KeepsPort(t *testing.T) {
+	loader := &RealPackageLoader{DefaultHost: "github.com"}
+	tests := []struct {
+		input, want string
+	}{
+		{"https://h.io:8443/o/x.git", "https://h.io:8443/o/x.git"},
+		{"http://h.io:8080/o/x.git", "http://h.io:8080/o/x.git"},
+		{"ssh://git@h.io:7999/o/x.git", "ssh://git@h.io:7999/o/x.git"},
+		{"h.io:8443/o/x", "https://h.io:8443/o/x.git"},
+		{"https://h.io:443/o/x.git", "https://h.io/o/x.git"},
+		{"http://h.io:80/o/x.git", "http://h.io/o/x.git"},
+		{"ssh://git@h.io:22/o/x.git", "ssh://git@h.io/o/x.git"},
+		{"https://h.io/o/x.git", "https://h.io/o/x.git"},
+		{"http://h.io/o/x.git", "http://h.io/o/x.git"},
+		{"ssh://git@h.io/o/x.git", "ssh://git@h.io/o/x.git"},
+		{"h.io/o/x", "https://h.io/o/x.git"},
+		{"git@h.io:o/x.git", "git@h.io:o/x.git"},
+		{"o/x", "https://github.com/o/x.git"},
+		{"https://art.corp:8443/artifactory/github/o/x", "https://art.corp:8443/artifactory/github/o/x.git"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			ref, err := manifest.ParseDepString(tt.input)
+			if err != nil {
+				t.Fatalf("ParseDepString(%q): %v", tt.input, err)
+			}
+			if got := loader.resolveCloneURL(ref); got != tt.want {
+				t.Errorf("resolveCloneURL(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckoutMatchesRef_FalseWhenRefNotFoundLocally(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithTag(t, dir, "v1", "v1.0.0")

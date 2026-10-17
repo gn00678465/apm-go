@@ -137,3 +137,17 @@ func TestCheckInsecureDependencyScheme_MissingHostUsesDefaultHost(t *testing.T) 
 		t.Errorf("error should reconstruct the URL using defaultHost, got: %v", err)
 	}
 }
+
+// The refusal names the URL with its port, as the Oracle prints the entry's
+// git URL (install/insecure_policy.py:50-59).
+func TestCheckInsecureDependencyScheme_MessageKeepsPort(t *testing.T) {
+	dep, err := ParseDepString("http://127.0.0.1:18115/o/x.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = CheckInsecureDependencyScheme(dep, false, "github.com")
+	const want = "http://127.0.0.1:18115/o/x -- HTTP dependency (unencrypted); refused by default. Pass --allow-insecure to apm-go install to permit it"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v\nwant %s", err, want)
+	}
+}

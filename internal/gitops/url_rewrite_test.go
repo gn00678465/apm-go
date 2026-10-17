@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/apm-go/apm/internal/manifest"
+	"github.com/apm-go/apm/internal/yamlcore"
 )
 
 const (
@@ -747,4 +750,64 @@ func TestNetworkGit_NotRunWhenRewriteCheckFails(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The check judges the URL git would connect to, port included: a rule for
+// h.io:8443 stops the clone and the tag listing of a dependency on that port.
+func TestNetworkGit_RewriteCheckSeesDependencyPort(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "git-invocations")
+	t.Setenv("PATH", buildFakeGit(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKEGIT_RECORD_FILE", record)
+	useGitConfigList(t, configList("url.https://evil.example:9999/.insteadof", "https://h.io:8443/"))
+	ref, err := manifest.ParseDepString("https://h.io:8443/o/x.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	calls := map[string]func() error{
+		"clone": func() error {
+			_, err := (&RealPackageLoader{ModulesDir: t.TempDir()}).LoadPackage(ref, "")
+			return err
+		},
+		"clone at a commit": func() error {
+			_, err := (&RealPackageLoader{ModulesDir: t.TempDir()}).LoadPackage(ref, strings.Repeat("a", 40))
+			return err
+		},
+		"subdirectory package": func() error {
+			sub := parseOneDependency(t, "dependencies:\n  apm:\n    - git: https://h.io:8443/o/x.git\n      path: skills/foo\n")
+			if sub.VirtualType != "subdirectory" {
+				t.Fatalf("not a subdirectory package: %+v", sub)
+			}
+			_, err := (&RealPackageLoader{ModulesDir: t.TempDir()}).LoadPackage(sub, "")
+			return err
+		},
+		"ls-remote": func() error {
+			_, err := (&RealTagLister{}).ListTagsForRef(ref)
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			var rejected *URLRewriteError
+			if err := call(); !errors.As(err, &rejected) {
+				t.Fatalf("want *URLRewriteError, got %v", err)
+			}
+			if invoked, readErr := os.ReadFile(record); readErr == nil {
+				t.Fatalf("git was run: %s", invoked)
+			}
+		})
+	}
+}
+
+func parseOneDependency(t *testing.T, apmYML string) *manifest.DependencyReference {
+	t.Helper()
+	doc, err := yamlcore.SafeLoad([]byte("name: p\nversion: 1.0.0\n" + apmYML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := manifest.ParseManifest(doc)
+	if err != nil || len(m.ParsedDeps) != 1 {
+		t.Fatalf("ParseManifest: %v, %d dependencies", err, len(m.ParsedDeps))
+	}
+	return m.ParsedDeps[0]
 }

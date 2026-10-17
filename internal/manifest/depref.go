@@ -635,6 +635,11 @@ func parseHTTPURL(s string) (*DependencyReference, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dependency %q: %w", s, err)
 	}
+	// reference.py:1690-1694: the scheme's default port is dropped, so the
+	// lock records no port for "https://h:443/...".
+	if (scheme == "https" && port == 443) || (scheme == "http" && port == 80) {
+		port = 0
+	}
 	// reference.py:1492-1493 (_validate_url_repo_path): the HTTPS/HTTP URL
 	// form gates its host on is_supported_git_host, which falls through to
 	// is_valid_fqdn for any host outside the GitHub/Azure-DevOps allowlists
@@ -761,6 +766,9 @@ func parseSSHURL(s string) (*DependencyReference, error) {
 	host, port, err := netlocHostPortSSH(netloc)
 	if err != nil {
 		return nil, fmt.Errorf("dependency %q: %w", s, err)
+	}
+	if port == 22 { // reference.py:593-595
+		port = 0
 	}
 
 	// _parse_ssh_protocol_url (reference.py:562-599): the path is

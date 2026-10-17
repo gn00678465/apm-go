@@ -32,6 +32,9 @@ func insecureDependencyDisplayURL(dep *DependencyReference, defaultHost string) 
 	if host == "" {
 		host = defaultHost
 	}
+	if dep.Port > 0 {
+		host = fmt.Sprintf("%s:%d", host, dep.Port)
+	}
 	display := fmt.Sprintf("http://%s/%s/%s", host, dep.Owner, dep.Repo)
 	if dep.VirtualPath != "" {
 		display += "/" + dep.VirtualPath

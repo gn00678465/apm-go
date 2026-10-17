@@ -76,6 +76,14 @@ func TestParseDepString_URLForm(t *testing.T) {
 		{"git@github.com:owner/repo.git#v1.0.0", "git", "github.com", "owner", "repo", 0, "v1.0.0"},
 		{"ssh://git@host:7999/owner/repo/skills/foo#v1", "ssh", "host", "owner", "repo", 7999, "v1"},
 		{"git@gitlab.com:acme/repo/sub/path.git", "git", "gitlab.com", "acme", "repo", 0, ""},
+		// A default port is dropped, as the Oracle drops it
+		// (reference.py:1690-1694 for https and http, :593-595 for ssh).
+		{"https://h.io:8443/o/x.git", "https", "h.io", "o", "x", 8443, ""},
+		{"https://h.io:443/o/x.git", "https", "h.io", "o", "x", 0, ""},
+		{"http://h.io:80/o/x.git", "http", "h.io", "o", "x", 0, ""},
+		{"http://h.io:443/o/x.git", "http", "h.io", "o", "x", 443, ""},
+		{"https://h.io:80/o/x.git", "https", "h.io", "o", "x", 80, ""},
+		{"ssh://git@h.io:22/o/x.git", "ssh", "h.io", "o", "x", 0, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
