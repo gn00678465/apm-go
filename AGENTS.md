@@ -133,4 +133,3 @@ Run a review after a board card's PR merges, or at the end of a day with merges.
 6. A lesson seen on 3 separate days moves into "Promoted rules" in the same commit: the rule is added here, and its entry in `LESSONS.md` moves under "Moved to AGENTS.md" with its evidence.
 7. Move the cursor to the reviewed head in the same commit. A review that does not move the cursor is not done.
 8. Land it through a PR titled `lessons: <from>..<to> (<N> PRs)` whose description lists the new lessons, the raised counts and the promotions.
-
