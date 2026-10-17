@@ -2,6 +2,12 @@ module github.com/apm-go/apm
 
 go 1.26.9
 
+// Since Go 1.23, Windows reports a directory junction as an irregular file, not
+// a symlink, and filepath.EvalSymlinks does not resolve it. apm-go decides what
+// a path may touch by resolving its symlinks, so a junction must get the
+// verdict a symlink gets (issue #116).
+godebug winsymlink=0
+
 require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/huh/v2 v2.0.3
