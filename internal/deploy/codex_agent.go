@@ -80,6 +80,12 @@ func deployCodexAgentTOML(p Primitive, projectDir string) ([]string, error) {
 	if err := CheckDeployWrite(projectDir, destPath); err != nil {
 		return nil, err
 	}
+	switch placeFile(p, destPath) {
+	case placeSkip:
+		return nil, nil
+	case placeAdopt:
+		return []string{destPath}, nil
+	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
 	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)

@@ -545,7 +545,7 @@ func TestRun_PluginCommandNotesNameThePlugin(t *testing.T) {
 			}
 			m, resolved := depManifest("acme/pkg")
 
-			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -663,7 +663,7 @@ func TestRun_PluginStagingLaterCopyWins(t *testing.T) {
 			}
 			m, resolved := depManifest("acme/plug")
 
-			if _, err := Run([]string{"claude", "copilot"}, dir, m, resolved, nil, "", false); err != nil {
+			if _, err := Run([]string{"claude", "copilot"}, dir, m, resolved, nil, "", false, nil); err != nil {
 				t.Fatal(err)
 			}
 

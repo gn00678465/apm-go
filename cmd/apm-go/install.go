@@ -1949,6 +1949,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	var skippedDeps []deploy.SkippedDep
 	var commandNotes []deploy.CommandNote
 	var shadowed []deploy.Shadowed
+	var unmanaged map[string][]string
 	// orphans are the lock entries step 6b carries over for packages this
 	// run no longer resolves: whole when they were not cleaned, else the
 	// paths the cleanup could not remove.
@@ -2001,7 +2002,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 
 		beforeDeploy := hashesOnDisk(existingLock, detectRoot)
-		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir, deployDir != "")
+		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir, deployDir != "", lockManaged(existingLock, detectRoot))
 		var rejected *deploy.RejectedInstructionError
 		if run != nil && errors.As(err, &rejected) {
 			printTargets()
@@ -2010,7 +2011,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}
-		apmPhase = len(result.Deps) > 0 || len(deployResult.PerDep) > 0
+		// A path left to the user is content the Oracle integrated too.
+		apmPhase = len(result.Deps) > 0 || len(deployResult.PerDep) > 0 || len(deployResult.Unmanaged) > 0
 		if run != nil && apmPhase {
 			// The Oracle names the targets only when it has a package or the
 			// project's own content to integrate (core/target_detection.py:1186),
@@ -2044,7 +2046,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			}
 		}
 		keptDirs, failedBuckets, refused = deployResult.KeptDirs, deployResult.FailedBuckets, rejectedSet(deployResult.RejectedPaths)
-		skippedDeps, shadowed = deployResult.SkippedDeps, deployResult.Shadowed
+		skippedDeps, shadowed, unmanaged = deployResult.SkippedDeps, deployResult.Shadowed, deployResult.Unmanaged
 		skipped := make(map[string]bool, len(skippedDeps))
 		for _, sd := range skippedDeps {
 			skipped[sd.Key] = true
@@ -2324,7 +2326,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			manifestSectionMoved: manifestSectionMoved, result: result, targets: targets,
 			newLock: newLock, existingLock: existingLock, existingNode: existingNode,
 			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase,
-			skippedDeps: skippedDeps, commandNotes: commandNotes, shadowed: shadowed,
+			skippedDeps: skippedDeps, commandNotes: commandNotes, shadowed: shadowed, unmanaged: unmanaged,
 			listed: listedDeps(result, requestedKeys, scoped),
 		})
 	}

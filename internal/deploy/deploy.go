@@ -88,6 +88,11 @@ type DeployResult struct {
 	// prompt or instruction file the deploy wrote was, before it wrote it,
 	// what the Oracle compares there and adopts (noteAdopted).
 	Adopted map[string]bool
+	// Unmanaged holds, by PerDep key, each path a project deploy left to the
+	// user: a file or skill directory there that the lock before the run
+	// does not record and that is not what the Oracle compares it with
+	// (Managed). It is in no PerDep entry.
+	Unmanaged map[string][]string
 }
 
 // RootSkill is the skill of a package whose root is a skill. Created is
@@ -192,16 +197,21 @@ func skillNameInSubset(subset []string, name string) bool {
 // make a symlink (canSymlink), when the whole Run copies, as the Oracle's
 // user scope always does. Merged outputs (WriteMCP, FinalizeBundles) always
 // write regardless of this flag.
-func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string, global bool) (*DeployResult, error) {
+// managed, for a project deploy, leaves the files the user put where a
+// primitive deploys (Managed); nil writes over them.
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string, global bool, managed *Managed) (*DeployResult, error) {
 	if deployDir == "" {
 		deployDir = projectDir
 	}
 	activeDeployMode.symlink = global && symlinkProbe()
 	activeDeployMode.global, activeDeployMode.projectDir = global, projectDir
 	activeDeployMode.adopted = map[string]bool{}
+	if !global {
+		activeDeployMode.unmanaged = newUnmanagedGuard(managed)
+	}
 	defer func() {
 		activeDeployMode.symlink, activeDeployMode.global, activeDeployMode.projectDir = false, false, ""
-		activeDeployMode.adopted = nil
+		activeDeployMode.adopted, activeDeployMode.unmanaged = nil, nil
 	}()
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
@@ -598,8 +608,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				depResult.Files = append(depResult.Files, files...)
 
 				for _, f := range files {
-					absPath := filepath.Join(deployDir, f)
-					hash, err := lockfile.HashDeployedFile(absPath)
+					hash, err := activeDeployMode.unmanaged.hash(deployDir, f)
 					if err != nil {
 						return nil, fmt.Errorf("hash deployed file %s: %w", f, err)
 					}
@@ -709,6 +718,9 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 
 	result.Conflicts = conflictDiags
 	result.Adopted = activeDeployMode.adopted
+	if g := activeDeployMode.unmanaged; g != nil {
+		result.Unmanaged = g.skipped
+	}
 	result.Shadowed = shadowedPrimitives(targets, ordered, targetSubsets, winnersByTarget, written, deployDir)
 
 	// Sort deployed files within each dep for determinism

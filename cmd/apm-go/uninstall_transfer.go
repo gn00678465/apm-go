@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"os"
@@ -128,7 +129,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		}
 	}
 	h.order = append(h.order, "")
-	trial, err := deploy.Run(targets, ".", m, result, filter, trialDir, deployDir != "")
+	trial, err := deploy.Run(targets, ".", m, result, filter, trialDir, deployDir != "", lockManaged(lock, cmp.Or(deployDir, ".")))
 	if err != nil {
 		h.close()
 		return nil, err
