@@ -173,7 +173,7 @@ func TestRun_ClaudeInstructionWithInvalidFrontmatterFails(t *testing.T) {
 	mkFile(t, dir, ".claude/rules/bad.md", "old rule\n")
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false)
+	result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestRun_ClaudeInstructionWarningRelativePathUsesSlash(t *testing.T) {
 	mkFile(t, ".", ".apm/instructions/bad.instructions.md", "---\napplyTo: **/*.go\n---\nbad\n")
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"claude"}, ".", m, nil, nil, "", false)
+	result, err := Run([]string{"claude"}, ".", m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

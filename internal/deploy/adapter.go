@@ -23,6 +23,9 @@ var activeDeployMode struct {
 	global     bool
 	projectDir string
 	adopted    map[string]bool
+	// unmanaged is the project deploy's guard of the files it does not
+	// manage, nil for a --global deploy and when Run is given no Managed.
+	unmanaged *unmanagedGuard
 }
 
 // symlinkProbe is canSymlink, replaced in tests.
@@ -248,6 +251,27 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		return symlinkSkillTo(p.SrcPath, absDestDir, destDir, p.DepKey != "", p.SkipRootGit)
 	}
 
+	links := skillLinksOf(p)
+	if g := activeDeployMode.unmanaged; g != nil {
+		var rels []string
+		_ = walkSkillDir(p.SrcPath, "", links, p.SkipRootGit, func(_, rel string, isDir bool) error {
+			if !isDir {
+				rels = append(rels, rel)
+			}
+			return nil
+		})
+		switch g.skill(p.DepKey, destDir, p.SrcPath, rels) {
+		case placeSkip:
+			return nil, nil
+		case placeAdopt:
+			deployed := make([]string, len(rels))
+			for i, rel := range rels {
+				deployed[i] = path.Join(destDir, rel)
+			}
+			return deployed, nil
+		}
+	}
+
 	// A symlink here is not the deploy's: a copy through it would write into
 	// the directory it leads to. It is replaced by the skill's own directory,
 	// as a symlink deploy replaces one (symlinkSkillTo), so nothing below it
@@ -257,7 +281,6 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	// an os.MkdirAll, there, so it has to stay in the skill's directory. A
 	// file that is a symlink is replaced by the copy, wherever it points, as
 	// the Oracle replaces the whole directory.
-	links := skillLinksOf(p)
 	info, err := os.Lstat(absDestDir)
 	if err == nil && info.Mode()&os.ModeSymlink != 0 {
 		if err := os.Remove(absDestDir); err != nil {
@@ -440,6 +463,12 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 		return nil, err
 	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
+	switch placeFile(p, destPath) {
+	case placeSkip:
+		return nil, nil
+	case placeAdopt:
+		return []string{destPath}, nil
+	}
 	if copiedAsText(p.Type) {
 		if src, err := os.ReadFile(p.SrcPath); err == nil {
 			noteAdopted(destPath, absDest, crlfToLF(src), true)

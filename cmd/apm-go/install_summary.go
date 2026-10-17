@@ -148,6 +148,8 @@ type blockFiles struct {
 	integrated []string
 	skills     map[string][]string
 	rootSkill  *deploy.RootSkill
+	// unmanaged are the paths the deploy left to the user.
+	unmanaged []string
 }
 
 // printSummaryLines prints the lines of one package of the install summary
@@ -214,6 +216,22 @@ func printSummaryLines(b blockFiles, before map[string]string, verbose bool) int
 			skillRoots[path.Dir(d)+"/"] = true
 		}
 	}
+	if primary := primarySkillRoot(b); primary != "" {
+		// The Oracle counts the skills of .apm/skills/ in its first skill
+		// directory alone (integration/skill_integrator.py:952-987), so a
+		// skill whose directory there was left to the user is not counted.
+		skillNames = map[string]bool{}
+		for _, f := range b.files {
+			if strings.HasPrefix(f, primary) {
+				skillNames[deployedPrimitiveName(f, primary)] = true
+			}
+		}
+		for name, dirs := range b.skills {
+			if slices.ContainsFunc(dirs, func(d string) bool { return strings.HasPrefix(d, primary) }) {
+				skillNames[name] = true
+			}
+		}
+	}
 
 	total := 0
 	for _, kind := range summaryKinds {
@@ -273,6 +291,28 @@ func printSummaryLines(b blockFiles, before map[string]string, verbose bool) int
 		ux.Plain(os.Stdout, "  |-- (files unchanged)")
 	}
 	return total
+}
+
+// primarySkillRoot is the Oracle's first skill directory of a package that
+// had a skill directory of .claude/skills/ or .agents/skills/ left to the
+// user: .claude/skills/ when claude deploys its skills, else
+// .agents/skills/. It is "" when none was left to the user, which keeps the
+// count of every other install as it was.
+func primarySkillRoot(b blockFiles) string {
+	left := false
+	for _, p := range b.unmanaged {
+		dir := path.Dir(p) + "/"
+		left = left || dir == ".claude/skills/" || dir == ".agents/skills/"
+	}
+	if !left {
+		return ""
+	}
+	for _, f := range append(slices.Clone(b.unmanaged), b.files...) {
+		if strings.HasPrefix(f, ".claude/skills/") {
+			return ".claude/skills/"
+		}
+	}
+	return ".agents/skills/"
 }
 
 // blockHeader is the Oracle's download_complete line of a package
@@ -416,6 +456,12 @@ func managedPaths(oldLock *lockfile.Lockfile) map[string]bool {
 	return managed
 }
 
+// lockManaged is what a project deploy may write over below root: the paths
+// oldLock records (deploy.Managed).
+func lockManaged(oldLock *lockfile.Lockfile, root string) *deploy.Managed {
+	return &deploy.Managed{Paths: managedPaths(oldLock), Root: root}
+}
+
 // shadowedOutcome decides it as the Oracle's integrators do
 // (integration/base_integrator.py:198-241,429-495): what the Oracle compares
 // on disk adopts the file, or for a skill integrates it
@@ -463,10 +509,17 @@ func anyManaged(paths []string, managed map[string]bool) bool {
 
 // collisionCount is the Oracle's count of files it skipped because a file
 // it does not manage was there (install/pipeline.py:723-728), over the
-// listed packages; a skill counts once whatever its directories.
-func collisionCount(shadowed []deploy.Shadowed, listed map[string]bool, managed map[string]bool) int {
+// listed packages: each path the deploy left to the user (unmanaged), a
+// skill directory once, and each shadowed primitive that met such a file, a
+// skill once whatever its directories.
+func collisionCount(shadowed []deploy.Shadowed, unmanaged map[string][]string, listed map[string]bool, managed map[string]bool) int {
 	seen := map[string]bool{}
 	count := 0
+	for key, paths := range unmanaged {
+		if listed[key] {
+			count += len(paths)
+		}
+	}
 	for _, s := range shadowed {
 		if !listed[s.DepKey] || shadowedOutcome(s, managed) != shadowCollision {
 			continue

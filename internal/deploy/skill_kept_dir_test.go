@@ -322,7 +322,7 @@ func keptDirProject(t *testing.T, roots ...string) (projectDir, deployDir string
 func TestRun_SymlinkKeepsRealSkillDirectory(t *testing.T) {
 	projectDir, deployDir := keptDirProject(t, ".claude/skills")
 
-	result, err := Run([]string{"claude"}, projectDir, &manifest.Manifest{}, nil, nil, deployDir, true)
+	result, err := Run([]string{"claude"}, projectDir, &manifest.Manifest{}, nil, nil, deployDir, true, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestRun_SymlinkKeepsRealSkillDirectory(t *testing.T) {
 func TestRun_SymlinkKeepsSharedSkillDirectoryOnce(t *testing.T) {
 	projectDir, deployDir := keptDirProject(t, ".agents/skills")
 
-	result, err := Run([]string{"codex", "copilot", "opencode"}, projectDir, &manifest.Manifest{}, nil, nil, deployDir, true)
+	result, err := Run([]string{"codex", "copilot", "opencode"}, projectDir, &manifest.Manifest{}, nil, nil, deployDir, true, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestRun_SymlinkKeepsSharedSkillDirectoryOnce(t *testing.T) {
 func TestRun_SymlinkKeepsEachTargetNativeDirectory(t *testing.T) {
 	projectDir, deployDir := keptDirProject(t, ".claude/skills", ".agents/skills")
 
-	result, err := Run([]string{"claude", "codex"}, projectDir, &manifest.Manifest{}, nil, nil, deployDir, true)
+	result, err := Run([]string{"claude", "codex"}, projectDir, &manifest.Manifest{}, nil, nil, deployDir, true, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

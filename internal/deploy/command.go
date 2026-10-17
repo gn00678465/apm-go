@@ -333,6 +333,14 @@ func deployPromptCommand(p Primitive, deployDir, destPath, target string) ([]str
 	if err := CheckDeployWrite(deployDir, destPath); err != nil {
 		return nil, nil, err
 	}
+	// The Oracle converts a prompt only once it writes it, so a command it
+	// adopts or skips has nothing to tell (command_integrator.py:581-590).
+	switch placeFile(p, destPath) {
+	case placeSkip:
+		return nil, nil, nil
+	case placeAdopt:
+		return []string{destPath}, nil, nil
+	}
 	absDest := filepath.Join(deployDir, filepath.FromSlash(destPath))
 	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
 		return nil, nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)

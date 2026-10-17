@@ -520,7 +520,7 @@ func TestRun_AgentSameNameCollision_FirstDeclaredWins(t *testing.T) {
 				},
 			}
 
-			result, err := Run([]string{tt.target}, dir, m, nil, nil, "", false)
+			result, err := Run([]string{tt.target}, dir, m, nil, nil, "", false, nil)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -830,7 +830,7 @@ func TestRun_FullPipeline(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -904,7 +904,7 @@ func TestRun_ConflictResolution(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -958,7 +958,7 @@ func TestRun_SkillFilterScopedToDepKey(t *testing.T) {
 		},
 	}
 
-	_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: map[string][]string{depA: {"a1"}}}, "", false)
+	_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: map[string][]string{depA: {"a1"}}}, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1019,7 +1019,7 @@ func TestRun_SkillFilterAbsentKeyDeploysAll(t *testing.T) {
 				},
 			}
 
-			_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: tt.subsets}, "", false)
+			_, err := Run([]string{"claude"}, dir, m, resolved, &SkillFilter{Subsets: tt.subsets}, "", false, nil)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -1041,7 +1041,7 @@ func TestRun_SkillDeduplication(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"claude", "codex", "copilot"}, dir, m, nil, nil, "", false)
+	result, err := Run([]string{"claude", "codex", "copilot"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1077,7 +1077,7 @@ func TestRun_SkillDeduplication_ClaudeExtraCopySurvivesTargetOrder(t *testing.T)
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
 	// codex runs before claude -- this ordering used to trigger the bug.
-	result, err := Run([]string{"codex", "claude"}, dir, m, nil, nil, "", false)
+	result, err := Run([]string{"codex", "claude"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1158,7 +1158,7 @@ func TestRun_NoTargets(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run(nil, dir, m, nil, nil, "", false)
+	result, err := Run(nil, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1205,7 +1205,7 @@ func TestRun_DeployedFilesKeyMatch(t *testing.T) {
 		},
 	}
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1269,7 +1269,7 @@ func TestRun_MultipleHooksOverwriteDiagnostic(t *testing.T) {
 
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
 
-	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "", false)
+	result, err := Run([]string{"antigravity"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1529,7 +1529,7 @@ func TestRun_FailedBucketsRecordsBucketOfFailedPrimitive(t *testing.T) {
 				}
 			}
 
-			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -1633,7 +1633,7 @@ func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
 				reason = makeUnreadable(t, filepath.Join(dir, filepath.FromSlash(tt.unreadable)), listed)
 			}
 
-			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+			result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -1697,7 +1697,7 @@ func TestRun_FailedBucketsRecordsUnreadablePluginComponent(t *testing.T) {
 				reason = makeUnreadable(t, filepath.Join(dir, filepath.FromSlash(tt.unreadable)), !tt.wantFailed || tt.wantPath == tt.unreadable)
 			}
 
-			result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false)
+			result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false, nil)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -1761,7 +1761,7 @@ func TestRun_FailedBucketsRecordsUnreadablePluginDefaultDir(t *testing.T) {
 				reason = makeUnreadable(t, filepath.Join(dir, filepath.FromSlash(tt.unreadable)), true)
 			}
 
-			result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false)
+			result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false, nil)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}

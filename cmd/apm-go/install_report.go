@@ -171,6 +171,7 @@ func (r *installRun) printBlocks(result *resolver.ResolutionResult, dr *deploy.D
 		if rs, ok := dr.RootSkills[key]; ok {
 			b.rootSkill = &rs
 		}
+		b.unmanaged = dr.Unmanaged[key]
 		return b
 	}
 	count := 0
@@ -398,6 +399,7 @@ type installOutcome struct {
 	skippedDeps  []deploy.SkippedDep
 	commandNotes []deploy.CommandNote
 	shadowed     []deploy.Shadowed
+	unmanaged    map[string][]string
 	// listed holds the keys of the packages the summary lists ("" for the
 	// project's own content).
 	listed map[string]bool
@@ -458,7 +460,7 @@ func (r *installRun) finish(o installOutcome) error {
 func (r *installRun) printDiagnostics(o installOutcome) {
 	diagnosed := r.diagnosed
 	listed := o.listed
-	if n := collisionCount(o.shadowed, listed, managedPaths(o.existingLock)); n > 0 {
+	if n := collisionCount(o.shadowed, o.unmanaged, listed, managedPaths(o.existingLock)); n > 0 {
 		// Deliberate deviation by owner ruling (issue #122 comment
 		// 6232421913): the Oracle's second line, "Use 'apm install --force'
 		// to overwrite" (utils/diagnostics.py:459-463), is not printed;

@@ -57,7 +57,7 @@ func depFiles(r *DeployResult, key string) []string {
 func TestRun_TargetSubset_ConflictDecidedPerTarget(t *testing.T) {
 	dir, m := twoAgentProject(t, []string{"claude"}, nil)
 
-	r, err := Run([]string{"claude", "copilot"}, dir, m, nil, nil, "", false)
+	r, err := Run([]string{"claude", "copilot"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestRun_TargetSubset_ConflictDecidedPerTarget(t *testing.T) {
 func TestRun_TargetSubset_ConflictOnEveryTargetReportedOnce(t *testing.T) {
 	dir, m := twoAgentProject(t, nil, []string{"claude"})
 
-	r, err := Run([]string{"claude", "copilot"}, dir, m, nil, nil, "", false)
+	r, err := Run([]string{"claude", "copilot"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestRun_TargetSubset_ConflictOnEveryTargetReportedOnce(t *testing.T) {
 func TestRun_NoTargetSubset_DiagsUnchanged(t *testing.T) {
 	dir, m := twoAgentProject(t, nil, nil)
 
-	r, err := Run([]string{"claude", "copilot"}, dir, m, nil, nil, "", false)
+	r, err := Run([]string{"claude", "copilot"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestRun_TargetSubset_NoActiveTargetSkipsButKeepsMCP(t *testing.T) {
 		{RepoURL: "acme/dep", Owner: "acme", Repo: "dep", Source: "git", TargetSubset: []string{"codex"}},
 	}}
 
-	r, err := Run([]string{"claude", "copilot"}, dir, m, nil, nil, "", false)
+	r, err := Run([]string{"claude", "copilot"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestRun_TargetSubset_TransitiveFromResolution(t *testing.T) {
 		{Key: "acme/b", RepoURL: "acme/b", Depth: 2, TargetSubset: []string{"copilot"}},
 	}}
 
-	r, err := Run([]string{"claude", "copilot"}, dir, m, resolved, nil, "", false)
+	r, err := Run([]string{"claude", "copilot"}, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestRun_TargetSubset_SharedSkillDirKeepsFirstWriter(t *testing.T) {
 		{RepoURL: "acme/dep2", Owner: "acme", Repo: "dep2", Source: "git"},
 	}}
 
-	r, err := Run([]string{"copilot", "codex"}, dir, m, nil, nil, "", false)
+	r, err := Run([]string{"copilot", "codex"}, dir, m, nil, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

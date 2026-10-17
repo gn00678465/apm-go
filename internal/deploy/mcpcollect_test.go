@@ -59,7 +59,7 @@ func TestRun_MCPCollection_LocalOverridesDependency(t *testing.T) {
 		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
 	}
 
-	result, err := Run(nil, dir, m, resolved, nil, "", false)
+	result, err := Run(nil, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestRun_MCPCollection_FirstDeclaredDepWins(t *testing.T) {
 		},
 	}
 
-	result, err := Run(nil, dir, m, resolved, nil, "", false)
+	result, err := Run(nil, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestRun_MCPCollection_TransitiveSelfDefinedSkippedWithWarning(t *testing.T)
 		},
 	}
 
-	result, err := Run(nil, dir, m, resolved, nil, "", false)
+	result, err := Run(nil, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestRun_MCPCollection_DevDependencySelfDefinedAutoTrusted(t *testing.T) {
 		},
 	}
 
-	result, err := Run(nil, dir, m, resolved, nil, "", false)
+	result, err := Run(nil, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestRun_MCPCollection_DirectDepAutoTrusted(t *testing.T) {
 		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
 	}
 
-	result, err := Run(nil, dir, m, resolved, nil, "", false)
+	result, err := Run(nil, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestRun_MCPDevServersOfProjectDeploy(t *testing.T) {
 			{Name: "devsrv", Registry: false, Transport: "stdio", Command: "npx"},
 		},
 	}
-	if _, err := Run([]string{"claude"}, dir, m, nil, nil, "", false); err != nil {
+	if _, err := Run([]string{"claude"}, dir, m, nil, nil, "", false, nil); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	servers := readMCPServers(t, dir)
@@ -394,7 +394,7 @@ func TestRun_MCPProdServerWinsOverDevServerOfSameName(t *testing.T) {
 			{Name: "same", Registry: false, Transport: "stdio", Command: "dev-cmd"},
 		},
 	}
-	if _, err := Run([]string{"claude"}, dir, m, nil, nil, "", false); err != nil {
+	if _, err := Run([]string{"claude"}, dir, m, nil, nil, "", false, nil); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	servers := readMCPServers(t, dir)
@@ -419,7 +419,7 @@ func TestRun_MCPDevServersOfDependencyDoNotDeploy(t *testing.T) {
 	resolved := &resolver.ResolutionResult{
 		Deps: []resolver.ResolvedDep{{Key: depKey, RepoURL: depKey, Kind: resolver.KindGitSemver, Depth: 1}},
 	}
-	if _, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false); err != nil {
+	if _, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	servers := readMCPServers(t, dir)

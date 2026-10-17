@@ -169,7 +169,7 @@ func TestRun_PromptWinsOverCommandInOnePackage(t *testing.T) {
 	mkFile(t, mod, ".apm/prompts/x.prompt.md", "---\ndescription: from the prompt\n---\nprompt body\n")
 	m, resolved := depManifest("acme/pkg")
 
-	result, err := Run([]string{"claude", "opencode"}, dir, m, resolved, nil, "", false)
+	result, err := Run([]string{"claude", "opencode"}, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestRun_PromptAndCommandAcrossPackages(t *testing.T) {
 	mkFile(t, filepath.Join(dir, "apm_modules", "acme/b"), ".apm/prompts/y.prompt.md", "b prompt")
 	m, resolved := depManifest("acme/a", "acme/b")
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestRun_PromptCommandNotes(t *testing.T) {
 	mkFile(t, mod, ".apm/prompts/...prompt.md", "named ..")
 	m, resolved := depManifest("acme/pkg")
 
-	result, err := Run([]string{"claude", "opencode"}, dir, m, resolved, nil, "", false)
+	result, err := Run([]string{"claude", "opencode"}, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestRun_PromptCommandGlobalIsAFile(t *testing.T) {
 	mkFile(t, filepath.Join(dir, "apm_modules", "acme/pkg"), ".apm/prompts/p.prompt.md", "p")
 	m, resolved := depManifest("acme/pkg")
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil, home, true)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, home, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestRun_UnlistableDependencyRootFailsBucket(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(mod, 0o755) })
 	m, resolved := depManifest("acme/pkg")
 
-	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false)
+	result, err := Run([]string{"claude"}, dir, m, resolved, nil, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

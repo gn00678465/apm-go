@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -158,7 +159,11 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 	defer os.RemoveAll(trialDir)
 	// The trial takes the mode of the real deploy: a symlink deploy records
 	// the symlinks inside a skill, which a copy deploy skips.
-	trial, err := deploy.Run(p.targets, ".", m, result, filter, trialDir, p.deployDir != "")
+	// Whether a path is the user's is read in the real deploy root, so the
+	// trial leaves out what the deploy in place leaves.
+	managed := lockManaged(lock, cmp.Or(p.deployDir, "."))
+	managed.NoAdopt = true
+	trial, err := deploy.Run(p.targets, ".", m, result, filter, trialDir, p.deployDir != "", managed)
 	if err == nil {
 		if err = frozenDeployMatchesLock(trial, lock); err == nil {
 			err = p.missingDeployed(trial, lock)
@@ -175,7 +180,7 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 		return err
 	}
 
-	deployed, err := deploy.Run(p.targets, ".", m, result, filter, p.deployDir, p.deployDir != "")
+	deployed, err := deploy.Run(p.targets, ".", m, result, filter, p.deployDir, p.deployDir != "", managed)
 	if err != nil {
 		return fmt.Errorf("frozen install: deploy: %w", err)
 	}
