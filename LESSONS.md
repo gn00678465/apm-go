@@ -1,4 +1,4 @@
-<!-- reviewed-through: 4fb095a (2026-10-17 12:37 +0800) -->
+<!-- reviewed-through: ad865d7 (2026-10-17 14:35 +0800) -->
 
 # Lessons
 
@@ -13,6 +13,18 @@ Rules and lessons differ in status:
 - A lesson seen on 3 separate days is promoted. The rule goes into AGENTS.md "Promoted rules"; the entry and its evidence move to "Moved to AGENTS.md" below and stay there as the record.
 
 How to run a review is in AGENTS.md "Lessons review". Findings about the board tooling itself are not entered here.
+
+## Review of 2026-10-17 12:37 to 2026-10-17 14:35 (+0800)
+
+Range `4fb095a..ad865d7`: 2 merged PRs (#137, #138), 5 commits (3 non-merge, 2 merges), 11 files changed. No tag. PR #137 is the previous review and had no card. PR #138 came from card 118: one stop on rule 1 for the CRITICAL blast radius of `checkFileDest` (board 118 event 3586), ruled in issue #118 comment 6229823230; one failed review (event 3625, on `230e9df`), fixed in `27f95f3`; a pass on the second review (event 3644).
+
+What went wrong: the first round handed over a frozen-install failure that the ruling's handoff conditions forbid. It was written into PRODUCT.md and the PR's To confirm section as a known limitation (new lesson below). The fix round added a case to the PR's Behavior section and not to the PR's line in issue #133 (new lesson below). No merged change was found broken.
+
+Done right:
+
+- Promoted rule 2: PR #138 was opened at 05:20:12Z and its line was added to issue #133 at 05:20:29Z (the issue's edit history).
+- Promoted rule 1: the one Not verified item of PR #138 is a macOS run, and this machine has no macOS host or VM.
+- The Windows lesson: PR #138 ran its Windows scenarios under a restricted token and as administrator (PR #138 Verified), because the bug exists only for an account that cannot make a symlink.
 
 ## Review of 2026-10-17 11:49 to 2026-10-17 12:37 (+0800)
 
@@ -99,6 +111,16 @@ Seen 1× (2026-10-16)
 - Evidence: issue #133, opened on 2026-10-17, holds the items of PR #100, #101, #103, #105, #106, #108-#110, #117, #120 and #121. It has no item for PR #85 (the next `install` drops `id` from `.codex/config.toml`), PR #91 (a package with a symlink that leaves it no longer installs), PR #92 (`uninstall` fails and `install` skips paths when a directory or file below `apm_modules/` or `.claude/` is linked outside), PR #93 (`enabled` written to `opencode.json` and the lock) or PR #94 (a `targets:` list removes the package's files on other targets). All five merged after `v0.4.0` (`34dfa71`); PR #91, #92 and #94 are listed in this file under "Moved to AGENTS.md". The five items, and those of PR #84 and #111, were added to issue #133 after this review.
 Seen 1× (2026-10-17)
 
+**Check each limitation you find against the handoff conditions of the owner ruling before you hand over. When it breaks one, fix it in the same round: do not write it into PRODUCT.md or the PR as a known limitation, and do not put it to the owner as a question.**
+- The handoff condition has already decided the question, so the reviewer fails the round and the fix costs a full review cycle. Here the limitation came from a fallback that records other lock paths than the primary way: a lock moves between accounts and machines, so a frozen install with one way fails on a lock the other way wrote.
+- Evidence: issue #118 comment 6229823230 requires `install -g --frozen` to succeed under a restricted token. `230e9df` wrote into PRODUCT.md "A symlink inside a local skill is not deployed and not recorded in the lock, where a symlink deploy records it."; the first body of PR #138 (edit history, 05:20:12Z) listed the resulting frozen failure under To confirm; the first version of issue #118 comment 6230006003 (05:11:03Z) asked the owner whether to accept it. The reviewer reproduced it in the Windows sandbox and failed the round (board 118 event 3625, on `230e9df`). `27f95f3` makes the copy deploy record the same paths and hashes as a symlink deploy, and the next review passed (event 3644).
+Seen 1× (2026-10-17)
+
+**When a fix round changes what a PR's Behavior section says, update the PR's line in the release-notes issue in the same step.**
+- Release notes are written from that issue (promoted rule 2), so a case added only to the PR body is missing from them.
+- Evidence: PR #138's body edit at 06:31:25Z (edit history) adds "或 skill 裡有 symlink 時" to the case where a skill directory is kept with a warning. Issue #133 was last edited at 05:20:29Z, and its PR #138 line names only "目錄裡有自己加的檔案或套件改過時".
+Seen 1× (2026-10-17)
+
 ## Existing rules missed
 
 A rule that already exists in AGENTS.md or the project's instructions and was broken again. These are not new lessons; each one is evidence that the rule is not being checked.
@@ -133,4 +155,4 @@ Seen 3× (2026-10-15, 2026-10-16, 2026-10-17)
 ## Observed, not entered
 
 - The instruction files have outgrown Claude Code's limit. ARCHITECTURE.md grew from 69,071 to 121,598 characters and PRODUCT.md from 21,890 to 76,231 in this range (`git show 34dfa71:ARCHITECTURE.md | wc -m` against `0cf2bd2`). Claude Code warned "over the 150.0k-char total limit" (163.5k on 2026-10-16, 216.7k on 2026-10-17). Its effect on the agents is not measured.
-- GitNexus does not find Go top-level functions, so the AGENTS.md `impact` gate cannot run on them. On the index of `4fb095a`, `node .gitnexus/run.cjs impact CheckWithin --direction upstream` and `context ParseManifest` return "not found", and `context materializeLocalCopy`, a method, is found. Board 116 event 3546 reports 38 of 5535 Function nodes named; card 116 gave the blast radius of the methods it could find.
+- GitNexus does not find Go top-level functions, so the AGENTS.md `impact` gate cannot run on them. On the index of `4fb095a`, `node .gitnexus/run.cjs impact CheckWithin --direction upstream` and `context ParseManifest` return "not found", and `context materializeLocalCopy`, a method, is found. Board 116 event 3546 reports 38 of 5535 Function nodes named; card 116 gave the blast radius of the methods it could find. Card 118 found that a full rebuild fixes it: after `node .gitnexus/run.cjs analyze --index-only --force` the top-level functions are found, where 5497 of 5546 Function nodes had no name before (board 118 event 3586). Tracked in issue #130 comments 6229756641 and 6229823442.
