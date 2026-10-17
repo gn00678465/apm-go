@@ -323,7 +323,7 @@ func TestLoadPackage_ClonesWhenDirMissing(t *testing.T) {
 // branch/tag name -- e.g. the frozen-install path, which passes
 // dep.ResolvedCommit. `git clone --depth 1 --branch <ref>` rejects a raw SHA
 // with "Remote branch <sha> not found in upstream origin", so this proves
-// the isCommitSHA fallback in cloneRepo actually gets exercised end-to-end
+// the commit path of cloneRepo actually gets exercised end-to-end
 // through LoadPackage, not just at the cloneRepoAtCommit unit level.
 func TestLoadPackage_ClonesByRawCommitSHA(t *testing.T) {
 	ref, remoteDir := chdirToFakeRemote(t)
@@ -348,20 +348,24 @@ func TestLoadPackage_ClonesByRawCommitSHA(t *testing.T) {
 	}
 }
 
-func TestIsCommitSHA(t *testing.T) {
+func TestIsCommitRef(t *testing.T) {
 	cases := map[string]bool{
 		"27e04a371c29b4a714ddefca617faaef9cb8c38f": true,
 		"27E04A371C29B4A714DDEFCA617FAAEF9CB8C38F": true,
-		"v1.0.0": false,
-		"main":   false,
-		"":       false,
-		"27e04a371c29b4a714ddefca617faaef9cb8c38":   false, // 39 chars
+		"27e04a3":  true,  // 7 chars
+		"27E04A3":  true,  // upper case, as the Oracle lowers it first
+		"27e04a":   false, // 6 chars
+		"deadbeef": true,
+		"v1.0.0":   false,
+		"main":     false,
+		"":         false,
 		"27e04a371c29b4a714ddefca617faaef9cb8c38ff": false, // 41 chars
 		"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz":  false, // right length, non-hex
+		"27e04g3": false,
 	}
 	for ref, want := range cases {
-		if got := isCommitSHA(ref); got != want {
-			t.Errorf("isCommitSHA(%q) = %v, want %v", ref, got, want)
+		if got := IsCommitRef(ref); got != want {
+			t.Errorf("IsCommitRef(%q) = %v, want %v", ref, got, want)
 		}
 	}
 }
