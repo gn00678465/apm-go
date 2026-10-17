@@ -49,7 +49,14 @@ func deployClaudeInstructions(p Primitive, projectDir, destPath string) ([]strin
 	}
 	rule, err := convertToClaudeRules(oracleText(data))
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", p.SrcPath, err)
+		// A relative path is printed with "/" on every system, as the
+		// Oracle and compile's Skipping line print one; an absolute one
+		// (--global) stays native, as the Oracle prints it.
+		src := p.SrcPath
+		if !filepath.IsAbs(src) {
+			src = filepath.ToSlash(src)
+		}
+		return nil, fmt.Errorf("%s: %w", src, err)
 	}
 	if err := CheckDeployWrite(projectDir, destPath); err != nil {
 		return nil, err

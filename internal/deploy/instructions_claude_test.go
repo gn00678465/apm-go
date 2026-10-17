@@ -196,3 +196,25 @@ func TestRun_ClaudeInstructionWithInvalidFrontmatterFails(t *testing.T) {
 		t.Errorf(".claude/rules/good.md = %q", got)
 	}
 }
+
+// A project install deploys from "." and its warning names the instruction by
+// a relative path, which is printed with "/" on every system, as the Oracle
+// prints a relative path on Windows (issue #127).
+func TestRun_ClaudeInstructionWarningRelativePathUsesSlash(t *testing.T) {
+	t.Chdir(t.TempDir())
+	mkFile(t, ".", ".apm/instructions/bad.instructions.md", "---\napplyTo: **/*.go\n---\nbad\n")
+	m := &manifest.Manifest{Name: "test", Version: "1.0.0"}
+
+	result, err := Run([]string{"claude"}, ".", m, nil, nil, "", false)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := "deploy bad to claude failed: .apm/instructions/bad.instructions.md: frontmatter: YAML parse error: "
+	found := false
+	for _, d := range result.Diags {
+		found = found || strings.HasPrefix(d, want)
+	}
+	if !found {
+		t.Errorf("Diags = %q, want one starting with %q", result.Diags, want)
+	}
+}

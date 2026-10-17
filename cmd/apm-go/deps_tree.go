@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -245,11 +246,72 @@ func absoluteLocalDisplay(p, fallback string) string {
 // oraclePathJoin is Python's apm_modules / key: an absolute key replaces the
 // whole path, so the Oracle counts the primitives of an absolute local
 // dependency in its source directory, and finds nothing for a relative one.
+// On Windows the join is PureWindowsPath's, where a drive or UNC path is
+// absolute and "/" is a separator too.
 func oraclePathJoin(base, key string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Clean(ntJoin(base, key))
+	}
 	if strings.HasPrefix(key, "/") {
 		return key
 	}
 	return filepath.Join(base, filepath.FromSlash(key))
+}
+
+// ntJoin is Python 3.12's ntpath.join(base, key): a key with a root replaces
+// the path, keeping base's drive when it has none of its own (\x on C:); a
+// key with another drive and no root replaces it all; a key on base's drive
+// with no root is joined below base.
+func ntJoin(base, key string) string {
+	drive, root, path := ntSplitRoot(base)
+	kDrive, kRoot, kPath := ntSplitRoot(key)
+	switch {
+	case kRoot != "":
+		if kDrive != "" || drive == "" {
+			drive = kDrive
+		}
+		return drive + kRoot + kPath
+	case kDrive != "" && !strings.EqualFold(kDrive, drive):
+		return key
+	case kDrive != "":
+		drive = kDrive
+	}
+	if path != "" && !strings.ContainsRune(`\/`, rune(path[len(path)-1])) {
+		path += `\`
+	}
+	return drive + root + path + kPath
+}
+
+// ntSplitRoot is Python 3.12's ntpath.splitroot: a UNC share
+// (\\server\share) or "X:" is the drive, a leading separator the root.
+func ntSplitRoot(p string) (drive, root, rest string) {
+	norm := strings.ReplaceAll(p, "/", `\`)
+	switch {
+	case strings.HasPrefix(norm, `\\`):
+		start := 2
+		if len(norm) >= 8 && strings.EqualFold(norm[:8], `\\?\UNC\`) {
+			start = 8
+		}
+		i := strings.IndexByte(norm[start:], '\\')
+		if i < 0 {
+			return p, "", ""
+		}
+		i += start
+		j := strings.IndexByte(norm[i+1:], '\\')
+		if j < 0 {
+			return p, "", ""
+		}
+		j += i + 1
+		return p[:j], p[j : j+1], p[j+1:]
+	case strings.HasPrefix(norm, `\`):
+		return "", p[:1], p[1:]
+	case len(norm) >= 2 && norm[1] == ':':
+		if len(norm) >= 3 && norm[2] == '\\' {
+			return p[:2], p[2:3], p[3:]
+		}
+		return p[:2], "", p[2:]
+	}
+	return "", "", p
 }
 
 // packageDisplayInfo is _get_package_display_info (_utils.py:209-241):

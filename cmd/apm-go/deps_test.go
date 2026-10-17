@@ -347,3 +347,33 @@ func TestDeps_NoSubcommandIsUsageError(t *testing.T) {
 		t.Fatalf("deps nope: err %v; want the usage error No such command 'nope'.", err)
 	}
 }
+
+// ntJoin is ntpath.join, which PureWindowsPath(apm_modules) / key runs for the
+// Oracle on Windows; each want is what Python 3.12's ntpath.join returned.
+func TestNtJoin(t *testing.T) {
+	const base = `C:\proj\apm_modules`
+	tests := []struct{ base, key, want string }{
+		{base, `C:\src\dep`, `C:\src\dep`},
+		{base, `C:/src/dep`, `C:/src/dep`},
+		{base, `D:\src\dep`, `D:\src\dep`},
+		{base, `\\server\share\dep`, `\\server\share\dep`},
+		{base, `//server/share/dep`, `//server/share/dep`},
+		{base, `\\?\UNC\server\share\dep`, `\\?\UNC\server\share\dep`},
+		{base, `\src\dep`, `C:\src\dep`},
+		{base, `/src/dep`, `C:/src/dep`},
+		{base, `C:dep`, `C:\proj\apm_modules\dep`},
+		{base, `c:dep`, `c:\proj\apm_modules\dep`},
+		{base, `D:dep`, `D:dep`},
+		{base, `_local/dep`, `C:\proj\apm_modules\_local/dep`},
+		{base, `..\dep`, `C:\proj\apm_modules\..\dep`},
+		{base, `~\hdep`, `C:\proj\apm_modules\~\hdep`},
+		{base, `\\server`, `\\server`},
+		{`\\server\share\apm_modules`, `/src/dep`, `\\server\share/src/dep`},
+		{`apm_modules`, `/src/dep`, `/src/dep`},
+	}
+	for _, tt := range tests {
+		if got := ntJoin(tt.base, tt.key); got != tt.want {
+			t.Errorf("ntJoin(%q, %q) = %q, want %q", tt.base, tt.key, got, tt.want)
+		}
+	}
+}

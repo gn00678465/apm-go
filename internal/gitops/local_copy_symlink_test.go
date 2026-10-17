@@ -3,6 +3,7 @@ package gitops
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -85,6 +86,9 @@ func TestMaterializeLocalCopy_DereferencesInPackageSymlinks(t *testing.T) {
 // place of the stale one (:286-289). The expected reasons are Oracle output
 // with the test root replaced by <ROOT>, and its parent by <PARENT>.
 func TestMaterializeLocalCopy_RefusesSymlinkItCannotDereference(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the reasons on Windows: TestMaterializeLocalCopy_RefusesSymlinkItCannotDereferenceWindows")
+	}
 	const dangling = ". Remove the dangling symlink or restore its target. Local install aborted."
 	link := func(path, target string) func(*testing.T, string) {
 		return func(t *testing.T, dep string) {
