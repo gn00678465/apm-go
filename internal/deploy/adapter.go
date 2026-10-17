@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -21,6 +22,7 @@ var activeDeployMode struct {
 	symlink    bool
 	global     bool
 	projectDir string
+	adopted    map[string]bool
 }
 
 // symlinkProbe is canSymlink, replaced in tests.
@@ -438,6 +440,11 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 		return nil, err
 	}
 	absDest := filepath.Join(projectDir, filepath.FromSlash(destPath))
+	if copiedAsText(p.Type) {
+		if src, err := os.ReadFile(p.SrcPath); err == nil {
+			noteAdopted(destPath, absDest, crlfToLF(src), true)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
 		return nil, err
 	}
@@ -463,6 +470,17 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
 	return []string{destPath}, nil
+}
+
+// noteAdopted records, before the deploy writes destPath, whether the file
+// there is the one the Oracle compares with want and adopts, as
+// oracleFinds reads it (integration/base_integrator.py:429-495).
+func noteAdopted(destPath, abs string, want []byte, text bool) {
+	if activeDeployMode.adopted == nil {
+		return
+	}
+	got, ok := oracleFinds(abs, text)
+	activeDeployMode.adopted[destPath] = ok && bytes.Equal(got, want)
 }
 
 // checkFileDest is the check deployFileToPath makes before it writes

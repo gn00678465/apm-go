@@ -190,7 +190,7 @@ func TestInstall_StaleCleanup_DependencyFileRemovedFromSource(t *testing.T) {
 	if _, ok := dep.DeployedHashes[deployed]; ok {
 		t.Errorf("deployed_file_hashes still lists %s", deployed)
 	}
-	if !strings.Contains(stdout, "Cleaned 1 stale file from "+depKey) {
+	if !strings.Contains(stdout, "Cleaned 1 stale file from ./vendor/dep") {
 		t.Errorf("stdout must report the cleanup for %s, got:\n%s", depKey, stdout)
 	}
 	if installChangedNothing(stdout) {
@@ -406,7 +406,7 @@ func TestInstall_StaleCleanup_AntigravityDependencyFileRemovedFromSource(t *test
 	if dep := readLockfile(t).FindByKey(depKey); dep == nil || staleCleanupContains(dep.DeployedFiles, deployed) {
 		t.Errorf("deployed_files of %s must not list %s, got %+v", depKey, deployed, dep)
 	}
-	if !strings.Contains(stdout, "Cleaned 1 stale file from "+depKey) {
+	if !strings.Contains(stdout, "Cleaned 1 stale file from ./vendor/dep") {
 		t.Errorf("stdout must report the cleanup for %s, got:\n%s", depKey, stdout)
 	}
 }
@@ -443,7 +443,7 @@ func TestInstall_StaleCleanup_DependencyDeployingNothingIsCleaned(t *testing.T) 
 	if _, ok := dep.DeployedHashes[deployed]; ok {
 		t.Errorf("deployed_file_hashes still lists %s", deployed)
 	}
-	if !strings.Contains(stdout, "Cleaned 2 stale files from "+depKey+"\n  - .claude/skills/demo\n  - "+deployed+"\n") {
+	if !strings.Contains(stdout, "Cleaned 2 stale files from ./vendor/dep\n  - .claude/skills/demo\n  - "+deployed+"\n") {
 		t.Errorf("stdout must report the cleanup of %s and list %s, got:\n%s", depKey, deployed, stdout)
 	}
 	if installChangedNothing(stdout) {
@@ -561,7 +561,6 @@ func TestInstall_StaleCleanup_DeployFailureInOneBucketDoesNotStopAnother(t *test
 		"vendor/dep/.apm/skills/ds/SKILL.md":        "---\nname: ds\ndescription: d\n---\n# D\n",
 		"vendor/dep/.apm/skills/ds/extra/remove.md": "two\n",
 	})
-	depKey := localModulesKey(resolveLocalSourceAbs("./vendor/dep"))
 	staleCleanupInstall(t, "")
 	local := []string{".claude/skills/demo/SKILL.md", ".claude/skills/demo/extra/a.md"}
 	const depStale = ".claude/skills/ds/extra/remove.md"
@@ -574,7 +573,7 @@ func TestInstall_StaleCleanup_DeployFailureInOneBucketDoesNotStopAnother(t *test
 
 	assertStaleCleanupExists(t, true, local...)
 	assertStaleCleanupExists(t, false, depStale)
-	if !strings.Contains(stdout, "Cleaned 1 stale file from "+depKey+"\n  - "+depStale+"\n") {
+	if !strings.Contains(stdout, "Cleaned 1 stale file from ./vendor/dep\n  - "+depStale+"\n") {
 		t.Errorf("stdout must report the dependency's cleanup, got:\n%s", stdout)
 	}
 	if strings.Contains(stdout, "<local .apm/>") {

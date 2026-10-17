@@ -35,7 +35,8 @@ func TestInstall_RootPromptZeroTarget(t *testing.T) {
 			t.Fatal(err)
 		}
 		stdout, stderr, code := runCompileCLI(t, "install", "-g")
-		if want := " i No dependencies to install\n"; code != 0 || stdout != want || stderr != "" {
+		// The scope line comes first (install/manifest_helpers.py:63-74).
+		if want := " i Installing to user scope (~/.apm/)\n i No dependencies to install\n"; code != 0 || stdout != want || stderr != "" {
 			t.Errorf("exit %d, stdout:\n%s\nstderr:\n%s\nwant exit 0, stdout:\n%s", code, stdout, stderr, want)
 		}
 		assertNoFile(t, filepath.Join(root, "home", ".apm", "apm.lock.yaml"))

@@ -1,0 +1,6 @@
+{
+  "id": "install-multi-target",
+  "argv": ["install", "--target", "claude,copilot"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

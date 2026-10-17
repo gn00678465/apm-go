@@ -192,6 +192,9 @@ func stripQuery(s string) string {
 // treated as a plain "owner" (no dot, not host-qualified) still gets this
 // port-shape check first, so a malformed "owner:notaport/repo" fails here,
 // not silently later.
+// errShorthandPort is the Oracle's text (identity.py:53).
+var errShorthandPort = errors.New("Invalid shorthand port. Expected an integer from 1 to 65535")
+
 func splitShorthandHostPort(hostSegment string) (host string, port int, err error) {
 	idx := strings.LastIndex(hostSegment, ":")
 	if idx < 0 {
@@ -200,11 +203,11 @@ func splitShorthandHostPort(hostSegment string) (host string, port int, err erro
 	host = hostSegment[:idx]
 	rawPort := hostSegment[idx+1:]
 	if host == "" || !shorthandPortRe.MatchString(rawPort) {
-		return "", 0, fmt.Errorf("invalid shorthand port %q; expected an integer from 1 to 65535", rawPort)
+		return "", 0, errShorthandPort
 	}
 	p, convErr := strconv.Atoi(rawPort)
 	if convErr != nil || p < 1 || p > 65535 {
-		return "", 0, fmt.Errorf("invalid shorthand port %q; expected an integer from 1 to 65535", rawPort)
+		return "", 0, errShorthandPort
 	}
 	if p == 443 { // identity.py:46: only the HTTPS default is stripped, regardless of the eventual scheme
 		return host, 0, nil
@@ -927,6 +930,15 @@ func parseShorthand(s string) (*DependencyReference, error) {
 	// comment.
 	first, port, err := splitShorthandHostPort(parts[0])
 	if err != nil {
+		// The Oracle reads a segment with a port it refuses as a bare owner:
+		// it checks the virtual path past owner/repo (reference.py:1219,
+		// 1270-1305) before it splits the port (:1454), so a dotted last
+		// segment ("file:///x/y/b.git") gets the virtual path's reason.
+		if segs := nonEmptySegments(rest); len(segs) > 2 {
+			if vErr := validateVirtualPath(strings.Join(segs[2:], "/")); vErr != nil {
+				return nil, vErr
+			}
+		}
 		return nil, fmt.Errorf("dependency %q: %w", s, err)
 	}
 	normalizedParts := append([]string(nil), parts...)
@@ -1781,6 +1793,16 @@ func parseNetlocHostPort(netloc string, validateHost bool) (host string, port in
 		return "", 0, fmt.Errorf("invalid host %q", host)
 	}
 	return host, port, nil
+}
+
+func nonEmptySegments(p string) []string {
+	var segs []string
+	for _, seg := range strings.Split(p, "/") {
+		if seg != "" {
+			segs = append(segs, seg)
+		}
+	}
+	return segs
 }
 
 func validateVirtualPath(vp string) error {

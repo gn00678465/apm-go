@@ -194,14 +194,17 @@ func TestInstallGlobal_DestinationParentOutside_NotDeployed(t *testing.T) {
 			stdout, code := runCLI86(t, "install", "--global")
 
 			real := realDir86(t, root)
-			want := " > Installing dependencies from apm.yml...\n" +
+			// A user-scope install announces the scope, prints no Targets
+			// line and no .gitignore line, and has a <project root> block
+			// (r4-or/global2, install/manifest_helpers.py:63-74).
+			want := " i Installing to user scope (~/.apm/)\n" +
+				" > Installing dependencies from apm.yml...\n" +
 				" > Resolving ../dep...\n" +
-				" i Targets: claude  (source: apm.yml)\n" +
 				" ! deploy " + tt.prim + " to claude failed: " + tt.dest + ": symlink .claude/" + tt.linked + " resolves to " + filepath.Join(real, "outside") + ", outside " + filepath.Join(real, "home", ".claude") + "\n" +
 				"   + ../dep (local)\n" +
 				"  |-- (files unchanged)\n" +
-				" i Added apm_modules/ to .gitignore\n" +
-				" ! _local/dep deployed 0 files to any target\n" +
+				"   + <project root> (local)\n" +
+				"  |-- (files unchanged)\n" +
 				" + Installed 1 APM dependency in <t>s.\n"
 			if code != 0 || stdout != want {
 				t.Errorf("exit %d, stdout:\n%s\nwant exit 0, stdout:\n%s", code, stdout, want)

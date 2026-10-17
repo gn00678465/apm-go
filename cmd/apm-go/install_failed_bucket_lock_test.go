@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -104,7 +105,8 @@ func TestInstallGlobal_FailedBucket_CleanedAfterFailureIsFixed(t *testing.T) {
 	if got := globalStaleRead(t, agent); got != failedBucketAgent {
 		t.Errorf("a.md through its symlink = %q, want %q", got, failedBucketAgent)
 	}
-	if !strings.Contains(out, "Cleaned 1 stale file from _local/dep\n") || strings.Count(out, ".claude/skills/s2\n") != 1 {
+	// The line names the package as apm.yml declares it (r2-or/stale/i2.out).
+	if !regexp.MustCompile(`Cleaned 1 stale file from \S+[/\\]dep\n`).MatchString(out) || strings.Count(out, ".claude/skills/s2\n") != 1 {
 		t.Errorf("want one cleaned line listing .claude/skills/s2:\n%s", out)
 	}
 	if again := globalStaleInstall(t, "claude"); !installChangedNothing(again) {

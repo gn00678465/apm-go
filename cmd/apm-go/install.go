@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
+	"github.com/apm-go/apm/internal/semver"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -241,6 +243,11 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			refused.printEnd()
 			runErr = withSilentExitCode(1, runErr)
 		}
+		var outside *resolveRefusedError
+		if errors.As(runErr, &outside) {
+			outside.print()
+			runErr = withSilentExitCode(1, runErr)
+		}
 	}()
 
 	// Determine frozen mode up front (explicit flag or CI default) so apm.yml can
@@ -280,6 +287,14 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		if len(packages) == 0 {
 			return fmt.Errorf("--dev requires at least one positional package to install")
 		}
+	}
+
+	if deployDir != "" && !frozen {
+		// install/manifest_helpers.py:63-74. Deliberate deviation by owner
+		// ruling (issue #122 comment 6232580233): the Oracle's warning after
+		// it, which names the user-scope support of its 16 targets
+		// (core/scope.py:228-276), is not printed, since apm-go deploys to 6.
+		ux.Info(os.Stdout, "Installing to user scope (~/.apm/)")
 	}
 
 	// 1. Parse apm.yml — optional in frozen mode.
@@ -873,8 +888,8 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 
 	var result *resolver.ResolutionResult
 	var regLoader *registry.Loader
-	// core/command_logger.py:319-347. A local package the lock already holds
-	// is not resolved again by the Oracle and gets no line.
+	var fetched *fetchedDirsLoader
+	// core/command_logger.py:319-347.
 	heldLines = append(heldLines, heldLine{print: func() {
 		if len(packages) > 0 {
 			ux.Progress(os.Stdout, "Installing %d new %s...", len(packages), pluralWord(len(packages), "package", "packages"))
@@ -886,21 +901,6 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		printHeldLines(heldLines, true)
 		result = &resolver.ResolutionResult{}
 	} else {
-		seen := make(map[string]bool)
-		for _, dep := range allDirectDeps(m) {
-			canon := dep.ToCanonical(m.DefaultHost)
-			if dep.LocalSourcePath != "" {
-				canon = dep.LocalDeclaredPath
-				if existingLock != nil && existingLock.FindByKey(deploy.DepRefKey(dep)) != nil {
-					continue
-				}
-			}
-			if !seen[canon] {
-				seen[canon] = true
-				heldLines = append(heldLines, heldLine{print: func() { ux.Progress(os.Stdout, "Resolving %s...", canon) }})
-			}
-		}
-
 		// Registry access is experimental (API may change); require the opt-in flag
 		// before any live registry resolution. Gates network use only — apm.yml
 		// registries parsing and lockfile schema stay unconditional.
@@ -926,13 +926,20 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		}
 
 		newLocalCopies := absentLocalCopies(m)
-		fetched := &fetchedDirsLoader{next: regLoader}
+		fetched = &fetchedDirsLoader{next: regLoader, lock: existingLock, fetched: map[string]bool{},
+			announce: func(name string) {
+				heldLines = append(heldLines, heldLine{print: func() { ux.Progress(os.Stdout, "Resolving %s...", name) }})
+			}}
 		result, err = resolver.Resolve(m, existingLock, deps.tags, fetched, resolver.ResolverConfig{
 			MarketplaceResolve: newMarketplaceResolveFunc(),
 		})
 		printHeldLines(heldLines, err == nil)
 		if err != nil {
 			removeNewLocalCopies(newLocalCopies)
+			var outside *archive.ContainmentError
+			if errors.As(err, &outside) {
+				return &resolveRefusedError{err: err, reason: outside, verbose: deps.verbose, started: started}
+			}
 			return fmt.Errorf("resolve: %w", err)
 		}
 		newModuleDirs = fetched.keys
@@ -1007,7 +1014,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
 	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, len(requestedKeys) > 0, result, newLock, existingLock, existingNode, node,
-		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance, manifestCreated: manifestCreated})
+		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance,
+			manifestCreated: manifestCreated, global: deployDir != "", verbose: deps.verbose, manifestTargets: len(m.Target) > 0,
+			fetched: fetchedKeys(fetched)})
 }
 
 // printFrozenVerifiedDeps lists every dependency a successful --frozen
@@ -1939,6 +1948,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	var failedBuckets, refused map[string]bool
 	var skippedDeps []deploy.SkippedDep
 	var commandNotes []deploy.CommandNote
+	var shadowed []deploy.Shadowed
 	// orphans are the lock entries step 6b carries over for packages this
 	// run no longer resolves: whole when they were not cleaned, else the
 	// paths the cleanup could not remove.
@@ -1955,6 +1965,9 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	}
 	if len(targets) > 0 {
 		targetSource := "auto-detect"
+		if run != nil {
+			targetSource = "auto-detect from " + strings.Join(manifest.DetectSignals(detectRoot), ", ")
+		}
 		if targetFlag != "" {
 			targetSource = "--target"
 			if run != nil {
@@ -1992,7 +2005,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		var rejected *deploy.RejectedInstructionError
 		if run != nil && errors.As(err, &rejected) {
 			printTargets()
-			return run.rejectedInstall(rejected, result)
+			return run.rejectedInstall(rejected, result, newLock, existingLock)
 		}
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
@@ -2000,11 +2013,22 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		apmPhase = len(result.Deps) > 0 || len(deployResult.PerDep) > 0
 		if run != nil && apmPhase {
 			// The Oracle names the targets only when it has a package or the
-			// project's own content to integrate (core/target_detection.py:1186).
-			printTargets()
+			// project's own content to integrate (core/target_detection.py:1186),
+			// and not for the user scope.
+			if !run.global {
+				printTargets()
+			}
 			printSkillSubset()
 		}
 		for _, d := range deployResult.Diags {
+			// install counts shadowed primitives as the Oracle's skipped
+			// files (finish) instead.
+			if run != nil && slices.Contains(deployResult.Conflicts, d) {
+				continue
+			}
+			if !slices.Contains(deployResult.MCPDiags, d) {
+				run.noteDiagnostic()
+			}
 			ux.Warn(os.Stderr, "%s", d)
 		}
 		commandNotes = deployResult.CommandNotes
@@ -2020,7 +2044,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			}
 		}
 		keptDirs, failedBuckets, refused = deployResult.KeptDirs, deployResult.FailedBuckets, rejectedSet(deployResult.RejectedPaths)
-		skippedDeps = deployResult.SkippedDeps
+		skippedDeps, shadowed = deployResult.SkippedDeps, deployResult.Shadowed
 		skipped := make(map[string]bool, len(skippedDeps))
 		for _, sd := range skippedDeps {
 			skipped[sd.Key] = true
@@ -2035,68 +2059,30 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// it orders the dependencies by (depth, node id)
 		// (deps/apm_resolver.py:46). apm-go keeps the resolver order (issue
 		// #47, kept by issue #50 ruling R1).
-		for _, dep := range result.Deps {
-			dr, ok := deployResult.PerDep[dep.Key]
-			if !ok && run == nil {
-				continue
+		if run == nil {
+			for _, dep := range result.Deps {
+				if dr, ok := deployResult.PerDep[dep.Key]; ok {
+					ux.Tree(os.Stdout, deployedFilesTree(dep.Key+depVersionLabel(dep), dr.Files))
+				}
 			}
-			if run == nil {
-				ux.Tree(os.Stdout, deployedFilesTree(dep.Key+depVersionLabel(dep), dr.Files))
-				continue
+			if dr, ok := deployResult.PerDep[""]; ok {
+				ux.Tree(os.Stdout, deployedFilesTree("<project root> (local)", dr.Files))
 			}
-			// A package that deployed nothing still gets its header, with
-			// "(files unchanged)", and is counted (measured on the Oracle);
-			// one whose targets: has no active target gets the header alone
-			// (install/services.py:321).
-			var files []string
-			var hashes map[string]string
-			if ok {
-				files, hashes = dr.Files, dr.Hashes
+			// Warn about resolved dependencies that deployed zero files to
+			// any target -- otherwise the summary reads as success even when
+			// a dependency's primitives went entirely undiscovered.
+			for _, dep := range result.Deps {
+				if _, ok := deployResult.PerDep[dep.Key]; !ok && !skipped[dep.Key] && len(deployResult.RejectedPaths[dep.Key]) == 0 {
+					ux.Warn(os.Stderr, "%s deployed 0 files to any target", dep.Key)
+				}
 			}
-			if skipped[dep.Key] {
-				ux.SuccessAt(os.Stdout, "  ", "%s", run.installBlockLabel(dep))
-			} else {
-				printInstallBlock(run.installBlockLabel(dep), files, hashes, beforeDeploy)
-			}
-			// The Oracle counts a local package on every run
-			// (install/sources.py:74). A remote package it counts only when
-			// fetched in this run; apm-go counts it always, which was not
-			// compared against the Oracle.
-			apmInstalled++
-		}
-		// R14: name the local-primitives bucket after what it actually is
-		// (files integrated from this project's own .apm/ tree), not a bare,
-		// ambiguous "(local)".
-		if dr, ok := deployResult.PerDep[""]; ok && run == nil {
-			ux.Tree(os.Stdout, deployedFilesTree("<project root> (local)", dr.Files))
-		} else if ok || (run != nil && len(deployResult.RejectedPaths[""]) > 0) {
-			// The project's content refused at a path still gets its header,
-			// with "(files unchanged)", as the Oracle prints it.
-			var files []string
-			var hashes map[string]string
-			if ok {
-				files, hashes = dr.Files, dr.Hashes
-			}
-			if printInstallBlock("<project root> (local)", files, hashes, beforeDeploy) > 0 {
-				// The project's own content counts as one dependency when a
-				// file of it was integrated (install/phases/integrate.py:385).
-				apmInstalled++
-			}
-		}
-
-		if run != nil && apmPhase {
-			// Here, before the MCP servers, is where the Oracle prints it.
-			updateGitignoreForApmModules()
-		}
-
-		// Warn about resolved dependencies that deployed zero files to any
-		// target -- otherwise "Installed N dependencies" reads as success
-		// even when a dependency's primitives went entirely undiscovered
-		// (e.g. an unrecognized manifest format). One with a refused path
-		// already has its Rejected line, and the Oracle prints no more.
-		for _, dep := range result.Deps {
-			if _, ok := deployResult.PerDep[dep.Key]; !ok && !skipped[dep.Key] && len(deployResult.RejectedPaths[dep.Key]) == 0 {
-				ux.Warn(os.Stderr, "%s deployed 0 files to any target", dep.Key)
+		} else if apmPhase {
+			apmInstalled = run.printBlocks(result, deployResult, existingLock, newLock, beforeDeploy, skipped,
+				listedDeps(result, requestedKeys, scoped))
+			// Here, before the MCP servers, is where the Oracle prints it; the
+			// user scope keeps no .gitignore (install/pipeline.py:820-826).
+			if !run.global {
+				updateGitignoreForApmModules()
 			}
 		}
 
@@ -2173,6 +2159,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// dependency has since taken over, or a file that's already gone are
 		// all left untouched and reported via a warning instead.
 		for _, d := range reconcileStaleSkillDeployments(existingLock, newLock, ".") {
+			run.noteDiagnostic()
 			ux.Warn(os.Stderr, "%s", d)
 		}
 
@@ -2198,6 +2185,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 					ux.List(os.Stdout, items)
 				}
 				for _, d := range oc.diags {
+					run.noteDiagnostic()
 					ux.Warn(os.Stderr, "%s", d)
 				}
 				orphans = oc.kept
@@ -2212,7 +2200,13 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 					// oracle prints the count only; apm-go also lists the
 					// paths, because issue #30 asks for them and the deleted
 					// files are in the user's workspace.
-					ux.Info(os.Stdout, "Cleaned %d stale %s from %s", n, noun, c.label)
+					label := c.label
+					if declared, ok := run.declaredPath(c.label); ok {
+						// The Oracle names a local package as apm.yml declares
+						// it (core/command_logger.py:482-496).
+						label = declared
+					}
+					ux.Info(os.Stdout, "Cleaned %d stale %s from %s", n, noun, label)
 					items := make([]ux.Item, 0, n)
 					for _, f := range c.removed {
 						items = append(items, ux.Item{Text: f})
@@ -2224,6 +2218,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				// deploy.RemoveDeployedFiles, the one delete path install and
 				// uninstall share, whose strings are existing output.
 				for _, d := range c.diags {
+					run.noteDiagnostic()
 					ux.Warn(os.Stderr, "%s", d)
 				}
 			}
@@ -2329,8 +2324,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			manifestSectionMoved: manifestSectionMoved, result: result, targets: targets,
 			newLock: newLock, existingLock: existingLock, existingNode: existingNode,
 			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase,
-			skippedDeps:  skippedDeps,
-			commandNotes: commandNotes,
+			skippedDeps: skippedDeps, commandNotes: commandNotes, shadowed: shadowed,
+			listed: listedDeps(result, requestedKeys, scoped),
 		})
 	}
 
@@ -3472,19 +3467,110 @@ func removeNewLocalCopies(keys []string) {
 // resolve loads, direct or transitive, that did not exist before its load.
 // An install the deploy refuses removes them, as the Oracle's install leaves
 // no package it fetched (measured for a local, a git and a registry package,
-// and for a registry package's dependency).
+// and for a registry package's dependency). It also decides which packages
+// this run fetches, as the Oracle's download callback does
+// (install/phases/resolve.py:455-481): one is fetched, and announced with
+// its Resolving line, when its directory is absent or its remote reference
+// left the lock (shouldFetch); every other one is cached.
 type fetchedDirsLoader struct {
 	next resolver.PackageLoader
 	keys []string
+	// lock is the lock before this run; fetched gets each key it fetches.
+	lock     *lockfile.Lockfile
+	fetched  map[string]bool
+	announce func(name string)
 }
 
 func (l *fetchedDirsLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
 	if key := deploy.DepRefKey(ref); key != "" {
-		if _, err := os.Lstat(filepath.Join("apm_modules", filepath.FromSlash(key))); os.IsNotExist(err) {
+		dir := filepath.Join("apm_modules", filepath.FromSlash(key))
+		_, statErr := os.Lstat(dir)
+		absent := os.IsNotExist(statErr)
+		if absent {
 			l.keys = append(l.keys, key)
+		}
+		// The Oracle checks the path before it prints the Resolving line
+		// (resolve.py:455-464); a local copy has its own check, run before
+		// the resolve (gitops.CheckLocalCopy).
+		if ref.LocalSourcePath == "" {
+			if err := archive.CheckWithin("apm_modules", dir); err != nil {
+				return nil, err
+			}
+		}
+		if l.fetched != nil && !l.fetched[key] && (absent || (ref.LocalSourcePath == "" && shouldFetch(ref, l.lock))) {
+			l.fetched[key] = true
+			if l.announce != nil {
+				l.announce(resolvingName(ref))
+			}
 		}
 	}
 	return l.next.LoadPackage(ref, resolvedRef)
+}
+
+func fetchedKeys(l *fetchedDirsLoader) map[string]bool {
+	if l == nil {
+		return nil
+	}
+	return l.fetched
+}
+
+// shouldFetch is the Oracle's should_force_ref_recheck for a remote package
+// whose directory is there (drift.py:95-218): it is fetched again when the
+// lock has no entry for it or its reference changed since.
+func shouldFetch(ref *manifest.DependencyReference, lock *lockfile.Lockfile) bool {
+	if ref.ArtifactoryPrefix != "" {
+		return false
+	}
+	var locked *lockfile.LockedDep
+	if lock != nil {
+		locked = lock.FindByKey(deploy.DepRefKey(ref))
+	}
+	if locked == nil {
+		return true
+	}
+	if (ref.Source == "registry") != (locked.Source == "registry") {
+		return true
+	}
+	if ref.Source == "registry" {
+		if !semver.IsSemverRange(ref.Reference) {
+			return ref.Reference != locked.Version
+		}
+		ok, err := semver.Satisfies(locked.Version, ref.Reference)
+		return err != nil || !ok
+	}
+	if resolver.ClassifyReference(ref) == resolver.KindGitSemver {
+		return ref.Reference != locked.Constraint
+	}
+	return ref.Reference != locked.ResolvedRef
+}
+
+// resolvingName is the Oracle's get_display_name
+// (models/dependency/reference.py:2009-2017): a local package's declared
+// path, a virtual package's name, else the repository path.
+func resolvingName(ref *manifest.DependencyReference) string {
+	switch {
+	case ref.Alias != "":
+		return ref.Alias
+	case ref.LocalSourcePath != "":
+		return ref.LocalDeclaredPath
+	case ref.VirtualPath != "":
+		return virtualPackageName(ref.RepoURL, ref.VirtualPath)
+	}
+	return ref.RepoURL
+}
+
+// virtualPackageName is the Oracle's get_virtual_package_name
+// (reference.py:302-325): the repository's last segment and the virtual
+// path's last segment, its virtual file extension dropped.
+func virtualPackageName(repoURL, virtualPath string) string {
+	last := path.Base(virtualPath)
+	for _, ext := range []string{".prompt.md", ".instructions.md", ".agent.md"} {
+		if strings.HasSuffix(last, ext) {
+			last = strings.TrimSuffix(last, ext)
+			break
+		}
+	}
+	return path.Base(repoURL) + "-" + last
 }
 
 // newGitPackageLoader is the loader install and update fetch packages into

@@ -369,6 +369,19 @@ func ResolveCommit(repoDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// CheckedOutBranch is the branch checked out in repoDir, "" when HEAD is
+// detached or git cannot tell. A clone with no ref checks out the remote's
+// default branch, which the Oracle names in the install header.
+func CheckedOutBranch(repoDir string) string {
+	cmd := gitCommand("symbolic-ref", "--short", "-q", "HEAD")
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func (r *RealPackageLoader) loadLocalPackage(path string) (*manifest.Manifest, error) {
 	return r.parseSubManifest(path)
 }

@@ -1,0 +1,6 @@
+{
+  "id": "install-bootstrap-autodetect",
+  "argv": ["install", "./pkg"],
+  "env": {"CI": "0"},
+  "rewrite_binary_name": true
+}

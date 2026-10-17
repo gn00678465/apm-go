@@ -33,6 +33,8 @@ type Primitive struct {
 	// SkipRootGit marks a skill whose SrcPath is the root of a cloned
 	// package: the .git there is the checkout's, not the skill's.
 	SkipRootGit bool
+	// RootSkill marks the skill of a package whose root holds SKILL.md.
+	RootSkill bool
 }
 
 // CollectLocalPrimitives returns the primitives of the project's own content
@@ -182,6 +184,7 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 			DepKey:      t.depKey,
 			SrcPath:     t.dir,
 			SkipRootGit: t.cloned(),
+			RootSkill:   true,
 		})
 	}
 
