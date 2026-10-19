@@ -48,7 +48,7 @@ func TestRun_UnmanagedPaths(t *testing.T) {
 		// What the Oracle compares an agent with: the source, CRLF as LF.
 		".github/agents/same.agent.md": "---\nname: same\ndescription: d\n---\nsame\n",
 		// A hook the Oracle never adopts (hook_integrator.py:1070).
-		".github/hooks/h.json": "{}\n",
+		".github/hooks/local-h.json": "{}\n",
 	}
 	for _, trial := range []bool{false, true} {
 		deployDir := ""
@@ -61,7 +61,7 @@ func TestRun_UnmanagedPaths(t *testing.T) {
 		}
 		left := result.Unmanaged[""]
 		sort.Strings(left)
-		if want := []string{".claude/agents/ag.md", ".claude/skills/sk", ".github/hooks/h.json"}; !reflect.DeepEqual(left, want) {
+		if want := []string{".claude/agents/ag.md", ".claude/skills/sk", ".github/hooks/local-h.json"}; !reflect.DeepEqual(left, want) {
 			t.Errorf("trial %v: Unmanaged = %q, want %q", trial, left, want)
 		}
 		for rel, content := range user {
@@ -70,7 +70,7 @@ func TestRun_UnmanagedPaths(t *testing.T) {
 			}
 		}
 		local := result.PerDep[""]
-		for _, rel := range []string{".claude/agents/ag.md", ".claude/skills/sk/SKILL.md", ".github/hooks/h.json"} {
+		for _, rel := range []string{".claude/agents/ag.md", ".claude/skills/sk/SKILL.md", ".github/hooks/local-h.json"} {
 			if _, ok := local.Hashes[rel]; ok {
 				t.Errorf("trial %v: %s is recorded", trial, rel)
 			}

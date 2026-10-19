@@ -262,21 +262,62 @@ func TakenOver(deployRoot, bucketSource, rel string) bool {
 	return err == nil && loc.userLink != ""
 }
 
-// RootGitThroughLink reports whether the lock path rel is at or below the .git
-// of a package root, reached through the skill symlink a symlink deploy made
-// to bucketSource itself: a file of the package's own .git, which a cloned
-// package's root skill does not deploy (Primitive.SkipRootGit).
-func RootGitThroughLink(deployRoot, bucketSource, rel string) bool {
-	loc, err := locateStalePath(deployRoot, bucketSource, rel)
-	if err != nil || loc.deployLink == "" {
-		return false
+// LeftOutThroughLink returns a test of the lock paths of the bucket depKey
+// ("" for the project's own content), whose source is bucketSource: whether
+// one is below a skill symlink a symlink deploy made into that source and is
+// not a file the skill's deploy writes (walkSkillDir). The link still shows
+// what the deploy leaves out, the .git of a cloned package's root (#113) and
+// what the Oracle's copy leaves out (issue #126), so a lock written before
+// lists it there.
+func LeftOutThroughLink(deployRoot, bucketSource, depKey string) func(rel string) bool {
+	written := map[string]map[string]bool{}
+	return func(rel string) bool {
+		loc, err := locateStalePath(deployRoot, bucketSource, rel)
+		if err != nil || loc.deployLink == "" {
+			return false
+		}
+		below, ok := strings.CutPrefix(filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))), loc.deployLink+"/")
+		if !ok {
+			return false
+		}
+		files, seen := written[loc.deployLink]
+		if !seen {
+			files = linkedSkillFiles(bucketSource, depKey, loc.linkTarget)
+			written[loc.deployLink] = files
+		}
+		return files != nil && !files[below]
 	}
-	below := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))), loc.deployLink+"/")
-	if below != ".git" && !strings.HasPrefix(below, ".git/") {
-		return false
-	}
+}
+
+// linkedSkillFiles lists the files a deploy of the skill at dir writes, for a
+// skill of the bucket depKey whose source is bucketSource, or nil when they
+// cannot be read.
+func linkedSkillFiles(bucketSource, depKey, dir string) map[string]bool {
 	absSource, err := filepath.Abs(bucketSource)
-	return err == nil && resolveExisting(absSource) == resolveExisting(loc.linkTarget)
+	if err != nil {
+		return nil
+	}
+	p := Primitive{Type: TypeSkills, DepKey: depKey, SrcPath: dir}
+	links := fileLinks
+	if depKey != "" {
+		links = followLinks
+		if resolveExisting(absSource) == resolveExisting(dir) {
+			t := sourceTree{dir: bucketSource, depKey: depKey}
+			m, _ := loadPluginManifest(t)
+			p.RootSkill, p.SkipRootGit, p.PluginRoot = true, !strings.HasPrefix(depKey, "_local/"), m != nil && !isAPMPackage(t)
+		}
+	}
+	files := map[string]bool{}
+	err = walkSkillDir(dir, links, skillCopyRulesOf(p), func(_, rel string, isDir bool) error {
+		if !isDir {
+			files[rel] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil
+	}
+	return files
 }
 
 // lockPathsAtOrBelow returns the entries of stale that are link itself or

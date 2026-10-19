@@ -1,0 +1,4 @@
+.claude/agents/rev.md: sha256:79cdc7d42083b311450fde9746800e9af17e9ae476c1e22cda9d87519ea72e07
+.claude/commands/hello.md: sha256:5db76a4f58183d1487597d37e143e8ecc28c031552166344f657e17f0534270c
+.github/agents/rev.agent.md: sha256:79cdc7d42083b311450fde9746800e9af17e9ae476c1e22cda9d87519ea72e07
+.github/prompts/hello.prompt.md: sha256:465b02fbf73b6f6d38794dbb610511f57c895471bd1b847b64a94ae572fcb177

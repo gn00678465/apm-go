@@ -148,14 +148,13 @@ func TestUninstallGlobal_SkillHandoverThroughSymlinkOutside_Refused(t *testing.T
 	assertTree86(t, root, before)
 }
 
-// Feedback test 4: skill-emptydir. A copy deploy makes every directory of
-// the skill, an empty one included, so a directory linked out of .claude
+// Feedback test 4: skill-emptydir. A copy deploy makes a directory of the
+// skill that holds no file it writes, as the Oracle makes one whose only file
+// is a .apm-pin (skex/p2: onlypin), so a directory linked out of .claude
 // fails the deploy before anything is made through it.
 func TestInstall_SkillEmptyDirLinksOutside_NotMade(t *testing.T) {
 	root := upDepProject(t, "  apm:\n    - ../dep\n")
-	if err := os.MkdirAll(filepath.Join(root, "dep", ".apm", "skills", "sk", "empty", "inner"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeCompileFile(t, root, "dep/.apm/skills/sk/empty/inner/.apm-pin", "pin\n")
 	if err := os.MkdirAll(filepath.Join(root, "outside"), 0o755); err != nil {
 		t.Fatal(err)
 	}

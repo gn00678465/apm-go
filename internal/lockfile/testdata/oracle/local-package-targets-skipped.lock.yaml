@@ -1,0 +1,10 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: _local/dep
+  name: dep
+  version: 1.0.0
+  package_type: apm_package
+  source: local
+  local_path: ./dep
+deployments: []

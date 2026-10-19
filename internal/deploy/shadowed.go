@@ -2,6 +2,8 @@ package deploy
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -66,10 +68,15 @@ func shadowedPrimitives(targets []string, ordered []Primitive, targetSubsets map
 				continue
 			}
 			s.ManagedAs = s.Paths
+			s.Rule = writesRule(adapter, p)
 			if p.Type == TypeSkills {
-				s.Same = skillDirsEqual(p.SrcPath, filepath.Join(deployDir, filepath.FromSlash(s.Paths[0])))
+				dir := filepath.Join(deployDir, filepath.FromSlash(s.Paths[0]))
+				s.Same = skillSameOnDisk(p, s.Paths[0], dir)
 				s.Deployed = s.Same
-			} else if same, deployed, text, err := shadowedContent(adapter, p); err == nil {
+				if !activeDeployMode.symlink {
+					s.Deployed = skillCopyOnDisk(p, dir)
+				}
+			} else if same, deployed, text, err := shadowedContent(adapter, p, s.Paths[0]); err == nil {
 				s.Same = onDisk(same, s.Paths, deployDir, text)
 				s.Deployed = onDisk(deployed, s.Paths, deployDir, text)
 				if text {
@@ -85,14 +92,16 @@ func shadowedPrimitives(targets []string, ordered []Primitive, targetSubsets map
 // shadowedContent is, for the shadowed primitive p of a single file, what
 // the Oracle compares the winner's file on disk with before it writes p
 // (same), and what p's deploy writes there (deployed), computed as the
-// deploy computes it. The Oracle compares a hook's source bytes, a claude
-// rule as converted (integration/instruction_integrator.py:188,360), and any
-// other primitive's source with each CRLF as LF when it is UTF-8
+// deploy computes it. The Oracle compares a hook's source bytes, a rule as
+// converted (integration/instruction_integrator.py:188,360), and any other
+// primitive's source with each CRLF as LF when it is UTF-8
 // (integration/base_integrator.py:355-373); a command it converts after the
 // comparison (command_integrator.py:581), and a codex agent it writes as TOML
 // (agent_integrator.py:262-283). text tells that p is an agent, prompt or
-// instruction deployFileToPath writes (copiedAsText).
-func shadowedContent(adapter TargetAdapter, p Primitive) (same, deployed []byte, text bool, err error) {
+// instruction deployFileToPath writes (copiedAsText). Links are rewritten for
+// destRel, where the winner wrote: an instruction is compared with its
+// content links rewritten (comparedContent).
+func shadowedContent(adapter TargetAdapter, p Primitive, destRel string) (same, deployed []byte, text bool, err error) {
 	src, err := os.ReadFile(p.SrcPath)
 	if err != nil {
 		return nil, nil, false, err
@@ -100,23 +109,35 @@ func shadowedContent(adapter TargetAdapter, p Primitive) (same, deployed []byte,
 	switch _, commander := adapter.(promptCommander); {
 	case p.Type == TypeHooks:
 		return src, src, false, nil
-	case p.Type == TypeInstructions && adapter.Name() == "claude":
-		rule, err := claudeRule(p)
+	case writesRule(adapter, p) && adapter.Name() == "claude":
+		rule, err := claudeRule(p, destRel)
+		return rule, rule, false, err
+	case writesRule(adapter, p):
+		rule, err := antigravityRule(p, destRel)
 		return rule, rule, false, err
 	case p.Type == TypePrompts && commander:
-		deployed, _, err = convertPromptToCommand(p.Name, adapter.Name(), src)
+		deployed, _, err = convertPromptToCommand(p.Name, adapter.Name(), src, commandLinks(p, destRel))
 	case p.Type == TypeAgents && adapter.Name() == "codex":
 		deployed, err = codexAgentTOML(p)
 	case activeDeployMode.symlink:
 		deployed, text = src, copiedAsText(p.Type)
 	default:
-		deployed, text = copiedBytes(p, src), copiedAsText(p.Type)
+		deployed, text = copiedBytes(p, destRel, src), copiedAsText(p.Type)
 	}
 	if text && activeDeployMode.global {
 		// What the Oracle's user scope writes over the winner's copy.
 		deployed = oracleText(src)
 	}
-	return crlfToLF(src), deployed, text, err
+	return comparedContent(p, destRel, src), deployed, text, err
+}
+
+// writesRule tells whether adapter writes the instruction p as a rule
+// (deployRule): claude's, and antigravity's in a project.
+func writesRule(adapter TargetAdapter, p Primitive) bool {
+	if p.Type != TypeInstructions {
+		return false
+	}
+	return adapter.Name() == "claude" || adapter.Name() == "antigravity" && convertsAntigravityRules()
 }
 
 // copiedAsText tells whether deployFileToPath writes a primitive of type t
@@ -244,6 +265,55 @@ func skillDirsEqual(a, b string) bool {
 	}
 	return true
 }
+
+// skillCopyOnDisk tells whether dir holds what a copy deploy of the skill p
+// writes (walkSkillDir, skillFileBytes) and nothing else: the same
+// directories, and files with the same bytes, none of them a symlink.
+func skillCopyOnDisk(p Primitive, dir string) bool {
+	destDir := ""
+	if r := activeDeployMode.links; r != nil {
+		if rel, err := filepath.Rel(r.deployDir, dir); err == nil {
+			destDir = filepath.ToSlash(rel)
+		}
+	}
+	want := map[string]string{}
+	err := walkSkillDir(p.SrcPath, skillLinksOf(p), skillCopyRulesOf(p), func(src, rel string, isDir bool) error {
+		if isDir {
+			src = ""
+		}
+		want[rel] = src
+		return nil
+	})
+	if err != nil {
+		return false
+	}
+	found := 0
+	err = filepath.WalkDir(dir, func(full string, d fs.DirEntry, err error) error {
+		if err != nil || full == dir {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, full)
+		src, ok := want[filepath.ToSlash(rel)]
+		switch {
+		case !ok, d.Type()&fs.ModeSymlink != 0, d.IsDir() != (src == ""):
+			return errSkillDiffers
+		case !d.IsDir():
+			got, err := os.ReadFile(full)
+			if err != nil {
+				return err
+			}
+			data, err := skillFileBytes(p, destDir, filepath.ToSlash(rel), src)
+			if err != nil || !bytes.Equal(got, data) {
+				return errSkillDiffers
+			}
+		}
+		found++
+		return nil
+	})
+	return err == nil && found == len(want)
+}
+
+var errSkillDiffers = errors.New("skill differs")
 
 // dircmpNames lists dir as dircmp's phase0 does, sorted, less dircmpIgnores.
 func dircmpNames(dir string) ([]string, error) {

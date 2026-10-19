@@ -7,16 +7,52 @@ type conflictKey struct {
 	Type PrimitiveType
 }
 
+func nameKey(p Primitive) conflictKey { return conflictKey{Name: p.Name, Type: p.Type} }
+
+// targetKey is the conflict key of target: the name, but for a copilot hook
+// the file it writes, <package>-<stem>.json (integration/hook_integrator.py:
+// 1065-1067), so hooks of one name from two packages do not compete there.
+func targetKey(target string) func(Primitive) conflictKey {
+	if target != "copilot" {
+		return nameKey
+	}
+	return func(p Primitive) conflictKey {
+		if p.Type == TypeHooks {
+			return conflictKey{Name: copilotHookFile(p), Type: p.Type}
+		}
+		return nameKey(p)
+	}
+}
+
+// copilotOnlyHookTarget reports whether copilot is the one target of targets
+// that deploys hooks.
+func copilotOnlyHookTarget(targets []string) bool {
+	copilot := false
+	for _, t := range targets {
+		if a, ok := Adapters[t]; ok && adapterSupports(a, TypeHooks) {
+			if t != "copilot" {
+				return false
+			}
+			copilot = true
+		}
+	}
+	return copilot
+}
+
 // ResolvePrimitives applies req-pr-002 (local wins) and req-pr-003 (first-declared wins).
 // Input must be ordered: locals first, then deps in manifest declaration order,
 // then transitive in lockfile sorted order (repo_url, virtual_path).
 func ResolvePrimitives(primitives []Primitive) ([]Primitive, []string) {
+	return resolvePrimitivesBy(primitives, nameKey)
+}
+
+func resolvePrimitivesBy(primitives []Primitive, keyOf func(Primitive) conflictKey) ([]Primitive, []string) {
 	winners := make(map[conflictKey]Primitive)
 	var order []conflictKey
 	var diags []string
 
 	for _, p := range primitives {
-		key := conflictKey{Name: p.Name, Type: p.Type}
+		key := keyOf(p)
 		existing, exists := winners[key]
 		if !exists {
 			winners[key] = p

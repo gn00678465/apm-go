@@ -124,6 +124,9 @@ type CommandNote struct {
 	Package string
 	Info    bool
 	Text    string
+	// Path is the deployed file an agent's note is about, which the
+	// uninstall hand-over prints only for a file it writes again.
+	Path string
 	// phase orders the notes of one package as the Oracle's integration
 	// phases come (rejectedKind); every other note is a command's.
 	phase int
@@ -139,9 +142,10 @@ const (
 // and the frontmatter.dumps of its result (command_integrator.py:196-273,
 // 397): the frontmatter keeps description, allowed-tools, model and
 // argument-hint, input becomes arguments, and ${input:name} in the body
-// becomes $name. It returns the command's bytes and the notes the Oracle
-// prints for it on target, warnings first.
-func convertPromptToCommand(name, target string, content []byte) ([]byte, []CommandNote, error) {
+// becomes $name, then links rewrites the body's links (command_integrator.py:
+// 323-327). It returns the command's bytes and the notes the Oracle prints
+// for it on target, warnings first.
+func convertPromptToCommand(name, target string, content []byte, links func(string) string) ([]byte, []CommandNote, error) {
 	doc, err := readPromptDoc(content)
 	if err != nil {
 		return nil, nil, err
@@ -204,6 +208,9 @@ func convertPromptToCommand(name, target string, content []byte) ([]byte, []Comm
 			"Mapped input -> command arguments in %s.md: [%s]", name, strings.Join(valid, ", "))})
 	}
 
+	if links != nil {
+		body = links(body)
+	}
 	command := pyStrip("---\n" + pyDump(out) + "\n---\n\n" + body)
 	return []byte(command), notes, nil
 }
@@ -315,9 +322,15 @@ func unhex(c byte) byte {
 	return c - 'a' + 10
 }
 
+// commandLinks rewrites the links of the body of the command p converts to
+// at destRel, also at --global, where the command is a file of its own.
+func commandLinks(p Primitive, destRel string) func(string) string {
+	return func(body string) string { return string(rewriteLinks(p, destRel, []byte(body))) }
+}
+
 // deployPromptCommand writes the prompt p, converted, to destPath: a file of
 // its own also for a symlink deploy, as the claude rules are
-// (deployClaudeInstructions).
+// (deployRule).
 func deployPromptCommand(p Primitive, deployDir, destPath, target string) ([]string, []CommandNote, error) {
 	if err := checkCommandName(p.Name); err != nil {
 		return nil, nil, err
@@ -326,7 +339,7 @@ func deployPromptCommand(p Primitive, deployDir, destPath, target string) ([]str
 	if err != nil {
 		return nil, nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
-	command, notes, err := convertPromptToCommand(p.Name, target, content)
+	command, notes, err := convertPromptToCommand(p.Name, target, content, commandLinks(p, destPath))
 	if err != nil {
 		return nil, nil, err
 	}

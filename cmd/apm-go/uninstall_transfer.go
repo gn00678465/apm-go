@@ -47,6 +47,10 @@ type uninstallHandover struct {
 	// link with the directories it leaves empty, so restore makes it again
 	// before it puts the files back through it.
 	parentLinks map[string]string
+	// notes holds the trial's notes about the files it deployed; written,
+	// the handed-over paths restore wrote.
+	notes   []deploy.CommandNote
+	written map[string]bool
 }
 
 // planUninstallHandover deploys the packages that stay into a temporary
@@ -114,7 +118,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 	if err != nil {
 		return nil, err
 	}
-	h := &uninstallHandover{trialDir: trialDir, owner: map[string]string{}, hashes: map[string]string{}, before: map[string]string{}, parentLinks: map[string]string{}}
+	h := &uninstallHandover{trialDir: trialDir, owner: map[string]string{}, hashes: map[string]string{}, before: map[string]string{}, parentLinks: map[string]string{}, written: map[string]bool{}}
 	listed := map[string]bool{}
 	for _, d := range allDirectDeps(m) {
 		if key := deploy.DepRefKey(d); key != "" && !listed[key] {
@@ -134,10 +138,12 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		h.close()
 		return nil, err
 	}
+	h.notes = trial.CommandNotes
 
 	deployedBy := map[string]string{}
 	for key, dr := range trial.PerDep {
-		for _, f := range withSkillDirs(dr.Files) {
+		files, _ := dr.Recorded()
+		for _, f := range withSkillDirs(files) {
 			deployedBy[f] = key
 		}
 	}
@@ -232,10 +238,13 @@ func (h *uninstallHandover) restore(root string) {
 			delete(h.hashes, p)
 			continue
 		}
+		_, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(p)))
 		if err := restoreFromTrial(h.trialDir, root, p); err != nil {
 			warnReintegrationSkipped(fmt.Errorf("restore %s: %w", p, err))
 			delete(h.owner, p)
 			delete(h.hashes, p)
+		} else if os.IsNotExist(statErr) {
+			h.written[p] = true
 		}
 	}
 }
@@ -411,6 +420,16 @@ func (h *uninstallHandover) printBlocks(lock *lockfile.Lockfile, root string) {
 			}
 		}
 		printInstallBlockLines(files, hashes, before)
+	}
+	// The Oracle's redeploy warns about each agent it writes again, after
+	// every block (commands/uninstall/engine.py:1381-1413); an agent it
+	// adopts gets no warning.
+	for _, key := range h.order {
+		for _, n := range h.notes {
+			if n.DepKey == key && n.Path != "" && h.written[n.Path] && h.owner[n.Path] == key && h.before[n.Path] != h.hashes[n.Path] {
+				ux.WarnAt(os.Stdout, "  ", "%s", commandNoteText(n))
+			}
+		}
 	}
 }
 

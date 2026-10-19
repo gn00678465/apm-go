@@ -9,6 +9,7 @@ import (
 
 	yamllib "go.yaml.in/yaml/v4"
 
+	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/semver"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -138,7 +139,7 @@ func declaresDependencies(m *yamllib.Node) bool {
 
 // pluginJSONPath is the Oracle's find_plugin_json (utils/helpers.py:105-129).
 func pluginJSONPath(dir string) string {
-	for _, rel := range []string{"plugin.json", ".github/plugin/plugin.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json"} {
+	for _, rel := range deploy.PluginManifestPaths {
 		p := filepath.Join(dir, filepath.FromSlash(rel))
 		if _, err := os.Stat(p); err == nil {
 			return p

@@ -56,7 +56,7 @@ var crlfDeployedPaths = map[string]bool{
 	".claude/commands/ship.md":                   false,
 	".claude/skills/sk/SKILL.md":                 true,
 	".agents/skills/sk/SKILL.md":                 true,
-	".github/hooks/h.json":                       true,
+	".github/hooks/{pkg}-h.json":                 true,
 }
 
 func writeCRLFFiles(t *testing.T, dir string, files map[string]string) {
@@ -111,15 +111,18 @@ func crlfBucketHashes(t *testing.T, project string) map[string]string {
 // assertCRLFDeploy checks that crlfProject, whose package has CRLF line
 // endings, deployed what lfProject, whose package has LF ones, deployed: the
 // same bytes, CRLF kept in skills and hooks, and the same lock hashes.
-func assertCRLFDeploy(t *testing.T, lfProject, crlfProject string) {
+// hookPkg is the package a copilot hook file is named after
+// (integration/hook_integrator.py:1065-1067).
+func assertCRLFDeploy(t *testing.T, lfProject, crlfProject, hookPkg string) {
 	t.Helper()
 	lfHashes := crlfBucketHashes(t, lfProject)
 	crlfHashes := crlfBucketHashes(t, crlfProject)
-	for _, rel := range slices.Sorted(maps.Keys(crlfDeployedPaths)) {
+	for _, key := range slices.Sorted(maps.Keys(crlfDeployedPaths)) {
+		rel := strings.Replace(key, "{pkg}", hookPkg, 1)
 		lf := globalStaleRead(t, filepath.Join(lfProject, filepath.FromSlash(rel)))
 		got := globalStaleRead(t, filepath.Join(crlfProject, filepath.FromSlash(rel)))
 		want := lf
-		if crlfDeployedPaths[rel] {
+		if crlfDeployedPaths[key] {
 			want = strings.ReplaceAll(lf, "\n", "\r\n")
 		}
 		if got != want {
@@ -182,7 +185,7 @@ func TestInstall_CRLF_ProjectOwnContent(t *testing.T) {
 		files["apm.yml"] = "name: own\nversion: 1.0.0\n"
 		writeCRLFFiles(t, project, files)
 	})
-	assertCRLFDeploy(t, lfProject, crlfProject)
+	assertCRLFDeploy(t, lfProject, crlfProject, "own")
 	assertCRLFProjectStable(t, crlfProject)
 }
 
@@ -193,7 +196,7 @@ func TestInstall_CRLF_LocalPathPackage(t *testing.T) {
 		writeCRLFFiles(t, filepath.Join(project, "pkg"), files)
 		writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"), "name: caller\nversion: 0.1.0\ndependencies:\n  apm:\n    - ./pkg\n")
 	})
-	assertCRLFDeploy(t, lfProject, crlfProject)
+	assertCRLFDeploy(t, lfProject, crlfProject, "pkg")
 	assertCRLFProjectStable(t, crlfProject)
 }
 
@@ -208,7 +211,7 @@ func TestInstall_CRLF_GitPackage(t *testing.T) {
 	if got := globalStaleRead(t, filepath.Join(crlfProject, "apm_modules", "acme", "pkg", ".apm", "agents", "rev.agent.md")); !strings.Contains(got, "\r\n") {
 		t.Fatalf("the checkout of a package committed with CRLF has no CRLF: %q", got)
 	}
-	assertCRLFDeploy(t, lfProject, crlfProject)
+	assertCRLFDeploy(t, lfProject, crlfProject, "pkg")
 	assertCRLFProjectStable(t, crlfProject)
 }
 
@@ -244,7 +247,7 @@ func TestInstall_CRLF_RegistryPackage(t *testing.T) {
 		writeGlobalStaleFile(t, filepath.Join(project, "apm.yml"), fmt.Sprintf(
 			"name: consumer\nversion: 0.1.0\nregistries:\n  local:\n    url: %s\n    insecure: true\n  default: local\ndependencies:\n  apm:\n    - id: acme/sample\n      version: 1.0.0\n", srv.URL))
 	})
-	assertCRLFDeploy(t, lfProject, crlfProject)
+	assertCRLFDeploy(t, lfProject, crlfProject, "sample")
 	assertCRLFProjectStable(t, crlfProject)
 }
 

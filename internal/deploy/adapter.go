@@ -26,6 +26,11 @@ var activeDeployMode struct {
 	// unmanaged is the project deploy's guard of the files it does not
 	// manage, nil for a --global deploy and when Run is given no Managed.
 	unmanaged *unmanagedGuard
+	// hookPackage is the package a copilot hook of the project's own
+	// content is named after (projectHookPackage).
+	hookPackage string
+	// links is the link rewriting of the Run, nil outside one.
+	links *linkRun
 }
 
 // symlinkProbe is canSymlink, replaced in tests.
@@ -248,19 +253,19 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	}
 
 	if activeDeployMode.symlink {
-		return symlinkSkillTo(p.SrcPath, absDestDir, destDir, p.DepKey != "", p.SkipRootGit)
+		return symlinkSkillTo(p, absDestDir, destDir)
 	}
 
-	links := skillLinksOf(p)
+	links, filter := skillLinksOf(p), skillCopyRulesOf(p)
 	if g := activeDeployMode.unmanaged; g != nil {
 		var rels []string
-		_ = walkSkillDir(p.SrcPath, "", links, p.SkipRootGit, func(_, rel string, isDir bool) error {
+		_ = walkSkillDir(p.SrcPath, links, filter, func(_, rel string, isDir bool) error {
 			if !isDir {
 				rels = append(rels, rel)
 			}
 			return nil
 		})
-		switch g.skill(p.DepKey, destDir, p.SrcPath, rels) {
+		switch g.skill(p.DepKey, destDir, rels, func(abs string) bool { return skillSameOnDisk(p, destDir, abs) }) {
 		case placeSkip:
 			return nil, nil
 		case placeAdopt:
@@ -288,7 +293,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		}
 	} else {
 		for _, dirs := range []bool{false, true} {
-			err := walkSkillDir(p.SrcPath, "", links, p.SkipRootGit, func(_, rel string, isDir bool) error {
+			err := walkSkillDir(p.SrcPath, links, filter, func(_, rel string, isDir bool) error {
 				if isDir != dirs {
 					return nil
 				}
@@ -306,7 +311,7 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 		return nil, fmt.Errorf("create skill dir: %w", err)
 	}
 	var deployed []string
-	err = walkSkillDir(p.SrcPath, "", links, p.SkipRootGit, func(src, rel string, isDir bool) error {
+	err = walkSkillDir(p.SrcPath, links, filter, func(src, rel string, isDir bool) error {
 		dst := filepath.Join(absDestDir, filepath.FromSlash(rel))
 		if isDir {
 			return os.MkdirAll(dst, 0755)
@@ -316,7 +321,11 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 				return err
 			}
 		}
-		if err := copyFile(src, dst); err != nil {
+		data, err := skillFileBytes(p, destDir, rel, src)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, data, 0644); err != nil {
 			return err
 		}
 		deployed = append(deployed, path.Join(destDir, rel))
@@ -328,14 +337,15 @@ func deploySkillTo(p Primitive, projectDir, root string) ([]string, error) {
 	return deployed, nil
 }
 
-// symlinkSkillTo makes absDestDir a symlink to srcDir. A real directory at
+// symlinkSkillTo makes absDestDir a symlink to p's source. A real directory at
 // absDestDir is the user's (the deploy only ever makes a symlink there), so it
 // is deleted only when the source has every file in it with the same bytes;
 // otherwise it is left as it is and the error is a *keptSkillDirError. The
-// files it returns are those a copy deploy writes (follow and skipRootGit as
-// walkSkillDir); the link still shows a skipped .git (#113).
-func symlinkSkillTo(srcDir, absDestDir, destDir string, follow, skipRootGit bool) ([]string, error) {
-	absSrc, err := filepath.Abs(srcDir)
+// files it returns are those a copy deploy writes (walkSkillDir), so one lock
+// serves both; the link still shows what the copy leaves out (#113, issue
+// #126 comment 6267289737 item 1).
+func symlinkSkillTo(p Primitive, absDestDir, destDir string) ([]string, error) {
+	absSrc, err := filepath.Abs(p.SrcPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve source: %w", err)
 	}
@@ -359,21 +369,10 @@ func symlinkSkillTo(srcDir, absDestDir, destDir string, follow, skipRootGit bool
 		return nil, fmt.Errorf("symlink skill: %w", err)
 	}
 	var deployed []string
-	if follow {
-		_ = walkSkillDir(srcDir, "", followLinks, skipRootGit, func(_, rel string, isDir bool) error {
-			if !isDir {
-				deployed = append(deployed, path.Join(destDir, rel))
-			}
-			return nil
-		})
-		return deployed, nil
-	}
-	_ = filepath.WalkDir(srcDir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
+	_ = walkSkillDir(p.SrcPath, skillLinksOf(p), skillCopyRulesOf(p), func(_, rel string, isDir bool) error {
+		if !isDir {
+			deployed = append(deployed, path.Join(destDir, rel))
 		}
-		rel, _ := filepath.Rel(srcDir, p)
-		deployed = append(deployed, path.Join(destDir, filepath.ToSlash(rel)))
 		return nil
 	})
 	return deployed, nil
@@ -408,11 +407,12 @@ func skillLinksOf(p Primitive) skillLinks {
 	return skipLinks
 }
 
-// walkSkillDir calls visit for each entry below srcDir, a directory before
+// walkSkillTree calls visit for each entry below srcDir, a directory before
 // what is in it, with its slash-separated path below relPrefix, and a
 // symlink as links says. With skipRootGit the entry .git of srcDir itself is
-// not visited (Primitive.SkipRootGit); one deeper down is.
-func walkSkillDir(srcDir, relPrefix string, links skillLinks, skipRootGit bool, visit func(src, rel string, isDir bool) error) error {
+// not visited (Primitive.SkipRootGit); one deeper down is. When visit returns
+// fs.SkipDir the entry is passed over, with what is in it.
+func walkSkillTree(srcDir, relPrefix string, links skillLinks, skipRootGit bool, visit func(src, rel string, isDir bool) error) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return err
@@ -438,24 +438,19 @@ func walkSkillDir(srcDir, relPrefix string, links skillLinks, skipRootGit bool, 
 				isDir = info.IsDir()
 			}
 		}
-		if err := visit(src, rel, isDir); err != nil {
+		switch err := visit(src, rel, isDir); {
+		case err == fs.SkipDir:
+			continue
+		case err != nil:
 			return err
 		}
 		if isDir {
-			if err := walkSkillDir(src, rel, links, false, visit); err != nil {
+			if err := walkSkillTree(src, rel, links, false, visit); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
-}
-
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, 0644)
 }
 
 func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error) {
@@ -471,7 +466,7 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 	}
 	if copiedAsText(p.Type) {
 		if src, err := os.ReadFile(p.SrcPath); err == nil {
-			noteAdopted(destPath, absDest, crlfToLF(src), true)
+			noteAdopted(destPath, absDest, comparedContent(p, destPath, src), true)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
@@ -495,7 +490,7 @@ func deployFileToPath(p Primitive, destPath, projectDir string) ([]string, error
 			return nil, fmt.Errorf("replace %s %s: %w", p.Type, p.Name, err)
 		}
 	}
-	if err := copyPrimitiveFile(p, absDest); err != nil {
+	if err := copyPrimitiveFile(p, destPath, absDest); err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
 	return []string{destPath}, nil

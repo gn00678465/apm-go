@@ -554,10 +554,13 @@ func shadowedCases() []shadowedCase {
 			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill + "z\n"}},
 		// A name on one side alone, an empty directory included, makes two
 		// skills differ, as filecmp.dircmp compares them
-		// (integration/skill_integrator.py:531-550). The rerun is skilldiff's.
+		// (integration/skill_integrator.py:531-550). The deploy makes no empty
+		// directory (install/deployable_source_plan.py:284-297), so on the
+		// rerun what the second skill deploys is on disk, and it is
+		// integrated, as the Oracle, which writes it over the first, prints.
 		{"skill-empty-dir", "claude",
 			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n" + gitignore + skipped + last,
-			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n\n" + last,
+			head("claude", false) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- 1 skill(s) integrated -> .claude/skills/\n\n" + last,
 			map[string]string{".apm/skills/sk/SKILL.md": skill}, map[string]string{".apm/skills/sk/SKILL.md": skill, ".apm/skills/sk/data/": ""}},
 		{"skill-onefile", "claude",
 			head("claude", true) + "  |-- 1 skill(s) integrated -> .claude/skills/\n  |-- (files unchanged)\n" + gitignore + skipped + last,

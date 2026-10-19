@@ -231,8 +231,9 @@ func frozenDeployMatchesLock(deployed *deploy.DeployResult, lock *lockfile.Lockf
 		if dr == nil {
 			return nil
 		}
-		for _, path := range slices.Sorted(maps.Keys(dr.Hashes)) {
-			written := dr.Hashes[path]
+		_, hashes := dr.Recorded()
+		for _, path := range slices.Sorted(maps.Keys(hashes)) {
+			written := hashes[path]
 			if written == "" {
 				continue
 			}

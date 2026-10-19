@@ -669,7 +669,9 @@ func globalOwners112(t *testing.T) string {
 		writeCompileFile(t, root, name+"/.apm/agents/a.agent.md", "---\nname: a\ndescription: agent\n---\nAGENT "+name+"\n")
 		writeCompileFile(t, root, name+"/.apm/instructions/r.instructions.md", "---\napplyTo: \"**/*.go\"\n---\nRULE "+name+"\n")
 	}
+	// Windows takes the home directory from USERPROFILE.
 	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("USERPROFILE", filepath.Join(root, "home"))
 	writeCompileFile(t, root, "gitconfig", "")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
