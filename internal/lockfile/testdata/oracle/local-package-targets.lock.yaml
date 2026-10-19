@@ -1,0 +1,55 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: _local/dep
+  name: dep
+  version: 1.0.0
+  package_type: apm_package
+  deployed_files:
+  - .claude/agents/dagent.md
+  - .claude/rules/di.md
+  - .claude/skills/dskill
+  - .claude/skills/dskill/SKILL.md
+  deployed_file_hashes:
+    .claude/agents/dagent.md: sha256:3d2eace1f1d4b97e8866b01dcf96698f2e917c3528597d305a005fec7ddb403b
+    .claude/rules/di.md: sha256:eaa7f75d42d2e54c28246695d40bb63a58f55878411e674a60447c522d3be899
+    .claude/skills/dskill/SKILL.md: sha256:5d7e17af9ec0e6fde2a9d34980d50eaf07ea7b4a5cfbee86dde32d8e30e3752b
+  source: local
+  local_path: ./dep
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/agents/dagent.md
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: sha256:3d2eace1f1d4b97e8866b01dcf96698f2e917c3528597d305a005fec7ddb403b
+- kind: project-relative
+  target: claude
+  value: .claude/rules/di.md
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: sha256:eaa7f75d42d2e54c28246695d40bb63a58f55878411e674a60447c522d3be899
+- kind: project-relative
+  target: claude
+  value: .claude/skills/dskill
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/dskill/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - ./dep
+  active_owner: ./dep
+  content_hash: sha256:5d7e17af9ec0e6fde2a9d34980d50eaf07ea7b4a5cfbee86dde32d8e30e3752b

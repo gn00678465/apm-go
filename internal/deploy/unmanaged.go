@@ -106,10 +106,9 @@ func (g *unmanagedGuard) file(depKey, destPath string, want []byte) placement {
 }
 
 // skill decides the placement of the skill directory destDir, whose files
-// below it are rels: adopted when it equals the source as the Oracle's
-// dircmp compares them (skillDirsEqual), each file then recorded with its
-// hash below Root.
-func (g *unmanagedGuard) skill(depKey, destDir, srcDir string, rels []string) placement {
+// below it are rels: adopted when same finds it the same (skillSameOnDisk),
+// each file then recorded with its hash below Root.
+func (g *unmanagedGuard) skill(depKey, destDir string, rels []string, same func(abs string) bool) placement {
 	if g == nil {
 		return placeWrite
 	}
@@ -120,7 +119,7 @@ func (g *unmanagedGuard) skill(depKey, destDir, srcDir string, rels []string) pl
 	abs := g.abs(destDir)
 	if _, err := os.Stat(abs); err == nil && !g.managedDir(destDir) {
 		d = placeSkip
-		if info, err := os.Lstat(abs); err == nil && info.Mode()&os.ModeSymlink == 0 && skillDirsEqual(srcDir, abs) {
+		if info, err := os.Lstat(abs); err == nil && info.Mode()&os.ModeSymlink == 0 && same(abs) {
 			hashes := map[string]string{}
 			for _, rel := range rels {
 				f := path.Join(destDir, rel)
@@ -184,7 +183,7 @@ func placeFile(p Primitive, destPath string) placement {
 			// The deploy reports it.
 			return placeWrite
 		}
-		want = crlfToLF(src)
+		want = comparedContent(p, destPath, src)
 	}
 	d := g.file(p.DepKey, destPath, want)
 	if d == placeAdopt && copiedAsText(p.Type) {

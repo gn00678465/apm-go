@@ -38,7 +38,7 @@ var mcpRemoveTargets = []mcpRemoveTarget{
 	{target: "codex", label: "Codex CLI config", relPath: ".codex/config.toml", topKey: "mcp_servers", isTOML: true, perm: 0600},
 	{target: "copilot", label: "Copilot CLI config", relPath: ".github/mcp-config.json", topKey: "mcpServers", perm: 0644},
 	{target: "antigravity", label: "Antigravity MCP config", relPath: ".agents/mcp_config.json", topKey: "mcpServers", perm: 0600},
-	{target: "opencode", label: "opencode.json", relPath: "opencode.json", topKey: "mcp", perm: 0600},
+	{target: "opencode", label: "OpenCode MCP config", relPath: "opencode.json", topKey: "mcp", perm: 0600},
 }
 
 // RemoveMCPServersFromTargets deletes serverNames from every target's MCP

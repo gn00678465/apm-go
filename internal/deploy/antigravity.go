@@ -26,6 +26,12 @@ func antigravityRulePath(p Primitive) string {
 	return path.Join(antigravityBundleDir(p.DepKey), "rules", p.Name+".md")
 }
 
+// convertsAntigravityRules tells whether an instruction is written as the
+// Oracle's antigravity rule: in a project. A --global deploy links or copies
+// it as before, where the Oracle deploys no antigravity instruction at user
+// scope (integration/targets.py:770-773).
+func convertsAntigravityRules() bool { return !activeDeployMode.global }
+
 // DeployPrimitive routes local primitives (p.DepKey == "") to the flat,
 // shared workspace paths as before. Dependency primitives (p.DepKey != "")
 // instead land under that dependency's plugin bundle directory,
@@ -45,6 +51,9 @@ func (a *antigravityAdapter) DeployPrimitive(p Primitive, projectDir string) ([]
 	case TypeSkills:
 		return deploySkillTo(p, projectDir, a.skillRoot(p))
 	case TypeInstructions:
+		if convertsAntigravityRules() {
+			return deployRule(p, projectDir, antigravityRulePath(p), antigravityRule)
+		}
 		return deployFileToPath(p, antigravityRulePath(p), projectDir)
 	case TypeAgents:
 		// Static custom-agent format of Antigravity CLI >=1.0.16

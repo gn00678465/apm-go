@@ -1,0 +1,7 @@
+.agents/skills/s/SKILL.md: sha256:13ad0140c1f0fc0a0b0477b240cd9e732ef1870774bc4836b0fb3aa956bcde9d
+.agents/skills/s/ref/k.context.md: sha256:90df931d2f0ca91e9eeb57c43f220e133d44b6abff93685f6e44b5940a2f7a42
+.agents/skills/s/ref/r.md: sha256:d81a137514e98c54d3673b98a6dc31e7b17b93d13153ddac5f4f67da293d43f2
+.github/agents/a.agent.md: sha256:590143e4868ace9f0161e2337d9ecb1c15b747cef3f6930cf3d7f6b9f118bcf5
+.github/agents/other.agent.md: sha256:6083e223e7558faa111ad733f802c9b912ddc31393e7f0d0133f516f7d7c5b6d
+.github/instructions/i.instructions.md: sha256:cffe33db907ae22a608af1c7cd6d87c8ed67bb38b8f353678a18efc1276861da
+.github/prompts/p.prompt.md: sha256:6522d4576eed5608129f3f7bbe644cc58e4cbabefe6b43f0bd55b6457f9459c2

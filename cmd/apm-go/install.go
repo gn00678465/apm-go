@@ -2096,14 +2096,16 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			dep := &newLock.Dependencies[i]
 			key := dep.UniqueKey()
 			if dr, ok := deployResult.PerDep[key]; ok {
-				dep.DeployedFiles = withSkillDirs(dr.Files)
-				dep.DeployedHashes = dr.Hashes
+				files, hashes := dr.Recorded()
+				dep.DeployedFiles = withSkillDirs(files)
+				dep.DeployedHashes = hashes
 			}
 		}
 		// Populate local deployed files
 		if dr, ok := deployResult.PerDep[""]; ok {
-			newLock.LocalDeployedFiles = withSkillDirs(dr.Files)
-			newLock.LocalDeployedHashes = dr.Hashes
+			files, hashes := dr.Recorded()
+			newLock.LocalDeployedFiles = withSkillDirs(files)
+			newLock.LocalDeployedHashes = hashes
 			localProjectDeployed = len(dr.Files) > 0
 		}
 
@@ -3634,7 +3636,7 @@ func localPackageIdentity(dir string) (name, pkgVersion, packageType string) {
 		packageType = "hybrid"
 	case hasManifest:
 		packageType = lockfile.PackageTypeAPMPackage
-	case exists("plugin.json") || exists(".claude-plugin"):
+	case pluginJSONPath(dir) != "" || exists(".claude-plugin"):
 		packageType = lockfile.PackageTypeMarketplacePlugin
 	case exists("SKILL.md"):
 		packageType = "claude_skill"

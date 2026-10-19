@@ -132,7 +132,7 @@ func TestInstall_StaleMCP_TargetsShrunkInAPMYml(t *testing.T) {
 	out := mustStaleMCPInstall(t, "", "")
 
 	want := " + Removed stale MCP server 'example' from Codex CLI config\n" +
-		" i Removed stale MCP server 'example' from opencode.json"
+		" i Removed stale MCP server 'example' from OpenCode MCP config"
 	if got := staleMCPLines(out); got != want {
 		t.Errorf("removal lines:\n%s\nwant:\n%s\nfull output:\n%s", got, want, out)
 	}

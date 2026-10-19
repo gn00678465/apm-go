@@ -1,0 +1,6 @@
+.agents/skills/s/SKILL.md: sha256:13ad0140c1f0fc0a0b0477b240cd9e732ef1870774bc4836b0fb3aa956bcde9d
+.agents/skills/s/ref/k.context.md: sha256:90df931d2f0ca91e9eeb57c43f220e133d44b6abff93685f6e44b5940a2f7a42
+.agents/skills/s/ref/r.md: sha256:d81a137514e98c54d3673b98a6dc31e7b17b93d13153ddac5f4f67da293d43f2
+.opencode/agents/a.md: sha256:590143e4868ace9f0161e2337d9ecb1c15b747cef3f6930cf3d7f6b9f118bcf5
+.opencode/agents/other.md: sha256:6083e223e7558faa111ad733f802c9b912ddc31393e7f0d0133f516f7d7c5b6d
+.opencode/commands/p.md: sha256:5e731974f58e297b42b2bee4db4e856f90041f15ec7400579877aa82615b3367

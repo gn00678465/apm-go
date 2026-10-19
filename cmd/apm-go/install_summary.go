@@ -150,6 +150,9 @@ type blockFiles struct {
 	rootSkill  *deploy.RootSkill
 	// unmanaged are the paths the deploy left to the user.
 	unmanaged []string
+	// global is a --global install, which links or copies an antigravity
+	// instruction and does not write it as a rule.
+	global bool
 }
 
 // printSummaryLines prints the lines of one package of the install summary
@@ -254,7 +257,9 @@ func printSummaryLines(b blockFiles, before map[string]string, verbose bool) int
 		}
 		label := map[string]string{"prompts": "prompts", "agents": "agents", "commands": "commands",
 			"instructions": "instruction(s)", "hooks": "hook(s)", "files": "file(s)"}[kind]
-		if kind == "instructions" && names[len(names)-1] == "claude" {
+		// The Oracle names the kind after the last target with work, a rule
+		// format being rule(s) (install/services.py:105-110).
+		if last := names[len(names)-1]; kind == "instructions" && (last == "claude" || last == "antigravity" && !b.global) {
 			label = "rule(s)"
 		}
 		phrase := fmt.Sprintf("%d %s adopted", adopted, label)
@@ -468,8 +473,8 @@ func lockManaged(oldLock *lockfile.Lockfile, root string) *deploy.Managed {
 // (skill_integrator.py, measured as review122/probes/sameskill); a managed
 // path is written over, which leaves the disk as it is when the primitive
 // deploys what is there and is the owner-pick deviation otherwise; anything
-// else is a skipped file, but a claude rule, which the Oracle writes over
-// (integration/instruction_integrator.py:450-485).
+// else is a skipped file, but a claude or antigravity rule, which the Oracle
+// writes over (integration/instruction_integrator.py:450-485).
 func shadowedOutcome(s deploy.Shadowed, managed map[string]bool) shadowOutcome {
 	switch {
 	case s.Same && s.Type == deploy.TypeSkills:
@@ -482,10 +487,8 @@ func shadowedOutcome(s deploy.Shadowed, managed map[string]bool) shadowOutcome {
 		}
 		return shadowNone
 	}
-	for _, p := range s.Paths {
-		if strings.HasPrefix(p, ".claude/rules/") {
-			return shadowNone
-		}
+	if s.Rule {
+		return shadowNone
 	}
 	return shadowCollision
 }

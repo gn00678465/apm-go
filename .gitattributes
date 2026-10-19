@@ -30,3 +30,6 @@ kitty-specs/**/tasks/*/review-cycle-*.md merge=spec-kitty-review-cycle
 # gofmt on 241 files.
 * text=auto eol=lf
 *.golden.json -text
+# The issue #126 link/r8 fixture is CRLF on purpose: it tests how a deploy
+# reads CRLF.
+cmd/apm-go/testdata/issue126_links/r8/** -text

@@ -54,7 +54,7 @@ var commandOracleCases = []struct {
 func TestConvertPromptToCommand_OracleMatch(t *testing.T) {
 	for _, tc := range commandOracleCases {
 		t.Run(tc.name, func(t *testing.T) {
-			out, notes, err := convertPromptToCommand(tc.name, "claude", []byte(tc.in))
+			out, notes, err := convertPromptToCommand(tc.name, "claude", []byte(tc.in), nil)
 			if tc.err {
 				var fmErr *frontmatterError
 				if !errors.As(err, &fmErr) {
@@ -87,7 +87,7 @@ func TestConvertPromptToCommand_OracleMatch(t *testing.T) {
 // The dropped-keys warning names the target the way the Oracle's
 // str.capitalize() does (measured: "Opencode command ...").
 func TestConvertPromptToCommand_TargetName(t *testing.T) {
-	_, notes, err := convertPromptToCommand("p", "opencode", []byte("---\nauthor: me\n---\nb\n"))
+	_, notes, err := convertPromptToCommand("p", "opencode", []byte("---\nauthor: me\n---\nb\n"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

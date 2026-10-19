@@ -3,6 +3,7 @@ package deploy
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -19,6 +20,31 @@ import (
 type DepDeployResult struct {
 	Files  []string
 	Hashes map[string]string
+	// Overwritten holds each path of Files that a later bucket of the Run
+	// wrote again, a single-file target such as .codex/hooks.json: the
+	// content on disk is that bucket's, so only that bucket records it.
+	Overwritten map[string]bool
+}
+
+// Recorded returns Files and Hashes without Overwritten: what the lock
+// records for the bucket.
+func (d *DepDeployResult) Recorded() ([]string, map[string]string) {
+	if len(d.Overwritten) == 0 {
+		return d.Files, d.Hashes
+	}
+	var files []string
+	hashes := make(map[string]string, len(d.Hashes))
+	for _, f := range d.Files {
+		if !d.Overwritten[f] {
+			files = append(files, f)
+		}
+	}
+	for f, h := range d.Hashes {
+		if !d.Overwritten[f] {
+			hashes[f] = h
+		}
+	}
+	return files, hashes
 }
 
 // MCPProv records where one deployed MCP server entry came from (pr-001
@@ -123,6 +149,9 @@ type Shadowed struct {
 	// Deployed is whether it equals what this primitive's deploy writes:
 	// the Oracle's overwrite of a path it manages leaves the disk as it is.
 	Deployed bool
+	// Rule is a claude or antigravity rule, which the Oracle writes over a
+	// file it does not manage (writesRule).
+	Rule bool
 }
 
 // RejectedInstructionError is an instruction whose destination a symlink takes
@@ -137,10 +166,13 @@ func (e *RejectedInstructionError) Error() string { return e.Err.Error() }
 
 func (e *RejectedInstructionError) Unwrap() error { return e.Err }
 
-// SkippedDep is a dependency whose `targets:` (Targets) has no active target.
+// SkippedDep is a dependency that deploys to no active target: the
+// `targets:` of its entry names none (Targets), or, when ByPackage, the
+// targets of its own apm.yml (Targets) name none of those its entry allows.
 type SkippedDep struct {
-	Key     string
-	Targets []string
+	Key       string
+	Targets   []string
+	ByPackage bool
 }
 
 // SkillFilter scopes a per-dependency --skill name whitelist (BUG-2, design
@@ -209,9 +241,22 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	if !global {
 		activeDeployMode.unmanaged = newUnmanagedGuard(managed)
 	}
+	hookRoot := projectDir
+	if home, err := os.UserHomeDir(); global && err == nil {
+		hookRoot = home
+	}
+	activeDeployMode.hookPackage = projectHookPackage(hookRoot)
+	// Links are rewritten as they read from the real deploy root, also by a
+	// trial in a temporary directory, so the trial records the lock's hashes.
+	linkRoot := deployDir
+	if managed != nil && managed.Root != "" {
+		linkRoot = managed.Root
+	}
+	activeDeployMode.links = newLinkRun(linkRoot, deployDir, global)
 	defer func() {
 		activeDeployMode.symlink, activeDeployMode.global, activeDeployMode.projectDir = false, false, ""
-		activeDeployMode.adopted, activeDeployMode.unmanaged = nil, nil
+		activeDeployMode.adopted, activeDeployMode.unmanaged, activeDeployMode.hookPackage = nil, nil, ""
+		activeDeployMode.links = nil
 	}()
 	// 1. Collect primitives in priority order
 	var ordered []Primitive
@@ -272,17 +317,37 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// requiring Primitive itself to carry the full DependencyReference.
 	directKeys := make(map[string]bool)
 	depCanonKeys := make(map[string]string, len(directDeps))
-	// targetSubsets maps a dependency's DepKey to its `targets:`; a
-	// dependency with none has no entry.
+	// targetSubsets maps a dependency's DepKey to the targets it may deploy
+	// to; a dependency with no restriction has no entry.
 	targetSubsets := make(map[string][]string)
 	var skippedDeps []SkippedDep
-	noteTargetSubset := func(key string, subset []string) {
-		if len(subset) == 0 {
+	// noteTargetSubset narrows the active targets by the `targets:` of the
+	// dependency's entry (subset), then by its apm.yml's own (declared), as
+	// resolve_effective_package_targets does (install/target_filter.py:
+	// 72-150): the package's own never adds a target.
+	noteTargetSubset := func(key string, subset, declared []string) {
+		if len(subset) == 0 && declared == nil {
 			return
 		}
-		targetSubsets[key] = subset
-		if !slices.ContainsFunc(targets, func(t string) bool { return slices.Contains(subset, t) }) {
-			skippedDeps = append(skippedDeps, SkippedDep{Key: key, Targets: subset})
+		authorized := targets
+		if len(subset) > 0 {
+			targetSubsets[key] = subset
+			authorized = slices.DeleteFunc(slices.Clone(targets), func(t string) bool { return !slices.Contains(subset, t) })
+			if len(authorized) == 0 {
+				skippedDeps = append(skippedDeps, SkippedDep{Key: key, Targets: subset})
+				return
+			}
+		}
+		if declared == nil {
+			return
+		}
+		allowed := slices.DeleteFunc(slices.Clone(authorized), func(t string) bool { return !slices.Contains(declared, t) })
+		if len(allowed) == len(authorized) {
+			return
+		}
+		targetSubsets[key] = allowed
+		if len(allowed) == 0 {
+			skippedDeps = append(skippedDeps, SkippedDep{Key: key, Targets: declared, ByPackage: true})
 		}
 	}
 	for _, dep := range directDeps {
@@ -292,12 +357,12 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 		directKeys[key] = true
 		depCanonKeys[key] = CanonicalDepKey(dep)
-		noteTargetSubset(key, dep.TargetSubset)
 		modulePath := filepath.Join(projectDir, "apm_modules", key)
-		prims, depServers, loadDiags, name, err := collectDependencySources(key, modulePath, dep.Source == "registry")
+		prims, depServers, loadDiags, name, declared, err := collectDependencySources(key, modulePath, dep.Source == "registry")
 		if err != nil {
 			return nil, err
 		}
+		noteTargetSubset(key, dep.TargetSubset, declared)
 		packageNames[key] = name
 		ordered = append(ordered, prims...)
 		noteSourceReadFailure(key, key, dependencySourceReadFailure(modulePath))
@@ -314,12 +379,12 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	if resolved != nil {
 		transitive := sortedTransitiveDeps(resolved.Deps, directKeys)
 		for _, dep := range transitive {
-			noteTargetSubset(dep.Key, dep.TargetSubset)
 			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
-			prims, transitiveServers, loadDiags, name, err := collectDependencySources(dep.Key, modulePath, dep.Kind == resolver.KindRegistry)
+			prims, transitiveServers, loadDiags, name, declared, err := collectDependencySources(dep.Key, modulePath, dep.Kind == resolver.KindRegistry)
 			if err != nil {
 				return nil, err
 			}
+			noteTargetSubset(dep.Key, dep.TargetSubset, declared)
 			packageNames[dep.Key] = name
 			ordered = append(ordered, prims...)
 			noteSourceReadFailure(dep.Key, dep.Key, dependencySourceReadFailure(modulePath))
@@ -398,11 +463,26 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// 3. Resolve conflicts. A dependency with `targets:` competes for a name
 	// only on the targets it allows, so with any such dependency each
 	// target gets its own winners, as in the Oracle (install/services.py:294).
-	winners, conflictDiags := ResolvePrimitives(ordered)
+	// A copilot hook competes only for its file (targetKey). The diagnostics
+	// keep naming hooks of one name while another target deploys them by
+	// name, and leave them out when copilot is the one target deploying
+	// hooks.
+	diagKey, copilotHooksOnly := nameKey, copilotOnlyHookTarget(targets)
+	if copilotHooksOnly {
+		diagKey = targetKey("copilot")
+	}
+	resolveFor := func(target string, prims []Primitive) ([]Primitive, []string) {
+		w, diags := resolvePrimitivesBy(prims, diagKey)
+		if target == "copilot" && !copilotHooksOnly {
+			w, _ = resolvePrimitivesBy(prims, targetKey(target))
+		}
+		return w, diags
+	}
+	winners, conflictDiags := resolvePrimitivesBy(ordered, diagKey)
 	winnersByTarget := make(map[string][]Primitive, len(targets))
 	if len(targetSubsets) == 0 {
 		for _, target := range targets {
-			winnersByTarget[target] = winners
+			winnersByTarget[target], _ = resolveFor(target, ordered)
 		}
 	} else {
 		conflictDiags = nil
@@ -413,7 +493,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 					allowed = append(allowed, p)
 				}
 			}
-			w, diags := ResolvePrimitives(allowed)
+			w, diags := resolveFor(target, allowed)
 			winnersByTarget[target] = w
 			conflictDiags = append(conflictDiags, diags...)
 		}
@@ -480,6 +560,8 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// Track which primitive first wrote each destination path, to warn on
 	// fixed-path overwrites (e.g. multiple hook files -> .agents/hooks.json).
 	writtenBy := make(map[string]string)
+	// lastBucket holds the PerDep key of the bucket that last wrote each path.
+	lastBucket := make(map[string]string)
 	// Track, per bundle-target, the ordered/deduplicated DepKeys that
 	// actually produced at least one file this Run -- passed to
 	// FinalizeBundles below.
@@ -562,6 +644,15 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 				continue
 			}
 
+			// The Oracle warns only for an agent it writes, not one it adopts
+			// or leaves to the user (integration/agent_integrator.py:263-286).
+			if target == "opencode" && p.Type == TypeAgents && len(files) == 1 && !activeDeployMode.adopted[files[0]] {
+				for _, n := range opencodeAgentNotes(p.SrcPath, filepath.Base(p.origin()), packageNames[p.DepKey]) {
+					n.DepKey, n.Path = p.DepKey, files[0]
+					result.CommandNotes = append(result.CommandNotes, n)
+				}
+			}
+
 			if written[target] == nil {
 				written[target] = make(map[primitiveID][]string)
 			}
@@ -595,6 +686,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 						p.Type, p.Name, f, prev))
 				}
 				writtenBy[f] = p.Name
+				lastBucket[f] = p.DepKey
 			}
 
 			if len(files) > 0 {
@@ -624,6 +716,17 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 						bundledDepsByTarget[target] = append(bundledDepsByTarget[target], p.DepKey)
 					}
 				}
+			}
+		}
+	}
+
+	for key, dr := range result.PerDep {
+		for _, f := range dr.Files {
+			if lastBucket[f] != key {
+				if dr.Overwritten == nil {
+					dr.Overwritten = make(map[string]bool)
+				}
+				dr.Overwritten[f] = true
 			}
 		}
 	}
@@ -840,24 +943,25 @@ func keepFirstSharedSkill(targets []string, ordered []Primitive, winnersByTarget
 	return diags
 }
 
-// collectDependencySources reads the primitives, the MCP servers and the
-// package name of the dependency vendored at modulePath, a registry package
-// when registry. Every check of its symlinks runs here, before Run writes
+// collectDependencySources reads the primitives, the MCP servers, the
+// package name and the targets its apm.yml restricts it to (packageTargets)
+// of the dependency vendored at modulePath, a registry package when
+// registry. Every check of its symlinks runs here, before Run writes
 // anything.
-func collectDependencySources(key, modulePath string, registry bool) ([]Primitive, []*manifest.MCPDependency, []string, string, error) {
+func collectDependencySources(key, modulePath string, registry bool) ([]Primitive, []*manifest.MCPDependency, []string, string, []string, error) {
 	name := filepath.Base(modulePath)
 	t, ok := dependencyTree(key, modulePath)
 	if !ok {
-		return nil, nil, nil, name, nil
+		return nil, nil, nil, name, nil, nil
 	}
 	t.registry = registry
 	prims, err := collectDependency(t)
 	if err != nil {
-		return nil, nil, nil, "", err
+		return nil, nil, nil, "", nil, err
 	}
 	data, err := readDependencyManifest(t)
 	if err != nil {
-		return nil, nil, nil, "", err
+		return nil, nil, nil, "", nil, err
 	}
 	servers, diags := loadDependencyMCP(key, data)
 	if n := manifestName(data); n != "" {
@@ -865,12 +969,12 @@ func collectDependencySources(key, modulePath string, registry bool) ([]Primitiv
 	}
 	pluginName, err := claudePluginName(t)
 	if err != nil {
-		return nil, nil, nil, "", err
+		return nil, nil, nil, "", nil, err
 	}
 	if pluginName != "" {
 		name = pluginName
 	}
-	return prims, servers, diags, name, nil
+	return prims, servers, diags, name, packageTargets(data), nil
 }
 
 // manifestName is the name an apm.yml gives its package, "" when it gives

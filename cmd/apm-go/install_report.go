@@ -172,6 +172,7 @@ func (r *installRun) printBlocks(result *resolver.ResolutionResult, dr *deploy.D
 			b.rootSkill = &rs
 		}
 		b.unmanaged = dr.Unmanaged[key]
+		b.global = r.global
 		return b
 	}
 	count := 0
@@ -472,9 +473,16 @@ func (r *installRun) printDiagnostics(o installOutcome) {
 		if !listed[sd.Key] {
 			continue
 		}
-		// install/target_filter.py:62-67.
-		ux.WarnAt(os.Stdout, "  ", "[%s] Per-dependency targets [%s] do not overlap active install targets; skipping",
-			r.dependencyName(sd.Key, o.result), strings.Join(sd.Targets, ", "))
+		name := r.dependencyName(sd.Key, o.result)
+		if sd.ByPackage {
+			// install/target_filter.py:128-137.
+			ux.WarnAt(os.Stdout, "  ", "[%s] Package targets [%s] do not overlap authorized active targets; skipping",
+				name, strings.Join(sd.Targets, ", "))
+		} else {
+			// install/target_filter.py:62-67.
+			ux.WarnAt(os.Stdout, "  ", "[%s] Per-dependency targets [%s] do not overlap active install targets; skipping",
+				name, strings.Join(sd.Targets, ", "))
+		}
 		diagnosed = true
 	}
 	var notes []deploy.CommandNote

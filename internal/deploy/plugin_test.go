@@ -170,20 +170,25 @@ func TestCollectDependencyPrimitives_PluginJSON_SymlinkedSkillSkipped(t *testing
 	}
 }
 
-func TestCollectDependencyPrimitives_PluginJSON_MissingNameFallsBackToLegacyScan(t *testing.T) {
+// A plugin.json without "name" is still the package's manifest: the Oracle
+// names the plugin after its directory (deps/plugin_parser.py:501-505) and
+// deploys what the manifest lists, so its skills key keeps the legacy scan
+// from running (~/.cache/apm-go-verify/issue126/plug/r3/or-noname).
+func TestCollectDependencyPrimitives_PluginJSON_MissingNameNamesThePluginAfterItsDirectory(t *testing.T) {
 	dir := t.TempDir()
-	modDir := filepath.Join(dir, "apm_modules", "acme/noname")
-
-	// plugin.json without "name" is not a valid manifest per spec -- ignored
-	// entirely, legacy single-level skills/<name>/SKILL.md scan still runs.
-	writePluginJSON(t, modDir, `{"skills": ["./skills/should-be-ignored"]}`)
+	modDir := filepath.Join(dir, "apm_modules", "_local/noname")
+	writePluginJSON(t, modDir, `{"skills": ["./kits/declared"]}`)
+	mkFile(t, modDir, "kits/declared/SKILL.md", "declared skill")
 	mkFile(t, modDir, "skills/legacy/SKILL.md", "legacy skill")
 
-	prims := collectDep(t, "acme/noname", modDir)
+	prims := collectDep(t, "_local/noname", modDir)
 	skills := onlyType(prims, TypeSkills)
 
-	if len(skills) != 1 || skills[0].Name != "legacy" {
-		t.Fatalf("expected legacy scan fallback to find 'legacy', got %+v", skills)
+	if len(skills) != 1 || skills[0].Name != "declared" {
+		t.Fatalf("skills = %+v, want the declared skill alone", skills)
+	}
+	if name, err := claudePluginName(sourceTree{dir: modDir, depKey: "_local/noname"}); err != nil || name != "noname" {
+		t.Fatalf("plugin name = %q, %v, want noname", name, err)
 	}
 }
 

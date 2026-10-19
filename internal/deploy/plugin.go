@@ -3,11 +3,14 @@ package deploy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -152,29 +155,22 @@ func stagePluginFiles(t sourceTree, m *pluginManifest) ([]Primitive, error) {
 	var prims []Primitive
 	for _, name := range slices.Sorted(maps.Keys(agents)) {
 		if n := extractAgentName(name); n != "" {
-			prims = append(prims, Primitive{Name: n, Type: TypeAgents, Source: t.source(), DepKey: t.depKey, SrcPath: agents[name]})
+			prims = append(prims, Primitive{Name: n, Type: TypeAgents, Source: t.source(), DepKey: t.depKey, SrcPath: agents[name], Origin: t.logical(".apm/agents/" + name)})
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(prompts)) {
 		if n := extractPromptName(name); n != "" && !isWorkflowPrompt(prompts[name]) {
-			prims = append(prims, Primitive{Name: n, Type: TypePrompts, Source: t.source(), DepKey: t.depKey, SrcPath: prompts[name]})
+			prims = append(prims, Primitive{Name: n, Type: TypePrompts, Source: t.source(), DepKey: t.depKey, SrcPath: prompts[name], Origin: t.logical(".apm/prompts/" + name)})
 		}
 	}
 	return prims, nil
 }
 
 // loadPluginManifest returns t's plugin.json, nil when it cannot be read, is
-// not valid JSON or has no name.
+// not valid JSON or is no Claude plugin's.
 func loadPluginManifest(t sourceTree) (*pluginManifest, error) {
-	data, err := readPluginManifest(t)
-	if data == nil {
-		return nil, err
-	}
-	var m pluginManifest
-	if err := json.Unmarshal(data, &m); err != nil || m.Name == "" {
-		return nil, nil
-	}
-	return &m, nil
+	m, _, err := findPluginManifest(t)
+	return m, err
 }
 
 // claudePluginName is the name of t's plugin.json when the Oracle takes t for
@@ -188,19 +184,77 @@ func claudePluginName(t sourceTree) (string, error) {
 	return m.Name, nil
 }
 
-// readPluginManifest returns the bytes of t's .claude-plugin/plugin.json, nil
-// when it cannot be read. The manifest is read through t, so a symlink at it
-// that leaves the package is an error.
-func readPluginManifest(t sourceTree) ([]byte, error) {
-	p, err := t.path(".claude-plugin/plugin.json")
-	if err != nil {
-		return nil, err
+// PluginManifestPaths are the places the Oracle's find_plugin_json looks for a
+// plugin.json, in its order (utils/helpers.py:105-129).
+var PluginManifestPaths = []string{"plugin.json", ".github/plugin/plugin.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json"}
+
+// agentPluginSchemaID is the $schema of an Agent Plugins 1.0.0 manifest
+// (agent_plugins/constants.py:7), which the Oracle installs as an Agent Plugin.
+const agentPluginSchemaID = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+
+// findPluginManifest returns t's plugin.json, nil when there is none, or the
+// first one found cannot be read (failure, when it is there) or is not valid
+// JSON; a later place is not tried then. An APM package keeps reading
+// .claude-plugin/plugin.json alone (#88 item 75). Any other package takes
+// the first of PluginManifestPaths that exists, as the Oracle does, and a
+// manifest with no name, an empty one or null, is named after the package's
+// directory (deps/plugin_parser.py:501-505). A root plugin.json the Oracle
+// does not take for a Claude plugin's, an Agent Plugin's
+// (install/primitive_classification.py:88-92), or one it refuses (no name,
+// deps/plugin_parser.py:503-504, or not valid JSON), is passed over as it was
+// before.
+func findPluginManifest(t sourceTree) (*pluginManifest, *sourceReadFailure, error) {
+	apmPackage := isAPMPackage(t)
+	paths := PluginManifestPaths
+	if apmPackage {
+		paths = []string{".claude-plugin/plugin.json"}
 	}
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return nil, nil
+	for _, rel := range paths {
+		p, err := t.path(rel)
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, err := os.Stat(p); errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, readFailure(p, err), nil
+		}
+		var m pluginManifest
+		err = json.Unmarshal(data, &m)
+		if rel == "plugin.json" && (err != nil || m.Name == "" || !legacyPluginSchema(data)) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, nil
+		}
+		if m.Name == "" {
+			if apmPackage {
+				return nil, nil, nil
+			}
+			m.Name = filepath.Base(t.dir)
+		}
+		return &m, nil, nil
 	}
-	return data, nil
+	return nil, nil, nil
+}
+
+// legacyPluginSchema reports whether a root plugin.json goes to the Oracle's
+// Claude plugin normalization (install/primitive_classification.py:75-102):
+// it has no $schema, or a string one other than an Agent Plugin's. A $schema
+// that is no string fails the Oracle's install.
+func legacyPluginSchema(data []byte) bool {
+	var head map[string]any
+	if json.Unmarshal(data, &head) != nil {
+		return false
+	}
+	schema, ok := head["$schema"]
+	if !ok {
+		return true
+	}
+	s, isString := schema.(string)
+	return isString && s != agentPluginSchemaID
 }
 
 // decodeStringOrList normalizes a manifest component field that the spec

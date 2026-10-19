@@ -35,6 +35,22 @@ type Primitive struct {
 	SkipRootGit bool
 	// RootSkill marks the skill of a package whose root holds SKILL.md.
 	RootSkill bool
+	// PluginRoot marks the root skill of a Claude plugin, whose apm.yml
+	// the deploy leaves out (skillCopyRules).
+	PluginRoot bool
+	// Origin is where the Oracle reads p from when it rewrites p's links:
+	// SrcPath with no symlink of the package resolved, since the Oracle's
+	// apm_modules holds none (link/g1out), and for a Claude plugin's agent
+	// or command the place it stages it in (deps/plugin_parser.py:
+	// 1232-1296). "" is SrcPath.
+	Origin string
+}
+
+func (p Primitive) origin() string {
+	if p.Origin != "" {
+		return p.Origin
+	}
+	return p.SrcPath
 }
 
 // CollectLocalPrimitives returns the primitives of the project's own content
@@ -44,16 +60,16 @@ func CollectLocalPrimitives(projectDir string) []Primitive {
 }
 
 // CollectScopeLocalPrimitives reads the own content a deploy of that scope
-// deploys: the project's .apm/ and the *.prompt.md files beside it, which the
-// Oracle reads only when the project has a .apm/ directory
+// deploys: the project's .apm/ and the prompts, agents and hooks beside it,
+// which the Oracle reads only when the project has a .apm/ directory
 // (install/phases/local_content.py:44-56); for global, ~/.apm/.apm/ alone
 // (#88 item 68).
 func CollectScopeLocalPrimitives(projectDir string, global bool) []Primitive {
-	rootPrompts := !global
+	root := !global
 	if info, err := os.Stat(filepath.Join(projectDir, ".apm")); err != nil || !info.IsDir() {
-		rootPrompts = false
+		root = false
 	}
-	prims, _ := collectFromAPMDir(sourceTree{dir: projectDir}, ".apm", rootPrompts, false)
+	prims, _ := collectFromAPMDir(sourceTree{dir: projectDir}, ".apm", root, false)
 	return prims
 }
 
@@ -107,6 +123,12 @@ func (t sourceTree) path(rel string) (string, error) {
 		return "", fmt.Errorf("dependency %s: %w", t.depKey, err)
 	}
 	return filepath.Join(t.dir, filepath.FromSlash(resolved)), nil
+}
+
+// logical is rel, slash-separated below the tree, joined to dir with no
+// symlink resolved.
+func (t sourceTree) logical(rel string) string {
+	return filepath.Join(t.dir, filepath.FromSlash(rel))
 }
 
 // entry returns where the entry e of directory rel, listed at dir, is read
@@ -185,10 +207,11 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 			SrcPath:     t.dir,
 			SkipRootGit: t.cloned(),
 			RootSkill:   true,
+			PluginRoot:  staged,
 		})
 	}
 
-	// Claude-plugin manifest (.claude-plugin/plugin.json): when present and
+	// Plugin manifest (findPluginManifest): when present and
 	// valid, its skills/agents/commands arrays are the authoritative source
 	// for this module. An explicitly-declared "skills" key (even an empty
 	// array) takes precedence over the legacy single-level scan below, so a
@@ -202,7 +225,7 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 	if err != nil {
 		return nil, err
 	}
-	prims = append(prims, pluginPrims...)
+	prims = append(prims, withoutRepeatedSkills(prims, pluginPrims)...)
 	if skillsDeclared {
 		return prims, nil
 	}
@@ -216,37 +239,59 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 }
 
 // collectFromAPMDir collects the primitives of the .apm directory apmRel of
-// t, and with rootPrompts the prompts at t's root too. With staged it leaves
-// out apmRel's agents and prompts, which a Claude plugin's collection reads
-// with the plugin's own (pluginStage).
-func collectFromAPMDir(t sourceTree, apmRel string, rootPrompts, staged bool) ([]Primitive, error) {
-	typeMap := []struct {
-		subdir    string
+// t, and with root the prompts, agents and hooks at t's root too. With staged
+// it leaves out apmRel's agents and prompts, which a Claude plugin's
+// collection reads with the plugin's own (pluginStage).
+func collectFromAPMDir(t sourceTree, apmRel string, root, staged bool) ([]Primitive, error) {
+	type source struct {
+		rel       string
 		primType  PrimitiveType
 		extractFn func(string) string
-	}{
-		{"instructions", TypeInstructions, extractInstructionName},
-		{"agents", TypeAgents, extractAgentName},
-		{"commands", TypeCommands, extractBaseName},
-		{"hooks", TypeHooks, extractHookName},
+	}
+	// Each directory as the Oracle's finders read it, not recursive and in
+	// name order: an agent at the root before .apm/agents
+	// (find_agent_files, integration/agent_integrator.py:71-113), and a hook
+	// of .apm/hooks before hooks/ (find_hook_files,
+	// integration/hook_integrator.py:449-488). A Claude plugin's root agents
+	// are not staged; they come before the staged ones.
+	var sources []source
+	sources = append(sources, source{apmRel + "/instructions", TypeInstructions, extractInstructionName})
+	if root {
+		sources = append(sources, source{".", TypeAgents, extractRootAgentName})
+	}
+	if !staged {
+		sources = append(sources, source{apmRel + "/agents", TypeAgents, extractAgentName})
+	}
+	sources = append(sources,
+		source{apmRel + "/commands", TypeCommands, extractBaseName},
+		source{apmRel + "/hooks", TypeHooks, extractHookName})
+	if root {
+		sources = append(sources, source{"hooks", TypeHooks, extractHookName})
 	}
 	var prims []Primitive
-	for _, tm := range typeMap {
-		if staged && tm.primType == TypeAgents {
-			continue
-		}
-		found, err := collectFlat(t, apmRel+"/"+tm.subdir, tm.primType, tm.extractFn)
+	hookStems := map[string]bool{}
+	for _, src := range sources {
+		found, err := collectFlat(t, src.rel, src.primType, src.extractFn)
 		if err != nil {
 			return nil, err
 		}
-		prims = append(prims, found...)
+		for _, p := range found {
+			if p.Type == TypeHooks {
+				// find_hook_files keeps one hook per stem.lower().
+				if hookStems[strings.ToLower(p.Name)] {
+					continue
+				}
+				hookStems[strings.ToLower(p.Name)] = true
+			}
+			prims = append(prims, p)
+		}
 	}
 
 	// Prompts as the Oracle finds them: find_files_by_glob(root,
 	// "*.prompt.md", subdirs=[".apm/prompts"]) (base_integrator.py:1031-1080),
 	// the root's first, each directory in name order, not recursive.
 	var promptDirs []string
-	if rootPrompts {
+	if root {
 		promptDirs = append(promptDirs, ".")
 	}
 	if !staged {
@@ -286,6 +331,7 @@ func collectFlat(t sourceTree, rel string, pt PrimitiveType, extractFn func(stri
 			Source:  t.source(),
 			DepKey:  t.depKey,
 			SrcPath: src,
+			Origin:  t.logical(rel + "/" + file),
 		})
 	})
 	return prims, err
@@ -351,6 +397,7 @@ func collectSkills(t sourceTree, rel string) ([]Primitive, error) {
 			Source:  t.source(),
 			DepKey:  t.depKey,
 			SrcPath: src,
+			Origin:  t.logical(rel + "/" + e.Name()),
 		})
 	}
 	return prims, nil
@@ -377,6 +424,32 @@ func extractAgentName(filename string) string {
 	return ""
 }
 
+// extractRootAgentName only accepts *.agent.md, the glob of an agent at a
+// package's root (integration/agent_integrator.py:93), which Path.glob
+// matches without regard to case on Windows. Of what that glob finds, the
+// Oracle takes a name ending in .md as written for an agent and skips any
+// other (_is_markdown, install/primitive_classification.py:214-215), and
+// names one not ending in .agent.md as written by its stem
+// (agent_integrator.py:136): Y.Agent.md is the agent Y.Agent, X.AGENT.MD none.
+func extractRootAgentName(filename string) string {
+	if strings.HasSuffix(filename, ".agent.md") {
+		return strings.TrimSuffix(filename, ".agent.md")
+	}
+	if globSuffix(filename, ".agent.md") && strings.HasSuffix(filename, ".md") {
+		return strings.TrimSuffix(filename, ".md")
+	}
+	return ""
+}
+
+// globSuffix is whether name ends in suffix as Python 3.12's Path.glob
+// matches a pattern: without regard to case on Windows.
+func globSuffix(name, suffix string) bool {
+	if !windowsPaths {
+		return strings.HasSuffix(name, suffix)
+	}
+	return len(name) >= len(suffix) && strings.EqualFold(name[len(name)-len(suffix):], suffix)
+}
+
 func extractBaseName(filename string) string {
 	if strings.HasSuffix(filename, ".md") {
 		return strings.TrimSuffix(filename, ".md")
@@ -384,9 +457,12 @@ func extractBaseName(filename string) string {
 	return ""
 }
 
+// extractHookName accepts *.json, the glob of find_hook_files
+// (integration/hook_integrator.py:449-488), and names the hook by the stem
+// as written.
 func extractHookName(filename string) string {
-	if strings.HasSuffix(filename, ".json") {
-		return strings.TrimSuffix(filename, ".json")
+	if globSuffix(filename, ".json") {
+		return filename[:len(filename)-len(".json")]
 	}
 	return ""
 }
@@ -398,6 +474,31 @@ func extractPromptName(filename string) string {
 		return strings.TrimSuffix(filename, ".prompt.md")
 	}
 	return ""
+}
+
+// withoutRepeatedSkills returns add without each skill whose directory a skill
+// of have, or an earlier one of add, already reads: a plugin.json that lists
+// the root skill ("./") or one directory twice names one skill, which would
+// otherwise shadow itself.
+func withoutRepeatedSkills(have, add []Primitive) []Primitive {
+	seen := map[string]bool{}
+	for _, p := range have {
+		if p.Type == TypeSkills {
+			seen[filepath.Clean(p.SrcPath)] = true
+		}
+	}
+	var out []Primitive
+	for _, p := range add {
+		if p.Type == TypeSkills {
+			src := filepath.Clean(p.SrcPath)
+			if seen[src] {
+				continue
+			}
+			seen[src] = true
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func skillNameFromDepKey(depKey string) string {

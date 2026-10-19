@@ -1,7 +1,6 @@
 package deploy
 
 import (
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -26,6 +25,10 @@ type sourceReadFailure struct {
 
 // apmFlatSubdirs are the .apm/ subdirectories collectFromAPMDir lists.
 var apmFlatSubdirs = []string{"instructions", "agents", "commands", "hooks", "prompts"}
+
+// rootFlatSubdirs are the directories at a package's root collectFromAPMDir
+// lists, besides the root itself.
+var rootFlatSubdirs = []string{"hooks"}
 
 // readFailure returns nil for a successful read and for a missing path: a
 // source that is not there is the normal case.
@@ -76,12 +79,26 @@ func apmDirReadFailure(apmDir string) *sourceReadFailure {
 	return skillsDirReadFailure(filepath.Join(apmDir, "skills"))
 }
 
+// rootReadFailure covers what collectFromAPMDir reads at a package's root:
+// the root itself, for its prompts and agents, and rootFlatSubdirs.
+func rootReadFailure(dir string) *sourceReadFailure {
+	if f := dirReadFailure(dir); f != nil {
+		return f
+	}
+	for _, sub := range rootFlatSubdirs {
+		if f := dirReadFailure(filepath.Join(dir, sub)); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
 // localSourceReadFailure reports the first unreadable source location of the
 // own content CollectScopeLocalPrimitives reads, or nil: its .apm/, and
-// outside global the directory of its root prompts.
+// outside global what it reads at the project's root.
 func localSourceReadFailure(projectDir string, global bool) *sourceReadFailure {
 	if info, err := os.Stat(filepath.Join(projectDir, ".apm")); !global && err == nil && info.IsDir() {
-		if f := dirReadFailure(projectDir); f != nil {
+		if f := rootReadFailure(projectDir); f != nil {
 			return f
 		}
 	}
@@ -91,8 +108,7 @@ func localSourceReadFailure(projectDir string, global bool) *sourceReadFailure {
 // dependencySourceReadFailure reports the first unreadable source location of
 // the dependency vendored at modulePath, or nil.
 func dependencySourceReadFailure(modulePath string) *sourceReadFailure {
-	// The package root holds its root prompts.
-	if f := dirReadFailure(modulePath); f != nil {
+	if f := rootReadFailure(modulePath); f != nil {
 		return f
 	}
 	if f := apmDirReadFailure(filepath.Join(modulePath, ".apm")); f != nil {
@@ -115,14 +131,10 @@ func dependencySourceReadFailure(modulePath string) *sourceReadFailure {
 // readable but invalid, and a declared path resolvePluginPath rejects, are
 // content decisions, not read failures.
 func pluginSourceReadFailure(modulePath string) (skillsDeclared bool, failure *sourceReadFailure) {
-	manifestPath := filepath.Join(modulePath, ".claude-plugin", "plugin.json")
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return false, readFailure(manifestPath, err)
-	}
-	var m pluginManifest
-	if err := json.Unmarshal(data, &m); err != nil || m.Name == "" {
-		return false, nil
+	t := sourceTree{dir: modulePath}
+	m, f, _ := findPluginManifest(t)
+	if m == nil {
+		return false, f
 	}
 	skillsDeclared = isJSONKeyPresent(m.Skills)
 
@@ -146,7 +158,7 @@ func pluginSourceReadFailure(modulePath string) (skillsDeclared bool, failure *s
 		}
 	}
 
-	apmPackage := isAPMPackage(sourceTree{dir: modulePath})
+	apmPackage := isAPMPackage(t)
 	flat := append(componentPaths(m.Agents, "agents", !apmPackage), componentPaths(m.Commands, "commands", !apmPackage)...)
 	for _, rel := range flat {
 		abs, ok := resolvePluginPath(modulePath, rel)

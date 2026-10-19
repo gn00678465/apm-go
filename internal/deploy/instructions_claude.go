@@ -39,11 +39,13 @@ func convertToClaudeRules(content []byte) ([]byte, error) {
 	return []byte(strings.Join(parts, "\n") + "\n\n" + strings.TrimLeft(body, "\n")), nil
 }
 
-// deployClaudeInstructions writes an instruction primitive to destPath,
-// .claude/rules/<name>.md, as claudeRule gives it (unlike the byte-copy
-// deployFileToPath used by other targets' instructions).
-func deployClaudeInstructions(p Primitive, projectDir, destPath string) ([]string, error) {
-	rule, err := claudeRule(p)
+// deployRule writes the instruction p to destPath as render gives it, the
+// rule formats the Oracle converts and compares by their output
+// (integration/targets.py:779-784, instruction_integrator.py:450-485): no
+// byte-copy through deployFileToPath, and no guard of a file the user put
+// there, since the Oracle writes over it.
+func deployRule(p Primitive, projectDir, destPath string, render func(Primitive, string) ([]byte, error)) ([]string, error) {
+	rule, err := render(p, destPath)
 	if err != nil {
 		return nil, err
 	}
@@ -63,14 +65,19 @@ func deployClaudeInstructions(p Primitive, projectDir, destPath string) ([]strin
 	return []string{destPath}, nil
 }
 
-// claudeRule is the rule the instruction p deploys to claude: its source
-// through oracleText, then convertToClaudeRules.
-func claudeRule(p Primitive) ([]byte, error) {
+// claudeRule is the rule the instruction p deploys to claude at destRel.
+func claudeRule(p Primitive, destRel string) ([]byte, error) {
+	return instructionRule(p, destRel, convertToClaudeRules)
+}
+
+// instructionRule is p's source through oracleText, then convert, then its
+// links rewritten for destRel (instruction_integrator.py:177-202).
+func instructionRule(p Primitive, destRel string, convert func([]byte) ([]byte, error)) ([]byte, error) {
 	data, err := os.ReadFile(p.SrcPath)
 	if err != nil {
 		return nil, fmt.Errorf("deploy %s %s: %w", p.Type, p.Name, err)
 	}
-	rule, err := convertToClaudeRules(oracleText(data))
+	rule, err := convert(oracleText(data))
 	if err != nil {
 		// A relative path is printed with "/" on every system, as the
 		// Oracle and compile's Skipping line print one; an absolute one
@@ -81,5 +88,5 @@ func claudeRule(p Primitive) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("%s: %w", src, err)
 	}
-	return rule, nil
+	return rewriteLinks(p, destRel, rule), nil
 }

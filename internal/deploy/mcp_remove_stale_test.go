@@ -82,13 +82,15 @@ func TestRemoveStaleMCPServers_TargetWithoutMCPConfig(t *testing.T) {
 	}
 }
 
+// The labels of Oracle 0.34.0's stale cleanup (integration/mcp_integrator.py
+// :811,830,856,932,968); 0.33.0 named opencode's file "opencode.json" (:845).
 func TestRemoveStaleMCPServers_Labels(t *testing.T) {
 	want := map[string]string{
 		"claude":      ".mcp.json",
 		"codex":       "Codex CLI config",
 		"copilot":     "Copilot CLI config",
 		"antigravity": "Antigravity MCP config",
-		"opencode":    "opencode.json",
+		"opencode":    "OpenCode MCP config",
 	}
 	for target, label := range want {
 		if got := MCPConfigLabel(target); got != label {

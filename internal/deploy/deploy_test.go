@@ -1431,8 +1431,10 @@ func TestCopilotHooksDeploy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || files[0] != ".github/hooks/pre.json" {
-		t.Errorf("expected [.github/hooks/pre.json], got %v", files)
+	// With no apm.yml the project's hooks are named after "local"
+	// (hook/glob-copilot-or: local-y.json).
+	if len(files) != 1 || files[0] != ".github/hooks/local-pre.json" {
+		t.Errorf("expected [.github/hooks/local-pre.json], got %v", files)
 	}
 }
 
@@ -1567,7 +1569,13 @@ func makeUnreadable(t *testing.T, full string, listed bool) string {
 			t.Skipf("icacls could not deny listing %s: %v: %s", full, err, bytes.TrimSpace(out))
 		}
 		t.Cleanup(func() { exec.Command("icacls", full, "/remove:d", u.Username).Run() })
-		if _, err := os.ReadDir(full); err == nil {
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			// os.Open asks for backup semantics, which an administrator's
+			// token passes whatever the deny entry says.
+			if _, err := os.ReadFile(full); err == nil {
+				t.Skip("the deny entry does not stop this process from reading the file")
+			}
+		} else if _, err := os.ReadDir(full); err == nil {
 			t.Skip("the deny entry does not stop this process from listing the directory")
 		}
 		return "Access is denied."
@@ -1611,15 +1619,19 @@ func TestRun_FailedBucketsRecordsUnreadableSource(t *testing.T) {
 		{"local commands", []string{".apm/commands/a.md"}, ".apm/commands", "", true, "<local .apm/>: read .apm/commands failed: "},
 		{"local hooks", []string{".apm/hooks/a.json"}, ".apm/hooks", "", true, "<local .apm/>: read .apm/hooks failed: "},
 		{"local prompts", []string{".apm/prompts/a.prompt.md"}, ".apm/prompts", "", true, "<local .apm/>: read .apm/prompts failed: "},
+		{"local root hooks", []string{".apm/agents/a.agent.md", "hooks/r.json"}, "hooks", "", true, "<local .apm/>: read hooks failed: "},
 		{"local skills", []string{".apm/skills/demo/SKILL.md"}, ".apm/skills", "", true, "<local .apm/>: read .apm/skills failed: "},
 		{"local skill directory hides its SKILL.md", []string{".apm/skills/demo/SKILL.md"}, ".apm/skills/demo", "", true, "<local .apm/>: read .apm/skills/demo/SKILL.md failed: "},
 		{"local .apm itself", []string{".apm/skills/demo/SKILL.md"}, ".apm", "", true, "<local .apm/>: read .apm/instructions failed: "},
 		{"dependency .apm skills", []string{module + "/.apm/skills/s/SKILL.md"}, module + "/.apm/skills", depKey, true, depKey + ": read " + module + "/.apm/skills failed: "},
 		{"dependency .apm agents", []string{module + "/.apm/agents/a.md"}, module + "/.apm/agents", depKey, true, depKey + ": read " + module + "/.apm/agents failed: "},
 		{"dependency root skills", []string{module + "/skills/s/SKILL.md"}, module + "/skills", depKey, true, depKey + ": read " + module + "/skills failed: "},
+		{"dependency root hooks", []string{module + "/hooks/r.json"}, module + "/hooks", depKey, true, depKey + ": read " + module + "/hooks failed: "},
 		{"dependency .apm prompts", []string{module + "/.apm/prompts/p.prompt.md"}, module + "/.apm/prompts", depKey, true, depKey + ": read " + module + "/.apm/prompts failed: "},
 		{"dependency root skill directory hides its SKILL.md", []string{module + "/skills/s/SKILL.md"}, module + "/skills/s", depKey, true, depKey + ": read " + module + "/skills/s/SKILL.md failed: "},
 		{"dependency plugin manifest directory", []string{module + "/.claude-plugin/plugin.json"}, module + "/.claude-plugin", depKey, true, depKey + ": read " + module + "/.claude-plugin/plugin.json failed: "},
+		{"dependency github plugin manifest directory", []string{module + "/.github/plugin/plugin.json"}, module + "/.github/plugin", depKey, true, depKey + ": read " + module + "/.github/plugin/plugin.json failed: "},
+		{"dependency root plugin manifest", []string{module + "/plugin.json"}, module + "/plugin.json", depKey, true, depKey + ": read " + module + "/plugin.json failed: "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1722,6 +1734,34 @@ func TestRun_FailedBucketsRecordsUnreadablePluginComponent(t *testing.T) {
 				t.Errorf("Diags = %q, want one equal to %q", result.Diags, want)
 			}
 		})
+	}
+}
+
+// The skill directory a plugin.json outside .claude-plugin/ declares is read
+// through the manifest deploy reads (find_plugin_json, utils/helpers.py:105-129).
+func TestRun_FailedBucketsRecordsUnreadableSkillOfGithubPluginManifest(t *testing.T) {
+	const depKey = "acme/foo"
+	const module = "apm_modules/" + depKey
+	m := &manifest.Manifest{
+		Name:       "test",
+		Version:    "1.0.0",
+		ParsedDeps: []*manifest.DependencyReference{{RepoURL: depKey, Owner: "acme", Repo: "foo", Source: "git"}},
+	}
+	dir := t.TempDir()
+	mkFile(t, dir, module+"/.github/plugin/plugin.json", `{"name":"p","skills":["./kits/one"]}`)
+	mkFile(t, dir, module+"/kits/one/SKILL.md", "x\n")
+	reason := makeUnreadable(t, filepath.Join(dir, module, "kits", "one"), false)
+
+	result, err := Run([]string{"claude"}, dir, m, nil, nil, "", false, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(result.FailedBuckets) != 1 || !result.FailedBuckets[depKey] {
+		t.Errorf("FailedBuckets = %v, want only %q", result.FailedBuckets, depKey)
+	}
+	if want := depKey + ": read " + module + "/kits/one/SKILL.md failed: " + reason; !slices.Contains(result.Diags, want) {
+		t.Errorf("Diags = %q, want one equal to %q", result.Diags, want)
 	}
 }
 

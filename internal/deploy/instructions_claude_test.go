@@ -58,10 +58,9 @@ func TestDeployClaude_InstructionsApplyToTransformed(t *testing.T) {
 	}
 }
 
-// PRD req #1 scope guard: the SAME source stays byte-identical for copilot
-// (applyTo is copilot-native) and antigravity (documented deviation:
-// byte-copy, 07-05-antigravity-research).
-func TestDeployOtherTargets_InstructionsStayByteIdentical(t *testing.T) {
+// PRD req #1 scope guard: the SAME source stays byte-identical for copilot,
+// where applyTo is native.
+func TestDeployCopilot_InstructionsStayByteIdentical(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, dir, ".apm/instructions/demo.instructions.md", applyToSource)
 	p := collectSoleInstruction(t, dir)
@@ -71,13 +70,6 @@ func TestDeployOtherTargets_InstructionsStayByteIdentical(t *testing.T) {
 	}
 	if got := readDeployed(t, dir, ".github/instructions/demo.instructions.md"); got != applyToSource {
 		t.Errorf("copilot output must be byte-identical to source\n got: %q\nwant: %q", got, applyToSource)
-	}
-
-	if _, err := (&antigravityAdapter{}).DeployPrimitive(p, dir); err != nil {
-		t.Fatalf("antigravity deploy: %v", err)
-	}
-	if got := readDeployed(t, dir, ".agents/rules/demo.md"); got != applyToSource {
-		t.Errorf("antigravity output must be byte-identical to source\n got: %q\nwant: %q", got, applyToSource)
 	}
 }
 

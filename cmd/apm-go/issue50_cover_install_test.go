@@ -80,17 +80,21 @@ func TestUpdate_ListsConfiguredMCPServers(t *testing.T) {
 // claude_skill are what Oracle v0.33.0 wrote to the lock for these three
 // directories; hook_package is the Oracle's name for the type
 // (models/validation.py:29), which the Oracle itself refuses as a local
-// package.
+// package. A plugin.json at .github/plugin/ or .cursor-plugin/ is a
+// marketplace_plugin too (find_plugin_json, utils/helpers.py:105-129;
+// Oracle 0.33.0's lock in ~/.cache/apm-go-verify/issue126/plug/r4.txt).
 func TestInstall_LocalPackageTypesInLock(t *testing.T) {
 	const skill = "---\nname: s\ndescription: d\n---\nbody\n"
 	dir := chdirTemp(t)
 	for rel, content := range map[string]string{
-		"apm.yml":             "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n  - ./hy\n  - ./pl\n  - ./sk\n  - ./hk\n",
-		"hy/apm.yml":          "name: hy\nversion: 1.0.0\n",
-		"hy/SKILL.md":         skill,
-		"pl/plugin.json":      "{\"name\":\"pl\",\"version\":\"1.0.0\"}\n",
-		"sk/SKILL.md":         skill,
-		"hk/hooks/hooks.json": "{\"hooks\":{}}\n",
+		"apm.yml":                       "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n  - ./hy\n  - ./pl\n  - ./gh\n  - ./cu\n  - ./sk\n  - ./hk\n",
+		"hy/apm.yml":                    "name: hy\nversion: 1.0.0\n",
+		"hy/SKILL.md":                   skill,
+		"pl/plugin.json":                "{\"name\":\"pl\",\"version\":\"1.0.0\"}\n",
+		"gh/.github/plugin/plugin.json": "{\"name\":\"gh\",\"version\":\"1.0.0\"}\n",
+		"cu/.cursor-plugin/plugin.json": "{\"name\":\"cu\",\"version\":\"1.0.0\"}\n",
+		"sk/SKILL.md":                   skill,
+		"hk/hooks/hooks.json":           "{\"hooks\":{}}\n",
 	} {
 		writeCompileFile(t, dir, rel, content)
 	}
@@ -100,6 +104,8 @@ func TestInstall_LocalPackageTypesInLock(t *testing.T) {
 	want := map[string]string{
 		"_local/hy": "hybrid",
 		"_local/pl": "marketplace_plugin",
+		"_local/gh": "marketplace_plugin",
+		"_local/cu": "marketplace_plugin",
 		"_local/sk": "claude_skill",
 		"_local/hk": "hook_package",
 	}
