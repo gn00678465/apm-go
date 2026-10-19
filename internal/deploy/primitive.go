@@ -425,12 +425,29 @@ func extractAgentName(filename string) string {
 }
 
 // extractRootAgentName only accepts *.agent.md, the glob of an agent at a
-// package's root (integration/agent_integrator.py:93).
+// package's root (integration/agent_integrator.py:93), which Path.glob
+// matches without regard to case on Windows. Of what that glob finds, the
+// Oracle takes a name ending in .md as written for an agent and skips any
+// other (_is_markdown, install/primitive_classification.py:214-215), and
+// names one not ending in .agent.md as written by its stem
+// (agent_integrator.py:136): Y.Agent.md is the agent Y.Agent, X.AGENT.MD none.
 func extractRootAgentName(filename string) string {
 	if strings.HasSuffix(filename, ".agent.md") {
 		return strings.TrimSuffix(filename, ".agent.md")
 	}
+	if globSuffix(filename, ".agent.md") && strings.HasSuffix(filename, ".md") {
+		return strings.TrimSuffix(filename, ".md")
+	}
 	return ""
+}
+
+// globSuffix is whether name ends in suffix as Python 3.12's Path.glob
+// matches a pattern: without regard to case on Windows.
+func globSuffix(name, suffix string) bool {
+	if !windowsPaths {
+		return strings.HasSuffix(name, suffix)
+	}
+	return len(name) >= len(suffix) && strings.EqualFold(name[len(name)-len(suffix):], suffix)
 }
 
 func extractBaseName(filename string) string {
@@ -440,9 +457,12 @@ func extractBaseName(filename string) string {
 	return ""
 }
 
+// extractHookName accepts *.json, the glob of find_hook_files
+// (integration/hook_integrator.py:449-488), and names the hook by the stem
+// as written.
 func extractHookName(filename string) string {
-	if strings.HasSuffix(filename, ".json") {
-		return strings.TrimSuffix(filename, ".json")
+	if globSuffix(filename, ".json") {
+		return filename[:len(filename)-len(".json")]
 	}
 	return ""
 }
