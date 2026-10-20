@@ -712,3 +712,19 @@ func TestHasCompilableContent_AsTheOracle(t *testing.T) {
 		t.Error("instruction at the root and no .apm: got true, want false")
 	}
 }
+
+// Where names keep their case, .APM is not .apm: a link named .APM is not
+// read, and with nothing else to compile compile exits 1, as main does.
+func TestCollectInstructions_LinkOfAnotherCaseIsNotAPM(t *testing.T) {
+	ext := t.TempDir()
+	mkFile(t, ext, "instructions/top.instructions.md", "Ext apm.\n")
+	dir := t.TempDir()
+	symlinkOrSkip(t, ext, filepath.Join(dir, ".APM"))
+	if _, err := os.Lstat(filepath.Join(dir, ".apm")); err == nil {
+		t.Skip("file system ignores case")
+	}
+	if HasCompilableContent(dir) {
+		t.Error("HasCompilableContent = true, want false")
+	}
+	bodiesInOrder(t, renderLocal(t, dir), nil, []string{"Ext apm."})
+}

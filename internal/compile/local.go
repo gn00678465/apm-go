@@ -69,7 +69,7 @@ func walkLocalInstructions(projectDir, rel string, out *[]deploy.Primitive) {
 	for _, e := range entries {
 		child := filepath.Join(rel, e.Name())
 		switch {
-		case e.Type()&fs.ModeSymlink != 0 && isAPMInstructionsLink(child):
+		case e.Type()&fs.ModeSymlink != 0 && isAPMInstructionsLink(projectDir, child):
 			*out = append(*out, linkedAPMInstructions(projectDir)...)
 		case e.IsDir() && !skippedDirs[e.Name()]:
 			walkLocalInstructions(projectDir, child, out)
@@ -77,10 +77,32 @@ func walkLocalInstructions(projectDir, rel string, out *[]deploy.Primitive) {
 	}
 }
 
-// isAPMInstructionsLink is whether rel, a link, is .apm or .apm/instructions.
-func isAPMInstructionsLink(rel string) bool {
-	rel = filepath.ToSlash(rel)
-	return rel == ".apm" || rel == ".apm/instructions"
+// isAPMInstructionsLink is whether the link at rel is the entry an earlier
+// apm-go read as .apm or .apm/instructions: the same entry, not the same
+// name, since on a file system that ignores case (Windows, APFS) .APM is
+// .apm. Lstat and SameFile compare the links themselves, not their targets,
+// and only below a real .apm of the root, so a link elsewhere that leads to
+// .apm/instructions is not taken.
+func isAPMInstructionsLink(projectDir, rel string) bool {
+	link, err := os.Lstat(filepath.Join(projectDir, rel))
+	if err != nil {
+		return false
+	}
+	apm := filepath.Join(projectDir, ".apm")
+	parent := filepath.Dir(rel)
+	if parent == "." {
+		return sameEntry(link, apm)
+	}
+	if filepath.Dir(parent) != "." {
+		return false
+	}
+	dir, err := os.Lstat(filepath.Join(projectDir, parent))
+	return err == nil && dir.IsDir() && sameEntry(dir, apm) && sameEntry(link, filepath.Join(apm, "instructions"))
+}
+
+func sameEntry(info fs.FileInfo, path string) bool {
+	other, err := os.Lstat(path)
+	return err == nil && os.SameFile(info, other)
 }
 
 // linkedAPMInstructions is what an earlier apm-go compiled when .apm or
