@@ -40,7 +40,7 @@ func staleCleanupUpdate(t *testing.T) string {
 	t.Helper()
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 	return captureUninstallStdout(t, func() {
-		if err := runUpdate(deps, false, true, "", false); err != nil {
+		if err := runUpdate(deps, false, true, "", false, ""); err != nil {
 			t.Fatalf("update: %v", err)
 		}
 	})

@@ -60,7 +60,7 @@ func orphanUpdate(t *testing.T, pkg string) string {
 	t.Helper()
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 	return captureUninstallStdout(t, func() {
-		if err := runUpdate(deps, false, true, pkg, false); err != nil {
+		if err := runUpdate(deps, false, true, pkg, false, ""); err != nil {
 			t.Fatalf("update: %v", err)
 		}
 	})

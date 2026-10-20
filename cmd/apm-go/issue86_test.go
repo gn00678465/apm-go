@@ -292,7 +292,7 @@ func TestUpdate_ClearSemverModuleDirOutside_Refused(t *testing.T) {
 		loader: &mockInstallLoader{packages: map[string]*manifest.Manifest{"acme/a@v1.9.0": {Name: "a", Version: "1.9.0"}}},
 	}
 
-	err := runUpdate(deps, false, false, "", false)
+	err := runUpdate(deps, false, false, "", false, "")
 
 	real := realDir86(t, root)
 	want := `refusing to clear "acme/a": ` + containment86(filepath.Join(cwd86(t), "apm_modules", "acme", "a"),

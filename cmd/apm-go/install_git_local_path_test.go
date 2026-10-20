@@ -386,7 +386,7 @@ func TestUpdate_GitLocalPath_DryRunPlansNoRefChange(t *testing.T) {
 	}
 
 	var err error
-	out := captureUninstallStdout(t, func() { err = runUpdate(deps, false, false, "", true) })
+	out := captureUninstallStdout(t, func() { err = runUpdate(deps, false, false, "", true, "") })
 
 	if err != nil {
 		t.Fatalf("update --dry-run: %v\n%s", err, out)

@@ -2277,12 +2277,15 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 						Text: fmt.Sprintf("%s -> %s", server, strings.Join(sortedStringSet(targetsByServer[server]), ", ")),
 					})
 				}
+				chosen.userScope.warn()
 				ux.Info(os.Stdout, "MCP servers configured:")
 				ux.List(os.Stdout, mcpItems)
 			}
-		} else if run != nil && run.global && len(chosen.mcp) == 0 && len(chosen.userScope.targets) > 0 && len(deployResult.DeclaredMCPServers) > 0 {
+		} else if deployDir != "" && len(chosen.mcp) == 0 && len(chosen.userScope.targets) > 0 && len(deployResult.DeclaredMCPServers) > 0 {
 			mcpUnplaced = true
-			run.noteDiagnostic()
+			if run != nil {
+				run.noteDiagnostic()
+			}
 			printUnplacedMCP(len(deployResult.DeclaredMCPServers), targets, targetFlag != "", &chosen.userScope)
 		}
 
@@ -2481,9 +2484,18 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		})
 	}
 
+	// The Oracle's update ends on RequiredIntegrationError with this line
+	// alone, after the lock is written (commands/update.py:889-892).
+	unplacedErr := func() error {
+		ux.Error(os.Stdout, "MCP dependencies are declared, but no effective target can accept their configuration. Choose a supported --target and retry.")
+		return withSilentExitCode(1, errors.New("no target takes the MCP servers at user scope"))
+	}
 	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) && !manifestSectionMoved {
 		if mcpFailure != nil {
 			return mcpFailure
+		}
+		if mcpUnplaced {
+			return unplacedErr()
 		}
 		ux.Info(os.Stdout, "Already up to date")
 		return nil
@@ -2504,6 +2516,9 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	if mcpFailure != nil {
 		return mcpFailure
 	}
+	if mcpUnplaced {
+		return unplacedErr()
+	}
 
 	// 9. Persist positional packages to apm.yml
 	if len(packages) > 0 {
@@ -2518,7 +2533,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			return fmt.Errorf("write apm.yml: %w", err)
 		}
 	}
-	updateGitignoreForApmModules()
+	// The user scope keeps no .gitignore (install/pipeline.py:820-826).
+	if deployDir == "" {
+		updateGitignoreForApmModules()
+	}
 
 	fmt.Println()
 	// Closing summary. Built as parts joined with " and " so R15's MCP-count

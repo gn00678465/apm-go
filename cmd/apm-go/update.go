@@ -26,6 +26,7 @@ func updateCmd() *cobra.Command {
 	var frozen bool
 	var noFrozen bool
 	var dryRun bool
+	var global bool
 
 	cmd := &cobra.Command{
 		Use:   "update [package]",
@@ -35,10 +36,20 @@ func updateCmd() *cobra.Command {
 The dry-run flag prints the same update plan a real update would apply
 (old -> new version per changed dependency) and returns without writing
 apm.lock.yaml, without materializing or removing anything under
-apm_modules/, and without deploying any change to a target.`,
+apm_modules/, and without deploying any change to a target.
+
+With --global, the update reads ~/.apm/apm.yml and ~/.apm/apm.lock.yaml
+and deploys to the home directory, as install --global does.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			defer silenceUsageForRuntimeError(cmd, &runErr)
+			var deployDir string
+			if global {
+				var err error
+				if deployDir, err = enterGlobalScope(); err != nil {
+					return err
+				}
+			}
 			deps := &installDeps{
 				tags:   &gitops.RealTagLister{},
 				loader: newGitPackageLoader("apm_modules"),
@@ -47,7 +58,7 @@ apm_modules/, and without deploying any change to a target.`,
 			if len(args) == 1 {
 				pkg = args[0]
 			}
-			runErr = runUpdate(deps, frozen, noFrozen, pkg, dryRun)
+			runErr = runUpdate(deps, frozen, noFrozen, pkg, dryRun, deployDir)
 			if mh := (*multipleHarnessError)(nil); errors.As(runErr, &mh) {
 				cmd.SilenceUsage = true
 			}
@@ -57,11 +68,21 @@ apm_modules/, and without deploying any change to a target.`,
 	cmd.Flags().BoolVar(&frozen, "frozen", false, "refuse a scoped update against a frozen install (req-rs-012); auto-enabled in CI")
 	cmd.Flags().BoolVar(&noFrozen, "no-frozen", false, "override CI auto-frozen detection to allow a scoped update")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview the update plan without applying it: no apm.lock.yaml write, no apm_modules/ mutation, no target deploy")
+	cmd.Flags().BoolVarP(&global, "global", "g", false, "Refresh user-scope dependencies (~/.apm/) instead of the current project")
 	cmd.MarkFlagsMutuallyExclusive("frozen", "no-frozen")
 	return cmd
 }
 
-func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool) error {
+// deployDir is HOME for --global, with the working directory ~/.apm/, and
+// "" for a project.
+func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool, deployDir string) error {
+	// The Oracle checks this before anything else (commands/update.py:483-486).
+	if deployDir != "" {
+		if _, err := os.Stat("apm.yml"); os.IsNotExist(err) {
+			ux.Error(os.Stdout, "No apm.yml found in ~/.apm/. Run 'apm-go install -g <org/repo>' to create one.")
+			return withSilentExitCode(1, errors.New("no ~/.apm/apm.yml"))
+		}
+	}
 	if noFrozen {
 		frozen = false
 	} else if !frozen && lockfile.IsCIEnvironment() {
@@ -109,7 +130,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	}
 	// As install refuses several detected harnesses, before anything is
 	// fetched (measured, issue125 proj2-or/m6).
-	if t := resolveInstallTargets("", m.Target, ""); len(t.ambiguous) > 0 && hasContentToIntegrate(m) {
+	if t := resolveInstallTargets("", m.Target, deployDir); len(t.ambiguous) > 0 && hasContentToIntegrate(m) {
 		return errMultipleHarnesses(t.ambiguous)
 	}
 
@@ -282,7 +303,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	// provenance with nothing deployed to show for it. targetFlag is always
 	// "" here -- apm-go's `update` has no --target flag (Python parity gap,
 	// out of this task's scope).
-	chosen := resolveInstallTargets("", m.Target, "")
+	chosen := resolveInstallTargets("", m.Target, deployDir)
 	targets, targetDiags := chosen.targets, chosen.diags
 	if (len(result.Deps) > 0 || len(m.MCPServers)+len(m.MCPDevServers) > 0) && len(targets) == 0 {
 		for _, d := range targetDiags {
@@ -291,7 +312,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		return errNoDeployTarget()
 	}
 
-	return deployAndFinalize(m, "", "", effectiveSubsets, nil, nil, nil, nil, false, false, pkg != "", map[string]bool{pkg: true}, result, newLock, existingLock, existingNode, node, nil)
+	return deployAndFinalize(m, "", deployDir, effectiveSubsets, nil, nil, nil, nil, false, false, pkg != "", map[string]bool{pkg: true}, result, newLock, existingLock, existingNode, node, nil)
 }
 
 // runUpdateDryRun resolves --dry-run's plan against a throwaway scratch

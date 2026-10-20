@@ -72,7 +72,7 @@ func TestInstall_AliasNamesDirectoryAndRootSkill(t *testing.T) {
 	// commands/_helpers.py:404-412: update takes the alias for the package.
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: subdirPathLoader{subdirRealLoader()}}
 	var err error
-	captureUninstallStdout(t, func() { err = runUpdate(deps, false, false, "custom", false) })
+	captureUninstallStdout(t, func() { err = runUpdate(deps, false, false, "custom", false, "") })
 	if err != nil {
 		t.Errorf("update custom: %v", err)
 	}

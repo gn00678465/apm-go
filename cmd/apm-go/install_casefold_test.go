@@ -213,7 +213,7 @@ func TestInstall_CaseFoldDedup(t *testing.T) {
 		t.Errorf("after bare install: expected ONE materialized directory, got %d", len(entries2))
 	}
 
-	if err := runUpdate(deps, false, false, "", false); err != nil {
+	if err := runUpdate(deps, false, false, "", false, ""); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	lock3 := readLockfile(t)

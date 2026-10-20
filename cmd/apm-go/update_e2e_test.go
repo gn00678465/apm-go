@@ -86,7 +86,7 @@ func TestRunUpdate_RealGitSemver_ResolvesToNewTag(t *testing.T) {
 	git(remoteDir, "tag", "v1.5.0")
 	v15Head := headOf(remoteDir)
 
-	if err := runUpdate(deps, false, false, "", false); err != nil {
+	if err := runUpdate(deps, false, false, "", false, ""); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -161,7 +161,7 @@ func TestRunUpdate_RealGitSemver_UnchangedTagStillRecloned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := runUpdate(deps, false, false, "", false); err != nil {
+	if err := runUpdate(deps, false, false, "", false, ""); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -239,7 +239,7 @@ func TestRunUpdate_DryRunPlanNoSideEffects(t *testing.T) {
 	targetBefore := snapshotDir(t, filepath.Join(dir, ".claude"))
 
 	stdout := captureUninstallStdout(t, func() {
-		if err := runUpdate(deps, false, false, "", true); err != nil {
+		if err := runUpdate(deps, false, false, "", true, ""); err != nil {
 			t.Fatalf("update --dry-run: %v", err)
 		}
 	})
