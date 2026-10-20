@@ -14,7 +14,7 @@ Three files are the project's long-term memory. Read the relevant one before des
 
 Each topic lives in exactly one of them; reference, do not restate. When a change alters a fact recorded there, update that file in the same change.
 
-**`LESSONS.md`** is the review log of merged work: what went wrong, with evidence and the days it was seen. Its lessons are candidate rules: breaking one does not block a PR, but read them before changing code, follow each one that applies, and say in the PR description what you did. A lesson becomes a mandatory rule only when it moves into "Promoted rules" below.
+**`LESSONS.md`** holds the candidate rules that reviews of merged work found, each with one sentence of why, one checkable reference for each day it was seen, and the count. Breaking a lesson does not block a PR, but read them before changing code, follow each one that applies, and say in the PR description what you did. A lesson becomes a mandatory rule only when it moves into "Promoted rules" below.
 
 ## GitNexus — code intelligence
 
@@ -116,12 +116,13 @@ Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depen
 
 ## Promoted rules
 
-Lessons seen on 3 separate days in `LESSONS.md`. These rules are mandatory: every PR description and every review checks each one, and a PR that breaks one is not ready. The original entries and their evidence stay in `LESSONS.md` under "Moved to AGENTS.md".
+Lessons seen on 3 separate days in `LESSONS.md`. These rules are mandatory: every PR description and every review checks each one, and a PR that breaks one is not ready. A promoted lesson leaves `LESSONS.md`; its entry and evidence stay in the git history of that file and in the description of the `lessons:` PR that promoted it.
 
 1. **Run every check this machine can run before you list it under "Not verified".** The Windows sandbox, a local fake registry, a local-directory marketplace and an installed agent CLI all count. Before writing "cannot be verified here", try it once and write the command that failed. (Promoted 2026-10-17.)
 2. **When a PR changes what an existing user sees after upgrading, add one line for it to the release-notes issue of the next tag in the same step that opens the PR**; open that issue (`Release notes: vX.Y.Z`) when none exists. A PR's Risks section alone is not a record. (Promoted 2026-10-17.)
 3. **Write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line, and write what PRODUCT.md says only with the item quoted.** This holds in issue bodies and comments too. A statement copied from an earlier issue or comment needs the same check, because that record can claim more than its run showed. (Promoted 2026-10-17.)
 4. **Do not write a new deviation from the Oracle into PRODUCT.md unless an owner ruling names it; when the fix needs one, stop with `board ask`.** PRODUCT.md is the contract later cards follow, so an unruled deviation there is read as a ruling. This holds also when the orchestrator's feedback asks for the deviation. (Promoted 2026-10-20.)
+5. **When a reviewer or the orchestrator names one path that breaks a rule, list every path that rests on the same premise, fix them all in the same round, and write the list in the round's report.** A fix that covers only the named case lets the next review find the next one. (Promoted 2026-10-20.)
 
 ## Lessons review
 
@@ -129,9 +130,9 @@ Run a review after a board card's PR merges, or at the end of a day with merges.
 
 1. Read the range: commits, each PR's body and comments, `board log <issue> --project apm-go` of each card, and issues opened, reopened or corrected in the range.
 2. Look for work that had to be fixed again, work that should not have merged, verification that was too thin, and work done right that is worth repeating.
-3. Write each finding as a lesson: a rule an agent can follow (imperative), why, evidence, an optional `Done right on <date>: <ref>`, and `Seen N× (<dates>)`. Seen counts separate days (UTC+8); several instances on one day count once. A new instance of an existing lesson adds its evidence and, on a new day, raises the count.
-4. A finding that breaks a rule already written in this file or in the project's instructions goes under "Existing rules missed" in `LESSONS.md` with its evidence, not as a new lesson. A finding about the board tooling itself is not entered in `LESSONS.md`.
+3. Write each finding as a lesson: a rule an agent can follow (imperative), one sentence of why, one checkable reference for each day it was seen, and `Seen N×`. Seen counts separate days (UTC+8); several instances on one day count once. An instance on a new day adds its reference and raises the count; an instance on a day already listed changes nothing in the file.
+4. A finding that breaks a rule already written in this file or in the project's instructions goes under "Existing rules missed" in `LESSONS.md`, in the same form, not as a new lesson. A finding about the board tooling, work done right, and an observation not entered go into the PR description, not into `LESSONS.md`.
 5. Check every reference before writing it: each sha with `git cat-file -t`, each PR, issue and comment with `gh`, each board event with `board log`. A finding whose evidence cannot be checked is not entered as a lesson.
-6. A lesson seen on 3 separate days moves into "Promoted rules" in the same commit: the rule is added here, and its entry in `LESSONS.md` moves under "Moved to AGENTS.md" with its evidence.
+6. A lesson seen on 3 separate days moves into "Promoted rules" in the same commit: the rule is added here, and its entry is removed from `LESSONS.md`; the PR description quotes the entry with its evidence.
 7. Move the cursor to the reviewed head in the same commit. A review that does not move the cursor is not done.
-8. Land it through a PR titled `lessons: <from>..<to> (<N> PRs)` whose description lists the new lessons, the raised counts and the promotions.
+8. Land it through a PR titled `lessons: <from>..<to> (<N> PRs)` whose description holds the review's summary (the range, the cards and their rounds, what went wrong, what was done right), the new lessons, the raised counts and the promotions.
