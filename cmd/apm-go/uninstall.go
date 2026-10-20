@@ -978,8 +978,16 @@ func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[s
 		}
 		ux.Info(os.Stdout, "Removed %s from %s in apm.yml", plan.moduleKey(t), section)
 	}
+	// The Oracle cannot uninstall an MCP server by name, so this line takes
+	// the form of its APM package line, one per section the entry was
+	// removed from (commands/uninstall/cli.py:487-495).
 	for _, t := range plan.mcpTargets {
-		ux.Info(os.Stdout, "Removed %s from dependencies.mcp in apm.yml", t.Name)
+		if t.InDep {
+			ux.Info(os.Stdout, "Removed %s from dependencies.mcp in apm.yml", t.Name)
+		}
+		if t.InDev {
+			ux.Info(os.Stdout, "Removed %s from devDependencies.mcp in apm.yml", t.Name)
+		}
 	}
 	removedPackages := len(plan.apmTargets) + len(plan.mcpTargets)
 	apmYMLPath := "apm.yml"
