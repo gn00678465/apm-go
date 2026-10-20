@@ -471,9 +471,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	// this same call (BUG-1) is still recognized as a duplicate and skipped,
 	// without marking the first, genuinely-new occurrence as pre-existing.
 	appendedThisCall := make(map[string]bool)
-	// manifestSectionMoved is set whenever moveDependencyBetweenSections
-	// below actually relocates an already-declared dependency between
-	// dependencies.apm/devDependencies.apm THIS call. It must gate the
+	// manifestChanged is set whenever apm.yml's entries change THIS call:
+	// moveDependencyBetweenSections below relocates an already-declared
+	// dependency between dependencies.apm/devDependencies.apm, or an
+	// already-declared dependency gets another ref. It must gate the
 	// no-op check in deployAndFinalize alongside lockfile.IsSemanticEqual:
 	// a section move can leave the LOCKFILE content unchanged (e.g. a
 	// legacy lock entry whose package_type was never populated by an
@@ -483,12 +484,13 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	// no-op and persistPackagesToManifest -- the only place the actual
 	// apm.yml section move gets written -- would never run (2026-07-30
 	// Tier-2 finding).
-	manifestSectionMoved := false
+	manifestChanged := false
 	// The lines the Oracle prints while it validates positional packages
 	// (core/command_logger.py:276-295, install/manifest_helpers.py:40). A
 	// frozen install keeps its own output.
 	announce := !frozen && len(packages) > 0
 	newPackages := 0
+	updatedEntries := 0
 	// heldLines are the lines from "Updated apm.yml" to the last "Resolving",
 	// printed once the resolve has returned. apm.yml is written at the end of
 	// the run, so "Updated apm.yml" is true only when the run gets there: a
@@ -569,7 +571,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			// first one too, not just a 1:1 pair).
 			if identity := deploy.CanonicalDepKey(ref); identity != "" {
 				if firstKey, ok := existingByIdentity[identity]; ok {
-					if winner := foldedRefByKey[firstKey]; winner != nil && winner.Reference != ref.Reference {
+					// A frozen install writes no apm.yml and keeps the first-declared
+					// ref, as before issue #156; the other installs rewrite it below.
+					if winner := foldedRefByKey[firstKey]; frozen && winner != nil && winner.Reference != ref.Reference {
 						ux.Warn(os.Stderr, "%s: ref %q conflicts with already-declared %q (%s#%s) -- keeping the first-declared ref",
 							pkg, ref.Reference, firstKey, firstKey, winner.Reference)
 					}
@@ -591,23 +595,48 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			// third/later positional package folding onto an identity a
 			// PRECEDING positional package (not apm.yml) already added this
 			// same call (BUG-1).
-			if existing[key] || appendedThisCall[key] {
+			if existing[key] && !appendedThisCall[key] {
 				// External Tier-2 audit finding (scenario A/B): a package
 				// already declared, but in the OTHER section than this
 				// call's --dev flag names, must be MOVED there -- never left
 				// alone (which would leave devDependencies.apm/package_type
 				// stale, scenario B) and never duplicated into both sections
-				// (scenario A). appendedThisCall[key] is deliberately
-				// excluded from this branch: an earlier positional package
-				// THIS call already placed is always already in the correct
-				// section (deps.dev is constant for the whole call).
-				if existing[key] && !appendedThisCall[key] && existingIsDev[key] != deps.dev {
+				// (scenario A).
+				if existingIsDev[key] != deps.dev {
 					if moveDependencyBetweenSections(m, key, deps.dev) {
-						manifestSectionMoved = true
+						manifestChanged = true
 					}
 					existingIsDev[key] = deps.dev
-					appendedThisCall[key] = true
 				}
+				appendedThisCall[key] = true
+				// Oracle 0.33.0 rewrites the declared entry to the ref this call
+				// names and says so, whether or not the ref changed
+				// (install/package_resolution.py:345-378,
+				// core/command_logger.py:289-291). apm-go changes the ref alone
+				// (issue #156 comment 6290306546, item 1).
+				winner := foldedRefByKey[key]
+				if frozen {
+					continue
+				}
+				if !declaredEntryUpdated(winner) {
+					if announce {
+						ux.Success(os.Stdout, "%s (already in apm.yml)", persistPkg)
+					}
+					continue
+				}
+				if declaredRefRewritable(winner) && winner.Reference != ref.Reference {
+					winner.Reference = ref.Reference
+					manifestChanged = true
+				}
+				updatedEntries++
+				if announce {
+					ux.Success(os.Stdout, "%s (updated ref in apm.yml)", persistPkg)
+				}
+				continue
+			}
+			// A second package of this call with the same identity: the first one
+			// decided the ref (Oracle 0.33.0, install/package_resolution.py).
+			if appendedThisCall[key] {
 				if announce {
 					ux.Success(os.Stdout, "%s (already in apm.yml)", persistPkg)
 				}
@@ -645,6 +674,11 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		if newPackages > 0 {
 			heldLines = append(heldLines, heldLine{onlyOnSuccess: true, print: func() {
 				ux.Success(os.Stdout, "Updated apm.yml with %d new package(s)", newPackages)
+			}})
+		} else if updatedEntries > 0 {
+			// package_resolution.py:476.
+			heldLines = append(heldLines, heldLine{onlyOnSuccess: true, print: func() {
+				ux.Success(os.Stdout, "Updated apm.yml dependency entries")
 			}})
 		} else {
 			ux.Progress(os.Stdout, "No new packages to add")
@@ -1095,7 +1129,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, len(requestedKeys) > 0, requestedKeys, result, newLock, existingLock, existingNode, node,
+	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestChanged, len(requestedKeys) > 0, requestedKeys, result, newLock, existingLock, existingNode, node,
 		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance,
 			manifestCreated: manifestCreated, global: deployDir != "", verbose: deps.verbose, manifestTargets: len(m.Target) > 0,
 			fetched: fetchedKeys(fetched)})
@@ -2015,7 +2049,7 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // packages they bring in are deployed, the project's own content and the MCP
 // servers too, and the lock keeps the record of every other package as it
 // was (the Oracle's only_packages, install/phases/cleanup.py:69-75).
-func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved, scoped bool, named map[string]bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, run *installRun) error {
+func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestChanged, scoped bool, named map[string]bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, run *installRun) error {
 	detectRoot := "."
 	if deployDir != "" {
 		detectRoot = deployDir
@@ -2461,7 +2495,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		newLock.Dependencies = append(newLock.Dependencies, orphans...)
 	}
 
-	// 7. No-op check. manifestSectionMoved must gate this alongside lockfile
+	// 7. No-op check. manifestChanged must gate this alongside lockfile
 	// equality (2026-07-30 Tier-2 finding): a dependencies.apm/
 	// devDependencies.apm section move can leave the lockfile's own
 	// comparison fields unchanged -- notably PackageType, which reads "" on
@@ -2476,7 +2510,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	if run != nil {
 		return run.finish(installOutcome{
 			node: node, packages: packages, effectiveSubsets: effectiveSubsets, dev: dev,
-			manifestSectionMoved: manifestSectionMoved, result: result, targets: targets,
+			manifestChanged: manifestChanged, result: result, targets: targets,
 			newLock: newLock, existingLock: existingLock, existingNode: existingNode,
 			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase, mcpUnplaced: mcpUnplaced, mcpFailure: mcpFailure,
 			skippedDeps: skippedDeps, commandNotes: commandNotes, shadowed: shadowed, unmanaged: unmanaged,
@@ -2490,7 +2524,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		ux.Error(os.Stdout, "MCP dependencies are declared, but no effective target can accept their configuration. Choose a supported --target and retry.")
 		return withSilentExitCode(1, errors.New("no target takes the MCP servers at user scope"))
 	}
-	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) && !manifestSectionMoved {
+	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) && !manifestChanged {
 		if mcpFailure != nil {
 			return mcpFailure
 		}
@@ -2936,6 +2970,8 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 	// call's --dev flag is the final word on section ownership).
 	otherApmSeq := findApmSeq(root, otherSectionKey)
 
+	// refSet holds the identities whose entry already has this call's ref.
+	refSet := make(map[string]bool)
 	appended := false
 	movedOut := false
 	for _, pkg := range packages {
@@ -2946,6 +2982,15 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 				// C3 fix: rewrite the EXISTING entry in place to the
 				// effective (union'd or reset) subset, instead of the old
 				// `continue` that left a stale apm.yml value behind.
+				// Only the first package of a call with this identity sets the
+				// ref; later ones fold onto it (issue #156, Oracle 0.33.0
+				// install/package_resolution.py).
+				if !refSet[identity] {
+					refSet[identity] = true
+					if ref, ok := refOfDepString(pkg); ok {
+						setEntryRef(apmSeq, idx, ref)
+					}
+				}
 				setEntrySkillSubset(apmSeq, idx, effectiveSubsets[identity])
 				appended = true
 				// 2026-07-30 round-5 fix: the package can ALSO be declared in
@@ -2987,6 +3032,9 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 			// skills: field is adjusted, via the SAME setEntrySkillSubset
 			// helper the same-section update path above already uses.
 			apmSeq.Content = append(apmSeq.Content, movedEntry)
+			if ref, ok := refOfDepString(pkg); ok {
+				setEntryRef(apmSeq, len(apmSeq.Content)-1, ref)
+			}
 			setEntrySkillSubset(apmSeq, len(apmSeq.Content)-1, subset)
 		case len(subset) > 0:
 			apmSeq.Content = append(apmSeq.Content, newGitSkillEntry(pkg, subset))
@@ -3018,6 +3066,7 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 		// just written.
 		if identity != "" {
 			existingByIdentity[identity] = len(apmSeq.Content) - 1
+			refSet[identity] = true
 		} else {
 			existingPkgs[pkg] = true
 		}
@@ -3417,7 +3466,7 @@ func localPathForManifest(abs string) string {
 // if key isn't actually found in the expected source section. The returned
 // bool tells the caller whether a move actually happened, so it can force a
 // write even when the resulting lockfile happens to compare equal to the
-// existing one (manifestSectionMoved, install.go's runInstall -- see its
+// existing one (manifestChanged, install.go's runInstall -- see its
 // declaration for why lockfile equality alone isn't sufficient).
 func moveDependencyBetweenSections(m *manifest.Manifest, key string, toDev bool) bool {
 	if toDev {

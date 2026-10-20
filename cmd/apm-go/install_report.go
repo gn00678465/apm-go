@@ -420,7 +420,7 @@ type installOutcome struct {
 	packages                    []string
 	effectiveSubsets            map[string][]string
 	dev                         bool
-	manifestSectionMoved        bool
+	manifestChanged             bool
 	result                      *resolver.ResolutionResult
 	targets                     []string
 	newLock, existingLock       *lockfile.Lockfile
@@ -452,7 +452,7 @@ func (r *installRun) finish(o installOutcome) error {
 
 	// With nothing to record and no lock yet, the Oracle writes no file.
 	empty := len(lock.Dependencies) == 0 && len(lock.LocalDeployedFiles) == 0 && len(lock.MCPServers) == 0
-	unchanged := o.existingLock != nil && lockfile.IsSemanticEqual(o.existingLock, lock) && !o.manifestSectionMoved &&
+	unchanged := o.existingLock != nil && lockfile.IsSemanticEqual(o.existingLock, lock) && !o.manifestChanged &&
 		lockIsCanonical(o.existingLock, o.existingNode)
 	lockCurrent := unchanged && hasVersion == wantsAPMVersion(lock, hasVersion, r.noProvenance)
 	if !lockCurrent && !(o.existingLock == nil && empty) {

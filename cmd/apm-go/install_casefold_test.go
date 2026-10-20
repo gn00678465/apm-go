@@ -255,15 +255,10 @@ func TestInstall_CaseFoldDedup_DifferentReposNotMerged(t *testing.T) {
 	}
 }
 
-// TestInstall_CaseFoldDedup_SelectorConflictNotSilentlyMerged is the second
-// half of design.md §0/§2's "same identity, different selector" rule: two
-// refs to the SAME repository identity but pinned to different, conflicting
-// literal refs (branches) must not be quietly/indistinguishably merged --
-// the existing first-declared-wins policy applies (exactly as it already
-// does for two exact-same-case installs of the same dep with different
-// refs across separate calls), but the caller must be WARNED that the
-// second ref was dropped, rather than the difference vanishing with zero
-// trace.
+// TestInstall_CaseFoldDedup_SelectorConflictNotSilentlyMerged: two refs to the
+// SAME repository identity in one call. Oracle 0.33.0 lets the first win, says
+// "(already in apm.yml)" for the second and prints no warning (measured, issue
+// #156 scenario s9: install/package_resolution.py, commands/install.py:432).
 func TestInstall_CaseFoldDedup_SelectorConflictNotSilentlyMerged(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -284,8 +279,11 @@ func TestInstall_CaseFoldDedup_SelectorConflictNotSilentlyMerged(t *testing.T) {
 	if installErr != nil {
 		t.Fatalf("runInstall: %v\noutput:\n%s", installErr, out)
 	}
-	if !strings.Contains(out, "conflicts with already-declared") {
-		t.Errorf("expected a conflicting-selector warning, got:\n%s", out)
+	if strings.Contains(out, "conflicts with already-declared") || strings.Contains(out, "keeping the first-declared") {
+		t.Errorf("Oracle 0.33.0 prints no conflict warning, got:\n%s", out)
+	}
+	if !strings.Contains(out, " + owner/repo#branch-b (already in apm.yml)\n") {
+		t.Errorf("the second same-identity package is \"(already in apm.yml)\", got:\n%s", out)
 	}
 
 	m := readManifestParsed(t)

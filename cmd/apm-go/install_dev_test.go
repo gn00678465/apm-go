@@ -330,7 +330,7 @@ func TestRunInstall_Dev_CrossSectionMove_PreservesEntryMetadata(t *testing.T) {
 		loader: &mockInstallLoader{},
 		dev:    true,
 	}
-	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo"}); err != nil {
+	if err := runInstall(deps, false, true, "claude", "", nil, []string{"acme/foo#stable"}); err != nil {
 		t.Fatalf("runInstall: %v", err)
 	}
 
@@ -367,7 +367,7 @@ func TestRunInstall_Dev_CrossSectionMove_PreservesEntryMetadata(t *testing.T) {
 // recomputes package_type as "", which happens to equal the legacy lock's
 // (incorrectly blank) existing value too, so IsSemanticEqual reports "no
 // change" even though the manifest section move genuinely needs to be
-// written. manifestSectionMoved must gate the no-op check independently of
+// written. manifestChanged must gate the no-op check independently of
 // lockfile equality.
 func TestRunInstall_Dev_MoveOutOfDevWithLegacyLock_StillPersistsManifestMove(t *testing.T) {
 	dir := t.TempDir()
