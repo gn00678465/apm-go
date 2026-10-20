@@ -71,7 +71,9 @@ type uninstallAPMTarget struct {
 // enhancement -- Python's uninstall never looks at dependencies.mcp at all,
 // see un-019's documented-deviation note).
 type uninstallMCPTarget struct {
-	Name string // == the matched MCPDependency.Name
+	Name  string // == the matched MCPDependency.Name
+	InDep bool   // declared in dependencies.mcp
+	InDev bool   // declared in devDependencies.mcp
 }
 
 // uninstallResolution is resolveUninstallTargets's full result: every
@@ -167,8 +169,8 @@ func resolvePlainUninstallTarget(name string, m *manifest.Manifest, lock *lockfi
 	// un-019 (apm-go enhancement): apm package identity not found (or the
 	// argument doesn't even parse as one) -- try it as a standalone MCP
 	// server name from `install --mcp NAME`.
-	if findManifestMCPTarget(m, name) {
-		res.MCPTargets = append(res.MCPTargets, uninstallMCPTarget{Name: name})
+	if t := findManifestMCPTarget(m, name); t.InDep || t.InDev {
+		res.MCPTargets = append(res.MCPTargets, t)
 		return
 	}
 	res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundNoMatch})
@@ -336,22 +338,19 @@ func findManifestAPMTarget(m *manifest.Manifest, identity string) (isDev bool, f
 	return false, false
 }
 
-// findManifestMCPTarget reports whether name exactly matches a
-// dependencies.mcp / devDependencies.mcp server's Name (un-019; exact
-// string match, same as mcpinstall.go's upsertMCPEntry lookup -- MCP server
-// names are not case-folded anywhere else in this codebase).
-func findManifestMCPTarget(m *manifest.Manifest, name string) bool {
+// findManifestMCPTarget reports which of dependencies.mcp and
+// devDependencies.mcp have a server whose Name exactly matches name (un-019;
+// exact string match, same as mcpinstall.go's upsertMCPEntry lookup -- MCP
+// server names are not case-folded anywhere else in this codebase).
+func findManifestMCPTarget(m *manifest.Manifest, name string) uninstallMCPTarget {
+	t := uninstallMCPTarget{Name: name}
 	for _, s := range m.MCPServers {
-		if s.Name == name {
-			return true
-		}
+		t.InDep = t.InDep || s.Name == name
 	}
 	for _, s := range m.MCPDevServers {
-		if s.Name == name {
-			return true
-		}
+		t.InDev = t.InDev || s.Name == name
 	}
-	return false
+	return t
 }
 
 // uninstallIdentity returns the comparison key used to match a parsed CLI
