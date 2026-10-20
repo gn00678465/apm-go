@@ -108,15 +108,13 @@ func frozenTargetsGovern(lock *lockfile.Lockfile, targets []string, relPath stri
 	return true
 }
 
-// run deploys what the lock pins and verifies the result. It runs after the
-// registry and git sources of the lock are in apm_modules/. The deploy is
-// tried in a temporary directory first, so a deploy that would not reproduce
-// the lock fails with the deploy root as it was; the sources this run put in
-// apm_modules/ stay, as the source step leaves them.
-func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lockfile.Lockfile) error {
-	// The frozen source step skips local packages, so a fresh clone has no
-	// copy of them. An existing copy is kept, as a frozen install with
-	// nothing missing keeps it.
+// copyMissingLocalPackages copies each local package apm.yml declares that has
+// no copy in apm_modules/, because the frozen source step skips local
+// packages and compile and uninstall read the copy even when every deployed
+// file is on disk; Oracle 0.33.0 copies them in a frozen install too
+// (install/phases/resolve.py:580). Only the apm.yml reference carries the
+// source path: a lock entry sent to the loader would be cloned as git.
+func copyMissingLocalPackages(deps *installDeps, m *manifest.Manifest) error {
 	for _, dep := range allDirectDeps(m) {
 		if dep.LocalSourcePath == "" {
 			continue
@@ -128,7 +126,15 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 			return fmt.Errorf("frozen install: copy local package %s: %w", dep.LocalDeclaredPath, err)
 		}
 	}
+	return nil
+}
 
+// run deploys what the lock pins and verifies the result. It runs after the
+// registry and git sources of the lock are in apm_modules/. The deploy is
+// tried in a temporary directory first, so a deploy that would not reproduce
+// the lock fails with the deploy root as it was; the sources this run put in
+// apm_modules/ stay, as the source step leaves them.
+func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lockfile.Lockfile) error {
 	// deploy.Run finds the transitive dependencies in this list.
 	result := &resolver.ResolutionResult{}
 	for i := range lock.Dependencies {
