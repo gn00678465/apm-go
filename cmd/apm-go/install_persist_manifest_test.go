@@ -130,6 +130,9 @@ func TestPersistPackagesToManifest_DoesNotTouchMCPBlockSequence(t *testing.T) {
 // perform key surgery on the mapping, never rebuild it as {git, skills} --
 // the first draft silently dropped sibling fields like a `ref:` version
 // pin, so the very next install/update could resolve a different version.
+// The package is named with the ref the entry has: a call with no ref removes
+// the ref (issue #156, Oracle 0.33.0 scenario s6), and these cases are about the
+// fields that are not the ref.
 func TestPersistPackagesToManifest_PreservesSiblingEntryFields(t *testing.T) {
 	src := "name: d\nversion: 1.0.0\ndependencies:\n  apm:\n    - git: acme/foo\n      ref: stable\n      skills:\n        - a\n"
 
@@ -138,7 +141,7 @@ func TestPersistPackagesToManifest_PreservesSiblingEntryFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SafeLoad: %v", err)
 	}
-	if err := persistPackagesToManifest(doc, []string{"acme/foo"}, map[string][]string{"acme/foo": {"a", "b"}}, false); err != nil {
+	if err := persistPackagesToManifest(doc, []string{"acme/foo#stable"}, map[string][]string{"acme/foo": {"a", "b"}}, false); err != nil {
 		t.Fatalf("persistPackagesToManifest: %v", err)
 	}
 	out, err := yamlcore.SafeDump(doc)
@@ -158,7 +161,7 @@ func TestPersistPackagesToManifest_PreservesSiblingEntryFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SafeLoad: %v", err)
 	}
-	if err := persistPackagesToManifest(doc2, []string{"acme/foo"}, nil, false); err != nil {
+	if err := persistPackagesToManifest(doc2, []string{"acme/foo#stable"}, nil, false); err != nil {
 		t.Fatalf("persistPackagesToManifest (reset): %v", err)
 	}
 	out2, err := yamlcore.SafeDump(doc2)

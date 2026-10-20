@@ -61,7 +61,12 @@ func TestRunInstall_SummaryDistinguishesNewFromExisting(t *testing.T) {
 
 	for _, want := range []string{
 		" + org/monorepo/skills/b\n",
-		" + org/monorepo/skills/a (already in apm.yml)\n",
+		// Oracle 0.33.0 says so of a declared package whatever its ref
+		// (install/package_resolution.py:345-378, issue #156 scenario s5); with
+		// a new package in the call it prints no "dependency entries" line
+		// (commands/install.py:702-711).
+		" + org/monorepo/skills/a (updated ref in apm.yml)\n",
+		" + Updated apm.yml with 1 new package(s)\n",
 		// A subdirectory package is headed by str(dep_ref), host included,
 		// and "#default" when no ref was asked for (measured with Oracle
 		// 0.33.0: "127.0.0.1/o/m/sub #default @0395c819";
@@ -74,8 +79,11 @@ func TestRunInstall_SummaryDistinguishesNewFromExisting(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "org/monorepo/skills/b (already in apm.yml)") {
-		t.Errorf("a newly requested package must not be marked (already in apm.yml):\n%s", out)
+	if strings.Contains(out, "org/monorepo/skills/b (already in apm.yml)") || strings.Contains(out, "org/monorepo/skills/b (updated ref") {
+		t.Errorf("a newly requested package must not be marked as declared:\n%s", out)
+	}
+	if strings.Contains(out, "dependency entries") {
+		t.Errorf("a call with a new package prints no \"dependency entries\" line:\n%s", out)
 	}
 }
 
