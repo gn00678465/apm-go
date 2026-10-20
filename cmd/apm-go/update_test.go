@@ -61,7 +61,7 @@ func TestRunUpdate_Full_ReResolvesToNewestAndRewritesLock(t *testing.T) {
 		}},
 	}
 
-	if err := runUpdate(deps, false, false, "", false); err != nil {
+	if err := runUpdate(deps, false, false, "", false, ""); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestRunUpdate_Scoped_OnlyNamedPackageChanges(t *testing.T) {
 		}},
 	}
 
-	if err := runUpdate(deps, false, false, "acme/a", false); err != nil {
+	if err := runUpdate(deps, false, false, "acme/a", false, ""); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestRunUpdate_Scoped_FrozenRefusedWithoutOverride(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	err := runUpdate(deps, true, false, "acme/a", false)
+	err := runUpdate(deps, true, false, "acme/a", false, "")
 	if err == nil {
 		t.Fatal("expected error for scoped update against a frozen install without override")
 	}
@@ -166,7 +166,7 @@ func TestRunUpdate_Scoped_CIAutoFrozenRefused(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	err := runUpdate(deps, false, false, "acme/a", false)
+	err := runUpdate(deps, false, false, "acme/a", false, "")
 	if err == nil {
 		t.Fatal("expected CI environment to auto-refuse a scoped update without --no-frozen")
 	}
@@ -197,7 +197,7 @@ func TestRunUpdate_Scoped_NoFrozenOverridesCIAutoFrozen(t *testing.T) {
 		}},
 	}
 
-	if err := runUpdate(deps, false, true, "acme/a", false); err != nil {
+	if err := runUpdate(deps, false, true, "acme/a", false, ""); err != nil {
 		t.Fatalf("--no-frozen should override CI auto-frozen detection: %v", err)
 	}
 }
@@ -226,7 +226,7 @@ func TestRunUpdate_GitSemver_InstallPathClearedEvenWhenTagUnchanged(t *testing.T
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("stale content from before"), 0644)
 
-	if err := runUpdate(deps, false, false, "", false); err != nil {
+	if err := runUpdate(deps, false, false, "", false, ""); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -266,7 +266,7 @@ func TestRunUpdate_GitSemver_DevDependency_InstallPathClearedEvenWhenTagUnchange
 	os.MkdirAll(filepath.Dir(markerPath), 0755)
 	os.WriteFile(markerPath, []byte("stale content from before"), 0644)
 
-	if err := runUpdate(deps, false, false, "", false); err != nil {
+	if err := runUpdate(deps, false, false, "", false, ""); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 
@@ -303,7 +303,7 @@ func TestRunUpdate_RefusesVirtualPathEscapingApmModules(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	err := runUpdate(deps, false, false, "", false)
+	err := runUpdate(deps, false, false, "", false, "")
 	if err == nil {
 		t.Fatal("expected an error refusing to clear a path outside apm_modules")
 	}
@@ -343,7 +343,7 @@ func TestRunUpdate_RefusesParentSegmentStayingInsideApmModules(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
 
-	err := runUpdate(deps, false, false, "", false)
+	err := runUpdate(deps, false, false, "", false, "")
 	if err == nil {
 		t.Fatal("expected an error refusing to clear a \"..\"-containing path")
 	}
@@ -378,7 +378,7 @@ func TestRunUpdate_RegistryDevDependency_RequiresExperimentalFlag(t *testing.T) 
 	os.WriteFile("apm.lock.yaml", []byte("lockfile_version: \"2\"\ndependencies:\n  - repo_url: acme/sample\n    source: registry\n    version: 1.0.0\n    depth: 1\n"), 0644)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runUpdate(deps, false, false, "", false)
+	err := runUpdate(deps, false, false, "", false, "")
 	if err == nil {
 		t.Fatal("expected an error for a registry-sourced devDependencies.apm entry without the registries experimental flag enabled")
 	}
@@ -394,7 +394,7 @@ func TestRunUpdate_NoManifest(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runUpdate(deps, false, false, "", false)
+	err := runUpdate(deps, false, false, "", false, "")
 	if err == nil {
 		t.Fatal("expected error when apm.yml is missing")
 	}
@@ -511,7 +511,7 @@ func TestUpdate_RespectsSkillSubset(t *testing.T) {
 		}
 	}
 
-	if err := runUpdate(deps, false, false, "", false); err != nil {
+	if err := runUpdate(deps, false, false, "", false, ""); err != nil {
 		t.Fatalf("runUpdate: %v", err)
 	}
 

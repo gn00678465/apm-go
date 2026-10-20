@@ -98,7 +98,7 @@ func TestUpdate_MCPDevServerAddedIsConfigured(t *testing.T) {
 
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &gitops.RealPackageLoader{ModulesDir: "apm_modules"}}
 	out := captureStdout(t, func() {
-		if err := runUpdate(deps, false, true, "", false); err != nil {
+		if err := runUpdate(deps, false, true, "", false, ""); err != nil {
 			t.Errorf("update: %v", err)
 		}
 	})

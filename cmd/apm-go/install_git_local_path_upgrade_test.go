@@ -88,7 +88,7 @@ func TestInstall_GitLocalPath_OldCloneOverlapsLocalCopy(t *testing.T) {
 				var err error
 				out := captureUninstallStdout(t, func() {
 					if update {
-						err = runUpdate(deps, false, false, "", false)
+						err = runUpdate(deps, false, false, "", false, "")
 					} else {
 						err = runInstall(deps, false, true, "", "", nil, nil)
 					}
