@@ -30,7 +30,7 @@ func TestRemoveStaleMCPServers_RemovesOnlyTheNamesAndReturnsThemSorted(t *testin
     "mine": {"type": "local"}
   }
 }`)
-	removed, err := RemoveStaleMCPServers(root, "opencode", []string{"b", "a", "absent"})
+	removed, err := RemoveStaleMCPServers(root, "opencode", []string{"b", "a", "absent"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestRemoveStaleMCPServers_NothingToRemoveLeavesTheFile(t *testing.T) {
 	root := t.TempDir()
 	const content = "{\"mcpServers\":{\"mine\":{}}}"
 	path := writeStaleFixture(t, root, ".mcp.json", content)
-	removed, err := RemoveStaleMCPServers(root, "claude", []string{"gone"})
+	removed, err := RemoveStaleMCPServers(root, "claude", []string{"gone"}, false)
 	if err != nil || removed != nil {
 		t.Fatalf("removed = %v, err = %v", removed, err)
 	}
@@ -63,7 +63,7 @@ func TestRemoveStaleMCPServers_NothingToRemoveLeavesTheFile(t *testing.T) {
 		t.Errorf(".mcp.json rewritten:\n%s", data)
 	}
 
-	removed, err = RemoveStaleMCPServers(root, "codex", []string{"gone"})
+	removed, err = RemoveStaleMCPServers(root, "codex", []string{"gone"}, false)
 	if err != nil || removed != nil {
 		t.Fatalf("missing file: removed = %v, err = %v", removed, err)
 	}
@@ -73,7 +73,7 @@ func TestRemoveStaleMCPServers_NothingToRemoveLeavesTheFile(t *testing.T) {
 }
 
 func TestRemoveStaleMCPServers_TargetWithoutMCPConfig(t *testing.T) {
-	removed, err := RemoveStaleMCPServers(t.TempDir(), "cursor", []string{"x"})
+	removed, err := RemoveStaleMCPServers(t.TempDir(), "cursor", []string{"x"}, false)
 	if err != nil || removed != nil {
 		t.Errorf("removed = %v, err = %v", removed, err)
 	}
@@ -102,7 +102,7 @@ func TestRemoveStaleMCPServers_Labels(t *testing.T) {
 func TestRemoveStaleMCPServers_InvalidFileIsAnError(t *testing.T) {
 	root := t.TempDir()
 	path := writeStaleFixture(t, root, ".github/mcp-config.json", "{not json")
-	_, err := RemoveStaleMCPServers(root, "copilot", []string{"x"})
+	_, err := RemoveStaleMCPServers(root, "copilot", []string{"x"}, false)
 	if err == nil || !strings.HasPrefix(err.Error(), "MCP cleanup failed for Copilot CLI config: existing ") ||
 		!strings.HasSuffix(err.Error(), ". Check the config path and permissions, then retry.") {
 		t.Errorf("err = %v", err)
@@ -137,7 +137,7 @@ func TestRemoveStaleMCPServers_SymlinkIsRefused(t *testing.T) {
 			target := writeStaleFixture(t, outside, "config.toml", content)
 			tc.link(t, root, outside)
 
-			_, err := RemoveStaleMCPServers(root, "codex", []string{"x"})
+			_, err := RemoveStaleMCPServers(root, "codex", []string{"x"}, false)
 			want := "Refusing to clean symlinked MCP config: Codex CLI config (" + filepath.Join(root, ".codex", "config.toml") +
 				"). Replace the symlink with a regular file or directory, then retry."
 			if err == nil || err.Error() != want {

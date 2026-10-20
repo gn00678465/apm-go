@@ -332,7 +332,7 @@ func TestInstallUnmanaged_OpencodeCodex(t *testing.T) {
 	runSummary(t, []summaryRun{
 		{[]string{"install"}, " > Installing dependencies from apm.yml...\n" +
 			" > Resolving ./m...\n" +
-			" i Targets: opencode, codex  (source: apm.yml)\n" +
+			" i Targets: codex, opencode  (source: apm.yml)\n" +
 			"   + ./m (local)\n" +
 			"  |-- (files unchanged)\n" +
 			" i Added apm_modules/ to .gitignore\n" +

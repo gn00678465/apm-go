@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -165,7 +166,7 @@ func installCmd() *cobra.Command {
 			}
 
 			if mcpGiven {
-				return runMCPInstall(mcpInstallOpts{
+				err := runMCPInstall(mcpInstallOpts{
 					Name: mcpName, Transport: mcpTransport, URL: mcpURL,
 					EnvPairs: mcpEnvPairs, HeaderPairs: mcpHeaderPairs,
 					Version: mcpVersion, Registry: mcpRegistry, Force: mcpForce,
@@ -173,6 +174,12 @@ func installCmd() *cobra.Command {
 					SkillSubset: skillFlags, TargetFlag: targetFlag,
 					DeployDir: deployDir, NoProvenance: noProvenance,
 				})
+				var mh *multipleHarnessError
+				var us *userScopeMCPError
+				if errors.As(err, &mh) || errors.As(err, &us) {
+					cmd.SilenceUsage = true
+				}
+				return err
 			}
 
 			deps := &installDeps{
@@ -195,7 +202,8 @@ func installCmd() *cobra.Command {
 			// exist in the resolved package.
 			var ndt *noDeployTargetError
 			var usk *unknownSkillError
-			if errors.As(err, &ndt) || errors.As(err, &usk) {
+			var mh *multipleHarnessError
+			if errors.As(err, &ndt) || errors.As(err, &usk) || errors.As(err, &mh) {
 				cmd.SilenceUsage = true
 			}
 			return err
@@ -661,6 +669,15 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	// project silently resolves/deploys/verifies nothing.
 	hasAnyDeps := len(m.ParsedDeps) > 0 || len(m.ParsedDevDeps) > 0
 
+	// A project that detects several harnesses and names no target stops
+	// before anything is fetched or written, a frozen install too
+	// (core/target_detection.py:1137-1146).
+	if deployDir == "" {
+		if t := resolveInstallTargets(targetFlag, m.Target, ""); len(t.ambiguous) > 0 && hasContentToIntegrate(m) {
+			return errMultipleHarnesses(t.ambiguous)
+		}
+	}
+
 	// 2. Load existing lockfile
 	var existingLock *lockfile.Lockfile
 	var existingNode *yamllib.Node
@@ -891,7 +908,8 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	}
 
 	// 4. Resolve dependency graph, unless this is a local-only deploy.
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, ".")
+	chosen := resolveInstallTargets(targetFlag, m.Target, deployDir)
+	targets, targetDiags := chosen.targets, chosen.diags
 	if !hasAnyDeps {
 		if len(targets) == 0 {
 			// R16 (prd.md/design.md §3): this message is only printed when
@@ -1058,7 +1076,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, len(requestedKeys) > 0, result, newLock, existingLock, existingNode, node,
+	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestSectionMoved, len(requestedKeys) > 0, requestedKeys, result, newLock, existingLock, existingNode, node,
 		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance,
 			manifestCreated: manifestCreated, global: deployDir != "", verbose: deps.verbose, manifestTargets: len(m.Target) > 0,
 			fetched: fetchedKeys(fetched)})
@@ -1973,12 +1991,23 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // the files of a package apm.yml no longer declares are then not cleaned and
 // its lock entry stays as it was, as the Oracle skips its orphan cleanup when
 // it has only_packages (install/phases/cleanup.py:69).
-func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved, scoped bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, run *installRun) error {
+//
+// named are the packages the command named; with scoped, only they and the
+// packages they bring in are deployed, the project's own content and the MCP
+// servers too, and the lock keeps the record of every other package as it
+// was (the Oracle's only_packages, install/phases/cleanup.py:69-75).
+func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestSectionMoved, scoped bool, named map[string]bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, run *installRun) error {
 	detectRoot := "."
 	if deployDir != "" {
 		detectRoot = deployDir
 	}
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, detectRoot)
+	chosen := resolveInstallTargets(targetFlag, m.Target, deployDir)
+	targets, targetDiags := chosen.targets, chosen.diags
+	var only map[string]bool
+	if scoped {
+		only = listedDeps(result, named, true)
+		delete(only, "")
+	}
 	// localProjectDeployed is R16's post-deploy decision point (design.md
 	// §3, codex M2): whether THIS run's deploy.Run actually deployed at
 	// least one file from the project's own .apm/ tree (deployResult.
@@ -1989,6 +2018,9 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// apmInstalled and mcpConfigured are the counts of the Oracle's summary
 	// line: what this run installed or configured.
 	var apmInstalled, mcpConfigured int
+	// mcpUnplaced: at user scope the MCP servers declared have no target
+	// that takes them there, which fails the install.
+	var mcpUnplaced bool
 	// apmPhase: a dependency or the project's own content was deployed.
 	var apmPhase bool
 	// keptDirs and failedBuckets are deploy.DeployResult.KeptDirs and
@@ -2029,7 +2061,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			targetSource = "apm.yml"
 		}
 		printTargets := func() {
-			ux.Info(os.Stdout, "Targets: %s  (source: %s)", strings.Join(targets, ", "), targetSource)
+			ux.Info(os.Stdout, "Targets: %s  (source: %s)", sortedTargets(targets), targetSource)
 		}
 		if run == nil {
 			printTargets()
@@ -2052,7 +2084,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 
 		beforeDeploy := hashesOnDisk(existingLock, detectRoot)
-		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir, deployDir != "", lockManaged(existingLock, detectRoot))
+		deployResult, err := deploy.Run(targets, ".", m, result, skillFilter, deployDir, deployDir != "", lockManaged(existingLock, detectRoot), deploy.WithMCPTargets(chosen.mcp), deploy.WithOnly(only))
 		var rejected *deploy.RejectedInstructionError
 		if run != nil && errors.As(err, &rejected) {
 			printTargets()
@@ -2124,11 +2156,13 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			// any target -- otherwise the summary reads as success even when
 			// a dependency's primitives went entirely undiscovered.
 			for _, dep := range result.Deps {
-				if _, ok := deployResult.PerDep[dep.Key]; !ok && !skipped[dep.Key] && len(deployResult.RejectedPaths[dep.Key]) == 0 {
+				if _, ok := deployResult.PerDep[dep.Key]; !ok && !skipped[dep.Key] && len(deployResult.RejectedPaths[dep.Key]) == 0 && (only == nil || only[dep.Key]) {
 					ux.Warn(os.Stderr, "%s deployed 0 files to any target", dep.Key)
 				}
 			}
-		} else if apmPhase {
+		} else if apmPhase || run.global {
+			// The user scope always integrates ~/.apm's own content
+			// (install/phases/local_content.py:45-56), also with nothing in it.
 			apmInstalled = run.printBlocks(result, deployResult, existingLock, newLock, beforeDeploy, skipped,
 				listedDeps(result, requestedKeys, scoped))
 			// Here, before the MCP servers, is where the Oracle prints it; the
@@ -2147,6 +2181,22 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				dep.DeployedFiles = withSkillDirs(files)
 				dep.DeployedHashes = hashes
 			}
+		}
+		// A package the command did not name keeps its old record, its
+		// deployed files merged back in step 6b; one with none is not
+		// recorded (measured, issue125 upd2-or).
+		if only != nil {
+			kept := newLock.Dependencies[:0]
+			for _, dep := range newLock.Dependencies {
+				if only[dep.UniqueKey()] {
+					kept = append(kept, dep)
+				} else if prevLock != nil && prevLock.FindByKey(dep.UniqueKey()) != nil {
+					entry := *prevLock.FindByKey(dep.UniqueKey())
+					entry.DeployedFiles, entry.DeployedHashes = nil, nil
+					kept = append(kept, entry)
+				}
+			}
+			newLock.Dependencies = kept
 		}
 		// Populate local deployed files
 		if dr, ok := deployResult.PerDep[""]; ok {
@@ -2190,7 +2240,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 				ensureClaudeDir(detectRoot, mcpTargets)
 				mcpConfigured = printMCPBlock(manifestMCPOrder(m, newLock.MCPServers, targetsByServer), declaredMCP,
-					newLock, existingLock, targetsByServer, targets, targetFlag != "", len(m.Target) > 0)
+					newLock, existingLock, targetsByServer, targets, targetFlag != "", len(m.Target) > 0, &chosen.userScope)
 			} else {
 				mcpItems := make([]ux.Item, 0, len(newLock.MCPServers))
 				for _, server := range newLock.MCPServers {
@@ -2201,6 +2251,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				ux.Info(os.Stdout, "MCP servers configured:")
 				ux.List(os.Stdout, mcpItems)
 			}
+		} else if run != nil && run.global && len(chosen.mcp) == 0 && len(chosen.userScope.targets) > 0 && len(deployResult.DeclaredMCPServers) > 0 {
+			mcpUnplaced = true
+			run.noteDiagnostic()
+			printUnplacedMCP(len(deployResult.DeclaredMCPServers), targets, targetFlag != "", &chosen.userScope)
 		}
 
 		// Pollution convergence (design.md §1.2g, codex C1, prd.md B2-3/
@@ -2244,7 +2298,20 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 				}
 				orphans = oc.kept
 			}
-			for _, c := range cleanStaleDeployedFiles(prevLock, newLock, deployResult.FailedBuckets, refused, keptDirs, targets, cleanRoot, linkSourceRoot) {
+			var declared []string
+			if len(m.Target) > 0 {
+				declared, _ = deploy.ResolveTargets("", m.Target, "")
+			}
+			notCleaned := maps.Clone(deployResult.FailedBuckets)
+			for _, dep := range newLock.Dependencies {
+				if only != nil && !only[dep.UniqueKey()] {
+					if notCleaned == nil {
+						notCleaned = map[string]bool{}
+					}
+					notCleaned[dep.UniqueKey()] = true
+				}
+			}
+			for _, c := range cleanStaleDeployedFiles(prevLock, newLock, notCleaned, refused, keptDirs, targets, declared, cleanRoot, linkSourceRoot) {
 				if n := len(c.removed); n > 0 {
 					noun := "files"
 					if n == 1 {
@@ -2281,7 +2348,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// The lock below no longer records a server that is no longer
 		// declared, so its entry has to leave the config files first. A
 		// frozen install writes no lock and does not come here.
-		if err := cleanStaleMCPServers(detectRoot, targets, deployResult.DeclaredMCPServers, existingLock); err != nil {
+		if err := cleanStaleMCPServers(detectRoot, targets, deployResult.DeclaredMCPServers, existingLock, deployDir != ""); err != nil {
 			return err
 		}
 	}
@@ -2371,13 +2438,13 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// report a false "Already up to date" and the section move's apm.yml
 	// write would silently never happen, despite the "moved from ..."
 	// info message already printed above.
-	newLock.PathTargets = pathTargets(newLock, existingLock, targets)
+	newLock.PathTargets = pathTargets(newLock, existingLock, targets, deployDir != "")
 	if run != nil {
 		return run.finish(installOutcome{
 			node: node, packages: packages, effectiveSubsets: effectiveSubsets, dev: dev,
 			manifestSectionMoved: manifestSectionMoved, result: result, targets: targets,
 			newLock: newLock, existingLock: existingLock, existingNode: existingNode,
-			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase,
+			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase, mcpUnplaced: mcpUnplaced,
 			skippedDeps: skippedDeps, commandNotes: commandNotes, shadowed: shadowed, unmanaged: unmanaged,
 			listed: listedDeps(result, requestedKeys, scoped),
 		})
@@ -2434,18 +2501,23 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	//     from existingLock elsewhere in this function), so it already IS
 	//     "this run's actual successful server count" (codex M3), not a
 	//     stale lockfile total.
+	// update <pkg> deployed and records the named packages alone.
+	summaryDeps := result.Deps
+	if only != nil {
+		summaryDeps = slices.DeleteFunc(slices.Clone(result.Deps), func(d resolver.ResolvedDep) bool { return !only[d.Key] })
+	}
 	var summaryParts []string
-	if len(result.Deps) == 0 && localProjectDeployed {
+	if len(summaryDeps) == 0 && localProjectDeployed {
 		summaryParts = append(summaryParts, "local project")
 	} else {
-		summaryParts = append(summaryParts, fmt.Sprintf("%d %s", len(result.Deps), pluralWord(len(result.Deps), "dependency", "dependencies")))
+		summaryParts = append(summaryParts, fmt.Sprintf("%d %s", len(summaryDeps), pluralWord(len(summaryDeps), "dependency", "dependencies")))
 	}
 	if n := len(newLock.MCPServers); n > 0 {
 		summaryParts = append(summaryParts, fmt.Sprintf("%d %s", n, pluralWord(n, "MCP server", "MCP servers")))
 	}
 	ux.Success(os.Stdout, "Installed %s", strings.Join(summaryParts, " and "))
-	items := make([]ux.Item, 0, len(result.Deps))
-	for _, dep := range result.Deps {
+	items := make([]ux.Item, 0, len(summaryDeps))
+	for _, dep := range summaryDeps {
 		label := dep.Key + depVersionLabel(dep)
 		// R9/R10c: a dep is "new" only if this call's positional args asked
 		// for it AND it wasn't already declared in apm.yml before this call.

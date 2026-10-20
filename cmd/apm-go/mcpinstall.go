@@ -57,7 +57,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if err != nil {
 		switch {
 		case os.IsNotExist(err) && opts.DeployDir != "":
-			if data, err = newManifestBytes(manifestOwnerName(true), mcpManifestTargets(opts.TargetFlag, deployRoot), false); err != nil {
+			if data, err = newManifestBytes(manifestOwnerName(true), mcpManifestTargets(opts.TargetFlag, opts.DeployDir), false); err != nil {
 				return err
 			}
 			createManifest = true
@@ -74,6 +74,24 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	m, _, err := manifest.ParseManifest(node)
 	if err != nil {
 		return fmt.Errorf("validate apm.yml: %w", err)
+	}
+	chosen := resolveInstallTargets(opts.TargetFlag, m.Target, opts.DeployDir)
+	if len(chosen.ambiguous) > 0 {
+		return errMultipleHarnesses(chosen.ambiguous)
+	}
+	// At user scope, the targets of --target or targets: that take no MCP
+	// there are skipped, or refused when they are all there is
+	// (commands/install.py:777-803).
+	if opts.DeployDir != "" && len(chosen.userScope.targets) > 0 {
+		if len(chosen.mcp) == 0 {
+			source := "apm.yml"
+			if opts.TargetFlag != "" {
+				source = "--target flag"
+			}
+			return withUsageError(&userScopeMCPError{fmt.Errorf("Selected targets are unavailable for user-scope MCP installation (%s; source: %s); choose a global-capable --target or omit --global",
+				strings.Join(chosen.userScope.names, ", "), source)})
+		}
+		chosen.userScope.warn()
 	}
 
 	// Compute the apm.yml value FIRST -- this is pure and requires no
@@ -156,7 +174,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 
 	// The transcript is the Oracle's (integration/mcp_integrator_install.py:
 	// 825, :950-1081, :1175), issue #50 ruling R10.
-	deployed, skipped, err := deployMCPEntry(m, opts.TargetFlag, deployDep, deployRoot)
+	deployed, skipped, err := deployMCPEntry(chosen.mcp, chosen.diags, deployDep, deployRoot, opts.DeployDir != "")
 	if err != nil {
 		return err
 	}
@@ -195,7 +213,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	recordMCPServer(lock, deployDep, deployed)
 	ensureClaudeDir(deployRoot, targetSet)
 	printMCPBlock([]string{opts.Name}, map[string]*manifest.MCPDependency{opts.Name: deployDep}, lock, oldLock,
-		map[string]map[string]bool{opts.Name: targetSet}, deployed, opts.TargetFlag != "", len(m.Target) > 0)
+		map[string]map[string]bool{opts.Name: targetSet}, deployed, opts.TargetFlag != "", len(m.Target) > 0, nil)
 
 	lock.APMVersion = apmVersionFor(lock, lock.APMVersion, lockHasAPMVersion(lockNode), opts.NoProvenance)
 	lockBytes, err := lockfile.WriteLockfile(lock, lockNode)
@@ -223,16 +241,25 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	return nil
 }
 
+// userScopeMCPError is the Oracle's click.UsageError for a user-scope MCP
+// install whose targets all take no MCP there: the Usage and Try lines, not
+// cobra's flag list.
+type userScopeMCPError struct{ err error }
+
+func (e *userScopeMCPError) Error() string { return e.err.Error() }
+func (e *userScopeMCPError) Unwrap() error { return e.err }
+
 // mcpManifestTargets is the targets: of the ~/.apm/apm.yml a user-scope MCP
 // install creates: the targets of --target it configures, in their order and
 // with all expanded, as the Oracle writes its supported_runtimes
-// (commands/install.py:829-834). With no --target there is none.
-func mcpManifestTargets(targetFlag, deployRoot string) []string {
+// (commands/install.py:829-834), so not a target that takes no MCP at user
+// scope. With no --target there is none.
+func mcpManifestTargets(targetFlag, home string) []string {
 	if targetFlag == "" {
 		return nil
 	}
 	// The diagnostics are deployMCPEntry's to print.
-	resolved, _ := deploy.ResolveTargets(targetFlag, nil, deployRoot)
+	resolved := resolveInstallTargets(targetFlag, nil, home).mcp
 	var targets []string
 	for _, t := range resolved {
 		if _, ok := deploy.Adapters[t].(deploy.MCPTarget); ok && !slices.Contains(targets, t) {
@@ -723,8 +750,7 @@ func nodeToValue(n *yamllib.Node) any {
 // MCP, reusing the existing per-target writers (internal/deploy/mcp_*.go)
 // unmodified -- this is not a new deploy path, just a single-Primitive call
 // into the same one regular `apm install` uses.
-func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDependency, deployRoot string) (deployedTargets, skippedTargets []string, err error) {
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, deployRoot)
+func deployMCPEntry(targets, targetDiags []string, dep *manifest.MCPDependency, deployRoot string, userScope bool) (deployedTargets, skippedTargets []string, err error) {
 	for _, d := range targetDiags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
@@ -740,7 +766,7 @@ func deployMCPEntry(m *manifest.Manifest, targetFlag string, dep *manifest.MCPDe
 			skippedTargets = append(skippedTargets, t)
 			continue
 		}
-		_, written, diags, werr := mcpAdapter.WriteMCP(prims, deployRoot)
+		_, written, diags, werr := deploy.WriteMCPAt(mcpAdapter, prims, deployRoot, userScope)
 		for _, d := range diags {
 			ux.Warn(os.Stderr, "%s", d)
 		}

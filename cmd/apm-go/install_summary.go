@@ -75,9 +75,9 @@ func summaryTargetOf(f string) string {
 		return "claude"
 	case ".codex":
 		return "codex"
-	case ".github":
+	case ".github", ".copilot":
 		return "copilot"
-	case ".opencode":
+	case ".opencode", ".config":
 		return "opencode"
 	}
 	return "antigravity"

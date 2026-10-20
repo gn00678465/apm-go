@@ -219,6 +219,28 @@ func skillNameInSubset(subset []string, name string) bool {
 	return false
 }
 
+// RunOption changes what Run does beyond its arguments.
+type RunOption func(*runOptions)
+
+type runOptions struct {
+	mcpTargets []string
+	mcpSet     bool
+	only       map[string]bool
+}
+
+// WithOnly has Run deploy the packages of only (by DepKey), the project's own
+// content and every MCP server, and nothing of the other packages.
+func WithOnly(only map[string]bool) RunOption {
+	return func(o *runOptions) { o.only = only }
+}
+
+// WithMCPTargets has Run write the MCP servers to targets alone, not to every
+// target it deploys to: a --global install leaves out the targets that take
+// no MCP at user scope.
+func WithMCPTargets(targets []string) RunOption {
+	return func(o *runOptions) { o.mcpTargets, o.mcpSet = targets, true }
+}
+
 // Run executes the full deploy pipeline: collect → resolve conflicts → deploy.
 // deployDir controls where target files are written (DeployPrimitive, WriteMCP,
 // FinalizeBundles and their post-write hashes). When empty it defaults to
@@ -231,7 +253,15 @@ func skillNameInSubset(subset []string, name string) bool {
 // write regardless of this flag.
 // managed, for a project deploy, leaves the files the user put where a
 // primitive deploys (Managed); nil writes over them.
-func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string, global bool, managed *Managed) (*DeployResult, error) {
+func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *resolver.ResolutionResult, filter *SkillFilter, deployDir string, global bool, managed *Managed, opts ...RunOption) (*DeployResult, error) {
+	var o runOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	mcpTargets := targets
+	if o.mcpSet {
+		mcpTargets = o.mcpTargets
+	}
 	if deployDir == "" {
 		deployDir = projectDir
 	}
@@ -393,6 +423,17 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 			mcpDiags = append(mcpDiags, loadDiags...)
 			mcpDiags = append(mcpDiags, collectTransitiveMCPDiagnostics(transitiveServers, dep.Key)...)
 		}
+	}
+
+	// install <pkg> and update <pkg> integrate the named packages and the
+	// project's own content alone, as the Oracle's only_packages does
+	// (install/phases/integrate.py); a primitive of another package does
+	// not take part in the conflicts either (measured, issue125 impl1/same1).
+	if o.only != nil {
+		ordered = slices.DeleteFunc(ordered, func(p Primitive) bool {
+			return p.DepKey != "" && p.Type != TypeMCP && !o.only[p.DepKey]
+		})
+		skippedDeps = slices.DeleteFunc(skippedDeps, func(d SkippedDep) bool { return !o.only[d.Key] })
 	}
 
 	// 2. Apply --skill filter before conflict resolution. A skill primitive
@@ -780,7 +821,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 	}
 	if len(mcpWinners) > 0 {
-		for _, target := range targets {
+		for _, target := range mcpTargets {
 			adapter, ok := Adapters[target]
 			if !ok {
 				continue

@@ -52,14 +52,15 @@ type staleCleanup struct {
 //
 // newLock must already carry this run's deployed files. Results are ordered
 // local bucket first, then newLock.Dependencies order.
-func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed, rejected map[string]bool, keptDirs, targets []string, deployRoot, linkSourceRoot string) []staleCleanup {
+func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed, rejected map[string]bool, keptDirs, targets, declared []string, deployRoot, linkSourceRoot string) []staleCleanup {
 	claimed := claimedPaths(newLock)
+	userScope := linkSourceRoot != ""
 
 	var results []staleCleanup
 	clean := func(label string, bucket deploy.DeployBucket, source string, oldFiles []string, oldHashes map[string]string) {
 		var stale []string
 		for _, f := range oldFiles {
-			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(targets, bucket, f) || deploy.UnderKeptDir(keptDirs, f) || rejected[normalizeDeployPath(f)] {
+			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !staleTargetPath(userScope, targets, declared, bucket, f) || deploy.UnderKeptDir(keptDirs, f) || rejected[normalizeDeployPath(f)] {
 				continue
 			}
 			stale = append(stale, f)
@@ -91,6 +92,28 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed, r
 		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(old.ModuleDir())), old.DeployedFiles, old.DeployedHashes)
 	}
 	return results
+}
+
+// staleTargetPath reports whether f, a path the old lock records and this run
+// did not deploy, is stale by its target, as the Oracle's lock merge decides
+// (install/manifest_reconcile.py:247-290,540-660, install/phases/
+// targets.py:120-150): a target of this run governs it; or apm.yml declares
+// targets (declared), none of this run's or of declared governs f, and
+// another target does, so f is the file of a target taken out of targets:.
+// With no targets: in apm.yml the files of the other targets stay. At user
+// scope (a --global install) a path where apm-go before issue #125 wrote a
+// copilot or opencode file is stale too.
+func staleTargetPath(userScope bool, targets, declared []string, bucket deploy.DeployBucket, f string) bool {
+	known := func(ts []string) bool {
+		return deploy.Governs(userScope, ts, bucket, f) || userScope && deploy.GovernsLegacyUserPath(ts, f)
+	}
+	switch {
+	case known(targets):
+		return true
+	case len(declared) == 0 || deploy.Governs(userScope, declared, bucket, f):
+		return false
+	}
+	return known(deploy.AllTargets())
 }
 
 // rejectedSet is every path of deploy.DeployResult.RejectedPaths, normalized:
@@ -188,6 +211,7 @@ type orphanCleanup struct {
 func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.Lockfile, rejected map[string]bool, keptDirs []string, deployRoot, linkSourceRoot string) orphanCleanup {
 	claimed := claimedPaths(newLock)
 	allTargets := deploy.AllTargets()
+	userScope := linkSourceRoot != ""
 	takenOverRoot := ""
 	if linkSourceRoot != "" {
 		takenOverRoot = deployRoot
@@ -200,7 +224,7 @@ func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.
 				refused = append(refused, f)
 				continue
 			}
-			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !deploy.TargetsGovernPath(allTargets, deploy.DependencyBucket, f) || deploy.UnderKeptDir(keptDirs, f) {
+			if claimed[normalizeDeployPath(f)] || deploy.IsMCPConfigPath(f) || !staleTargetPath(userScope, allTargets, nil, deploy.DependencyBucket, f) || deploy.UnderKeptDir(keptDirs, f) {
 				continue
 			}
 			candidates = append(candidates, f)
@@ -320,7 +344,7 @@ func notTakenOver(bucket, dir string, files, targets []string, deployDir string)
 	}
 	out := files[:0:0]
 	for _, f := range files {
-		if deploy.TargetsGovernPath(targets, kind, f) && deploy.TakenOver(root, source, f) {
+		if deploy.Governs(deployDir != "", targets, kind, f) && deploy.TakenOver(root, source, f) {
 			continue
 		}
 		if leftOut(f) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"github.com/spf13/cobra"
+	yamllib "go.yaml.in/yaml/v4"
 )
 
 func updateCmd() *cobra.Command {
@@ -45,7 +47,11 @@ apm_modules/, and without deploying any change to a target.`,
 			if len(args) == 1 {
 				pkg = args[0]
 			}
-			return runUpdate(deps, frozen, noFrozen, pkg, dryRun)
+			runErr = runUpdate(deps, frozen, noFrozen, pkg, dryRun)
+			if mh := (*multipleHarnessError)(nil); errors.As(runErr, &mh) {
+				cmd.SilenceUsage = true
+			}
+			return runErr
 		},
 	}
 	cmd.Flags().BoolVar(&frozen, "frozen", false, "refuse a scoped update against a frozen install (req-rs-012); auto-enabled in CI")
@@ -101,6 +107,11 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	if err := checkInsecureDirect(allDirectDeps(m), false, m.DefaultHost); err != nil {
 		return err
 	}
+	// As install refuses several detected harnesses, before anything is
+	// fetched (measured, issue125 proj2-or/m6).
+	if t := resolveInstallTargets("", m.Target, ""); len(t.ambiguous) > 0 && hasContentToIntegrate(m) {
+		return errMultipleHarnesses(t.ambiguous)
+	}
 
 	// C3 (07-11-update-local-deps): translate a scoped positional token that
 	// names a local/absolute-path dependency into the same synthetic
@@ -124,19 +135,29 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		}
 	}
 
+	// With no apm.lock.yaml the update resolves, deploys and writes the lock
+	// as an install does, as the Oracle's does (measured, issue125 upd-or).
+	var existingLock *lockfile.Lockfile
+	var existingNode *yamllib.Node
 	lockData, err := os.ReadFile("apm.lock.yaml")
-	if err != nil {
-		return fmt.Errorf("apm-go update requires an existing apm.lock.yaml: %w", err)
+	switch {
+	case err == nil:
+		lockNode, err := yamlcore.SafeLoad(lockData)
+		if err != nil {
+			return fmt.Errorf("parse apm.lock.yaml: %w", err)
+		}
+		if existingLock, err = lockfile.ParseLockfile(lockNode); err != nil {
+			return fmt.Errorf("validate apm.lock.yaml: %w", err)
+		}
+		existingNode = lockNode
+	case !os.IsNotExist(err):
+		return fmt.Errorf("read apm.lock.yaml: %w", err)
 	}
-	lockNode, err := yamlcore.SafeLoad(lockData)
-	if err != nil {
-		return fmt.Errorf("parse apm.lock.yaml: %w", err)
+	// oldLock is what the plan compares with: nothing when there is no lock.
+	oldLock := existingLock
+	if oldLock == nil {
+		oldLock = &lockfile.Lockfile{}
 	}
-	existingLock, err := lockfile.ParseLockfile(lockNode)
-	if err != nil {
-		return fmt.Errorf("validate apm.lock.yaml: %w", err)
-	}
-	existingNode := lockNode
 
 	// Registry access is experimental; mirrors runInstall's gate (regular
 	// and dev dependencies both in scope).
@@ -163,7 +184,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	// stale checkouts as a side effect of resolving, per gitops.clone.go),
 	// and buildLockfile/deployAndFinalize are disk-writing by design.
 	if dryRun {
-		return runUpdateDryRun(m, existingLock, deps, pkg, resolverCfg)
+		return runUpdateDryRun(m, oldLock, deps, pkg, resolverCfg)
 	}
 
 	// Before the first copy, so a refusal leaves earlier copies as they were.
@@ -213,7 +234,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	if pkg == "" {
 		result, err = resolver.PlanFullUpdate(m, existingLock, deps.tags, insecure, resolverCfg)
 	} else {
-		result, err = resolver.PlanScopedUpdate(m, existingLock, deps.tags, insecure, resolverCfg, pkg, frozen)
+		result, err = resolver.PlanScopedUpdate(m, oldLock, deps.tags, insecure, resolverCfg, pkg, frozen)
 	}
 	if err != nil {
 		return fmt.Errorf("update: %w", err)
@@ -238,7 +259,14 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		return err
 	}
 
-	printUpdateSummary(existingLock, newLock)
+	shownLock := newLock
+	if pkg != "" {
+		// The plan of update <pkg> names the packages it deploys
+		// (measured, issue125 upd2-or).
+		named := listedDeps(result, map[string]bool{pkg: true}, true)
+		shownLock = &lockfile.Lockfile{Dependencies: slices.DeleteFunc(slices.Clone(newLock.Dependencies), func(d lockfile.LockedDep) bool { return !named[d.UniqueKey()] })}
+	}
+	printUpdateSummary(oldLock, shownLock)
 
 	// C2 (07-11-update-local-deps): same deps-present/zero-target teaching
 	// exit as runInstall (install.go:613-618), reusing the identical
@@ -254,7 +282,8 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	// provenance with nothing deployed to show for it. targetFlag is always
 	// "" here -- apm-go's `update` has no --target flag (Python parity gap,
 	// out of this task's scope).
-	targets, targetDiags := deploy.ResolveTargets("", m.Target, ".")
+	chosen := resolveInstallTargets("", m.Target, "")
+	targets, targetDiags := chosen.targets, chosen.diags
 	if len(result.Deps) > 0 && len(targets) == 0 {
 		for _, d := range targetDiags {
 			ux.Error(os.Stderr, "%s", d)
@@ -262,7 +291,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		return errNoDeployTarget()
 	}
 
-	return deployAndFinalize(m, "", "", effectiveSubsets, nil, nil, nil, nil, false, false, pkg != "", result, newLock, existingLock, existingNode, node, nil)
+	return deployAndFinalize(m, "", "", effectiveSubsets, nil, nil, nil, nil, false, false, pkg != "", map[string]bool{pkg: true}, result, newLock, existingLock, existingNode, node, nil)
 }
 
 // runUpdateDryRun resolves --dry-run's plan against a throwaway scratch

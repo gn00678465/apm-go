@@ -63,7 +63,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 	var targets []string
 	for name := range deploy.Adapters {
 		for _, p := range removed {
-			if deploy.TargetsGovernPath([]string{name}, deploy.DependencyBucket, p) {
+			if deploy.Governs(deployDir != "", []string{name}, deploy.DependencyBucket, p) {
 				targets = append(targets, name)
 				break
 			}

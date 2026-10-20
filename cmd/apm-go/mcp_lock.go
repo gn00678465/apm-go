@@ -150,11 +150,19 @@ var mcpAdapterLines = map[string]mcpAdapterLine{
 // lists it for every target. targetOrder is the order deploy.ResolveTargets
 // gave: the Oracle lists targets in the order --target or targets: names
 // them (mcp_integrator_install.py:635-835), not sorted.
-func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, newLock, existingLock *lockfile.Lockfile, targetsByServer map[string]map[string]bool, targetOrder []string, explicitTarget, declaredTarget bool) int {
+// skipped, for an install at user scope, are the targets the Oracle names in
+// the Targeting line and then skips with a warning
+// (integration/mcp_integrator_install.py:895-913).
+func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, newLock, existingLock *lockfile.Lockfile, targetsByServer map[string]map[string]bool, targetOrder []string, explicitTarget, declaredTarget bool, skipped *userScopeSkip) int {
 
 	targetSet := map[string]bool{}
 	for _, set := range targetsByServer {
 		for t := range set {
+			targetSet[t] = true
+		}
+	}
+	if skipped != nil {
+		for _, t := range skipped.targets {
 			targetSet[t] = true
 		}
 	}
@@ -166,6 +174,9 @@ func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, 
 		ux.Info(os.Stdout, "Targeting specific %s: %s", pluralWord(len(targets), "runtime", "runtimes"), strings.Join(targets, ", "))
 	case declaredTarget:
 		ux.Info(os.Stdout, "Targeting declared %s from apm.yml: %s", pluralWord(len(targets), "target", "targets"), strings.Join(targets, ", "))
+	}
+	if skipped != nil {
+		skipped.warn()
 	}
 
 	state := func(server string) (configured, known bool) {

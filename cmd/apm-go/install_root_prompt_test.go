@@ -11,7 +11,7 @@ import (
 // *.prompt.md beside a project's .apm/ is content to integrate, so the
 // install exits 2 as Oracle 0.33.0 does (No harness detected). A --global
 // install does not deploy ~/.apm/*.prompt.md, so there it is nothing to
-// integrate and the install exits 0 with the line of 10f6c06.
+// integrate and the install exits 0 with nothing changed.
 func TestInstall_RootPromptZeroTarget(t *testing.T) {
 	t.Run("project", func(t *testing.T) {
 		root := bootstrapProject(t, "proj")
@@ -36,7 +36,10 @@ func TestInstall_RootPromptZeroTarget(t *testing.T) {
 		}
 		stdout, stderr, code := runCompileCLI(t, "install", "-g")
 		// The scope line comes first (install/manifest_helpers.py:63-74).
-		if want := " i Installing to user scope (~/.apm/)\n i No dependencies to install\n"; code != 0 || stdout != want || stderr != "" {
+		// The user scope deploys to copilot when nothing is detected at ~,
+		// and integrates ~/.apm's own content, here nothing (measured,
+		// issue125 impl1/gempty).
+		if want := " i Installing to user scope (~/.apm/)\n > Installing dependencies from apm.yml...\n   + <project root> (local)\n  |-- (files unchanged)\n\n i No changes -- install state already up to date in <t>s.\n"; code != 0 || elapsed86.ReplaceAllString(stdout, "in <t>s.") != want || stderr != "" {
 			t.Errorf("exit %d, stdout:\n%s\nstderr:\n%s\nwant exit 0, stdout:\n%s", code, stdout, stderr, want)
 		}
 		assertNoFile(t, filepath.Join(root, "home", ".apm", "apm.lock.yaml"))

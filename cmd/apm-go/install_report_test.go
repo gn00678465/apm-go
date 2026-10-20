@@ -13,6 +13,7 @@ func TestInstallAndUpdate_RuntimeErrorPrintedOnce(t *testing.T) {
 	tests := []struct {
 		name     string
 		manifest string
+		lock     string
 		args     []string
 		wantLine string
 	}{
@@ -23,16 +24,20 @@ func TestInstallAndUpdate_RuntimeErrorPrintedOnce(t *testing.T) {
 			wantLine: " x resolve: loading package _local/nope: local dependency source ",
 		},
 		{
-			name:     "update: no lockfile",
+			name:     "update: lockfile that does not parse",
 			manifest: "name: p\nversion: 1.0.0\n",
+			lock:     "dependencies: [\n",
 			args:     []string{"update"},
-			wantLine: " x apm-go update requires an existing apm.lock.yaml: ",
+			wantLine: " x parse apm.lock.yaml: ",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := chdirTemp(t)
 			writeCompileFile(t, dir, "apm.yml", tt.manifest)
+			if tt.lock != "" {
+				writeCompileFile(t, dir, "apm.lock.yaml", tt.lock)
+			}
 
 			stdout, stderr, exitCode := runCompileCLI(t, tt.args...)
 

@@ -379,10 +379,12 @@ func TestInstallGlobalMCP_NoManifest_CreatesIt(t *testing.T) {
 	}{
 		{"target flag", []string{"--target", "codex,claude"}, head + "targets:\n- codex\n- claude\n" + mcpTail},
 		{"repeated target", []string{"--target", "codex,claude,codex"}, head + "targets:\n- codex\n- claude\n" + mcpTail},
-		// apm-go's MCP targets for all at user scope; Oracle 0.33.0 writes
-		// claude, codex, gemini, kiro, windsurf (rv5/m-or-all), a recorded
+		// The targets all gives that take MCP at user scope, copilot being
+		// the Oracle's vscode there; Oracle 0.33.0 writes claude, codex,
+		// gemini, kiro, windsurf (issue125 gmcp-or/m-all), a recorded
 		// deviation.
-		{"all", []string{"--target", "all"}, head + "targets:\n- claude\n- codex\n- copilot\n- opencode\n" + mcpTail},
+		{"all", []string{"--target", "all"}, head + "targets:\n- claude\n- codex\n" + mcpTail},
+		{"opencode skipped", []string{"--target", "claude,opencode"}, head + "targets:\n- claude\n" + mcpTail},
 		{"alias", []string{"--target", "agy"}, head + "targets:\n- antigravity\n" + mcpTail},
 		{"target without MCP config", []string{"--target", "claude,agent-skills"}, head + "targets:\n- claude\n" + mcpTail},
 		{"auto-detect", nil, head + mcpTail},

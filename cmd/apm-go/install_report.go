@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -183,7 +184,7 @@ func (r *installRun) printBlocks(result *resolver.ResolutionResult, dr *deploy.D
 		}
 		shown = append(shown, dep)
 		ux.SuccessAt(os.Stdout, "  ", "%s", r.blockHeader(dep, newLock, oldLock))
-		if _, local := r.localDeclared[dep.Key]; local || r.fetched[dep.Key] {
+		if _, local := r.localDeclared[dep.Key]; local || r.fetched[dep.Key] || loseKeptPaths(oldLock, dep.Key, dr.KeptDirs) {
 			count++
 		}
 	}
@@ -205,6 +206,19 @@ func (r *installRun) printBlocks(result *resolver.ResolutionResult, dr *deploy.D
 		}
 	}
 	return count
+}
+
+// loseKeptPaths reports whether the old lock records, for the package key, a
+// path below a directory the deploy kept for the user (deploy.DeployResult.
+// KeptDirs), which the lock no longer records. The lock then changes in more
+// than its format, so the last line counts the package and does not say No
+// changes (issue #125, comment 6230746037).
+func loseKeptPaths(oldLock *lockfile.Lockfile, key string, keptDirs []string) bool {
+	if oldLock == nil || len(keptDirs) == 0 {
+		return false
+	}
+	old := oldLock.FindByKey(key)
+	return old != nil && slices.ContainsFunc(old.DeployedFiles, func(f string) bool { return deploy.UnderKeptDir(keptDirs, f) })
 }
 
 // printInstallBlockLines prints one line per kind of deployed file, the
@@ -361,12 +375,12 @@ func (r *installRun) printInstallSummary(apmCount, mcpCount int) {
 // pathTargets names the target that owns each deployed path of newLock, for
 // the lock's deployments section: the first of this run's targets whose
 // adapter can write the path, else what the old lock recorded.
-func pathTargets(newLock, existingLock *lockfile.Lockfile, targets []string) map[string]string {
+func pathTargets(newLock, existingLock *lockfile.Lockfile, targets []string, userScope bool) map[string]string {
 	owners := map[string]string{}
 	assign := func(files []string, bucket deploy.DeployBucket) {
 		for _, f := range files {
 			for _, t := range targets {
-				if deploy.TargetsGovernPath([]string{t}, bucket, f) {
+				if deploy.Governs(userScope, []string{t}, bucket, f) {
 					owners[f] = t
 					break
 				}
@@ -395,6 +409,7 @@ type installOutcome struct {
 	newLock, existingLock       *lockfile.Lockfile
 	existingNode                *yamllib.Node
 	apmInstalled, mcpConfigured int
+	mcpUnplaced                 bool
 	// apmPhase: a dependency or the project's own content was integrated.
 	apmPhase     bool
 	skippedDeps  []deploy.SkippedDep
@@ -448,6 +463,15 @@ func (r *installRun) finish(o installOutcome) error {
 		printCompileHint(o.targets, o.result)
 	}
 	r.printDiagnostics(o)
+	if o.mcpUnplaced {
+		// The Oracle's install requires its MCP integration to write
+		// (install/service_integration.py:128): RequiredIntegrationError,
+		// after the lock is written (integration/mcp_integrator_install.py:
+		// 1199-1204).
+		ux.Error(os.Stdout, "MCP dependencies are declared, but no effective target can accept their configuration. Choose a supported --target and retry.")
+		ux.Error(os.Stdout, "Install failed after %s.", r.elapsed())
+		return withSilentExitCode(1, errors.New("no target takes the MCP servers at user scope"))
+	}
 	r.printInstallSummary(o.apmInstalled, o.mcpConfigured)
 	return nil
 }

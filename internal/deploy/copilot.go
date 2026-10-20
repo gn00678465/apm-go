@@ -27,7 +27,17 @@ func (a *copilotAdapter) checkInstruction(p Primitive, deployDir string) error {
 }
 
 func copilotInstructionPath(p Primitive) string {
-	return fmt.Sprintf(".github/instructions/%s.instructions.md", p.Name)
+	return fmt.Sprintf("%s/instructions/%s.instructions.md", copilotRoot(), p.Name)
+}
+
+// copilotRoot is the directory copilot's files go to: .github in a project,
+// ~/.copilot at user scope, Copilot CLI's user root (user_root_dir,
+// integration/targets.py:538-583). A skill stays in .agents/skills.
+func copilotRoot() string {
+	if activeDeployMode.global {
+		return ".copilot"
+	}
+	return ".github"
 }
 
 func (a *copilotAdapter) DeployPrimitive(p Primitive, projectDir string) ([]string, error) {
@@ -37,11 +47,11 @@ func (a *copilotAdapter) DeployPrimitive(p Primitive, projectDir string) ([]stri
 	case TypeInstructions:
 		return deployFileToPath(p, copilotInstructionPath(p), projectDir)
 	case TypePrompts:
-		return deployFileToPath(p, fmt.Sprintf(".github/prompts/%s.prompt.md", p.Name), projectDir)
+		return deployFileToPath(p, fmt.Sprintf("%s/prompts/%s.prompt.md", copilotRoot(), p.Name), projectDir)
 	case TypeAgents:
-		return deployFileToPath(p, fmt.Sprintf(".github/agents/%s.agent.md", p.Name), projectDir)
+		return deployFileToPath(p, fmt.Sprintf("%s/agents/%s.agent.md", copilotRoot(), p.Name), projectDir)
 	case TypeHooks:
-		return deployFileToPath(p, ".github/hooks/"+copilotHookFile(p)+".json", projectDir)
+		return deployFileToPath(p, copilotRoot()+"/hooks/"+copilotHookFile(p)+".json", projectDir)
 	default:
 		return nil, nil
 	}

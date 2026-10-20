@@ -369,8 +369,11 @@ func TestRunInstall_PositionalDedup_KeysByVirtualPath(t *testing.T) {
 	for _, d := range lock.Dependencies {
 		got[d.UniqueKey()] = true
 	}
-	if !got["org/monorepo/skills/a"] {
-		t.Errorf("expected org/monorepo/skills/a (already declared) in apm.lock.yaml, got keys: %v", got)
+	// install <pkg> records the named package alone when the lock has no
+	// record of the other one, as Oracle 0.33.0 does (measured, issue125
+	// impl1/nolockpkg).
+	if got["org/monorepo/skills/a"] {
+		t.Errorf("org/monorepo/skills/a, not named and never installed, is in apm.lock.yaml: %v", got)
 	}
 	if !got["org/monorepo/skills/b"] {
 		t.Errorf("expected org/monorepo/skills/b (newly requested positional package) in apm.lock.yaml, got keys: %v", got)

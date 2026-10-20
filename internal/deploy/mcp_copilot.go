@@ -6,16 +6,19 @@ import (
 
 func (a *copilotAdapter) MCPResolveMode() manifest.ResolveMode { return manifest.ResolveTranslate }
 
-// WriteMCP writes .github/mcp-config.json (apm-go project-scoped extension,
-// NOT apm-cli parity -- apm-cli writes to the user's home directory; see
-// design.md D2). Translate mode: placeholders pass through verbatim for the
-// runtime to resolve.
+// WriteMCP writes .github/mcp-config.json in a project (apm-go project-scoped
+// extension, NOT apm-cli parity; see design.md D2) and ~/.copilot/
+// mcp-config.json at user scope, as the Oracle writes it there. Translate
+// mode: placeholders pass through verbatim for the runtime to resolve.
 func (a *copilotAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string, []string, []string, error) {
 	entries, diags := buildMCPEntries(prims, manifest.ResolveTranslate, manifest.ResolveTranslate, copilotMCPEntry)
 	if len(prims) == 0 {
 		return nil, nil, diags, nil
 	}
 	relPath := ".github/mcp-config.json"
+	if activeDeployMode.global {
+		relPath = userCopilotMCPPath
+	}
 	if err := writeMergedMCPJSON(projectDir, relPath, "mcpServers", entries, consideredNames(prims), 0644); err != nil {
 		return nil, nil, diags, err
 	}
@@ -38,4 +41,12 @@ func copilotMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 		e["headers"] = r.Headers
 	}
 	return e, true, ""
+}
+
+// WriteMCPAt is t.WriteMCP for a command that writes MCP servers outside Run
+// (install --mcp), at user scope when userScope.
+func WriteMCPAt(t MCPTarget, prims []Primitive, deployDir string, userScope bool) ([]string, []string, []string, error) {
+	activeDeployMode.global = userScope
+	defer func() { activeDeployMode.global = false }()
+	return t.WriteMCP(prims, deployDir)
 }

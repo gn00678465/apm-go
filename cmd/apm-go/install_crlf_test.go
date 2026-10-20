@@ -509,7 +509,7 @@ func TestInstallGlobalFrozen_CRLFSourcesRestoreAcrossModes(t *testing.T) {
 				}
 				lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
 				lockBefore := globalStaleRead(t, lockPath)
-				for _, root := range []string{".claude", ".github"} {
+				for _, root := range []string{".claude", ".copilot"} {
 					if err := os.RemoveAll(filepath.Join(home, root)); err != nil {
 						t.Fatal(err)
 					}
@@ -525,7 +525,7 @@ func TestInstallGlobalFrozen_CRLFSourcesRestoreAcrossModes(t *testing.T) {
 				if !firstSymlink {
 					want = content
 				}
-				for _, rel := range []string{".claude/agents/rev.md", ".github/agents/rev.agent.md", ".github/instructions/r.instructions.md", ".github/prompts/p.prompt.md"} {
+				for _, rel := range []string{".claude/agents/rev.md", ".copilot/agents/rev.agent.md", ".copilot/instructions/r.instructions.md", ".copilot/prompts/p.prompt.md"} {
 					if got := globalStaleRead(t, filepath.Join(home, filepath.FromSlash(rel))); got != want {
 						t.Errorf("%s = %q, want %q", rel, got, want)
 					}

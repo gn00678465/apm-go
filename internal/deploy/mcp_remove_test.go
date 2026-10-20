@@ -41,7 +41,7 @@ func TestRemoveMCPServersFromTargets_RemovesAcrossAllFiveTargets_PreservesOtherS
 	writeMCPFixtureJSON(t, filepath.Join(dir, ".agents", "mcp_config.json"), "mcpServers")
 	writeMCPFixtureJSON(t, filepath.Join(dir, "opencode.json"), "mcp")
 
-	diags := RemoveMCPServersFromTargets(dir, []string{"remove"})
+	diags := RemoveMCPServersFromTargets(dir, []string{"remove"}, false)
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
@@ -94,7 +94,7 @@ func TestRemoveMCPServersFromTargets_RemovesAcrossAllFiveTargets_PreservesOtherS
 func TestRemoveMCPServersFromTargets_NoExistingFiles_CreatesNothing(t *testing.T) {
 	dir := t.TempDir()
 
-	diags := RemoveMCPServersFromTargets(dir, []string{"anything"})
+	diags := RemoveMCPServersFromTargets(dir, []string{"anything"}, false)
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
@@ -119,7 +119,7 @@ func TestRemoveMCPServersFromTargets_TopKeyAbsent_LeavesFileByteExact(t *testing
 		t.Fatal(err)
 	}
 
-	diags := RemoveMCPServersFromTargets(dir, []string{"not-present"})
+	diags := RemoveMCPServersFromTargets(dir, []string{"not-present"}, false)
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
@@ -143,7 +143,7 @@ func TestRemoveMCPServersFromTargets_MalformedExistingFile_DiagAndSkip(t *testin
 	// abort removal for everything else.
 	writeMCPFixtureJSON(t, filepath.Join(dir, "opencode.json"), "mcp")
 
-	diags := RemoveMCPServersFromTargets(dir, []string{"remove"})
+	diags := RemoveMCPServersFromTargets(dir, []string{"remove"}, false)
 	if len(diags) == 0 {
 		t.Fatal("expected a diagnostic for the malformed .mcp.json")
 	}
@@ -167,7 +167,7 @@ func TestRemoveMCPServersFromTargets_EmptyServerNames_NoOp(t *testing.T) {
 	dir := t.TempDir()
 	writeMCPFixtureJSON(t, filepath.Join(dir, ".mcp.json"), "mcpServers")
 
-	diags := RemoveMCPServersFromTargets(dir, nil)
+	diags := RemoveMCPServersFromTargets(dir, nil, false)
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diags: %v", diags)
 	}
