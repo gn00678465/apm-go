@@ -904,6 +904,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			}
 		}
 
+		if err := copyMissingLocalPackages(deps, m); err != nil {
+			return err
+		}
 		if deployPlan != nil {
 			if err := deployPlan.run(deps, m, existingLock); err != nil {
 				return err
