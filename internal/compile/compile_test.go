@@ -159,9 +159,7 @@ func TestCollectInstructions_PriorityAndTransitiveOrder(t *testing.T) {
 // plain .md file (wrong suffix) is never collected, a directory named
 // "*.instructions.md" is never collected, and a symlink named
 // "*.instructions.md" pointing OUTSIDE the source tree must not leak the
-// external file's content into the compiled output (compile is an
-// additional safety filter on top of deploy.CollectLocalPrimitives, which
-// does not itself skip symlinks).
+// external file's content into the compiled output.
 func TestCollectInstructions_IgnoresWrongSuffixAndSymlink(t *testing.T) {
 	dir := t.TempDir()
 	mkFile(t, dir, "apm.yml", "name: probe\nversion: \"1.0.0\"\n")
@@ -560,5 +558,157 @@ func TestCollectInstructions_SkipsWhatTheOracleSkips(t *testing.T) {
 				t.Errorf("reported %q, want %q", warned, tt.wantWarned)
 			}
 		})
+	}
+}
+
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink creation unsupported/unprivileged on this Windows host: %v", err)
+		}
+		t.Fatalf("os.Symlink: %v", err)
+	}
+}
+
+// bodiesInOrder fails unless each of want appears in rendered, in that
+// order, and none of absent does.
+func bodiesInOrder(t *testing.T, rendered string, want, absent []string) {
+	t.Helper()
+	at := 0
+	for _, w := range want {
+		i := strings.Index(rendered[at:], w)
+		if i < 0 {
+			t.Fatalf("%q missing or out of order in:\n%s", w, rendered)
+		}
+		at += i + len(w)
+	}
+	for _, a := range absent {
+		if strings.Contains(rendered, a) {
+			t.Errorf("%q should not be compiled:\n%s", a, rendered)
+		}
+	}
+}
+
+func renderLocal(t *testing.T, dir string) string {
+	t.Helper()
+	got, _, err := CollectInstructions(dir, &manifest.Manifest{})
+	if err != nil {
+		t.Fatalf("CollectInstructions: %v", err)
+	}
+	return RenderAgentsMD(got)
+}
+
+func scoped(glob, body string) string {
+	return "---\napplyTo: \"" + glob + "\"\n---\n" + body + "\n"
+}
+
+// The project tree of issue #131's run1: Oracle 0.33.0 compiles every
+// *.instructions.md of the project, keeps .apm/instructions/top over
+// .apm/instructions/sub/top, and reads nothing below node_modules, build,
+// vendor or a nested repository (~/.cache/apm-go-verify/issue131/run1-oracle;
+// the Oracle places the two applyTo groups in src/AGENTS.md, apm-go in the
+// root one, ruling R11).
+func TestCollectInstructions_WalksTheProjectAsTheOracle(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, "apm.yml", "name: fx\nversion: 1.0.0\n")
+	mkFile(t, dir, ".apm/instructions/top.instructions.md", "Top rule.\n")
+	mkFile(t, dir, ".apm/instructions/sub/nested.instructions.md", scoped("src/**", "Nested rule."))
+	mkFile(t, dir, ".apm/instructions/sub/deeper/deep.instructions.md", "Deep rule.\n")
+	mkFile(t, dir, ".apm/instructions/sub/top.instructions.md", "Shadow top rule.\n")
+	mkFile(t, dir, ".github/instructions/gh.instructions.md", "Github rule.\n")
+	mkFile(t, dir, "root.instructions.md", "Root rule.\n")
+	mkFile(t, dir, "src/local.instructions.md", scoped("src/**/*.go", "Src rule."))
+	mkFile(t, dir, "docs/doc.instructions.md", "Doc rule.\n")
+	mkFile(t, dir, "node_modules/m/nm.instructions.md", "NM rule.\n")
+	mkFile(t, dir, "build/b.instructions.md", "Build rule.\n")
+	mkFile(t, dir, "vendor/v.instructions.md", "Vendor rule.\n")
+	mkFile(t, dir, "nested/n.instructions.md", "Nested repo rule.\n")
+	if err := os.MkdirAll(filepath.Join(dir, "nested/.git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	bodiesInOrder(t, renderLocal(t, dir),
+		[]string{"## Global Instructions", "Deep rule.", "Top rule.", "Github rule.", "Doc rule.", "Root rule.",
+			"## Files matching `src/**`", "Nested rule.", "## Files matching `src/**/*.go`", "Src rule."},
+		[]string{"Shadow top rule.", "NM rule.", "Build rule.", "Vendor rule.", "Nested repo rule."})
+}
+
+// A file at the project root is collected before any below .apm, so it
+// keeps a name both have.
+func TestCollectInstructions_RootFileWinsItsName(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, "top.instructions.md", "Root top.\n")
+	mkFile(t, dir, ".apm/instructions/top.instructions.md", "Apm top.\n")
+	bodiesInOrder(t, renderLocal(t, dir), []string{"Root top."}, []string{"Apm top."})
+}
+
+// DEFAULT_SKIP_DIRS is compared as written: Build/ is read, build/ is not
+// (measured with Oracle 0.33.0 in the Windows sandbox, issue #131 s131.ps1
+// scenario N).
+func TestCollectInstructions_SkipListIsCaseSensitive(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, dir, "Build/c.instructions.md", "Build cap.\n")
+	mkFile(t, dir, "x/build/b.instructions.md", "Build.\n")
+	bodiesInOrder(t, renderLocal(t, dir), []string{"Build cap."}, []string{"Build.\n"})
+}
+
+// A symlinked directory below .apm/instructions, or anywhere else, is not
+// entered (issue #131 run l2-oracle: only Top.).
+func TestCollectInstructions_DoesNotEnterLinkedDirectories(t *testing.T) {
+	ext := t.TempDir()
+	mkFile(t, ext, "instr/ei.instructions.md", "Ext instr.\n")
+	mkFile(t, ext, "docs/ed.instructions.md", "Ext doc.\n")
+	dir := t.TempDir()
+	mkFile(t, dir, ".apm/instructions/top.instructions.md", "Top.\n")
+	symlinkOrSkip(t, filepath.Join(ext, "instr"), filepath.Join(dir, ".apm/instructions/linked"))
+	symlinkOrSkip(t, filepath.Join(ext, "docs"), filepath.Join(dir, "docs"))
+	bodiesInOrder(t, renderLocal(t, dir), []string{"Top."}, []string{"Ext instr.", "Ext doc."})
+}
+
+// A linked .apm/instructions, or a linked .apm, gives the first level of
+// .apm/instructions, as before, where the Oracle reads none of it (issue
+// #131 comments 6286949791 and 6286973860; runs l1 and l3).
+func TestCollectInstructions_LinkedAPMReadsItsFirstLevel(t *testing.T) {
+	t.Run(".apm/instructions is a link", func(t *testing.T) {
+		ext := t.TempDir()
+		mkFile(t, ext, "ei.instructions.md", "Ext instr.\n")
+		mkFile(t, ext, "sub/deep.instructions.md", "Ext deep.\n")
+		dir := t.TempDir()
+		symlinkOrSkip(t, ext, filepath.Join(dir, ".apm/instructions"))
+		if !HasCompilableContent(dir) {
+			t.Error("HasCompilableContent = false, want true")
+		}
+		bodiesInOrder(t, renderLocal(t, dir), []string{"Ext instr."}, []string{"Ext deep."})
+	})
+	t.Run(".apm is a link", func(t *testing.T) {
+		ext := t.TempDir()
+		mkFile(t, ext, "instructions/a.instructions.md", "Ext apm.\n")
+		mkFile(t, ext, "instructions/sub/b.instructions.md", "Ext sub.\n")
+		dir := t.TempDir()
+		symlinkOrSkip(t, ext, filepath.Join(dir, ".apm"))
+		if !HasCompilableContent(dir) {
+			t.Error("HasCompilableContent = false, want true")
+		}
+		bodiesInOrder(t, renderLocal(t, dir), []string{"Ext apm."}, []string{"Ext sub."})
+	})
+}
+
+// Oracle 0.33.0 compiles a project whose one instruction is in a
+// subdirectory of .apm/instructions (run e1-oracle), and refuses one whose
+// one instruction is outside .apm (run e2-oracle).
+func TestHasCompilableContent_AsTheOracle(t *testing.T) {
+	sub := t.TempDir()
+	mkFile(t, sub, ".apm/instructions/sub/a.instructions.md", "Sub only.\n")
+	if !HasCompilableContent(sub) {
+		t.Error("instruction below .apm/instructions/sub: got false, want true")
+	}
+	root := t.TempDir()
+	mkFile(t, root, "root.instructions.md", "Root.\n")
+	if HasCompilableContent(root) {
+		t.Error("instruction at the root and no .apm: got true, want false")
 	}
 }
