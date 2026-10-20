@@ -40,6 +40,7 @@ func frozenViolationError(path, expected, observed string) error {
 // install with every locked file in place: it verifies and deploys nothing.
 type frozenDeployPlan struct {
 	targets    []string
+	mcp        []string
 	deployDir  string
 	deployRoot string
 	// missing holds the locked paths with nothing at them.
@@ -70,7 +71,8 @@ func planFrozenDeploy(lock *lockfile.Lockfile, m *manifest.Manifest, haveManifes
 	if !haveManifest {
 		return nil, frozenViolationError(viol[0].Path, viol[0].Expected, "")
 	}
-	targets, targetDiags := deploy.ResolveTargets(targetFlag, m.Target, deployRoot)
+	chosen := resolveInstallTargets(targetFlag, m.Target, deployDir)
+	targets, targetDiags := chosen.targets, chosen.diags
 	for _, d := range targetDiags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
@@ -79,7 +81,7 @@ func planFrozenDeploy(lock *lockfile.Lockfile, m *manifest.Manifest, haveManifes
 	}
 	// A path no target of this run governs would not be written by the deploy.
 	for _, v := range viol {
-		if !frozenTargetsGovern(lock, targets, v.Path) {
+		if !frozenTargetsGovern(lock, targets, v.Path, deployDir != "") {
 			return nil, frozenViolationError(v.Path, v.Expected, "")
 		}
 	}
@@ -87,20 +89,20 @@ func planFrozenDeploy(lock *lockfile.Lockfile, m *manifest.Manifest, haveManifes
 	for _, v := range viol {
 		missing[v.Path] = true
 	}
-	return &frozenDeployPlan{targets: targets, deployDir: deployDir, deployRoot: deployRoot, missing: missing}, nil
+	return &frozenDeployPlan{targets: targets, mcp: chosen.mcp, deployDir: deployDir, deployRoot: deployRoot, missing: missing}, nil
 }
 
 // frozenTargetsGovern reports whether targets govern relPath in every bucket
 // of the lock that records it.
-func frozenTargetsGovern(lock *lockfile.Lockfile, targets []string, relPath string) bool {
+func frozenTargetsGovern(lock *lockfile.Lockfile, targets []string, relPath string, userScope bool) bool {
 	for i := range lock.Dependencies {
 		if _, ok := lock.Dependencies[i].DeployedHashes[relPath]; ok &&
-			!deploy.TargetsGovernPath(targets, deploy.DependencyBucket, relPath) {
+			!deploy.Governs(userScope, targets, deploy.DependencyBucket, relPath) {
 			return false
 		}
 	}
 	if _, ok := lock.LocalDeployedHashes[relPath]; ok &&
-		!deploy.TargetsGovernPath(targets, deploy.LocalBucket, relPath) {
+		!deploy.Governs(userScope, targets, deploy.LocalBucket, relPath) {
 		return false
 	}
 	return true
@@ -148,7 +150,7 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 	// trial leaves out what the deploy in place leaves.
 	managed := lockManaged(lock, cmp.Or(p.deployDir, "."))
 	managed.NoAdopt = true
-	trial, err := deploy.Run(p.targets, ".", m, result, filter, trialDir, p.deployDir != "", managed)
+	trial, err := deploy.Run(p.targets, ".", m, result, filter, trialDir, p.deployDir != "", managed, deploy.WithMCPTargets(p.mcp))
 	if err == nil {
 		if err = frozenDeployMatchesLock(trial, lock); err == nil {
 			err = p.missingDeployed(trial, lock)
@@ -165,7 +167,7 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 		return err
 	}
 
-	deployed, err := deploy.Run(p.targets, ".", m, result, filter, p.deployDir, p.deployDir != "", managed)
+	deployed, err := deploy.Run(p.targets, ".", m, result, filter, p.deployDir, p.deployDir != "", managed, deploy.WithMCPTargets(p.mcp))
 	if err != nil {
 		return fmt.Errorf("frozen install: deploy: %w", err)
 	}

@@ -110,12 +110,12 @@ func stringSet(names []string) map[string]bool {
 // and opencode.json only when .opencode/ is one; apm-go writes
 // opencode.json without making .opencode/, so it cleans both files whatever
 // the directories.
-func cleanStaleMCPServers(root string, targets, declared []string, existingLock *lockfile.Lockfile) error {
+func cleanStaleMCPServers(root string, targets, declared []string, existingLock *lockfile.Lockfile, userScope bool) error {
 	if existingLock == nil {
 		return nil
 	}
 	for _, r := range staleMCPRemovals(targets, declared, existingLock) {
-		removed, err := deploy.RemoveStaleMCPServers(root, r.target, r.names)
+		removed, err := deploy.RemoveStaleMCPServers(root, r.target, r.names, userScope)
 		if err != nil {
 			return err
 		}

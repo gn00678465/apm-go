@@ -378,7 +378,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		}
 		if len(stale) > 0 {
 			sort.Strings(stale)
-			for _, d := range deploy.RemoveMCPServersFromTargets(removeRoot, stale) {
+			for _, d := range deploy.RemoveMCPServersFromTargets(removeRoot, stale, deployDir != "") {
 				ux.Warn(os.Stderr, "%s", d)
 			}
 		}
@@ -766,7 +766,7 @@ func removeUninstallStandaloneMCP(mcpNames map[string]bool, lock *lockfile.Lockf
 		root = deployDir
 	}
 	names := sortedStringSet(mcpNames)
-	diags := deploy.RemoveMCPServersFromTargets(root, names)
+	diags := deploy.RemoveMCPServersFromTargets(root, names, deployDir != "")
 	for _, d := range diags {
 		ux.Warn(os.Stderr, "%s", d)
 	}

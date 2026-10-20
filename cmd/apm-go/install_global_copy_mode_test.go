@@ -37,16 +37,16 @@ var copyModePackage = map[string]string{
 // with the bytes a copy writes when it copies the source as it is ("" for a
 // file the deploy converts: a claude rule and a command).
 var copyModeDeployed = map[string]string{
-	".claude/agents/ag.md":                   copyModeAgent,
-	".claude/skills/sk/SKILL.md":             copyModeSkill,
-	".claude/skills/gone/SKILL.md":           copyModeGoneSkill,
-	".claude/rules/r.md":                     "",
-	".claude/commands/p.md":                  "",
-	".github/agents/ag.agent.md":             copyModeAgent,
-	".github/instructions/r.instructions.md": copyModeInstruction,
-	".github/prompts/p.prompt.md":            copyModePrompt,
-	".agents/skills/sk/SKILL.md":             copyModeSkill,
-	".agents/skills/gone/SKILL.md":           copyModeGoneSkill,
+	".claude/agents/ag.md":                    copyModeAgent,
+	".claude/skills/sk/SKILL.md":              copyModeSkill,
+	".claude/skills/gone/SKILL.md":            copyModeGoneSkill,
+	".claude/rules/r.md":                      "",
+	".claude/commands/p.md":                   "",
+	".copilot/agents/ag.agent.md":             copyModeAgent,
+	".copilot/instructions/r.instructions.md": copyModeInstruction,
+	".copilot/prompts/p.prompt.md":            copyModePrompt,
+	".agents/skills/sk/SKILL.md":              copyModeSkill,
+	".agents/skills/gone/SKILL.md":            copyModeGoneSkill,
 }
 
 func setSymlinkProbe(t *testing.T, can bool) {
@@ -146,7 +146,7 @@ func TestInstallGlobal_CopyMode_StaleCleanupAndUninstall(t *testing.T) {
 		t.Fatalf("second install --global: %v\n%s", err, out)
 	}
 
-	for _, rel := range []string{".claude/agents/ag.md", ".github/agents/ag.agent.md", ".claude/skills/gone", ".agents/skills/gone"} {
+	for _, rel := range []string{".claude/agents/ag.md", ".copilot/agents/ag.agent.md", ".claude/skills/gone", ".agents/skills/gone"} {
 		if _, err := os.Lstat(filepath.Join(home, filepath.FromSlash(rel))); !os.IsNotExist(err) {
 			t.Errorf("%s still present after the stale cleanup (Lstat err = %v)", rel, err)
 		}
@@ -171,7 +171,7 @@ func TestInstallGlobal_CopyMode_ReplacesEarlierDeployLinks(t *testing.T) {
 	if out, err := copyModeInstall(t, false, "claude,copilot", src); err != nil {
 		t.Fatalf("symlink install --global: %v\n%s", err, out)
 	}
-	for _, rel := range []string{".claude/agents/ag.md", ".github/instructions/r.instructions.md", ".claude/skills/sk"} {
+	for _, rel := range []string{".claude/agents/ag.md", ".copilot/instructions/r.instructions.md", ".claude/skills/sk"} {
 		if !globalStaleIsSymlink(t, filepath.Join(home, filepath.FromSlash(rel))) {
 			t.Fatalf("precondition: %s is not a symlink after the symlink deploy", rel)
 		}
@@ -279,7 +279,7 @@ func TestInstallGlobal_CopyMode_FrozenRestoresFiles(t *testing.T) {
 			}
 			lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
 			lockBefore := globalStaleRead(t, lockPath)
-			for _, root := range []string{".claude", ".github", ".agents"} {
+			for _, root := range []string{".claude", ".copilot", ".agents"} {
 				if err := os.RemoveAll(filepath.Join(home, root)); err != nil {
 					t.Fatal(err)
 				}

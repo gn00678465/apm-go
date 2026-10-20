@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -41,6 +42,27 @@ var mcpRemoveTargets = []mcpRemoveTarget{
 	{target: "opencode", label: "OpenCode MCP config", relPath: "opencode.json", topKey: "mcp", perm: 0600},
 }
 
+// userCopilotMCPPath is copilot's MCP config at user scope, Copilot CLI's
+// ~/.copilot/mcp-config.json (measured, issue125 gmcp-or/m-copilot). The
+// ~/.github/mcp-config.json an apm-go before issue #125 wrote there is no
+// longer managed.
+const userCopilotMCPPath = ".copilot/mcp-config.json"
+
+// mcpRemoveTargetsAt is mcpRemoveTargets at user scope (userScope, a
+// --global command) or in a project.
+func mcpRemoveTargetsAt(userScope bool) []mcpRemoveTarget {
+	if !userScope {
+		return mcpRemoveTargets
+	}
+	out := slices.Clone(mcpRemoveTargets)
+	for i := range out {
+		if out[i].target == "copilot" {
+			out[i].relPath = userCopilotMCPPath
+		}
+	}
+	return out
+}
+
 // RemoveMCPServersFromTargets deletes serverNames from every target's MCP
 // config file (claude/codex/copilot/antigravity/opencode), reusing the exact
 // same writeMergedMCPJSON/writeMergedMCPTOML + mergeMCPServers path install's
@@ -59,11 +81,11 @@ var mcpRemoveTargets = []mcpRemoveTarget{
 // Returns diagnostics for any target whose existing config file could not be
 // read (permission error) or parsed (malformed) -- that target is skipped
 // (left untouched) rather than aborting removal for every other target.
-func RemoveMCPServersFromTargets(projectDir string, serverNames []string) (diags []string) {
+func RemoveMCPServersFromTargets(projectDir string, serverNames []string, userScope bool) (diags []string) {
 	if len(serverNames) == 0 {
 		return nil
 	}
-	for _, t := range mcpRemoveTargets {
+	for _, t := range mcpRemoveTargetsAt(userScope) {
 		if _, err := removeMCPServers(projectDir, t, serverNames); err != nil {
 			diags = append(diags, fmt.Sprintf("mcp uninstall %s: %v", t.relPath, err))
 		}
@@ -74,7 +96,7 @@ func RemoveMCPServersFromTargets(projectDir string, serverNames []string) (diags
 // MCPConfigLabel is the name the Oracle's stale cleanup gives target's MCP
 // config file, or "" when target writes none.
 func MCPConfigLabel(target string) string {
-	if t, ok := mcpRemoveTargetFor(target); ok {
+	if t, ok := mcpRemoveTargetFor(target, false); ok {
 		return t.label
 	}
 	return ""
@@ -90,8 +112,8 @@ func MCPConfigLabel(target string) string {
 // a symlink, before anything is read, as the Oracle refuses them
 // (integration/mcp_integrator.py:58-95); root itself is not checked, so a
 // HOME reached through a link still works for --global.
-func RemoveStaleMCPServers(root, target string, names []string) ([]string, error) {
-	t, ok := mcpRemoveTargetFor(target)
+func RemoveStaleMCPServers(root, target string, names []string, userScope bool) ([]string, error) {
+	t, ok := mcpRemoveTargetFor(target, userScope)
 	if !ok || len(names) == 0 {
 		return nil, nil
 	}
@@ -105,8 +127,8 @@ func RemoveStaleMCPServers(root, target string, names []string) ([]string, error
 	return removed, nil
 }
 
-func mcpRemoveTargetFor(target string) (mcpRemoveTarget, bool) {
-	for _, t := range mcpRemoveTargets {
+func mcpRemoveTargetFor(target string, userScope bool) (mcpRemoveTarget, bool) {
+	for _, t := range mcpRemoveTargetsAt(userScope) {
 		if t.target == target {
 			return t, true
 		}

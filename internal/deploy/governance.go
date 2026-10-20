@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"path"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -45,6 +46,52 @@ var governedPaths = map[string]governedRoots{
 	},
 }
 
+// userGovernedPaths is governedPaths for a --global deploy: copilot writes
+// below ~/.copilot and opencode below ~/.config/opencode, with its skills in
+// its own skills/ (integration/targets.py:538-700).
+var userGovernedPaths = map[string]governedRoots{
+	"claude":       governedPaths["claude"],
+	"codex":        governedPaths["codex"],
+	"copilot":      sameForBothBuckets(".copilot", ".agents/skills"),
+	"opencode":     sameForBothBuckets(".config/opencode"),
+	"agent-skills": governedPaths["agent-skills"],
+	"antigravity":  governedPaths["antigravity"],
+}
+
+// legacyUserRoots are where a --global deploy of apm-go before issue #125
+// wrote copilot's and opencode's files: ~/.github and ~/.opencode, which
+// neither tool reads at user scope, and opencode's skills in ~/.agents/skills.
+var legacyUserRoots = map[string][]string{
+	"copilot":  {".github"},
+	"opencode": {".opencode", ".agents/skills"},
+}
+
+// Governs is TargetsGovernPath at user scope (userScope, a --global deploy)
+// or in a project.
+func Governs(userScope bool, targets []string, bucket DeployBucket, relPath string) bool {
+	if !userScope {
+		return TargetsGovernPath(targets, bucket, relPath)
+	}
+	return governedBy(userGovernedPaths, targets, bucket, relPath)
+}
+
+// GovernsLegacyUserPath reports whether relPath, a path a --global lock
+// records, is where apm-go before issue #125 wrote a copilot or opencode
+// file: below ~/.github or ~/.opencode, whatever targets are, or below
+// ~/.agents/skills when opencode is one of targets. No deploy writes there
+// any more, so it is stale.
+func GovernsLegacyUserPath(targets []string, relPath string) bool {
+	p := normalizeRelPath(relPath)
+	for target, roots := range legacyUserRoots {
+		for _, root := range roots {
+			if (p == root || strings.HasPrefix(p, root+"/")) && (root != sharedSkillRoot || slices.Contains(targets, target)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // AllTargets lists every target apm-go deploys to, sorted.
 func AllTargets() []string {
 	targets := make([]string, 0, len(governedPaths))
@@ -63,11 +110,15 @@ func normalizeRelPath(p string) string {
 // relPath for a bucket of the given kind. A path that no listed target
 // governs must not be treated as stale output of a run over those targets.
 func TargetsGovernPath(targets []string, bucket DeployBucket, relPath string) bool {
+	return governedBy(governedPaths, targets, bucket, relPath)
+}
+
+func governedBy(paths map[string]governedRoots, targets []string, bucket DeployBucket, relPath string) bool {
 	p := normalizeRelPath(relPath)
 	for _, t := range targets {
-		roots := governedPaths[t].local
+		roots := paths[t].local
 		if bucket == DependencyBucket {
-			roots = governedPaths[t].dependency
+			roots = paths[t].dependency
 		}
 		for _, root := range roots {
 			if p == root || strings.HasPrefix(p, root+"/") {
@@ -88,5 +139,5 @@ func IsMCPConfigPath(relPath string) bool {
 			return true
 		}
 	}
-	return false
+	return p == userCopilotMCPPath
 }

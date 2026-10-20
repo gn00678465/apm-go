@@ -724,7 +724,7 @@ func TestInstallGlobal112_OwnerChanged_DeploySymlinkReplaced(t *testing.T) {
 		{"agent owner removed", "claude", agentLink, []string{"dep-a", "dep-b"}, []string{"dep-b"}, false, false, "apm_modules/_local/dep-b/.apm/agents/a.agent.md", "_local/dep-b"},
 		{"agent taken by the project", "claude", agentLink, []string{"dep-a", "dep-b"}, []string{"dep-a", "dep-b"}, false, true, ".apm/agents/a.agent.md", ""},
 		{"agent given back by the project", "claude", agentLink, []string{"dep-a", "dep-b"}, []string{"dep-a", "dep-b"}, true, false, "apm_modules/_local/dep-a/.apm/agents/a.agent.md", "_local/dep-a"},
-		{"copilot instruction reordered", "copilot", ".github/instructions/r.instructions.md", []string{"dep-a", "dep-b"}, []string{"dep-b", "dep-a"}, false, false, "apm_modules/_local/dep-b/.apm/instructions/r.instructions.md", "_local/dep-b"},
+		{"copilot instruction reordered", "copilot", ".copilot/instructions/r.instructions.md", []string{"dep-a", "dep-b"}, []string{"dep-b", "dep-a"}, false, false, "apm_modules/_local/dep-b/.apm/instructions/r.instructions.md", "_local/dep-b"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

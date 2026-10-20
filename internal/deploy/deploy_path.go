@@ -84,14 +84,15 @@ func checkDeployPath(deployRoot, rel string, write bool) error {
 		last = link
 	}
 	segs := strings.Split(filepath.ToSlash(filepath.Clean(filepath.FromSlash(last))), "/")
-	if len(segs) < 2 {
+	n := targetRootSegments(deployRoot, segs)
+	if len(segs) <= n {
 		return nil
 	}
-	root, err := archive.RealPath(filepath.Join(deployRoot, segs[0]))
+	root, err := archive.RealPath(filepath.Join(deployRoot, filepath.FromSlash(strings.Join(segs[:n], "/"))))
 	if err != nil {
 		return fmt.Errorf("%s: %w", rel, err)
 	}
-	for i := 2; i < len(segs); i++ {
+	for i := n + 1; i < len(segs); i++ {
 		dir := strings.Join(segs[:i], "/")
 		resolved, err := archive.RealPath(filepath.Join(deployRoot, filepath.FromSlash(dir)))
 		if err != nil {
@@ -102,6 +103,38 @@ func checkDeployPath(deployRoot, rel string, write bool) error {
 		}
 	}
 	return nil
+}
+
+// targetRootSegments is how many of the first components of a path below
+// deployRoot name its target root: one (.claude, .github, .copilot), or, at
+// user scope, two for .config/opencode, opencode's user-scope root, since
+// .config is no target's. A project keeps one.
+func targetRootSegments(deployRoot string, segs []string) int {
+	if len(segs) > 1 && segs[0] == ".config" && segs[1] == "opencode" && isUserRoot(deployRoot) {
+		return 2
+	}
+	return 1
+}
+
+// targetRootOf is the target root of rel, a slash path below deployRoot.
+func targetRootOf(deployRoot, rel string) string {
+	segs := strings.Split(rel, "/")
+	return strings.Join(segs[:min(len(segs), targetRootSegments(deployRoot, segs))], "/")
+}
+
+// isUserRoot reports whether deployRoot is the user scope's: a --global Run,
+// or HOME itself, where its cleanups run.
+func isUserRoot(deployRoot string) bool {
+	if activeDeployMode.global {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	a, errA := archive.RealPath(deployRoot)
+	b, errB := archive.RealPath(home)
+	return errA == nil && errB == nil && a == b
 }
 
 // keepOutsideDiag is the one diagnostic of a cleanup that keeps the paths
@@ -119,9 +152,14 @@ func withinTargetRoot(root, dir string) bool {
 	if err != nil || rel == "." || !archive.Within(root, dir) {
 		return false
 	}
-	first, _, deeper := strings.Cut(filepath.ToSlash(rel), "/")
-	targetRoot := filepath.Join(root, first)
-	if info, err := os.Lstat(targetRoot); !deeper && err == nil && info.Mode()&os.ModeSymlink != 0 {
+	slash := filepath.ToSlash(rel)
+	// .config holds opencode's user-scope root and is the user's.
+	if slash == ".config" && isUserRoot(root) {
+		return false
+	}
+	first := targetRootOf(root, slash)
+	targetRoot := filepath.Join(root, filepath.FromSlash(first))
+	if info, err := os.Lstat(targetRoot); first == slash && err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
 	realRoot, err := archive.RealPath(targetRoot)
@@ -188,8 +226,7 @@ func treeLeavesTargetRoot(deployRoot, dir string) bool {
 	if info, err := os.Lstat(abs); err != nil || !info.IsDir() || CheckDeployPath(deployRoot, dir) != nil {
 		return false
 	}
-	first, _, _ := strings.Cut(dir, "/")
-	root, err := archive.RealPath(filepath.Join(deployRoot, first))
+	root, err := archive.RealPath(filepath.Join(deployRoot, filepath.FromSlash(targetRootOf(deployRoot, dir))))
 	if err != nil {
 		return false
 	}

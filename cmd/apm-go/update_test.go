@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -403,21 +404,64 @@ func TestRunUpdate_NoManifest(t *testing.T) {
 }
 
 func TestRunUpdate_NoLockfile(t *testing.T) {
-	dir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
+	dir := chdirTemp(t)
+	writeCompileFile(t, dir, "dep/apm.yml", "name: dep\nversion: 1.0.0\n")
+	writeCompileFile(t, dir, "dep/.apm/agents/ag.agent.md", "---\ndescription: a\n---\nagent\n")
+	writeCompileFile(t, dir, "apm.yml", "name: p\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - ./dep\n")
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/a#^1.0.0\n"), 0644)
+	// Oracle 0.33.0 resolves, deploys and writes the lock with no lock there
+	// (measured, issue125 upd-or/a).
+	_, _, code := runCompileCLI(t, "update")
+	if code != 0 {
+		t.Fatalf("update exit = %d, want 0", code)
+	}
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || lock.Dependencies[0].UniqueKey() != "_local/dep" {
+		t.Fatalf("lock dependencies = %+v, want _local/dep alone", lock.Dependencies)
+	}
+	if got := lock.Dependencies[0].DeployedFiles; !slices.Equal(got, []string{".claude/agents/ag.md"}) {
+		t.Errorf("deployed_files = %v, want [.claude/agents/ag.md]", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "agents", "ag.md")); err != nil {
+		t.Errorf("agent not deployed: %v", err)
+	}
+}
 
-	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
-	err := runUpdate(deps, false, false, "", false)
-	if err == nil {
-		t.Fatal("expected error when apm.lock.yaml is missing")
+// TestRunUpdate_NoLockfile_DryRunWritesNothing: with no lock, --dry-run prints
+// the plan and writes nothing (measured, issue125 upd-or/d).
+func TestRunUpdate_NoLockfile_DryRunWritesNothing(t *testing.T) {
+	dir := chdirTemp(t)
+	writeCompileFile(t, dir, "dep/apm.yml", "name: dep\nversion: 1.0.0\n")
+	writeCompileFile(t, dir, "dep/.apm/agents/ag.agent.md", "---\ndescription: a\n---\nagent\n")
+	writeCompileFile(t, dir, "apm.yml", "name: p\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - ./dep\n")
+
+	stdout, _, code := runCompileCLI(t, "update", "--dry-run")
+	if code != 0 || !strings.Contains(stdout, "Update plan for apm.yml") {
+		t.Fatalf("update --dry-run exit = %d, stdout:\n%s", code, stdout)
 	}
-	if !strings.Contains(err.Error(), "apm.lock.yaml") {
-		t.Errorf("error should mention apm.lock.yaml: %v", err)
+	for _, rel := range []string{"apm.lock.yaml", ".claude", "apm_modules"} {
+		assertNoFile(t, filepath.Join(dir, rel))
 	}
+}
+
+// TestRunUpdate_NoLockfile_NamedPackageAlone: update <pkg> with no lock
+// deploys and records the named package alone (measured, issue125 upd2-or).
+func TestRunUpdate_NoLockfile_NamedPackageAlone(t *testing.T) {
+	dir := chdirTemp(t)
+	for _, n := range []string{"a", "b"} {
+		writeCompileFile(t, dir, n+"/apm.yml", "name: "+n+"\nversion: 1.0.0\n")
+		writeCompileFile(t, dir, n+"/.apm/agents/"+n+".agent.md", "---\ndescription: a\n---\nagent\n")
+	}
+	writeCompileFile(t, dir, "apm.yml", "name: p\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - ./a\n    - ./b\n")
+
+	if _, _, code := runCompileCLI(t, "update", "./a"); code != 0 {
+		t.Fatalf("update ./a exit = %d", code)
+	}
+	lock := readLockfile(t)
+	if len(lock.Dependencies) != 1 || lock.Dependencies[0].UniqueKey() != "_local/a" {
+		t.Fatalf("lock dependencies = %+v, want _local/a alone", lock.Dependencies)
+	}
+	assertNoFile(t, filepath.Join(dir, ".claude", "agents", "b.md"))
 }
 
 // TestUpdate_RespectsSkillSubset is BUG-2's `apm update` regression

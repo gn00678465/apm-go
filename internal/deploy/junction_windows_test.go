@@ -55,7 +55,7 @@ func TestRemoveStaleMCPServers_JunctionIsRefused(t *testing.T) {
 	target := writeStaleFixture(t, outside, "config.toml", content)
 	junction(t, filepath.Join(root, ".codex"), outside)
 
-	_, err := RemoveStaleMCPServers(root, "codex", []string{"x"})
+	_, err := RemoveStaleMCPServers(root, "codex", []string{"x"}, false)
 	want := "Refusing to clean symlinked MCP config: Codex CLI config (" + filepath.Join(root, ".codex", "config.toml") +
 		"). Replace the symlink with a regular file or directory, then retry."
 	if err == nil || err.Error() != want {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/apm-go/apm/internal/archive"
@@ -134,49 +135,89 @@ func SplitTargetFlag(flagTarget string) ([]string, error) {
 //  1. --target flag (explicit CLI, comma-separated, validated against the
 //     canonical target vocabulary -- see SplitTargetFlag)
 //  2. manifest target: field
-//  3. auto-detection from filesystem signals
+//  3. auto-detection from filesystem signals (manifest.SignalWhitelist)
 //
-// Returns empty if nothing detected (no-deploy).
+// A target named twice is kept at its first place. Returns empty if nothing
+// detected (no-deploy).
 func ResolveTargets(flagTarget string, manifestTargets []string, projectDir string) ([]string, []string) {
-	var diags []string
+	if targets, diags, named := namedTargets(flagTarget, manifestTargets); named {
+		return targets, diags
+	}
+	return filterExplicitOnly(manifest.DetectTargets(projectDir)), nil
+}
 
+// ResolveInstallTargets is ResolveTargets for install and update, which
+// detect by the Oracle's signal table (manifest.HarnessSignals) and refuse
+// more than one detected harness, as its resolve_targets does
+// (core/target_detection.py:1137-1146): ambiguous then names them, sorted,
+// and targets is empty. One detected harness with no adapter is no target.
+func ResolveInstallTargets(flagTarget string, manifestTargets []string, projectDir string) (targets, diags, ambiguous []string) {
+	if targets, diags, named := namedTargets(flagTarget, manifestTargets); named {
+		return targets, diags, nil
+	}
+	detected := manifest.DetectHarnesses(projectDir)
+	if len(detected) > 1 {
+		return nil, nil, detected
+	}
+	return filterSupported(filterExplicitOnly(detected)), nil, nil
+}
+
+// UserScopeTargets is ResolveTargets for a --global deploy, the Oracle's
+// active_targets_user_scope (integration/targets.py:1204-1280): with no
+// --target and no targets: in ~/.apm/apm.yml, each target whose user-scope
+// root is a directory below home (userScopeRoots), else copilot, which is
+// then fallback.
+func UserScopeTargets(flagTarget string, manifestTargets []string, home string) (targets, diags []string, fallback bool) {
+	if targets, diags, named := namedTargets(flagTarget, manifestTargets); named {
+		return targets, diags, false
+	}
+	for _, r := range userScopeRoots {
+		if info, err := os.Stat(filepath.Join(home, filepath.FromSlash(r.dir))); err == nil && info.IsDir() {
+			targets = append(targets, r.target)
+		}
+	}
+	if len(targets) == 0 {
+		return []string{"copilot"}, nil, true
+	}
+	return targets, nil, false
+}
+
+// userScopeRoots are the user-scope roots by which the Oracle detects the
+// targets apm-go has an adapter for, sorted by target: effective_root(
+// user_scope=True) of each profile with detect_by_dir (integration/
+// targets.py:538-700). antigravity and agent-skills are not detected.
+var userScopeRoots = []struct{ target, dir string }{
+	{"claude", ".claude"},
+	{"codex", ".codex"},
+	{"copilot", ".copilot"},
+	{"opencode", ".config/opencode"},
+}
+
+// namedTargets is the targets --target or apm.yml's targets: names, all
+// expanded, each once at its first place; named is false when neither names
+// any.
+func namedTargets(flagTarget string, manifestTargets []string) (targets, diags []string, named bool) {
+	tokens := manifestTargets
 	if flagTarget != "" {
-		tokens, err := SplitTargetFlag(flagTarget)
-		if err != nil {
-			return nil, []string{err.Error()}
+		var err error
+		if tokens, err = SplitTargetFlag(flagTarget); err != nil {
+			return nil, []string{err.Error()}, true
 		}
-		var targets []string
-		for _, t := range tokens {
-			if t == "all" {
-				targets = append(targets, allAutoDetectableTargets()...)
-			} else {
-				targets = append(targets, t)
+	} else if len(manifestTargets) == 0 {
+		return nil, nil, false
+	}
+	for _, t := range tokens {
+		expanded := []string{t}
+		if t == "all" {
+			expanded = allAutoDetectableTargets()
+		}
+		for _, e := range expanded {
+			if !slices.Contains(targets, e) {
+				targets = append(targets, e)
 			}
 		}
-		diags = append(diags, checkUnsupported(targets)...)
-		return filterSupported(targets), diags
 	}
-
-	if len(manifestTargets) > 0 {
-		var targets []string
-		for _, t := range manifestTargets {
-			if t == "all" {
-				targets = append(targets, allAutoDetectableTargets()...)
-			} else {
-				targets = append(targets, t)
-			}
-		}
-		diags = append(diags, checkUnsupported(targets)...)
-		return filterSupported(targets), diags
-	}
-
-	detected := manifest.DetectTargets(projectDir)
-	detected = filterExplicitOnly(detected)
-	if len(detected) > 0 {
-		return detected, nil
-	}
-
-	return nil, nil
+	return filterSupported(targets), checkUnsupported(targets), true
 }
 
 // explicitOnlyTargets must never be activated by auto-detection
@@ -550,4 +591,11 @@ func isDeployLink(abs string) bool {
 		}
 	}
 	return false
+}
+
+// UserScopeMCP reports whether target takes MCP servers at user scope: the
+// Oracle refuses opencode and agent-skills there (commands/install.py:
+// 769-805, integration/mcp_integrator_install.py:585-605).
+func UserScopeMCP(target string) bool {
+	return target != "opencode" && target != "agent-skills"
 }
