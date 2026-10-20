@@ -3,6 +3,7 @@ package mcpregistry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -388,7 +389,7 @@ func TestFindServerByReference_UnreachableNamesBaseURLOnly(t *testing.T) {
 	}
 }
 
-// TestGetJSON_SizeCapEnforced covers M1: getJSON must reject an oversized
+// TestGetJSON_SizeCapEnforced covers M1: getJSON rejects an oversized
 // registry response body before decoding, bounding memory use.
 func TestGetJSON_SizeCapEnforced(t *testing.T) {
 	orig := mcpRegistryMaxBytes
@@ -406,7 +407,10 @@ func TestGetJSON_SizeCapEnforced(t *testing.T) {
 	if err == nil {
 		t.Fatal("FindServerByReference returned no error, want a size-cap rejection")
 	}
-	if !strings.Contains(err.Error(), "byte limit") {
-		t.Errorf("error = %v, want it to mention the byte limit", err)
+	// Oracle 0.33.0 reads a body over the cap as a registry that did not
+	// answer (issue #123 run p22-oracle, big-search).
+	var unreachable *UnreachableError
+	if !errors.As(err, &unreachable) {
+		t.Errorf("error = %v, want an UnreachableError", err)
 	}
 }

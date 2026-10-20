@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/apm-go/apm/internal/manifest"
 )
@@ -77,8 +78,9 @@ func (e *InsecureURLError) Error() string {
 }
 
 // UnreachableError is a lookup of Server that the registry did not answer:
-// a network error, a search that is not 2xx, or a server fetch that is
-// neither 2xx nor 404 (registry/operations.py:229-256, registry/client.py:
+// a network error, a search that is not 2xx, a server fetch that is neither
+// 2xx nor 404, or a body that cannot be read whole, is over 10 MiB or is not
+// UTF-8 JSON (registry/operations.py:229-256, registry/client.py:37-83,
 // 422,457,623-640).
 type UnreachableError struct {
 	URL    string
@@ -103,11 +105,13 @@ func (e *UnreachableError) Error() string {
 }
 
 // IsFailure reports whether err is a registry failure that ends an install:
-// a refused http:// URL or a registry that did not answer.
+// a refused http:// URL, a registry that did not answer, or a search answer
+// the Oracle refuses.
 func IsFailure(err error) bool {
 	var insecure *InsecureURLError
 	var unreachable *UnreachableError
-	return errors.As(err, &insecure) || errors.As(err, &unreachable)
+	var format *FormatError
+	return errors.As(err, &insecure) || errors.As(err, &unreachable) || errors.As(err, &format)
 }
 
 // NewClientFor is NewClient for a URL taken from source: an http:// URL from
@@ -120,10 +124,33 @@ func NewClientFor(baseURL string, source Source) (*Client, error) {
 		return nil, err
 	}
 	c.Source = source
-	if (source == SourceEnv || source == SourceExplicit) && strings.HasPrefix(c.BaseURL, "http://") && os.Getenv("MCP_REGISTRY_ALLOW_HTTP") == "" {
-		return nil, &InsecureURLError{URL: c.BaseURL, Source: source}
+	// url.Parse lowercases the scheme, as the Oracle's urlparse does, so
+	// HTTP:// is plain HTTP too.
+	u, _ := url.Parse(c.BaseURL)
+	if (source == SourceEnv || source == SourceExplicit) && u.Scheme == "http" && os.Getenv("MCP_REGISTRY_ALLOW_HTTP") == "" {
+		return nil, &InsecureURLError{URL: displayURL(c.BaseURL), Source: source}
 	}
 	return c, nil
+}
+
+// displayURL is the registry URL as the Oracle prints it once
+// normalize_mcp_registry_url has read it (registry/client.py:123-150): the
+// scheme and host lowercased and a default port dropped. NewClient has
+// already trimmed the trailing slash and refused userinfo.
+func displayURL(base string) string {
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return base
+	}
+	host := strings.ToLower(u.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port := u.Port(); port != "" && !(u.Scheme == "http" && port == "80") && !(u.Scheme == "https" && port == "443") {
+		host += ":" + port
+	}
+	u.Host = host
+	return u.String()
 }
 
 // NormalizeBaseURL trims whitespace and a trailing slash the same way
@@ -245,6 +272,20 @@ type serverListResponse struct {
 
 type serverGetResponse struct {
 	Server *rawServer `json:"server"`
+	// empty: the body was {}, which the Oracle reads as no server.
+	empty bool
+}
+
+func (r *serverGetResponse) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	r.empty = len(fields) == 0
+	if raw, ok := fields["server"]; ok {
+		return json.Unmarshal(raw, &r.Server)
+	}
+	return nil
 }
 
 // FindServerByReference resolves reference (a bare or namespaced server
@@ -258,7 +299,7 @@ type serverGetResponse struct {
 func (c *Client) FindServerByReference(ctx context.Context, reference, version string) (*ServerInfo, error) {
 	list, err := c.searchServers(ctx, reference)
 	var status *statusError
-	if errors.Is(err, errNetwork) || errors.As(err, &status) {
+	if errors.Is(err, errNetwork) || errors.Is(err, errBadBody) || errors.As(err, &status) {
 		return nil, c.unreachable(reference)
 	}
 	if err != nil {
@@ -285,14 +326,14 @@ func (c *Client) FindServerByReference(ctx context.Context, reference, version s
 	}
 
 	info, err := c.getServer(ctx, matched, version)
-	if errors.Is(err, errNetwork) || (errors.As(err, &status) && status.code != http.StatusNotFound) {
+	if errors.Is(err, errNetwork) || errors.Is(err, errBadBody) || (errors.As(err, &status) && status.code != http.StatusNotFound) {
 		return nil, c.unreachable(reference)
 	}
 	return info, err
 }
 
 func (c *Client) unreachable(reference string) error {
-	return &UnreachableError{URL: c.BaseURL, Source: c.Source, Server: reference}
+	return &UnreachableError{URL: displayURL(c.BaseURL), Source: c.Source, Server: reference}
 }
 
 // isServerMatch reports whether name is a namespace-boundary fuzzy match for
@@ -316,7 +357,7 @@ func (c *Client) searchServers(ctx context.Context, reference string) ([]serverL
 	}
 	for _, entry := range resp.Servers {
 		if entry.Server == nil {
-			return nil, fmt.Errorf("registry returned a non-spec list entry (missing 'server' key); expected MCP Registry v0.1 response shape")
+			return nil, errNonSpecList
 		}
 	}
 	return resp.Servers, nil
@@ -328,8 +369,16 @@ func (c *Client) getServer(ctx context.Context, name, version string) (*ServerIn
 	}
 	u := fmt.Sprintf("%s%s/servers/%s/versions/%s", c.BaseURL, v0_1Prefix, url.PathEscape(name), url.PathEscape(version))
 	var resp serverGetResponse
-	if err := c.getJSON(ctx, u, &resp); err != nil {
+	err := c.getJSON(ctx, u, &resp)
+	if errors.Is(err, errEmptyBody) {
+		// An empty body is no server (registry/client.py:647-660).
+		return nil, &statusError{code: http.StatusNotFound}
+	}
+	if err != nil {
 		return nil, err
+	}
+	if resp.Server == nil && resp.empty {
+		return nil, &statusError{code: http.StatusNotFound}
 	}
 	if resp.Server == nil {
 		return nil, fmt.Errorf("registry returned a non-spec response for %q (missing 'server' key); expected MCP Registry v0.1 response shape", name)
@@ -381,20 +430,42 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, out any) error {
 		return &statusError{code: resp.StatusCode}
 	}
 
+	// A body that cannot be read whole, is over the cap, or is not UTF-8
+	// JSON is a RequestException for the Oracle (registry/client.py:37-83),
+	// so the registry did not answer.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, mcpRegistryMaxBytes+1))
 	if err != nil {
-		return fmt.Errorf("read registry response: %w", err)
+		return fmt.Errorf("%w: read registry response: %v", errBadBody, err)
 	}
 	if int64(len(data)) > mcpRegistryMaxBytes {
-		return fmt.Errorf("registry response exceeds %d byte limit", mcpRegistryMaxBytes)
+		return fmt.Errorf("%w: registry response exceeds %d byte limit", errBadBody, mcpRegistryMaxBytes)
+	}
+	if len(data) == 0 {
+		return errEmptyBody
+	}
+	if !utf8.Valid(data) {
+		return fmt.Errorf("%w: registry response is not UTF-8", errBadBody)
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("decode registry response: %w", err)
+		return fmt.Errorf("%w: decode registry response: %v", errBadBody, err)
 	}
 	return nil
 }
 
-var errNetwork = errors.New("could not reach the MCP registry (network error)")
+var (
+	errNetwork = errors.New("could not reach the MCP registry (network error)")
+	errBadBody = errors.New("unreadable registry response")
+	// errEmptyBody keeps the text an empty search body had before.
+	errEmptyBody = errors.New("decode registry response: unexpected end of JSON input")
+	// errNonSpecList is the Oracle's ValueError for a search entry with no
+	// server key (registry/client.py:534-551), which ends the install.
+	errNonSpecList = &FormatError{"Registry returned a non-spec list entry (missing 'server' key); expected MCP Registry v0.1 response shape."}
+)
+
+// FormatError is a registry answer the Oracle refuses outright.
+type FormatError struct{ msg string }
+
+func (e *FormatError) Error() string { return e.msg }
 
 // statusError is a registry response that is not 2xx, as requests'
 // raise_for_status refuses it.

@@ -348,17 +348,29 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	rootMCP := slices.Concat(m.MCPServers, m.MCPDevServers)
 	noteDeclaredMCP(rootMCP)
 	var mcpFailure error
+	// Only the first declaration of a name is resolved, as the Oracle drops
+	// the others before it looks a server up (integration/mcp_config_view.py:
+	// 84-88,131-133). A later one gets a placeholder with no MCP config, which
+	// loses the conflict for its diagnostic and is never written.
+	resolvedMCP := map[string]bool{}
 	collectMCP := func(servers []*manifest.MCPDependency, source, key string) {
-		if mcpFailure != nil {
-			return
+		for _, s := range servers {
+			if mcpFailure != nil {
+				return
+			}
+			if resolvedMCP[s.Name] {
+				ordered = append(ordered, Primitive{Name: s.Name, Type: TypeMCP, Source: source, DepKey: key})
+				continue
+			}
+			resolvedMCP[s.Name] = true
+			prims, diags, err := collectMCPPrimitives([]*manifest.MCPDependency{s}, source, key)
+			if err != nil {
+				mcpFailure = err
+				return
+			}
+			ordered = append(ordered, prims...)
+			mcpDiags = append(mcpDiags, diags...)
 		}
-		prims, diags, err := collectMCPPrimitives(servers, source, key)
-		if err != nil {
-			mcpFailure = err
-			return
-		}
-		ordered = append(ordered, prims...)
-		mcpDiags = append(mcpDiags, diags...)
 	}
 	collectMCP(rootMCP, "local", "")
 	dependencyMCP := map[string]DeclaredMCP{}
@@ -852,7 +864,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	var mcpWinners []Primitive
 	mcpSourceByName := map[string]string{}
 	for _, p := range winners {
-		if p.Type == TypeMCP {
+		if p.Type == TypeMCP && p.MCP != nil {
 			mcpWinners = append(mcpWinners, p)
 			mcpSourceByName[p.Name] = p.Source
 		}

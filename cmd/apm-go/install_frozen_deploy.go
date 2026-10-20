@@ -174,6 +174,9 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 	if err != nil {
 		return fmt.Errorf("frozen install: deploy: %w", err)
 	}
+	if deployed.MCPFailure != nil {
+		return fmt.Errorf("frozen install: %w", deployed.MCPFailure)
+	}
 	for _, d := range deployed.Diags {
 		ux.Warn(os.Stderr, "%s", d)
 	}
