@@ -413,30 +413,23 @@ func TestRunInstall_PositionalDedup_TrueDuplicateStillSkipped(t *testing.T) {
 	}
 }
 
-// TestRunInstall_RefusesHTTPDependency_Positional is the P0 security
-// regression test: `apm-go install http://...` used to proceed straight to
-// git clone with no policy gate. It must now refuse before any clone is
-// attempted (spy.calls stays empty) and name the offending dependency plus
-// the --allow-insecure remediation.
+// TestRunInstall_RefusesHTTPDependency_Positional: `install http://...`
+// without --allow-insecure fails validation before any clone, with the lines
+// Oracle 0.33.0 prints (issue151/r6-or/httpcli/i1.out).
 func TestRunInstall_RefusesHTTPDependency_Positional(t *testing.T) {
-	dir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
-
+	t.Chdir(t.TempDir())
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
 
 	spy := &spyLoader{}
-	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
-	err := runInstall(deps, false, true, "", "", nil, []string{"http://example.com/owner/repo.git"})
-	if err == nil {
-		t.Fatal("expected error for http:// dependency without --allow-insecure, got nil")
-	}
-	if !strings.Contains(err.Error(), "http://example.com/owner/repo") {
-		t.Errorf("error should name the offending dependency, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--allow-insecure") {
-		t.Errorf("error should point at the --allow-insecure remediation, got: %v", err)
+	var err error
+	out := captureInstallStdout(t, func() {
+		err = runInstall(&installDeps{tags: &mockInstallTagLister{}, loader: spy}, false, true, "", "", nil, []string{"http://example.com/owner/repo.git"})
+	})
+	want := " + Validating 1 package...\n" +
+		" x http://example.com/owner/repo -- HTTP dependency (unencrypted)\nTo install:\n  1. Set allow_insecure: true on the dep in apm.yml\n  2. Pass --allow-insecure to apm-go install\n" +
+		"All packages failed validation. Nothing to install.\n"
+	if exitCodeOf(err) != 1 || out != want {
+		t.Errorf("exit %d, stdout:\n%s\nwant:\n%s", exitCodeOf(err), out, want)
 	}
 	if len(spy.calls) != 0 {
 		t.Errorf("expected zero LoadPackage (clone) calls before the refusal, got %d", len(spy.calls))
@@ -490,40 +483,28 @@ func TestRunInstall_AllowInsecureFlag_PermitsHTTPDependency(t *testing.T) {
 	}
 }
 
-// TestRunInstall_LoopbackHTTPDependency_AlsoRefusedWithoutFlag mirrors the
-// Python reference implementation's flag-only gate: there is NO host
-// exemption, so even a loopback host's http:// dependency is refused without
-// --allow-insecure -- and permitted with it.
+// TestRunInstall_LoopbackHTTPDependency_AlsoRefusedWithoutFlag: the policy
+// has no host exemption, so a loopback http:// dependency is refused
+// without --allow-insecure and goes through with it.
 func TestRunInstall_LoopbackHTTPDependency_AlsoRefusedWithoutFlag(t *testing.T) {
-	dir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(dir)
-	defer os.Chdir(origDir)
-
+	t.Chdir(t.TempDir())
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
 
 	spy := &spyLoader{}
-	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy}
-	err := runInstall(deps, false, true, "", "", nil, []string{"http://127.0.0.1/owner/repo.git"})
-	if err == nil {
-		t.Fatal("expected refusal for loopback http:// dependency without --allow-insecure (no host exemption, Python parity)")
-	}
-	if !strings.Contains(err.Error(), "--allow-insecure") {
-		t.Errorf("error should point at the --allow-insecure remediation, got: %v", err)
-	}
-	if len(spy.calls) != 0 {
-		t.Errorf("expected zero LoadPackage (clone) calls before the refusal, got %d", len(spy.calls))
+	var err error
+	captureInstallStdout(t, func() {
+		err = runInstall(&installDeps{tags: &mockInstallTagLister{}, loader: spy}, false, true, "", "", nil, []string{"http://127.0.0.1/owner/repo.git"})
+	})
+	if exitCodeOf(err) != 1 || len(spy.calls) != 0 {
+		t.Fatalf("exit %d after %d clone calls, want 1 and none", exitCodeOf(err), len(spy.calls))
 	}
 
-	// With --allow-insecure the same loopback dependency proceeds to clone.
 	spy2 := &spyLoader{}
-	deps2 := &installDeps{tags: &mockInstallTagLister{}, loader: spy2, allowInsecure: true}
-	err = runInstall(deps2, false, true, "", "", nil, []string{"http://127.0.0.1/owner/repo.git"})
-	if err != nil && strings.Contains(err.Error(), "HTTP dependency (unencrypted)") {
-		t.Fatalf("--allow-insecure should have permitted the loopback http:// dependency, got refusal: %v", err)
-	}
-	if len(spy2.calls) == 0 {
-		t.Error("expected the install to proceed to LoadPackage once --allow-insecure permitted the loopback http:// dependency")
+	captureInstallStdout(t, func() {
+		err = runInstall(&installDeps{tags: &mockInstallTagLister{}, loader: spy2, allowInsecure: true}, false, true, "", "", nil, []string{"http://127.0.0.1/owner/repo.git"})
+	})
+	if len(spy2.calls) == 0 || !spy2.refs[0].HTTPApproved {
+		t.Errorf("with --allow-insecure the clone was not approved for http (%v)", err)
 	}
 }
 
@@ -756,7 +737,7 @@ func TestRunInstall_Frozen_PrefersResolvedCommitOverResolvedRef(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo#^1.0.0\n"), 0644)
-	lockContent := "lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/foo\n    resolved_ref: main\n    resolved_commit: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n    tree_sha256: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n    depth: 1\n"
+	lockContent := "lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/foo\n    resolved_ref: main\n    constraint: ^1.0.0\n    resolved_commit: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n    tree_sha256: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n    depth: 1\n"
 	os.WriteFile("apm.lock.yaml", []byte(lockContent), 0644)
 
 	spy := &spyLoader{}
@@ -787,7 +768,7 @@ func TestRunInstall_Frozen_PreservesVirtualPath(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo/sub/pkg#^1.0.0\n"), 0644)
-	lockContent := "lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/foo\n    virtual_path: sub/pkg\n    resolved_ref: v1.0.0\n    resolved_commit: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n    tree_sha256: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n    depth: 1\n"
+	lockContent := "lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/foo\n    virtual_path: sub/pkg\n    resolved_ref: v1.0.0\n    constraint: ^1.0.0\n    resolved_commit: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n    tree_sha256: \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n    depth: 1\n"
 	os.WriteFile("apm.lock.yaml", []byte(lockContent), 0644)
 
 	spy := &spyLoader{}
@@ -1222,28 +1203,26 @@ func TestRunInstall_LocalPrimitivesWithTargetSignal_StillDeploys(t *testing.T) {
 	}
 }
 
-func TestRunInstall_FrozenMissingTreeSHA256(t *testing.T) {
+// TestRunInstall_FrozenWithoutTreeSHA256 is a git entry of a lock the Oracle
+// wrote, which has no tree_sha256: Oracle 0.33.0's --frozen installs it
+// (#124 comment 6230849377), pinned by resolved_commit alone.
+func TestRunInstall_FrozenWithoutTreeSHA256(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(dir)
 	defer os.Chdir(origDir)
 
-	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo#^1.0.0\n"), 0644)
-	// Lockfile with a git entry that has resolved_commit but NO tree_sha256
-	lockContent := "lockfile_version: \"1\"\ndependencies:\n  - repo_url: acme/foo\n    resolved_commit: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n    depth: 1\n"
+	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo#main\n"), 0644)
+	lockContent := "lockfile_version: '1'\ndependencies:\n- repo_url: acme/foo\n  name: foo\n  resolved_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  resolved_ref: main\n  package_type: apm_package\n"
 	os.WriteFile("apm.lock.yaml", []byte(lockContent), 0644)
 	os.MkdirAll(filepath.Join("apm_modules", "acme", "foo"), 0755)
 
-	deps := &installDeps{
-		tags:   &mockInstallTagLister{},
-		loader: &mockInstallLoader{},
+	deps := &installDeps{tags: &mockInstallTagLister{}, loader: &mockInstallLoader{}}
+	if err := runInstall(deps, true, false, "", "", nil, nil); err != nil {
+		t.Fatalf("frozen install of an entry with no tree_sha256: %v", err)
 	}
-	err := runInstall(deps, true, false, "", "", nil, nil)
-	if err == nil {
-		t.Fatal("expected error for frozen install with missing tree_sha256")
-	}
-	if !strings.Contains(err.Error(), "tree_sha256") {
-		t.Errorf("error should mention tree_sha256: %v", err)
+	if got, _ := os.ReadFile("apm.lock.yaml"); string(got) != lockContent {
+		t.Errorf("a frozen install wrote the lock:\n%s", got)
 	}
 }
 

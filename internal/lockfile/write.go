@@ -138,6 +138,7 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 
 	scalars := map[string]string{
 		"repo_url":                dep.RepoURL,
+		"alias":                   dep.Alias,
 		"name":                    dep.Name,
 		"host":                    dep.Host,
 		"registry_prefix":         dep.RegistryPrefix,
@@ -173,6 +174,12 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 			if dep.Port > 0 {
 				addNode(node, key, intNode(dep.Port))
 			}
+		case "is_virtual":
+			addTrue(node, key, dep.IsVirtual)
+		case "is_insecure":
+			addTrue(node, key, dep.IsInsecure)
+		case "allow_insecure":
+			addTrue(node, key, dep.AllowInsecure)
 		case "depth":
 			// The Oracle's default depth is 1 and it writes only another value.
 			if dep.Depth > 1 {
@@ -305,6 +312,10 @@ func depSemanticEqual(a, b *LockedDep) bool {
 		// dependencies.apm to devDependencies.apm) must not be treated as a
 		// no-op that skips rewriting apm.lock.yaml.
 		a.PackageType == b.PackageType &&
+		a.Alias == b.Alias &&
+		a.IsVirtual == b.IsVirtual &&
+		a.IsInsecure == b.IsInsecure &&
+		a.AllowInsecure == b.AllowInsecure &&
 		// SkillSubset (BUG-2's per-dep --skill filter) must participate in
 		// semantic equality too: without this, a --skill RESET/narrowing
 		// that changes nothing else about the dependency (same commit,
@@ -564,6 +575,13 @@ func mappingRoot(doc *yaml.Node) *yaml.Node {
 
 func addNode(node *yaml.Node, key string, val *yaml.Node) {
 	node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: key, Tag: "!!str"}, val)
+}
+
+// addTrue writes a boolean field as the Oracle does, only when it is true.
+func addTrue(node *yaml.Node, key string, set bool) {
+	if set {
+		addNode(node, key, &yaml.Node{Kind: yaml.ScalarNode, Value: "true", Tag: "!!bool"})
+	}
 }
 
 func intNode(n int) *yaml.Node {

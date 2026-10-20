@@ -332,7 +332,7 @@ func printCompileHint(targets []string, result *resolver.ResolutionResult) {
 		return
 	}
 	for _, dep := range result.Deps {
-		matches, _ := filepath.Glob(filepath.Join("apm_modules", filepath.FromSlash(dep.Key), ".apm", "instructions", "*.instructions.md"))
+		matches, _ := filepath.Glob(filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir()), ".apm", "instructions", "*.instructions.md"))
 		if len(matches) > 0 {
 			ux.Info(os.Stdout, "Instructions installed for %s. Run 'apm-go compile' to update AGENTS.md.", strings.Join(family, ", "))
 			return
@@ -663,22 +663,22 @@ func removeLegacyLocalModules(oldLock, newLock *lockfile.Lockfile) {
 	for i := range oldLock.Dependencies {
 		dep := &oldLock.Dependencies[i]
 		gitPath := nowLocal[dep.RepoURL] && isGitPathEntry(dep, dep.RepoURL)
-		if (!isLegacyLocalEntry(dep) && !gitPath) || overlapsModuleDir(newLock, dep.UniqueKey()) {
+		if (!isLegacyLocalEntry(dep) && !gitPath) || overlapsModuleDir(newLock, dep.ModuleDir()) {
 			continue
 		}
-		if _, err := deploy.SafeRemoveModuleDir(".", dep.UniqueKey()); err != nil {
-			ux.Warn(os.Stderr, "could not remove apm_modules/%s: %v", dep.UniqueKey(), err)
+		if _, err := deploy.SafeRemoveModuleDir(".", dep.ModuleDir()); err != nil {
+			ux.Warn(os.Stderr, "could not remove apm_modules/%s: %v", dep.ModuleDir(), err)
 		}
 	}
 }
 
-// overlapsModuleDir reports whether apm_modules/<key>, cleaned as
+// overlapsModuleDir reports whether apm_modules/<rel>, cleaned as
 // deploy.SafeRemoveModuleDir resolves it, is the directory of a package lock
 // has, or holds it, or lies in it.
-func overlapsModuleDir(lock *lockfile.Lockfile, key string) bool {
-	dir := moduleDirOf(key)
+func overlapsModuleDir(lock *lockfile.Lockfile, rel string) bool {
+	dir := moduleDirOf(rel)
 	for i := range lock.Dependencies {
-		pkg := moduleDirOf(lock.Dependencies[i].UniqueKey())
+		pkg := moduleDirOf(lock.Dependencies[i].ModuleDir())
 		if dir == pkg || strings.HasPrefix(pkg, dir+string(filepath.Separator)) || strings.HasPrefix(dir, pkg+string(filepath.Separator)) {
 			return true
 		}
@@ -686,6 +686,6 @@ func overlapsModuleDir(lock *lockfile.Lockfile, key string) bool {
 	return false
 }
 
-func moduleDirOf(key string) string {
-	return filepath.Join("apm_modules", filepath.FromSlash(key))
+func moduleDirOf(rel string) string {
+	return filepath.Join("apm_modules", filepath.FromSlash(rel))
 }

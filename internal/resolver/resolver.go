@@ -280,6 +280,9 @@ func Resolve(
 			dep.ArtifactoryPrefix = ref.ArtifactoryPrefix
 			dep.VirtualPath = ref.VirtualPath
 			dep.TargetSubset = ref.TargetSubset
+			dep.Alias = ref.Alias
+			dep.Insecure = ref.IsInsecure()
+			dep.AllowInsecure = ref.AllowInsecure
 			if dep.VirtualPath != "" {
 				dep.RepoURL = strings.TrimSuffix(displayKey, "/"+dep.VirtualPath)
 			}

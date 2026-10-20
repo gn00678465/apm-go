@@ -47,9 +47,11 @@ dependencies:
 	}
 }
 
-// version: preferred over ref: when both present.
-func TestParseDepDict_VersionWinsOverRef(t *testing.T) {
-	m := parseYML(t, `
+// The registry object form takes no `ref:`; Oracle 0.33.0 refuses an unknown
+// field with this text (models/dependency/registry_entry.py:83-90; measured
+// with `foo: 1`, issue151-impl/reg1/extra-or/i1.out).
+func TestParseDepDict_RegistryRefusesUnknownField(t *testing.T) {
+	node, err := yamlcore.SafeLoad([]byte(`
 name: proj
 version: 0.1.0
 registries:
@@ -60,13 +62,14 @@ dependencies:
     - id: acme/sample
       version: 2.0.0
       ref: 1.0.0
-`)
-	if got := m.ParsedDeps[0].Reference; got != "2.0.0" {
-		t.Errorf("Reference = %q, want 2.0.0 (version wins)", got)
+`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	// registry omitted -> RegistryName empty, resolved via default.
-	if m.ParsedDeps[0].RegistryName != "" {
-		t.Errorf("RegistryName = %q, want empty", m.ParsedDeps[0].RegistryName)
+	_, _, err = ParseManifest(node)
+	want := "dependency entry 0: Object-form registry entry has unknown fields: ['ref']. Known fields: ['alias', 'id', 'path', 'registry', 'skills', 'targets', 'version']"
+	if err == nil || err.Error() != want {
+		t.Errorf("error %v, want %s", err, want)
 	}
 }
 

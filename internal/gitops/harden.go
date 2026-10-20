@@ -48,12 +48,23 @@ func gitLocalCloneCommand(args ...string) *exec.Cmd {
 	return cmd
 }
 
+// allowedGitProtocolsHTTP additionally permits plain http, for the one
+// command that fetches an http:// dependency the install's HTTP policy
+// approved (allow_insecure and --allow-insecure, or --allow-insecure-host).
+const allowedGitProtocolsHTTP = allowedGitProtocols + ":http"
+
 // cloneCommandFor returns the hardened git command for cloning url: the
 // file-permitting variant only when url is a local filesystem path, the
-// remote-only default otherwise.
-func cloneCommandFor(url string, args ...string) *exec.Cmd {
+// http-permitting one only when url is http:// and insecureHTTP says the
+// policy approved it, the remote-only default otherwise.
+func cloneCommandFor(url string, insecureHTTP bool, args ...string) *exec.Cmd {
 	if isLocalCloneURL(url) {
 		return gitLocalCloneCommand(args...)
+	}
+	if insecureHTTP && strings.HasPrefix(strings.ToLower(url), "http://") {
+		cmd := exec.Command("git", args...)
+		cmd.Env = secureGitEnvWithProtocols(allowedGitProtocolsHTTP)
+		return cmd
 	}
 	return gitCommand(args...)
 }

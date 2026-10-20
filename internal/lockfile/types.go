@@ -5,11 +5,13 @@ import "go.yaml.in/yaml/v4"
 // LockedDep represents a single resolved dependency in the lockfile.
 type LockedDep struct {
 	RepoURL        string
+	Alias          string // the directory below apm_modules, when the entry names one
 	Name           string // the package's own name, from its apm.yml
 	Host           string
 	Port           int
 	RegistryPrefix string
 	VirtualPath    string
+	IsVirtual      bool
 	Source         string // "git", "registry", "local"
 	LocalPath      string // source "local": the path as apm.yml declares it
 	Constraint     string // verbatim semver range from manifest at lock time
@@ -27,6 +29,11 @@ type LockedDep struct {
 	TargetSubset   []string
 	DeployedFiles  []string
 	DeployedHashes map[string]string // path -> hash
+
+	// IsInsecure records that the source was fetched over http://, and
+	// AllowInsecure that apm.yml allowed it (deps/lockfile.py:238-239).
+	IsInsecure    bool
+	AllowInsecure bool
 
 	// Marketplace provenance (mkt-031): purely additive metadata recording
 	// that this dependency was discovered via `apm install
@@ -61,6 +68,15 @@ func (d *LockedDep) UniqueKey() string {
 		return d.RepoURL + "/" + d.VirtualPath
 	}
 	return d.RepoURL
+}
+
+// ModuleDir is the entry's directory below apm_modules, slash-separated: its
+// alias, else its key.
+func (d *LockedDep) ModuleDir() string {
+	if d.Alias != "" {
+		return d.Alias
+	}
+	return d.UniqueKey()
 }
 
 // Lockfile represents the parsed apm.lock.yaml.

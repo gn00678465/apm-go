@@ -88,7 +88,7 @@ func cleanStaleDeployedFiles(existingLock, newLock *lockfile.Lockfile, failed, r
 		if old == nil || failed[key] {
 			continue
 		}
-		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(key)), old.DeployedFiles, old.DeployedHashes)
+		clean(key, deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(old.ModuleDir())), old.DeployedFiles, old.DeployedHashes)
 	}
 	return results
 }
@@ -217,7 +217,7 @@ func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.
 			// Oracle, which copies the files, counts them; uninstall
 			// --global counts them the same way.
 			var gone []string
-			gone, diags = deploy.RemoveStaleLinkedFiles(deployRoot, linkSourceRoot, filepath.Join(linkSourceRoot, "apm_modules", filepath.FromSlash(key)), candidates, dep.DeployedHashes, claimed)
+			gone, diags = deploy.RemoveStaleLinkedFiles(deployRoot, linkSourceRoot, filepath.Join(linkSourceRoot, "apm_modules", filepath.FromSlash(dep.ModuleDir())), candidates, dep.DeployedHashes, claimed)
 			for _, f := range candidates {
 				if atOrBelowAny(gone, f) {
 					removed = append(removed, f)
@@ -228,7 +228,7 @@ func cleanOrphanedDeployedFiles(orphans []lockfile.LockedDep, newLock *lockfile.
 		}
 		out.removed = append(out.removed, removed...)
 		out.diags = append(out.diags, diags...)
-		left, hashes := mergeDeployedFiles(append(notTakenOver(key, candidates, allTargets, takenOverRoot), refused...), dep.DeployedHashes, nil, nil, deployRoot)
+		left, hashes := mergeDeployedFiles(append(notTakenOver(key, dep.ModuleDir(), candidates, allTargets, takenOverRoot), refused...), dep.DeployedHashes, nil, nil, deployRoot)
 		if len(left) > 0 {
 			dep.DeployedFiles, dep.DeployedHashes = left, hashes
 			out.kept = append(out.kept, dep)
@@ -303,8 +303,8 @@ func hasFileBelow(files []string, dir string) bool {
 // written before #113 lists a cloned package's .git there, one written
 // before #126 the files the Oracle's copy leaves out. The stale cleanup
 // removes nothing below the deploy's own link.
-func notTakenOver(bucket string, files, targets []string, deployDir string) []string {
-	kind, source := deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(bucket))
+func notTakenOver(bucket, dir string, files, targets []string, deployDir string) []string {
+	kind, source := deploy.DependencyBucket, filepath.Join("apm_modules", filepath.FromSlash(dir))
 	if bucket == "" {
 		kind, source = deploy.LocalBucket, ".apm"
 	}

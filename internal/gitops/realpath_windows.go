@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"unicode/utf16"
+
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 const (
@@ -54,7 +56,7 @@ type winError struct {
 }
 
 func (e *winError) Error() string {
-	return fmt.Sprintf("[WinError %d] %s: %s", uint32(e.code), winMessage(e.code), pyRepr(e.path))
+	return fmt.Sprintf("[WinError %d] %s: %s", uint32(e.code), winMessage(e.code), manifest.PyRepr(e.path))
 }
 
 // winMessage is the message Python/errors.c

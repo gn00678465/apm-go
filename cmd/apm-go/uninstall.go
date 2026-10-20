@@ -98,7 +98,7 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	}
 
 	if opts.DryRun {
-		printUninstallDryRunPlan(plan)
+		printUninstallDryRunPlan(plan, lock)
 		return nil
 	}
 
@@ -129,9 +129,14 @@ type uninstallPlan struct {
 	// uninstallIdentity's matching space for the apm.yml splice and the
 	// remaining-roots filter.
 	removedModuleKeys map[string]bool
-	mcpNames          map[string]bool
-	orphans           map[string]bool
-	allRemovalKeys    map[string]bool
+	// declaredDirs is the apm_modules directory of each removed direct
+	// package, as its apm.yml entry places it: the Oracle removes a direct package from
+	// the directory its entry places it in (commands/uninstall/engine.py:
+	// 750-751,834-835) and a transitive one from its lock entry's (:929).
+	declaredDirs   map[string]string
+	mcpNames       map[string]bool
+	orphans        map[string]bool
+	allRemovalKeys map[string]bool
 }
 
 // prepareUninstallPlan resolves args against m/lock and computes everything
@@ -166,6 +171,16 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	// under its `git:` path is removed under its current key, as install
 	// would have recorded it; the entries that stay are written back as they
 	// are, since uninstall copies no package to its current key.
+	declaredDirs := map[string]string{}
+	for _, d := range allDirectDeps(m) {
+		if id, ok := uninstallIdentity(d); ok && removedIdentities[id] {
+			key := moduleKeyByIdentity[id]
+			declaredDirs[key] = key
+			if d.Alias != "" {
+				declaredDirs[key] = d.Alias
+			}
+		}
+	}
 	if lock != nil {
 		var removed []*manifest.DependencyReference
 		for _, d := range allDirectDeps(m) {
@@ -216,6 +231,7 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 		moduleKeyByIdentity: moduleKeyByIdentity,
 		removedIdentities:   removedIdentities,
 		removedModuleKeys:   removedModuleKeys,
+		declaredDirs:        declaredDirs,
 		mcpNames:            mcpNames,
 		orphans:             orphans,
 		allRemovalKeys:      allRemovalKeys,
@@ -226,6 +242,14 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 // apm_modules key, which is the Oracle's public label of a package.
 func (p *uninstallPlan) moduleKey(t uninstallAPMTarget) string {
 	return p.moduleKeyByIdentity[t.IdentityKey]
+}
+
+// moduleDir is the directory below apm_modules uninstall removes for key.
+func (p *uninstallPlan) moduleDir(lock *lockfile.Lockfile, key string) string {
+	if dir, ok := p.declaredDirs[key]; ok {
+		return dir
+	}
+	return lockModuleDir(lock, key)
 }
 
 // uninstallRemovalKey translates a matched target's identity key (the
@@ -295,7 +319,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	for k := range orphans {
 		allRemovalKeys[k] = true
 	}
-	if err := checkUninstallModuleDirs(plan.removedModuleKeys, orphans, deployDir != ""); err != nil {
+	if err := checkUninstallModuleDirs(plan, lock, plan.removedModuleKeys, orphans, deployDir != ""); err != nil {
 		return err
 	}
 	if err := checkUninstallDeployPaths(lock, allRemovalKeys, deployDir); err != nil {
@@ -318,7 +342,7 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	removedFiles = handover.notHandedOver(removedFiles)
 	cleaned := uninstallCleanedByOwner(lock, allRemovalKeys, removedFiles)
 
-	removedModuleDirs, err := removeUninstallModuleDirs(allRemovalKeys)
+	removedModuleDirs, err := removeUninstallModuleDirs(plan, lock, allRemovalKeys)
 	if err != nil {
 		return err
 	}
@@ -397,7 +421,7 @@ func reachableFromRemainingRoots(remainingRootKeys map[string]bool, lock *lockfi
 	for len(queue) > 0 {
 		key := queue[0]
 		queue = queue[1:]
-		deps, _ := deploy.LoadDependencyDeps(key, filepath.Join(projectDir, "apm_modules", key))
+		deps, _ := deploy.LoadDependencyDeps(key, filepath.Join(projectDir, "apm_modules", filepath.FromSlash(lockModuleDir(lock, key))))
 		for _, depKey := range deps {
 			if lock.FindByKey(depKey) == nil {
 				continue
@@ -528,7 +552,7 @@ func removeUninstallDeployed(lock *lockfile.Lockfile, removalKeys map[string]boo
 		if dep == nil {
 			continue
 		}
-		source := filepath.Join(".", "apm_modules", filepath.FromSlash(key))
+		source := filepath.Join(".", "apm_modules", filepath.FromSlash(dep.ModuleDir()))
 		gone, depDiags := deploy.RemoveStaleLinkedFiles(deployDir, ".", source, dep.DeployedFiles, dep.DeployedHashes, nil)
 		diags = append(diags, depDiags...)
 		for _, f := range dep.DeployedFiles {
@@ -602,14 +626,16 @@ func writeUninstallManifest(data []byte, node *yamllib.Node, removedIdentities, 
 	return nil
 }
 
-// removeUninstallModuleDirs deletes apm_modules/<key> for every removal key
-// (un-030~032, direct targets and transitive orphans alike).
-func removeUninstallModuleDirs(removalKeys map[string]bool) (removed map[string]bool, err error) {
+// removeUninstallModuleDirs deletes the apm_modules directory of every
+// removal key (un-030~032, direct targets and transitive orphans alike), the
+// one its alias names when it has one; the Oracle leaves a directory an
+// earlier alias named (measured, issue151-impl/al2-or/aliaschgpkg).
+func removeUninstallModuleDirs(plan *uninstallPlan, lock *lockfile.Lockfile, removalKeys map[string]bool) (removed map[string]bool, err error) {
 	_, statErr := os.Stat("apm_modules")
 	hadModules := statErr == nil
 	removed = make(map[string]bool)
 	for _, key := range sortedStringSet(removalKeys) {
-		wasRemoved, rerr := deploy.SafeRemoveModuleDir(".", key)
+		wasRemoved, rerr := deploy.SafeRemoveModuleDir(".", plan.moduleDir(lock, key))
 		if rerr != nil {
 			return removed, fmt.Errorf("remove apm_modules/%s: %w", key, rerr)
 		}
@@ -635,7 +661,7 @@ func removeUninstallModuleDirs(removalKeys map[string]bool) (removed map[string]
 // (commands/uninstall/engine.py:931,951, cli.py:188-212). Deliberate
 // deviation: the Oracle checks while it removes, so a refused transitive
 // package comes after the direct packages' directories are gone.
-func checkUninstallModuleDirs(direct, transitive map[string]bool, global bool) error {
+func checkUninstallModuleDirs(plan *uninstallPlan, lock *lockfile.Lockfile, direct, transitive map[string]bool, global bool) error {
 	refuse := func(label string, err error) error {
 		ux.Error(os.Stderr, "Refusing to remove %s: %v", label, err)
 		recovery := "apm-go install"
@@ -645,7 +671,7 @@ func checkUninstallModuleDirs(direct, transitive map[string]bool, global bool) e
 		return fmt.Errorf("Uninstall incomplete: package deletion failed. apm.yml and lockfile ownership were retained; some package files may already have been removed. Resolve the unsafe package path and retry the same uninstall command, or run '%s' to restore the declared packages. Run with --verbose for detailed diagnostics.", recovery)
 	}
 	for _, key := range sortedStringSet(direct) {
-		if err := deploy.CheckModuleDir(".", key); err != nil {
+		if err := deploy.CheckModuleDir(".", plan.moduleDir(lock, key)); err != nil {
 			return refuse(key, err)
 		}
 	}
@@ -653,7 +679,7 @@ func checkUninstallModuleDirs(direct, transitive map[string]bool, global bool) e
 		if direct[key] {
 			continue
 		}
-		if err := deploy.CheckModuleDir(".", key); err != nil {
+		if err := deploy.CheckModuleDir(".", lockModuleDir(lock, key)); err != nil {
 			return refuse("transitive dep "+key, err)
 		}
 	}
@@ -884,17 +910,18 @@ func printUninstallNotFound(nf uninstallNotFound) {
 // transitive dependencies would go with them. The lines are the Oracle's
 // (commands/uninstall/engine.py:745-810); a matched MCP server, which the
 // Oracle does not uninstall, gets a line of the same shape.
-func printUninstallDryRunPlan(plan *uninstallPlan) {
+func printUninstallDryRunPlan(plan *uninstallPlan, lock *lockfile.Lockfile) {
 	ux.Info(os.Stdout, "Dry run: Would remove %d package(s):", len(plan.apmTargets)+len(plan.mcpTargets))
 	for _, t := range plan.apmTargets {
 		key := plan.moduleKey(t)
 		ux.Info(os.Stdout, "  - %s from apm.yml", key)
 		// A directory that leads out of apm_modules is not one the real run
 		// would remove; the Oracle leaves it out too (engine.py:751-767).
-		if deploy.CheckModuleDir(".", key) != nil {
+		dir := plan.moduleDir(lock, key)
+		if deploy.CheckModuleDir(".", dir) != nil {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join("apm_modules", filepath.FromSlash(key))); err == nil {
+		if _, err := os.Stat(filepath.Join("apm_modules", filepath.FromSlash(dir))); err == nil {
 			ux.Info(os.Stdout, "  - %s from apm_modules/", key)
 		}
 	}
@@ -972,4 +999,15 @@ func sortedStringSet(set map[string]bool) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// lockModuleDir is the directory below apm_modules of the lock's entry for
+// key, its alias when it has one, else key.
+func lockModuleDir(lock *lockfile.Lockfile, key string) string {
+	if lock != nil {
+		if d := lock.FindByKey(key); d != nil {
+			return d.ModuleDir()
+		}
+	}
+	return key
 }

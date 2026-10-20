@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 // On Windows a symlink of a local package is resolved as Python 3.12's
@@ -92,7 +94,7 @@ func TestMaterializeLocalCopy_RefusesSymlinkItCannotDereferenceWindows(t *testin
 			} else {
 				link := filepath.Join(dep, tt.links[0][0])
 				prefix := "Symlink '" + link + "' has a broken or unresolvable target: [WinError " + strconv.Itoa(tt.winCode) + "] "
-				suffix := ": " + pyRepr(link) + dangling
+				suffix := ": " + manifest.PyRepr(link) + dangling
 				msg, ok := strings.CutPrefix(got, prefix)
 				if ok {
 					msg, ok = strings.CutSuffix(msg, suffix)

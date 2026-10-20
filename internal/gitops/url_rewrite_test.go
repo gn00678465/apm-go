@@ -732,10 +732,10 @@ func TestNetworkGit_NotRunWhenRewriteCheckFails(t *testing.T) {
 			return err
 		},
 		"clone at a tag": func() error {
-			return loader.cloneRepo(remote, filepath.Join(t.TempDir(), "dest"), "v1.0.0", "owner/repo")
+			return loader.cloneRepo(remote, filepath.Join(t.TempDir(), "dest"), "v1.0.0", "owner/repo", false)
 		},
 		"clone at a commit": func() error {
-			return loader.cloneRepo(remote, filepath.Join(t.TempDir(), "dest"), strings.Repeat("a", 40), "owner/repo")
+			return loader.cloneRepo(remote, filepath.Join(t.TempDir(), "dest"), strings.Repeat("a", 40), "owner/repo", false)
 		},
 	}
 	for name, call := range calls {

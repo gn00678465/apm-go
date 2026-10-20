@@ -9,8 +9,6 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/apm-go/apm/internal/archive"
 	"github.com/apm-go/apm/internal/lockfile"
@@ -30,12 +28,12 @@ type RealPackageLoader struct {
 }
 
 // SubdirCommit returns the commit of the repository that the subdirectory
-// package with module key key was taken from, or "" when this loader did not
-// clone it. The package's module directory holds only the subdirectory's
+// package in directory dir below ModulesDir (its ModuleDir) was taken from,
+// or "" when this loader did not clone it. The package's module directory holds only the subdirectory's
 // content and no .git, so git run there answers for whatever repository
 // encloses the project; the clone is the one place the commit is known.
-func (r *RealPackageLoader) SubdirCommit(key string) string {
-	return r.subdirCommits[path.Clean(key)]
+func (r *RealPackageLoader) SubdirCommit(dir string) string {
+	return r.subdirCommits[path.Clean(dir)]
 }
 
 func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
@@ -58,7 +56,7 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 	}
 	// Before the stale checkout is removed or a clone written: both follow a
 	// symlinked parent out of ModulesDir.
-	if err := archive.CheckWithin(r.ModulesDir, installDir); err != nil {
+	if err := archive.CheckPackageDir(r.ModulesDir, installDir, ref.Alias); err != nil {
 		return nil, err
 	}
 
@@ -79,11 +77,12 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 		return nil, err
 	}
 
+	insecureHTTP := ref.IsInsecure() && ref.HTTPApproved
 	if ref.VirtualPath != "" && ref.VirtualType == "subdirectory" {
-		return r.cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, ref.RepoURL, ref.VirtualPath)
+		return r.cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, ref.RepoURL, ref.VirtualPath, insecureHTTP)
 	}
 
-	if err := r.cloneRepo(cloneURL, installDir, resolvedRef, ref.RepoURL); err != nil {
+	if err := r.cloneRepo(cloneURL, installDir, resolvedRef, ref.RepoURL, insecureHTTP); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
 	}
 
@@ -94,7 +93,7 @@ func (r *RealPackageLoader) LoadPackage(ref *manifest.DependencyReference, resol
 // moves only the VirtualPath subdirectory into installDir. This mirrors the
 // Oracle's download_subdirectory_package (github_downloader.py:1363):
 // clone to temp, locate subdir, copy contents to target, delete temp.
-func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, repo, virtualPath string) (*manifest.Manifest, error) {
+func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolvedRef, repo, virtualPath string, insecureHTTP bool) (*manifest.Manifest, error) {
 	tmpDir, err := os.MkdirTemp("", "apm-subdir-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir for subdirectory clone: %w", err)
@@ -102,7 +101,7 @@ func (r *RealPackageLoader) cloneAndExtractSubdir(cloneURL, installDir, resolved
 	defer os.RemoveAll(tmpDir)
 
 	tmpClone := filepath.Join(tmpDir, "repo")
-	if err := r.cloneRepo(cloneURL, tmpClone, resolvedRef, repo); err != nil {
+	if err := r.cloneRepo(cloneURL, tmpClone, resolvedRef, repo, insecureHTTP); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", SanitizeGitOutput(cloneURL), err)
 	}
 
@@ -251,10 +250,7 @@ func (r *RealPackageLoader) installPath(ref *manifest.DependencyReference) (stri
 }
 
 func installPathIn(modulesDir string, ref *manifest.DependencyReference) (string, error) {
-	key := ref.RepoURL
-	if ref.VirtualPath != "" {
-		key += "/" + ref.VirtualPath
-	}
+	key := ref.ModuleDir()
 	// RepoURL/VirtualPath are only charset-validated at manifest-parse time
 	// and do not reject ".." segments -- guard against a crafted dependency
 	// resolving outside ModulesDir, or landing on an unrelated sibling
@@ -309,9 +305,10 @@ func (r *RealPackageLoader) defaultHost() string {
 
 // cloneRepo clones url into dir at ref. repo is the dependency's repository
 // path, which the Oracle names when a commit ref does not resolve.
-func (r *RealPackageLoader) cloneRepo(url, dir, ref, repo string) error {
+// insecureHTTP lets this clone, and no other git command, use http.
+func (r *RealPackageLoader) cloneRepo(url, dir, ref, repo string, insecureHTTP bool) error {
 	if IsCommitRef(ref) {
-		return r.cloneRepoAtCommit(url, dir, ref, repo)
+		return r.cloneRepoAtCommit(url, dir, ref, repo, insecureHTTP)
 	}
 
 	args := []string{"-c", autocrlfOff, "clone", "-c", autocrlfOff, "--depth", "1"}
@@ -325,7 +322,7 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref, repo string) error {
 	if err := ValidateURLRewriteSafety(url); err != nil {
 		return err
 	}
-	cmd := cloneCommandFor(url, args...)
+	cmd := cloneCommandFor(url, insecureHTTP, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
@@ -340,11 +337,11 @@ func (r *RealPackageLoader) cloneRepo(url, dir, ref, repo string) error {
 // a branch other than the default one does not; a ref that resolves to
 // nothing fails, and is not tried as a branch. The short ref is never given
 // to checkout, whose DWIM would make a local branch of origin/<ref>.
-func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, ref, repo string) error {
+func (r *RealPackageLoader) cloneRepoAtCommit(url, dir, ref, repo string, insecureHTTP bool) error {
 	if err := ValidateURLRewriteSafety(url); err != nil {
 		return err
 	}
-	cloneCmd := cloneCommandFor(url, "-c", autocrlfOff, "clone", "-c", autocrlfOff, "--", url, dir)
+	cloneCmd := cloneCommandFor(url, insecureHTTP, "-c", autocrlfOff, "clone", "-c", autocrlfOff, "--", url, dir)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s\n%s", err, SanitizeGitOutput(string(out)))
 	}
@@ -478,11 +475,19 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 // Deliberate deviation from the Oracle, which copies a source holding the
 // project into itself until "[Errno 36] File name too long", exits 1 and
 // leaves .claude/ behind.
+//
+// The directory an alias names is refused when the copy is made, where the
+// Oracle refuses it (models/dependency/materialization.py:117-129), so this
+// check leaves that refusal to the resolve.
 func CheckLocalCopy(modulesDir string, ref *manifest.DependencyReference) error {
 	if ref.LocalSourcePath == "" {
 		return nil
 	}
 	_, err := checkLocalCopy(modulesDir, ref)
+	var outside *archive.ContainmentError
+	if errors.As(err, &outside) && outside.Alias != "" {
+		return nil
+	}
 	return err
 }
 
@@ -498,8 +503,11 @@ func checkLocalCopy(modulesDir string, ref *manifest.DependencyReference) (strin
 	if err != nil {
 		return "", err
 	}
-	if err := archive.CheckWithin(modulesDir, dest); err != nil {
+	if err := archive.CheckPackageDir(modulesDir, dest, ref.Alias); err != nil {
 		var outside *archive.ContainmentError
+		if errors.As(err, &outside) && outside.Alias != "" {
+			return "", err
+		}
 		if errors.As(err, &outside) {
 			return "", fmt.Errorf("local dependency %s would be copied to %s, which resolves to %s outside %s/; refusing to replace it",
 				declared, filepath.ToSlash(dest), outside.Resolved, modules)
@@ -574,7 +582,7 @@ func copyTreeDereferencing(srcDir, dstDir, pkgRoot string, visited []string) err
 				// which the Oracle does not catch: it is the whole reason.
 				var pe *os.PathError
 				if errors.As(err, &pe) && errors.Is(pe.Err, syscall.ELOOP) {
-					return fmt.Errorf("Symlink loop from %s", pyRepr(pe.Path))
+					return fmt.Errorf("Symlink loop from %s", manifest.PyRepr(pe.Path))
 				}
 				return fmt.Errorf("Symlink '%s' has a broken or unresolvable target: %s. Remove the dangling symlink or restore its target. Local install aborted.", srcPath, pyOSError(err))
 			}
@@ -626,47 +634,7 @@ func pyOSError(err error) string {
 		return err.Error()
 	}
 	text := errno.Error()
-	return fmt.Sprintf("[Errno %d] %s%s: %s", int(errno), strings.ToUpper(text[:1]), text[1:], pyRepr(pe.Path))
-}
-
-// pyRepr is Python's repr() of a str holding a path, an invalid UTF-8 byte b
-// being the lone surrogate U+DC00+b Python decodes it to. It follows the rule
-// of pythonReprPyStr (internal/marketplace/models.go), which gitops cannot
-// import.
-func pyRepr(s string) string {
-	quote := '\''
-	if strings.ContainsRune(s, '\'') && !strings.ContainsRune(s, '"') {
-		quote = '"'
-	}
-	var sb strings.Builder
-	sb.WriteRune(quote)
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		switch {
-		case r == utf8.RuneError && size == 1:
-			fmt.Fprintf(&sb, `\u%04x`, 0xdc00+int(s[i]))
-		case r == quote || r == '\\':
-			sb.WriteByte('\\')
-			sb.WriteRune(r)
-		case r == '\n':
-			sb.WriteString(`\n`)
-		case r == '\r':
-			sb.WriteString(`\r`)
-		case r == '\t':
-			sb.WriteString(`\t`)
-		case unicode.IsPrint(r):
-			sb.WriteRune(r)
-		case r < 0x100:
-			fmt.Fprintf(&sb, `\x%02x`, r)
-		case r < 0x10000:
-			fmt.Fprintf(&sb, `\u%04x`, r)
-		default:
-			fmt.Fprintf(&sb, `\U%08x`, r)
-		}
-		i += size
-	}
-	sb.WriteRune(quote)
-	return sb.String()
+	return fmt.Sprintf("[Errno %d] %s%s: %s", int(errno), strings.ToUpper(text[:1]), text[1:], manifest.PyRepr(pe.Path))
 }
 
 // parseModuleManifest is parseSubManifest for a git checkout, which keeps the

@@ -1,153 +1,71 @@
 package manifest
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-// TestCheckInsecureDependencyScheme_HTTPRefusedByDefault is the RED case for
-// the P0 gate this file adds: a non-TLS http:// git dependency must be
-// refused unless --allow-insecure was passed, and the error must name the
-// offending dependency and point at the remediation.
-func TestCheckInsecureDependencyScheme_HTTPRefusedByDefault(t *testing.T) {
-	dep := &DependencyReference{
-		Scheme: "http",
-		Host:   "example.com",
-		Owner:  "owner",
-		Repo:   "repo",
-		Source: "git",
+// TestCheckInsecureDependency holds the reasons Oracle 0.33.0 prints
+// (~/.cache/apm-go-verify/issue151/r3-or/http, httpflag, httpai: i1.out),
+// with apm-go for apm in the step. An http dependency needs both
+// allow_insecure: true and --allow-insecure, whatever its host
+// (install/insecure_policy.py:204-264).
+func TestCheckInsecureDependency(t *testing.T) {
+	both := "http://127.0.0.1/o/pkg#main -- HTTP dependency (unencrypted)\nTo install:\n  1. Set allow_insecure: true on the dep in apm.yml\n  2. Pass --allow-insecure to apm-go install"
+	field := "http://127.0.0.1/o/pkg#main -- HTTP dependency (unencrypted)\nTo install:\n  1. Set allow_insecure: true on the dep in apm.yml"
+	flag := "http://127.0.0.1/o/pkg#main -- HTTP dependency (unencrypted)\nTo install:\n  1. Pass --allow-insecure to apm-go install"
+	cases := []struct {
+		name       string
+		allowField bool
+		allowFlag  bool
+		want       string
+	}{
+		{"neither", false, false, both},
+		{"flag only", false, true, field},
+		{"field only", true, false, flag},
+		{"both", true, true, ""},
 	}
-	err := CheckInsecureDependencyScheme(dep, false, "github.com")
-	if err == nil {
-		t.Fatal("expected error for http:// dependency without --allow-insecure, got nil")
-	}
-	if !strings.Contains(err.Error(), "http://example.com/owner/repo") {
-		t.Errorf("error should name the offending dependency, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "--allow-insecure") {
-		t.Errorf("error should point at the --allow-insecure remediation, got: %v", err)
-	}
-}
-
-// TestCheckInsecureDependencyScheme_AllHostsRefusedWithoutFlag mirrors the
-// Python reference implementation's _check_insecure_dependencies exactly: the
-// gate is flag-only, with NO host exemption -- loopback, RFC1918-private, and
-// public hosts alike are all refused without --allow-insecure.
-func TestCheckInsecureDependencyScheme_AllHostsRefusedWithoutFlag(t *testing.T) {
-	hosts := []string{
-		// loopback / local
-		"127.0.0.1",
-		"127.5.5.5",
-		"::1",
-		"localhost",
-		// RFC1918 private
-		"10.0.0.5",
-		"172.16.0.5",
-		"192.168.1.10",
-		// public
-		"203.0.113.5",
-		"example.com",
-		"8.8.8.8",
-	}
-	for _, host := range hosts {
-		t.Run(host, func(t *testing.T) {
-			dep := &DependencyReference{
-				Scheme: "http",
-				Host:   host,
-				Owner:  "owner",
-				Repo:   "repo",
-				Source: "git",
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dep, err := ParseDepString("http://127.0.0.1/o/pkg.git#main")
+			if err != nil {
+				t.Fatal(err)
 			}
-			if err := CheckInsecureDependencyScheme(dep, false, "github.com"); err == nil {
-				t.Errorf("expected host %q to be refused without --allow-insecure (no host exemption, Python parity)", host)
+			dep.AllowInsecure = tc.allowField
+			err = CheckInsecureDependency(dep, tc.allowFlag, "github.com")
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if got != tc.want {
+				t.Errorf("got %q\nwant %q", got, tc.want)
 			}
 		})
 	}
-}
-
-// TestCheckInsecureDependencyScheme_AllowInsecurePermits proves
-// --allow-insecure permits an otherwise-refused http:// dependency for every
-// host class -- public, loopback, and RFC1918-private alike.
-func TestCheckInsecureDependencyScheme_AllowInsecurePermits(t *testing.T) {
-	hosts := []string{"example.com", "127.0.0.1", "localhost", "192.168.1.10"}
-	for _, host := range hosts {
-		t.Run(host, func(t *testing.T) {
-			dep := &DependencyReference{
-				Scheme: "http",
-				Host:   host,
-				Owner:  "owner",
-				Repo:   "repo",
-				Source: "git",
-			}
-			if err := CheckInsecureDependencyScheme(dep, true, "github.com"); err != nil {
-				t.Errorf("expected --allow-insecure to permit http:// dependency to %q, got: %v", host, err)
-			}
-		})
-	}
-}
-
-// TestCheckInsecureDependencyScheme_NonHTTPSchemesUnaffected proves https/ssh
-// (and a nil dep) are never touched by this gate.
-func TestCheckInsecureDependencyScheme_NonHTTPSchemesUnaffected(t *testing.T) {
-	if err := CheckInsecureDependencyScheme(nil, false, "github.com"); err != nil {
-		t.Errorf("nil dep should never error, got: %v", err)
-	}
-	for _, scheme := range []string{"https", "ssh", "git", ""} {
-		dep := &DependencyReference{Scheme: scheme, Host: "example.com", Owner: "owner", Repo: "repo", Source: "git"}
-		if err := CheckInsecureDependencyScheme(dep, false, "github.com"); err != nil {
-			t.Errorf("scheme %q should never be refused by the http-only gate, got: %v", scheme, err)
+	for _, raw := range []string{"https://127.0.0.1/o/pkg.git", "o/pkg", "./local"} {
+		dep, err := ParseDepString(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckInsecureDependency(dep, false, "github.com"); err != nil {
+			t.Errorf("%s refused: %v", raw, err)
 		}
 	}
 }
 
-// TestCheckInsecureDependencyScheme_DisplayIncludesVirtualPathAndRef proves
-// the reconstructed display URL includes the virtual path and ref when
-// present, matching the dependency the user actually declared.
-func TestCheckInsecureDependencyScheme_DisplayIncludesVirtualPathAndRef(t *testing.T) {
-	dep := &DependencyReference{
-		Scheme:      "http",
-		Host:        "example.com",
-		Owner:       "owner",
-		Repo:        "repo",
-		VirtualPath: "sub/pkg",
-		Reference:   "main",
-		Source:      "git",
+// TestInsecureDependencyURL is the git value to_apm_yml_entry writes for an
+// http dependency (models/dependency/reference.py:1956-1961): host and port,
+// the repository, no virtual path, then the ref.
+func TestInsecureDependencyURL(t *testing.T) {
+	cases := map[string]string{
+		"http://127.0.0.1/o/pkg.git":      "http://127.0.0.1/o/pkg",
+		"http://127.0.0.1:18115/o/x.git":  "http://127.0.0.1:18115/o/x",
+		"http://example.com/o/pkg.git#v1": "http://example.com/o/pkg#v1",
 	}
-	err := CheckInsecureDependencyScheme(dep, false, "github.com")
-	if err == nil {
-		t.Fatal("expected error for http:// dependency without --allow-insecure")
-	}
-	want := "http://example.com/owner/repo/sub/pkg#main"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("error should include virtual path and ref (%q), got: %v", want, err)
-	}
-}
-
-// TestCheckInsecureDependencyScheme_MissingHostUsesDefaultHost proves a dep
-// with no explicit Host (e.g. shorthand parsed against DefaultHost) is still
-// refused and the error reconstructs the URL from the manifest's default
-// host so the message names an actual location.
-func TestCheckInsecureDependencyScheme_MissingHostUsesDefaultHost(t *testing.T) {
-	dep := &DependencyReference{Scheme: "http", Owner: "owner", Repo: "repo", Source: "git"}
-	err := CheckInsecureDependencyScheme(dep, false, "github.com")
-	if err == nil {
-		t.Fatal("expected error: empty Host is refused like any other http:// dependency")
-	}
-	if !strings.Contains(err.Error(), "http://github.com/owner/repo") {
-		t.Errorf("error should reconstruct the URL using defaultHost, got: %v", err)
-	}
-}
-
-// The refusal names the URL with its port, as the Oracle prints the entry's
-// git URL (install/insecure_policy.py:50-59).
-func TestCheckInsecureDependencyScheme_MessageKeepsPort(t *testing.T) {
-	dep, err := ParseDepString("http://127.0.0.1:18115/o/x.git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = CheckInsecureDependencyScheme(dep, false, "github.com")
-	const want = "http://127.0.0.1:18115/o/x -- HTTP dependency (unencrypted); refused by default. Pass --allow-insecure to apm-go install to permit it"
-	if err == nil || err.Error() != want {
-		t.Fatalf("got %v\nwant %s", err, want)
+	for raw, want := range cases {
+		dep, err := ParseDepString(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := InsecureDependencyURL(dep, "github.com"); got != want {
+			t.Errorf("%s: got %s, want %s", raw, got, want)
+		}
 	}
 }

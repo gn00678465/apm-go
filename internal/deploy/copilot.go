@@ -3,7 +3,6 @@ package deploy
 import (
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -50,11 +49,12 @@ func (a *copilotAdapter) DeployPrimitive(p Primitive, projectDir string) ([]stri
 
 // copilotHookFile is the stem of the file a copilot hook is written to,
 // <package>-<stem> (integration/hook_integrator.py:1065-1067). A dependency's
-// package is its directory below apm_modules (install_path.name, :901).
+// package is its directory below apm_modules (install_path.name, :901), an
+// alias when it has one (measured, issue151-impl/al3-or/aliashook).
 func copilotHookFile(p Primitive) string {
 	pkg := activeDeployMode.hookPackage
 	if p.DepKey != "" {
-		pkg = path.Base(p.DepKey)
+		pkg = filepath.Base(p.PackageDir)
 	} else if pkg == "" {
 		pkg = localHookPackage
 	}

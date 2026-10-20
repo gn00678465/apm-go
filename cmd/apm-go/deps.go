@@ -86,10 +86,9 @@ func (c primitiveCounts) summary() string {
 
 // countPrimitives counts what the Oracle counts, which is not what deploy
 // deploys (a root skills/<name>/SKILL.md is not counted). A root SKILL.md is
-// the skill deploy names after the last segment of the apm_modules key
-// (internal/deploy/primitive.go skillNameFromDepKey), so --skills and the
-// Skills column agree. The Oracle names an alias package's root skill after
-// the alias, which is that segment too (measured: {git: .../skill.git, alias:
+// the skill deploy names after the package's directory below apm_modules,
+// the last segment of rel, so --skills and the Skills column agree; for an
+// alias package that is the alias (measured: {git: .../skill.git, alias:
 // custom} deploys .claude/skills/custom).
 func countPrimitives(dir, rel string) primitiveCounts {
 	var c primitiveCounts

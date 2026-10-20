@@ -92,6 +92,20 @@ type ResolvedDep struct {
 	// TargetSubset is the `targets:` of the reference the resolver kept for
 	// this key, the shallowest one (deps/apm_resolver.py:762-773).
 	TargetSubset []string
+	// Alias, Insecure (an http:// source) and AllowInsecure (its
+	// allow_insecure: true) are those of that reference too.
+	Alias         string
+	Insecure      bool
+	AllowInsecure bool
+}
+
+// ModuleDir is the dependency's directory below apm_modules, slash-separated:
+// its alias, else its key.
+func (d ResolvedDep) ModuleDir() string {
+	if d.Alias != "" {
+		return d.Alias
+	}
+	return d.Key
 }
 
 // ConstraintEntry records one constraint path to a package identity.

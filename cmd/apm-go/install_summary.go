@@ -340,6 +340,9 @@ func (r *installRun) blockHeader(dep resolver.ResolvedDep, newLock, oldLock *loc
 		if dep.Constraint != "" {
 			name += "#" + dep.Constraint
 		}
+		if dep.Alias != "" {
+			name += "@" + dep.Alias
+		}
 	}
 	var now, old *lockfile.LockedDep
 	if newLock != nil {
@@ -367,7 +370,7 @@ func (r *installRun) blockHeader(dep resolver.ResolvedDep, newLock, oldLock *loc
 			// (deps/github_downloader.py:1746-1747).
 			ref = "default"
 		default:
-			ref = gitops.CheckedOutBranch(filepath.Join("apm_modules", filepath.FromSlash(dep.Key)))
+			ref = gitops.CheckedOutBranch(filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir())))
 		}
 		if now != nil {
 			sha = now.ResolvedCommit
