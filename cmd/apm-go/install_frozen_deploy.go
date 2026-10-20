@@ -119,7 +119,7 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 		if dep.LocalSourcePath == "" {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join("apm_modules", deploy.DepRefKey(dep))); err == nil {
+		if _, err := os.Stat(filepath.Join("apm_modules", filepath.FromSlash(deploy.DepRefDir(dep)))); err == nil {
 			continue
 		}
 		if _, err := deps.loader.LoadPackage(dep, ""); err != nil {
@@ -131,22 +131,7 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 	result := &resolver.ResolutionResult{}
 	for i := range lock.Dependencies {
 		d := &lock.Dependencies[i]
-		result.Deps = append(result.Deps, resolver.ResolvedDep{
-			Key:               d.UniqueKey(),
-			Kind:              lockedKind(d),
-			RepoURL:           d.RepoURL,
-			Host:              d.Host,
-			Port:              d.Port,
-			ArtifactoryPrefix: d.RegistryPrefix,
-			VirtualPath:       d.VirtualPath,
-			Constraint:        d.Constraint,
-			ResolvedTag:       d.ResolvedTag,
-			ResolvedRef:       d.ResolvedRef,
-			Commit:            d.ResolvedCommit,
-			Depth:             d.Depth,
-			ResolvedBy:        d.ResolvedBy,
-			TargetSubset:      d.TargetSubset,
-		})
+		result.Deps = append(result.Deps, lockedResolvedDep(d))
 	}
 	var filter *deploy.SkillFilter
 	if subsets := effectiveSkillSubsets(m, nil, nil); len(subsets) > 0 {
@@ -271,4 +256,41 @@ func frozenDeployMatchesLock(deployed *deploy.DeployResult, lock *lockfile.Lockf
 		}
 	}
 	return nil
+}
+
+// useLockedAliases gives each direct dependency the lock entry's alias, for a
+// deploy that takes its packages from the lock: the alias names the directory
+// below apm_modules the lock's packages are in, and a lock an apm-go before
+// issue #151 wrote records none although apm.yml declares one.
+func useLockedAliases(deps []*manifest.DependencyReference, lock *lockfile.Lockfile) {
+	for _, d := range deps {
+		if entry := lock.FindByKey(deploy.DepRefKey(d)); entry != nil {
+			d.Alias = entry.Alias
+		}
+	}
+}
+
+// lockedResolvedDep is the dependency a lock entry records, for a deploy that
+// takes its packages from the lock (a frozen install, the uninstall
+// hand-over).
+func lockedResolvedDep(d *lockfile.LockedDep) resolver.ResolvedDep {
+	return resolver.ResolvedDep{
+		Key:               d.UniqueKey(),
+		Kind:              lockedKind(d),
+		RepoURL:           d.RepoURL,
+		Host:              d.Host,
+		Port:              d.Port,
+		ArtifactoryPrefix: d.RegistryPrefix,
+		VirtualPath:       d.VirtualPath,
+		Constraint:        d.Constraint,
+		ResolvedTag:       d.ResolvedTag,
+		ResolvedRef:       d.ResolvedRef,
+		Commit:            d.ResolvedCommit,
+		Depth:             d.Depth,
+		ResolvedBy:        d.ResolvedBy,
+		TargetSubset:      d.TargetSubset,
+		Alias:             d.Alias,
+		Insecure:          d.IsInsecure,
+		AllowInsecure:     d.AllowInsecure,
+	}
 }

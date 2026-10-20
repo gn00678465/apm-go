@@ -48,10 +48,17 @@ type DependencyReference struct {
 	// LocalSourcePath.
 	LocalDeclaredRef string
 	IsParent         bool
-	Port             int
-	Scheme           string // "https", "http", "ssh", "git" (SCP)
-	Source           string // "git", "registry", "local", "marketplace", "" (inferred)
-	RegistryName     string // registry name for source=="registry" (empty = use default)
+	// AllowInsecure is a git entry's `allow_insecure: true`, one of the two
+	// opt-ins an http:// dependency needs (install/insecure_policy.py).
+	AllowInsecure bool
+	// HTTPApproved is set by install's HTTP policy on an http:// dependency
+	// it lets through; gitops adds http to the transports of that
+	// dependency's clone alone. Runtime-only, like LocalSourcePath.
+	HTTPApproved bool
+	Port         int
+	Scheme       string // "https", "http", "ssh", "git" (SCP)
+	Source       string // "git", "registry", "local", "marketplace", "" (inferred)
+	RegistryName string // registry name for source=="registry" (empty = use default)
 
 	// SSHUser is the parsed userinfo for an ssh:// or SCP-form dependency
 	// whose git remote needs a non-default user (e.g. an EMU/self-hosted
@@ -1129,18 +1136,21 @@ func namesDirectory(p string) bool {
 func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	kv := make(map[string]string)
 	keys := make(map[string]bool)
-	var skillsNode, pathNode, targetsNode *yaml.Node
+	var skillsNode, pathNode, targetsNode, aliasNode, insecureNode *yaml.Node
 	for i := 0; i < len(entry.Content)-1; i += 2 {
 		k := entry.Content[i].Value
 		keys[k] = true
-		if k == "skills" {
+		switch k {
+		case "skills":
 			skillsNode = entry.Content[i+1]
-		}
-		if k == "targets" {
+		case "targets":
 			targetsNode = entry.Content[i+1]
-		}
-		if k == "path" {
+		case "path":
 			pathNode = entry.Content[i+1]
+		case "alias":
+			aliasNode = entry.Content[i+1]
+		case "allow_insecure":
+			insecureNode = entry.Content[i+1]
 		}
 		if entry.Content[i+1].Kind == yaml.ScalarNode {
 			kv[k] = entry.Content[i+1].Value
@@ -1212,6 +1222,9 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 		// moves the string between the two forms when a skill subset is
 		// added (newGitSkillEntry) or reset. The reason text is the
 		// Oracle's (models/dependency/reference.py:831-846).
+		if err := rejectUnknownFields(entry, pathDepFields, "path"); err != nil {
+			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
+		}
 		if pathNode.Kind != yaml.ScalarNode || pathNode.ShortTag() != "!!str" || strings.TrimSpace(pathNode.Value) == "" {
 			return nil, fmt.Errorf("dependency entry %d: 'path' field must be a non-empty string", idx)
 		}
@@ -1223,7 +1236,9 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 		if err != nil {
 			return nil, err
 		}
-		d.Alias = kv["alias"]
+		if d.Alias, err = ParseAliasField(aliasNode); err != nil {
+			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
+		}
 		// The Oracle's path object form takes skills too
 		// (models/dependency/reference.py:831-846).
 		if keys["skills"] {
@@ -1242,24 +1257,29 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 	if keys["git"] {
 		gitVal := kv["git"]
 		if gitVal == "parent" {
+			if err := rejectUnknownFields(entry, parentGitDepFields, "parent git"); err != nil {
+				return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
+			}
 			if !keys["path"] {
 				return nil, fmt.Errorf("dependency entry %d: git: parent requires a 'path' field", idx)
 			}
-			if keys["type"] {
-				return nil, fmt.Errorf("dependency entry %d: 'type' is not allowed with git: parent", idx)
-			}
-			if keys["skills"] {
-				return nil, fmt.Errorf("dependency entry %d: 'skills' is not allowed with git: parent", idx)
-			}
-			if keys["targets"] {
-				return nil, fmt.Errorf("dependency entry %d: Unsupported field(s) for parent git dependency: 'targets'", idx)
+			alias, err := ParseAliasField(aliasNode)
+			if err != nil {
+				return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
 			}
 			return &DependencyReference{
 				IsParent:    true,
 				VirtualPath: kv["path"],
 				VirtualType: classifyVirtualPath(kv["path"]),
-				Alias:       kv["alias"],
+				Alias:       alias,
 			}, nil
+		}
+		if err := rejectUnknownFields(entry, gitDepFields, "git"); err != nil {
+			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
+		}
+		allowInsecure, err := parseAllowInsecureField(insecureNode)
+		if err != nil {
+			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
 		}
 		// A local path here is the local package it names, as in the string
 		// form (reference.py:904 parses the value with cls.parse). Its `ref`
@@ -1269,15 +1289,18 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 		if err != nil {
 			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
 		}
+		d.AllowInsecure = allowInsecure
 		if kv["ref"] != "" {
 			d.Reference = kv["ref"]
-		}
-		if kv["alias"] != "" {
-			d.Alias = kv["alias"]
 		}
 		if kv["path"] != "" && !d.IsLocal {
 			d.VirtualPath = kv["path"]
 			d.VirtualType = classifyVirtualPath(kv["path"])
+		}
+		if aliasNode != nil {
+			if d.Alias, err = ParseAliasField(aliasNode); err != nil {
+				return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
+			}
 		}
 		if keys["skills"] {
 			subset, err := parseSkillsField(skillsNode, idx)
@@ -1296,20 +1319,22 @@ func ParseDepDict(entry *yaml.Node, idx int) (*DependencyReference, error) {
 		if keys["skills"] {
 			return nil, fmt.Errorf("dependency entry %d: 'skills' is only supported for git dependencies", idx)
 		}
+		alias, err := ParseAliasField(aliasNode)
+		if err != nil {
+			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
+		}
 		targets, err := parseDepTargets(targetsNode, idx)
 		if err != nil {
 			return nil, err
 		}
-		// Registry object form uses `version:` (docs); accept `ref:` as an alias.
-		reference := kv["version"]
-		if reference == "" {
-			reference = kv["ref"]
+		if err := rejectUnknownRegistryFields(entry); err != nil {
+			return nil, fmt.Errorf("dependency entry %d: %w", idx, err)
 		}
 		return &DependencyReference{
 			RepoURL:      kv["id"],
-			Reference:    reference,
+			Reference:    kv["version"],
 			RegistryName: kv["registry"],
-			Alias:        kv["alias"],
+			Alias:        alias,
 			Source:       "registry",
 			TargetSubset: targets,
 		}, nil
@@ -1851,4 +1876,18 @@ func validateVirtualPath(vp string) error {
 // check with this one.
 func isDotSegment(s string) bool {
 	return s == "." || s == ".."
+}
+
+// ModuleDir is the package's directory below apm_modules, slash-separated:
+// the alias when the entry names one, else its key, as the Oracle's
+// build_materialization_path places it (models/dependency/materialization.py:
+// 106-130). The alias changes where the package is, not which it is.
+func (d *DependencyReference) ModuleDir() string {
+	if d.Alias != "" {
+		return d.Alias
+	}
+	if d.VirtualPath != "" {
+		return d.RepoURL + "/" + d.VirtualPath
+	}
+	return d.RepoURL
 }

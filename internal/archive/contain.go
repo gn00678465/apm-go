@@ -25,9 +25,19 @@ type ContainmentError struct {
 	Base string
 	// Resolved is Path with every symlink resolved, the last one included.
 	Resolved string
+	// Alias is the alias that names Path, a package's directory below
+	// apm_modules; the Oracle refuses such a directory with its own texts
+	// (models/dependency/materialization.py:117-129).
+	Alias string
 }
 
 func (e *ContainmentError) Error() string {
+	if e.Alias != "" {
+		if e.Resolved == e.Base {
+			return fmt.Sprintf("Invalid dependency alias '%s': destination resolves to apm_modules itself. Choose a separate package directory and rerun apm-go install.", e.Alias)
+		}
+		return fmt.Sprintf("Invalid dependency alias '%s': unsafe destination %s. Inspect the alias path without removing its target, choose a separate package directory, and rerun apm-go install.", e.Alias, e.Path)
+	}
 	return fmt.Sprintf("Cannot verify containment of '%s' within '%s': Path '%s' resolves to '%s' which is outside the allowed base directory '%s'",
 		e.Path, e.Base, e.Path, e.Resolved, e.Base)
 }
@@ -55,6 +65,17 @@ func CheckWithin(base, target string) error {
 		return &ContainmentError{Path: abs, Base: realBase, Resolved: resolved}
 	}
 	return nil
+}
+
+// CheckPackageDir is CheckWithin for dir, a package's directory below base;
+// when alias names it, a refusal has the Oracle's texts for an alias.
+func CheckPackageDir(base, dir, alias string) error {
+	err := CheckWithin(base, dir)
+	var ce *ContainmentError
+	if alias != "" && errors.As(err, &ce) {
+		ce.Alias = alias
+	}
+	return err
 }
 
 // RealPath is p made absolute with every symlink resolved, as Python's

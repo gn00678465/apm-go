@@ -96,6 +96,11 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	for _, dep := range m.ParsedDevDeps {
 		normalizeLocalDep(dep)
 	}
+	// The Oracle's update has no --allow-insecure, so an http:// dependency
+	// always stops it (r6-or/httpok/up.out).
+	if err := checkInsecureDirect(allDirectDeps(m), false, m.DefaultHost); err != nil {
+		return err
+	}
 
 	// C3 (07-11-update-local-deps): translate a scoped positional token that
 	// names a local/absolute-path dependency into the same synthetic
@@ -108,6 +113,14 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	if pkg != "" {
 		if ref, perr := manifest.ParseDepString(pkg); perr == nil && ref.IsLocal {
 			pkg = localModulesKey(resolveLocalSourceAbs(ref.LocalPath))
+		}
+		// The Oracle takes a dependency's alias for it too
+		// (commands/_helpers.py:404-412).
+		for _, dep := range allDirectDeps(m) {
+			if dep.Alias != "" && dep.Alias == pkg {
+				pkg = deploy.DepRefKey(dep)
+				break
+			}
 		}
 	}
 
@@ -195,14 +208,18 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		}
 	}
 
+	insecure := updateInsecureLoader(m, regLoader)
 	var result *resolver.ResolutionResult
 	if pkg == "" {
-		result, err = resolver.PlanFullUpdate(m, existingLock, deps.tags, regLoader, resolverCfg)
+		result, err = resolver.PlanFullUpdate(m, existingLock, deps.tags, insecure, resolverCfg)
 	} else {
-		result, err = resolver.PlanScopedUpdate(m, existingLock, deps.tags, regLoader, resolverCfg, pkg, frozen)
+		result, err = resolver.PlanScopedUpdate(m, existingLock, deps.tags, insecure, resolverCfg, pkg, frozen)
 	}
 	if err != nil {
 		return fmt.Errorf("update: %w", err)
+	}
+	if err := insecure.reportInsecure(result.Deps); err != nil {
+		return err
 	}
 
 	marketplaceProvenance := make(map[string]*marketplace.Provenance)
@@ -278,14 +295,18 @@ func runUpdateDryRun(m *manifest.Manifest, existingLock *lockfile.Lockfile, deps
 		MaxEntries:      deps.maxEntries,
 	}
 
+	insecure := updateInsecureLoader(m, scratchRegLoader)
 	var result *resolver.ResolutionResult
 	if pkg == "" {
-		result, err = resolver.PlanFullUpdate(m, existingLock, deps.tags, scratchRegLoader, resolverCfg)
+		result, err = resolver.PlanFullUpdate(m, existingLock, deps.tags, insecure, resolverCfg)
 	} else {
-		result, err = resolver.PlanScopedUpdate(m, existingLock, deps.tags, scratchRegLoader, resolverCfg, pkg, false)
+		result, err = resolver.PlanScopedUpdate(m, existingLock, deps.tags, insecure, resolverCfg, pkg, false)
 	}
 	if err != nil {
 		return fmt.Errorf("update --dry-run: %w", err)
+	}
+	if err := insecure.reportInsecure(result.Deps); err != nil {
+		return err
 	}
 
 	// A minimal, in-memory-only Lockfile carrying just enough
@@ -333,7 +354,7 @@ func directGitSemverUpdateScope(m *manifest.Manifest, pkg string) []string {
 		if pkg != "" && key != pkg {
 			continue
 		}
-		keys = append(keys, key)
+		keys = append(keys, dep.ModuleDir())
 	}
 	return keys
 }
@@ -376,4 +397,12 @@ func printUpdateSummary(oldLock, newLock *lockfile.Lockfile) {
 	}
 	ux.Section(os.Stdout, "Update plan for apm.yml")
 	ux.List(os.Stdout, items)
+}
+
+// updateInsecureLoader is the HTTP policy of an update, which takes neither
+// --allow-insecure nor --allow-insecure-host: no transitive http://
+// dependency is fetched.
+func updateInsecureLoader(m *manifest.Manifest, next resolver.PackageLoader) *insecureLoader {
+	return &insecureLoader{next: next, refs: map[string]*manifest.DependencyReference{},
+		policy: newInsecurePolicy(allDirectDeps(m), false, nil, m.DefaultHost)}
 }

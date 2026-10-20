@@ -55,6 +55,9 @@ func TestInstall_GitDependency_LockRecordsPackageVersion(t *testing.T) {
 		key   string
 		files map[string]string
 		want  string
+		// The name and package_type of the Oracle's lock (the comment of
+		// gitPackageIdentity names the runs and the lines).
+		wantName, wantType string
 	}{
 		{
 			name: "apm package",
@@ -63,7 +66,8 @@ func TestInstall_GitDependency_LockRecordsPackageVersion(t *testing.T) {
 				"apm.yml":                             "name: pkg\nversion: 3.1.4\n",
 				".apm/instructions/x.instructions.md": "# x\n",
 			},
-			want: "3.1.4",
+			want:     "3.1.4",
+			wantName: "pkg", wantType: "apm_package",
 		},
 		{
 			name: "dependency-only apm package",
@@ -71,37 +75,43 @@ func TestInstall_GitDependency_LockRecordsPackageVersion(t *testing.T) {
 			files: map[string]string{
 				"apm.yml": "name: agg\nversion: 2.2.0\ndependencies:\n  mcp:\n    - name: m\n      registry: false\n      transport: stdio\n      command: m\n",
 			},
-			want: "2.2.0",
+			want:     "2.2.0",
+			wantName: "agg", wantType: "apm_package",
 		},
 		{
 			name: "root SKILL.md only",
 			dep:  "acme/skill", key: "acme/skill",
-			files: map[string]string{"SKILL.md": gitVersionSkill},
-			want:  "unknown",
+			files:    map[string]string{"SKILL.md": gitVersionSkill},
+			want:     "unknown",
+			wantName: "s", wantType: "claude_skill",
 		},
 		{
 			name: "root SKILL.md with a metadata apm.yml",
 			dep:  "acme/hybrid", key: "acme/hybrid",
-			files: map[string]string{"SKILL.md": gitVersionSkill, "apm.yml": "name: hybrid\nversion: 0.4.0\n"},
-			want:  "0.4.0",
+			files:    map[string]string{"SKILL.md": gitVersionSkill, "apm.yml": "name: hybrid\nversion: 0.4.0\n"},
+			want:     "0.4.0",
+			wantName: "hybrid", wantType: "hybrid",
 		},
 		{
 			name: "hook package",
 			dep:  "acme/hooks", key: "acme/hooks",
-			files: map[string]string{"hooks/hooks.json": "{}\n"},
-			want:  "unknown",
+			files:    map[string]string{"hooks/hooks.json": "{}\n"},
+			want:     "unknown",
+			wantName: "", wantType: "",
 		},
 		{
 			name: "skill bundle",
 			dep:  "acme/bundle", key: "acme/bundle",
-			files: map[string]string{"skills/a/SKILL.md": gitVersionSkill},
-			want:  "unknown",
+			files:    map[string]string{"skills/a/SKILL.md": gitVersionSkill},
+			want:     "unknown",
+			wantName: "bundle", wantType: "skill_bundle",
 		},
 		{
 			name: "skill bundle with a metadata apm.yml",
 			dep:  "acme/bundle", key: "acme/bundle",
-			files: map[string]string{"skills/a/SKILL.md": gitVersionSkill, "apm.yml": "name: bundle\nversion: 5.0.1\n"},
-			want:  "5.0.1",
+			files:    map[string]string{"skills/a/SKILL.md": gitVersionSkill, "apm.yml": "name: bundle-name\nversion: 5.0.1\n"},
+			want:     "5.0.1",
+			wantName: "bundle-name", wantType: "skill_bundle",
 		},
 		{
 			name: "claude plugin with a version",
@@ -110,7 +120,8 @@ func TestInstall_GitDependency_LockRecordsPackageVersion(t *testing.T) {
 				".claude-plugin/plugin.json": `{"name": "plugin", "version": "2.5.0"}`,
 				"agents/a.md":                "# a\n",
 			},
-			want: "2.5.0",
+			want:     "2.5.0",
+			wantName: "plugin", wantType: "apm_package",
 		},
 		{
 			name: "claude plugin without a version or a commit",
@@ -119,13 +130,15 @@ func TestInstall_GitDependency_LockRecordsPackageVersion(t *testing.T) {
 				".claude-plugin/plugin.json": `{"name": "plugin"}`,
 				"agents/a.md":                "# a\n",
 			},
-			want: "0.0.0",
+			want:     "0.0.0",
+			wantName: "plugin", wantType: "apm_package",
 		},
 		{
 			name: "root plugin.json",
 			dep:  "acme/plugin", key: "acme/plugin",
-			files: map[string]string{"plugin.json": `{"name": "plugin", "version": "1.2.0"}`, "agents/a.md": "# a\n"},
-			want:  "1.2.0",
+			files:    map[string]string{"plugin.json": `{"name": "plugin", "version": "1.2.0"}`, "agents/a.md": "# a\n"},
+			want:     "1.2.0",
+			wantName: "plugin", wantType: "apm_package",
 		},
 		{
 			name: "claude plugin without a version and a metadata apm.yml",
@@ -135,7 +148,8 @@ func TestInstall_GitDependency_LockRecordsPackageVersion(t *testing.T) {
 				"apm.yml":                    "name: plugin\nversion: 4.0.0\n",
 				"agents/a.md":                "# a\n",
 			},
-			want: "4.0.0",
+			want:     "4.0.0",
+			wantName: "plugin", wantType: "apm_package",
 		},
 		{
 			name: "plugin manifest beside an apm package",
@@ -145,13 +159,15 @@ func TestInstall_GitDependency_LockRecordsPackageVersion(t *testing.T) {
 				"apm.yml":                             "name: dual\nversion: 1.1.0\n",
 				".apm/instructions/x.instructions.md": "# x\n",
 			},
-			want: "1.1.0",
+			want:     "1.1.0",
+			wantName: "dual", wantType: "apm_package",
 		},
 		{
 			name: "subdirectory package",
 			dep:  "acme/mono/skills/alpha", key: "acme/mono/skills/alpha",
-			files: map[string]string{"SKILL.md": gitVersionSkill},
-			want:  "unknown",
+			files:    map[string]string{"SKILL.md": gitVersionSkill},
+			want:     "unknown",
+			wantName: "s", wantType: "claude_skill",
 		},
 	}
 	for _, tc := range cases {
@@ -160,8 +176,8 @@ func TestInstall_GitDependency_LockRecordsPackageVersion(t *testing.T) {
 			if version != tc.want {
 				t.Errorf("version = %q, want %q\n%s", version, tc.want, lock)
 			}
-			if name != "" || packageType != "" {
-				t.Errorf("git entry got name %q and package_type %q, want neither\n%s", name, packageType, lock)
+			if name != tc.wantName || packageType != tc.wantType {
+				t.Errorf("name %q package_type %q, want %q %q\n%s", name, packageType, tc.wantName, tc.wantType, lock)
 			}
 		})
 	}

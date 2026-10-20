@@ -44,6 +44,9 @@ type Primitive struct {
 	// or command the place it stages it in (deps/plugin_parser.py:
 	// 1232-1296). "" is SrcPath.
 	Origin string
+	// PackageDir is the directory of the dependency p comes from, below
+	// apm_modules: the key's, or its alias's. "" for local content.
+	PackageDir string
 }
 
 func (p Primitive) origin() string {
@@ -181,7 +184,17 @@ func CollectDependencyPrimitives(depKey, modulePath string) ([]Primitive, error)
 	return collectDependency(t)
 }
 
+// collectDependency returns the primitives of the package t, each with t's
+// directory as its PackageDir.
 func collectDependency(t sourceTree) ([]Primitive, error) {
+	prims, err := collectPackage(t)
+	for i := range prims {
+		prims[i].PackageDir = t.dir
+	}
+	return prims, err
+}
+
+func collectPackage(t sourceTree) ([]Primitive, error) {
 	m, manifestErr := loadPluginManifest(t)
 	staged := m != nil && !isAPMPackage(t)
 	prims, err := collectFromAPMDir(t, ".apm", true, staged)
@@ -198,9 +211,11 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 		if err := t.checkSkill("."); err != nil {
 			return nil, err
 		}
-		name := skillNameFromDepKey(t.depKey)
+		// The root skill is named after the package's directory below
+		// apm_modules, an alias when there is one (install_path.name,
+		// integration/skill_integrator.py:1769).
 		prims = append(prims, Primitive{
-			Name:        name,
+			Name:        filepath.Base(t.dir),
 			Type:        TypeSkills,
 			Source:      t.source(),
 			DepKey:      t.depKey,
@@ -499,12 +514,4 @@ func withoutRepeatedSkills(have, add []Primitive) []Primitive {
 		out = append(out, p)
 	}
 	return out
-}
-
-func skillNameFromDepKey(depKey string) string {
-	parts := strings.Split(depKey, "/")
-	if len(parts) >= 2 {
-		return parts[len(parts)-1]
-	}
-	return depKey
 }

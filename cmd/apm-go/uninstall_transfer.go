@@ -87,28 +87,14 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 	}
 	useLegacyLocalKeys(m, lock)
 	useGitPathKeys(m, lock)
+	useLockedAliases(allDirectDeps(m), lock)
 	result := &resolver.ResolutionResult{}
 	for i := range lock.Dependencies {
 		d := &lock.Dependencies[i]
 		if removalKeys[d.UniqueKey()] {
 			continue
 		}
-		result.Deps = append(result.Deps, resolver.ResolvedDep{
-			Key:               d.UniqueKey(),
-			Kind:              lockedKind(d),
-			RepoURL:           d.RepoURL,
-			Host:              d.Host,
-			Port:              d.Port,
-			ArtifactoryPrefix: d.RegistryPrefix,
-			VirtualPath:       d.VirtualPath,
-			Constraint:        d.Constraint,
-			ResolvedTag:       d.ResolvedTag,
-			ResolvedRef:       d.ResolvedRef,
-			Commit:            d.ResolvedCommit,
-			Depth:             d.Depth,
-			ResolvedBy:        d.ResolvedBy,
-			TargetSubset:      d.TargetSubset,
-		})
+		result.Deps = append(result.Deps, lockedResolvedDep(d))
 	}
 	var filter *deploy.SkillFilter
 	if subsets, _ := persistedSkillSubsets(m); len(subsets) > 0 {

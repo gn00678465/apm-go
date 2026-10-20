@@ -1,0 +1,27 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: o/pkg
+  name: pkg-name
+  host: 127.0.0.1
+  resolved_commit: b4e35f0dc0a022142cf5b403f9d1377d6f53c8d4
+  resolved_ref: main
+  version: 1.2.3
+  package_type: apm_package
+  deployed_files:
+  - .claude/agents/ag.md
+  deployed_file_hashes:
+    .claude/agents/ag.md: sha256:37904a032dcd4c2f2c504ef978fe2d219a9369955208653cbbbe98085a4b371f
+  content_hash: sha256:5edd1a2ab2926b8fd6637fa1ff4d78ee49e601f176ee190932ddd9b17e61454a
+  is_insecure: true
+  allow_insecure: true
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/agents/ag.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/pkg
+  active_owner: 127.0.0.1/o/pkg
+  content_hash: sha256:37904a032dcd4c2f2c504ef978fe2d219a9369955208653cbbbe98085a4b371f

@@ -1,0 +1,190 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: o/bundle
+  name: bundle
+  host: 127.0.0.1
+  resolved_commit: b5b9d55d9ee2a2fa13e89f93372076bd78f42949
+  version: unknown
+  package_type: skill_bundle
+  deployed_files:
+  - .claude/skills/b1
+  - .claude/skills/b1/SKILL.md
+  deployed_file_hashes:
+    .claude/skills/b1/SKILL.md: sha256:ec327e284588cdf69581945523080e2e17f5653a6cfc940ca9211a81dad63a3c
+  content_hash: sha256:46b885d55403d2941dd577027611c38f813fac104c027edba22dcca1b0b4bb9f
+- repo_url: o/hybrid
+  name: hybrid-name
+  host: 127.0.0.1
+  resolved_commit: d8827dedffb7accc196ff20e81b8828eab33f119
+  version: 2.0.0
+  package_type: hybrid
+  deployed_files:
+  - .claude/skills/hybrid
+  - .claude/skills/hybrid/SKILL.md
+  - .claude/skills/hybrid/apm.yml
+  deployed_file_hashes:
+    .claude/skills/hybrid/SKILL.md: sha256:eae1ae4b9d15de28f1aa405799a8380e8d50fd1e90c517813be4e32a699c43cd
+    .claude/skills/hybrid/apm.yml: sha256:fd43494b4765a88ac851bc40c1d474cfbb914b2e2bda3e4378efda3efbd4e8a2
+  content_hash: sha256:10a518f564c8bd90aebe8dc98e03dc00d7b43556ec892ef7c347c73eea46a9fa
+- repo_url: o/mono
+  name: mono-a
+  host: 127.0.0.1
+  resolved_commit: caab8bcc140db85b7a83b3f8d0105db877138d3a
+  version: 0.1.0
+  virtual_path: a
+  is_virtual: true
+  package_type: apm_package
+  deployed_files:
+  - .claude/agents/aga.md
+  deployed_file_hashes:
+    .claude/agents/aga.md: sha256:19ec47f5162db8a57392f59ce4369754ffe6d69ee6c15b3a42b8903a649e9922
+  content_hash: sha256:f501af8bd2d55f3838663ef6cd434e7bfbe1a4bc54b50cfae88c3d3d99d87131
+- repo_url: o/mono
+  name: mono-b
+  host: 127.0.0.1
+  resolved_commit: caab8bcc140db85b7a83b3f8d0105db877138d3a
+  version: 0.1.0
+  virtual_path: b
+  is_virtual: true
+  package_type: apm_package
+  deployed_files:
+  - .claude/agents/agb.md
+  deployed_file_hashes:
+    .claude/agents/agb.md: sha256:e01d97cac45639bb45803893540396694259e5f1f04ed890a791fa17c082ca86
+  content_hash: sha256:e8b78eb4bbca791bd31443ac98f582b813ec51efeefb25a51cd53b7fec95d519
+- repo_url: o/pkg
+  name: pkg-name
+  host: 127.0.0.1
+  resolved_commit: b4e35f0dc0a022142cf5b403f9d1377d6f53c8d4
+  resolved_ref: main
+  version: 1.2.3
+  package_type: apm_package
+  deployed_files:
+  - .claude/agents/ag.md
+  deployed_file_hashes:
+    .claude/agents/ag.md: sha256:37904a032dcd4c2f2c504ef978fe2d219a9369955208653cbbbe98085a4b371f
+  content_hash: sha256:5edd1a2ab2926b8fd6637fa1ff4d78ee49e601f176ee190932ddd9b17e61454a
+- repo_url: o/plug
+  name: plug-name
+  host: 127.0.0.1
+  resolved_commit: 56ac792e7270c858f7b5f730f68c620e78c1a74b
+  version: 0.5.0
+  package_type: apm_package
+  deployed_files:
+  - .claude/agents/pa.md
+  deployed_file_hashes:
+    .claude/agents/pa.md: sha256:ab3a615f283de352b8f3b520bb66bb2017e629e8686c3b4a764fd07612ac9238
+  content_hash: sha256:05abdd13243916d467660e1cd7784f83f91808fb117c876943c7f08cb845d600
+- repo_url: o/skill
+  name: skill
+  host: 127.0.0.1
+  resolved_commit: 78301d38cad465475b02ba05d6678aa4d8399e46
+  version: unknown
+  package_type: claude_skill
+  deployed_files:
+  - .claude/skills/skill
+  - .claude/skills/skill/SKILL.md
+  deployed_file_hashes:
+    .claude/skills/skill/SKILL.md: sha256:2c2eeaa78a99f3f69f7164f4f6ffa16189646ce9fb14dcd66e259c94604ced5f
+  content_hash: sha256:9d992d01c86b0e8bf2fcc14ee27bb99ee461712b86947c4662221382111ecc9c
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/agents/ag.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/pkg
+  active_owner: 127.0.0.1/o/pkg
+  content_hash: sha256:37904a032dcd4c2f2c504ef978fe2d219a9369955208653cbbbe98085a4b371f
+- kind: project-relative
+  target: claude
+  value: .claude/agents/aga.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/mono/a
+  active_owner: 127.0.0.1/o/mono/a
+  content_hash: sha256:19ec47f5162db8a57392f59ce4369754ffe6d69ee6c15b3a42b8903a649e9922
+- kind: project-relative
+  target: claude
+  value: .claude/agents/agb.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/mono/b
+  active_owner: 127.0.0.1/o/mono/b
+  content_hash: sha256:e01d97cac45639bb45803893540396694259e5f1f04ed890a791fa17c082ca86
+- kind: project-relative
+  target: claude
+  value: .claude/agents/pa.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/plug
+  active_owner: 127.0.0.1/o/plug
+  content_hash: sha256:ab3a615f283de352b8f3b520bb66bb2017e629e8686c3b4a764fd07612ac9238
+- kind: project-relative
+  target: claude
+  value: .claude/skills/b1
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/bundle
+  active_owner: 127.0.0.1/o/bundle
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/b1/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/bundle
+  active_owner: 127.0.0.1/o/bundle
+  content_hash: sha256:ec327e284588cdf69581945523080e2e17f5653a6cfc940ca9211a81dad63a3c
+- kind: project-relative
+  target: claude
+  value: .claude/skills/hybrid
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/hybrid
+  active_owner: 127.0.0.1/o/hybrid
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/hybrid/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/hybrid
+  active_owner: 127.0.0.1/o/hybrid
+  content_hash: sha256:eae1ae4b9d15de28f1aa405799a8380e8d50fd1e90c517813be4e32a699c43cd
+- kind: project-relative
+  target: claude
+  value: .claude/skills/hybrid/apm.yml
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/hybrid
+  active_owner: 127.0.0.1/o/hybrid
+  content_hash: sha256:fd43494b4765a88ac851bc40c1d474cfbb914b2e2bda3e4378efda3efbd4e8a2
+- kind: project-relative
+  target: claude
+  value: .claude/skills/skill
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/skill
+  active_owner: 127.0.0.1/o/skill
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/skill/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/skill
+  active_owner: 127.0.0.1/o/skill
+  content_hash: sha256:2c2eeaa78a99f3f69f7164f4f6ffa16189646ce9fb14dcd66e259c94604ced5f

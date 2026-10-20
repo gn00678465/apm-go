@@ -1,0 +1,57 @@
+lockfile_version: '1'
+apm_version: 0.33.0
+dependencies:
+- repo_url: o/pkg
+  alias: mypkg
+  name: pkg-name
+  host: 127.0.0.1
+  resolved_commit: b4e35f0dc0a022142cf5b403f9d1377d6f53c8d4
+  resolved_ref: main
+  version: 1.2.3
+  package_type: apm_package
+  deployed_files:
+  - .claude/agents/ag.md
+  deployed_file_hashes:
+    .claude/agents/ag.md: sha256:37904a032dcd4c2f2c504ef978fe2d219a9369955208653cbbbe98085a4b371f
+  content_hash: sha256:5edd1a2ab2926b8fd6637fa1ff4d78ee49e601f176ee190932ddd9b17e61454a
+- repo_url: o/skill
+  alias: custom
+  name: skill
+  host: 127.0.0.1
+  resolved_commit: 78301d38cad465475b02ba05d6678aa4d8399e46
+  version: unknown
+  package_type: claude_skill
+  deployed_files:
+  - .claude/skills/custom
+  - .claude/skills/custom/SKILL.md
+  deployed_file_hashes:
+    .claude/skills/custom/SKILL.md: sha256:2c2eeaa78a99f3f69f7164f4f6ffa16189646ce9fb14dcd66e259c94604ced5f
+  content_hash: sha256:9d992d01c86b0e8bf2fcc14ee27bb99ee461712b86947c4662221382111ecc9c
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/agents/ag.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/pkg
+  active_owner: 127.0.0.1/o/pkg
+  content_hash: sha256:37904a032dcd4c2f2c504ef978fe2d219a9369955208653cbbbe98085a4b371f
+- kind: project-relative
+  target: claude
+  value: .claude/skills/custom
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/skill
+  active_owner: 127.0.0.1/o/skill
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/custom/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - 127.0.0.1/o/skill
+  active_owner: 127.0.0.1/o/skill
+  content_hash: sha256:2c2eeaa78a99f3f69f7164f4f6ffa16189646ce9fb14dcd66e259c94604ced5f

@@ -29,7 +29,6 @@ import (
 	"github.com/apm-go/apm/internal/pack/bundle"
 	"github.com/apm-go/apm/internal/registry"
 	"github.com/apm-go/apm/internal/resolver"
-	"github.com/apm-go/apm/internal/semver"
 	"github.com/apm-go/apm/internal/ux"
 	"github.com/apm-go/apm/internal/version"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -43,9 +42,11 @@ type installDeps struct {
 	// defaults (100 MB / 10,000) inside internal/archive.
 	maxEntries      int
 	maxArchiveBytes int64
-	// allowInsecure permits non-TLS http:// git dependencies (--allow-insecure).
-	// Zero value (false) is fail-secure: refuse by default.
-	allowInsecure bool
+	// allowInsecure is --allow-insecure, and allowInsecureHosts the
+	// normalized --allow-insecure-host values (install_insecure.go). The
+	// zero values let no http:// dependency through.
+	allowInsecure      bool
+	allowInsecureHosts []string
 	// verbose enables --verbose-only detail in low-priority presentation
 	// paths (R12d, prd.md/design.md §3) -- currently only the frozen-install
 	// success summary. The zero value (false) keeps every default output
@@ -75,6 +76,7 @@ func installCmd() *cobra.Command {
 	var mcpRegistry string
 	var mcpForce bool
 	var allowInsecure bool
+	var allowInsecureHosts []string
 	var dev bool
 	var globalFlag bool
 
@@ -83,6 +85,10 @@ func installCmd() *cobra.Command {
 		Short: "Install dependencies from apm.yml or by URL/shorthand",
 		RunE: func(cmd *cobra.Command, args []string) (runErr error) {
 			defer silenceUsageForRuntimeError(cmd, &runErr)
+			insecureHosts, err := normalizeInsecureHosts(allowInsecureHosts)
+			if err != nil {
+				return withUsageError(err)
+			}
 			var deployDir string
 			if globalFlag {
 				var err error
@@ -170,15 +176,16 @@ func installCmd() *cobra.Command {
 			}
 
 			deps := &installDeps{
-				tags:            &gitops.RealTagLister{},
-				loader:          newGitPackageLoader("apm_modules"),
-				maxEntries:      maxEntries,
-				maxArchiveBytes: maxArchiveBytes,
-				allowInsecure:   allowInsecure,
-				verbose:         verbose,
-				dev:             dev,
+				tags:               &gitops.RealTagLister{},
+				loader:             newGitPackageLoader("apm_modules"),
+				maxEntries:         maxEntries,
+				maxArchiveBytes:    maxArchiveBytes,
+				allowInsecure:      allowInsecure,
+				allowInsecureHosts: insecureHosts,
+				verbose:            verbose,
+				dev:                dev,
 			}
-			err := runInstall(deps, frozen, noProvenance, targetFlag, deployDir, skillFlags, args)
+			err = runInstall(deps, frozen, noProvenance, targetFlag, deployDir, skillFlags, args)
 			// R17 (codex H8): suppress cobra's default usage dump for JUST
 			// the no-deployment-target diagnostic -- it is a structured,
 			// self-contained teaching message (scanned markers + concrete
@@ -209,7 +216,8 @@ func installCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mcpVersion, "mcp-version", "", "pin the MCP registry entry to a specific version (requires --mcp)")
 	cmd.Flags().StringVar(&mcpRegistry, "registry", "", "MCP registry URL for resolving --mcp NAME (requires --mcp; not valid with --url or a stdio command)")
 	cmd.Flags().BoolVar(&mcpForce, "force", false, "overwrite a conflicting existing --mcp entry non-interactively")
-	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "permit direct http:// (non-TLS) dependencies")
+	cmd.Flags().BoolVar(&allowInsecure, "allow-insecure", false, "Allow HTTP (insecure) dependencies. Required when dependencies use http:// URLs.")
+	cmd.Flags().StringArrayVar(&allowInsecureHosts, "allow-insecure-host", nil, "Allow transitive HTTP (insecure) dependencies from this hostname. Repeat for multiple hosts.")
 	cmd.Flags().BoolVar(&dev, "dev", false, "install positional packages into devDependencies.apm instead of dependencies.apm")
 	cmd.Flags().BoolVarP(&globalFlag, "global", "g", false, "user-scope install: manage packages under ~/.apm/ instead of the project directory")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false,
@@ -465,6 +473,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	// the run, so "Updated apm.yml" is true only when the run gets there: a
 	// run that fails up to and in the resolve does not print it.
 	var heldLines []heldLine
+	invalid := 0
 	if announce {
 		ux.Success(os.Stdout, "Validating %d %s...", len(packages), pluralWord(len(packages), "package", "packages"))
 	}
@@ -483,6 +492,17 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			}
 			if err := validatePersistableRef(pkg, ref); err != nil {
 				return err
+			}
+			// commands/install.py:418-430: an http:// package is valid only
+			// with --allow-insecure, and is then declared with
+			// allow_insecure: true.
+			if ref.IsInsecure() {
+				if !deps.allowInsecure {
+					printInsecureRefusal(manifest.InsecureDependencyRequirements(manifest.InsecureDependencyURL(ref, m.DefaultHost), true, true))
+					invalid++
+					continue
+				}
+				ref.AllowInsecure = true
 			}
 			// Compute the apm.yml-persisted form from the ORIGINAL ref, BEFORE
 			// normalizeLocalDep rewrites RepoURL into the "_local/<name>" key
@@ -592,6 +612,14 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		}
 	}
 	if announce {
+		// core/command_logger.py:302-315.
+		if invalid == len(packages) {
+			ux.Plain(os.Stdout, "All packages failed validation. Nothing to install.")
+			return withSilentExitCode(1, errors.New("all packages failed validation"))
+		}
+		if invalid > 0 {
+			ux.Warn(os.Stdout, "%d %s failed validation and will be skipped.", invalid, pluralWord(invalid, "package", "packages"))
+		}
 		// apm.yml itself is written at the end of the run, with the lock.
 		if newPackages > 0 {
 			heldLines = append(heldLines, heldLine{onlyOnSuccess: true, print: func() {
@@ -616,16 +644,11 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		normalizeLocalDep(dep)
 	}
 
-	// 1c. HTTP dependency policy: refuse non-TLS http:// git dependencies by
-	// default -- both the CLI positional packages just merged into
-	// m.ParsedDeps above and pre-existing apm.yml dependencies.apm/
-	// devDependencies.apm entries -- unless --allow-insecure was passed.
-	// Flag-only, no host exemption (Python parity: insecure_policy.py's
-	// _check_insecure_dependencies(all_apm_deps, ...), which checks
-	// apm_deps + dev_apm_deps together). Must run before any git clone /
-	// network fetch (step 4 below).
-	for _, dep := range allDirectDeps(m) {
-		if err := manifest.CheckInsecureDependencyScheme(dep, deps.allowInsecure, m.DefaultHost); err != nil {
+	// 1c. HTTP dependency policy of the direct dependencies, regular and
+	// dev, before anything is fetched (commands/install.py:1819); a frozen
+	// install checks its lock first (:1762) and this after.
+	if !frozen {
+		if err := checkInsecureDirect(allDirectDeps(m), deps.allowInsecure, m.DefaultHost); err != nil {
 			return err
 		}
 	}
@@ -659,11 +682,15 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		if existingLock == nil {
 			return fmt.Errorf("frozen install requires a lockfile but none was found")
 		}
-		useLegacyLocalKeys(m, existingLock)
-		useLocalKeysForGitPaths(allDirectDeps(m), existingLock)
-		if err := lockfile.CheckFrozenInstall(m, existingLock); err != nil {
+		if err := checkFrozenManifestSync(allDirectDeps(m), existingLock); err != nil {
 			return err
 		}
+		if err := checkInsecureDirect(allDirectDeps(m), deps.allowInsecure, m.DefaultHost); err != nil {
+			return err
+		}
+		useLegacyLocalKeys(m, existingLock)
+		useLocalKeysForGitPaths(allDirectDeps(m), existingLock)
+		useLockedAliases(allDirectDeps(m), existingLock)
 		if err := checkFrozenCommitPins(m.Name, existingLock); err != nil {
 			return err
 		}
@@ -697,7 +724,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			// Defense in depth: the extraction root is derived from lockfile
 			// repo_url (validated at parse time). Refuse to extract outside
 			// apm_modules even if that validation is ever bypassed (req-sc-002).
-			destDir := filepath.Join("apm_modules", dep.UniqueKey())
+			destDir := filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir()))
 			if !archive.Contained("apm_modules", destDir) {
 				return fmt.Errorf("frozen install: refusing to extract %q outside apm_modules", dep.RepoURL)
 			}
@@ -784,6 +811,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		// (no apm.yml) there is nothing to materialize; (A) is the operative
 		// integrity gate.
 		if hasAnyDeps {
+			approvedHTTP, err := checkFrozenInsecure(existingLock, newInsecurePolicy(allDirectDeps(m), deps.allowInsecure, deps.allowInsecureHosts, m.DefaultHost))
+			if err != nil {
+				return err
+			}
 			for _, dep := range existingLock.Dependencies {
 				if dep.Source == "registry" || dep.Source == "local" {
 					continue
@@ -812,6 +843,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 					Owner:             ownerFromRepoURL(dep.RepoURL),
 					Repo:              repoFromRepoURL(dep.RepoURL),
 					Source:            "git",
+					Alias:             dep.Alias,
+				}
+				if dep.IsInsecure {
+					ref.Scheme, ref.AllowInsecure, ref.HTTPApproved = "http", dep.AllowInsecure, approvedHTTP[dep.UniqueKey()]
 				}
 				// Frozen mode already has the authoritative locked commit;
 				// prefer it over resolved_ref (which may name a mutable
@@ -827,12 +862,11 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 				}
 			}
 			for _, dep := range existingLock.Dependencies {
-				// A subdirectory package has no tree_sha256 (buildLockfile).
-				if dep.ResolvedCommit != "" && dep.Source != "registry" && !isSubdirectoryPackage(dep.VirtualPath) {
-					if dep.TreeSHA256 == "" {
-						return fmt.Errorf("frozen install: entry %s missing required tree_sha256", dep.UniqueKey())
-					}
-					installDir := filepath.Join("apm_modules", dep.UniqueKey())
+				// An entry with no tree_sha256, a subdirectory package's
+				// (buildLockfile) or any of a lock the Oracle wrote, is
+				// pinned by resolved_commit and deployed_file_hashes alone.
+				if dep.ResolvedCommit != "" && dep.Source != "registry" && dep.TreeSHA256 != "" && !isSubdirectoryPackage(dep.VirtualPath) {
+					installDir := filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir()))
 					if err := lockfile.VerifyTreeSHA256(dep.TreeSHA256, installDir, dep.ResolvedCommit); err != nil {
 						return fmt.Errorf("frozen install: entry %s: %w", dep.UniqueKey(), err)
 					}
@@ -929,7 +963,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		}
 
 		newLocalCopies := absentLocalCopies(m)
-		fetched = &fetchedDirsLoader{next: regLoader, lock: existingLock, fetched: map[string]bool{},
+		insecure := &insecureLoader{next: regLoader, refs: map[string]*manifest.DependencyReference{},
+			policy: newInsecurePolicy(allDirectDeps(m), deps.allowInsecure, deps.allowInsecureHosts, m.DefaultHost)}
+		fetched = &fetchedDirsLoader{next: insecure, lock: existingLock, fetched: map[string]bool{},
 			announce: func(name string) {
 				heldLines = append(heldLines, heldLine{print: func() { ux.Progress(os.Stdout, "Resolving %s...", name) }})
 			}}
@@ -937,8 +973,14 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			MarketplaceResolve: newMarketplaceResolveFunc(),
 		})
 		printHeldLines(heldLines, err == nil)
+		if err == nil {
+			err = insecure.reportInsecure(result.Deps)
+		}
 		if err != nil {
 			removeNewLocalCopies(newLocalCopies)
+			if isSilentExit(err) {
+				return err
+			}
 			var outside *archive.ContainmentError
 			if errors.As(err, &outside) {
 				return &resolveRefusedError{err: err, reason: outside, verbose: deps.verbose, started: started}
@@ -1466,7 +1508,7 @@ func validateNewSkillNames(result *resolver.ResolutionResult, requestedKeys map[
 		if !requestedKeys[dep.Key] {
 			continue
 		}
-		prims, err := deploy.CollectDependencyPrimitives(dep.Key, filepath.Join("apm_modules", dep.Key))
+		prims, err := deploy.CollectDependencyPrimitives(dep.Key, filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir())))
 		if err != nil {
 			return fmt.Errorf("deploy: %w", err)
 		}
@@ -1759,7 +1801,11 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			Constraint:     dep.Constraint,
 			ResolvedBy:     dep.ResolvedBy,
 			Depth:          dep.Depth,
+			IsInsecure:     dep.Insecure,
+			AllowInsecure:  dep.AllowInsecure,
+			Alias:          dep.Alias,
 		}
+		moduleDir := filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir()))
 
 		// req-lk-002/003: registry deps carry resolved_url + resolved_hash +
 		// version, collected out-of-band by the registry loader.
@@ -1773,7 +1819,7 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			ld.LocalPath = local.LocalDeclaredPath
 			ld.ResolvedRef = local.LocalDeclaredRef
 			ld.ResolvedCommit = ""
-			ld.Name, ld.Version, ld.PackageType = localPackageIdentity(filepath.Join("apm_modules", filepath.FromSlash(dep.Key)))
+			ld.Name, ld.Version, ld.PackageType = localPackageIdentity(moduleDir)
 		}
 
 		if dep.Kind == resolver.KindRegistry {
@@ -1858,22 +1904,23 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 		isSubdir := isSubdirectoryPackage(dep.VirtualPath)
 		if isGit && dep.Commit == "" {
 			if isSubdir {
-				ld.ResolvedCommit = clonedSubdirCommit(regLoader, dep.Key)
-			} else if commit, err := gitops.ResolveCommit(filepath.Join("apm_modules", dep.Key)); err == nil {
+				ld.ResolvedCommit = clonedSubdirCommit(regLoader, dep.ModuleDir())
+			} else if commit, err := gitops.ResolveCommit(moduleDir); err == nil {
 				ld.ResolvedCommit = commit
 			}
 		}
 
 		if isGit {
-			ld.Version = gitDependencyVersion(dep, filepath.Join("apm_modules", filepath.FromSlash(dep.Key)), ld.ResolvedCommit)
+			ld.Version = gitDependencyVersion(dep, moduleDir, ld.ResolvedCommit)
+			ld.Name, ld.PackageType = gitPackageIdentity(moduleDir, dep.ModuleDir(), dep.RepoURL, dep.VirtualPath)
+			ld.IsVirtual = dep.VirtualPath != ""
 		}
 
 		// req-lk-015: compute tree_sha256 for git-sourced deps (required)
 		if isGit && !isSubdir {
-			installDir := filepath.Join("apm_modules", dep.Key)
 			commit := ld.ResolvedCommit
 			if commit != "" {
-				treeHash, hashErr := lockfile.ComputeTreeSHA256(installDir, commit)
+				treeHash, hashErr := lockfile.ComputeTreeSHA256(moduleDir, commit)
 				if hashErr != nil {
 					return nil, fmt.Errorf("tree_sha256 for %s: %w", dep.Key, hashErr)
 				}
@@ -2267,7 +2314,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			effectiveDeployRoot = deployDir
 		}
 		claimed := claimedPaths(newLock)
-		merge := func(bucket string, oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string) ([]string, map[string]string) {
+		merge := func(bucket, dir string, oldFiles []string, oldHashes map[string]string, newFiles []string, newHashes map[string]string) ([]string, map[string]string) {
 			if failedBuckets[bucket] {
 				return mergeDeployedFilesIf(notKept(oldFiles), oldHashes, newFiles, newHashes,
 					func(string) bool { return true })
@@ -2288,12 +2335,12 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 					rest = append(rest, f)
 				}
 			}
-			return mergeDeployedFiles(append(notTakenOver(bucket, rest, targets, deployDir), userPaths...), oldHashes, newFiles, newHashes, effectiveDeployRoot)
+			return mergeDeployedFiles(append(notTakenOver(bucket, dir, rest, targets, deployDir), userPaths...), oldHashes, newFiles, newHashes, effectiveDeployRoot)
 		}
 		for i := range newLock.Dependencies {
 			dep := &newLock.Dependencies[i]
 			if old := prevLock.FindByKey(dep.UniqueKey()); old != nil {
-				dep.DeployedFiles, dep.DeployedHashes = merge(dep.UniqueKey(),
+				dep.DeployedFiles, dep.DeployedHashes = merge(dep.UniqueKey(), old.ModuleDir(),
 					old.DeployedFiles, old.DeployedHashes, dep.DeployedFiles, dep.DeployedHashes)
 			}
 		}
@@ -2306,7 +2353,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 					oldLocal = append(oldLocal, f)
 				}
 			}
-			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = merge("",
+			newLock.LocalDeployedFiles, newLock.LocalDeployedHashes = merge("", "",
 				oldLocal, existingLock.LocalDeployedHashes,
 				newLock.LocalDeployedFiles, newLock.LocalDeployedHashes)
 		}
@@ -2816,6 +2863,11 @@ func persistPackagesToManifest(doc *yamllib.Node, packages []string, effectiveSu
 			setEntrySkillSubset(apmSeq, len(apmSeq.Content)-1, subset)
 		case len(subset) > 0:
 			apmSeq.Content = append(apmSeq.Content, newGitSkillEntry(pkg, subset))
+		case isInsecureDepString(pkg):
+			// An http:// package install takes only with --allow-insecure
+			// is declared as an object with allow_insecure: true
+			// (models/dependency/reference.py:1956-1969).
+			apmSeq.Content = append(apmSeq.Content, insecureGitEntry(pkg))
 		default:
 			// String form. A local path is written without the whitespace
 			// around it, as newGitSkillEntry writes it.
@@ -3080,13 +3132,35 @@ func newGitSkillEntry(gitVal string, subset []string) *yamllib.Node {
 		sourceKey, gitVal = "path", ref.LocalPath
 	}
 	entry := &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map"}
+	if isInsecureDepString(gitVal) {
+		entry = insecureGitEntry(gitVal)
+	} else {
+		entry.Content = append(entry.Content,
+			&yamllib.Node{Kind: yamllib.ScalarNode, Value: sourceKey, Tag: "!!str"},
+			&yamllib.Node{Kind: yamllib.ScalarNode, Value: gitVal, Tag: "!!str"},
+		)
+	}
 	entry.Content = append(entry.Content,
-		&yamllib.Node{Kind: yamllib.ScalarNode, Value: sourceKey, Tag: "!!str"},
-		&yamllib.Node{Kind: yamllib.ScalarNode, Value: gitVal, Tag: "!!str"},
 		&yamllib.Node{Kind: yamllib.ScalarNode, Value: "skills", Tag: "!!str"},
 		newSkillSeqNode(subset),
 	)
 	return entry
+}
+
+func isInsecureDepString(pkg string) bool {
+	ref, err := manifest.ParseDepString(pkg)
+	return err == nil && ref.IsInsecure()
+}
+
+// insecureGitEntry is the object entry of an http:// package: its git value
+// and allow_insecure: true.
+func insecureGitEntry(gitVal string) *yamllib.Node {
+	return &yamllib.Node{Kind: yamllib.MappingNode, Tag: "!!map", Content: []*yamllib.Node{
+		{Kind: yamllib.ScalarNode, Value: "git", Tag: "!!str"},
+		{Kind: yamllib.ScalarNode, Value: gitVal, Tag: "!!str"},
+		{Kind: yamllib.ScalarNode, Value: "allow_insecure", Tag: "!!str"},
+		{Kind: yamllib.ScalarNode, Value: "true", Tag: "!!bool"},
+	}}
 }
 
 // newSkillSeqNode builds the skills: sequence node for subset.
@@ -3451,9 +3525,9 @@ func absentLocalCopies(m *manifest.Manifest) []string {
 		if d.LocalSourcePath == "" {
 			continue
 		}
-		key := deploy.DepRefKey(d)
-		if _, err := os.Lstat(filepath.Join("apm_modules", filepath.FromSlash(key))); os.IsNotExist(err) {
-			absent = append(absent, key)
+		dir := deploy.DepRefDir(d)
+		if _, err := os.Lstat(filepath.Join("apm_modules", filepath.FromSlash(dir))); os.IsNotExist(err) {
+			absent = append(absent, dir)
 		}
 	}
 	return absent
@@ -3462,10 +3536,10 @@ func absentLocalCopies(m *manifest.Manifest) []string {
 // removeNewLocalCopies deletes the directories absentLocalCopies or
 // fetchedDirsLoader listed, and the parent directories that leaves empty,
 // apm_modules included.
-func removeNewLocalCopies(keys []string) {
-	for _, key := range keys {
-		if _, err := deploy.SafeRemoveModuleDir(".", key); err != nil {
-			ux.Warn(os.Stderr, "could not remove apm_modules/%s: %v", key, err)
+func removeNewLocalCopies(dirs []string) {
+	for _, dir := range dirs {
+		if _, err := deploy.SafeRemoveModuleDir(".", dir); err != nil {
+			ux.Warn(os.Stderr, "could not remove apm_modules/%s: %v", dir, err)
 		}
 	}
 }
@@ -3490,17 +3564,19 @@ type fetchedDirsLoader struct {
 
 func (l *fetchedDirsLoader) LoadPackage(ref *manifest.DependencyReference, resolvedRef string) (*manifest.Manifest, error) {
 	if key := deploy.DepRefKey(ref); key != "" {
-		dir := filepath.Join("apm_modules", filepath.FromSlash(key))
+		rel := deploy.DepRefDir(ref)
+		dir := filepath.Join("apm_modules", filepath.FromSlash(rel))
 		_, statErr := os.Lstat(dir)
 		absent := os.IsNotExist(statErr)
 		if absent {
-			l.keys = append(l.keys, key)
+			l.keys = append(l.keys, rel)
 		}
 		// The Oracle checks the path before it prints the Resolving line
 		// (resolve.py:455-464); a local copy has its own check, run before
-		// the resolve (gitops.CheckLocalCopy).
-		if ref.LocalSourcePath == "" {
-			if err := archive.CheckWithin("apm_modules", dir); err != nil {
+		// the resolve (gitops.CheckLocalCopy), but for the directory of an
+		// alias, which the copy refuses as the Oracle does.
+		if ref.LocalSourcePath == "" || ref.Alias != "" {
+			if err := archive.CheckPackageDir("apm_modules", dir, ref.Alias); err != nil {
 				return nil, err
 			}
 		}
@@ -3532,23 +3608,7 @@ func shouldFetch(ref *manifest.DependencyReference, lock *lockfile.Lockfile) boo
 	if lock != nil {
 		locked = lock.FindByKey(deploy.DepRefKey(ref))
 	}
-	if locked == nil {
-		return true
-	}
-	if (ref.Source == "registry") != (locked.Source == "registry") {
-		return true
-	}
-	if ref.Source == "registry" {
-		if !semver.IsSemverRange(ref.Reference) {
-			return ref.Reference != locked.Version
-		}
-		ok, err := semver.Satisfies(locked.Version, ref.Reference)
-		return err != nil || !ok
-	}
-	if resolver.ClassifyReference(ref) == resolver.KindGitSemver {
-		return ref.Reference != locked.Constraint
-	}
-	return ref.Reference != locked.ResolvedRef
+	return locked == nil || lockedRefChanged(ref, locked)
 }
 
 // resolvingName is the Oracle's get_display_name

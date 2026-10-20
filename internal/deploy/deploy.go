@@ -357,7 +357,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		}
 		directKeys[key] = true
 		depCanonKeys[key] = CanonicalDepKey(dep)
-		modulePath := filepath.Join(projectDir, "apm_modules", key)
+		modulePath := filepath.Join(projectDir, "apm_modules", filepath.FromSlash(DepRefDir(dep)))
 		prims, depServers, loadDiags, name, declared, err := collectDependencySources(key, modulePath, dep.Source == "registry")
 		if err != nil {
 			return nil, err
@@ -379,7 +379,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	if resolved != nil {
 		transitive := sortedTransitiveDeps(resolved.Deps, directKeys)
 		for _, dep := range transitive {
-			modulePath := filepath.Join(projectDir, "apm_modules", dep.Key)
+			modulePath := filepath.Join(projectDir, "apm_modules", filepath.FromSlash(dep.ModuleDir()))
 			prims, transitiveServers, loadDiags, name, declared, err := collectDependencySources(dep.Key, modulePath, dep.Kind == resolver.KindRegistry)
 			if err != nil {
 				return nil, err
@@ -1044,6 +1044,16 @@ func appendUnique(list []string, items ...string) []string {
 		}
 	}
 	return list
+}
+
+// DepRefDir is the directory below apm_modules, slash-separated, of the
+// dependency DepRefKey names: its alias, else that key. "" for a local or
+// parent reference, which has no key.
+func DepRefDir(ref *manifest.DependencyReference) string {
+	if DepRefKey(ref) == "" {
+		return ""
+	}
+	return ref.ModuleDir()
 }
 
 // DepRefKey returns the unique dependency key (repo_url, or

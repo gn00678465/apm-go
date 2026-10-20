@@ -16,7 +16,7 @@ type RealTagLister struct {
 
 func (r *RealTagLister) ListTags(repoURL string) ([]semver.TagInfo, error) {
 	cloneURL := r.resolveCloneURL(repoURL)
-	return r.listTags(cloneURL)
+	return r.listTags(cloneURL, false)
 }
 
 // ListTagsForRef preserves structured URL context that is not representable
@@ -24,18 +24,18 @@ func (r *RealTagLister) ListTags(repoURL string) ([]semver.TagInfo, error) {
 // ArtifactoryPrefix and nested host-specific RepoURL.
 func (r *RealTagLister) ListTagsForRef(ref *manifest.DependencyReference) ([]semver.TagInfo, error) {
 	cloneURL := r.resolveCloneURLForRef(ref)
-	return r.listTags(cloneURL)
+	return r.listTags(cloneURL, ref.IsInsecure() && ref.HTTPApproved)
 }
 
 func (r *RealTagLister) resolveCloneURLForRef(ref *manifest.DependencyReference) string {
 	return (&RealPackageLoader{DefaultHost: r.DefaultHost}).resolveCloneURL(ref)
 }
 
-func (r *RealTagLister) listTags(cloneURL string) ([]semver.TagInfo, error) {
+func (r *RealTagLister) listTags(cloneURL string, insecureHTTP bool) ([]semver.TagInfo, error) {
 	if err := ValidateURLRewriteSafety(cloneURL); err != nil {
 		return nil, err
 	}
-	cmd := cloneCommandFor(cloneURL, "ls-remote", "--tags", "--refs", "--", cloneURL)
+	cmd := cloneCommandFor(cloneURL, insecureHTTP, "ls-remote", "--tags", "--refs", "--", cloneURL)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

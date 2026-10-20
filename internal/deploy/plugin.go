@@ -307,7 +307,7 @@ func componentPaths(raw json.RawMessage, defaultDir string, useDefault bool) []s
 // (models/format_detection.py:207-229,451): an apm.yml beside a .apm/
 // directory, or one that declares a dependency. The Oracle takes such a
 // package for an APM package, not a Claude plugin, so it gets no default
-// component directories. cmd/apm-go's packageVersion has its own copy (#88).
+// component directories.
 // A path that leaves the package is not read and counts as missing, as for
 // uninstall (readManifestLeniently): install refuses that apm.yml where it
 // reads the package's manifest, and compile, which reads no apm.yml, must

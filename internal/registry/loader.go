@@ -104,10 +104,7 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 		return nil, fmt.Errorf("%s: %w", ref.RepoURL, err)
 	}
 
-	key := ref.RepoURL
-	if ref.VirtualPath != "" {
-		key += "/" + ref.VirtualPath
-	}
+	key := ref.ModuleDir()
 	// sc-002 defense in depth: RepoURL/VirtualPath are only charset-validated
 	// at manifest-parse time and do not reject ".." segments, so a plain
 	// Contained check after the join alone would miss a ".." that resolves
@@ -120,7 +117,7 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 	destDir := filepath.Join(l.ModulesDir, filepath.FromSlash(key))
 	// SafeExtract removes destDir and renames into it, through a symlinked
 	// parent too.
-	if err := archive.CheckWithin(l.ModulesDir, destDir); err != nil {
+	if err := archive.CheckPackageDir(l.ModulesDir, destDir, ref.Alias); err != nil {
 		return nil, err
 	}
 	if _, err := archive.SafeExtract(bytes.NewReader(body), destDir, archive.Limits{
@@ -136,7 +133,11 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 	// lk-016: emit a normalized <algo>:<hex> envelope even if the registry
 	// advertised a bare-hex digest (VerifyArchiveBytes already validated it).
 	_, digHex, _ := lockfile.ParseHashEnvelope(chosen.Digest)
-	l.resolutions[key] = Resolution{
+	identity := ref.RepoURL
+	if ref.VirtualPath != "" {
+		identity += "/" + ref.VirtualPath
+	}
+	l.resolutions[identity] = Resolution{
 		ResolvedURL:  client.ArchiveURL(owner, repo, chosen.Version),
 		ResolvedHash: lockfile.HashEnvelope("sha256", digHex),
 		Version:      chosen.Version,

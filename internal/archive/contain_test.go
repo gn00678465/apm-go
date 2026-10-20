@@ -50,7 +50,7 @@ func TestCheckWithin(t *testing.T) {
 				containLink(t, filepath.Join(root, "outside"), "apm_modules/_local")
 			},
 			refuse: func(root string) *ContainmentError {
-				return &ContainmentError{filepath.Join(root, "proj/apm_modules/_local/dep"), filepath.Join(root, "proj/apm_modules"), filepath.Join(root, "outside/dep")}
+				return &ContainmentError{Path: filepath.Join(root, "proj/apm_modules/_local/dep"), Base: filepath.Join(root, "proj/apm_modules"), Resolved: filepath.Join(root, "outside/dep")}
 			},
 		},
 		{
@@ -60,7 +60,7 @@ func TestCheckWithin(t *testing.T) {
 				containLink(t, filepath.Join(root, "outside/dep"), "apm_modules/_local/dep")
 			},
 			refuse: func(root string) *ContainmentError {
-				return &ContainmentError{filepath.Join(root, "proj/apm_modules/_local/dep"), filepath.Join(root, "proj/apm_modules"), filepath.Join(root, "outside/dep")}
+				return &ContainmentError{Path: filepath.Join(root, "proj/apm_modules/_local/dep"), Base: filepath.Join(root, "proj/apm_modules"), Resolved: filepath.Join(root, "outside/dep")}
 			},
 		},
 		{
@@ -70,7 +70,7 @@ func TestCheckWithin(t *testing.T) {
 				containLink(t, "../../../outside/gone/x", "apm_modules/_local/dep")
 			},
 			refuse: func(root string) *ContainmentError {
-				return &ContainmentError{filepath.Join(root, "proj/apm_modules/_local/dep"), filepath.Join(root, "proj/apm_modules"), filepath.Join(root, "outside/gone/x")}
+				return &ContainmentError{Path: filepath.Join(root, "proj/apm_modules/_local/dep"), Base: filepath.Join(root, "proj/apm_modules"), Resolved: filepath.Join(root, "outside/gone/x")}
 			},
 		},
 		{
@@ -81,7 +81,7 @@ func TestCheckWithin(t *testing.T) {
 				containLink(t, filepath.Join(root, "outside/gone"), filepath.Join(root, "outside/hop"))
 			},
 			refuse: func(root string) *ContainmentError {
-				return &ContainmentError{filepath.Join(root, "proj/apm_modules/_local/dep"), filepath.Join(root, "proj/apm_modules"), filepath.Join(root, "outside/gone")}
+				return &ContainmentError{Path: filepath.Join(root, "proj/apm_modules/_local/dep"), Base: filepath.Join(root, "proj/apm_modules"), Resolved: filepath.Join(root, "outside/gone")}
 			},
 		},
 		{
@@ -125,7 +125,7 @@ func TestCheckWithin(t *testing.T) {
 				containLink(t, "..", "apm_modules/_local/dep")
 			},
 			refuse: func(root string) *ContainmentError {
-				return &ContainmentError{filepath.Join(root, "proj/apm_modules/_local/dep"), filepath.Join(root, "proj/apm_modules"), filepath.Join(root, "proj/apm_modules")}
+				return &ContainmentError{Path: filepath.Join(root, "proj/apm_modules/_local/dep"), Base: filepath.Join(root, "proj/apm_modules"), Resolved: filepath.Join(root, "proj/apm_modules")}
 			},
 		},
 		{
@@ -133,7 +133,7 @@ func TestCheckWithin(t *testing.T) {
 			key:   "o/..",
 			setup: func(*testing.T, string) {},
 			refuse: func(root string) *ContainmentError {
-				return &ContainmentError{filepath.Join(root, "proj/apm_modules"), filepath.Join(root, "proj/apm_modules"), filepath.Join(root, "proj/apm_modules")}
+				return &ContainmentError{Path: filepath.Join(root, "proj/apm_modules"), Base: filepath.Join(root, "proj/apm_modules"), Resolved: filepath.Join(root, "proj/apm_modules")}
 			},
 		},
 	}

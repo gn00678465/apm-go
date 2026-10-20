@@ -926,7 +926,7 @@ func bundleDepSources(m *manifest.Manifest, lf *lockfile.Lockfile) []bundle.DepS
 		}
 		deps = append(deps, bundle.DepSource{
 			Name:        dep.RepoURL,
-			InstallPath: filepath.Join("apm_modules", dep.UniqueKey()),
+			InstallPath: filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir())),
 			VirtualPath: dep.VirtualPath,
 			RepoURL:     dep.RepoURL,
 		})

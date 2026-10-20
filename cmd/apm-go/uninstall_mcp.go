@@ -66,7 +66,7 @@ func computeUninstallStaleMCP(m *manifest.Manifest, lock *lockfile.Lockfile, mcp
 			// servers on its behalf.
 			continue
 		}
-		servers, _ := deploy.LoadDependencyMCP(key, filepath.Join("apm_modules", key))
+		servers, _ := deploy.LoadDependencyMCP(key, filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir())))
 		for _, s := range servers {
 			newMCP[s.Name] = true
 		}

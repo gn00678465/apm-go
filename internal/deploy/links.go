@@ -96,7 +96,7 @@ func linkSourceOf(p Primitive, origin, destRel string) (*linkSource, bool) {
 	s := &linkSource{run: r, file: r.frame(origin), dep: p.DepKey != "", target: r.frame(filepath.Join(r.logical, filepath.FromSlash(path.Dir(destRel))))}
 	pkgDir := activeDeployMode.projectDir
 	if s.dep {
-		pkgDir = filepath.Join(pkgDir, "apm_modules", filepath.FromSlash(p.DepKey))
+		pkgDir = p.PackageDir
 	}
 	var scan []string
 	switch {

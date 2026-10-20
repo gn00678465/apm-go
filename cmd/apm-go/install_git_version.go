@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -10,6 +13,8 @@ import (
 	yamllib "go.yaml.in/yaml/v4"
 
 	"github.com/apm-go/apm/internal/deploy"
+	"github.com/apm-go/apm/internal/lockfile"
+	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/semver"
 	"github.com/apm-go/apm/internal/yamlcore"
@@ -64,12 +69,9 @@ func renderTagVersion(tag string) (string, bool) {
 // SKILL.md by validation.py:578-581, anything else by sources.py:466-471.
 func packageVersion(dir, commit string) string {
 	apmYML, hasAPMYML := readPackageYAML(filepath.Join(dir, "apm.yml"))
-	apmDir, _ := os.Stat(filepath.Join(dir, ".apm"))
-	eligible := hasAPMYML && ((apmDir != nil && apmDir.IsDir()) || declaresDependencies(apmYML))
-	claudePluginDir, _ := os.Stat(filepath.Join(dir, ".claude-plugin"))
 	switch {
-	case !eligible && ((claudePluginDir != nil && claudePluginDir.IsDir()) || pluginJSONPath(dir) != ""):
-		v := pluginVersion(pluginJSONPath(dir))
+	case isClaudePluginDir(dir):
+		v := pluginField(pluginJSONPath(dir), "version")
 		if v == "" && hasAPMYML {
 			if n := nodeMappingValue(apmYML, "version"); n != nil {
 				v = n.Value
@@ -117,26 +119,6 @@ func manifestVersion(m *yamllib.Node) string {
 	return v.Value
 }
 
-// declaresDependencies is the Oracle's _apm_yml_declares_dependencies
-// (models/validation.py:298-335).
-func declaresDependencies(m *yamllib.Node) bool {
-	for _, section := range []string{"dependencies", "devDependencies"} {
-		block := nodeMappingValue(m, section)
-		for _, key := range []string{"apm", "mcp"} {
-			list := nodeMappingValue(block, key)
-			if list == nil || list.Kind != yamllib.SequenceNode {
-				continue
-			}
-			for _, entry := range list.Content {
-				if entry.Kind == yamllib.MappingNode || (entry.Kind == yamllib.ScalarNode && entry.ShortTag() == "!!str") {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // pluginJSONPath is the Oracle's find_plugin_json (utils/helpers.py:105-129).
 func pluginJSONPath(dir string) string {
 	for _, rel := range deploy.PluginManifestPaths {
@@ -148,9 +130,10 @@ func pluginJSONPath(dir string) string {
 	return ""
 }
 
-// pluginVersion is the plugin manifest's version when it is a non-empty
-// string, the one kind the synthesized apm.yml loads with.
-func pluginVersion(path string) string {
+// pluginField is a field of the plugin manifest at path when it is a
+// non-empty string, the one kind the apm.yml the Oracle builds from it loads
+// with.
+func pluginField(path, field string) string {
 	if path == "" {
 		return ""
 	}
@@ -158,12 +141,82 @@ func pluginVersion(path string) string {
 	if err != nil {
 		return ""
 	}
-	var m struct {
-		Version any `json:"version"`
-	}
+	var m map[string]any
 	if json.Unmarshal(data, &m) != nil {
 		return ""
 	}
-	v, _ := m.Version.(string)
+	v, _ := m[field].(string)
 	return v
+}
+
+// isClaudePluginDir is the Oracle's MARKETPLACE_PLUGIN detection
+// (models/format_detection.py:455-470) of the package at dir: a plugin
+// manifest or a .claude-plugin/ directory, and no apm.yml that makes it an
+// APM package.
+func isClaudePluginDir(dir string) bool {
+	if deploy.IsAPMPackage(dir) {
+		return false
+	}
+	info, _ := os.Stat(filepath.Join(dir, ".claude-plugin"))
+	return (info != nil && info.IsDir()) || pluginJSONPath(dir) != ""
+}
+
+// gitPackageIdentity is the name and package_type Oracle 0.33.0's lock
+// records for a git dependency (measured: issue151/r3-or/kinds,
+// r5-or/kinds2, issue151-impl/m4-or/kinds3, gh1-or/vfile). The type is what
+// detect_package_type gives the package its resolver leaves in apm_modules
+// (models/format_detection.py:436-491), where a Claude plugin has by then an
+// apm.yml and .apm/ built from plugin.json, so it is an APM package; the
+// name is that of the package CachedDependencySource reads there
+// (install/sources.py:436-471): the apm.yml's, a plugin manifest's or, for
+// one with none, the name of the slot the Oracle staged it in
+// (install/resolution_staging.py:215-222, deps/plugin_parser.py:501-505), a
+// Claude skill's frontmatter or directory (models/validation.py:573), else
+// the repository's last segment, a subdirectory skill bundle's too. A virtual
+// file package is the apm.yml the Oracle synthesizes for it, named by
+// get_virtual_package_name. A package the Oracle refuses to install (a hook
+// package with no apm.yml) gets neither.
+func gitPackageIdentity(dir, modulesRel, repoURL, virtualPath string) (name, packageType string) {
+	if manifest.VirtualTypeOf(virtualPath) == "file" {
+		return virtualPackageName(repoURL, virtualPath), lockfile.PackageTypeAPMPackage
+	}
+	apmYML, hasAPMYML := readPackageYAML(filepath.Join(dir, "apm.yml"))
+	apmName := ""
+	if n := nodeMappingValue(apmYML, "name"); n != nil && n.Kind == yamllib.ScalarNode {
+		apmName = n.Value
+	}
+	_, err := os.Stat(filepath.Join(dir, "SKILL.md"))
+	rootSkill := err == nil
+	nested, _ := filepath.Glob(filepath.Join(dir, "skills", "*", "SKILL.md"))
+	plugin := isClaudePluginDir(dir)
+	typed := func(base string) string {
+		switch {
+		case rootSkill:
+			return "hybrid"
+		case len(nested) > 0:
+			return "skill_bundle"
+		}
+		return base
+	}
+	switch {
+	case plugin:
+		name = pluginField(pluginJSONPath(dir), "name")
+		if name == "" {
+			sum := sha256.Sum256([]byte(modulesRel))
+			name = hex.EncodeToString(sum[:])[:16]
+		}
+		return name, typed(lockfile.PackageTypeAPMPackage)
+	case deploy.IsAPMPackage(dir):
+		return apmName, typed(lockfile.PackageTypeAPMPackage)
+	case hasAPMYML && rootSkill:
+		return apmName, "hybrid"
+	case rootSkill:
+		return deploy.SkillName(filepath.Join(dir, "SKILL.md"), filepath.Base(dir)), "claude_skill"
+	case len(nested) > 0:
+		if hasAPMYML {
+			return apmName, "skill_bundle"
+		}
+		return path.Base(repoURL), "skill_bundle"
+	}
+	return "", ""
 }

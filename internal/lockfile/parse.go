@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 var commitSHARegex = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -200,6 +202,12 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 				return nil, err
 			}
 			d.RepoURL = val.Value
+		case "alias":
+			alias, err := manifest.ParseAliasField(val)
+			if err != nil {
+				return nil, lockAliasError(val)
+			}
+			d.Alias = alias
 		case "name":
 			d.Name = val.Value
 		case "local_path":
@@ -287,6 +295,12 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 			d.SourceDigest = val.Value
 		case "package_type":
 			d.PackageType = val.Value
+		case "is_virtual":
+			d.IsVirtual = pyTrue(val)
+		case "is_insecure":
+			d.IsInsecure = pyTrue(val)
+		case "allow_insecure":
+			d.AllowInsecure = pyTrue(val)
 		}
 	}
 
@@ -295,4 +309,32 @@ func parseLockedDep(node *yaml.Node, idx int) (*LockedDep, error) {
 	}
 
 	return d, nil
+}
+
+// pyTrue reads a boolean field as the Oracle's lock reader does: PyYAML
+// loads the YAML 1.1 spellings of true, and the field is taken as given
+// (deps/lockfile.py:532,548-549).
+func pyTrue(val *yaml.Node) bool {
+	if val.Kind != yaml.ScalarNode || val.Style&(yaml.SingleQuotedStyle|yaml.DoubleQuotedStyle) != 0 {
+		return false
+	}
+	switch val.Value {
+	case "yes", "Yes", "YES", "true", "True", "TRUE", "on", "On", "ON":
+		return true
+	}
+	return false
+}
+
+// lockAliasError is the Oracle's refusal of a lock entry's alias
+// (deps/lockfile.py:286-296): the alias names a directory below apm_modules,
+// so a lock that names another package's directory, or one outside, is not
+// read at all. The value is Python's repr() of what the lock holds.
+func lockAliasError(val *yaml.Node) error {
+	raw := val.Value
+	if val.Kind != yaml.ScalarNode {
+		raw = "<" + val.ShortTag() + ">"
+	} else if val.ShortTag() == "!!str" {
+		raw = manifest.PyRepr(val.Value)
+	}
+	return fmt.Errorf("Invalid lockfile dependency alias %s. Restore a known-good apm.lock.yaml from version control or correct this entry's alias to its intended placement. Do not delete content at a rejected alias destination.", raw)
 }

@@ -84,7 +84,7 @@ func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInst
 			continue
 		}
 		directKeys[key] = true
-		prims, err := deploy.CollectDependencyPrimitives(key, filepath.Join(projectDir, "apm_modules", key))
+		prims, err := deploy.CollectDependencyPrimitives(key, filepath.Join(projectDir, "apm_modules", filepath.FromSlash(deploy.DepRefDir(dep))))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -93,7 +93,7 @@ func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInst
 
 	for _, dep := range sortedTransitiveDeps(loadLockfileDeps(projectDir), directKeys) {
 		key := dep.UniqueKey()
-		prims, err := deploy.CollectDependencyPrimitives(key, filepath.Join(projectDir, "apm_modules", key))
+		prims, err := deploy.CollectDependencyPrimitives(key, filepath.Join(projectDir, "apm_modules", filepath.FromSlash(dep.ModuleDir())))
 		if err != nil {
 			return nil, nil, err
 		}
