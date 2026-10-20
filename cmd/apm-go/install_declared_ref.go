@@ -136,6 +136,9 @@ func setObjectEntryRef(entry *yamllib.Node, ref string) {
 	}
 }
 
+// setScalarValue makes n a plain string scalar holding value. manifest.ParseDepDict
+// reads only scalar values, so a `ref: []` or `ref: {}` is no ref; writing over it
+// has to drop the children too, and keeps the comments.
 func setScalarValue(n *yamllib.Node, value string) {
-	n.Value, n.Tag, n.Style = value, "!!str", 0
+	n.Kind, n.Content, n.Value, n.Tag, n.Style = yamllib.ScalarNode, nil, value, "!!str", 0
 }

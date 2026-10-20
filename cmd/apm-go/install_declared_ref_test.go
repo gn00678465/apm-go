@@ -390,6 +390,14 @@ func TestSetEntryRef_ReadsBackForEveryRewritableForm(t *testing.T) {
 		"- name: acme/foo#v1\n",
 		"- name: acme/foo\n  alias: ghs\n",
 		"- name: acme/foo#v1\n  path: ignored\n",
+		// ParseDepDict reads only scalar values, so these `ref:` are no ref.
+		"- git: acme/foo\n  ref: []\n",
+		"- git: acme/foo\n  ref: {}\n",
+		"- git: acme/foo\n  ref:\n",
+		"- git: acme/foo#v1\n  ref: []\n",
+		"- git: acme/foo#v1\n  ref: {}\n",
+		"- git: acme/foo#v1\n  ref:\n",
+		"- git: acme/foo\n  ref: [a, b]\n  alias: ghs\n",
 	}
 	for _, form := range forms {
 		for _, newRef := range []string{"v2", ""} {
@@ -409,6 +417,20 @@ func TestSetEntryRef_ReadsBackForEveryRewritableForm(t *testing.T) {
 			setEntryRef(seq, 0, newRef)
 			if got := parseEntryRef(t, seq.Content[0]); got.Reference != newRef {
 				t.Errorf("%q with ref %q reads back %q", form, newRef, got.Reference)
+			}
+			out, err := yamlcore.SafeDump(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(out), "!!") {
+				t.Errorf("%q with ref %q leaves a tag in:\n%s", form, newRef, out)
+			}
+			if m := seq.Content[0]; m.Kind == yamllib.MappingNode {
+				for j := 0; j < len(m.Content)-1; j += 2 {
+					if m.Content[j].Value == "ref" && m.Content[j+1].Kind == yamllib.SequenceNode && newRef != "" && !strings.Contains(form, "#") {
+						t.Errorf("%q with ref %q keeps a non-scalar ref: node", form, newRef)
+					}
+				}
 			}
 		}
 	}
