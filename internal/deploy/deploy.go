@@ -47,6 +47,13 @@ func (d *DepDeployResult) Recorded() ([]string, map[string]string) {
 	return files, hashes
 }
 
+// DeclaredMCP is an MCP server as a direct dependency's apm.yml declares it
+// and the name of that apm.yml's package, which apm.yml requires.
+type DeclaredMCP struct {
+	Config *manifest.MCPDependency
+	Owner  string
+}
+
 // MCPProv records where one deployed MCP server entry came from (pr-001
 // source attribution), for a merged config file that multiple deps -- or
 // local -- may jointly contribute servers to. Target names the adapter
@@ -99,6 +106,19 @@ type DeployResult struct {
 	// one of the same name shadowed. install reports Shadowed in their
 	// place, as the Oracle's count of skipped files.
 	Conflicts []string
+	// MCPFailure is the registry failure (mcpregistry.IsFailure) of the
+	// first registry-backed server, in declaration order, that the registry
+	// refused or did not answer. Run then writes no MCP config file, as the
+	// Oracle's install validates every server before it writes any
+	// (integration/mcp_integrator_install.py:54-94); the packages deploy as
+	// before.
+	MCPFailure error
+	// DependencyMCP holds, by name, each MCP server a direct dependency
+	// declares, as its apm.yml declares it, and the package that declares
+	// it. The first declaration wins and the project's own come first, so a
+	// name the project declares is not here (integration/mcp_config_view.py:
+	// 84-88,350).
+	DependencyMCP map[string]DeclaredMCP
 	// MCPDiags holds the entries of Diags about MCP servers. The Oracle
 	// reports those in its MCP block, not among the diagnostics whose
 	// absence install marks with an empty line (install/summary.py:115-118).
@@ -327,9 +347,33 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	// dependency's does not (Oracle integration/mcp_config_view.py:84-88).
 	rootMCP := slices.Concat(m.MCPServers, m.MCPDevServers)
 	noteDeclaredMCP(rootMCP)
-	localMCP, localMCPDiags := collectMCPPrimitives(rootMCP, "local", "")
-	ordered = append(ordered, localMCP...)
-	mcpDiags = append(mcpDiags, localMCPDiags...)
+	var mcpFailure error
+	// Only the first declaration of a name is resolved, as the Oracle drops
+	// the others before it looks a server up (integration/mcp_config_view.py:
+	// 84-88,131-133). A later one gets a placeholder with no MCP config, which
+	// loses the conflict for its diagnostic and is never written.
+	resolvedMCP := map[string]bool{}
+	collectMCP := func(servers []*manifest.MCPDependency, source, key string) {
+		for _, s := range servers {
+			if mcpFailure != nil {
+				return
+			}
+			if resolvedMCP[s.Name] {
+				ordered = append(ordered, Primitive{Name: s.Name, Type: TypeMCP, Source: source, DepKey: key})
+				continue
+			}
+			resolvedMCP[s.Name] = true
+			prims, diags, err := collectMCPPrimitives([]*manifest.MCPDependency{s}, source, key)
+			if err != nil {
+				mcpFailure = err
+				return
+			}
+			ordered = append(ordered, prims...)
+			mcpDiags = append(mcpDiags, diags...)
+		}
+	}
+	collectMCP(rootMCP, "local", "")
+	dependencyMCP := map[string]DeclaredMCP{}
 
 	// Direct deps in manifest declaration order (req-pr-003), deduplicated.
 	// Production dependencies.apm followed by devDependencies.apm (F3): a
@@ -398,11 +442,14 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		noteSourceReadFailure(key, key, dependencySourceReadFailure(modulePath))
 
 		// direct (depth==1) self-defined MCP servers are auto-trusted.
+		for _, s := range depServers {
+			if _, ok := dependencyMCP[s.Name]; !ok && !declaredMCP[s.Name] {
+				dependencyMCP[s.Name] = DeclaredMCP{Config: s, Owner: name}
+			}
+		}
 		noteDeclaredMCP(depServers)
-		depMCP, depMCPDiags := collectMCPPrimitives(depServers, "dependency:"+key, key)
-		ordered = append(ordered, depMCP...)
 		mcpDiags = append(mcpDiags, loadDiags...)
-		mcpDiags = append(mcpDiags, depMCPDiags...)
+		collectMCP(depServers, "dependency:"+key, key)
 	}
 
 	// Transitive deps in lockfile sorted order (repo_url, virtual_path)
@@ -587,6 +634,8 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		FailedBuckets: failedBuckets,
 		SkippedDeps:   skippedDeps,
 		MCPDiags:      slices.Clone(mcpDiags),
+		MCPFailure:    mcpFailure,
+		DependencyMCP: dependencyMCP,
 	}
 	for name := range declaredMCP {
 		result.DeclaredMCPServers = append(result.DeclaredMCPServers, name)
@@ -815,12 +864,12 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	var mcpWinners []Primitive
 	mcpSourceByName := map[string]string{}
 	for _, p := range winners {
-		if p.Type == TypeMCP {
+		if p.Type == TypeMCP && p.MCP != nil {
 			mcpWinners = append(mcpWinners, p)
 			mcpSourceByName[p.Name] = p.Source
 		}
 	}
-	if len(mcpWinners) > 0 {
+	if len(mcpWinners) > 0 && mcpFailure == nil {
 		for _, target := range mcpTargets {
 			adapter, ok := Adapters[target]
 			if !ok {

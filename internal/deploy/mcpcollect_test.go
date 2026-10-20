@@ -18,6 +18,8 @@ import (
 // doesn't share unexported test helpers across packages).
 func mockMCPRegistryServer(t *testing.T, name string, remotes []map[string]any) *httptest.Server {
 	t.Helper()
+	// httptest serves http://, which a registry: URL takes only with this.
+	t.Setenv("MCP_REGISTRY_ALLOW_HTTP", "1")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v0.1/servers", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -184,7 +186,10 @@ func TestCollectMCPPrimitives_RegistryBackedResolvedLive(t *testing.T) {
 		{Name: "from-registry", Registry: srv.URL, Transport: "http"},
 	}
 
-	prims, diags := collectMCPPrimitives(servers, "local", "")
+	prims, diags, err := collectMCPPrimitives(servers, "local", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(diags) != 0 {
 		t.Errorf("unexpected diagnostics: %v", diags)
 	}
@@ -202,7 +207,10 @@ func TestCollectMCPPrimitives_RegistryBackedNotFound_DiagnosedNotFatal(t *testin
 		{Name: "missing-server", Registry: srv.URL},
 	}
 
-	prims, diags := collectMCPPrimitives(servers, "local", "")
+	prims, diags, err := collectMCPPrimitives(servers, "local", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prims) != 0 {
 		t.Errorf("expected no primitives for an unresolvable entry, got %+v", prims)
 	}
@@ -225,7 +233,10 @@ func TestCollectMCPPrimitives_RegistryBackedRequiredHeaders_Diagnosed(t *testing
 		{Name: "needs-auth", Registry: srv.URL},
 	}
 
-	prims, diags := collectMCPPrimitives(servers, "local", "")
+	prims, diags, err := collectMCPPrimitives(servers, "local", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prims) != 1 {
 		t.Fatalf("expected the server to still resolve and deploy, got %+v", prims)
 	}
@@ -339,7 +350,10 @@ func TestRun_MCPCollection_DirectDepAutoTrusted(t *testing.T) {
 	if len(loadDiags) != 0 {
 		t.Fatalf("unexpected load diagnostics: %v", loadDiags)
 	}
-	prims, collectDiags := collectMCPPrimitives(servers, "dependency:"+depKey, depKey)
+	prims, collectDiags, err := collectMCPPrimitives(servers, "dependency:"+depKey, depKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(collectDiags) != 0 {
 		t.Errorf("unexpected collect diagnostics: %v", collectDiags)
 	}

@@ -172,11 +172,12 @@ func installCmd() *cobra.Command {
 					Version: mcpVersion, Registry: mcpRegistry, Force: mcpForce,
 					Command: stdioCommand, PrePackages: prePackages,
 					SkillSubset: skillFlags, TargetFlag: targetFlag,
-					DeployDir: deployDir, NoProvenance: noProvenance,
+					DeployDir: deployDir, NoProvenance: noProvenance, Dev: dev,
 				})
 				var mh *multipleHarnessError
 				var us *userScopeMCPError
-				if errors.As(err, &mh) || errors.As(err, &us) {
+				var ndt *noDeployTargetError
+				if errors.As(err, &mh) || errors.As(err, &us) || errors.As(err, &ndt) {
 					cmd.SilenceUsage = true
 				}
 				return err
@@ -252,11 +253,20 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	// newModuleDirs are the apm_modules directories of the packages this run
 	// fetched; an install the deploy refuses removes them.
 	var newModuleDirs []string
+	// manifestBefore is apm.yml as it was before the run, when it existed.
+	var manifestBefore []byte
 	defer func() {
 		var refused *installRefusedError
 		if errors.As(runErr, &refused) {
 			removeNewLocalCopies(newModuleDirs)
 			refused.printEnd()
+			runErr = withSilentExitCode(1, runErr)
+		}
+		var mcpFailed *mcpFailedError
+		if errors.As(runErr, &mcpFailed) {
+			removeNewLocalCopies(newModuleDirs)
+			restoreManifest(manifestBefore)
+			mcpFailed.printEnd()
 			runErr = withSilentExitCode(1, runErr)
 		}
 		var outside *resolveRefusedError
@@ -317,6 +327,9 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	var m *manifest.Manifest
 	var node *yamllib.Node
 	data, err := os.ReadFile("apm.yml")
+	if err == nil {
+		manifestBefore = data
+	}
 	manifestCreated := false
 	if !frozen && len(packages) > 0 && os.IsNotExist(err) {
 		if data, err = createInstallManifest(targetFlag, deployDir != ""); err != nil {
@@ -934,7 +947,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			// whenever there is ANYTHING to integrate -- deps or local
 			// primitives; task 07-11-instructions-applyto-parity req #2). An
 			// EMPTY project (no deps, no local primitives) keeps exiting 0.
-			if len(deploy.CollectScopeLocalPrimitives(".", deployDir != "")) > 0 {
+			// Declared MCP servers count too in a project (issue #123 item
+			// c57-3), as they do for the Oracle's harness check.
+			if len(deploy.CollectScopeLocalPrimitives(".", deployDir != "")) > 0 ||
+				(deployDir == "" && len(m.MCPServers)+len(m.MCPDevServers) > 0) {
 				return errNoDeployTarget()
 			}
 			return nil
@@ -2021,6 +2037,9 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// mcpUnplaced: at user scope the MCP servers declared have no target
 	// that takes them there, which fails the install.
 	var mcpUnplaced bool
+	// mcpFailure: the MCP registry refused or did not answer, so no MCP
+	// config was written and the install ends with exit 1 once the lock is.
+	var mcpFailure error
 	// apmPhase: a dependency or the project's own content was deployed.
 	var apmPhase bool
 	// keptDirs and failedBuckets are deploy.DeployResult.KeptDirs and
@@ -2210,7 +2229,14 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// servers, so the lock does not list it as a deployed file; the
 		// servers are recorded instead (the Oracle's mcp_servers, mcp_configs
 		// and mcp_target_servers).
-		if len(deployResult.MCPProvenance) > 0 {
+		if deployResult.MCPFailure != nil {
+			mcpFailure = deployResult.MCPFailure
+			keepMCPState(newLock, existingLock)
+			if run != nil {
+				printMCPHeader(len(deployResult.DeclaredMCPServers), orderedTargets(mcpTargetSet(chosen.mcp), targets),
+					targetFlag != "", len(m.Target) > 0, &chosen.userScope)
+			}
+		} else if len(deployResult.MCPProvenance) > 0 {
 			seen := make(map[string]bool, len(deployResult.MCPProvenance))
 			targetsByServer := make(map[string]map[string]bool, len(deployResult.MCPProvenance))
 			for _, p := range deployResult.MCPProvenance {
@@ -2229,7 +2255,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			}
 			sort.Strings(newLock.MCPServers)
 			declaredMCP := manifestMCPByName(m)
-			recordMCPState(newLock, declaredMCP, targetsByServer)
+			recordMCPState(newLock, declaredMCP, deployResult.DependencyMCP, targetsByServer)
 
 			if run != nil {
 				mcpTargets := map[string]bool{}
@@ -2348,8 +2374,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		// The lock below no longer records a server that is no longer
 		// declared, so its entry has to leave the config files first. A
 		// frozen install writes no lock and does not come here.
-		if err := cleanStaleMCPServers(detectRoot, targets, deployResult.DeclaredMCPServers, existingLock, deployDir != ""); err != nil {
-			return err
+		if mcpFailure == nil {
+			if err := cleanStaleMCPServers(detectRoot, targets, deployResult.DeclaredMCPServers, existingLock, deployDir != ""); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -2444,13 +2472,16 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			node: node, packages: packages, effectiveSubsets: effectiveSubsets, dev: dev,
 			manifestSectionMoved: manifestSectionMoved, result: result, targets: targets,
 			newLock: newLock, existingLock: existingLock, existingNode: existingNode,
-			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase, mcpUnplaced: mcpUnplaced,
+			apmInstalled: apmInstalled, mcpConfigured: mcpConfigured, apmPhase: apmPhase, mcpUnplaced: mcpUnplaced, mcpFailure: mcpFailure,
 			skippedDeps: skippedDeps, commandNotes: commandNotes, shadowed: shadowed, unmanaged: unmanaged,
 			listed: listedDeps(result, requestedKeys, scoped),
 		})
 	}
 
 	if existingLock != nil && lockfile.IsSemanticEqual(existingLock, newLock) && !manifestSectionMoved {
+		if mcpFailure != nil {
+			return mcpFailure
+		}
 		ux.Info(os.Stdout, "Already up to date")
 		return nil
 	}
@@ -2467,6 +2498,9 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 	// update rewrites a lock from before issue #50 too; the directories that
 	// lock named would otherwise stay with no lock entry to clean them (R16).
 	removeLegacyLocalModules(existingLock, newLock)
+	if mcpFailure != nil {
+		return mcpFailure
+	}
 
 	// 9. Persist positional packages to apm.yml
 	if len(packages) > 0 {

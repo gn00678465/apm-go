@@ -103,6 +103,21 @@ func SerializeLockfile(lf *Lockfile, original *yaml.Node) (*yaml.Node, error) {
 				}
 				addNode(root, key, m)
 			}
+		case "mcp_config_provenance":
+			// Sorted by server, a list of owners sorted too
+			// (deps/lockfile.py:160-166,881-883).
+			if len(lf.MCPConfigProvenance) > 0 {
+				m := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+				for _, server := range sortedKeys(lf.MCPConfigProvenance) {
+					owners := lf.MCPConfigProvenance[server]
+					if owners.List {
+						addNode(m, server, flowIfEmpty(stringSeq(sortedCopy(owners.Names))))
+					} else if len(owners.Names) == 1 {
+						addScalar(m, server, owners.Names[0])
+					}
+				}
+				addNode(root, key, m)
+			}
 		case "local_deployed_files":
 			if len(lf.LocalDeployedFiles) > 0 {
 				addNode(root, key, stringSeq(sortedCopy(lf.LocalDeployedFiles)))
@@ -253,7 +268,8 @@ func IsSemanticEqual(a, b *Lockfile) bool {
 	if !slicesEqual(a.MCPServers, b.MCPServers) {
 		return false
 	}
-	if !mcpConfigsEqual(a.MCPConfigs, b.MCPConfigs) || !targetServersEqual(a.MCPTargetServers, b.MCPTargetServers) {
+	if !mcpConfigsEqual(a.MCPConfigs, b.MCPConfigs) || !targetServersEqual(a.MCPTargetServers, b.MCPTargetServers) ||
+		!provenanceEqual(a.MCPConfigProvenance, b.MCPConfigProvenance) {
 		return false
 	}
 	if len(a.Dependencies) != len(b.Dependencies) {
@@ -338,6 +354,19 @@ func targetServersEqual(a, b map[string][]string) bool {
 	for target, servers := range a {
 		other, ok := b[target]
 		if !ok || !slicesEqual(sortedCopy(servers), sortedCopy(other)) {
+			return false
+		}
+	}
+	return true
+}
+
+func provenanceEqual(a, b map[string]MCPOwners) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for server, owners := range a {
+		other, ok := b[server]
+		if !ok || owners.List != other.List || !slicesEqual(sortedCopy(owners.Names), sortedCopy(other.Names)) {
 			return false
 		}
 	}

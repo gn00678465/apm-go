@@ -151,7 +151,10 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 	managed := lockManaged(lock, cmp.Or(p.deployDir, "."))
 	managed.NoAdopt = true
 	trial, err := deploy.Run(p.targets, ".", m, result, filter, trialDir, p.deployDir != "", managed, deploy.WithMCPTargets(p.mcp))
-	if err == nil {
+	if err == nil && trial.MCPFailure != nil {
+		// The deploy in place would write no MCP config either.
+		err = fmt.Errorf("frozen install: %w", trial.MCPFailure)
+	} else if err == nil {
 		if err = frozenDeployMatchesLock(trial, lock); err == nil {
 			err = p.missingDeployed(trial, lock)
 		}
@@ -170,6 +173,9 @@ func (p *frozenDeployPlan) run(deps *installDeps, m *manifest.Manifest, lock *lo
 	deployed, err := deploy.Run(p.targets, ".", m, result, filter, p.deployDir, p.deployDir != "", managed, deploy.WithMCPTargets(p.mcp))
 	if err != nil {
 		return fmt.Errorf("frozen install: deploy: %w", err)
+	}
+	if deployed.MCPFailure != nil {
+		return fmt.Errorf("frozen install: %w", deployed.MCPFailure)
 	}
 	for _, d := range deployed.Diags {
 		ux.Warn(os.Stderr, "%s", d)

@@ -16,10 +16,12 @@ import (
 // command/url and are used as-is. Registry-backed entries are resolved
 // live against the MCP Registry v0.1 API (internal/mcpregistry), matching
 // the Python original's behavior: a plain `apm install` deploys them too,
-// not just `apm install --mcp NAME`. A resolution failure for one entry is
-// a diagnostic, not a hard install failure -- consistent with how the rest
-// of this deploy pipeline treats per-item errors.
-func collectMCPPrimitives(servers []*manifest.MCPDependency, source, depKey string) ([]Primitive, []string) {
+// not just `apm install --mcp NAME`. A server the registry does not have is
+// a diagnostic; a registry that refuses or does not answer is the error
+// (mcpregistry.IsFailure) that ends the MCP part of the install, returned
+// at the first such server, as the Oracle validates every server before it
+// writes one (integration/mcp_integrator_install.py:54-94).
+func collectMCPPrimitives(servers []*manifest.MCPDependency, source, depKey string) ([]Primitive, []string, error) {
 	var prims []Primitive
 	var diags []string
 	for _, s := range servers {
@@ -33,7 +35,10 @@ func collectMCPPrimitives(servers []*manifest.MCPDependency, source, depKey stri
 			})
 			continue
 		}
-		dep, resolveDiags := resolveRegistryMCP(s)
+		dep, resolveDiags, err := resolveRegistryMCP(s)
+		if err != nil {
+			return nil, nil, err
+		}
 		diags = append(diags, resolveDiags...)
 		if dep == nil {
 			continue
@@ -46,32 +51,39 @@ func collectMCPPrimitives(servers []*manifest.MCPDependency, source, depKey stri
 			MCP:    dep,
 		})
 	}
-	return prims, diags
+	return prims, diags, nil
 }
 
 // registryURLForMCPEntry resolves the registry base URL for a
-// registry-backed entry: the entry's own registry: string (an explicit
-// per-server override in apm.yml) takes precedence over MCP_REGISTRY_URL,
-// which takes precedence over the client's built-in default -- the same
-// precedence `apm install --mcp` uses for its --registry flag vs env.
-func registryURLForMCPEntry(s *manifest.MCPDependency) string {
+// registry-backed entry and the setting it came from: the entry's own
+// registry: string (an explicit per-server override in apm.yml) takes
+// precedence over MCP_REGISTRY_URL, which takes precedence over the client's
+// built-in default -- the same precedence `apm install --mcp` uses for its
+// --registry flag vs env.
+func registryURLForMCPEntry(s *manifest.MCPDependency) (string, mcpregistry.Source) {
 	if url, ok := s.Registry.(string); ok && url != "" {
-		return mcpregistry.NormalizeBaseURL(url)
+		return mcpregistry.NormalizeBaseURL(url), mcpregistry.SourceExplicit
 	}
 	if env := os.Getenv("MCP_REGISTRY_URL"); env != "" {
-		return mcpregistry.NormalizeBaseURL(env)
+		return mcpregistry.NormalizeBaseURL(env), mcpregistry.SourceEnv
 	}
-	return ""
+	return "", mcpregistry.SourceDefault
 }
 
-func resolveRegistryMCP(s *manifest.MCPDependency) (*manifest.MCPDependency, []string) {
-	client, cerr := mcpregistry.NewClient(registryURLForMCPEntry(s))
+func resolveRegistryMCP(s *manifest.MCPDependency) (*manifest.MCPDependency, []string, error) {
+	client, cerr := mcpregistry.NewClientFor(registryURLForMCPEntry(s))
+	if mcpregistry.IsFailure(cerr) {
+		return nil, nil, cerr
+	}
 	if cerr != nil {
-		return nil, []string{fmt.Sprintf("mcp %q: %v; skipped", s.Name, cerr)}
+		return nil, []string{fmt.Sprintf("mcp %q: %v; skipped", s.Name, cerr)}, nil
 	}
 	dep, requiredHeaders, rerr := mcpregistry.ResolveDeployable(context.Background(), client, s.Name, s.Version, s.Transport)
+	if mcpregistry.IsFailure(rerr) {
+		return nil, nil, rerr
+	}
 	if rerr != nil {
-		return nil, []string{fmt.Sprintf("mcp %q: %v; skipped", s.Name, rerr)}
+		return nil, []string{fmt.Sprintf("mcp %q: %v; skipped", s.Name, rerr)}, nil
 	}
 	// The registry knows nothing of enabled; the Oracle overlays the apm.yml
 	// value on the resolved server (integration/mcp_integrator.py:508).
@@ -82,7 +94,7 @@ func resolveRegistryMCP(s *manifest.MCPDependency) (*manifest.MCPDependency, []s
 			"mcp %q requires header(s) %s which apm-go does not resolve automatically; declare it with registry:false and an explicit headers: map if the server needs authentication",
 			s.Name, strings.Join(requiredHeaders, ", ")))
 	}
-	return dep, diags
+	return dep, diags, nil
 }
 
 // collectTransitiveMCPDiagnostics reports every MCP server declared by a

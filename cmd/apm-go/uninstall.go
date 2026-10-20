@@ -787,7 +787,7 @@ func removeUninstallStandaloneMCP(mcpNames map[string]bool, lock *lockfile.Lockf
 var lockModeledTopKeys = map[string]bool{
 	"lockfile_version": true, "generated_at": true, "apm_version": true,
 	"dependencies": true, "deployments": true, "mcp_servers": true,
-	"mcp_configs": true, "mcp_target_servers": true,
+	"mcp_configs": true, "mcp_target_servers": true, "mcp_config_provenance": true,
 	"local_deployed_files": true, "local_deployed_file_hashes": true,
 }
 
@@ -816,7 +816,8 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 	}
 	lock.RemoveKeys(sortedStringSet(removalKeys))
 
-	// mcp_configs and mcp_target_servers follow mcp_servers.
+	// mcp_configs, mcp_config_provenance and mcp_target_servers follow
+	// mcp_servers.
 	kept := make(map[string]bool, len(lock.MCPServers))
 	for _, name := range lock.MCPServers {
 		kept[name] = true
@@ -824,6 +825,11 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 	for name := range lock.MCPConfigs {
 		if !kept[name] {
 			delete(lock.MCPConfigs, name)
+		}
+	}
+	for name := range lock.MCPConfigProvenance {
+		if !kept[name] {
+			delete(lock.MCPConfigProvenance, name)
 		}
 	}
 	for target, servers := range lock.MCPTargetServers {

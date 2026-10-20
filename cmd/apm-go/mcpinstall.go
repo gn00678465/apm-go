@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,6 +39,17 @@ type mcpInstallOpts struct {
 	DeployDir   string
 	// NoProvenance leaves apm_version out of the lock (--no-provenance).
 	NoProvenance bool
+	// Dev declares the server under devDependencies.mcp (--dev), as the
+	// Oracle does (install/mcp/command.py:199-206, writer.py:44-140).
+	Dev bool
+}
+
+// section is the top-level key of apm.yml the server is declared under.
+func (o mcpInstallOpts) section() string {
+	if o.Dev {
+		return "devDependencies"
+	}
+	return "dependencies"
 }
 
 // runMCPInstall handles `apm install --mcp NAME [flags]`: a standalone
@@ -79,6 +92,14 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if len(chosen.ambiguous) > 0 {
 		return errMultipleHarnesses(chosen.ambiguous)
 	}
+	// A project with no target refuses before apm.yml is written, as the
+	// Oracle's harness check does (issue #123 item c57-3).
+	if opts.DeployDir == "" && len(chosen.targets) == 0 {
+		for _, d := range chosen.diags {
+			ux.Error(os.Stderr, "%s", d)
+		}
+		return errNoDeployTarget()
+	}
 	// At user scope, the targets of --target or targets: that take no MCP
 	// there are skipped, or refused when they are all there is
 	// (commands/install.py:777-803).
@@ -110,7 +131,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	}
 	setEntryMapOrder(entryNode, "env", kvPairKeys(opts.EnvPairs))
 	setEntryMapOrder(entryNode, "headers", kvPairKeys(opts.HeaderPairs))
-	compactList := !mcpListIsIndented(node)
+	compactList := !mcpListIsIndented(node, opts.section())
 
 	// On an interactive TTY a conflicting entry is resolved by prompting
 	// (show the diff, default No) instead of hard-failing; non-interactively
@@ -120,7 +141,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if canPromptCreds() {
 		confirm = promptReplaceMCP
 	}
-	status, err := upsertMCPEntry(node, opts.Name, entryNode, opts.Force, confirm)
+	status, err := upsertMCPEntry(node, opts.section(), opts.Name, entryNode, opts.Force, confirm)
 	if err != nil {
 		return err
 	}
@@ -154,7 +175,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 		if compactList {
 			patch = yamlcore.PatchMappingPathCompact
 		}
-		manifestBytes, patched, err := patch(data, node, []string{"dependencies", "mcp"})
+		manifestBytes, patched, err := patch(data, node, []string{opts.section(), "mcp"})
 		if err != nil {
 			return fmt.Errorf("serialize apm.yml: %w", err)
 		}
@@ -205,6 +226,10 @@ func runMCPInstall(opts mcpInstallOpts) error {
 			previous.MCPTargetServers[target] = append([]string(nil), servers...)
 		}
 		oldLock = &previous
+		// The server is the project's own now (install/mcp/command.py:
+		// 282-283).
+		lock.MCPConfigProvenance = maps.Clone(lock.MCPConfigProvenance)
+		delete(lock.MCPConfigProvenance, opts.Name)
 	}
 	targetSet := map[string]bool{}
 	for _, t := range deployed {
@@ -269,14 +294,14 @@ func mcpManifestTargets(targetFlag, home string) []string {
 	return targets
 }
 
-// mcpListIsIndented reports whether dependencies.mcp already has items the
+// mcpListIsIndented reports whether <section>.mcp already has items the
 // user indented under the key ("mcp:" then "    - name"). An absent, empty or
 // flow list has no layout to keep.
-func mcpListIsIndented(doc *yamllib.Node) bool {
+func mcpListIsIndented(doc *yamllib.Node, section string) bool {
 	// doc passed manifest.ParseManifest: a document whose root is a mapping.
 	root := doc.Content[0]
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "dependencies" || root.Content[i+1].Kind != yamllib.MappingNode {
+		if root.Content[i].Value != section || root.Content[i+1].Kind != yamllib.MappingNode {
 			continue
 		}
 		deps := root.Content[i+1]
@@ -487,7 +512,19 @@ func resolveFromRegistry(opts mcpInstallOpts) (deployDep *manifest.MCPDependency
 		// record their custom registry there.
 		diags = append(diags, "using a custom MCP registry (from MCP_REGISTRY_URL)")
 	}
-	client, cerr := mcpregistry.NewClient(registryURL)
+	source := mcpregistry.SourceDefault
+	switch {
+	case opts.Registry != "":
+		source = mcpregistry.SourceFlag
+	case registryURL != "":
+		source = mcpregistry.SourceEnv
+	}
+	client, cerr := mcpregistry.NewClientFor(registryURL, source)
+	var insecure *mcpregistry.InsecureURLError
+	if errors.As(cerr, &insecure) {
+		// The Oracle's line without --verbose (install/mcp/command.py:180).
+		return nil, nil, fmt.Errorf("MCP registry validation failed for '%s'. Check the server name and registry reachability/configuration, then retry; no state was changed", opts.Name)
+	}
 	if cerr != nil {
 		return nil, nil, fmt.Errorf("--registry: %w", cerr)
 	}
@@ -585,7 +622,7 @@ func mcpEntryNode(dep *manifest.MCPDependency) *yamllib.Node {
 type confirmReplaceFunc func(name string, diff []string) (bool, error)
 
 // upsertMCPEntry inserts or replaces entryNode by name in apm.yml's
-// dependencies.mcp sequence (design.md §6): unmatched name -> append
+// <section>.mcp sequence (design.md §6): unmatched name -> append
 // ("added"); matched name, semantically identical -> no-op ("unchanged");
 // matched name, different, force=true -> replace in place ("replaced");
 // matched name, different, force=false -> confirm==nil errors (doc
@@ -596,7 +633,7 @@ type confirmReplaceFunc func(name string, diff []string) (bool, error)
 // to the empty `mcp: []` that `apm-go init` writes (which go-yaml renders in
 // flow style, and whose parsed node inherits FlowStyle) serializes as a
 // block-style list, matching the Python original's dump.
-func upsertMCPEntry(doc *yamllib.Node, name string, entryNode *yamllib.Node, force bool, confirm confirmReplaceFunc) (status string, err error) {
+func upsertMCPEntry(doc *yamllib.Node, section, name string, entryNode *yamllib.Node, force bool, confirm confirmReplaceFunc) (status string, err error) {
 	root := doc
 	if root.Kind == yamllib.DocumentNode && len(root.Content) > 0 {
 		root = root.Content[0]
@@ -605,7 +642,7 @@ func upsertMCPEntry(doc *yamllib.Node, name string, entryNode *yamllib.Node, for
 		return "", fmt.Errorf("manifest root is not a mapping")
 	}
 
-	depsNode := findOrCreateMappingChild(root, "dependencies")
+	depsNode := findOrCreateMappingChild(root, section)
 	mcpSeq := findOrCreateSeqChild(depsNode, "mcp")
 
 	for i, existing := range mcpSeq.Content {

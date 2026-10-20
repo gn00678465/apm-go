@@ -311,7 +311,7 @@ func TestInstall_DependencyInPackageSymlinksAreDeployed(t *testing.T) {
 		if got := readText(t, ".claude/agents/inpkg.md"); got != symlinkDepAgent {
 			t.Errorf(".claude/agents/inpkg.md = %q, want %q", got, symlinkDepAgent)
 		}
-		const wantTOML = "name = 'oracle'\ndescription = 'd'\ndeveloper_instructions = 'agent body'\n"
+		const wantTOML = "name = \"oracle\"\ndescription = \"d\"\ndeveloper_instructions = \"agent body\"\n"
 		if got := readText(t, ".codex/agents/inpkg.toml"); got != wantTOML {
 			t.Errorf(".codex/agents/inpkg.toml = %q, want %q", got, wantTOML)
 		}

@@ -156,6 +156,23 @@ func ParseLockfile(doc *yaml.Node) (*Lockfile, error) {
 					lf.MCPConfigs[val.Content[j].Value] = val.Content[j+1]
 				}
 			}
+		case "mcp_config_provenance":
+			if val.Kind == yaml.MappingNode {
+				lf.MCPConfigProvenance = make(map[string]MCPOwners)
+				for j := 0; j < len(val.Content)-1; j += 2 {
+					owner := val.Content[j+1]
+					switch owner.Kind {
+					case yaml.ScalarNode:
+						lf.MCPConfigProvenance[val.Content[j].Value] = MCPOwners{Names: []string{owner.Value}}
+					case yaml.SequenceNode:
+						names := []string{}
+						for _, item := range owner.Content {
+							names = append(names, item.Value)
+						}
+						lf.MCPConfigProvenance[val.Content[j].Value] = MCPOwners{Names: names, List: true}
+					}
+				}
+			}
 		case "mcp_target_servers":
 			if val.Kind == yaml.MappingNode {
 				lf.MCPTargetServers = make(map[string][]string)
