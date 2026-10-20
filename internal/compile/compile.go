@@ -42,36 +42,32 @@ func FilterAgentsFamily(targets []string) []string {
 }
 
 // HasCompilableContent reports whether projectDir has anything for compile
-// to read: an apm_modules/ directory, or at least one local
-// .apm/instructions/*.instructions.md file (design.md §2 project gate,
-// simplified from the oracle's broader constitution/chatmode checks --
-// v1 compiles neither).
+// to read: an apm_modules/ directory, a *.instructions.md at any depth of
+// .apm/, as the Oracle checks (commands/compile/cli.py:601-611; apm-go
+// compiles no agent or constitution), or an instruction that a linked .apm
+// or .apm/instructions gives (linkedAPMInstructions).
 func HasCompilableContent(projectDir string) bool {
 	if info, err := os.Stat(filepath.Join(projectDir, "apm_modules")); err == nil && info.IsDir() {
 		return true
 	}
-	for _, p := range deploy.CollectLocalPrimitives(projectDir) {
-		if p.Type == deploy.TypeInstructions {
-			return true
-		}
-	}
-	return false
+	return apmHasInstruction(projectDir) || len(linkedAPMInstructions(projectDir)) > 0
 }
 
 // CollectInstructions gathers every *.instructions.md primitive in
-// priority order -- local, then direct dependencies in manifest declaration
-// order, then transitive dependencies in lockfile sorted order (design.md
-// §3; mirrors deploy.Run's collection order, deploy.go:72-118) -- resolves
-// same-name conflicts via deploy.ResolvePrimitives (local wins, then
-// first-declared wins), drops any symlinked instruction file of the
-// project's own (deploy.CollectLocalPrimitives does not filter symlinks; a
-// dependency's come resolved, or fail the collection when they leave the
-// package), and reads and parses each one (readCandidate); one it cannot
-// use takes no part in the conflicts and is returned apart when it is to be
-// reported.
+// priority order -- the project's own, in the order of the Oracle's walk
+// (collectLocalInstructions), then direct dependencies in manifest
+// declaration order, then transitive dependencies in lockfile sorted order
+// (mirrors deploy.Run's collection order) -- resolves same-name conflicts
+// via deploy.ResolvePrimitives (local wins, then first collected wins, as
+// primitives/models.py:193-249 keeps the first), drops any symlinked
+// instruction file of the project's own (linkedAPMInstructions reads
+// through a link; a dependency's come resolved, or fail the collection when
+// they leave the package), and reads and parses each one (readCandidate);
+// one it cannot use takes no part in the conflicts and is returned apart
+// when it is to be reported.
 func CollectInstructions(projectDir string, m *manifest.Manifest) ([]SourcedInstruction, []SkippedInstruction, error) {
 	var ordered []deploy.Primitive
-	ordered = append(ordered, deploy.CollectLocalPrimitives(projectDir)...)
+	ordered = append(ordered, collectLocalInstructions(projectDir)...)
 
 	directDeps := make([]*manifest.DependencyReference, 0, len(m.ParsedDeps)+len(m.ParsedDevDeps))
 	directDeps = append(directDeps, m.ParsedDeps...)

@@ -601,6 +601,16 @@ func TestInstall_DependencyPluginManifestSymlinkOutsideFails(t *testing.T) {
 		"install", "--target", "claude")
 }
 
+// compileOutside keeps the outside/ of symlinkDepProject out of what compile
+// reads: compile reads the whole project, and skips a directory that holds a
+// .git, as the files of another checkout.
+func compileOutside(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "outside", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Test 10: compile reads a dependency's instructions by the same rule.
 func TestCompile_DependencySymlinks(t *testing.T) {
 	t.Run("outside", func(t *testing.T) {
@@ -618,7 +628,7 @@ func TestCompile_DependencySymlinks(t *testing.T) {
 		assertNoModule(t, "AGENTS.md")
 	})
 	t.Run("in package", func(t *testing.T) {
-		symlinkDepProject(t)
+		compileOutside(t, symlinkDepProject(t))
 		writeSymlinkGitDep(t, "repo")
 		writeGlobalStaleFile(t, "apm_modules/acme/repo/apm.yml", "name: dep\nversion: 1.0.0\n")
 		writeGlobalStaleFile(t, "apm_modules/acme/repo/docs/c.instructions.md", "IN-PACKAGE-INSTRUCTION\n")
@@ -707,6 +717,7 @@ func TestInstall_LocalContentSymlinksUnchanged(t *testing.T) {
 		t.Errorf(".claude/agents/outer.md = %q, want the project's own symlink deployed", got)
 	}
 
+	compileOutside(t, dir)
 	mustRun(t, "compile", "--target", "codex")
 	agents := readText(t, "AGENTS.md")
 	if !strings.Contains(agents, "OWN-INSTRUCTION") || strings.Contains(agents, "SECRET-INSTR") {
