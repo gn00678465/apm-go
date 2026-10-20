@@ -112,6 +112,23 @@ func (r *installRun) rejectedInstall(e *deploy.RejectedInstructionError, result 
 	return refused
 }
 
+// mcpFailedError is an install that deployed its packages and wrote its lock
+// and then met an MCP registry failure. Like any failed install transaction
+// of the Oracle, it rolls back the apm.yml it created and the package
+// directories it fetched before its last line (install/transaction.py:37-72;
+// measured, issue #123 run h56_newpkg503).
+type mcpFailedError struct {
+	err error
+	run *installRun
+}
+
+func (e *mcpFailedError) Error() string { return e.err.Error() }
+func (e *mcpFailedError) Unwrap() error { return e.err }
+
+func (e *mcpFailedError) printEnd() {
+	ux.Error(os.Stdout, "Install failed after %s.", e.run.elapsed())
+}
+
 // printEnd prints the Oracle's last lines of a refused install
 // (utils/diagnostics.py:500-507, core/command_logger.py:925-931).
 func (e *installRefusedError) printEnd() {
@@ -410,6 +427,8 @@ type installOutcome struct {
 	existingNode                *yamllib.Node
 	apmInstalled, mcpConfigured int
 	mcpUnplaced                 bool
+	// mcpFailure is the MCP registry failure that ends the install.
+	mcpFailure error
 	// apmPhase: a dependency or the project's own content was integrated.
 	apmPhase     bool
 	skippedDeps  []deploy.SkippedDep
@@ -459,6 +478,15 @@ func (r *installRun) finish(o installOutcome) error {
 		}
 	}
 
+	if o.mcpFailure != nil {
+		// commands/install.py:1967-1999: the packages and their lock are
+		// written; the run ends at the MCP failure.
+		ux.Error(os.Stdout, "Error installing dependencies: %v", o.mcpFailure)
+		if !r.verbose {
+			ux.Info(os.Stdout, "Run with --verbose for detailed diagnostics")
+		}
+		return &mcpFailedError{err: o.mcpFailure, run: r}
+	}
 	if o.apmInstalled > 0 {
 		printCompileHint(o.targets, o.result)
 	}

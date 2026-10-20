@@ -65,7 +65,7 @@ func TestCodexAgentTransform(t *testing.T) {
 		if err != nil {
 			t.Fatalf("transformCodexAgent: %v", err)
 		}
-		if doc.Name != "accessibility-runtime-tester" {
+		if doc.Name != pyStr("accessibility-runtime-tester") {
 			t.Errorf("Name = %q, want %q (no trailing .agent)", doc.Name, "accessibility-runtime-tester")
 		}
 	})
@@ -88,10 +88,10 @@ func TestCodexAgentTransform(t *testing.T) {
 		if err != nil {
 			t.Fatalf("transformCodexAgent: %v", err)
 		}
-		if doc.Name != "Frontmatter Name" {
+		if doc.Name != pyStr("Frontmatter Name") {
 			t.Errorf("Name = %q, want %q", doc.Name, "Frontmatter Name")
 		}
-		if doc.Description != "Frontmatter Description" {
+		if doc.Description != pyStr("Frontmatter Description") {
 			t.Errorf("Description = %q, want %q", doc.Description, "Frontmatter Description")
 		}
 		if doc.DeveloperInstructions != "BODY EDGE" {
@@ -101,10 +101,7 @@ func TestCodexAgentTransform(t *testing.T) {
 			t.Errorf("frontmatter leaked into body: %q", doc.DeveloperInstructions)
 		}
 
-		data, err := toml.Marshal(doc)
-		if err != nil {
-			t.Fatalf("toml.Marshal: %v", err)
-		}
+		data := doc.bytes()
 		parsed := parseCodexAgentTOML(t, data)
 		assertExactCodexAgentKeys(t, parsed)
 		if parsed["model"] != nil || parsed["tools"] != nil {
@@ -127,10 +124,10 @@ func TestCodexAgentTransform(t *testing.T) {
 		if err != nil {
 			t.Fatalf("transformCodexAgent must not error on malformed frontmatter YAML: %v", err)
 		}
-		if doc.Name != "bad-yaml" {
+		if doc.Name != pyStr("bad-yaml") {
 			t.Errorf("Name = %q, want fallback %q", doc.Name, "bad-yaml")
 		}
-		if doc.Description != "" {
+		if doc.Description != pyStr("") {
 			t.Errorf("Description = %q, want empty default", doc.Description)
 		}
 		if doc.DeveloperInstructions != "bad body" {
@@ -157,13 +154,10 @@ func TestCodexAgentTransform(t *testing.T) {
 				if err != nil {
 					t.Fatalf("transformCodexAgent: %v", err)
 				}
-				if doc.Description != "" {
+				if doc.Description != pyStr("") {
 					t.Errorf("Description = %q, want empty string default", doc.Description)
 				}
-				data, err := toml.Marshal(doc)
-				if err != nil {
-					t.Fatalf("toml.Marshal: %v", err)
-				}
+				data := doc.bytes()
 				parsed := parseCodexAgentTOML(t, data)
 				desc, ok := parsed["description"]
 				if !ok {
@@ -193,10 +187,7 @@ func TestCodexAgentTransform(t *testing.T) {
 			t.Errorf("DeveloperInstructions = %q, want %q (only outer whitespace trimmed)", doc.DeveloperInstructions, want)
 		}
 
-		data, err := toml.Marshal(doc)
-		if err != nil {
-			t.Fatalf("toml.Marshal: %v", err)
-		}
+		data := doc.bytes()
 		assertExactCodexAgentKeys(t, parseCodexAgentTOML(t, data))
 	})
 
@@ -233,7 +224,7 @@ func TestCodexAgentTransform(t *testing.T) {
 		if negDoc.DeveloperInstructions != wantNeg {
 			t.Errorf("DeveloperInstructions = %q, want %q (leading blank line must prevent frontmatter match)", negDoc.DeveloperInstructions, wantNeg)
 		}
-		if negDoc.Name != "leading-blank" || negDoc.Description != "" {
+		if negDoc.Name != pyStr("leading-blank") || negDoc.Description != pyStr("") {
 			t.Errorf("leading-blank fixture must fall back to defaults: name=%q description=%q", negDoc.Name, negDoc.Description)
 		}
 	})

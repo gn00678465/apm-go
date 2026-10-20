@@ -284,7 +284,7 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	// out of this task's scope).
 	chosen := resolveInstallTargets("", m.Target, "")
 	targets, targetDiags := chosen.targets, chosen.diags
-	if len(result.Deps) > 0 && len(targets) == 0 {
+	if (len(result.Deps) > 0 || len(m.MCPServers)+len(m.MCPDevServers) > 0) && len(targets) == 0 {
 		for _, d := range targetDiags {
 			ux.Error(os.Stderr, "%s", d)
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -118,6 +119,23 @@ func removeCreatedManifest() {
 		return
 	}
 	ux.Info(os.Stdout, "Removed apm.yml created by the failed install.")
+}
+
+// restoreManifest writes back the apm.yml a failed install changed, as the
+// Oracle's install transaction restores it (install/transaction.py:61-70). An
+// apm.yml with the bytes it had, or one there was none of, is left alone.
+func restoreManifest(before []byte) {
+	if before == nil {
+		return
+	}
+	if now, err := os.ReadFile("apm.yml"); err == nil && bytes.Equal(now, before) {
+		return
+	}
+	if err := os.WriteFile("apm.yml", before, 0o644); err != nil {
+		ux.Warn(os.Stdout, "Failed to restore apm.yml. Inspect apm.yml before retrying.")
+		return
+	}
+	ux.Info(os.Stdout, "apm.yml restored to its previous state.")
 }
 
 // errNoManifest is an install with no package and no apm.yml: the Oracle's

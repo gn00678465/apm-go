@@ -515,16 +515,19 @@ mcp_target_servers:
 	}
 }
 
-// A declared server is not stale whatever became of it later in the run. The
-// expected output and files are what apm-go printed and wrote before issue
-// #71 for the same steps
-// (~/.cache/apm-go-verify/issue71/regold-step16/run-o4i5jyhd/old-*).
+// A declared server is not stale whatever became of it later in the run. A
+// registry that does not have it is what apm-go printed and wrote before
+// issue #71 for the same steps
+// (~/.cache/apm-go-verify/issue71/regold-step16/run-o4i5jyhd/old-*); a
+// registry that does not answer ends the install as Oracle 0.33.0 does
+// (issue #123, run h56_503), with every file as the first install left it.
 
 const staleMCPRegistryOnlyHeaderLock = "lockfile_version: '1'\napm_version: dev\ndependencies: []\ndeployments: []\n"
 
 func staleMCPRegistryRerun(t *testing.T, mode string) {
 	t.Helper()
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
+	t.Setenv("MCP_REGISTRY_ALLOW_HTTP", "1")
 	chdirTemp(t)
 	var current atomic.Value
 	current.Store("ok")
@@ -548,26 +551,39 @@ func staleMCPRegistryRerun(t *testing.T, mode string) {
 
 	writeStaleMCPFile(t, "apm.yml", "name: g8\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  mcp:\n    - name: example\n      registry: "+srv.URL+"\n")
 	mustStaleMCPInstall(t, "", "")
+	lockBefore := readStaleMCPFile(t, "apm.lock.yaml")
 	current.Store(mode)
-	out := mustStaleMCPInstall(t, "", "")
+	out, err := staleMCPInstall(t, "", "")
 	out = regexp.MustCompile(`in [0-9.]+s\.`).ReplaceAllString(out, "in Ns.")
+	out = regexp.MustCompile(`after [0-9.]+s\.`).ReplaceAllString(out, "after Ns.")
 
-	reason := `mcp registry: registry returned HTTP 503`
-	if mode == "missing" {
-		reason = `MCP server "example" not found in registry`
-	}
 	want := " > Installing dependencies from apm.yml...\n" +
-		" ! mcp \"example\": " + reason + "; skipped\n" +
+		" ! mcp \"example\": MCP server \"example\" not found in registry; skipped\n" +
 		"\n" +
 		" i No changes -- install state already up to date in Ns.\n"
+	wantLock := staleMCPRegistryOnlyHeaderLock
+	if mode == "503" {
+		if code := exitCodeOf(err); code != 1 {
+			t.Errorf("exit = %d (%v), want 1", code, err)
+		}
+		want = " > Installing dependencies from apm.yml...\n" +
+			"+- MCP Servers (1)\n" +
+			" i Targeting declared target from apm.yml: claude\n" +
+			" x Error installing dependencies: Could not reach MCP registry at " + srv.URL + " while validating server 'example'. Check the --registry value or the dependency's registry: URL.\n" +
+			" i Run with --verbose for detailed diagnostics\n" +
+			" x Install failed after Ns.\n"
+		wantLock = lockBefore
+	} else if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
 	if out != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
 	if got := readStaleMCPFile(t, ".mcp.json"); got != "{\n  \"mcpServers\": {\n    \"example\": {\n      \"type\": \"streamable-http\",\n      \"url\": \"https://example.com/mcp\"\n    }\n  }\n}\n" {
 		t.Errorf(".mcp.json:\n%s", got)
 	}
-	if got := readStaleMCPFile(t, "apm.lock.yaml"); got != staleMCPRegistryOnlyHeaderLock {
-		t.Errorf("apm.lock.yaml:\n%s", got)
+	if got := readStaleMCPFile(t, "apm.lock.yaml"); got != wantLock {
+		t.Errorf("apm.lock.yaml:\n%s\nwant:\n%s", got, wantLock)
 	}
 }
 

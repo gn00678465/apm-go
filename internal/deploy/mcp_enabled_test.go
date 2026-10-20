@@ -47,7 +47,10 @@ func TestWriteMCP_Opencode_RegistryServerKeepsEnabled(t *testing.T) {
 		{"type": "streamable-http", "url": "https://example.com/mcp"},
 	})
 	dep := parseMCPEntryText(t, "name: io.example/demo\nregistry: "+srv.URL+"\nenabled: false\n")
-	prims, diags := collectMCPPrimitives([]*manifest.MCPDependency{dep}, "local", "")
+	prims, diags, err := collectMCPPrimitives([]*manifest.MCPDependency{dep}, "local", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prims) != 1 {
 		t.Fatalf("prims = %+v, diags = %v", prims, diags)
 	}

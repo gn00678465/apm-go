@@ -369,45 +369,22 @@ func TestFindServerByReference_RegistryUnreachable(t *testing.T) {
 	}
 }
 
-// TestGetJSON_NetworkAndHTTPErrors_NeverEchoRequestURL is a regression test
-// (ninth codex review round): Go's http.Client wraps a failed request in a
-// *url.Error whose own Error() method embeds the full request URL -- a %w
-// wrap of that error, or an explicit c.BaseURL interpolation, would leak a
-// path-embedded token even after NewClient's query-string/userinfo
-// rejection (which only covers the base URL's query and userinfo, not an
-// unusual but valid auth-via-path pattern like ".../t-<token>/").
-func TestGetJSON_NetworkAndHTTPErrors_NeverEchoRequestURL(t *testing.T) {
-	pathToken := "t-should-not-leak-in-error"
-
-	// (a) unreachable registry -- transport-level failure.
-	unreachable, err := NewClient("https://127.0.0.1:1/" + pathToken)
+// TestFindServerByReference_UnreachableNamesBaseURLOnly: the failure names
+// the registry's base URL, as the Oracle's redact_mcp_registry_url keeps its
+// path (registry/client.py:107-120), never the request URL that Go's
+// *url.Error carries.
+func TestFindServerByReference_UnreachableNamesBaseURLOnly(t *testing.T) {
+	unreachable, err := NewClientFor("https://127.0.0.1:1/t-path", SourceEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = unreachable.FindServerByReference(context.Background(), "anything", "")
-	if err == nil {
-		t.Fatal("expected an error for an unreachable registry")
+	const want = "Could not reach MCP registry at https://127.0.0.1:1/t-path while validating server 'anything'. Check MCP_REGISTRY_URL."
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
 	}
-	if strings.Contains(err.Error(), pathToken) {
-		t.Errorf("unreachable-registry error leaked the path token: %v", err)
-	}
-
-	// (b) reachable registry, but every request 404s -- HTTP-level failure.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	notFound, err := NewClient(srv.URL + "/" + pathToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = notFound.FindServerByReference(context.Background(), "anything", "")
-	if err == nil {
-		t.Fatal("expected an error for a 404 registry")
-	}
-	if strings.Contains(err.Error(), pathToken) {
-		t.Errorf("404 registry error leaked the path token: %v", err)
+	if strings.Contains(err.Error(), "/v0.1/") {
+		t.Errorf("error names the request URL: %v", err)
 	}
 }
 

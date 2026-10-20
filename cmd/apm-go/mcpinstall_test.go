@@ -194,6 +194,9 @@ type mockMCPServer struct {
 
 func mcpRegistryServer(t *testing.T, servers map[string]mockMCPServer) *httptest.Server {
 	t.Helper()
+	// httptest serves http://, which MCP_REGISTRY_URL and a registry: URL
+	// take only with this.
+	t.Setenv("MCP_REGISTRY_ALLOW_HTTP", "1")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v0.1/servers", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("search")
@@ -485,7 +488,7 @@ func parseYAML(t *testing.T, src string) *yamllib.Node {
 
 func TestUpsertMCPEntry_Added(t *testing.T) {
 	doc := parseYAML(t, "name: test\nversion: \"1.0.0\"\n")
-	status, err := upsertMCPEntry(doc, "fetch", strNode("fetch"), false, nil)
+	status, err := upsertMCPEntry(doc, "dependencies", "fetch", strNode("fetch"), false, nil)
 	if err != nil {
 		t.Fatalf("upsertMCPEntry: %v", err)
 	}
@@ -496,7 +499,7 @@ func TestUpsertMCPEntry_Added(t *testing.T) {
 
 func TestUpsertMCPEntry_UnchangedDoesNotError(t *testing.T) {
 	doc := parseYAML(t, "name: test\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - fetch\n")
-	status, err := upsertMCPEntry(doc, "fetch", strNode("fetch"), false, nil)
+	status, err := upsertMCPEntry(doc, "dependencies", "fetch", strNode("fetch"), false, nil)
 	if err != nil {
 		t.Fatalf("upsertMCPEntry: %v", err)
 	}
@@ -508,7 +511,7 @@ func TestUpsertMCPEntry_UnchangedDoesNotError(t *testing.T) {
 func TestUpsertMCPEntry_DifferentWithoutForce_Errors(t *testing.T) {
 	doc := parseYAML(t, "name: test\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - name: fetch\n      transport: stdio\n")
 	newEntry := mapNode([][2]*yamllib.Node{{strNode("name"), strNode("fetch")}, {strNode("transport"), strNode("http")}})
-	_, err := upsertMCPEntry(doc, "fetch", newEntry, false, nil)
+	_, err := upsertMCPEntry(doc, "dependencies", "fetch", newEntry, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Errorf("expected a --force-required error, got %v", err)
 	}
@@ -517,7 +520,7 @@ func TestUpsertMCPEntry_DifferentWithoutForce_Errors(t *testing.T) {
 func TestUpsertMCPEntry_DifferentWithForce_Replaces(t *testing.T) {
 	doc := parseYAML(t, "name: test\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - name: fetch\n      transport: stdio\n")
 	newEntry := mapNode([][2]*yamllib.Node{{strNode("name"), strNode("fetch")}, {strNode("transport"), strNode("http")}})
-	status, err := upsertMCPEntry(doc, "fetch", newEntry, true, nil)
+	status, err := upsertMCPEntry(doc, "dependencies", "fetch", newEntry, true, nil)
 	if err != nil {
 		t.Fatalf("upsertMCPEntry: %v", err)
 	}
@@ -545,7 +548,7 @@ func TestUpsertMCPEntry_WritesBlockStyleNotInheritedFlow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte("name: test\ndependencies:\n  apm: []\n  mcp: []\n")
 			node := parseYAML(t, string(src))
-			status, err := upsertMCPEntry(node, mcpEntryName(tc.entry), tc.entry, false, nil)
+			status, err := upsertMCPEntry(node, "dependencies", mcpEntryName(tc.entry), tc.entry, false, nil)
 			if err != nil || status != "added" {
 				t.Fatalf("upsertMCPEntry status=%q err=%v", status, err)
 			}
@@ -583,7 +586,7 @@ func TestUpsertMCPEntry_ConflictConfirm(t *testing.T) {
 		doc := base()
 		var gotDiff []string
 		confirm := func(name string, diff []string) (bool, error) { gotDiff = diff; return true, nil }
-		status, err := upsertMCPEntry(doc, "fetch", newEntry(), false, confirm)
+		status, err := upsertMCPEntry(doc, "dependencies", "fetch", newEntry(), false, confirm)
 		if err != nil || status != "replaced" {
 			t.Fatalf("status=%q err=%v", status, err)
 		}
@@ -599,7 +602,7 @@ func TestUpsertMCPEntry_ConflictConfirm(t *testing.T) {
 	t.Run("decline -> skipped, doc untouched", func(t *testing.T) {
 		doc := base()
 		confirm := func(name string, diff []string) (bool, error) { return false, nil }
-		status, err := upsertMCPEntry(doc, "fetch", newEntry(), false, confirm)
+		status, err := upsertMCPEntry(doc, "dependencies", "fetch", newEntry(), false, confirm)
 		if err != nil || status != "skipped" {
 			t.Fatalf("status=%q err=%v", status, err)
 		}
@@ -611,7 +614,7 @@ func TestUpsertMCPEntry_ConflictConfirm(t *testing.T) {
 
 	t.Run("nil confirm (non-interactive) -> error", func(t *testing.T) {
 		doc := base()
-		_, err := upsertMCPEntry(doc, "fetch", newEntry(), false, nil)
+		_, err := upsertMCPEntry(doc, "dependencies", "fetch", newEntry(), false, nil)
 		if err == nil || !strings.Contains(err.Error(), "non-interactive") {
 			t.Errorf("expected a non-interactive --force error, got %v", err)
 		}
@@ -621,7 +624,7 @@ func TestUpsertMCPEntry_ConflictConfirm(t *testing.T) {
 		doc := base()
 		called := false
 		confirm := func(name string, diff []string) (bool, error) { called = true; return false, nil }
-		status, err := upsertMCPEntry(doc, "fetch", newEntry(), true, confirm)
+		status, err := upsertMCPEntry(doc, "dependencies", "fetch", newEntry(), true, confirm)
 		if err != nil || status != "replaced" {
 			t.Fatalf("status=%q err=%v", status, err)
 		}
@@ -913,6 +916,7 @@ func TestRunMCPInstall_UnchangedRegistryEntry_NeverContactsRegistry(t *testing.T
 
 	seeded := "name: test\nversion: \"1.0.0\"\ndependencies:\n  mcp:\n    - name: acme/server\n      transport: http\n      registry: http://127.0.0.1:1\n"
 	os.WriteFile("apm.yml", []byte(seeded), 0644)
+	os.MkdirAll(".claude", 0755)
 
 	err := runMCPInstall(mcpInstallOpts{Name: "acme/server", Transport: "http", Registry: "http://127.0.0.1:1"})
 	if err != nil {

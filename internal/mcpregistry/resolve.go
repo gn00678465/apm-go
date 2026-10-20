@@ -28,6 +28,9 @@ import (
 // accidentally treat "not found" as "nothing to deploy, no problem".
 func ResolveDeployable(ctx context.Context, client *Client, name, version, transportOverride string) (dep *manifest.MCPDependency, requiredHeaders []string, err error) {
 	info, ferr := client.FindServerByReference(ctx, name, version)
+	if IsFailure(ferr) {
+		return nil, nil, ferr
+	}
 	if ferr != nil {
 		return nil, nil, fmt.Errorf("mcp registry: %w", ferr)
 	}

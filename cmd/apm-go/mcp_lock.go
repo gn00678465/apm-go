@@ -1,12 +1,15 @@
 package main
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/lockfile"
 	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/ux"
@@ -111,13 +114,22 @@ func manifestMCPByName(m *manifest.Manifest) map[string]*manifest.MCPDependency 
 
 // recordMCPState fills the lock's mcp_configs and mcp_target_servers from the
 // servers this run wrote for each target. lock.MCPServers is already set. A
-// server a dependency declared has no entry in apm.yml, so it gets no config.
-func recordMCPState(lock *lockfile.Lockfile, declared map[string]*manifest.MCPDependency, targetsByServer map[string]map[string]bool) {
+// server a direct dependency declares gets the config its apm.yml declares
+// and the package that declares it as mcp_config_provenance, as the Oracle
+// records them (integration/mcp_config_view.py:147-154,350).
+func recordMCPState(lock *lockfile.Lockfile, declared map[string]*manifest.MCPDependency, depDeclared map[string]deploy.DeclaredMCP, targetsByServer map[string]map[string]bool) {
 	lock.MCPConfigs = make(map[string]*yamllib.Node)
 	lock.MCPTargetServers = make(map[string][]string)
+	lock.MCPConfigProvenance = nil
 	for _, server := range lock.MCPServers {
 		if dep, ok := declared[server]; ok {
 			lock.MCPConfigs[server] = mcpConfigNode(dep)
+		} else if d, ok := depDeclared[server]; ok {
+			lock.MCPConfigs[server] = mcpConfigNode(d.Config)
+			if lock.MCPConfigProvenance == nil {
+				lock.MCPConfigProvenance = make(map[string]lockfile.MCPOwners)
+			}
+			lock.MCPConfigProvenance[server] = lockfile.MCPOwners{Names: []string{d.Owner}}
 		}
 		for target := range targetsByServer[server] {
 			lock.MCPTargetServers[target] = append(lock.MCPTargetServers[target], server)
@@ -126,6 +138,26 @@ func recordMCPState(lock *lockfile.Lockfile, declared map[string]*manifest.MCPDe
 	for target := range lock.MCPTargetServers {
 		sort.Strings(lock.MCPTargetServers[target])
 	}
+}
+
+// keepMCPState gives lock the MCP state of old: the registry failed before
+// any MCP config was written, and the Oracle writes the lock's MCP fields
+// only after its MCP integration succeeds (install/mcp/integration.py:281,
+// 333).
+func keepMCPState(lock, old *lockfile.Lockfile) {
+	lock.MCPServers, lock.MCPConfigs, lock.MCPTargetServers, lock.MCPConfigProvenance = nil, nil, nil, nil
+	if old == nil {
+		return
+	}
+	lock.MCPServers = slices.Clone(old.MCPServers)
+	lock.MCPConfigs = maps.Clone(old.MCPConfigs)
+	if old.MCPTargetServers != nil {
+		lock.MCPTargetServers = make(map[string][]string, len(old.MCPTargetServers))
+		for t, servers := range old.MCPTargetServers {
+			lock.MCPTargetServers[t] = slices.Clone(servers)
+		}
+	}
+	lock.MCPConfigProvenance = maps.Clone(old.MCPConfigProvenance)
 }
 
 // mcpAdapterLine is the line an Oracle MCP adapter prints once it has
@@ -166,18 +198,7 @@ func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, 
 			targetSet[t] = true
 		}
 	}
-	targets := orderedTargets(targetSet, targetOrder)
-
-	ux.Plain(os.Stdout, "+- MCP Servers (%d)", len(order))
-	switch {
-	case explicitTarget:
-		ux.Info(os.Stdout, "Targeting specific %s: %s", pluralWord(len(targets), "runtime", "runtimes"), strings.Join(targets, ", "))
-	case declaredTarget:
-		ux.Info(os.Stdout, "Targeting declared %s from apm.yml: %s", pluralWord(len(targets), "target", "targets"), strings.Join(targets, ", "))
-	}
-	if skipped != nil {
-		skipped.warn()
-	}
+	printMCPHeader(len(order), orderedTargets(targetSet, targetOrder), explicitTarget, declaredTarget, skipped)
 
 	state := func(server string) (configured, known bool) {
 		if existingLock == nil {
@@ -259,6 +280,32 @@ func printMCPBlock(order []string, declared map[string]*manifest.MCPDependency, 
 	summary := strings.Join(parts, ", ")
 	ux.Success(os.Stdout, "%s", strings.ToUpper(summary[:1])+summary[1:])
 	return configuredCount + updatedCount
+}
+
+// printMCPHeader prints the first lines of the MCP block: the count of
+// servers and the targets named by --target or targets:.
+func printMCPHeader(n int, targets []string, explicitTarget, declaredTarget bool, skipped *userScopeSkip) {
+	ux.Plain(os.Stdout, "+- MCP Servers (%d)", n)
+	switch {
+	case explicitTarget:
+		ux.Info(os.Stdout, "Targeting specific %s: %s", pluralWord(len(targets), "runtime", "runtimes"), strings.Join(targets, ", "))
+	case declaredTarget:
+		ux.Info(os.Stdout, "Targeting declared %s from apm.yml: %s", pluralWord(len(targets), "target", "targets"), strings.Join(targets, ", "))
+	}
+	if skipped != nil {
+		skipped.warn()
+	}
+}
+
+// mcpTargetSet is the set of targets that take MCP servers.
+func mcpTargetSet(targets []string) map[string]bool {
+	set := map[string]bool{}
+	for _, t := range targets {
+		if _, ok := deploy.Adapters[t].(deploy.MCPTarget); ok {
+			set[t] = true
+		}
+	}
+	return set
 }
 
 // orderedTargets returns the targets of set in the order of targetOrder, each

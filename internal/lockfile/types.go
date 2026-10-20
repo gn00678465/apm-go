@@ -2,6 +2,13 @@ package lockfile
 
 import "go.yaml.in/yaml/v4"
 
+// MCPOwners is one mcp_config_provenance value: a single owner, or a list
+// of them, which the Oracle also reads (deps/lockfile.py:138-149).
+type MCPOwners struct {
+	Names []string
+	List  bool
+}
+
 // LockedDep represents a single resolved dependency in the lockfile.
 type LockedDep struct {
 	RepoURL        string
@@ -106,6 +113,10 @@ type Lockfile struct {
 	// the transport.
 	MCPConfigs       map[string]*yaml.Node
 	MCPTargetServers map[string][]string
+	// MCPConfigProvenance names, by server, the package whose apm.yml
+	// declares an MCP server a dependency brought (the Oracle's
+	// mcp_config_provenance, deps/lockfile.py:768).
+	MCPConfigProvenance map[string]MCPOwners
 
 	// PathTargets names the target that owns a deployed path, for the
 	// deployments section. Parsed from that section and set by install; a

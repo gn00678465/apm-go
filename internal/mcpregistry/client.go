@@ -9,12 +9,16 @@ package mcpregistry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 // DefaultBaseURL is used when no --registry flag or MCP_REGISTRY_URL env
@@ -35,6 +39,91 @@ var mcpRegistryMaxBytes int64 = 10 * 1024 * 1024
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
+	// Source is where BaseURL came from; it names the setting to check in
+	// an UnreachableError.
+	Source Source
+}
+
+// Source is the setting a registry URL came from, as the Oracle's
+// resolve_mcp_registry_url names it (registry/client.py:162-205). apm-go has
+// no `apm config`, so it has no "config" source.
+type Source string
+
+const (
+	SourceDefault Source = "default"
+	// SourceEnv is MCP_REGISTRY_URL.
+	SourceEnv Source = "env"
+	// SourceExplicit is the registry: field of an apm.yml MCP entry.
+	SourceExplicit Source = "explicit"
+	// SourceFlag is install --mcp's --registry.
+	SourceFlag Source = "flag"
+)
+
+// InsecureURLError refuses an http:// registry URL from MCP_REGISTRY_URL or
+// a registry: field while MCP_REGISTRY_ALLOW_HTTP is unset or empty
+// (registry/client.py:325-338). No request was sent.
+type InsecureURLError struct {
+	URL    string
+	Source Source
+}
+
+func (e *InsecureURLError) Error() string {
+	hint := "Check the --registry value or the dependency's registry: URL."
+	if e.Source == SourceEnv {
+		hint = "Check MCP_REGISTRY_URL if set."
+	}
+	return fmt.Sprintf("Insecure MCP registry URL %s: http:// is not allowed by default. Set MCP_REGISTRY_ALLOW_HTTP=1 to opt in to plaintext HTTP (not recommended for production). %s",
+		manifest.PyRepr(e.URL), hint)
+}
+
+// UnreachableError is a lookup of Server that the registry did not answer:
+// a network error, a search that is not 2xx, or a server fetch that is
+// neither 2xx nor 404 (registry/operations.py:229-256, registry/client.py:
+// 422,457,623-640).
+type UnreachableError struct {
+	URL    string
+	Source Source
+	Server string
+}
+
+func (e *UnreachableError) Error() string {
+	var hint string
+	switch e.Source {
+	case SourceEnv:
+		hint = "Check MCP_REGISTRY_URL."
+	case SourceDefault:
+		// The Oracle takes the default registry's failure for a server
+		// that is not there; apm-go uses the sentence of its fail-closed
+		// branch. Deviation (issue #123 comment 6284804045, item 2).
+		hint = "Check network connectivity and registry reachability."
+	default:
+		hint = "Check the --registry value or the dependency's registry: URL."
+	}
+	return fmt.Sprintf("Could not reach MCP registry at %s while validating server '%s'. %s", e.URL, e.Server, hint)
+}
+
+// IsFailure reports whether err is a registry failure that ends an install:
+// a refused http:// URL or a registry that did not answer.
+func IsFailure(err error) bool {
+	var insecure *InsecureURLError
+	var unreachable *UnreachableError
+	return errors.As(err, &insecure) || errors.As(err, &unreachable)
+}
+
+// NewClientFor is NewClient for a URL taken from source: an http:// URL from
+// MCP_REGISTRY_URL or a registry: field needs MCP_REGISTRY_ALLOW_HTTP set to
+// any non-empty value, as the Oracle reads it with os.environ.get. --registry
+// is the user's own choice and needs none (commands/install.py:853).
+func NewClientFor(baseURL string, source Source) (*Client, error) {
+	c, err := NewClient(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	c.Source = source
+	if (source == SourceEnv || source == SourceExplicit) && strings.HasPrefix(c.BaseURL, "http://") && os.Getenv("MCP_REGISTRY_ALLOW_HTTP") == "" {
+		return nil, &InsecureURLError{URL: c.BaseURL, Source: source}
+	}
+	return c, nil
 }
 
 // NormalizeBaseURL trims whitespace and a trailing slash the same way
@@ -98,6 +187,7 @@ func NewClient(baseURL string) (*Client, error) {
 	return &Client{
 		BaseURL: baseURL,
 		HTTP:    &http.Client{Timeout: 30 * time.Second},
+		Source:  SourceDefault,
 	}, nil
 }
 
@@ -167,6 +257,10 @@ type serverGetResponse struct {
 // this as "not found in registry", not treat it as a request failure.
 func (c *Client) FindServerByReference(ctx context.Context, reference, version string) (*ServerInfo, error) {
 	list, err := c.searchServers(ctx, reference)
+	var status *statusError
+	if errors.Is(err, errNetwork) || errors.As(err, &status) {
+		return nil, c.unreachable(reference)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +284,15 @@ func (c *Client) FindServerByReference(ctx context.Context, reference, version s
 		return nil, nil
 	}
 
-	return c.getServer(ctx, matched, version)
+	info, err := c.getServer(ctx, matched, version)
+	if errors.Is(err, errNetwork) || (errors.As(err, &status) && status.code != http.StatusNotFound) {
+		return nil, c.unreachable(reference)
+	}
+	return info, err
+}
+
+func (c *Client) unreachable(reference string) error {
+	return &UnreachableError{URL: c.BaseURL, Source: c.Source, Server: reference}
 }
 
 // isServerMatch reports whether name is a namespace-boundary fuzzy match for
@@ -271,15 +373,12 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, out any) error {
 		// the URL PATH itself, e.g. "--registry
 		// https://reg.example/t-secret123/", was still reachable through
 		// %w here).
-		return fmt.Errorf("could not reach the MCP registry (network error)")
+		return errNetwork
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("not found in registry")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("registry returned HTTP %d", resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return &statusError{code: resp.StatusCode}
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, mcpRegistryMaxBytes+1))
@@ -293,4 +392,17 @@ func (c *Client) getJSON(ctx context.Context, rawURL string, out any) error {
 		return fmt.Errorf("decode registry response: %w", err)
 	}
 	return nil
+}
+
+var errNetwork = errors.New("could not reach the MCP registry (network error)")
+
+// statusError is a registry response that is not 2xx, as requests'
+// raise_for_status refuses it.
+type statusError struct{ code int }
+
+func (e *statusError) Error() string {
+	if e.code == http.StatusNotFound {
+		return "not found in registry"
+	}
+	return fmt.Sprintf("registry returned HTTP %d", e.code)
 }
