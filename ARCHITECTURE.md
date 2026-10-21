@@ -1,6 +1,6 @@
 # apm-go architecture
 
-How apm-go is built: the layers, the direction dependencies may point, the data flow of each major command, the cross-cutting mechanisms every layer shares, and the gates a change must pass. Every structural claim is anchored to code as `path:line`. Product facts and the terminal UI design live in [PRODUCT.md](PRODUCT.md); engineering and testing rules live in [AGENTS.md](AGENTS.md). Each topic lives in exactly one of the three files.
+How apm-go is built: the layers, the direction dependencies may point, the data flow of each major command, the cross-cutting mechanisms every layer shares, and the checks a change must pass. Every structural claim is anchored to code as `path:line`. Product facts and the terminal UI design live in [PRODUCT.md](PRODUCT.md); engineering and testing rules live in [AGENTS.md](AGENTS.md). Each topic lives in exactly one of the three files.
 
 Layout: `cmd/apm-go/` holds one file per cobra subcommand; `internal/` holds the libraries listed in §2; `tools/parity/` is the output-contract runner (§5); `spec/conformance/` holds spec tables that tests read at run time.
 
@@ -175,7 +175,7 @@ flowchart LR
 4. Non-interactive (`--yes`, no TTY, CI): `renderSuccessBlock` (`:479`) prints the same content as plain status lines.
 5. Plugin mode writes through `pluginjson.NewStagedScaffold` (`:575`; `internal/pluginjson/stage.go:27`): files are staged in a project-local temp dir and committed in one move; any failure rolls back.
 
-`plugin validate` (`cmd/apm-go/plugin_validate.go`) is a read-only sibling command in the same package that does not join `runInitCore`'s flow; it has no Oracle equivalent and its output contract is fixed by `tools/realexec.sh` (§5) rather than the parity gate.
+`plugin validate` (`cmd/apm-go/plugin_validate.go`) is a read-only sibling command in the same package that does not join `runInitCore`'s flow; it has no Oracle equivalent and its output is pinned by `tools/realexec.sh` (§5).
 
 ### 3.6 `apm-go self-update`
 
@@ -238,7 +238,7 @@ Both are read-only ports of the Oracle's `commands/deps/cli.py` (issue #82; `cle
 
 **CI detection pin.** `cmd/apm-go/main_testmain_test.go:41` and `internal/ux/ux_testmain_test.go:21` are the two `TestMain`s AGENTS.md describes; the production branches they protect are `install.go:265` (frozen under CI) and `ux.isCI`.
 
-## 5. Gates
+## 5. Checks
 
 **`go test ./...`** verifies Go-level correctness. Injection seams: `installDeps` `cmd/apm-go/install.go:38`, `newGitPackageLoader` `install.go:3646` (the loader the `install` and `update` commands build, which a test replaces to clone `owner/repo` from a path), `doctorDeps` `doctor.go:35`, `deploy.SetSymlinkProbeForTest` `internal/deploy/testhooks.go:6` (whether a `--global` deploy can make symlinks), `ux.SetPromptSeamsForTest` / `SetTTYSeamsForTest` `internal/ux/testhooks.go:30,66`, `pluginjson.SetCommitHookForTest` `internal/pluginjson/testhooks.go:10`.
 
@@ -251,7 +251,7 @@ Both are read-only ports of the Oracle's `commands/deps/cli.py` (issue #82; `cle
 
 **Recorded Oracle output (`cmd/apm-go/testdata/pack_metadata_oracle/`)**: what the Oracle printed and wrote for `apm pack` with a canned remote-metadata outcome (a real fetch is network, so it cannot be a parity case). `tools/pack_metadata_oracle_gen.py` generates the records; `cmd/apm-go/pack_metadata_oracle_test.go` replays each against apm-go behind a fake `MetadataFetcher` and compares exit code, written files, fetch count, and stdout.
 
-**Output contract — the parity gate (`tools/parity`).** The gate compares apm-go with the latest stable upstream release of the Oracle. The `parity` job in `.github/workflows/parity.yml` resolves that release's tag when it runs (`gh api repos/microsoft/apm/releases/latest`, which never returns a prerelease or a draft), checks out `microsoft/apm` at the tag, builds `bin/apm-go`, then runs `go run ./tools/parity -cases tools/parity/cases -out parity-out`; no Oracle commit is recorded in this repository, so a new upstream release can turn the gate red with no change here; before running it greps every `case.json` for `https://` and `github.com/` to confirm no network URL is referenced (cases run on local fixtures only); the check allows exactly the JSON string `"https://example.com/mcp"`, the `--url` value of `install --mcp`, and still blocks a longer string that starts with it. The `go-test` job in the same workflow is separate on purpose: green tests say nothing about the contract.
+**Oracle comparison (`tools/parity`), by hand.** The runner compares apm-go with a release of the Oracle, case by case. It is a reference tool, not a gate: CI does not run it, and a difference it reports does not fail a change. To run it, check out `microsoft/apm` at a release tag, run `uv sync` there, build `bin/apm-go`, and run `APM_TARGET_BIN=$PWD/bin/apm-go APM_ORACLE_CMD="uv run --project <oracle checkout> apm" go run ./tools/parity -cases tools/parity/cases -out parity-out`; `parity-out/summary.txt` lists each case. Cases run on local fixtures only, so a case's argv must not name a network URL (`https://`, `github.com/`), the JSON string `"https://example.com/mcp"`, the `--url` value of `install --mcp`, aside.
 
 Runner:
 - `Case` (`tools/parity/case.go:18`): `id`, `argv`, `stdin`, `env`, `setup_argv`, `path_prepend`, `timeout_s`, `forbid_substrings`, `expected_taxonomy`, `waiver`; `LoadCases` (`:100`) reads `cases/<id>/case.json` plus `fixture/`.
@@ -261,8 +261,8 @@ Runner:
 - `diffCase` (`diff.go:109`) normalizes first (`normalize.go:47`: sandbox paths, hex tokens, timestamp lengths; `normalizeStatusGlyphs` `:74` treats status-symbol shape as the one sanctioned glyph difference), then compares stdout, stderr, exit code, and tree; `--help` cases use semantic comparison (`help_semantic.go`). `normalizeStatusGlyphs` also reduces a status symbol directly after one of the two prefixes `"  "` and `"|  "` to one token for both shapes (`canonicalNestedStatusGlyphLine` `normalize.go:98`), for the symbols `+ > * i ! x` only; there the Oracle's `[*]` is the success class and equals apm-go's ` + `. A tree file's bytes are normalized before they are compared (`normalizedFileBytesEqual` `diff.go:413`), and in `cwd/apm.lock.yaml` alone the first top-level `apm_version:` line is replaced by a placeholder (`normalizeTreeFileContent` `normalize.go:221`; ruling R12), because each side writes its own version there.
 - **Waiver** (`waiver.go:18`; `waivers.json`): `id`, `fields`, `tree_paths`, `taxonomy`, `reason`, `owner`, `eval_plan_ref`. `applyWaiver` (`diff.go:486`) counts a case waived only when the waiver covers every differing field; an unknown waiver id fails validation.
 - **Baseline** (`baseline.go:40`; `baseline.json`): exact paths of global-state side-effect files, excluded from the tree comparison.
-- `countUnwaived` (`diff.go:553`) > 0 returns an error and fails the job (`main.go:237`); `summary.txt` and `parity-out/` are printed and uploaded as an artifact either way.
-- **Pending cases** (`tools/parity/cases-pending/`, currently none: the directory holds only its `README.md`; `tools/parity/cases/` holds 142 cases): a case recorded as a design deviation is kept there, out of the gate. `README.md` there requires such a case to have a **ticket** in `.scratch/parity-runner/issues/` and to return to `cases/` when the ticket closes.
+- `countUnwaived` (`diff.go:553`) > 0 makes the runner exit non-zero (`main.go:237`); `summary.txt` and `parity-out/` are written either way.
+- **Pending cases** (`tools/parity/cases-pending/`, currently none: the directory holds only its `README.md`; `tools/parity/cases/` holds 142 cases): a case recorded as a design deviation is kept there, out of the run. `README.md` there requires such a case to have a **ticket** in `.scratch/parity-runner/issues/` and to return to `cases/` when the ticket closes.
 - The runner has its own `go test` (`tools/parity/*_test.go`) and a `-selftest-only` fault-injection self-check (`main.go:45-54`, `selftest.go`).
 
 **Release.** `release.yml` requires the tagged commit to be an ancestor of `origin/main` (fail-closed) and injects the tag into `Version` via `-ldflags -X` (`internal/version/version.go:14`); tags containing `-` are marked prerelease.

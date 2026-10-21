@@ -1,0 +1,79 @@
+name: CI
+
+# Oracle parity is a reference, not a gate: tools/parity is run by hand when
+# a comparison with microsoft/apm is wanted (see AGENTS.md "Oracle as a
+# reference"), so CI runs only apm-go's own checks.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./... -race
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$out" ]; then echo "gofmt drift:"; echo "$out"; exit 1; fi
+
+  real-execution:
+    # tools/realexec.sh pins apm-go's own output (stdout, stderr, exit code,
+    # file tree) for the commands it covers. The summary line is checked too,
+    # so a script that stopped before its last line does not pass.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout apm-go
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build apm-go
+        run: |
+          mkdir -p .scratch/realexec
+          go build -o .scratch/realexec/apm-go ./cmd/apm-go
+
+      - name: Run tools/realexec.sh
+        env:
+          REALEXEC_ART: .scratch/realexec
+          REALEXEC_BIN: .scratch/realexec/apm-go
+        run: |
+          sh tools/realexec.sh 2>&1 | tee .scratch/realexec/realexec.log
+          grep -q '^real-execution:' .scratch/realexec/realexec.log
+          ! grep -q '^FAIL' .scratch/realexec/realexec.log
+
+      # Runs even on failure, so the log ends with the check count.
+      - name: Print realexec summary
+        if: always()
+        run: |
+          if [ -f .scratch/realexec/realexec.log ]; then
+            tail -1 .scratch/realexec/realexec.log
+          else
+            echo "no realexec.log written -- the script failed before producing output"
+          fi
+
+      - name: Upload real-execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: realexec-out
+          path: .scratch/realexec/realexec.log
+          retention-days: 30
