@@ -1,6 +1,6 @@
 ---
 name: verify-apm-go
-description: Drive the real apm-go binary (CLI and its interactive init TUI) in a throwaway sandbox and capture evidence — stdout, stderr, exit code, resulting file tree. Use to prove a change to a command works the way a user would see it, to reproduce a reported behaviour, or to check a command before and after a fix. Also holds `verify.sh check`, the one command for the repository checks (build, shuffled suite, vet, gofmt, staticcheck, govulncheck, tools/realexec.sh); run it before saying a change is ready. Not a replacement for the parity gate.
+description: Drive the real apm-go binary (CLI and its interactive init TUI) in a throwaway sandbox and capture evidence — stdout, stderr, exit code, resulting file tree. Use to prove a change to a command works the way a user would see it, to reproduce a reported behaviour, or to check a command before and after a fix. Also holds `verify.sh check`, the one command for the repository checks (build, shuffled suite, vet, gofmt, staticcheck, govulncheck, tools/realexec.sh); run it before saying a change is ready. Not a comparison with the Oracle (that is `tools/parity`, run by hand).
 ---
 
 # Verify apm-go
@@ -13,7 +13,7 @@ All commands below go through one helper. Run it from anywhere inside the repo:
 V=.claude/skills/verify-apm-go/scripts/verify.sh
 ```
 
-This skill answers two questions. "Is the tree sound?" is `$V check` (see Check). "What does the binary do when a user runs it?" is everything from Launch on. Neither replaces `tools/parity` (CI), the authority on Oracle parity. See `AGENTS.md`.
+This skill answers two questions. "Is the tree sound?" is `$V check` (see Check). "What does the binary do when a user runs it?" is everything from Launch on. Comparing with the Oracle is `tools/parity`, run by hand when it helps; see `AGENTS.md`.
 
 ## Check
 
@@ -26,7 +26,7 @@ Runs on the working tree as it is; nothing has to be committed. Steps, in order:
 - Every step runs, also after an earlier one failed. A failed step prints `FAIL  <step>` with the end of its log; the whole log is `.scratch/verify/check/<step>.log`. The command exits 1 when a step failed.
 - `govulncheck` prints `ok` or `note` and never fails the run. A `note` is a finding the code calls or a scan that could not run (no network); read its log and report it, do not ignore it.
 - It runs on the Go version of `go.mod`'s `go` directive and keeps the build work directory and the tests' temporary files under `~/.cache/apm-go-verify/tmp` (removed at the end), not `/tmp`: a small or quota-limited `/tmp` fails the suite at link time.
-- Not covered: Oracle parity (CI), and whether the lines a change touched have a test. Read the diff for that.
+- Not covered: comparison with the Oracle (`tools/parity`, by hand), and whether the lines a change touched have a test. Read the diff for that.
 
 ## Launch
 

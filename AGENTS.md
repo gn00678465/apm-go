@@ -2,7 +2,7 @@
 
 Go port of [microsoft/apm](https://github.com/microsoft/apm) — the Agent Package Manager — as a single static binary with no Python runtime. Compiles `.apm/` primitives (instructions, agents, chat modes, memory) into the root context files AI agents read on startup (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`), and installs/uninstalls packages and MCP server configurations from a marketplace.
 
-The upstream Python implementation is the **oracle**: the term always means it, and code comments cite oracle file:line. Parity is deliberate but **partial** — the oracle's command surface is ported selectively, not API-for-API. Before treating a missing command or flag as a bug, check whether it is an intentional gap: `cmd/apm-go/*.go` comments mark each deviation with its reason, and a deviation that is not recorded there is a finding, not a feature.
+The upstream Python implementation is the **Oracle**: the term always means it, and code comments cite Oracle file:line. The Oracle is a **reference**, not a contract: apm-go starts from its behaviour where that serves apm-go's users and departs from it where apm-go has a reason to. Its command surface is ported selectively. A command, flag or behaviour that differs from the Oracle is not a bug by itself; it is one only when it is a problem for a user of apm-go.
 
 ## Canonical documents — read before writing code
 
@@ -82,7 +82,7 @@ internal/
 
 ## Key conventions
 
-**Oracle parity.** When the oracle handles a case, match its behaviour — edge cases, error messages, exit codes, output bytes. Cite oracle file:line in a comment when the mapping is non-obvious. Where apm-go deviates on purpose (a flag not yet ported, `apm-go` in place of `apm` in hint text), say so in a comment at the deviation with the reason.
+**Oracle as a reference.** When apm-go meets a case the Oracle already handles, read what the Oracle does first and take it unless apm-go has a reason to do otherwise. Cite Oracle file:line in a comment when the mapping is non-obvious. A difference from the Oracle needs no owner ruling and no issue of its own: where a user can see it, write it with its reason into the PRODUCT.md item for that behaviour, or as a comment at the site. Do not open an issue, or keep one open, only because apm-go differs from the Oracle; an issue is for a problem a user of apm-go meets.
 
 **Git subprocesses** run under `gitops.ApplySecureGitEnv` (no credential prompts, transport allow-list) — every call site, including diagnostics. A subprocess that connects to a remote (`ls-remote`, `clone`, `fetch`) first passes `gitops.ValidateURLRewriteSafety` for that URL.
 
@@ -104,7 +104,7 @@ internal/
 
 ## Testing patterns
 
-Tests use `t.TempDir()` for filesystem isolation. A git repository a test creates is made through a helper that runs git with `-c maintenance.auto=false` (for example `gitCmd` in `cmd/apm-go/marketplace_authoring_test.go`): git repacks in the background after a commit, which changes a fixture in the middle of a before/after comparison. No global test fixtures — each test builds its own `apm.yml` / directory tree inline. External seams are injected, not mocked globally: `installDeps`, `doctorDeps` (git/env), and the `*ForTest` hooks in `internal/ux/testhooks.go` and `internal/pluginjson/testhooks.go`. Expected values come from the oracle's source or output, never recomputed the way the code does.
+Tests use `t.TempDir()` for filesystem isolation. A git repository a test creates is made through a helper that runs git with `-c maintenance.auto=false` (for example `gitCmd` in `cmd/apm-go/marketplace_authoring_test.go`): git repacks in the background after a commit, which changes a fixture in the middle of a before/after comparison. No global test fixtures — each test builds its own `apm.yml` / directory tree inline. External seams are injected, not mocked globally: `installDeps`, `doctorDeps` (git/env), and the `*ForTest` hooks in `internal/ux/testhooks.go` and `internal/pluginjson/testhooks.go`. Expected values come from the intended behaviour (the Oracle's source or output where apm-go follows it), never recomputed the way the code does.
 
 **CI detection is pinned, never inherited.** `cmd/apm-go` and `internal/ux` each have a `TestMain` that unsets `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `TF_BUILD`, and `JENKINS_URL` before running their tests. Both packages have production code that branches on those variables — `install` defaults to frozen under CI (`lockfile.IsCIEnvironment`, req-lk-018) and `ux.isCI` suppresses interactivity — so without the pin the same test suite is green on a workstation and red in Actions. A test that wants CI semantics opts in with `t.Setenv("CI", "1")`, which overrides the baseline for that test only. Any new package whose code reads those variables needs the same `TestMain`.
 
@@ -112,7 +112,7 @@ Tests use `t.TempDir()` for filesystem isolation. A git repository a test create
 
 Schema sync tests (`internal/marketplace/build/`, `internal/pack/bundle/`) depend on conformance spec files under `spec/conformance/` — runtime inputs tracked in git, not generated. `TestParseDepString_AbsolutePath` in `internal/manifest` skips its two windows-drive-letter subtests outside `GOOS=windows` (ticket 09); everything else in it runs everywhere.
 
-`go test ./...` passing is not the parity gate — `.github/workflows/parity.yml` runs `tools/parity` against the latest stable upstream release of the Oracle on every push/PR, resolving the version when the job runs, and is the authority on Oracle byte-for-byte parity; `go test` only verifies apm-go's own Go-level correctness (ticket 09).
+`tools/parity` compares apm-go with a release of the Oracle, case by case. CI does not run it: run it by hand when a comparison helps a decision (it needs a checkout of `microsoft/apm` and `uv`; see ARCHITECTURE.md §5). A difference it reports is information, not a failure of the change. CI (`.github/workflows/ci.yml`) runs `go build`, `go test -race`, `go vet`, `gofmt` and `tools/realexec.sh`.
 
 ## Promoted rules
 
@@ -121,8 +121,7 @@ Lessons seen on 3 separate days in `LESSONS.md`. These rules are mandatory: ever
 1. **Run every check this machine can run before you list it under "Not verified".** The Windows sandbox, a local fake registry, a local-directory marketplace and an installed agent CLI all count. Before writing "cannot be verified here", try it once and write the command that failed. (Promoted 2026-10-17.)
 2. **When a PR changes what an existing user sees after upgrading, add one line for it to the release-notes issue of the next tag in the same step that opens the PR**; open that issue (`Release notes: vX.Y.Z`) when none exists. A PR's Risks section alone is not a record. (Promoted 2026-10-17.)
 3. **Write what the Oracle does only after you run Oracle 0.33.0 or cite the Oracle's file:line, and write what PRODUCT.md says only with the item quoted.** This holds in issue bodies and comments too. A statement copied from an earlier issue or comment needs the same check, because that record can claim more than its run showed. (Promoted 2026-10-17.)
-4. **Do not write a new deviation from the Oracle into PRODUCT.md unless an owner ruling names it; when the fix needs one, stop with `board ask`.** PRODUCT.md is the contract later cards follow, so an unruled deviation there is read as a ruling. This holds also when the orchestrator's feedback asks for the deviation. (Promoted 2026-10-20.)
-5. **When a reviewer or the orchestrator names one path that breaks a rule, list every path that rests on the same premise, fix them all in the same round, and write the list in the round's report.** A fix that covers only the named case lets the next review find the next one. (Promoted 2026-10-20.)
+4. **When a reviewer or the orchestrator names one path that breaks a rule, list every path that rests on the same premise, fix them all in the same round, and write the list in the round's report.** A fix that covers only the named case lets the next review find the next one. (Promoted 2026-10-20.)
 
 ## Lessons review
 
