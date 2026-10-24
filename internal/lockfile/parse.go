@@ -153,7 +153,9 @@ func ParseLockfile(doc *yaml.Node) (*Lockfile, error) {
 			if val.Kind == yaml.MappingNode {
 				lf.MCPConfigs = make(map[string]*yaml.Node)
 				for j := 0; j < len(val.Content)-1; j += 2 {
-					lf.MCPConfigs[val.Content[j].Value] = val.Content[j+1]
+					// Typed as the Oracle's loader reads its own lock, so a
+					// plain 1e3 it wrote is the string apm.yml declared.
+					lf.MCPConfigs[val.Content[j].Value] = manifest.PyYAML11Value(val.Content[j+1])
 				}
 			}
 		case "mcp_config_provenance":

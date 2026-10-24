@@ -30,15 +30,15 @@ type mcpRemoveTarget struct {
 	topKey  string
 	isTOML  bool
 	perm    os.FileMode
-	// keyOrder is set for a file written through writeOrderedMCPJSON.
-	keyOrder []string
+	// ordered is set for a file written through writeOrderedMCP.
+	ordered *orderedMCPFile
 }
 
 var mcpRemoveTargets = []mcpRemoveTarget{
-	{target: "claude", label: ".mcp.json", relPath: ".mcp.json", topKey: "mcpServers", perm: 0600, keyOrder: claudeMCPKeyOrder},
-	{target: "codex", label: "Codex CLI config", relPath: ".codex/config.toml", topKey: "mcp_servers", isTOML: true, perm: 0600},
+	{target: "claude", label: ".mcp.json", relPath: ".mcp.json", topKey: "mcpServers", ordered: &claudeMCPFile},
+	{target: "codex", label: "Codex CLI config", relPath: ".codex/config.toml", topKey: "mcp_servers", isTOML: true, ordered: &codexMCPFile},
 	{target: "copilot", label: "Copilot CLI config", relPath: ".github/mcp-config.json", topKey: "mcpServers", perm: 0644},
-	{target: "antigravity", label: "Antigravity MCP config", relPath: ".agents/mcp_config.json", topKey: "mcpServers", perm: 0600},
+	{target: "antigravity", label: "Antigravity MCP config", relPath: ".agents/mcp_config.json", topKey: "mcpServers", ordered: &antigravityMCPFile},
 	{target: "opencode", label: "OpenCode MCP config", relPath: "opencode.json", topKey: "mcp", perm: 0600},
 }
 
@@ -182,12 +182,9 @@ func removeMCPServers(root string, t mcpRemoveTarget, names []string) ([]string,
 	sort.Strings(present)
 
 	entries := map[string]map[string]any{}
-	switch {
-	case t.isTOML:
-		err = writeMergedMCPTOML(root, t.relPath, t.topKey, entries, considered, t.perm)
-	case t.keyOrder != nil:
-		err = writeOrderedMCPJSON(root, t.relPath, t.topKey, entries, considered, nil, t.keyOrder, t.perm)
-	default:
+	if t.ordered != nil {
+		err = writeOrderedMCP(root, t.relPath, t.topKey, entries, considered, nil, *t.ordered)
+	} else {
 		err = writeMergedMCPJSON(root, t.relPath, t.topKey, entries, considered, t.perm)
 	}
 	if err != nil {

@@ -125,6 +125,7 @@ func TestWriteMCP_Claude_RewrittenServerKeepsUnmanagedNestedKeys(t *testing.T) {
     "s1": {
       "type": "stdio",
       "command": "cmd",
+      "args": [],
       "autoApprove": [
         "read",
         "write"
@@ -195,7 +196,8 @@ func TestWriteMCP_Claude_NullExistingFileIsAnEmptyDocument(t *testing.T) {
   "mcpServers": {
     "s1": {
       "type": "stdio",
-      "command": "cmd"
+      "command": "cmd",
+      "args": []
     }
   }
 }
@@ -248,8 +250,8 @@ func TestWriteOrderedMCPJSON_ValueJSONCannotHoldLeavesFileAsItWas(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := writeClaudeMCPFixture(t, dir, before)
-			err := writeOrderedMCPJSON(dir, ".mcp.json", "mcpServers",
-				map[string]map[string]any{"s1": tt.entry}, map[string]bool{"s1": true}, []string{"s1"}, claudeMCPKeyOrder, 0600)
+			err := writeOrderedMCP(dir, ".mcp.json", "mcpServers",
+				map[string]map[string]any{"s1": tt.entry}, map[string]bool{"s1": true}, []string{"s1"}, claudeMCPFile)
 			if err == nil {
 				t.Fatal("no error")
 			}

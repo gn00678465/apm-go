@@ -217,10 +217,13 @@ func placeholderAtStart(s string) bool {
 // no longer produced this run (e.g. an env var became undefined and was
 // omitted) is dropped rather than left stale from a prior successful run.
 // No writer sets "id" any more; it stays listed so a redeploy drops the id
-// that older codex entries carry.
+// that older codex entries carry, and "httpUrl" so it drops the URL key the
+// Oracle writes for antigravity where apm-go writes serverUrl
+// (adapters/client/gemini.py:190-194).
 var managedMCPKeys = map[string]bool{
 	"command": true, "args": true, "env": true, "headers": true,
-	"url": true, "serverUrl": true, "type": true, "id": true, "http_headers": true,
+	"url": true, "serverUrl": true, "httpUrl": true, "type": true, "id": true, "http_headers": true,
+	"bearer_token_env_var": true, "env_http_headers": true,
 	"environment": true, "enabled": true,
 }
 

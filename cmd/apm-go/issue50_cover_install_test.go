@@ -53,9 +53,10 @@ func TestInstall_LocalNameCollisionInManifest_RefusedBeforeAnyWrite(t *testing.T
 	}
 }
 
-// Ruling R13: update keeps its own summary, with its list of the MCP servers
-// it configured.
-func TestUpdate_ListsConfiguredMCPServers(t *testing.T) {
+// An update of a project with MCP servers alone prints the MCP block and the
+// Oracle's last line, as Oracle 0.33.0 does (commands/update.py:322-379;
+// measured, C/c57-8/after1).
+func TestUpdate_MCPOnlyProject(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	dir := chdirTemp(t)
 	writeCompileFile(t, dir, "apm.yml", "name: p\nversion: 1.0.0\ntarget: claude\ndependencies:\n  mcp:\n"+
@@ -65,13 +66,20 @@ func TestUpdate_ListsConfiguredMCPServers(t *testing.T) {
 
 	got := mustRunCLI(t, "update")
 
-	want := " i Targets: claude  (source: apm.yml)\n" +
-		" i MCP servers configured:\n" +
-		"  - one -> claude\n" +
-		"  - two -> claude\n" +
-		" i Already up to date\n"
+	want := "+- MCP Servers (2)\n" +
+		" i Targeting declared target from apm.yml: claude\n" +
+		"|   + two (already configured)\n" +
+		"|   + one (already configured)\n" +
+		" + All servers up to date\n" +
+		" + MCP/LSP configuration reconciled. No APM dependencies to update.\n"
 	if got != want {
 		t.Errorf("update:\n%s\nwant:\n%s", got, want)
+	}
+	if got := mustRunCLI(t, "update", "--dry-run"); got != " i [dry-run] would reconcile MCP/LSP configuration; no files written\n" {
+		t.Errorf("update --dry-run = %q", got)
+	}
+	if _, err := os.Stat(".gitignore"); !os.IsNotExist(err) {
+		t.Errorf(".gitignore: err = %v, want none written", err)
 	}
 }
 

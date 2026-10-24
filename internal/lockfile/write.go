@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/yamlcore"
 	"go.yaml.in/yaml/v4"
 )
@@ -91,7 +92,7 @@ func SerializeLockfile(lf *Lockfile, original *yaml.Node) (*yaml.Node, error) {
 			if len(lf.MCPConfigs) > 0 {
 				m := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 				for _, name := range sortedKeys(lf.MCPConfigs) {
-					addNode(m, name, lf.MCPConfigs[name])
+					addNode(m, name, pyyamlQuoted(lf.MCPConfigs[name]))
 				}
 				addNode(root, key, m)
 			}
@@ -386,6 +387,30 @@ func mcpConfigsEqual(a, b map[string]*yaml.Node) bool {
 		}
 	}
 	return true
+}
+
+// pyyamlQuoted is a copy of v whose strings are quoted where PyYAML, which
+// writes the Oracle's lock, quotes them: a string its YAML 1.1 resolver would
+// read as another type ('1:30', 'no'), and not one YAML 1.2 alone reads so
+// (1e3), which the encoder would quote otherwise.
+func pyyamlQuoted(v *yaml.Node) *yaml.Node {
+	out := *v
+	if v.Kind != yaml.ScalarNode {
+		out.Content = make([]*yaml.Node, len(v.Content))
+		for i, c := range v.Content {
+			out.Content[i] = pyyamlQuoted(c)
+		}
+		return &out
+	}
+	if out.ShortTag() != "!!str" || out.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
+		return &out
+	}
+	if manifest.PyYAMLResolve(out.Value) != "!!str" {
+		out.Style = yaml.SingleQuotedStyle
+	} else {
+		out.Tag, out.Style = "", 0
+	}
+	return &out
 }
 
 // MCPConfigEqual reports whether two mcp_configs values record the same

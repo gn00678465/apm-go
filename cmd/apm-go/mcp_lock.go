@@ -99,6 +99,38 @@ func ensureClaudeDir(root string, targets map[string]bool) {
 	}
 }
 
+// printTrustedMCP prints the Oracle's line for each self-defined MCP server a
+// direct dependency declares, the dependencies in the order of the lock
+// (integration/mcp_config_view.py:284,349-361).
+func printTrustedMCP(lock *lockfile.Lockfile, trusted map[string][]deploy.DeclaredMCP) {
+	if len(trusted) == 0 {
+		return
+	}
+	deps := slices.Clone(lock.Dependencies)
+	lockfile.SortDependencies(deps)
+	for i := range deps {
+		if deps[i].Depth > 1 {
+			continue
+		}
+		for _, s := range trusted[deps[i].UniqueKey()] {
+			ux.Info(os.Stdout, "Trusting direct dependency MCP '%s' from '%s'", s.Config.Name, s.Owner)
+		}
+	}
+}
+
+// mcpBlockDeclared is declared with the servers only a direct dependency
+// declares, for the label of the MCP block, which the Oracle gives every
+// self-defined server (integration/mcp_integrator_install.py:997-1000).
+func mcpBlockDeclared(declared map[string]*manifest.MCPDependency, depDeclared map[string]deploy.DeclaredMCP) map[string]*manifest.MCPDependency {
+	out := maps.Clone(declared)
+	for name, d := range depDeclared {
+		if _, ok := out[name]; !ok {
+			out[name] = d.Config
+		}
+	}
+	return out
+}
+
 // manifestMCPByName indexes the MCP servers apm.yml declares.
 func manifestMCPByName(m *manifest.Manifest) map[string]*manifest.MCPDependency {
 	byName := make(map[string]*manifest.MCPDependency)

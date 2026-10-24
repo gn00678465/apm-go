@@ -179,6 +179,22 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	case !os.IsNotExist(err):
 		return fmt.Errorf("read apm.lock.yaml: %w", err)
 	}
+	// With no package to update and only MCP servers, the Oracle's update
+	// configures them and ends there, with no .gitignore and its own lines
+	// (commands/update.py:322-379,644), also when it is given a package. A
+	// project with its own content, or a lock that still records packages,
+	// takes the update of before.
+	serviceOnly := len(m.ParsedDeps)+len(m.ParsedDevDeps) == 0 &&
+		(existingLock == nil || len(existingLock.Dependencies) == 0) &&
+		(len(m.MCPServers)+len(m.MCPDevServers) > 0 || existingLock != nil && len(existingLock.MCPServers) > 0) &&
+		len(deploy.CollectScopeLocalPrimitives(".", deployDir != "")) == 0
+	if serviceOnly {
+		if dryRun {
+			ux.Info(os.Stdout, "[dry-run] would reconcile MCP/LSP configuration; no files written")
+			return nil
+		}
+		pkg = ""
+	}
 	// oldLock is what the plan compares with: nothing when there is no lock.
 	oldLock := existingLock
 	if oldLock == nil {
@@ -317,8 +333,12 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 		return errNoDeployTarget()
 	}
 
-	return deployAndFinalize(m, "", deployDir, effectiveSubsets, nil, nil, nil, nil, false, false, pkg != "", map[string]bool{pkg: true}, result, newLock, existingLock, existingNode, node, nil)
+	return deployAndFinalize(m, "", deployDir, effectiveSubsets, nil, nil, nil, nil, false, false, pkg != "", map[string]bool{pkg: true}, result, newLock, existingLock, existingNode, node, serviceOnly, nil)
 }
+
+// serviceOnlyDone is the last line of an update with MCP servers alone
+// (commands/update.py:379).
+const serviceOnlyDone = "MCP/LSP configuration reconciled. No APM dependencies to update."
 
 // runUpdateDryRun resolves --dry-run's plan against a throwaway scratch
 // ModulesDir (never "apm_modules") and prints it via the same

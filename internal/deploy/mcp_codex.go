@@ -1,11 +1,9 @@
 package deploy
 
 import (
-	"os"
 	"strings"
 
 	"github.com/apm-go/apm/internal/manifest"
-	"github.com/pelletier/go-toml/v2"
 )
 
 func (a *codexAdapter) MCPResolveMode() manifest.ResolveMode { return manifest.ResolveBake }
@@ -21,8 +19,9 @@ func (a *codexAdapter) WriteMCP(prims []Primitive, projectDir string) ([]string,
 	if len(prims) == 0 {
 		return nil, nil, diags, nil
 	}
+	keepPrimOrder(prims, entries, "env", "http_headers", "env_http_headers")
 	relPath := ".codex/config.toml"
-	if err := writeMergedMCPTOML(projectDir, relPath, "mcp_servers", entries, consideredNames(prims), 0600); err != nil {
+	if err := writeOrderedMCP(projectDir, relPath, "mcp_servers", entries, consideredNames(prims), primNames(prims), codexMCPFile); err != nil {
 		return nil, nil, diags, err
 	}
 	return []string{relPath}, entryNames(entries), diags, nil
@@ -33,14 +32,17 @@ func codexMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 		return nil, false, "SSE transport is not supported by codex; skipped"
 	}
 	if r.Transport == "stdio" {
-		e := map[string]any{"command": r.Command}
-		if len(r.Args) > 0 {
-			e["args"] = r.Args
+		// args and env are always written, [] and an empty table when there
+		// is none (codex.py:231-236).
+		args := r.Args
+		if args == nil {
+			args = []string{}
 		}
-		if len(r.Env) > 0 {
-			e["env"] = r.Env
+		env := r.Env
+		if env == nil {
+			env = map[string]string{}
 		}
-		return e, true, ""
+		return map[string]any{"command": r.Command, "args": args, "env": env}, true, ""
 	}
 	// Deviation: Oracle 0.33.0 writes id = "" on stdio and remote entries
 	// (codex.py:235,318). Codex's config schema has no id field and
@@ -51,6 +53,10 @@ func codexMCPEntry(r *ResolvedMCPServer) (map[string]any, bool, string) {
 	}
 	return e, true, ""
 }
+
+// codexMCPKeyOrder is the key order of one server in config.toml as the
+// Oracle's Codex adapter builds it (codex.py:231-236, 316-369), less its id.
+var codexMCPKeyOrder = []string{"command", "args", "env", "url", "bearer_token_env_var", "http_headers", "env_http_headers"}
 
 // encodeCodexHeaders splits resolved headers into Codex's config.toml fields
 // (developers.openai.com/codex/mcp): Codex does NOT expand ${VAR} inline, so a
@@ -104,21 +110,4 @@ func bearerEnvVar(v string) (string, bool) {
 		return "", false
 	}
 	return soleEnvVar(strings.TrimSpace(v[len(prefix):]))
-}
-
-// writeMergedMCPTOML mirrors writeMergedMCPJSON for codex's TOML config: read
-// the existing table at topKey (if any), merge entries per mergeMCPServers.
-func writeMergedMCPTOML(projectDir, rel, topKey string, entries map[string]map[string]any, considered map[string]bool, perm os.FileMode) error {
-	root, err := readExistingMCPRoot(projectDir, rel, toml.Unmarshal)
-	if err != nil {
-		return err
-	}
-	existing, _ := root[topKey].(map[string]any)
-	root[topKey] = mergeMCPServers(existing, entries, considered)
-
-	data, err := toml.Marshal(root)
-	if err != nil {
-		return err
-	}
-	return writeMCPFile(projectDir, rel, data, perm)
 }
