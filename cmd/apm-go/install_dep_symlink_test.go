@@ -753,6 +753,9 @@ func TestInstall_DependencySkillMarkerSymlinkFails(t *testing.T) {
 		files map[string]string
 		links map[string]string
 		want  string
+		// plugin leaves out the sibling .apm/, which would make the package
+		// an APM package, whose plugin.json is not read (issue #126 item 75).
+		plugin bool
 	}{
 		{
 			name:  "skills dangling",
@@ -770,17 +773,20 @@ func TestInstall_DependencySkillMarkerSymlinkFails(t *testing.T) {
 			want:  "symlink skills/s/SKILL.md is a symlink loop",
 		},
 		{
-			name:  "plugin skill dangling",
-			files: map[string]string{".claude-plugin/plugin.json": `{"name":"p","skills":["./custom/s"]}` + "\n"},
-			links: map[string]string{"custom/s/SKILL.md": "nope.md"},
-			want:  "symlink custom/s/SKILL.md -> nope.md does not resolve: no such file or directory",
+			name:   "plugin skill dangling",
+			files:  map[string]string{".claude-plugin/plugin.json": `{"name":"p","skills":["./custom/s"]}` + "\n"},
+			links:  map[string]string{"custom/s/SKILL.md": "nope.md"},
+			want:   "symlink custom/s/SKILL.md -> nope.md does not resolve: no such file or directory",
+			plugin: true,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := symlinkDepProject(t)
 			files := map[string]string{}
 			for k, v := range sibling {
-				files[k] = v
+				if !tt.plugin {
+					files[k] = v
+				}
 			}
 			for k, v := range tt.files {
 				files[k] = v

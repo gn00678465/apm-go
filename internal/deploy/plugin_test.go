@@ -534,7 +534,9 @@ func TestRun_PluginCommandNotesNameThePlugin(t *testing.T) {
 	}{
 		{name: "no apm.yml", want: "other"},
 		{name: "metadata-only apm.yml", apmYML: "name: meta\nversion: 2.0.0\n", want: "other"},
-		{name: "APM package", apmYML: "name: meta\nversion: 2.0.0\n", apmDir: true, want: "meta"},
+		// An APM package reads no plugin.json (issue #126 item 75), so its
+		// command is none.
+		{name: "APM package", apmYML: "name: meta\nversion: 2.0.0\n", apmDir: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -555,6 +557,12 @@ func TestRun_PluginCommandNotesNameThePlugin(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			if tt.want == "" {
+				if len(result.CommandNotes) != 0 {
+					t.Errorf("notes = %+v, want none", result.CommandNotes)
+				}
+				return
+			}
 			want := CommandNote{DepKey: "acme/pkg", Package: tt.want, Text: "Claude command hello: frontmatter keys not supported for claude commands and were dropped: name. Supported keys: allowed-tools, argument-hint, description, input, model."}
 			if len(result.CommandNotes) != 1 || result.CommandNotes[0] != want {
 				t.Errorf("notes = %+v, want [%+v]", result.CommandNotes, want)

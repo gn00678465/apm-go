@@ -31,6 +31,10 @@ func writeLocalMarketplacePlugin(t *testing.T, mktDir string) {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# hello skill"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A skills/ directory alone is no package (issue #128 item c50-5).
+	if err := os.WriteFile(filepath.Join(mktDir, "hello-pkg", "apm.yml"), []byte("name: hello\nversion: 1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestRunInstall_LocalMarketplacePlugin_E2E_InTree is the NON-MOCKED end-to-end

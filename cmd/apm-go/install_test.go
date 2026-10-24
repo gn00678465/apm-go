@@ -2425,6 +2425,11 @@ func TestRunInstall_PlainAbsoluteLocalPathPackage_PersistsAndRoundTrips(t *testi
 	if err := os.MkdirAll(pkgDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	// A local directory with no apm.yml, SKILL.md or plugin.json fails
+	// validation (issue #128 item 2).
+	if err := os.WriteFile(filepath.Join(pkgDir, "apm.yml"), []byte("name: external-pkg\nversion: 1.0.0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	os.WriteFile("apm.yml", []byte("name: test\nversion: \"1.0.0\"\n"), 0644)
 

@@ -527,6 +527,20 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 				invalid++
 				continue
 			}
+			// install/validation.py:166-168,241-263: a directory that is no
+			// package.
+			if dir, ok := localDirWithoutMarkers(ref); announce && ok {
+				printNoMarkersHint(dir, deps.verbose)
+				// A marketplace plugin is named by its source directory, as
+				// Oracle 0.33.0 names it (measured, 128-2/mkt-r1).
+				name := pkg
+				if provenance != nil {
+					name = dir
+				}
+				ux.Error(os.Stdout, "%s -- no apm.yml, SKILL.md, or plugin.json found", name)
+				invalid++
+				continue
+			}
 			// commands/install.py:418-430: an http:// package is valid only
 			// with --allow-insecure, and is then declared with
 			// allow_insecure: true.
@@ -1063,6 +1077,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			Next:            deps.loader,
 			MaxBytes:        deps.maxArchiveBytes,
 			MaxEntries:      deps.maxEntries,
+			Cached:          lockedRegistryResolution(existingLock, "apm_modules"),
 		}
 
 		newLocalCopies := absentLocalCopies(m)
@@ -1884,12 +1899,20 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			ResolvedTag:    dep.ResolvedTag,
 			ResolvedRef:    dep.ResolvedRef,
 			ResolvedCommit: dep.Commit,
-			Constraint:     dep.Constraint,
 			ResolvedBy:     dep.ResolvedBy,
 			Depth:          dep.Depth,
 			IsInsecure:     dep.Insecure,
 			AllowInsecure:  dep.AllowInsecure,
 			Alias:          dep.Alias,
+		}
+		// The Oracle's lock writes no source of a git entry, and a
+		// constraint only for a semver range (deps/lockfile.py:351-430,
+		// 564-713; measured, ~/.cache/apm-go-oracle-ref/A/124-82/r3).
+		if dep.Kind == resolver.KindGitSemver {
+			ld.Constraint = dep.Constraint
+		}
+		if ld.Source == "git" {
+			ld.Source = ""
 		}
 		moduleDir := filepath.Join("apm_modules", filepath.FromSlash(dep.ModuleDir()))
 
@@ -1908,12 +1931,21 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 			ld.Name, ld.Version, ld.PackageType = localPackageIdentity(moduleDir)
 		}
 
+		// A registry entry also records the name and package_type of the
+		// package, its default host, its version as resolved_ref
+		// (registry_entry.py:101, deps/lockfile.py:564-713; measured,
+		// ~/.cache/apm-go-oracle-ref/A/124-36/r1).
 		if dep.Kind == resolver.KindRegistry {
 			if r, ok := regLoader.Resolutions()[dep.Key]; ok {
 				ld.ResolvedURL = r.ResolvedURL
 				ld.ResolvedHash = r.ResolvedHash
 				ld.Version = r.Version
+				ld.ResolvedRef = r.Version
 			}
+			if ld.Host == "" {
+				ld.Host = "github.com"
+			}
+			ld.Name, ld.PackageType = gitPackageIdentity(moduleDir, dep.ModuleDir(), dep.RepoURL, dep.VirtualPath)
 		}
 
 		// mkt-031: marketplace provenance is purely additive metadata,
@@ -2013,6 +2045,11 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 				ld.TreeSHA256 = treeHash
 			}
 		}
+		hash, err := packageContentHash(moduleDir, dep.VirtualPath)
+		if err != nil {
+			return nil, fmt.Errorf("content_hash for %s: %w", dep.Key, err)
+		}
+		ld.ContentHash = hash
 
 		newLock.Dependencies = append(newLock.Dependencies, ld)
 	}
@@ -3804,6 +3841,29 @@ func shouldFetch(ref *manifest.DependencyReference, lock *lockfile.Lockfile) boo
 	return locked == nil || lockedRefChanged(ref, locked)
 }
 
+// lockedRegistryResolution gives the registry loader the resolution lock
+// records for a registry package whose directory below modulesDir is there
+// and whose reference has not changed, so a second install neither lists its
+// versions nor downloads it again, as Oracle 0.33.0 takes it from its cache
+// (measured, issue #124 item x1).
+func lockedRegistryResolution(lock *lockfile.Lockfile, modulesDir string) func(*manifest.DependencyReference, string) (registry.Resolution, bool) {
+	return func(ref *manifest.DependencyReference, version string) (registry.Resolution, bool) {
+		if lock == nil {
+			return registry.Resolution{}, false
+		}
+		entry := lock.FindByKey(deploy.DepRefKey(ref))
+		if entry == nil || entry.Source != "registry" || entry.ResolvedHash == "" ||
+			entry.Version != version || lockedRefChanged(ref, entry) {
+			return registry.Resolution{}, false
+		}
+		info, err := os.Stat(filepath.Join(modulesDir, filepath.FromSlash(ref.ModuleDir())))
+		if err != nil || !info.IsDir() {
+			return registry.Resolution{}, false
+		}
+		return registry.Resolution{ResolvedURL: entry.ResolvedURL, ResolvedHash: entry.ResolvedHash, Version: entry.Version}, true
+	}
+}
+
 // resolvingName is the Oracle's get_display_name
 // (models/dependency/reference.py:2009-2017): a local package's declared
 // path, a virtual package's name, else the repository path.
@@ -3865,10 +3925,16 @@ func localDeclaredPaths(m *manifest.Manifest) map[string]string {
 }
 
 // localPackageIdentity reads what the lock records about a materialized
-// local package: the name and version of its apm.yml, and its package type.
-// The type follows the first signals of the Oracle's cascade
-// (detect_package_type, models/validation.py:256); only apm_package was
-// compared against the Oracle's output.
+// local package, as Oracle 0.33.0 records it (measured,
+// ~/.cache/apm-go-oracle-ref/A/75 and c50): the package type of the Oracle's
+// cascade (models/format_detection.py:436-491), and the name and version of
+// the package the Oracle reads there. An APM package (an apm.yml with .apm/
+// or that declares a dependency) and every other package with an apm.yml are
+// those of its apm.yml. A Claude plugin is those of the apm.yml the Oracle
+// builds from plugin.json (deps/plugin_parser.py:501-505,1369-1373): the
+// manifest's name, else the directory's, and its version, else the apm.yml's,
+// else 0.0.0. A root SKILL.md alone is the name of its frontmatter and
+// "unknown" (models/validation.py:573-581).
 func localPackageIdentity(dir string) (name, pkgVersion, packageType string) {
 	exists := func(rel string) bool {
 		_, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel)))
@@ -3883,18 +3949,37 @@ func localPackageIdentity(dir string) (name, pkgVersion, packageType string) {
 			}
 		}
 	}
+	rootSkill := exists("SKILL.md")
 	nestedSkills, _ := filepath.Glob(filepath.Join(dir, "skills", "*", "SKILL.md"))
 	switch {
-	case hasManifest && exists("SKILL.md"):
+	case deploy.IsAPMPackage(dir) && rootSkill:
 		packageType = "hybrid"
-	case hasManifest:
+	case deploy.IsAPMPackage(dir) && len(nestedSkills) > 0:
+		packageType = "skill_bundle"
+	case deploy.IsAPMPackage(dir):
 		packageType = lockfile.PackageTypeAPMPackage
-	case pluginJSONPath(dir) != "" || exists(".claude-plugin"):
+	case isClaudePluginDir(dir):
+		manifestPath := pluginJSONPath(dir)
+		name = pluginField(manifestPath, "name")
+		if name == "" {
+			name = filepath.Base(dir)
+		}
+		if v := pluginField(manifestPath, "version"); v != "" {
+			pkgVersion = v
+		} else if pkgVersion == "" {
+			pkgVersion = "0.0.0"
+		}
 		packageType = lockfile.PackageTypeMarketplacePlugin
-	case exists("SKILL.md"):
+	case hasManifest && rootSkill:
+		packageType = "hybrid"
+	case rootSkill:
+		name = deploy.SkillName(filepath.Join(dir, "SKILL.md"), filepath.Base(dir))
+		pkgVersion = "unknown"
 		packageType = "claude_skill"
 	case len(nestedSkills) > 0:
 		packageType = "skill_bundle"
+	case hasManifest:
+		packageType = lockfile.PackageTypeAPMPackage
 	case exists("hooks"):
 		packageType = "hook_package"
 	}

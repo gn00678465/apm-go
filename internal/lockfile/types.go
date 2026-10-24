@@ -32,6 +32,7 @@ type LockedDep struct {
 	Version        string // registry version; source "local": the package's own version
 	Depth          int
 	TreeSHA256     string
+	ContentHash    string // the Oracle's content_hash, ComputePackageHash of the package
 	SkillSubset    []string
 	TargetSubset   []string
 	DeployedFiles  []string

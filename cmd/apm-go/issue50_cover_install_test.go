@@ -75,26 +75,42 @@ func TestUpdate_ListsConfiguredMCPServers(t *testing.T) {
 	}
 }
 
-// The package_type of a local package with no apm.yml of its own, and of one
-// that has apm.yml beside SKILL.md. hybrid, marketplace_plugin and
-// claude_skill are what Oracle v0.33.0 wrote to the lock for these three
-// directories; hook_package is the Oracle's name for the type
-// (models/validation.py:29), which the Oracle itself refuses as a local
-// package. A plugin.json at .github/plugin/ or .cursor-plugin/ is a
-// marketplace_plugin too (find_plugin_json, utils/helpers.py:105-129;
-// Oracle 0.33.0's lock in ~/.cache/apm-go-verify/issue126/plug/r4.txt).
+// The name, version and package_type the lock records for a local package,
+// each what Oracle 0.33.0 wrote to its lock (issue #126 item 75, issue #128
+// items 79 and c50-5; ~/.cache/apm-go-oracle-ref/A/75/dualkey-r1,
+// dualskills-r1, A/c50/r1-plugyml, r1-rootskill, r1-pluginv, r1-pluginnov;
+// the package types of hy, pl and sk earlier). A plugin.json at
+// .github/plugin/ or .cursor-plugin/ is a marketplace_plugin too
+// (find_plugin_json, utils/helpers.py:105-129;
+// ~/.cache/apm-go-verify/issue126/plug/r4.txt). A Claude plugin has the name
+// and version of the apm.yml the Oracle builds from plugin.json: plugin.json's
+// version wins over the package's apm.yml, and 0.0.0 stands for none.
 func TestInstall_LocalPackageTypesInLock(t *testing.T) {
 	const skill = "---\nname: s\ndescription: d\n---\nbody\n"
+	const rootSkill = "---\nname: my-root-skill\ndescription: A root skill\n---\n\nDo it.\n"
+	const rule = "---\napplyTo: \"**\"\n---\n\nRule a.\n"
 	dir := chdirTemp(t)
 	for rel, content := range map[string]string{
-		"apm.yml":                       "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n  - ./hy\n  - ./pl\n  - ./gh\n  - ./cu\n  - ./sk\n  - ./hk\n",
-		"hy/apm.yml":                    "name: hy\nversion: 1.0.0\n",
-		"hy/SKILL.md":                   skill,
-		"pl/plugin.json":                "{\"name\":\"pl\",\"version\":\"1.0.0\"}\n",
-		"gh/.github/plugin/plugin.json": "{\"name\":\"gh\",\"version\":\"1.0.0\"}\n",
-		"cu/.cursor-plugin/plugin.json": "{\"name\":\"cu\",\"version\":\"1.0.0\"}\n",
-		"sk/SKILL.md":                   skill,
-		"hk/hooks/hooks.json":           "{\"hooks\":{}}\n",
+		"apm.yml": "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  apm:\n" +
+			"  - ./hy\n  - ./pl\n  - ./gh\n  - ./cu\n  - ./sk\n  - ./plugyml\n  - ./rootskill\n  - ./pluginv\n  - ./pluginnov\n  - ./dualkey\n  - ./dualskills\n",
+		"hy/apm.yml":                                     "name: hy\nversion: 1.0.0\n",
+		"hy/SKILL.md":                                    skill,
+		"pl/plugin.json":                                 "{\"name\":\"pl\",\"version\":\"1.0.0\"}\n",
+		"gh/.github/plugin/plugin.json":                  "{\"name\":\"gh\",\"version\":\"1.0.0\"}\n",
+		"cu/.cursor-plugin/plugin.json":                  "{\"name\":\"cu\",\"version\":\"1.0.0\"}\n",
+		"sk/SKILL.md":                                    skill,
+		"plugyml/apm.yml":                                "name: plugyml\nversion: 2.0.0\n",
+		"plugyml/.claude-plugin/plugin.json":             "{\"name\": \"plugyml\", \"version\": \"1.0.0\"}\n",
+		"rootskill/SKILL.md":                             rootSkill,
+		"pluginv/.claude-plugin/plugin.json":             "{\"name\": \"pv\", \"version\": \"1.2.3\"}\n",
+		"pluginnov/.claude-plugin/plugin.json":           "{\"name\": \"pnv\"}\n",
+		"dualkey/apm.yml":                                "name: dualkey\nversion: 1.0.0\n",
+		"dualkey/.apm/instructions/a.instructions.md":    rule,
+		"dualkey/.claude-plugin/plugin.json":             "{\"name\": \"dualkey\", \"agents\": [\"./agents/rev.md\"]}\n",
+		"dualkey/agents/rev.md":                          "---\nname: rev\ndescription: Reviews code\n---\n\nReview the code.\n",
+		"dualskills/apm.yml":                             "name: dualskills\nversion: 1.0.0\n",
+		"dualskills/.apm/instructions/b.instructions.md": rule,
+		"dualskills/skills/s2/SKILL.md":                  skill,
 	} {
 		writeCompileFile(t, dir, rel, content)
 	}
@@ -102,21 +118,30 @@ func TestInstall_LocalPackageTypesInLock(t *testing.T) {
 	mustRunCLI(t, "install")
 
 	want := map[string]string{
-		"_local/hy": "hybrid",
-		"_local/pl": "marketplace_plugin",
-		"_local/gh": "marketplace_plugin",
-		"_local/cu": "marketplace_plugin",
-		"_local/sk": "claude_skill",
-		"_local/hk": "hook_package",
+		"_local/hy":         "hy 1.0.0 hybrid",
+		"_local/pl":         "pl 1.0.0 marketplace_plugin",
+		"_local/gh":         "gh 1.0.0 marketplace_plugin",
+		"_local/cu":         "cu 1.0.0 marketplace_plugin",
+		"_local/sk":         "s unknown claude_skill",
+		"_local/plugyml":    "plugyml 1.0.0 marketplace_plugin",
+		"_local/rootskill":  "my-root-skill unknown claude_skill",
+		"_local/pluginv":    "pv 1.2.3 marketplace_plugin",
+		"_local/pluginnov":  "pnv 0.0.0 marketplace_plugin",
+		"_local/dualkey":    "dualkey 1.0.0 apm_package",
+		"_local/dualskills": "dualskills 1.0.0 skill_bundle",
 	}
 	lock := readLockfile(t)
 	if len(lock.Dependencies) != len(want) {
 		t.Fatalf("lock has %d dependencies, want %d", len(lock.Dependencies), len(want))
 	}
 	for _, dep := range lock.Dependencies {
-		if dep.PackageType != want[dep.RepoURL] {
-			t.Errorf("%s: package_type = %q, want %q", dep.RepoURL, dep.PackageType, want[dep.RepoURL])
+		if got := dep.Name + " " + dep.Version + " " + dep.PackageType; got != want[dep.RepoURL] {
+			t.Errorf("%s: name, version, package_type = %q, want %q", dep.RepoURL, got, want[dep.RepoURL])
 		}
+	}
+	// The APM package's plugin.json is not read, so its agent is not deployed.
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "agents", "rev.md")); !os.IsNotExist(err) {
+		t.Errorf(".claude/agents/rev.md: err = %v, want it absent", err)
 	}
 }
 

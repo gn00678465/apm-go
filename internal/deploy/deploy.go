@@ -1045,6 +1045,13 @@ func collectDependencySources(key, modulePath string, registry bool) ([]Primitiv
 		return nil, nil, nil, name, nil, nil
 	}
 	t.registry = registry
+	if m, err := loadPluginManifest(t); err != nil {
+		return nil, nil, nil, "", nil, err
+	} else if m != nil {
+		if err := checkDeclaredComponents(t.dir, m); err != nil {
+			return nil, nil, nil, "", nil, fmt.Errorf("dependency %s: %w", key, err)
+		}
+	}
 	prims, err := collectDependency(t)
 	if err != nil {
 		return nil, nil, nil, "", nil, err

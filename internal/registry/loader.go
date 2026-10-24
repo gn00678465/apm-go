@@ -35,6 +35,11 @@ type Loader struct {
 	Next            resolver.PackageLoader
 	MaxBytes        int64
 	MaxEntries      int
+	// Cached, when set, returns the resolution the lock records for a
+	// package whose directory below ModulesDir is the one that lock pins
+	// for version, which is then not asked for again, as Oracle 0.33.0
+	// reuses it (measured, issue #124 item x1).
+	Cached func(ref *manifest.DependencyReference, version string) (Resolution, bool)
 
 	resolutions map[string]Resolution
 }
@@ -67,6 +72,33 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 		return nil, err
 	}
 
+	key := ref.ModuleDir()
+	// sc-002 defense in depth: RepoURL/VirtualPath are only charset-validated
+	// at manifest-parse time and do not reject ".." segments, so a plain
+	// Contained check after the join alone would miss a ".." that resolves
+	// to an unrelated directory still technically inside ModulesDir (e.g. a
+	// sibling package) -- ContainedKey rejects any ".." segment outright
+	// before the join happens.
+	if !archive.ContainedKey(l.ModulesDir, key) {
+		return nil, fmt.Errorf("refusing to extract %q outside %s", key, l.ModulesDir)
+	}
+	destDir := filepath.Join(l.ModulesDir, filepath.FromSlash(key))
+	// SafeExtract removes destDir and renames into it, through a symlinked
+	// parent too.
+	if err := archive.CheckPackageDir(l.ModulesDir, destDir, ref.Alias); err != nil {
+		return nil, err
+	}
+	want := resolvedRef
+	if want == "" {
+		want = ref.Reference
+	}
+	if l.Cached != nil {
+		if r, ok := l.Cached(ref, want); ok {
+			l.record(ref, r)
+			return parseSubManifest(destDir)
+		}
+	}
+
 	client, err := NewClient(reg.URL, ResolveCredential(name), aliasMap(reg), reg.Insecure)
 	if err != nil {
 		return nil, err
@@ -75,10 +107,6 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 	versions, err := client.ListVersions(owner, repo)
 	if err != nil {
 		return nil, remediateAuth(err, name)
-	}
-	want := resolvedRef
-	if want == "" {
-		want = ref.Reference
 	}
 	if want == "" {
 		return nil, fmt.Errorf("registry dependency %q requires a version selector", ref.RepoURL)
@@ -104,22 +132,6 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 		return nil, fmt.Errorf("%s: %w", ref.RepoURL, err)
 	}
 
-	key := ref.ModuleDir()
-	// sc-002 defense in depth: RepoURL/VirtualPath are only charset-validated
-	// at manifest-parse time and do not reject ".." segments, so a plain
-	// Contained check after the join alone would miss a ".." that resolves
-	// to an unrelated directory still technically inside ModulesDir (e.g. a
-	// sibling package) -- ContainedKey rejects any ".." segment outright
-	// before the join happens.
-	if !archive.ContainedKey(l.ModulesDir, key) {
-		return nil, fmt.Errorf("refusing to extract %q outside %s", key, l.ModulesDir)
-	}
-	destDir := filepath.Join(l.ModulesDir, filepath.FromSlash(key))
-	// SafeExtract removes destDir and renames into it, through a symlinked
-	// parent too.
-	if err := archive.CheckPackageDir(l.ModulesDir, destDir, ref.Alias); err != nil {
-		return nil, err
-	}
 	if _, err := archive.SafeExtract(bytes.NewReader(body), destDir, archive.Limits{
 		MaxBytes:   l.MaxBytes,
 		MaxEntries: l.MaxEntries,
@@ -127,23 +139,28 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 		return nil, err
 	}
 
-	if l.resolutions == nil {
-		l.resolutions = make(map[string]Resolution)
-	}
 	// lk-016: emit a normalized <algo>:<hex> envelope even if the registry
 	// advertised a bare-hex digest (VerifyArchiveBytes already validated it).
 	_, digHex, _ := lockfile.ParseHashEnvelope(chosen.Digest)
+	l.record(ref, Resolution{
+		ResolvedURL:  client.ArchiveURL(owner, repo, chosen.Version),
+		ResolvedHash: lockfile.HashEnvelope("sha256", digHex),
+		Version:      chosen.Version,
+	})
+
+	return parseSubManifest(destDir)
+}
+
+// record keeps r as the resolution of ref, by its unique key.
+func (l *Loader) record(ref *manifest.DependencyReference, r Resolution) {
+	if l.resolutions == nil {
+		l.resolutions = make(map[string]Resolution)
+	}
 	identity := ref.RepoURL
 	if ref.VirtualPath != "" {
 		identity += "/" + ref.VirtualPath
 	}
-	l.resolutions[identity] = Resolution{
-		ResolvedURL:  client.ArchiveURL(owner, repo, chosen.Version),
-		ResolvedHash: lockfile.HashEnvelope("sha256", digHex),
-		Version:      chosen.Version,
-	}
-
-	return parseSubManifest(destDir)
+	l.resolutions[identity] = r
 }
 
 // remediateAuth appends a redacted remediation hint to a 401/403 registry error

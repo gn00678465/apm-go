@@ -434,6 +434,11 @@ func (r *RealPackageLoader) materializeLocalCopy(ref *manifest.DependencyReferen
 	if !info.IsDir() {
 		return nil, fmt.Errorf("local dependency source %s is not a directory", ref.LocalSourcePath)
 	}
+	// The Oracle refuses the copy before it cleans the destination
+	// (install/phases/local_content.py:253-266).
+	if !hasLocalPackageMarker(src) {
+		return nil, fmt.Errorf("Local package is not a valid APM package (no apm.yml, SKILL.md, or plugin.json): %s", ref.LocalDeclaredPath)
+	}
 
 	// Replace any stale prior materialization so the result matches a fresh
 	// copy of the current source (parity with the stale-checkout repair on the
@@ -672,4 +677,18 @@ func parseManifestFile(apmYml string) (*manifest.Manifest, error) {
 		return nil, fmt.Errorf("validate %s: %w", apmYml, err)
 	}
 	return m, nil
+}
+
+// localPackageMarkers are the files whose presence makes a local directory a
+// package to the Oracle: an apm.yml, a SKILL.md, or a plugin manifest at one
+// of the places find_plugin_json looks (utils/helpers.py:105-129).
+var localPackageMarkers = []string{"apm.yml", "SKILL.md", "plugin.json", ".github/plugin/plugin.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json"}
+
+func hasLocalPackageMarker(dir string) bool {
+	for _, rel := range localPackageMarkers {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(rel))); err == nil {
+			return true
+		}
+	}
+	return false
 }
