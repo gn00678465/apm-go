@@ -136,23 +136,13 @@ func stageLocalCopy(d *manifest.DependencyReference, cleanup *[]string) (string,
 		return "", err
 	}
 	staged := filepath.Join(root, filepath.FromSlash(deploy.DepRefDir(&ref)))
-	if !refreshCopyHasMarker(staged) {
+	// The Oracle refuses a local source with no package marker
+	// (install/phases/local_content.py:253-266) before it validates the
+	// staged copy (commands/uninstall/engine.py:235-243).
+	if !hasPackageMarker(staged) {
 		return "", fmt.Errorf("%s: no apm.yml, SKILL.md or plugin.json", d.LocalPath)
 	}
 	return staged, nil
-}
-
-// refreshCopyHasMarker reports whether a staged copy is a package, as the
-// Oracle refuses a local source with no apm.yml, SKILL.md or plugin.json
-// (install/phases/local_content.py:253-266) before it validates the staged
-// copy (commands/uninstall/engine.py:235-243).
-func refreshCopyHasMarker(dir string) bool {
-	for _, name := range []string{"apm.yml", "SKILL.md"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-			return true
-		}
-	}
-	return pluginJSONPath(dir) != ""
 }
 
 // activate puts each staged copy in place of its shared directory, keeping

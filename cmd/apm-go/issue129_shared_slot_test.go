@@ -274,7 +274,8 @@ func TestUninstall_SharedLocalSlot_ActivationFailureRollsBack(t *testing.T) {
 // At user scope the package that stays is deployed again from its new copy
 // too: the skill an earlier copy deploy left takes the new content, here
 // through apm-go's skill symlink where the Oracle copies it, and the lock
-// records that content (measured, global-modified).
+// records that content (measured, global-modified). The paths are absolute,
+// as user scope takes no relative local path (install/package_resolution.py:113-137).
 func TestUninstallGlobal_SharedLocalSlot_RedeploysSurvivor(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	chdirTemp(t)
@@ -284,6 +285,7 @@ func TestUninstallGlobal_SharedLocalSlot_RedeploysSurvivor(t *testing.T) {
 	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
 	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
 	apm := filepath.Join(home, ".apm")
+	a, b := filepath.Join(apm, "a", "dep"), filepath.Join(apm, "b", "dep")
 	writeCompileFile(t, apm, "a/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, apm, "a/dep/.apm/skills/sa/SKILL.md", sharedSkillA)
 	writeCompileFile(t, apm, "b/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
@@ -291,19 +293,19 @@ func TestUninstallGlobal_SharedLocalSlot_RedeploysSurvivor(t *testing.T) {
 	writeCompileFile(t, apm, "apm_modules/_local/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, apm, "apm_modules/_local/dep/.apm/skills/sb/SKILL.md", sharedSkillB)
 	writeCompileFile(t, home, ".claude/skills/sb/SKILL.md", sharedSkillB)
-	writeCompileFile(t, apm, "apm.yml", "name: g\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - ./a/dep\n    - ./b/dep\n")
+	writeCompileFile(t, apm, "apm.yml", "name: g\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - '"+a+"'\n    - '"+b+"'\n")
 	writeCompileFile(t, apm, "apm.lock.yaml", "lockfile_version: '1'\ndependencies:\n"+
-		"- repo_url: _local/dep\n  source: local\n  local_path: ./a/dep\n"+
+		"- repo_url: _local/dep\n  source: local\n  local_path: '"+a+"'\n"+
 		"- repo_url: _local/dep\n  deployed_files:\n  - .claude/skills/sb\n  - .claude/skills/sb/SKILL.md\n"+
-		"  deployed_file_hashes:\n    .claude/skills/sb/SKILL.md: "+sharedHashB+"\n  source: local\n  local_path: ./b/dep\n")
+		"  deployed_file_hashes:\n    .claude/skills/sb/SKILL.md: "+sharedHashB+"\n  source: local\n  local_path: '"+b+"'\n")
 
-	want := " > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" +
+	want := " i Uninstalling from user scope (~/.apm/)\n > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" +
 		" i Refreshed _local/dep in apm_modules/ for 1 surviving declaration(s)\n" +
 		" i Removed _local/dep from dependencies.apm in apm.yml\n" +
 		" + Updated " + filepath.Join(apm, "apm.yml") + " (removed 1 package(s))\n" +
 		"  |-- 1 skill(s) integrated -> .claude/skills/\n" +
 		" + Uninstall complete: Removed 1 package(s) from apm.yml\n"
-	if got := mustRunCLI(t, "uninstall", "-g", "./a/dep"); got != want {
+	if got := mustRunCLI(t, "uninstall", "-g", a); got != want {
 		t.Errorf("uninstall:\n%s\nwant:\n%s", got, want)
 	}
 	if got := readFileString(t, filepath.Join(home, ".claude", "skills", "sb", "SKILL.md")); got != sharedSkillNewB {
