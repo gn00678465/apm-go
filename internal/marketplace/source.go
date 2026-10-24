@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 )
 
@@ -149,13 +150,18 @@ func parseLocalSource(raw, host string) (*MarketplaceSource, error) {
 }
 
 // resolveLocalPath canonicalizes a local SOURCE string to an absolute path
-// (design.md: "URL 存絕對路徑"). Backslashes are normalized to slashes
-// first so a Windows-shaped input ("C:\..", ".\rel", "~\rel") is
-// interpreted consistently regardless of which separator style the raw
-// SOURCE string used, then handed to filepath so the OS resolves the
-// platform-specific absolute form.
+// (design.md: "URL 存絕對路徑"), as the Oracle's
+// os.path.abspath(os.path.expanduser(raw)) does
+// (marketplace/source_identity.py:262-264). On Windows a backslash is a
+// separator, normalized to a slash first so "C:\..", ".\rel" and "~\rel"
+// read as the slash forms; elsewhere it is part of a file name, as
+// posixpath reads it, so ".github\plugin\marketplace.json" names one file
+// in the working directory.
 func resolveLocalPath(raw string) (string, error) {
-	normalized := strings.ReplaceAll(raw, `\`, "/")
+	normalized := raw
+	if runtime.GOOS == "windows" {
+		normalized = strings.ReplaceAll(raw, `\`, "/")
+	}
 
 	switch {
 	case strings.HasPrefix(normalized, "file://"):

@@ -153,3 +153,31 @@ func writeAndReadManifest(t *testing.T, dir, content string) []byte {
 	}
 	return data
 }
+
+// Oracle 0.33.0 with `targets: [copilot, claude]` lists .github/plugin/plugin.json
+// first in pack's lines and in plugin_manifests (measured, issue #131 item 57).
+func TestProduce_FollowsTargetsOrder(t *testing.T) {
+	dir := t.TempDir()
+	data := writeAndReadManifest(t, dir, "name: demo\nversion: 1.0.0\n")
+	doc, err := yamlcore.SafeLoad(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	got, err := Produce(&buf, dir, doc.Content[0], []string{"copilot", "claude", "copilot"}, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		filepath.Join(dir, ".github", "plugin", "plugin.json"),
+		filepath.Join(dir, ".claude-plugin", "plugin.json"),
+	}
+	if strings.Join(got.DryRun, "\n") != strings.Join(want, "\n") {
+		t.Errorf("dry_run = %v, want %v", got.DryRun, want)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 || !strings.HasSuffix(lines[0], want[0]) || !strings.HasSuffix(lines[1], want[1]) {
+		t.Errorf("output = %q, want the copilot line, then the claude line", buf.String())
+	}
+}

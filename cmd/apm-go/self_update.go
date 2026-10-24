@@ -71,16 +71,18 @@ func runSelfUpdate(checkOnly bool) error {
 	defer dlCancel()
 
 	u.HTTPClient = &http.Client{Timeout: selfUpdateDownloadTimeout}
+	// Without a terminal the line above and the result line are the whole
+	// download, as pip, cargo and gh print one in a log.
 	u.OnProgress = func(bytesRead, total int64) {
 		if total > 0 {
 			pct := float64(bytesRead) / float64(total) * 100
-			spin.Update(fmt.Sprintf("Downloading v%s... %s / %s (%.0f%%)",
+			spin.UpdateLive(fmt.Sprintf("Downloading v%s... %s / %s (%.0f%%)",
 				result.Latest,
 				selfupdate.HumanBytes(bytesRead),
 				selfupdate.HumanBytes(total),
 				pct))
 		} else {
-			spin.Update(fmt.Sprintf("Downloading v%s... %s",
+			spin.UpdateLive(fmt.Sprintf("Downloading v%s... %s",
 				result.Latest,
 				selfupdate.HumanBytes(bytesRead)))
 		}

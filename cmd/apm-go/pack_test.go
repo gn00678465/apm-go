@@ -2388,7 +2388,7 @@ func TestPackCmd_JSON_MarketplaceDrift_ErrorEnvelope(t *testing.T) {
 
 // pack --json reports each plugin.json under the decision Write made for it,
 // as Oracle 0.33.0 does (core/build_orchestrator.py:411-438,
-// commands/pack.py:612): claude first, then copilot, absolute paths.
+// commands/pack.py:612): in the order of the targets, absolute paths.
 func TestPackCmd_JSON_PluginManifestOutcomes(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(chdirTemp(t))
 	if err != nil {
@@ -2426,6 +2426,32 @@ func TestPackCmd_JSON_PluginManifestOutcomes(t *testing.T) {
 		if fmt.Sprintf("%#v", got) != fmt.Sprintf("%#v", s.want) {
 			t.Errorf("step %d pack %v: plugin_manifests =\n%#v\nwant\n%#v", i, s.args, got, s.want)
 		}
+	}
+}
+
+// Oracle 0.33.0, `targets: [copilot, claude]` and no license (measured, issue
+// #131 items 57 and x1): plugin_manifests lists .github/plugin/plugin.json
+// first, and --json prints no license warning.
+func TestPackCmd_JSON_PluginManifestsInTargetsOrder_NoLicenseWarning(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(chdirTemp(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackApmYML(t, "name: demo\nversion: 1.0.0\ndescription: d\ntargets: [copilot, claude]\n")
+
+	out, err := runPackCmd(t, "--json", "--dry-run")
+	if err != nil {
+		t.Fatalf("pack --json --dry-run: %v\n%s", err, out)
+	}
+	want := []string{
+		filepath.Join(dir, ".github", "plugin", "plugin.json"),
+		filepath.Join(dir, ".claude-plugin", "plugin.json"),
+	}
+	if got := packJSONFromOutput(t, out).PluginManifests.DryRun; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("plugin_manifests.dry_run = %v, want %v", got, want)
+	}
+	if strings.Contains(out, "NOASSERTION") {
+		t.Errorf("output = %q, want no license warning under --json", out)
 	}
 }
 

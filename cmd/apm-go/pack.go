@@ -429,7 +429,7 @@ func runPack(cmd *cobra.Command, opts packOptions) error {
 	implicitCheckCleanDryRun := opts.checkClean && !opts.dryRun
 	opts.dryRun = opts.dryRun || opts.checkClean
 
-	warnIfLicenseUndeclared(cmd.ErrOrStderr())
+	warnIfLicenseUndeclared(cmd.ErrOrStderr(), opts.jsonOutput)
 
 	hasMarketplace := hasMarketplaceConfig(".")
 
@@ -1663,8 +1663,9 @@ const licenseUndeclaredWarning = "No 'license:' field in apm.yml; the SBOM will 
 
 // warnIfLicenseUndeclared mirrors export/authoring.py's authoring-path
 // license nudge (issue #1777, findings §4): when apm.yml exists and has no
-// non-empty license: field, print a single actionable warning. Fires
-// unconditionally, before producer routing -- even when pack ultimately
+// non-empty license: field, print a single actionable warning, except under
+// --json (machine output), as the Oracle skips it there (commands/pack.py:
+// 364-369). Fires before producer routing -- even when pack ultimately
 // does nothing (matches Python: commands/pack.py:325-332 runs this before
 // BuildOrchestrator().run() is ever called, so it fires regardless of
 // which producers end up applicable or whether detect_outputs later raises
@@ -1673,7 +1674,10 @@ const licenseUndeclaredWarning = "No 'license:' field in apm.yml; the SBOM will 
 // dependencies stays silent, matching Python's design intent. A missing/
 // unreadable/unparsable apm.yml simply yields no warning (mirrors Python's
 // "never raises" contract).
-func warnIfLicenseUndeclared(w io.Writer) {
+func warnIfLicenseUndeclared(w io.Writer, jsonOutput bool) {
+	if jsonOutput {
+		return
+	}
 	data, err := os.ReadFile("apm.yml")
 	if err != nil {
 		return

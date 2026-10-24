@@ -87,6 +87,16 @@ func (s *Spin) Update(text string) {
 		Info(s.w, "%s", text)
 		return
 	}
+	s.UpdateLive(text)
+}
+
+// UpdateLive changes the text of an animated spinner and prints nothing
+// without one, for a counter updated many times a second: as a line per call
+// it would fill a log or a pipe (issue #131 item c53-1).
+func (s *Spin) UpdateLive(text string) {
+	if s.raw {
+		return
+	}
 	s.mu.Lock()
 	s.text = text
 	s.mu.Unlock()

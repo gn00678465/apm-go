@@ -29,6 +29,43 @@ func TestSpinner_NonRichPrintsPlainLinesWithoutAnimation(t *testing.T) {
 	}
 }
 
+func TestSpinner_NonRichUpdateLivePrintsNothing(t *testing.T) {
+	// Arrange
+	setRichMode(t, false)
+	var buf bytes.Buffer
+
+	// Act
+	sp := Spinner(&buf, "Downloading v0.4.0...")
+	for i := 0; i < 1000; i++ {
+		sp.UpdateLive("Downloading v0.4.0... 3.4 KB / 18.9 MB (0%)")
+	}
+	sp.Success("Updated v0.3.0 -> v0.4.0")
+
+	// Assert
+	if got, want := buf.String(), " i Downloading v0.4.0...\n + Updated v0.3.0 -> v0.4.0\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestSpinner_RichUpdateLiveShowsText(t *testing.T) {
+	// Arrange
+	setRichMode(t, true)
+	var buf bytes.Buffer
+
+	// Act
+	runWithTimeout(t, time.Second, func() {
+		sp := Spinner(&buf, "Downloading v0.4.0...")
+		sp.UpdateLive("Downloading v0.4.0... 9.5 MB / 18.9 MB (50%)")
+		time.Sleep(3 * spinnerFPS)
+		sp.Success("done")
+	})
+
+	// Assert
+	if !strings.Contains(buf.String(), "9.5 MB / 18.9 MB (50%)") {
+		t.Fatalf("spinner output %q missing the live text", buf.String())
+	}
+}
+
 func TestSpinner_NonRichFailPrintsErrorLine(t *testing.T) {
 	// Arrange
 	setRichMode(t, false)
