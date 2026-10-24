@@ -1106,6 +1106,14 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			return fmt.Errorf("resolve: %w", err)
 		}
 		newModuleDirs = fetched.keys
+		// A registry package downloaded again over its directory, because
+		// the cache no longer holds what the lock pins, is fetched, with no
+		// Resolving line, as Oracle 0.33.0 prints it (measured, A/p1-before).
+		for _, d := range result.Deps {
+			if d.Kind == resolver.KindRegistry && regLoader.Downloaded(d.Key) {
+				fetched.fetched[d.Key] = true
+			}
+		}
 		// mkt-029/033/F1: apm.yml dict-form marketplace dependencies
 		// (dependencies.apm entries {name, marketplace, version}) are
 		// resolved by the BFS itself now (root and transitive alike), not
@@ -3841,23 +3849,29 @@ func shouldFetch(ref *manifest.DependencyReference, lock *lockfile.Lockfile) boo
 	return locked == nil || lockedRefChanged(ref, locked)
 }
 
-// lockedRegistryResolution gives the registry loader the resolution lock
-// records for a registry package whose directory below modulesDir is there
-// and whose reference has not changed, so a second install neither lists its
-// versions nor downloads it again, as Oracle 0.33.0 takes it from its cache
-// (measured, issue #124 item x1).
+// lockedRegistryResolution gives the registry loader the resolution the lock
+// records for a registry package whose reference has not changed and whose
+// directory below modulesDir hashes to the lock's content_hash, so a second
+// install neither lists its versions nor downloads it again. As Oracle
+// 0.33.0's _should_skip_redownload (install/phases/_redownload.py:25-37,
+// integrate.py:166-177), a lock entry with no content_hash, or a directory
+// that is missing or changed, is downloaded and checked against the digest
+// again, so an edited cache is never deployed or recorded.
 func lockedRegistryResolution(lock *lockfile.Lockfile, modulesDir string) func(*manifest.DependencyReference, string) (registry.Resolution, bool) {
 	return func(ref *manifest.DependencyReference, version string) (registry.Resolution, bool) {
 		if lock == nil {
 			return registry.Resolution{}, false
 		}
 		entry := lock.FindByKey(deploy.DepRefKey(ref))
-		if entry == nil || entry.Source != "registry" || entry.ResolvedHash == "" ||
+		if entry == nil || entry.Source != "registry" || entry.ResolvedHash == "" || entry.ContentHash == "" ||
 			entry.Version != version || lockedRefChanged(ref, entry) {
 			return registry.Resolution{}, false
 		}
-		info, err := os.Stat(filepath.Join(modulesDir, filepath.FromSlash(ref.ModuleDir())))
-		if err != nil || !info.IsDir() {
+		dir := filepath.Join(modulesDir, filepath.FromSlash(ref.ModuleDir()))
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			return registry.Resolution{}, false
+		}
+		if hash, err := lockfile.ComputePackageHash(dir); err != nil || hash != entry.ContentHash {
 			return registry.Resolution{}, false
 		}
 		return registry.Resolution{ResolvedURL: entry.ResolvedURL, ResolvedHash: entry.ResolvedHash, Version: entry.Version}, true

@@ -1,8 +1,6 @@
 package lockfile
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,8 +10,7 @@ import (
 // with these files (~/.cache/apm-go-oracle-ref/A/124-82/r3 for the
 // subdirectory package mono/pkg and the repository whole, A/124-36/r1 for the
 // registry package acme/sample). A .git, a __pycache__ and a root .apm-pin
-// are left out; a symlink counts as what it points at, as the Oracle's copy
-// of a package resolves it.
+// are left out.
 func TestComputePackageHash(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -48,17 +45,39 @@ func TestComputePackageHash(t *testing.T) {
 			},
 			want: "sha256:4d8d086aea16a848f1728963a002093ab458d204c0bcf3ad614e6825d5122261",
 		},
+		// The cases below are hashed by Oracle 0.33.0's compute_package_hash
+		// (A/p2-oracle-hash: reviewer, dirlink, dangling, loop), which leaves
+		// every symlink out and enters no symlinked directory.
 		{
-			name: "registry package through symlinks",
+			name: "file symlink",
+			files: map[string]string{
+				"apm.yml":                             "name: pkg\nversion: 1.0.0\n",
+				".apm/instructions/x.instructions.md": "---\napplyTo: \"**\"\n---\n\nRULE\n",
+				"data.txt":                            "some data\n",
+			},
+			links: map[string]string{"link.txt": "data.txt"},
+			want:  "sha256:243d1badb991fd6b58dc26ef339b31e0b83c8deb38da60450ba75c3844eb1087",
+		},
+		{
+			name: "directory symlink",
 			files: map[string]string{
 				"apm.yml":                "name: sample\nversion: 1.0.0\n",
 				"real/x.instructions.md": "---\napplyTo: \"**\"\n---\n\nRule x.\n",
 			},
 			links: map[string]string{".apm/instructions": "../real"},
-			// The Oracle's copy of this package holds both files.
-			want: "sha256:" + sha256Hex(".apm/instructions/x.instructions.md---\napplyTo: \"**\"\n---\n\nRule x.\n"+
-				"apm.ymlname: sample\nversion: 1.0.0\n"+
-				"real/x.instructions.md---\napplyTo: \"**\"\n---\n\nRule x.\n"),
+			want:  "sha256:2e329a8c5255ca28fe346e182f3438068be4c3aa6b3ee06fe051ab284367cfd3",
+		},
+		{
+			name:  "dangling symlink",
+			files: map[string]string{"apm.yml": "name: d\nversion: 1.0.0\n"},
+			links: map[string]string{"gone.txt": "nothere"},
+			want:  "sha256:054fb1dccfeb86626a0fb5978fc6c9771d8d8efc8dfa9103d77677f36ae9e330",
+		},
+		{
+			name:  "symlink loop",
+			files: map[string]string{"apm.yml": "name: l\nversion: 1.0.0\n"},
+			links: map[string]string{"sub/self": "."},
+			want:  "sha256:1ce62455ef5e8e16d29afc6589fdd18eada3f24f853c824e505c8083575a8a14",
 		},
 		{name: "empty", want: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
 	}
@@ -92,9 +111,4 @@ func TestComputePackageHash(t *testing.T) {
 			}
 		})
 	}
-}
-
-func sha256Hex(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
 }

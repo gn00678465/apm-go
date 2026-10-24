@@ -36,12 +36,19 @@ type Loader struct {
 	MaxBytes        int64
 	MaxEntries      int
 	// Cached, when set, returns the resolution the lock records for a
-	// package whose directory below ModulesDir is the one that lock pins
-	// for version, which is then not asked for again, as Oracle 0.33.0
+	// package whose directory below ModulesDir still holds what that lock
+	// pins for version, which is then not asked for again, as Oracle 0.33.0
 	// reuses it (measured, issue #124 item x1).
 	Cached func(ref *manifest.DependencyReference, version string) (Resolution, bool)
 
 	resolutions map[string]Resolution
+	downloaded  map[string]bool
+}
+
+// Downloaded reports whether this loader downloaded the package of key (the
+// unique key of Resolutions) in this run, rather than taking it from Cached.
+func (l *Loader) Downloaded(key string) bool {
+	return l.downloaded[key]
 }
 
 // Resolutions returns the collected resolved_url/hash/version keyed by dep unique
@@ -142,6 +149,10 @@ func (l *Loader) LoadPackage(ref *manifest.DependencyReference, resolvedRef stri
 	// lk-016: emit a normalized <algo>:<hex> envelope even if the registry
 	// advertised a bare-hex digest (VerifyArchiveBytes already validated it).
 	_, digHex, _ := lockfile.ParseHashEnvelope(chosen.Digest)
+	if l.downloaded == nil {
+		l.downloaded = make(map[string]bool)
+	}
+	l.downloaded[uniqueKey(ref)] = true
 	l.record(ref, Resolution{
 		ResolvedURL:  client.ArchiveURL(owner, repo, chosen.Version),
 		ResolvedHash: lockfile.HashEnvelope("sha256", digHex),
@@ -156,11 +167,16 @@ func (l *Loader) record(ref *manifest.DependencyReference, r Resolution) {
 	if l.resolutions == nil {
 		l.resolutions = make(map[string]Resolution)
 	}
-	identity := ref.RepoURL
+	l.resolutions[uniqueKey(ref)] = r
+}
+
+// uniqueKey is the key of ref in Resolutions: repo_url, or
+// repo_url/virtual_path.
+func uniqueKey(ref *manifest.DependencyReference) string {
 	if ref.VirtualPath != "" {
-		identity += "/" + ref.VirtualPath
+		return ref.RepoURL + "/" + ref.VirtualPath
 	}
-	l.resolutions[identity] = r
+	return ref.RepoURL
 }
 
 // remediateAuth appends a redacted remediation hint to a 401/403 registry error
