@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -78,6 +79,9 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	}
 	ux.Progress(os.Stdout, "Uninstalling %d package(s)...", len(args))
 	plan := prepareUninstallPlan(args, m, lock, opts.DryRun)
+	if err := plan.resolution.Invalid; err != nil {
+		return fmt.Errorf("Error uninstalling packages: %w", err)
+	}
 	// The Oracle resolves every marketplace argument before it walks the
 	// arguments, and prints what resolving says then (commands/uninstall/
 	// engine.py:619-628). It resolves them in the order of a Python set
@@ -88,11 +92,9 @@ func runUninstall(args []string, opts uninstallOptions) error {
 	for _, arg := range plan.resolution.Arguments {
 		printUninstallArgument(plan, arg)
 	}
-	if ambiguous := plan.resolution.Ambiguous; len(ambiguous) > 0 {
-		// The Oracle's refusal (cli.py:324), before anything is written; a
-		// not-found argument does not abort, by the ruling, so it is not
-		// counted.
-		return fmt.Errorf("Uninstall aborted: %d requested package(s) could not be selected. Resolve the errors above and retry; no changes were made.", len(ambiguous))
+	if n := plan.resolution.unselected(); n > 0 {
+		// The Oracle's refusal (cli.py:323-329), before anything is written.
+		return fmt.Errorf("Uninstall aborted: %d requested package(s) could not be selected. Resolve the errors above and retry; no changes were made.", n)
 	}
 	if len(plan.resolution.APMTargets) == 0 && len(plan.resolution.MCPTargets) == 0 {
 		// un-013: every argument was some flavor of not-found -- no changes.
@@ -123,7 +125,11 @@ type uninstallPlan struct {
 	mcpTargets []uninstallMCPTarget
 	// moduleKeyByIdentity is the apm_modules key of each matched target.
 	moduleKeyByIdentity map[string]string
-	removedIdentities   map[string]bool
+	// removalKeyByIdentity is the lock key each matched target is removed
+	// under: its apm_modules key, or for a local package whose key another
+	// declaration shares, its identity (see rekeyLocalEntry).
+	removalKeyByIdentity map[string]string
+	removedIdentities    map[string]bool
 	// removedModuleKeys is removedIdentities translated through
 	// uninstallRemovalKey into the apm.lock.yaml / apm_modules key space --
 	// identical for git/marketplace targets, "_local/<name>" for
@@ -136,7 +142,10 @@ type uninstallPlan struct {
 	// package, as its apm.yml entry places it: the Oracle removes a direct package from
 	// the directory its entry places it in (commands/uninstall/engine.py:
 	// 750-751,834-835) and a transitive one from its lock entry's (:929).
-	declaredDirs   map[string]string
+	declaredDirs map[string]string
+	// refresh holds, by directory below apm_modules, the local declarations
+	// that stay and share the directory of a removed package.
+	refresh        map[string][]*manifest.DependencyReference
 	mcpNames       map[string]bool
 	orphans        map[string]bool
 	allRemovalKeys map[string]bool
@@ -166,32 +175,47 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 		}
 		apmTargets = append(apmTargets, t)
 		removedIdentities[t.IdentityKey] = true
-		key := uninstallRemovalKey(t.IdentityKey, lock)
-		moduleKeyByIdentity[t.IdentityKey] = key
-		removedModuleKeys[key] = true
+		moduleKeyByIdentity[t.IdentityKey] = uninstallRemovalKey(t.IdentityKey, lock)
+	}
+	var removed []*manifest.DependencyReference
+	for _, d := range allDirectDeps(m) {
+		if id, ok := uninstallIdentity(d); ok && removedIdentities[id] {
+			removed = append(removed, d)
+		}
 	}
 	// An entry of a removed package that a lock before issue #114 records
 	// under its `git:` path is removed under its current key, as install
 	// would have recorded it; the entries that stay are written back as they
 	// are, since uninstall copies no package to its current key.
-	declaredDirs := map[string]string{}
-	for _, d := range allDirectDeps(m) {
-		if id, ok := uninstallIdentity(d); ok && removedIdentities[id] {
-			key := moduleKeyByIdentity[id]
-			declaredDirs[key] = key
-			if d.Alias != "" {
-				declaredDirs[key] = d.Alias
-			}
-		}
-	}
 	if lock != nil {
-		var removed []*manifest.DependencyReference
-		for _, d := range allDirectDeps(m) {
-			if id, ok := uninstallIdentity(d); ok && removedIdentities[id] {
-				removed = append(removed, d)
-			}
-		}
 		useLocalKeysForGitPaths(removed, lock)
+	}
+	// A removed package whose directory below apm_modules a local
+	// declaration that stays shares (two local paths of one name, which only
+	// the Oracle's install makes) leaves that declaration's copy there, as
+	// the Oracle refreshes the slot (commands/uninstall/engine.py:85-105,
+	// 177-261,846-858). The lock entries of two such local packages share
+	// the key _local/<name>; each is told apart by its declared path, the
+	// Oracle's key for it (models/dependency/identity.py:212-215).
+	declaredDirs := map[string]string{}
+	refresh := map[string][]*manifest.DependencyReference{}
+	removalKeyByIdentity := map[string]string{}
+	for _, d := range removed {
+		id, _ := uninstallIdentity(d)
+		key := moduleKeyByIdentity[id]
+		dir := cmp.Or(d.Alias, key)
+		survivors := localSurvivorsAt(dir, m, removedIdentities, lock)
+		if len(survivors) > 0 {
+			refresh[dir] = survivors
+		}
+		removalKey := key
+		if d.IsLocal && (len(survivors) > 0 || sharesLockKey(lock, key)) {
+			removalKey = id
+			rekeyLocalEntry(lock, key, d.LocalPath, id, dir)
+		}
+		removalKeyByIdentity[id] = removalKey
+		removedModuleKeys[removalKey] = true
+		declaredDirs[removalKey] = dir
 	}
 	mcpNames := make(map[string]bool, len(resolution.MCPTargets))
 	var mcpTargets []uninstallMCPTarget
@@ -228,16 +252,18 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 	}
 
 	return &uninstallPlan{
-		resolution:          resolution,
-		apmTargets:          apmTargets,
-		mcpTargets:          mcpTargets,
-		moduleKeyByIdentity: moduleKeyByIdentity,
-		removedIdentities:   removedIdentities,
-		removedModuleKeys:   removedModuleKeys,
-		declaredDirs:        declaredDirs,
-		mcpNames:            mcpNames,
-		orphans:             orphans,
-		allRemovalKeys:      allRemovalKeys,
+		resolution:           resolution,
+		apmTargets:           apmTargets,
+		mcpTargets:           mcpTargets,
+		moduleKeyByIdentity:  moduleKeyByIdentity,
+		removalKeyByIdentity: removalKeyByIdentity,
+		removedIdentities:    removedIdentities,
+		removedModuleKeys:    removedModuleKeys,
+		declaredDirs:         declaredDirs,
+		refresh:              refresh,
+		mcpNames:             mcpNames,
+		orphans:              orphans,
+		allRemovalKeys:       allRemovalKeys,
 	}
 }
 
@@ -245,6 +271,17 @@ func prepareUninstallPlan(args []string, m *manifest.Manifest, lock *lockfile.Lo
 // apm_modules key, which is the Oracle's public label of a package.
 func (p *uninstallPlan) moduleKey(t uninstallAPMTarget) string {
 	return p.moduleKeyByIdentity[t.IdentityKey]
+}
+
+// removalLabel is the name the transcript gives the package removed under
+// the lock key key.
+func (p *uninstallPlan) removalLabel(key string) string {
+	for _, t := range p.apmTargets {
+		if p.removalKeyByIdentity[t.IdentityKey] == key {
+			return p.moduleKey(t)
+		}
+	}
+	return key
 }
 
 // moduleDir is the directory below apm_modules uninstall removes for key.
@@ -328,14 +365,44 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	if err := checkUninstallDeployPaths(lock, allRemovalKeys, deployDir); err != nil {
 		return err
 	}
-	if err := writeUninstallManifest(data, node, plan.removedIdentities, plan.mcpNames); err != nil {
+	refreshes, err := stageLocalRefreshes(plan)
+	if err != nil {
 		return err
+	}
+	// The Oracle replaces the shared directories before it writes apm.yml
+	// (commands/uninstall/cli.py:436-505), so a refresh that fails leaves
+	// apm.yml, the lock and apm_modules as they were. The hand-over below
+	// deploys the declaration that stays from its refreshed copy.
+	if err := refreshes.activate(); err != nil {
+		if verbose {
+			ux.Warn(os.Stderr, "%v", err)
+		}
+		recovery := "apm-go install"
+		if deployDir != "" {
+			recovery = "apm-go install --global"
+		}
+		return fmt.Errorf("Uninstall incomplete: shared-slot refresh failed. apm.yml and lockfile ownership were retained; some package files may already have been removed. Resolve the filesystem error and retry the same uninstall command, or run '%s' to restore the declared packages. Run with --verbose for detailed diagnostics.", recovery)
+	}
+	if err := writeUninstallManifest(data, node, plan.removedIdentities, plan.mcpNames); err != nil {
+		refreshes.rollback()
+		return err
+	}
+	refreshes.commit()
+	// The lock records the new copy's name, version and type, as install
+	// records a local package from its copy.
+	for key := range plan.refreshedKeys(lock) {
+		if lock == nil {
+			break
+		}
+		if d := lock.FindByKey(key); d != nil && d.Source == "local" {
+			d.Name, d.Version, d.PackageType = localPackageIdentity(filepath.Join("apm_modules", filepath.FromSlash(d.ModuleDir())))
+		}
 	}
 	removeRoot := "."
 	if deployDir != "" {
 		removeRoot = deployDir
 	}
-	handover, err := planUninstallHandover(lock, allRemovalKeys, deployDir)
+	handover, err := planUninstallHandover(lock, allRemovalKeys, plan.refreshedKeys(lock), deployDir)
 	if err != nil {
 		warnReintegrationSkipped(err)
 	}
@@ -637,7 +704,22 @@ func removeUninstallModuleDirs(plan *uninstallPlan, lock *lockfile.Lockfile, rem
 	_, statErr := os.Stat("apm_modules")
 	hadModules := statErr == nil
 	removed = make(map[string]bool)
+	// The direct packages go in the order they were selected, so of two that
+	// share a directory the first removes it, as in the Oracle
+	// (commands/uninstall/engine.py:813-880); a refreshed directory stays.
+	var keys []string
+	for _, t := range plan.apmTargets {
+		keys = append(keys, plan.removalKeyByIdentity[t.IdentityKey])
+	}
 	for _, key := range sortedStringSet(removalKeys) {
+		if !plan.removedModuleKeys[key] {
+			keys = append(keys, key)
+		}
+	}
+	for _, key := range keys {
+		if !removalKeys[key] || plan.refresh[plan.moduleDir(lock, key)] != nil {
+			continue
+		}
 		wasRemoved, rerr := deploy.SafeRemoveModuleDir(".", plan.moduleDir(lock, key))
 		if rerr != nil {
 			return removed, fmt.Errorf("remove apm_modules/%s: %w", key, rerr)
@@ -675,7 +757,7 @@ func checkUninstallModuleDirs(plan *uninstallPlan, lock *lockfile.Lockfile, dire
 	}
 	for _, key := range sortedStringSet(direct) {
 		if err := deploy.CheckModuleDir(".", plan.moduleDir(lock, key)); err != nil {
-			return refuse(key, err)
+			return refuse(plan.removalLabel(key), err)
 		}
 	}
 	for _, key := range sortedStringSet(transitive) {
@@ -863,23 +945,47 @@ func writeUninstallLockfile(lock *lockfile.Lockfile, lockNode *yamllib.Node, rem
 }
 
 // printUninstallResolveLines prints what resolving a marketplace argument
-// said: that it could not be resolved, could not be previewed, or was
-// refused by the supply-chain guard.
+// said, in the Oracle's words (commands/uninstall/engine.py:528-582): the
+// registry lookup, its failure or the supply-chain guard's refusal, and that
+// the argument could not be resolved.
 func printUninstallResolveLines(arg *uninstallResolution) {
+	if arg.RegistryLookup != "" {
+		ux.Progress(os.Stdout, "Resolving %s via registry...", arg.RegistryLookup)
+	}
 	for _, nf := range arg.NotFound {
-		if nf.Reason != uninstallNotFoundNoMatch {
-			printUninstallNotFound(nf)
+		switch nf.Reason {
+		case uninstallNotFoundDryRunSkipped:
+			ux.Warn(os.Stderr, "%s could not be resolved in dry-run (registry fallback skipped). Re-run without --dry-run, or use owner/repo notation to preview directly.", nf.Ref)
+		case uninstallNotFoundUnresolvable:
+			if nf.Detail != "" {
+				ux.Warn(os.Stderr, "Registry lookup for %s failed: %s. Falling back to apm.yml match.", nf.Ref, nf.Detail)
+			}
+			printUnresolvedMarketplace(nf.Ref)
 		}
 	}
 	for _, rej := range arg.SupplyChainRejected {
-		ux.Error(os.Stderr, "%q: refused to remove -- registry resolved %q, which is not present in apm.lock.yaml (supply-chain guard)", rej.Name, rej.Canonical)
+		ux.Warn(os.Stderr, "Registry resolved %s to %s, but it is not recorded in apm.lock.yaml. Refusing as a supply-chain precaution; use `apm-go uninstall %s` directly if this is correct.", rej.Ref, rej.Canonical, rej.Canonical)
+		printUnresolvedMarketplace(rej.Ref)
 	}
+}
+
+// printUnresolvedMarketplace is the Oracle's line for a marketplace argument
+// that could not be resolved (engine.py:576-582); it names `apm-go deps
+// list`, where the Oracle names `apm list`.
+func printUnresolvedMarketplace(ref string) {
+	ux.Error(os.Stderr, "%s could not be resolved -- use owner/repo format to uninstall directly, or run `apm-go deps list` to find the owner/repo canonical name then use `apm-go uninstall owner/repo` directly.", ref)
 }
 
 // printUninstallArgument prints the line of one argument's outcome, unless
 // printUninstallResolveLines already did.
 func printUninstallArgument(plan *uninstallPlan, arg *uninstallResolution) {
 	for _, t := range arg.APMTargets {
+		if t.Canonical != "" && t.Canonical != t.Name {
+			// The Oracle names what a marketplace argument resolved to
+			// (engine.py:675-679).
+			ux.Success(os.Stdout, "%s - found in apm.yml (as %s)", t.Name, t.Canonical)
+			continue
+		}
 		ux.Success(os.Stdout, "%s - found in apm.yml", plan.moduleKey(t))
 	}
 	for _, t := range arg.MCPTargets {
@@ -887,30 +993,17 @@ func printUninstallArgument(plan *uninstallPlan, arg *uninstallResolution) {
 	}
 	for _, nf := range arg.NotFound {
 		if nf.Reason == uninstallNotFoundNoMatch {
-			printUninstallNotFound(nf)
+			// un-013: by the ruling, a warning that lets the rest proceed.
+			ux.Warn(os.Stderr, "%q: not found in apm.yml", nf.Name)
 		}
 	}
-	// The Oracle's words (commands/uninstall/engine.py:694-698).
+	// The Oracle's words (commands/uninstall/engine.py:686-698).
 	for _, a := range arg.Ambiguous {
-		ux.Error(os.Stderr, "Ambiguous dependency '%s': it matches %d declarations. Use one exact path from apm.yml to uninstall a single dependency.", a.Name, a.Matches)
-	}
-}
-
-// printUninstallNotFound reports why one PACKAGE argument produced no
-// uninstall target (un-013/017/081), warning and letting the rest of the
-// command proceed.
-func printUninstallNotFound(nf uninstallNotFound) {
-	switch nf.Reason {
-	case uninstallNotFoundDryRunSkipped:
-		ux.Warn(os.Stderr, "%q: cannot preview with --dry-run (marketplace reference has no lockfile anchor); use owner/repo, or run without --dry-run", nf.Name)
-	case uninstallNotFoundUnresolvable:
-		if nf.Detail != "" {
-			ux.Warn(os.Stderr, "%q: could not resolve (%s)", nf.Name, nf.Detail)
-		} else {
-			ux.Warn(os.Stderr, "%q: could not resolve", nf.Name)
+		if a.Local != "" {
+			ux.Error(os.Stderr, "Local dependency '%s' is ambiguous: it matches %d declarations. Use one exact path from apm.yml to uninstall a single dependency.", a.Local, a.Matches)
+			continue
 		}
-	default:
-		ux.Warn(os.Stderr, "%q: not found in apm.yml", nf.Name)
+		ux.Error(os.Stderr, "Ambiguous dependency '%s': it matches %d declarations. Use one exact path from apm.yml to uninstall a single dependency.", a.Name, a.Matches)
 	}
 }
 
@@ -926,12 +1019,16 @@ func printUninstallDryRunPlan(plan *uninstallPlan, lock *lockfile.Lockfile) {
 		ux.Info(os.Stdout, "  - %s from apm.yml", key)
 		// A directory that leads out of apm_modules is not one the real run
 		// would remove; the Oracle leaves it out too (engine.py:751-767).
-		dir := plan.moduleDir(lock, key)
+		dir := plan.moduleDir(lock, plan.removalKeyByIdentity[t.IdentityKey])
 		if deploy.CheckModuleDir(".", dir) != nil {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join("apm_modules", filepath.FromSlash(dir))); err == nil {
-			ux.Info(os.Stdout, "  - %s from apm_modules/", key)
+			if survivors := plan.refresh[dir]; len(survivors) > 0 {
+				ux.Info(os.Stdout, "  - refresh %s in apm_modules/ for %d surviving declaration(s)", key, len(survivors))
+			} else {
+				ux.Info(os.Stdout, "  - %s from apm_modules/", key)
+			}
 		}
 	}
 	for _, t := range plan.mcpTargets {
@@ -954,9 +1051,18 @@ func printUninstallDryRunPlan(plan *uninstallPlan, lock *lockfile.Lockfile) {
 // counts come from what was removed, not from what the lock listed.
 func printUninstallSummary(plan *uninstallPlan, orphans, removedModuleDirs map[string]bool, cleaned []uninstallCleaned, keptFiles []string, handedOver func()) {
 	fromModules := 0
+	refreshed := map[string]bool{}
 	for _, t := range plan.apmTargets {
 		key := plan.moduleKey(t)
-		if removedModuleDirs[key] {
+		removalKey := plan.removalKeyByIdentity[t.IdentityKey]
+		if dir := plan.declaredDirs[removalKey]; plan.refresh[dir] != nil {
+			// The Oracle reports a refreshed directory once and does not
+			// count it as removed (commands/uninstall/engine.py:842-857).
+			if !refreshed[dir] {
+				refreshed[dir] = true
+				ux.Info(os.Stdout, "Refreshed %s in apm_modules/ for %d surviving declaration(s)", key, len(plan.refresh[dir]))
+			}
+		} else if removedModuleDirs[removalKey] {
 			fromModules++
 			ux.Info(os.Stdout, "Removed %s from apm_modules/", key)
 		} else {

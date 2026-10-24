@@ -4,13 +4,16 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/lockfile"
+	"github.com/apm-go/apm/internal/manifest"
 	"github.com/apm-go/apm/internal/resolver"
 	"github.com/apm-go/apm/internal/ux"
 )
@@ -51,18 +54,55 @@ type uninstallHandover struct {
 	// the handed-over paths restore wrote.
 	notes   []deploy.CommandNote
 	written map[string]bool
+	// refreshed holds the packages whose directory below apm_modules the
+	// uninstall gave a new copy, refreshedOld the paths the lock recorded
+	// for each of them, and refreshedPaths all those paths; old, the hash
+	// the lock recorded for each handed-over path before the uninstall;
+	// root, the deploy root; global, a --global uninstall, whose deploy
+	// links its files into the global project directory, the working one.
+	refreshed      map[string]bool
+	refreshedOld   map[string][]string
+	refreshedPaths []string
+	old            map[string]string
+	root           string
+	global         bool
+	// refreshing holds the paths the refresh of a package's copy decides: each
+	// goes to the bucket the trial gives it, with that bucket's content, and is
+	// recorded under it alone. recorded holds every path the lock had before
+	// the uninstall, the paths install writes over.
+	refreshing map[string]bool
+	recorded   map[string]bool
 }
 
 // planUninstallHandover deploys the packages that stay into a temporary
 // directory, with the apm.yml already written without the removed ones, and
 // keeps each removed lock path that one of them deploys; for a skill, the
-// whole directory that one of them deploys. It returns nil when
-// the removed packages recorded no path that a target governs.
-func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool, deployDir string) (*uninstallHandover, error) {
+// whole directory that one of them deploys. For a package in refreshed, whose
+// directory below apm_modules the uninstall gave its own copy, the disk and
+// the lock become what the next install gives them: each path it recorded,
+// and each path its new copy deploys to the install's targets, goes to the
+// bucket the trial gives it, and a recorded path the trial gives to no bucket
+// is removed. It returns nil when the removed packages and the refreshed ones
+// recorded no path that a target governs.
+func planUninstallHandover(lock *lockfile.Lockfile, removalKeys, refreshed map[string]bool, deployDir string) (*uninstallHandover, error) {
+	// With no lock no package recorded a path to hand over.
+	if lock == nil {
+		return nil, nil
+	}
 	removed, _ := collectUninstallDeployedProvenance(lock, removalKeys)
+	governed := append([]string(nil), removed...)
+	var refreshedPaths []string
+	refreshedOld := map[string][]string{}
+	for key := range refreshed {
+		if dep := lock.FindByKey(key); dep != nil {
+			refreshedOld[key] = dep.DeployedFiles
+			refreshedPaths = append(refreshedPaths, dep.DeployedFiles...)
+		}
+	}
+	governed = append(governed, refreshedPaths...)
 	var targets []string
 	for name := range deploy.Adapters {
-		for _, p := range removed {
+		for _, p := range governed {
 			if deploy.Governs(deployDir != "", []string{name}, deploy.DependencyBucket, p) {
 				targets = append(targets, name)
 				break
@@ -104,7 +144,7 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 	if err != nil {
 		return nil, err
 	}
-	h := &uninstallHandover{trialDir: trialDir, owner: map[string]string{}, hashes: map[string]string{}, before: map[string]string{}, parentLinks: map[string]string{}, written: map[string]bool{}}
+	h := &uninstallHandover{trialDir: trialDir, owner: map[string]string{}, hashes: map[string]string{}, before: map[string]string{}, parentLinks: map[string]string{}, written: map[string]bool{}, refreshed: refreshed, refreshedOld: refreshedOld, refreshedPaths: refreshedPaths, old: map[string]string{}, global: deployDir != ""}
 	listed := map[string]bool{}
 	for _, d := range allDirectDeps(m) {
 		if key := deploy.DepRefKey(d); key != "" && !listed[key] {
@@ -139,14 +179,14 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 			h.hashes[p] = hash
 		}
 	}
-	for _, p := range removed {
+	handOver := func(p string) {
 		// A skill is a directory deployed as one unit, so it is handed over
 		// whole: the survivor's own files below it come too, and the removed
 		// package's own files there are not handed over.
 		if dir := deploy.SkillDirOf(p); dir != "" {
 			key, ok := deployedBy[dir]
 			if !ok {
-				continue
+				return
 			}
 			take(key, dir)
 			for _, f := range trial.PerDep[key].Files {
@@ -154,18 +194,66 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 					take(key, f)
 				}
 			}
-			continue
+			return
 		}
 		if key, ok := deployedBy[p]; ok {
 			take(key, p)
+		}
+	}
+	for _, p := range removed {
+		handOver(p)
+	}
+	h.refreshing = map[string]bool{}
+	h.recorded = managedPaths(lock)
+	if len(refreshed) > 0 {
+		for _, p := range refreshedPaths {
+			if _, ok := h.owner[p]; !ok {
+				handOver(p)
+			}
+		}
+		// The trial deploys to every target that governs a path of the old
+		// record, a skill below .agents/skills to targets install does not
+		// deploy to; a path the new copy adds is taken on the install's
+		// targets alone.
+		active := refreshTargets(lock, m, deployDir)
+		for key := range refreshed {
+			if dr, ok := trial.PerDep[key]; ok {
+				files, _ := dr.Recorded()
+				for _, f := range withSkillDirs(files) {
+					if deploy.Governs(deployDir != "", active, deploy.DependencyBucket, f) {
+						handOver(f)
+					}
+				}
+			}
+		}
+		for p, key := range h.owner {
+			if refreshed[key] || slices.Contains(refreshedPaths, p) || anyBelow(refreshedPaths, p) {
+				h.refreshing[p] = true
+			}
 		}
 	}
 	root := "."
 	if deployDir != "" {
 		root = deployDir
 	}
-	for p := range h.owner {
-		if hash, err := lockfile.HashDeployedFile(filepath.Join(root, filepath.FromSlash(p))); err == nil {
+	h.root = root
+	for i := range lock.Dependencies {
+		for p, hash := range lock.Dependencies[i].DeployedHashes {
+			if _, ok := h.owner[p]; ok {
+				h.old[p] = hash
+			}
+		}
+	}
+	for p, hash := range lock.LocalDeployedHashes {
+		if _, ok := h.owner[p]; ok {
+			h.old[p] = hash
+		}
+	}
+	for p, key := range h.owner {
+		// A refreshed package's files are written again, so the block counts
+		// them integrated, as the Oracle cleans them before it redeploys
+		// (commands/uninstall/cli.py:516-524,544-585).
+		if hash, err := lockfile.HashDeployedFile(filepath.Join(root, filepath.FromSlash(p))); err == nil && !refreshed[key] {
 			h.before[p] = hash
 		}
 		segs := strings.Split(p, "/")
@@ -179,6 +267,39 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 	return h, nil
 }
 
+// refreshTargets is the targets the next install deploys a refreshed package
+// to. When the project's signals name several harnesses or none, that install
+// is refused or deploys nowhere, so the targets are read from the lock: each
+// target that alone governs a path it records (.claude/agents/x.md, not
+// .agents/skills/x). With none, no path the new copy adds is taken.
+func refreshTargets(lock *lockfile.Lockfile, m *manifest.Manifest, deployDir string) []string {
+	if targets := resolveInstallTargets("", m.Target, deployDir).targets; len(targets) > 0 {
+		return targets
+	}
+	var targets []string
+	note := func(bucket deploy.DeployBucket, p string) {
+		var only []string
+		for name := range deploy.Adapters {
+			if deploy.Governs(deployDir != "", []string{name}, bucket, p) {
+				only = append(only, name)
+			}
+		}
+		if len(only) == 1 && !slices.Contains(targets, only[0]) {
+			targets = append(targets, only[0])
+		}
+	}
+	for i := range lock.Dependencies {
+		for _, p := range lock.Dependencies[i].DeployedFiles {
+			note(deploy.DependencyBucket, p)
+		}
+	}
+	for _, p := range lock.LocalDeployedFiles {
+		note(deploy.LocalBucket, p)
+	}
+	sort.Strings(targets)
+	return targets
+}
+
 func (h *uninstallHandover) close() {
 	if h != nil {
 		os.RemoveAll(h.trialDir)
@@ -187,8 +308,13 @@ func (h *uninstallHandover) close() {
 
 // restore puts the trial's entry at each handed-over path that has nothing
 // on it under root. A path that is still there was kept by the removal (the
-// user changed it, or it is the user's symlink) and is not written. A path
-// that cannot be restored is reported and no longer handed over.
+// user changed it, or it is the user's symlink) and is not written, except
+// for a path the refresh decides that the lock recorded: its file or skill
+// directory is replaced with the content of the bucket the trial gives it, as
+// install writes over a recorded path (and as the Oracle cleans the package's
+// files and redeploys every remaining package whatever the content, measured
+// with Oracle 0.33.0 for a skill and an agent the user edited). A path that
+// cannot be restored is reported and no longer handed over.
 func (h *uninstallHandover) restore(root string) {
 	if h == nil {
 		return
@@ -213,6 +339,19 @@ func (h *uninstallHandover) restore(root string) {
 			brokenLinks = append(brokenLinks, rel)
 		}
 	}
+	// A path a refreshed package's old copy deployed and its new copy does
+	// not is removed, as the Oracle cleans every path of the package before
+	// it deploys it again (commands/uninstall/cli.py:516-524).
+	for _, key := range slices.Sorted(maps.Keys(h.refreshedOld)) {
+		for _, p := range h.refreshedOld[key] {
+			if _, kept := h.owner[p]; kept || atOrBelowAny(brokenLinks, p) {
+				continue
+			}
+			if err := h.clearForRefresh(root, p); err != nil {
+				warnReintegrationSkipped(fmt.Errorf("remove %s: %w", p, err))
+			}
+		}
+	}
 	paths := make([]string, 0, len(h.owner))
 	for p := range h.owner {
 		paths = append(paths, p)
@@ -224,6 +363,14 @@ func (h *uninstallHandover) restore(root string) {
 			delete(h.hashes, p)
 			continue
 		}
+		if h.refreshing[p] && h.wasRecorded(p) {
+			if err := h.clearForRefresh(root, p); err != nil {
+				warnReintegrationSkipped(fmt.Errorf("restore %s: %w", p, err))
+				delete(h.owner, p)
+				delete(h.hashes, p)
+				continue
+			}
+		}
 		_, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(p)))
 		if err := restoreFromTrial(h.trialDir, root, p); err != nil {
 			warnReintegrationSkipped(fmt.Errorf("restore %s: %w", p, err))
@@ -233,6 +380,59 @@ func (h *uninstallHandover) restore(root string) {
 			h.written[p] = true
 		}
 	}
+}
+
+// clearForRefresh removes the regular file, the real skill directory, or the
+// symlink a --global deploy made, at the slash path p under root, so that
+// restore writes the refreshed package's content there. A symlink on a
+// parent is walked through, within the bounds of deploy.CheckDeployPath (a
+// target root linked elsewhere, a directory linked to another place in it),
+// and one at a skill's directory is removed itself, as install replaces it;
+// a symlink of the user's at p is left, so restore does not write there.
+func (h *uninstallHandover) clearForRefresh(root, p string) error {
+	segs := strings.Split(p, "/")
+	for i := range segs {
+		full := filepath.Join(root, filepath.Join(segs[:i+1]...))
+		info, err := os.Lstat(full)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		last := i == len(segs)-1
+		skillDir := i > 0 && segs[i-1] == "skills"
+		if info.Mode()&os.ModeSymlink != 0 {
+			switch {
+			case skillDir && !last:
+				// The skill's directory is a path of its own, cleared first.
+				return nil
+			case skillDir:
+				// install replaces a symlink at a skill's directory by the
+				// skill and writes nothing through it.
+				if err := deploy.CheckDeployPath(root, p); err != nil {
+					return err
+				}
+				return os.Remove(full)
+			case last && !(h.global && deploy.IsDeployLink(".", full)):
+				return nil
+			case !last:
+				continue
+			}
+		} else if !last {
+			continue
+		}
+		if err := deploy.CheckDeployPath(root, p); err != nil {
+			return err
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0, info.Mode().IsRegular():
+			return os.Remove(full)
+		case info.IsDir() && deploy.SkillDirOf(p) == p:
+			return os.RemoveAll(full)
+		}
+	}
+	return nil
 }
 
 // restoreFromTrial creates, from the top down, each segment of the slash path
@@ -324,13 +524,30 @@ func (h *uninstallHandover) notHandedOver(removed []string) []string {
 }
 
 // record adds each handed-over path to the lock record of the bucket that
-// deploys it, with the trial's hash; the record keeps what it had.
+// deploys it, with the trial's hash. A refreshed package's record is made
+// again from what the refresh gives it, as the Oracle replaces it
+// (commands/uninstall/lockfile_state.py:69-82), and a path the refresh
+// decides is recorded under the bucket the trial gives it alone, as the next
+// install records it; a path a refreshed package recorded that the trial
+// gives to no bucket leaves every record. A file the refresh did not write
+// (the user's symlink) and that lacks the trial's content keeps the hash the
+// lock had for it, or is not recorded when the lock had none, so the lock
+// does not record content that is not on disk.
 func (h *uninstallHandover) record(lock *lockfile.Lockfile) {
 	if h == nil {
 		return
 	}
+	userKept := func(p string) bool {
+		return h.refreshing[p] && !h.writtenAt(p) && !h.holdsTrialContent(p)
+	}
 	byOwner := map[string][]string{}
+	for key := range h.refreshedOld {
+		byOwner[key] = nil
+	}
 	for p, key := range h.owner {
+		if _, recorded := h.old[p]; userKept(p) && !recorded && h.hashes[p] != "" {
+			continue
+		}
 		byOwner[key] = append(byOwner[key], p)
 	}
 	for key, paths := range byOwner {
@@ -341,6 +558,9 @@ func (h *uninstallHandover) record(lock *lockfile.Lockfile) {
 				continue
 			}
 			files, hashes = &dep.DeployedFiles, &dep.DeployedHashes
+		}
+		if h.refreshed[key] {
+			*files, *hashes = nil, nil
 		}
 		seen := make(map[string]bool, len(*files))
 		for _, f := range *files {
@@ -354,14 +574,82 @@ func (h *uninstallHandover) record(lock *lockfile.Lockfile) {
 		}
 		*files = withSkillDirs(merged)
 		for _, p := range paths {
-			if hash, ok := h.hashes[p]; ok {
-				if *hashes == nil {
-					*hashes = map[string]string{}
-				}
-				(*hashes)[p] = hash
+			hash, ok := h.hashes[p]
+			if ok && userKept(p) {
+				hash, ok = h.old[p]
 			}
+			if !ok {
+				continue
+			}
+			if *hashes == nil {
+				*hashes = map[string]string{}
+			}
+			(*hashes)[p] = hash
+		}
+		// A --global trial deploys a skill where the user's own directory
+		// is, which the refresh leaves; with its files not recorded, the
+		// entry goes, as install drops it.
+		*files = withoutOrphanSkillDirs(*files, *hashes)
+	}
+	gone := map[string]bool{}
+	for _, p := range h.refreshedPaths {
+		if _, ok := h.owner[p]; !ok {
+			gone[p] = true
 		}
 	}
+	drop := func(key string, files *[]string, hashes map[string]string) {
+		*files = slices.DeleteFunc(*files, func(f string) bool {
+			owner, owned := h.owner[f]
+			if !gone[f] && (!owned || !h.refreshing[f] || owner == key) {
+				return false
+			}
+			delete(hashes, f)
+			return true
+		})
+	}
+	for i := range lock.Dependencies {
+		d := &lock.Dependencies[i]
+		drop(d.UniqueKey(), &d.DeployedFiles, d.DeployedHashes)
+	}
+	drop("", &lock.LocalDeployedFiles, lock.LocalDeployedHashes)
+}
+
+// wasRecorded reports whether the lock before the uninstall recorded the
+// slash path p, or a path below it.
+func (h *uninstallHandover) wasRecorded(p string) bool {
+	if h.recorded[p] {
+		return true
+	}
+	for q := range h.recorded {
+		if strings.HasPrefix(q, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// writtenAt reports whether restore wrote the path p, or the skill directory
+// it is below (a --global skill symlink, whose files restore does not write).
+func (h *uninstallHandover) writtenAt(p string) bool {
+	dir := deploy.SkillDirOf(p)
+	return h.written[p] || dir != "" && h.written[dir]
+}
+
+// holdsTrialContent reports whether the file at the handed-over path p has
+// the content the trial deployed there.
+func (h *uninstallHandover) holdsTrialContent(p string) bool {
+	onDisk, err := lockfile.HashDeployedFile(filepath.Join(h.root, filepath.FromSlash(p)))
+	return err == nil && onDisk == h.hashes[p]
+}
+
+// anyBelow reports whether one of paths is below the slash path p.
+func anyBelow(paths []string, p string) bool {
+	for _, q := range paths {
+		if strings.HasPrefix(q, p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // printBlocks prints, for each package that received a path, the lines of its
@@ -394,6 +682,13 @@ func (h *uninstallHandover) printBlocks(lock *lockfile.Lockfile, root string) {
 				continue
 			}
 			files, hashes = dep.DeployedFiles, dep.DeployedHashes
+		}
+		// A refreshed package's file that restore did not write, below the
+		// user's symlink, is not counted.
+		if h.refreshed[key] {
+			files = slices.DeleteFunc(slices.Clone(files), func(f string) bool {
+				return h.owner[f] == key && !h.written[f]
+			})
 		}
 		before := map[string]string{}
 		for _, f := range files {

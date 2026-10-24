@@ -577,6 +577,13 @@ func checkFileDest(destPath, deployDir string) error {
 // isDeployLink reports whether abs is a symlink into apm_modules/ or .apm/ of
 // the global project directory, dangling or not.
 func isDeployLink(abs string) bool {
+	return IsDeployLink(activeDeployMode.projectDir, abs)
+}
+
+// IsDeployLink reports whether abs is a symlink into apm_modules/ or .apm/
+// of the global project directory projectDir, dangling or not: one a --global
+// deploy made, not the user's.
+func IsDeployLink(projectDir, abs string) bool {
 	target, err := os.Readlink(abs)
 	if err != nil {
 		return false
@@ -585,7 +592,7 @@ func isDeployLink(abs string) bool {
 		target = filepath.Join(filepath.Dir(abs), target)
 	}
 	for _, source := range []string{"apm_modules", ".apm"} {
-		source = filepath.Join(activeDeployMode.projectDir, source)
+		source = filepath.Join(projectDir, source)
 		if archive.Contained(source, target) || containedReal(source, target) {
 			return true
 		}
