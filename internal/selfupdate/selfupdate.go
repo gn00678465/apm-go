@@ -19,12 +19,14 @@ import (
 
 const (
 	defaultRepo     = "gn00678465/apm-go"
-	apiBaseURL      = "https://api.github.com"
 	binaryName      = "apm-go"
 	oldBinarySuffix = ".old"
 )
 
-var osExecutable = os.Executable
+var (
+	apiBaseURL   = "https://api.github.com"
+	osExecutable = os.Executable
+)
 
 // Release is a GitHub release.
 type Release struct {

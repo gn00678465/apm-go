@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -188,6 +189,43 @@ func TestParseMarketplaceSource_DotRelativePaths(t *testing.T) {
 				t.Errorf("Path = %q, want %q", src.Path, tt.wantPath)
 			}
 		})
+	}
+}
+
+// A backslash is a separator on Windows only. Elsewhere it is part of the
+// file name, so ".github\plugin\marketplace.json" names a file of the working
+// directory that does not exist, and Oracle 0.33.0's `marketplace add` ends
+// with "local marketplace path does not exist: <cwd>/.github\plugin\
+// marketplace.json" and exit 1 (measured on Linux, issue #131 item 61).
+func TestParseMarketplaceSource_BackslashPath(t *testing.T) {
+	// Arrange
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".github", "plugin", "marketplace.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(`{"name":"mk"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	raw := `.github\plugin\marketplace.json`
+	wantURL, wantPath := "file://"+dir+`/.github\plugin\marketplace.json`, "marketplace.json"
+	if runtime.GOOS == "windows" {
+		wantURL, wantPath = "file://"+p, ""
+	}
+
+	// Act
+	src, err := ParseMarketplaceSource(raw, "")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("ParseMarketplaceSource(%q) returned error: %v", raw, err)
+	}
+	if src.Kind() != KindLocal {
+		t.Errorf("Kind() = %q, want %q", src.Kind(), KindLocal)
+	}
+	if src.URL != wantURL || src.Path != wantPath {
+		t.Errorf("URL, Path = %q, %q, want %q, %q", src.URL, src.Path, wantURL, wantPath)
 	}
 }
 
