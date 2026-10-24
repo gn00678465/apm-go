@@ -83,6 +83,30 @@ type otherState struct {
 
 func newOtherState(t *testing.T, global, local, cFirst bool) *otherState {
 	t.Helper()
+	s := newOtherScope(t, global, local)
+	for _, k := range otherKinds {
+		writeCompileFile(t, s.srcRoot, "b/dep/"+otherSource(k, sharedNames[k]), otherBody(k, sharedNames[k], "b"))
+		writeCompileFile(t, s.cDir(), otherSource(k, gainedNames[k]), otherBody(k, gainedNames[k], "c"))
+		if !local {
+			writeCompileFile(t, s.cDir(), otherSource(k, sharedNames[k]), otherBody(k, sharedNames[k], "c"))
+		}
+	}
+	s.installThenAddA(t, "name: proj\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n", cFirst, func() {
+		if local {
+			// The project's own content would win b's names at the install.
+			for _, k := range otherKinds {
+				writeCompileFile(t, s.cDir(), otherSource(k, sharedNames[k]), otherBody(k, sharedNames[k], "c"))
+			}
+		}
+	})
+	return s
+}
+
+// newOtherScope makes the directories, HOME and the apm.yml of ./a/dep (a
+// skill sa), ./b/dep and ./c/other (none with local), at the deploy root of
+// the scope.
+func newOtherScope(t *testing.T, global, local bool) *otherState {
+	t.Helper()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	t.Setenv("HOME", home)
@@ -101,51 +125,46 @@ func newOtherState(t *testing.T, global, local, cFirst bool) *otherState {
 	writeCompileFile(t, s.srcRoot, "a/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, s.srcRoot, "a/dep/.apm/skills/sa/SKILL.md", "---\nname: sa\ndescription: d\n---\nfrom a\n")
 	writeCompileFile(t, s.srcRoot, "b/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
-	for _, k := range otherKinds {
-		writeCompileFile(t, s.srcRoot, "b/dep/"+otherSource(k, sharedNames[k]), otherBody(k, sharedNames[k], "b"))
-	}
 	if !local {
 		writeCompileFile(t, s.srcRoot, "c/other/apm.yml", "name: other\nversion: 1.0.0\n")
 	}
-	for _, k := range otherKinds {
-		writeCompileFile(t, s.cDir(), otherSource(k, gainedNames[k]), otherBody(k, gainedNames[k], "c"))
-		if !local {
-			writeCompileFile(t, s.cDir(), otherSource(k, sharedNames[k]), otherBody(k, sharedNames[k], "c"))
-		}
-	}
+	return s
+}
+
+// installThenAddA installs ./b/dep and then C (./b/dep alone with local),
+// with head as the start of apm.yml, runs afterInstall, and declares ./a/dep
+// first in apm.yml and the lock, then ./b/dep and C, C first with cFirst.
+func (s *otherState) installThenAddA(t *testing.T, head string, cFirst bool, afterInstall func()) {
+	t.Helper()
 	entries := func(paths ...string) string {
-		out := "name: proj\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n"
+		out := head
 		for _, p := range paths {
 			out += "    - '" + p + "'\n"
 		}
 		return out
 	}
 	rest := []string{s.b, s.c}
-	if local {
+	if s.local {
 		rest = []string{s.b}
 	}
 	writeCompileFile(t, s.manifestDir, "apm.yml", entries(rest...))
-	if global {
+	if s.global {
 		chdirTemp(t)
 		mustRunCLI(t, "install", "-g")
 	} else {
 		t.Chdir(s.deployRoot)
 		mustRunCLI(t, "install")
 	}
-	if local {
-		// The project's own content would win b's names at the install.
-		for _, k := range otherKinds {
-			writeCompileFile(t, s.cDir(), otherSource(k, sharedNames[k]), otherBody(k, sharedNames[k], "c"))
-		}
+	if afterInstall != nil {
+		afterInstall()
 	}
-	if cFirst && !local {
+	if cFirst && !s.local {
 		rest = []string{s.c, s.b}
 	}
 	writeCompileFile(t, s.manifestDir, "apm.yml", entries(append([]string{s.a}, rest...)...))
 	lockPath := filepath.Join(s.manifestDir, "apm.lock.yaml")
 	lock := strings.Replace(readFileString(t, lockPath), "dependencies:\n", "dependencies:\n- repo_url: _local/dep\n  source: local\n  local_path: '"+s.a+"'\n", 1)
 	writeCompileFile(t, s.manifestDir, "apm.lock.yaml", lock)
-	return s
 }
 
 // cDir is the directory C's primitives are below.

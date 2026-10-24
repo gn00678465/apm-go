@@ -200,11 +200,21 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys, refreshed map[s
 	for _, p := range removed {
 		handOver(p)
 	}
+	// The trial deploys to every target that governs a path of the old
+	// record, and a skill directory below .agents/skills is governed by
+	// targets the install does not deploy to; a refreshed package is
+	// deployed again to the install's targets only, as the Oracle redeploys it.
+	active := resolveInstallTargets("", m.Target, deployDir).targets
+	if len(active) == 0 {
+		active = targets
+	}
 	for key := range refreshed {
 		if dr, ok := trial.PerDep[key]; ok {
 			files, _ := dr.Recorded()
 			for _, f := range withSkillDirs(files) {
-				take(key, f)
+				if deploy.Governs(deployDir != "", active, deploy.DependencyBucket, f) {
+					take(key, f)
+				}
 			}
 		}
 	}
@@ -490,10 +500,17 @@ func (h *uninstallHandover) record(lock *lockfile.Lockfile) {
 	for p, key := range h.owner {
 		byOwner[key] = append(byOwner[key], p)
 	}
+	// A path restore wrote for a refreshed package leaves the record of every
+	// other bucket, so the lock records the content on disk once.
+	var claimed []string
 	for key, paths := range byOwner {
 		if h.refreshed[key] {
 			paths = slices.DeleteFunc(paths, func(p string) bool {
-				if h.written[p] || slices.Contains(h.refreshedOld[key], p) {
+				if h.writtenAt(p) {
+					claimed = append(claimed, p)
+					return false
+				}
+				if slices.Contains(h.refreshedOld[key], p) {
 					return false
 				}
 				if slices.ContainsFunc(h.recordedBy[p], func(k string) bool { return k != key }) {
@@ -542,6 +559,27 @@ func (h *uninstallHandover) record(lock *lockfile.Lockfile) {
 			(*hashes)[p] = hash
 		}
 	}
+	drop := func(key string, files *[]string, hashes map[string]string) {
+		*files = slices.DeleteFunc(*files, func(f string) bool {
+			if !slices.Contains(claimed, f) || h.owner[f] == key {
+				return false
+			}
+			delete(hashes, f)
+			return true
+		})
+	}
+	for i := range lock.Dependencies {
+		d := &lock.Dependencies[i]
+		drop(d.UniqueKey(), &d.DeployedFiles, d.DeployedHashes)
+	}
+	drop("", &lock.LocalDeployedFiles, lock.LocalDeployedHashes)
+}
+
+// writtenAt reports whether restore wrote the path p, or the skill directory
+// it is below (a --global skill symlink, whose files restore does not write).
+func (h *uninstallHandover) writtenAt(p string) bool {
+	dir := deploy.SkillDirOf(p)
+	return h.written[p] || dir != "" && h.written[dir]
 }
 
 // holdsTrialContent reports whether the file at the handed-over path p has
