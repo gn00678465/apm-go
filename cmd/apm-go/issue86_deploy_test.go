@@ -149,14 +149,14 @@ func TestInstall_StaleDeployedPathOutsideTargetRoot_Transcript(t *testing.T) {
 	}
 }
 
-// global86 makes HOME=root/home with ~/.apm/apm.yml declaring ../dep
-// (root/home/dep), which has the given files, and runs from root.
+// global86 makes HOME=root/home with ~/.apm/apm.yml declaring root/home/dep
+// by absolute path, which has the given files, and runs from root.
 func global86(t *testing.T, files map[string]string) (root, home string) {
 	t.Helper()
 	root = t.TempDir()
 	home = filepath.Join(root, "home")
 	t.Setenv("HOME", home)
-	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - ../dep\n")
+	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - "+filepath.Join(home, "dep")+"\n")
 	writeCompileFile(t, root, "home/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	for rel, content := range files {
 		writeCompileFile(t, root, "home/dep/"+rel, content)
@@ -184,7 +184,7 @@ func TestInstallGlobal_DestinationParentOutside_NotDeployed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			root, _ := global86(t, map[string]string{tt.file: tt.content})
+			root, home := global86(t, map[string]string{tt.file: tt.content})
 			for rel, content := range tt.outside {
 				writeCompileFile(t, root, "outside/"+rel, content)
 			}
@@ -199,9 +199,9 @@ func TestInstallGlobal_DestinationParentOutside_NotDeployed(t *testing.T) {
 			// (r4-or/global2, install/manifest_helpers.py:63-74).
 			want := " i Installing to user scope (~/.apm/)\n" +
 				" > Installing dependencies from apm.yml...\n" +
-				" > Resolving ../dep...\n" +
+				" > Resolving " + filepath.Join(home, "dep") + "...\n" +
 				" ! deploy " + tt.prim + " to claude failed: " + tt.dest + ": symlink .claude/" + tt.linked + " resolves to " + filepath.Join(real, "outside") + ", outside " + filepath.Join(real, "home", ".claude") + "\n" +
-				"   + ../dep (local)\n" +
+				"   + " + filepath.Join(home, "dep") + " (local)\n" +
 				"  |-- (files unchanged)\n" +
 				"   + <project root> (local)\n" +
 				"  |-- (files unchanged)\n" +
@@ -244,9 +244,9 @@ func TestUninstallGlobal_DeployedPathOutsideTargetRoot_Refused(t *testing.T) {
 			link86(t, moved, dir)
 			before := tree86(t, root)
 
-			stdout, code := runCLI86(t, "uninstall", "--global", "../dep")
+			stdout, code := runCLI86(t, "uninstall", "--global", filepath.Join(home, "dep"))
 
-			want := " > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" + uninstallTargetRefused86(tt.listed...)
+			want := " i Uninstalling from user scope (~/.apm/)\n > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" + uninstallTargetRefused86(tt.listed...)
 			if code != 1 || stdout != want {
 				t.Errorf("exit %d, stdout:\n%s\nwant exit 1, stdout:\n%s", code, stdout, want)
 			}

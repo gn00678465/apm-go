@@ -516,6 +516,17 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			if err := validatePersistableRef(pkg, ref); err != nil {
 				return err
 			}
+			if announce && deployDir != "" && relativeAtUserScope(ref) {
+				ux.Error(os.Stdout, "%s -- %s", pkg, userScopeRelativeReason)
+				invalid++
+				continue
+			}
+			// install/validation.py:155-164.
+			if announce && isMissingLocalPath(ref) {
+				ux.Error(os.Stdout, "%s -- path does not exist", pkg)
+				invalid++
+				continue
+			}
 			// commands/install.py:418-430: an http:// package is valid only
 			// with --allow-insecure, and is then declared with
 			// allow_insecure: true.
@@ -534,7 +545,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			persistPkg := pkg
 			if provenance != nil {
 				canonical := ref.ToCanonical(m.DefaultHost)
-				if filepath.IsAbs(canonical) {
+				// At user scope the absolute path is kept, as Oracle 0.33.0
+				// writes it into ~/.apm/apm.yml (measured, issue #128), because
+				// a relative local path is refused there.
+				if filepath.IsAbs(canonical) && deployDir == "" {
 					// mkt-025's local-marketplace fast path resolves to an
 					// absolute filesystem path. Persist it in the most
 					// PORTABLE form apm.yml can round-trip: a project-root-
@@ -644,9 +658,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			}
 			appendedThisCall[key] = true
 			newPackages++
-			// A local path that does not exist was not validated: the
-			// resolve reports it.
-			if announce && !isMissingLocalPath(ref) {
+			if announce {
 				ux.Success(os.Stdout, "%s", persistPkg)
 			}
 			// R9/AC42: --dev routes this call's positional packages into
@@ -697,6 +709,11 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	}
 	for _, dep := range m.ParsedDevDeps {
 		normalizeLocalDep(dep)
+	}
+	if deployDir != "" {
+		if err := checkUserScopeLocalPaths(m); err != nil {
+			return err
+		}
 	}
 
 	// 1c. HTTP dependency policy of the direct dependencies, regular and
@@ -1009,6 +1026,21 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 		printHeldLines(heldLines, true)
 		result = &resolver.ResolutionResult{}
 	} else {
+		// No target ends the install before any package is fetched or copied:
+		// Oracle 0.33.0 prints no Resolving line, leaves no apm_modules/ and
+		// refuses before a package that cannot be fetched fails. It has
+		// written apm.yml by then and puts it back, so it says so
+		// (install/transaction.py:61-70; measured, issue #125 item c47-3).
+		if len(targets) == 0 {
+			printHeldLines(heldLines, true)
+			if manifestBefore != nil && (newPackages > 0 || manifestChanged) {
+				ux.Info(os.Stdout, "apm.yml restored to its previous state.")
+			}
+			for _, d := range targetDiags {
+				ux.Error(os.Stderr, "%s", d)
+			}
+			return errNoDeployTarget()
+		}
 		// Registry access is experimental (API may change); require the opt-in flag
 		// before any live registry resolution. Gates network use only — apm.yml
 		// registries parsing and lockfile schema stay unconditional.
@@ -1109,23 +1141,6 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 				newLock.Dependencies[i].PackageType = lockfile.PackageTypeMarketplacePlugin
 			}
 		}
-	}
-
-	// There are resolved dependencies to deploy but target resolution came up
-	// empty (no --target, no apm.yml target:, no auto-detected harness
-	// signal): fail loud with a teaching message and exit 2 (install.md's
-	// exit-code table), instead of silently skipping deployment and exiting
-	// 0. Checked here -- after resolution/lockfile-build succeed, before any
-	// apm.lock.yaml/apm.yml write -- so a doomed install fails closed with
-	// zero partial writes rather than persisting a lockfile nothing deployed
-	// from. Reuses step-4's targets/targetDiags so an explicit --target of a
-	// known-but-adapterless runtime (cursor/gemini/windsurf) still surfaces
-	// its "no registered handler" diagnostic (req-tg-004) before we exit.
-	if len(result.Deps) > 0 && len(targets) == 0 {
-		for _, d := range targetDiags {
-			ux.Error(os.Stderr, "%s", d)
-		}
-		return errNoDeployTarget()
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
@@ -3638,13 +3653,15 @@ func printHeldLines(lines []heldLine, succeeded bool) {
 	}
 }
 
-// isMissingLocalPath reports whether ref, after normalizeLocalDep, names a
-// local directory that is not there.
+// isMissingLocalPath reports whether ref names a local directory that is not
+// there. It reads the path as normalizeLocalDep does, on a copy.
 func isMissingLocalPath(ref *manifest.DependencyReference) bool {
-	if ref.LocalSourcePath == "" {
+	c := *ref
+	normalizeLocalDep(&c)
+	if c.LocalSourcePath == "" {
 		return false
 	}
-	_, err := os.Stat(ref.LocalSourcePath)
+	_, err := os.Stat(c.LocalSourcePath)
 	return os.IsNotExist(err)
 }
 

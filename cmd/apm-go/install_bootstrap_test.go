@@ -169,16 +169,20 @@ func TestInstall_NoManifest_AutoDetect_CommentedSkeleton(t *testing.T) {
 }
 
 // TestInstall_NoManifest_FailureRemovesIt: an install that created apm.yml
-// and then fails removes it and says so before the error, as Oracle 0.33.0
-// does (or-p.out, projE: a path that does not exist; projB: no target).
+// and then fails removes it and says so, as Oracle 0.33.0 does: after the
+// failed validation of a path that does not exist (measured, c47-3/nope1),
+// before the error of no target (or-p.out, projB).
 func TestInstall_NoManifest_FailureRemovesIt(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		args     []string
 		wantCode int
+		want     string
 	}{
-		{"missing package path", []string{"install", "../nope", "--target", "claude"}, 1},
-		{"no deployment target", []string{"install", "../pkg"}, 2},
+		{"missing package path", []string{"install", "../nope", "--target", "claude"}, 1,
+			" x ../nope -- path does not exist\nAll packages failed validation. Nothing to install.\n i Removed apm.yml created by the failed install.\n"},
+		{"no deployment target", []string{"install", "../pkg"}, 2,
+			" i Removed apm.yml created by the failed install.\n x no deployment target detected"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := bootstrapProject(t, "proj")
@@ -187,10 +191,8 @@ func TestInstall_NoManifest_FailureRemovesIt(t *testing.T) {
 			if code != tt.wantCode {
 				t.Errorf("exit %d, want %d; stdout:\n%s", code, tt.wantCode, stdout)
 			}
-			removed := strings.Index(stdout, " i Removed apm.yml created by the failed install.\n")
-			failed := strings.Index(stdout, " x ")
-			if removed < 0 || failed < 0 || removed > failed {
-				t.Errorf("stdout:\n%s\nwant the Removed line before the first error line", stdout)
+			if !strings.Contains(stdout, tt.want) {
+				t.Errorf("stdout:\n%s\nwant it to hold:\n%s", stdout, tt.want)
 			}
 			assertNoFile(t, filepath.Join(root, "proj", "apm.yml"))
 		})

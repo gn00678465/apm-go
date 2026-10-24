@@ -35,6 +35,16 @@ func transferProject(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
+// transferGlobalProject is transferProject under ~/.apm, with a and b
+// declared by absolute path, since a relative local path is refused at user
+// scope (install/package_resolution.py:113-137).
+func transferGlobalProject(t *testing.T, apmDir string, files map[string]string) {
+	t.Helper()
+	transferProject(t, apmDir, files)
+	writeGlobalStaleFile(t, filepath.Join(apmDir, "apm.yml"), "name: app\nversion: 1.0.0\ndependencies:\n  apm:\n    - "+
+		filepath.Join(apmDir, "a")+"\n    - "+filepath.Join(apmDir, "b")+"\n")
+}
+
 func transferSHA(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -95,12 +105,14 @@ func assertTransferSteadyInstall(t *testing.T, out string, global bool, lastBloc
 	// (install/summary.py:115-118).
 	head := " > Installing dependencies from apm.yml...\n i Targets: claude  (source: --target flag)\n"
 	root := ""
+	b := "./b"
 	if global {
 		head = " i Installing to user scope (~/.apm/)\n > Installing dependencies from apm.yml...\n"
 		root = "   + <project root> (local)\n  |-- (files unchanged)\n"
+		b = filepath.Join(globalDirOverride, "b")
 	}
 	want := head +
-		"   + ./b (local)\n" +
+		"   + " + b + " (local)\n" +
 		"  |-- 1 rule(s) adopted -> .claude/rules/\n" +
 		lastBlockLine + root + "\n" +
 		" + Installed 1 APM dependency in "
@@ -203,7 +215,7 @@ func TestUninstallGlobal_SharedRuleAndSkillOwner_HandsBothToSurvivor(t *testing.
 	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
 	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
 	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
-	transferProject(t, filepath.Join(home, ".apm"), map[string]string{
+	transferGlobalProject(t, filepath.Join(home, ".apm"), map[string]string{
 		"a/.apm/instructions/shared.instructions.md": transferRule,
 		"b/.apm/instructions/shared.instructions.md": transferRule,
 		"a/.apm/skills/demo/SKILL.md":                staleCleanupSkillMD,
@@ -212,7 +224,7 @@ func TestUninstallGlobal_SharedRuleAndSkillOwner_HandsBothToSurvivor(t *testing.
 	globalStaleInstall(t, "claude")
 	lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
 
-	out := transferUninstall(t, uninstallOptions{Global: true}, "./a")
+	out := transferUninstall(t, uninstallOptions{Global: true}, filepath.Join(home, ".apm", "a"))
 
 	if got := globalStaleRead(t, filepath.Join(home, ".claude", "rules", "shared.md")); got != "shared rule\n" {
 		t.Errorf("~/.claude/rules/shared.md = %q, want %q", got, "shared rule\n")
@@ -361,7 +373,7 @@ func TestUninstallGlobal_SharedRuleOwner_ClaudeDirIsSymlink_HandsFileOver(t *tes
 	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
 	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
 	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
-	transferProject(t, filepath.Join(home, ".apm"), map[string]string{
+	transferGlobalProject(t, filepath.Join(home, ".apm"), map[string]string{
 		"a/.apm/instructions/shared.instructions.md": transferRule,
 		"b/.apm/instructions/shared.instructions.md": transferBRule,
 	})
@@ -374,7 +386,7 @@ func TestUninstallGlobal_SharedRuleOwner_ClaudeDirIsSymlink_HandsFileOver(t *tes
 	}
 	globalStaleInstall(t, "claude")
 
-	out := transferUninstall(t, uninstallOptions{Global: true}, "./a")
+	out := transferUninstall(t, uninstallOptions{Global: true}, filepath.Join(home, ".apm", "a"))
 
 	if got := globalStaleRead(t, filepath.Join(dotfiles, "rules", "shared.md")); got != "b rule\n" {
 		t.Errorf("dotfiles/claude/rules/shared.md = %q, want b's %q", got, "b rule\n")
@@ -472,11 +484,11 @@ func TestUninstallGlobal_SharedSkillOwner_RecordsSurvivorResources(t *testing.T)
 	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
 	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
 	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
-	transferProject(t, filepath.Join(home, ".apm"), transferSkillFiles)
+	transferGlobalProject(t, filepath.Join(home, ".apm"), transferSkillFiles)
 	globalStaleInstall(t, "claude")
 	lockPath := filepath.Join(home, ".apm", "apm.lock.yaml")
 
-	transferUninstall(t, uninstallOptions{Global: true}, "./a")
+	transferUninstall(t, uninstallOptions{Global: true}, filepath.Join(home, ".apm", "a"))
 
 	if got := globalStaleRead(t, filepath.Join(home, ".claude", "skills", "demo", "scripts", "b.py")); got != transferBScript {
 		t.Errorf("~/.claude/skills/demo/scripts/b.py = %q, want %q", got, transferBScript)
@@ -667,7 +679,7 @@ func TestUninstallGlobal_SharedRuleAndSkillOwner_PrintsSurvivorBlock(t *testing.
 	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
 	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
 	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })
-	transferProject(t, filepath.Join(home, ".apm"), map[string]string{
+	transferGlobalProject(t, filepath.Join(home, ".apm"), map[string]string{
 		"a/.apm/instructions/shared.instructions.md": transferRule,
 		"b/.apm/instructions/shared.instructions.md": transferRule,
 		"a/.apm/skills/demo/SKILL.md":                staleCleanupSkillMD,
@@ -675,7 +687,7 @@ func TestUninstallGlobal_SharedRuleAndSkillOwner_PrintsSurvivorBlock(t *testing.
 	})
 	globalStaleInstall(t, "claude")
 
-	out := transferUninstall(t, uninstallOptions{Global: true}, "./a")
+	out := transferUninstall(t, uninstallOptions{Global: true}, filepath.Join(home, ".apm", "a"))
 
 	want := "  |-- 1 rule(s) adopted -> .claude/rules/\n  |-- 1 skill(s) integrated -> .claude/skills/\n"
 	if got := transferBlockLines(t, out); got != want {

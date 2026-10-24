@@ -610,6 +610,10 @@ func TestRunInstall_MarketplacePackage_LocalPathInProjectTree_PersistsRelative(t
 		[]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// install validates that the plugin's local path exists.
+	if err := os.MkdirAll(filepath.Join(mktDir, "p"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: mktDir}); err != nil {
 		t.Fatalf("AddSource(): %v", err)
 	}
@@ -671,6 +675,10 @@ func TestRunInstall_MarketplacePackage_LocalPathOutsideProjectTree_PersistsAbsol
 	mktDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(mktDir, "marketplace.json"),
 		[]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// install validates that the plugin's local path exists.
+	if err := os.MkdirAll(filepath.Join(mktDir, "p"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: mktDir}); err != nil {

@@ -637,8 +637,7 @@ func TestUpdate_LegacyLock_RemovesOldDirectory(t *testing.T) {
 }
 
 // An install that fails before apm.yml is written does not say it updated
-// apm.yml, and a local path that does not exist gets no check mark. The
-// error line is the resolver's.
+// apm.yml, and a local path that does not exist fails its validation.
 func TestInstall_FailedRunDoesNotClaimManifestUpdate(t *testing.T) {
 	const manifestYAML = "name: p\nversion: 1.0.0\ntarget: claude\n"
 	tests := []struct {
@@ -649,12 +648,11 @@ func TestInstall_FailedRunDoesNotClaimManifestUpdate(t *testing.T) {
 		wantError string
 	}{
 		{
-			name: "local path that does not exist",
-			args: []string{"install", "./nope"},
-			wantLines: " + Validating 1 package...\n" +
-				" > Installing 1 new package...\n" +
-				" > Resolving ./nope...\n",
-			wantError: " x resolve: loading package _local/nope: local dependency source ",
+			// install/validation.py:155-164 (measured, c47-3/before2 H).
+			name:      "local path that does not exist",
+			args:      []string{"install", "./nope"},
+			wantLines: " + Validating 1 package...\n",
+			wantError: " x ./nope -- path does not exist\nAll packages failed validation. Nothing to install.",
 		},
 		{
 			name: "local package that declares a local package",
@@ -684,7 +682,7 @@ func TestInstall_FailedRunDoesNotClaimManifestUpdate(t *testing.T) {
 				t.Errorf("exit = %d, stderr = %q; want 1 and no stderr", exitCode, stderr)
 			}
 			rest, ok := strings.CutPrefix(stdout, tt.wantLines)
-			if !ok || !strings.HasPrefix(rest, tt.wantError) || strings.Count(rest, "\n") != 1 {
+			if !ok || !strings.HasPrefix(rest, tt.wantError) || strings.Count(rest, "\n") != strings.Count(tt.wantError, "\n")+1 {
 				t.Errorf("stdout:\n%s\nwant exactly:\n%sthen one line starting %q", stdout, tt.wantLines, tt.wantError)
 			}
 			if got, err := os.ReadFile("apm.yml"); err != nil || string(got) != manifestYAML {
