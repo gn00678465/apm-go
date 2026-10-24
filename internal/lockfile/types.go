@@ -168,3 +168,9 @@ func (l *Lockfile) RemoveKeys(keys []string) {
 		l.index[l.Dependencies[i].UniqueKey()] = i
 	}
 }
+
+// Reindex drops the lookup index of FindByKey, for a caller that changed the
+// key of an entry in Dependencies.
+func (l *Lockfile) Reindex() {
+	l.index = nil
+}

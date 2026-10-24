@@ -411,55 +411,62 @@ func marketplaceLocal70(t *testing.T) (proj, market string) {
 
 // The Oracle resolves every marketplace argument before it walks the
 // arguments (commands/uninstall/engine.py:619-628), so a resolution message
-// comes before every argument's line, whatever the argument order. The
-// words are apm-go's.
+// comes before every argument's line, whatever the argument order, and an
+// argument that does not resolve aborts the whole uninstall with exit 1 and
+// nothing changed (commands/uninstall/cli.py:323-329). The lines are the
+// Oracle's, measured with Oracle 0.33.0 (issue #129 item 50, runs
+// 50missing, 50guard and 50semver); the reasons of the registry and of a
+// semver range are apm-go's, which install prints too.
 func TestUninstall_MarketplaceResolutionLinesFirst(t *testing.T) {
-	const missing = ` ! "missing@sample": could not resolve (plugin not found in marketplace: "missing" in marketplace "sample"; run ` +
-		"`apm-go marketplace browse sample` to see available plugins)\n"
-	removed := func(proj string) string {
-		return " i Removed _local/dep from apm_modules/\n" +
-			" i Cleaned 3 stale files from ./dep\n" +
-			" i Removed _local/dep from dependencies.apm in apm.yml\n" +
-			" + Updated " + filepath.Join(proj, "apm.yml") + " (removed 1 package(s))\n" +
-			" + Uninstall complete: Removed 1 package(s) from apm.yml, Removed 1 package(s) from apm_modules/\n"
-	}
+	const missing = " > Resolving missing@sample via registry...\n" +
+		` ! Registry lookup for missing@sample failed: plugin not found in marketplace: "missing" in marketplace "sample"; run ` +
+		"`apm-go marketplace browse sample` to see available plugins. Falling back to apm.yml match.\n" +
+		" x missing@sample could not be resolved -- use owner/repo format to uninstall directly, or run `apm-go deps list` to find the owner/repo canonical name then use `apm-go uninstall owner/repo` directly.\n"
+	const aborted = " x Uninstall aborted: 1 requested package(s) could not be selected. Resolve the errors above and retry; no changes were made.\n"
+	const semver = " > Uninstalling 2 package(s)...\n" +
+		" x Error uninstalling packages: marketplace ref \"^1.0\" looks like a semver range constraint; #REF only accepts a raw git tag/branch/SHA, not a semver range (use the apm.yml dict form's version: field for ranges)\n"
 	tests := []struct {
 		name string
 		args []string
 		want func(proj, market string) string
 	}{
-		{"missing plugin after the package", []string{"_local/dep", "missing@sample"}, func(proj, _ string) string {
-			return " > Uninstalling 2 package(s)...\n" + missing + " + _local/dep - found in apm.yml\n" + removed(proj)
+		{"missing plugin after the package", []string{"_local/dep", "missing@sample"}, func(string, string) string {
+			return " > Uninstalling 2 package(s)...\n" + missing + " + _local/dep - found in apm.yml\n" + aborted
 		}},
-		{"missing plugin before the package", []string{"missing@sample", "_local/dep"}, func(proj, _ string) string {
-			return " > Uninstalling 2 package(s)...\n" + missing + " + _local/dep - found in apm.yml\n" + removed(proj)
+		{"missing plugin before the package", []string{"missing@sample", "_local/dep"}, func(string, string) string {
+			return " > Uninstalling 2 package(s)...\n" + missing + " + _local/dep - found in apm.yml\n" + aborted
 		}},
-		{"plugin not in the lock", []string{"unlocked@sample", "_local/dep"}, func(proj, market string) string {
+		{"plugin not in the lock", []string{"unlocked@sample", "_local/dep"}, func(_, market string) string {
+			plugin := filepath.Join(market, "plugin")
 			return " > Uninstalling 2 package(s)...\n" +
-				` x "unlocked@sample": refused to remove -- registry resolved "` + filepath.Join(market, "plugin") + `", which is not present in apm.lock.yaml (supply-chain guard)` + "\n" +
-				" + _local/dep - found in apm.yml\n" + removed(proj)
+				" > Resolving unlocked@sample via registry...\n" +
+				" ! Registry resolved unlocked@sample to " + plugin + ", but it is not recorded in apm.lock.yaml. Refusing as a supply-chain precaution; use `apm-go uninstall " + plugin + "` directly if this is correct.\n" +
+				" x unlocked@sample could not be resolved -- use owner/repo format to uninstall directly, or run `apm-go deps list` to find the owner/repo canonical name then use `apm-go uninstall owner/repo` directly.\n" +
+				" + _local/dep - found in apm.yml\n" + aborted
 		}},
 		{"dry run", []string{"--dry-run", "_local/dep", "missing@sample"}, func(string, string) string {
 			return " > Uninstalling 2 package(s)...\n" +
-				` ! "missing@sample": cannot preview with --dry-run (marketplace reference has no lockfile anchor); use owner/repo, or run without --dry-run` + "\n" +
-				" + _local/dep - found in apm.yml\n" +
-				" i Dry run: Would remove 1 package(s):\n" +
-				" i   - _local/dep from apm.yml\n" +
-				" i   - _local/dep from apm_modules/\n" +
-				" + Dry run complete - no changes made\n"
+				" ! missing@sample could not be resolved in dry-run (registry fallback skipped). Re-run without --dry-run, or use owner/repo notation to preview directly.\n" +
+				" + _local/dep - found in apm.yml\n" + aborted
 		}},
+		{"semver range", []string{"_local/dep", "missing@sample#^1.0"}, func(string, string) string { return semver }},
+		{"semver range in a dry run", []string{"--dry-run", "_local/dep", "missing@sample#^1.0"}, func(string, string) string { return semver }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			proj, market := marketplaceLocal70(t)
+			before := treeSnapshot(t, proj)
 
 			stdout, stderr, exitCode := runCompileCLI(t, append([]string{"uninstall"}, tt.args...)...)
 
-			if exitCode != 0 || stderr != "" {
+			if exitCode != 1 || stderr != "" {
 				t.Errorf("exit = %d, stderr = %q", exitCode, stderr)
 			}
 			if want := tt.want(proj, market); stdout != want {
 				t.Errorf("stdout:\n%s\nwant:\n%s", stdout, want)
+			}
+			if after := treeSnapshot(t, proj); !reflect.DeepEqual(before, after) {
+				t.Errorf("files changed:\nbefore %v\nafter  %v", before, after)
 			}
 		})
 	}

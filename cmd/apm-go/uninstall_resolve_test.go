@@ -339,22 +339,20 @@ func TestResolveUninstallTargets_APMIdentityWinsOverMCPName(t *testing.T) {
 	}
 }
 
-// TestResolveUninstallTargets_MarketplaceRefParseError_NotFoundAndContinues
-// proves a malformed "#ref" (a semver range constraint, rejected by
-// marketplace.ParseRef) is folded into NotFound rather than aborting
-// resolution of subsequent PACKAGE arguments.
-func TestResolveUninstallTargets_MarketplaceRefParseError_NotFoundAndContinues(t *testing.T) {
+// TestResolveUninstallTargets_MarketplaceRefParseError_Invalid proves a
+// malformed "#ref" (a semver range constraint, rejected by
+// marketplace.ParseRef) is kept as the resolution's Invalid error, which
+// ends the whole uninstall, as the Oracle's _is_marketplace_ref raises it
+// (commands/uninstall/cli.py:715-717).
+func TestResolveUninstallTargets_MarketplaceRefParseError_Invalid(t *testing.T) {
 	m := &manifest.Manifest{
 		ParsedDeps: []*manifest.DependencyReference{{RepoURL: "acme/foo", Source: "git"}},
 	}
 
 	res := resolveUninstallTargets([]string{"plug1@mkt1#>=1.0.0", "acme/foo"}, m, nil, panicResolver, false)
 
-	if len(res.NotFound) != 1 || res.NotFound[0].Reason != uninstallNotFoundUnresolvable {
-		t.Fatalf("expected single NotFound(Unresolvable), got %+v", res.NotFound)
-	}
-	if len(res.APMTargets) != 1 || res.APMTargets[0].Name != "acme/foo" {
-		t.Fatalf("expected acme/foo still resolved, got %+v", res.APMTargets)
+	if res.Invalid == nil {
+		t.Fatalf("expected Invalid, got %+v", res)
 	}
 }
 
