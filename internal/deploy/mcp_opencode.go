@@ -65,8 +65,9 @@ func translateOpencodeHeaders(headers map[string]string) map[string]string {
 	return out
 }
 
-// jsonValue is the JSON value of a node manifest.ParseMCPEntry tagged. A
-// number JSON cannot spell (.inf, 0x1F) is written as its YAML text.
+// jsonValue is the JSON value of a node manifest.ParseMCPEntry tagged, as
+// json.dumps writes what PyYAML loaded. A float JSON cannot spell (.inf,
+// .nan) is written as its YAML text.
 func jsonValue(n *yaml.Node) any {
 	switch n.Kind {
 	case yaml.SequenceNode:
@@ -78,7 +79,7 @@ func jsonValue(n *yaml.Node) any {
 	case yaml.MappingNode:
 		out := make(map[string]any, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			out[n.Content[i].Value] = jsonValue(n.Content[i+1])
+			out[jsonKey(n.Content[i])] = jsonValue(n.Content[i+1])
 		}
 		return out
 	}
@@ -99,4 +100,27 @@ func jsonValue(n *yaml.Node) any {
 		}
 	}
 	return n.Value
+}
+
+// jsonKey is the key json.dumps writes for a mapping key PyYAML loaded
+// (json/encoder.py _iterencode_dict): a float as its repr, so the float
+// 1.0e+20 is "1e+20" and stays apart from the string "1.0e+20"; None as
+// "null". An int and a bool already hold that text.
+func jsonKey(k *yaml.Node) string {
+	switch k.Tag {
+	case "!!float":
+		switch f := manifest.PyYAMLFloat(k.Value); {
+		case math.IsNaN(f):
+			return "NaN"
+		case math.IsInf(f, 1):
+			return "Infinity"
+		case math.IsInf(f, -1):
+			return "-Infinity"
+		default:
+			return manifest.PyFloatRepr(f)
+		}
+	case "!!null":
+		return "null"
+	}
+	return k.Value
 }

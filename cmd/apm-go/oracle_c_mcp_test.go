@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -267,6 +268,57 @@ func TestInstall_ExponentFloatEnabledIsStable(t *testing.T) {
 	}
 	if got := readText(t, "apm.lock.yaml"); got != lock {
 		t.Errorf("second install rewrote apm.lock.yaml:\n%s", got)
+	}
+}
+
+// issue #124 item 24: a mapping key in enabled is written to opencode.json
+// as json.dumps writes the key PyYAML loaded (json/encoder.py): the float
+// 1.0e+20 is "1e+20" and stays apart from the string "1.0e+20", None is
+// "null", True "true", .inf "Infinity". This holds for the top level, a
+// nested mapping and a mapping in a sequence, declared by the project,
+// under devDependencies and by a direct dependency. The expected values are
+// what Oracle 0.33.0 wrote for the same project (C/keys/after-fixture/or);
+// key order is not compared, since apm-go sorts the keys of opencode.json.
+func TestInstall_OpencodeEnabledMappingKeys(t *testing.T) {
+	dir := chdirTemp(t)
+	t.Setenv("HOME", t.TempDir())
+	server := func(name, enabled string) string {
+		return "    - name: " + name + "\n      registry: false\n      transport: stdio\n      command: echo\n      enabled: " + enabled + "\n"
+	}
+	writeCompileFile(t, dir, "apm.yml", "name: probe\nversion: 1.0.0\ntargets: [opencode]\ndependencies:\n  apm:\n    - ./dep\n  mcp:\n"+
+		server("mixed", `{1.0e+20: left, "1.0e+20": right}`)+
+		server("keytypes", `{7: a, 0x1F: b, yes: c, ~: d, .inf: e, -.Inf: f, .nan: g, 1.0e-10: h, 1.0e+15: i, 1.2e+20: j, "s": k}`)+
+		"devDependencies:\n  mcp:\n"+
+		server("devnested", `{outer: {1.0e+20: left, "1.0e+20": right}, off: [1, {1.0e-10: x}]}`))
+	writeCompileFile(t, dir, "dep/apm.yml", "name: dep\nversion: 1.0.0\ndependencies:\n  mcp:\n"+
+		server("depseq", `[{1.0e+20: left, "1.0e+20": right}, {1:30: m}]`))
+	mustRunCLI(t, "install")
+
+	want := map[string]string{
+		"mixed":     `{"1e+20": "left", "1.0e+20": "right"}`,
+		"keytypes":  `{"7": "a", "31": "b", "true": "c", "null": "d", "Infinity": "e", "-Infinity": "f", "NaN": "g", "1e-10": "h", "1000000000000000.0": "i", "1.2e+20": "j", "s": "k"}`,
+		"devnested": `{"outer": {"1e+20": "left", "1.0e+20": "right"}, "false": [1, {"1e-10": "x"}]}`,
+		"depseq":    `[{"1e+20": "left", "1.0e+20": "right"}, {"90": "m"}]`,
+	}
+	var doc struct {
+		MCP map[string]struct {
+			Enabled any `json:"enabled"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal([]byte(readText(t, "opencode.json")), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for name, w := range want {
+		var wv any
+		if err := json.Unmarshal([]byte(w), &wv); err != nil {
+			t.Fatal(err)
+		}
+		if got := doc.MCP[name].Enabled; !reflect.DeepEqual(got, wv) {
+			t.Errorf("%s: enabled = %#v, want %s", name, got, w)
+		}
+	}
+	if out := mustRunCLI(t, "install"); strings.Contains(out, "updated") {
+		t.Errorf("second install:\n%s\nwant no server updated", out)
 	}
 }
 
