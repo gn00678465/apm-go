@@ -369,15 +369,25 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 	if err != nil {
 		return err
 	}
-	if err := writeUninstallManifest(data, node, plan.removedIdentities, plan.mcpNames); err != nil {
-		refreshes.discard()
-		return err
-	}
-	// The hand-over below deploys the declaration that stays from its
-	// refreshed copy.
+	// The Oracle replaces the shared directories before it writes apm.yml
+	// (commands/uninstall/cli.py:436-505), so a refresh that fails leaves
+	// apm.yml, the lock and apm_modules as they were. The hand-over below
+	// deploys the declaration that stays from its refreshed copy.
 	if err := refreshes.activate(); err != nil {
+		if verbose {
+			ux.Warn(os.Stderr, "%v", err)
+		}
+		recovery := "apm-go install"
+		if deployDir != "" {
+			recovery = "apm-go install --global"
+		}
+		return fmt.Errorf("Uninstall incomplete: shared-slot refresh failed. apm.yml and lockfile ownership were retained; some package files may already have been removed. Resolve the filesystem error and retry the same uninstall command, or run '%s' to restore the declared packages. Run with --verbose for detailed diagnostics.", recovery)
+	}
+	if err := writeUninstallManifest(data, node, plan.removedIdentities, plan.mcpNames); err != nil {
+		refreshes.rollback()
 		return err
 	}
+	refreshes.commit()
 	removeRoot := "."
 	if deployDir != "" {
 		removeRoot = deployDir

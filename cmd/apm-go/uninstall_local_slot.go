@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/apm-go/apm/internal/deploy"
 	"github.com/apm-go/apm/internal/lockfile"
@@ -71,25 +70,24 @@ func rekeyLocalEntry(lock *lockfile.Lockfile, key, path, id, dir string) {
 }
 
 // localRefreshes holds the copies staged for the shared directories a real
-// uninstall refreshes, by directory below apm_modules.
+// uninstall refreshes, by directory below apm_modules, and, once they are in
+// place, the original directories kept as backups until the uninstall
+// commits.
 type localRefreshes struct {
-	staged  map[string]string
-	cleanup []string
+	staged    map[string]string
+	cleanup   []string
+	activated []string
+	backups   map[string]string
 }
 
 // stageLocalRefreshes copies the one declaration that stays in each shared
-// directory into a staging directory below apm_modules/_local, before any
-// write, as the Oracle stages them (commands/uninstall/engine.py:177-261):
-// a directory that more than one declaration would still share, or a copy
-// that fails, ends the uninstall with nothing changed.
+// directory into a staging directory, before any write, as the Oracle stages
+// them (commands/uninstall/engine.py:177-261): a directory that more than one
+// declaration would still share, a copy that fails, or a copy that is no
+// package ends the uninstall with nothing changed.
 func stageLocalRefreshes(plan *uninstallPlan) (*localRefreshes, error) {
-	r := &localRefreshes{staged: map[string]string{}}
-	dirs := make([]string, 0, len(plan.refresh))
-	for dir := range plan.refresh {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
+	r := &localRefreshes{staged: map[string]string{}, backups: map[string]string{}}
+	for _, dir := range sortedStringSet(stringKeys(plan.refresh)) {
 		survivors := plan.refresh[dir]
 		label := plan.refreshLabel(dir)
 		if len(survivors) > 1 {
@@ -108,13 +106,25 @@ func stageLocalRefreshes(plan *uninstallPlan) (*localRefreshes, error) {
 	return r, nil
 }
 
-// stageLocalCopy copies d into a new staging directory below
-// apm_modules/_local and returns the copy's path.
+func stringKeys[V any](m map[string]V) map[string]bool {
+	keys := make(map[string]bool, len(m))
+	for k := range m {
+		keys[k] = true
+	}
+	return keys
+}
+
+// stageLocalCopy copies d into a new staging directory directly below
+// apm_modules and returns the copy's path. The Oracle stages below
+// apm_modules/_local (commands/uninstall/engine.py:192-195), which is inside
+// the directory it replaces when the declarations share it through
+// `alias: _local`, so its refresh fails there; a staging directory beside
+// every package directory cannot be inside the one replaced.
 func stageLocalCopy(d *manifest.DependencyReference, cleanup *[]string) (string, error) {
-	if err := os.MkdirAll(filepath.Join("apm_modules", "_local"), 0o755); err != nil {
+	if err := os.MkdirAll("apm_modules", 0o755); err != nil {
 		return "", err
 	}
-	root, err := os.MkdirTemp(filepath.Join("apm_modules", "_local"), ".apm-uninstall-refresh-")
+	root, err := os.MkdirTemp("apm_modules", ".apm-uninstall-refresh-")
 	if err != nil {
 		return "", err
 	}
@@ -125,33 +135,109 @@ func stageLocalCopy(d *manifest.DependencyReference, cleanup *[]string) (string,
 	if _, err := newGitPackageLoader(root).LoadPackage(&ref, ""); err != nil {
 		return "", err
 	}
-	return filepath.Join(root, filepath.FromSlash(deploy.DepRefDir(&ref))), nil
+	staged := filepath.Join(root, filepath.FromSlash(deploy.DepRefDir(&ref)))
+	if !refreshCopyHasMarker(staged) {
+		return "", fmt.Errorf("%s: no apm.yml, SKILL.md or plugin.json", d.LocalPath)
+	}
+	return staged, nil
 }
 
-// activate puts each staged copy in place of its shared directory.
+// refreshCopyHasMarker reports whether a staged copy is a package, as the
+// Oracle refuses a local source with no apm.yml, SKILL.md or plugin.json
+// (install/phases/local_content.py:253-266) before it validates the staged
+// copy (commands/uninstall/engine.py:235-243).
+func refreshCopyHasMarker(dir string) bool {
+	for _, name := range []string{"apm.yml", "SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return pluginJSONPath(dir) != ""
+}
+
+// activate puts each staged copy in place of its shared directory, keeping
+// the original as a backup beside it, as the Oracle's
+// _activate_staged_local_refresh does (commands/uninstall/engine.py:262-289).
+// When one fails, every directory already replaced gets its original back and
+// the error is returned.
 func (r *localRefreshes) activate() error {
 	if r == nil {
 		return nil
 	}
-	defer r.discard()
-	dirs := make([]string, 0, len(r.staged))
-	for dir := range r.staged {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
-		if _, err := deploy.SafeRemoveModuleDir(".", dir); err != nil {
-			return fmt.Errorf("refresh apm_modules/%s: %w", dir, err)
-		}
-		dest := filepath.Join("apm_modules", filepath.FromSlash(dir))
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return fmt.Errorf("refresh apm_modules/%s: %w", dir, err)
-		}
-		if err := os.Rename(r.staged[dir], dest); err != nil {
+	for _, dir := range sortedStringSet(stringKeys(r.staged)) {
+		if err := r.activateOne(dir); err != nil {
+			r.rollback()
 			return fmt.Errorf("refresh apm_modules/%s: %w", dir, err)
 		}
 	}
 	return nil
+}
+
+func (r *localRefreshes) activateOne(dir string) error {
+	if err := deploy.CheckModuleDir(".", dir); err != nil {
+		return err
+	}
+	dest := filepath.Join("apm_modules", filepath.FromSlash(dir))
+	backup := filepath.Join(filepath.Dir(dest), "."+filepath.Base(dest)+".apm-uninstall-backup")
+	if _, err := os.Lstat(backup); err == nil {
+		return fmt.Errorf("refresh backup %s already exists", backup)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	hadDest := true
+	if err := os.Rename(dest, backup); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		hadDest = false
+	}
+	if err := os.Rename(r.staged[dir], dest); err != nil {
+		if hadDest {
+			_ = os.Rename(backup, dest)
+		}
+		return err
+	}
+	r.activated = append(r.activated, dir)
+	if hadDest {
+		r.backups[dir] = backup
+	}
+	return nil
+}
+
+// rollback gives each replaced directory its original back, the last
+// replaced first.
+func (r *localRefreshes) rollback() {
+	if r == nil {
+		return
+	}
+	for i := len(r.activated) - 1; i >= 0; i-- {
+		dir := r.activated[i]
+		dest := filepath.Join("apm_modules", filepath.FromSlash(dir))
+		err := os.RemoveAll(dest)
+		if backup, ok := r.backups[dir]; ok && err == nil {
+			err = os.Rename(backup, dest)
+		}
+		if err != nil {
+			ux.Warn(os.Stderr, "Could not restore apm_modules/%s: %v", dir, err)
+		}
+	}
+	r.activated, r.backups = nil, map[string]string{}
+	r.discard()
+}
+
+// commit drops the backups once the uninstall has written apm.yml.
+func (r *localRefreshes) commit() {
+	if r == nil {
+		return
+	}
+	for _, backup := range r.backups {
+		_ = os.RemoveAll(backup)
+	}
+	r.backups = map[string]string{}
+	r.discard()
 }
 
 // discard removes the staging directories.
