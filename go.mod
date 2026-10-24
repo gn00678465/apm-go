@@ -1,6 +1,6 @@
 module github.com/apm-go/apm
 
-go 1.26.9
+go 1.26.10
 
 // Since Go 1.23, Windows reports a directory junction as an irregular file, not
 // a symlink, and filepath.EvalSymlinks does not resolve it. apm-go decides what
