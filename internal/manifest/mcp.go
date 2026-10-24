@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"fmt"
-	"math"
 	"net/url"
 	"regexp"
 	"sort"
@@ -152,10 +151,7 @@ func pyyaml11Value(v *yaml.Node) *yaml.Node {
 			return scalar("!!int", n.String())
 		}
 	case "!!float":
-		if f := PyYAMLFloat(v.Value); !math.IsInf(f, 0) && !math.IsNaN(f) {
-			return scalar("!!float", PyFloatRepr(f))
-		}
-		return scalar("!!float", v.Value)
+		return scalar("!!float", PyYAMLFloatRepr(PyYAMLFloat(v.Value)))
 	case "!!timestamp":
 		return scalar(tag, v.Value)
 	}

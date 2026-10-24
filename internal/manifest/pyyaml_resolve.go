@@ -151,3 +151,22 @@ func PyFloatRepr(x float64) string {
 	}
 	return sign + digits[:decpt] + "." + digits[decpt:]
 }
+
+// PyYAMLFloatRepr is the text PyYAML's SafeRepresenter writes for a float
+// (yaml/representer.py:171-189). It adds ".0" before the exponent of a
+// repr with no decimal point, since its resolver reads 1e+20 as a string.
+func PyYAMLFloatRepr(x float64) string {
+	switch {
+	case math.IsNaN(x):
+		return ".nan"
+	case math.IsInf(x, 1):
+		return ".inf"
+	case math.IsInf(x, -1):
+		return "-.inf"
+	}
+	s := PyFloatRepr(x)
+	if !strings.Contains(s, ".") && strings.Contains(s, "e") {
+		s = strings.Replace(s, "e", ".0e", 1)
+	}
+	return s
+}

@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"encoding/json"
+	"math"
 
 	"github.com/apm-go/apm/internal/manifest"
 	"go.yaml.in/yaml/v4"
@@ -86,7 +87,13 @@ func jsonValue(n *yaml.Node) any {
 		return nil
 	case "!!bool":
 		return n.Value == "true"
-	case "!!int", "!!float":
+	case "!!float":
+		// The node holds PyYAML's spelling (1.0e+20); json.dumps writes
+		// the float's repr (1e+20).
+		if f := manifest.PyYAMLFloat(n.Value); !math.IsInf(f, 0) && !math.IsNaN(f) {
+			return json.Number(manifest.PyFloatRepr(f))
+		}
+	case "!!int":
 		if json.Valid([]byte(n.Value)) {
 			return json.Number(n.Value)
 		}

@@ -233,3 +233,65 @@ func TestInstallMCP_RegistryServerLinesAndLock(t *testing.T) {
 		t.Errorf("lock:\n%s\nwant it to hold:\n%s", lock, wantConfigs)
 	}
 }
+
+// issue #124 item 24: a float whose repr has an exponent and no decimal
+// point is locked as PyYAML dumps it, with ".0" before the "e"
+// (yaml/representer.py:187-188), so it reads back as a float and the next
+// install changes nothing; opencode.json has json.dumps's repr. The lock
+// lines and opencode.json values are Oracle 0.33.0's (C/sci/after-a/or).
+func TestInstall_ExponentFloatEnabledIsStable(t *testing.T) {
+	dir := chdirTemp(t)
+	t.Setenv("HOME", t.TempDir())
+	values := []string{"1.0e+20", "1.0e-10", "1.0e+16", "1.2e+20", "1.50"}
+	locked := []string{"1.0e+20", "1.0e-10", "1.0e+16", "1.2e+20", "1.5"}
+	inJSON := []string{"1e+20", "1e-10", "1e+16", "1.2e+20", "1.5"}
+	m := "name: proj\nversion: 1.0.0\ntargets: [opencode]\ndependencies:\n  mcp:\n"
+	for i, v := range values {
+		m += "    - name: s" + string(rune('a'+i)) + "\n      registry: false\n      transport: stdio\n      command: echo\n      enabled: " + v + "\n"
+	}
+	writeCompileFile(t, dir, "apm.yml", m)
+	mustRunCLI(t, "install")
+
+	lock, oc := readText(t, "apm.lock.yaml"), readText(t, "opencode.json")
+	for i := range values {
+		name := "s" + string(rune('a'+i))
+		if want := "  " + name + ":\n    name: " + name + "\n    transport: stdio\n    registry: false\n    command: echo\n    enabled: " + locked[i] + "\n"; !strings.Contains(lock, want) {
+			t.Errorf("apm.lock.yaml lacks\n%s\nin:\n%s", want, lock)
+		}
+		if want := "\"enabled\": " + inJSON[i] + ","; !strings.Contains(oc, want) {
+			t.Errorf("opencode.json lacks %s for %s:\n%s", want, name, oc)
+		}
+	}
+	if out := mustRunCLI(t, "install"); strings.Contains(out, "updated") || !strings.Contains(out, "No changes") {
+		t.Errorf("second install:\n%s\nwant No changes and no server updated", out)
+	}
+	if got := readText(t, "apm.lock.yaml"); got != lock {
+		t.Errorf("second install rewrote apm.lock.yaml:\n%s", got)
+	}
+}
+
+// An infinite float, +.Inf or one out of range, is locked as PyYAML's .inf,
+// as Oracle 0.33.0 locks it (C/sci/after-edge/or). opencode.json gets the
+// string ".inf" where json.dumps writes Infinity, which is not JSON and which
+// apm-go could not read back on the next install.
+func TestInstall_InfiniteFloatEnabled(t *testing.T) {
+	dir := chdirTemp(t)
+	t.Setenv("HOME", t.TempDir())
+	writeCompileFile(t, dir, "apm.yml", "name: proj\nversion: 1.0.0\ntargets: [opencode]\ndependencies:\n  mcp:\n"+
+		"    - name: a\n      registry: false\n      transport: stdio\n      command: echo\n      enabled: +.Inf\n"+
+		"    - name: b\n      registry: false\n      transport: stdio\n      command: echo\n      enabled: 1.0e+400\n")
+	mustRunCLI(t, "install")
+
+	lock, oc := readText(t, "apm.lock.yaml"), readText(t, "opencode.json")
+	for _, name := range []string{"a", "b"} {
+		if want := "    name: " + name + "\n    transport: stdio\n    registry: false\n    command: echo\n    enabled: .inf\n"; !strings.Contains(lock, want) {
+			t.Errorf("apm.lock.yaml lacks\n%s\nin:\n%s", want, lock)
+		}
+	}
+	if n := strings.Count(oc, "\"enabled\": \".inf\","); n != 2 {
+		t.Errorf("opencode.json has %d \"enabled\": \".inf\":\n%s", n, oc)
+	}
+	if out := mustRunCLI(t, "install"); strings.Contains(out, "updated") || strings.Contains(out, "failed") || !strings.Contains(out, "No changes") {
+		t.Errorf("second install:\n%s\nwant No changes", out)
+	}
+}
