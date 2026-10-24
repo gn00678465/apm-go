@@ -586,6 +586,10 @@ func (h *uninstallHandover) record(lock *lockfile.Lockfile) {
 			}
 			(*hashes)[p] = hash
 		}
+		// A --global trial deploys a skill where the user's own directory
+		// is, which the refresh leaves; with its files not recorded, the
+		// entry goes, as install drops it.
+		*files = withoutOrphanSkillDirs(*files, *hashes)
 	}
 	gone := map[string]bool{}
 	for _, p := range h.refreshedPaths {

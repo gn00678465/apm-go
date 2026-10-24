@@ -33,6 +33,13 @@ type settled struct {
 	// restored are recorded paths the user removed before the uninstall and
 	// the refresh does not decide, which (a)'s install puts back.
 	restored []string
+	// user are paths of the user's own that no lock records, which a clone
+	// that commits them holds: (b) puts their files back after the deletion.
+	user []string
+	// noFrozen skips (b) where a frozen install fails after a plain install
+	// too: a directory --global keeps for the user (#43) is in no lock, and
+	// the frozen trial, which has no such directory, deploys the skill there.
+	noFrozen bool
 	before   map[string]string
 }
 
@@ -128,13 +135,44 @@ func (c *settled) check(t *testing.T) {
 	if !maps.Equal(got, after) {
 		t.Errorf("(a) install changed the deployed files:\n%v\nwas:\n%v", got, after)
 	}
+	if c.noFrozen {
+		return
+	}
 	recorded := recordedContent(t, lock, c.deployRoot)
+	userFiles, userLinks := map[string][]byte{}, map[string]string{}
+	for _, u := range c.user {
+		err := filepath.WalkDir(filepath.Join(c.deployRoot, filepath.FromSlash(u)), func(p string, d fs.DirEntry, err error) error {
+			switch {
+			case err != nil:
+				return err
+			case d.Type()&fs.ModeSymlink != 0:
+				userLinks[p], err = os.Readlink(p)
+			case d.Type().IsRegular():
+				userFiles[p], err = os.ReadFile(p)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, dir := range append(settledTargetDirs, "apm_modules") {
 		base := c.deployRoot
 		if dir == "apm_modules" {
 			base = c.manifestDir
 		}
 		if err := os.RemoveAll(filepath.Join(base, filepath.FromSlash(dir))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for p, data := range userFiles {
+		writeCompileFile(t, filepath.Dir(p), filepath.Base(p), string(data))
+	}
+	for p, target := range userLinks {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, p); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -147,7 +185,7 @@ func (c *settled) check(t *testing.T) {
 	}
 	paths := settledLockPaths(t, lock)
 	for p := range deployedEntries(t, c.deployRoot) {
-		if !slices.ContainsFunc(paths, func(q string) bool { return p == q || strings.HasPrefix(p, q+"/") }) {
+		if !slices.ContainsFunc(append(paths, c.user...), func(q string) bool { return p == q || strings.HasPrefix(p, q+"/") }) {
 			t.Errorf("(b) install --frozen wrote %s, which the lock does not record", p)
 		}
 	}

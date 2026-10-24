@@ -143,3 +143,59 @@ func TestUninstall_SharedLocalSlot_TargetFlag(t *testing.T) {
 		})
 	}
 }
+
+// ./b/dep's new copy gains a skill sz where the user has a directory of their
+// own, or a symlink to one, that no lock records (review runs
+// g-ugainskill, g-ugainskilllink): the refresh leaves it, and the lock records
+// no .claude/skills/sz for ./b/dep with no file below it, as install drops
+// such an entry (withoutOrphanSkillDirs), so the next install changes no lock
+// and the next uninstall warns about nothing.
+func TestUninstall_SharedLocalSlot_GainedSkillOverUserDir(t *testing.T) {
+	for _, tc := range []struct {
+		global, link bool
+	}{{false, false}, {false, true}, {true, false}, {true, true}} {
+		global := tc.global
+		t.Run(scopeName(global)+map[bool]string{false: "/dir", true: "/link"}[tc.link], func(t *testing.T) {
+			s := newOtherScope(t, global, true)
+			writeCompileFile(t, s.srcRoot, "b/dep/.apm/skills/sb/SKILL.md", "---\nname: sb\ndescription: d\n---\nfrom b\n")
+			head := "name: proj\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n"
+			writeCompileFile(t, s.manifestDir, "apm.yml", head+"    - '"+s.b+"'\n")
+			if global {
+				chdirTemp(t)
+			} else {
+				t.Chdir(s.deployRoot)
+			}
+			s.run(t, "install")
+			addFirstDeclarations(t, s.manifestDir, head, []string{s.a}, []string{s.b})
+			writeCompileFile(t, s.srcRoot, "b/dep/.apm/skills/sz/SKILL.md", "---\nname: sz\ndescription: d\n---\nfrom b\n")
+			if tc.link {
+				writeCompileFile(t, s.deployRoot, "uz/SKILL.md", "user skill\n")
+				if err := os.Symlink("../../uz", filepath.Join(s.deployRoot, ".claude", "skills", "sz")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeCompileFile(t, s.deployRoot, ".claude/skills/sz/SKILL.md", "user skill\n")
+			}
+			c := &settled{deployRoot: s.deployRoot, manifestDir: s.manifestDir, global: global, user: []string{".claude/skills/sz"}, noFrozen: global && !tc.link}
+			c.start(t)
+			stdout := s.run(t, "uninstall", s.a)
+			if got := readFileString(t, filepath.Join(s.deployRoot, ".claude", "skills", "sz", "SKILL.md")); got != "user skill\n" {
+				t.Errorf("user skill = %q, want it kept", got)
+			}
+			lock := readFileString(t, filepath.Join(s.manifestDir, "apm.lock.yaml"))
+			if strings.Contains(lock, ".claude/skills/sz") || strings.Contains(stdout, "keeping") {
+				t.Errorf("lock records the user's skill directory, or the uninstall warns:\n%s\n%s", lock, stdout)
+			}
+			if !global || !tc.link {
+				c.check(t)
+				return
+			}
+			// install -g replaces the user's symlink by its own (#43), which the
+			// refresh, like a project deploy, leaves (PRODUCT.md, the exception
+			// for --global); the next uninstall still warns about nothing.
+			if out := s.run(t, "uninstall", s.b); strings.Contains(out, "keeping") {
+				t.Errorf("uninstall of ./b/dep warns:\n%s", out)
+			}
+		})
+	}
+}
