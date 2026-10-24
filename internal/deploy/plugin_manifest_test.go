@@ -110,19 +110,19 @@ func TestRun_PluginManifestLocations(t *testing.T) {
 	}
 }
 
-// An APM package reads .claude-plugin/plugin.json alone, as before: the
-// Oracle reads no plugin.json of an APM package, and apm-go keeps deploying
-// what that file lists (#88 item 75).
-func TestCollectDependencyPrimitives_APMPackageReadsClaudePluginManifestOnly(t *testing.T) {
+// An APM package reads no plugin.json, wherever it is, as Oracle 0.33.0
+// reads none (issue #126 item 75; measured: an apm.yml with .apm/ and a
+// .claude-plugin/plugin.json that lists an agent and a command deploys the
+// rule of .apm/ alone, ~/.cache/apm-go-oracle-ref/A/75/dualkey-r1).
+func TestCollectDependencyPrimitives_APMPackageReadsNoPluginManifest(t *testing.T) {
 	tests := []struct {
 		name      string
 		manifests map[string]string
-		want      []string
 	}{
-		{"github plugin", map[string]string{".github/plugin/plugin.json": `{"name":"plug","agents":["./agents/rev.md"]}`}, nil},
-		{"root plugin.json", map[string]string{"plugin.json": `{"name":"plug","agents":["./agents/rev.md"]}`}, nil},
-		{"claude-plugin", map[string]string{".claude-plugin/plugin.json": `{"name":"plug","agents":["./agents/rev.md"]}`}, []string{"rev"}},
-		{"claude-plugin with no name", map[string]string{".claude-plugin/plugin.json": `{"agents":["./agents/rev.md"]}`}, nil},
+		{"github plugin", map[string]string{".github/plugin/plugin.json": `{"name":"plug","agents":["./agents/rev.md"]}`}},
+		{"root plugin.json", map[string]string{"plugin.json": `{"name":"plug","agents":["./agents/rev.md"]}`}},
+		{"claude-plugin", map[string]string{".claude-plugin/plugin.json": `{"name":"plug","agents":["./agents/rev.md"]}`}},
+		{"claude-plugin with no name", map[string]string{".claude-plugin/plugin.json": `{"agents":["./agents/rev.md"]}`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -136,8 +136,8 @@ func TestCollectDependencyPrimitives_APMPackageReadsClaudePluginManifestOnly(t *
 
 			got := namesOf(onlyType(collectDep(t, "acme/pkg", mod), TypeAgents))
 
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("agents = %v, want %v", got, tt.want)
+			if len(got) != 0 {
+				t.Errorf("agents = %v, want none", got)
 			}
 		})
 	}

@@ -45,8 +45,7 @@ func TestParseLockfile_OracleGitIdentityFields(t *testing.T) {
 	}
 }
 
-// The original node carries content_hash, which apm-go does not model; every
-// other byte comes from the model.
+// Every byte comes from the model, content_hash included.
 func TestWriteLockfile_ReproducesOracleGitLocks(t *testing.T) {
 	for _, name := range []string{"git-alias", "git-http-insecure", "git-kinds"} {
 		t.Run(name, func(t *testing.T) {
@@ -72,6 +71,7 @@ func TestIsSemanticEqual_GitIdentityFields(t *testing.T) {
 		"allow_insecure": func(d *LockedDep) { d.AllowInsecure = !d.AllowInsecure },
 		"name":           func(d *LockedDep) { d.Name = "" },
 		"package_type":   func(d *LockedDep) { d.PackageType = "" },
+		"content_hash":   func(d *LockedDep) { d.ContentHash = "" },
 	}
 	for field, flip := range flips {
 		t.Run(field, func(t *testing.T) {

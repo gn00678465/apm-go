@@ -143,6 +143,35 @@ dependencies:
 		t.Errorf("expected deployed skill: %v", err)
 	}
 
+	// Issue #124 item 36: the lock entry has the fields Oracle 0.33.0 writes
+	// for a registry package (measured, A/124-36/r1) and no constraint.
+	for _, want := range []string{"name: sample", "host: github.com", "resolved_ref: 1.0.0", "package_type: apm_package", "content_hash: sha256:"} {
+		if !strings.Contains(ls, want) {
+			t.Errorf("124-36: lockfile missing %q\n---\n%s", want, ls)
+		}
+	}
+	if strings.Contains(ls, "constraint:") {
+		t.Errorf("124-36: lockfile has a constraint\n---\n%s", ls)
+	}
+
+	// Issue #124 item x1: a second install takes the package from
+	// apm_modules and asks the registry nothing, and leaves the lock as it was.
+	srv.mu.Lock()
+	srv.versionsHits, srv.downloadHits = 0, 0
+	srv.mu.Unlock()
+	if err := runInstall(deps, false, true, "claude", "", nil, nil); err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	srv.mu.Lock()
+	vh2, dh2 := srv.versionsHits, srv.downloadHits
+	srv.mu.Unlock()
+	if vh2 != 0 || dh2 != 0 {
+		t.Errorf("x1: second install queried /versions %d and /download %d times, want 0 and 0", vh2, dh2)
+	}
+	if again, _ := os.ReadFile("apm.lock.yaml"); string(again) != ls {
+		t.Errorf("x1: second install changed the lock\n--- before\n%s--- after\n%s", ls, again)
+	}
+
 	// AC6 replay: simulate clean checkout (apm_modules absent, lockfile+deployed
 	// files committed), then frozen install re-fetches resolved_url.
 	os.RemoveAll("apm_modules")

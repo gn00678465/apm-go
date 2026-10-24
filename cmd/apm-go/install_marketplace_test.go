@@ -610,8 +610,11 @@ func TestRunInstall_MarketplacePackage_LocalPathInProjectTree_PersistsRelative(t
 		[]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// install validates that the plugin's local path exists.
+	// install validates that the plugin's local path is a package.
 	if err := os.MkdirAll(filepath.Join(mktDir, "p"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mktDir, "p", "apm.yml"), []byte("name: p\nversion: 1.0.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: mktDir}); err != nil {
@@ -677,8 +680,11 @@ func TestRunInstall_MarketplacePackage_LocalPathOutsideProjectTree_PersistsAbsol
 		[]byte(`{"name": "acme", "plugins": [{"name": "p", "source": "./p"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// install validates that the plugin's local path exists.
+	// install validates that the plugin's local path is a package.
 	if err := os.MkdirAll(filepath.Join(mktDir, "p"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mktDir, "p", "apm.yml"), []byte("name: p\nversion: 1.0.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := marketplace.AddSource(marketplace.MarketplaceSource{Name: "acme", URL: mktDir}); err != nil {

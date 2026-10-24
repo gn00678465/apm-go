@@ -33,11 +33,11 @@ type pluginManifest struct {
 	Skills   json.RawMessage `json:"skills"`
 	Agents   json.RawMessage `json:"agents"`
 	Commands json.RawMessage `json:"commands"`
+	Hooks    json.RawMessage `json:"hooks"`
 }
 
 // collectPluginPrimitives returns the skills, agents and commands, as
-// prompts, that m, t's valid plugin.json, declares. staged is for a package
-// that is no APM package (isAPMPackage), a Claude plugin to the Oracle: its
+// prompts, that m, the plugin.json of t, a Claude plugin, declares: its
 // agents and commands are staged with its own .apm/agents/ and .apm/prompts/
 // (stagePluginFiles), and an agents or commands field that is neither a list
 // nor a string leaves the default directory. skillsDeclared reports whether the manifest's "skills"
@@ -49,8 +49,8 @@ type pluginManifest struct {
 // A nil m (no plugin.json, invalid JSON, or no "name") results in (nil,
 // false), so callers fall back to whatever non-plugin.json discovery they
 // already do. The error is a symlink in a declared skill directory, or in
-// the package's .apm/agents/ or .apm/prompts/ when staged.
-func collectPluginPrimitives(t sourceTree, m *pluginManifest, staged bool) (prims []Primitive, skillsDeclared bool, err error) {
+// the package's .apm/agents/ or .apm/prompts/.
+func collectPluginPrimitives(t sourceTree, m *pluginManifest) (prims []Primitive, skillsDeclared bool, err error) {
 	if m == nil {
 		return nil, false, nil
 	}
@@ -85,28 +85,11 @@ func collectPluginPrimitives(t sourceTree, m *pluginManifest, staged bool) (prim
 		})
 	}
 
-	if staged {
-		staging, err := stagePluginFiles(t, m)
-		if err != nil {
-			return nil, false, err
-		}
-		return append(prims, staging...), isJSONKeyPresent(m.Skills), nil
+	staging, err := stagePluginFiles(t, m)
+	if err != nil {
+		return nil, false, err
 	}
-
-	// An APM package's listed agents and commands follow its own .apm/; the
-	// Oracle reads no plugin.json of an APM package (#88).
-	for _, rel := range decodeStringOrList(m.Agents) {
-		prims = append(prims, collectPluginFlatFiles(rel, modulePath, depKey, source, TypeAgents, extractAgentName)...)
-	}
-	for _, rel := range decodeStringOrList(m.Commands) {
-		for _, p := range collectPluginFlatFiles(rel, modulePath, depKey, source, TypePrompts, pluginCommandName) {
-			if !isWorkflowPrompt(p.SrcPath) {
-				prims = append(prims, p)
-			}
-		}
-	}
-
-	return prims, isJSONKeyPresent(m.Skills), nil
+	return append(prims, staging...), isJSONKeyPresent(m.Skills), nil
 }
 
 // pluginStage is a staging directory of the Oracle, .apm/agents/ or
@@ -135,7 +118,7 @@ func stagePluginFiles(t sourceTree, m *pluginManifest) ([]Primitive, error) {
 		return nil, err
 	}
 
-	agentPaths := componentPaths(m.Agents, "agents", true)
+	agentPaths := componentPaths(m.Agents, "agents")
 	for _, dirs := range []bool{true, false} {
 		for _, rel := range agentPaths {
 			if files, isDir := pluginSourceFiles(t.dir, rel); isDir == dirs {
@@ -145,7 +128,7 @@ func stagePluginFiles(t sourceTree, m *pluginManifest) ([]Primitive, error) {
 			}
 		}
 	}
-	for _, rel := range componentPaths(m.Commands, "commands", true) {
+	for _, rel := range componentPaths(m.Commands, "commands") {
 		files, _ := pluginSourceFiles(t.dir, rel)
 		for _, f := range files {
 			prompts.put(pluginCommandPromptName(filepath.Base(f)), f)
@@ -178,7 +161,7 @@ func loadPluginManifest(t sourceTree) (*pluginManifest, error) {
 // from plugin.json (deps/plugin_parser.py:1370).
 func claudePluginName(t sourceTree) (string, error) {
 	m, err := loadPluginManifest(t)
-	if m == nil || isAPMPackage(t) {
+	if m == nil {
 		return "", err
 	}
 	return m.Name, nil
@@ -192,24 +175,21 @@ var PluginManifestPaths = []string{"plugin.json", ".github/plugin/plugin.json", 
 // (agent_plugins/constants.py:7), which the Oracle installs as an Agent Plugin.
 const agentPluginSchemaID = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 
-// findPluginManifest returns t's plugin.json, nil when there is none, or the
-// first one found cannot be read (failure, when it is there) or is not valid
-// JSON; a later place is not tried then. An APM package keeps reading
-// .claude-plugin/plugin.json alone (#88 item 75). Any other package takes
-// the first of PluginManifestPaths that exists, as the Oracle does, and a
-// manifest with no name, an empty one or null, is named after the package's
-// directory (deps/plugin_parser.py:501-505). A root plugin.json the Oracle
-// does not take for a Claude plugin's, an Agent Plugin's
-// (install/primitive_classification.py:88-92), or one it refuses (no name,
-// deps/plugin_parser.py:503-504, or not valid JSON), is passed over as it was
-// before.
+// findPluginManifest returns t's plugin.json, nil when there is none, when t
+// is an APM package (isAPMPackage), whose plugin.json the Oracle never reads
+// (models/format_detection.py:450-456), or when the first one found cannot be
+// read (failure, when it is there) or is not valid JSON; a later place is not
+// tried then. It takes the first of PluginManifestPaths that exists, as the
+// Oracle does, and a manifest with no name, an empty one or null, is named
+// after the package's directory (deps/plugin_parser.py:501-505). A root
+// plugin.json the Oracle does not take for a Claude plugin's, an Agent
+// Plugin's (install/primitive_classification.py:88-92), or one it refuses (no
+// name, deps/plugin_parser.py:503-504, or not valid JSON), is passed over.
 func findPluginManifest(t sourceTree) (*pluginManifest, *sourceReadFailure, error) {
-	apmPackage := isAPMPackage(t)
-	paths := PluginManifestPaths
-	if apmPackage {
-		paths = []string{".claude-plugin/plugin.json"}
+	if isAPMPackage(t) {
+		return nil, nil, nil
 	}
-	for _, rel := range paths {
+	for _, rel := range PluginManifestPaths {
 		p, err := t.path(rel)
 		if err != nil {
 			return nil, nil, err
@@ -230,9 +210,6 @@ func findPluginManifest(t sourceTree) (*pluginManifest, *sourceReadFailure, erro
 			return nil, nil, nil
 		}
 		if m.Name == "" {
-			if apmPackage {
-				return nil, nil, nil
-			}
 			m.Name = filepath.Base(t.dir)
 		}
 		return &m, nil, nil
@@ -284,30 +261,21 @@ func pluginCommandPromptName(filename string) string {
 	return filename
 }
 
-// pluginCommandName names a plugin command after the prompt it is staged as:
-// <name>.md and <name>.prompt.md are <name>, any other file is no prompt.
-func pluginCommandName(filename string) string {
-	return extractPromptName(pluginCommandPromptName(filename))
-}
-
 // componentPaths is what the Oracle's _resolve_sources reads for an agents or
 // commands component (deps/plugin_parser.py:1180-1215): the path or paths a
-// list or a string declares, else, when useDefault, the default directory.
-func componentPaths(raw json.RawMessage, defaultDir string, useDefault bool) []string {
+// list or a string declares, else the default directory.
+func componentPaths(raw json.RawMessage, defaultDir string) []string {
 	if v := bytes.TrimSpace(raw); len(v) > 0 && (v[0] == '[' || v[0] == '"') {
 		return decodeStringOrList(raw)
 	}
-	if useDefault {
-		return []string{defaultDir}
-	}
-	return nil
+	return []string{defaultDir}
 }
 
 // isAPMPackage is the Oracle's has_eligible_apm_yml
 // (models/format_detection.py:207-229,451): an apm.yml beside a .apm/
 // directory, or one that declares a dependency. The Oracle takes such a
-// package for an APM package, not a Claude plugin, so it gets no default
-// component directories.
+// package for an APM package, not a Claude plugin, and reads no plugin.json
+// of it.
 // A path that leaves the package is not read and counts as missing, as for
 // uninstall (readManifestLeniently): install refuses that apm.yml where it
 // reads the package's manifest, and compile, which reads no apm.yml, must
@@ -374,26 +342,6 @@ func mappingValue(n *yaml.Node, key string) *yaml.Node {
 // treated as absent too, since it carries no declaration either way.
 func isJSONKeyPresent(raw json.RawMessage) bool {
 	return len(raw) > 0 && string(raw) != "null"
-}
-
-// collectPluginFlatFiles resolves a single agents/commands manifest entry
-// (per spec, a component path may be a directory or an individual .md
-// file) into zero or more flat-file primitives -- matching how apm-go's
-// existing Primitive model represents agents/commands (one Primitive per
-// source file, SrcPath pointing at that file), not a directory copy. A
-// directory's files come in name order.
-func collectPluginFlatFiles(rel, modulePath, depKey, source string, pt PrimitiveType, nameFn func(string) string) []Primitive {
-	files, isDir := pluginSourceFiles(modulePath, rel)
-	if isDir {
-		slices.Sort(files)
-	}
-	var prims []Primitive
-	for _, f := range files {
-		if name := nameFn(filepath.Base(f)); name != "" {
-			prims = append(prims, Primitive{Name: name, Type: pt, Source: source, DepKey: depKey, SrcPath: f})
-		}
-	}
-	return prims
 }
 
 // pluginSourceFiles returns the files an agents or commands path of

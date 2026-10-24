@@ -220,3 +220,21 @@ func gitPackageIdentity(dir, modulesRel, repoURL, virtualPath string) (name, pac
 	}
 	return "", ""
 }
+
+// packageContentHash is the content_hash Oracle 0.33.0 records for a
+// dependency that is not local (install/sources.py:266-267,554-555,800-801):
+// compute_package_hash of its directory below apm_modules. A Claude plugin
+// and a virtual file package get none: the Oracle hashes the apm.yml and .apm/
+// it builds into their directory, which apm-go does not write, and a later
+// Oracle install that downloads the package again refuses a hash that does
+// not match (sources.py:803-840). A package with no directory there, which
+// the install has not fetched, gets none either.
+func packageContentHash(moduleDir, virtualPath string) (string, error) {
+	if manifest.VirtualTypeOf(virtualPath) == "file" || isClaudePluginDir(moduleDir) {
+		return "", nil
+	}
+	if info, err := os.Stat(moduleDir); err != nil || !info.IsDir() {
+		return "", nil
+	}
+	return lockfile.ComputePackageHash(moduleDir)
+}

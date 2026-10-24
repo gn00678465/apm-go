@@ -306,7 +306,8 @@ func TestInstall_LocalDependency_LockVersionUnchanged(t *testing.T) {
 }
 
 // A registry package records the version the registry resolved, not the one
-// its own apm.yml carries.
+// its own apm.yml carries, and the name and package_type of the package, as
+// Oracle 0.33.0 records them (measured, issue #124 item 36).
 func TestInstall_RegistryDependency_LockVersionUnchanged(t *testing.T) {
 	enableRegistries(t)
 	var buf bytes.Buffer
@@ -340,8 +341,8 @@ func TestInstall_RegistryDependency_LockVersionUnchanged(t *testing.T) {
 		t.Fatalf("install: %v", err)
 	}
 	entry := subdirLockEntry(t, project, "acme/sample")
-	if entry.Version != "1.0.0" || entry.Name != "" || entry.PackageType != "" {
-		t.Errorf("registry entry version/name/package_type = %q/%q/%q, want 1.0.0//",
+	if entry.Version != "1.0.0" || entry.Name != "sample" || entry.PackageType != "apm_package" {
+		t.Errorf("registry entry version/name/package_type = %q/%q/%q, want 1.0.0/sample/apm_package",
 			entry.Version, entry.Name, entry.PackageType)
 	}
 }

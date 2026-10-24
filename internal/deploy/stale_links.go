@@ -304,7 +304,7 @@ func linkedSkillFiles(bucketSource, depKey, dir string) map[string]bool {
 		if resolveExisting(absSource) == resolveExisting(dir) {
 			t := sourceTree{dir: bucketSource, depKey: depKey}
 			m, _ := loadPluginManifest(t)
-			p.RootSkill, p.SkipRootGit, p.PluginRoot = true, !strings.HasPrefix(depKey, "_local/"), m != nil && !isAPMPackage(t)
+			p.RootSkill, p.SkipRootGit, p.PluginRoot = true, !strings.HasPrefix(depKey, "_local/"), m != nil
 		}
 	}
 	files := map[string]bool{}

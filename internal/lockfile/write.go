@@ -175,6 +175,7 @@ func serializeEntry(dep *LockedDep, original *yaml.Node) *yaml.Node {
 		"resolved_tag":            dep.ResolvedTag,
 		"resolved_at":             dep.ResolvedAt,
 		"tree_sha256":             dep.TreeSHA256,
+		"content_hash":            dep.ContentHash,
 	}
 
 	for _, key := range entryFieldOrder {
@@ -310,6 +311,7 @@ func depSemanticEqual(a, b *LockedDep) bool {
 		a.LocalPath == b.LocalPath &&
 		max(a.Depth, 1) == max(b.Depth, 1) &&
 		a.TreeSHA256 == b.TreeSHA256 &&
+		a.ContentHash == b.ContentHash &&
 		// Marketplace provenance (mkt-031) participates in semantic equality
 		// (mirrors the Python original's is_semantically_equivalent): a
 		// no-provenance rebuild is NOT a no-op against a provenance-bearing

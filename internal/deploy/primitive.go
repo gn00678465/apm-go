@@ -196,7 +196,7 @@ func collectDependency(t sourceTree) ([]Primitive, error) {
 
 func collectPackage(t sourceTree) ([]Primitive, error) {
 	m, manifestErr := loadPluginManifest(t)
-	staged := m != nil && !isAPMPackage(t)
+	staged := m != nil
 	prims, err := collectFromAPMDir(t, ".apm", true, staged)
 	if err != nil {
 		return nil, err
@@ -236,7 +236,7 @@ func collectPackage(t sourceTree) ([]Primitive, error) {
 	if manifestErr != nil {
 		return nil, manifestErr
 	}
-	pluginPrims, skillsDeclared, err := collectPluginPrimitives(t, m, staged)
+	pluginPrims, skillsDeclared, err := collectPluginPrimitives(t, m)
 	if err != nil {
 		return nil, err
 	}
