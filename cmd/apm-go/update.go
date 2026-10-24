@@ -123,6 +123,11 @@ func runUpdate(deps *installDeps, frozen, noFrozen bool, pkg string, dryRun bool
 	for _, dep := range m.ParsedDevDeps {
 		normalizeLocalDep(dep)
 	}
+	if deployDir != "" {
+		if err := checkUserScopeLocalPaths(m); err != nil {
+			return err
+		}
+	}
 	// The Oracle's update has no --allow-insecure, so an http:// dependency
 	// always stops it (r6-or/httpok/up.out).
 	if err := checkInsecureDirect(allDirectDeps(m), false, m.DefaultHost); err != nil {

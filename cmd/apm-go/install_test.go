@@ -477,7 +477,7 @@ func TestRunInstall_AllowInsecureFlag_PermitsHTTPDependency(t *testing.T) {
 
 	spy := &spyLoader{}
 	deps := &installDeps{tags: &mockInstallTagLister{}, loader: spy, allowInsecure: true}
-	err := runInstall(deps, false, true, "", "", nil, []string{"http://example.com/owner/repo.git"})
+	err := runInstall(deps, false, true, "claude", "", nil, []string{"http://example.com/owner/repo.git"})
 	if err != nil && strings.Contains(err.Error(), "HTTP dependency (unencrypted)") {
 		t.Fatalf("--allow-insecure should have permitted the http:// dependency, got refusal: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestRunInstall_LoopbackHTTPDependency_AlsoRefusedWithoutFlag(t *testing.T) 
 
 	spy2 := &spyLoader{}
 	captureInstallStdout(t, func() {
-		err = runInstall(&installDeps{tags: &mockInstallTagLister{}, loader: spy2, allowInsecure: true}, false, true, "", "", nil, []string{"http://127.0.0.1/owner/repo.git"})
+		err = runInstall(&installDeps{tags: &mockInstallTagLister{}, loader: spy2, allowInsecure: true}, false, true, "claude", "", nil, []string{"http://127.0.0.1/owner/repo.git"})
 	})
 	if len(spy2.calls) == 0 || !spy2.refs[0].HTTPApproved {
 		t.Errorf("with --allow-insecure the clone was not approved for http (%v)", err)

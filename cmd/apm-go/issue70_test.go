@@ -116,7 +116,8 @@ func TestUninstallGlobal_LocalKeyAlias(t *testing.T) {
 
 	stdout, stderr, exitCode := runCompileCLI(t, "uninstall", "--global", "_local/my-local-skill")
 
-	want := " > Uninstalling 1 package(s)...\n" +
+	want := " i Uninstalling from user scope (~/.apm/)\n" +
+		" > Uninstalling 1 package(s)...\n" +
 		" + _local/my-local-skill - found in apm.yml\n" +
 		" i Removed _local/my-local-skill from apm_modules/\n" +
 		" i Cleaned 3 stale files from " + src + "\n" +

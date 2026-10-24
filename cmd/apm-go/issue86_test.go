@@ -205,7 +205,7 @@ func TestUninstallGlobal_ModuleDirOutsideApmModules_Refused(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	t.Setenv("HOME", home)
-	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - ../dep\n")
+	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - "+filepath.Join(home, "dep")+"\n")
 	writeCompileFile(t, root, "home/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, root, "home/dep/.apm/instructions/r.instructions.md", issue86Rule)
 	writeCompileFile(t, root, "outside/other.txt", "other\n")
@@ -222,12 +222,12 @@ func TestUninstallGlobal_ModuleDirOutsideApmModules_Refused(t *testing.T) {
 	link86(t, filepath.Join(root, "outside"), filepath.Join(mods, "_local"))
 	before := tree86(t, root)
 
-	stdout, _, code := runCompileCLI(t, "uninstall", "--global", "../dep")
+	stdout, _, code := runCompileCLI(t, "uninstall", "--global", filepath.Join(home, "dep"))
 
 	real := realDir86(t, root)
 	reason := containment86(filepath.Join(home, ".apm", "apm_modules", "_local", "dep"),
 		filepath.Join(real, "home", ".apm", "apm_modules"), filepath.Join(real, "outside", "dep"))
-	want := " > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" + uninstallRefused86("_local/dep", reason, "apm-go install --global")
+	want := " i Uninstalling from user scope (~/.apm/)\n > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" + uninstallRefused86("_local/dep", reason, "apm-go install --global")
 	if code != 1 || stdout != want {
 		t.Errorf("exit %d, stdout:\n%s\nwant exit 1, stdout:\n%s", code, stdout, want)
 	}

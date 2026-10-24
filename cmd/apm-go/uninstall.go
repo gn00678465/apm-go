@@ -71,8 +71,11 @@ func runUninstall(args []string, opts uninstallOptions) error {
 		return err
 	}
 
-	// The transcript of the Oracle (commands/uninstall/cli.py:288,
+	// The transcript of the Oracle (commands/uninstall/cli.py:285-288,
 	// engine.py:676-681), issue #50 ruling R10.
+	if opts.Global {
+		ux.Info(os.Stdout, "Uninstalling from user scope (~/.apm/)")
+	}
 	ux.Progress(os.Stdout, "Uninstalling %d package(s)...", len(args))
 	plan := prepareUninstallPlan(args, m, lock, opts.DryRun)
 	// The Oracle resolves every marketplace argument before it walks the

@@ -122,7 +122,7 @@ func TestUninstallGlobal_SkillHandoverThroughSymlinkOutside_Refused(t *testing.T
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	t.Setenv("HOME", home)
-	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - ../a\n    - ../b\n")
+	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - "+filepath.Join(home, "a")+"\n    - "+filepath.Join(home, "b")+"\n")
 	for rel, content := range handoverFiles {
 		writeCompileFile(t, home, rel, content)
 	}
@@ -139,9 +139,9 @@ func TestUninstallGlobal_SkillHandoverThroughSymlinkOutside_Refused(t *testing.T
 	link86(t, filepath.Join(root, "outside", "sub"), filepath.Join(demo, "sub"))
 	before := tree86(t, root)
 
-	stdout, code := runCLI86(t, "uninstall", "--global", "../a")
+	stdout, code := runCLI86(t, "uninstall", "--global", filepath.Join(home, "a"))
 
-	want := " > Uninstalling 1 package(s)...\n + _local/a - found in apm.yml\n" + uninstallTargetRefused86(".claude/skills/demo")
+	want := " i Uninstalling from user scope (~/.apm/)\n > Uninstalling 1 package(s)...\n + _local/a - found in apm.yml\n" + uninstallTargetRefused86(".claude/skills/demo")
 	if code != 1 || stdout != want {
 		t.Errorf("exit %d, stdout:\n%s\nwant exit 1, stdout:\n%s", code, stdout, want)
 	}
