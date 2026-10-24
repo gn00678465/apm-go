@@ -388,6 +388,16 @@ func applyUninstallPlan(plan *uninstallPlan, data []byte, node *yamllib.Node, m 
 		return err
 	}
 	refreshes.commit()
+	// The lock records the new copy's name, version and type, as install
+	// records a local package from its copy.
+	for key := range plan.refreshedKeys(lock) {
+		if lock == nil {
+			break
+		}
+		if d := lock.FindByKey(key); d != nil && d.Source == "local" {
+			d.Name, d.Version, d.PackageType = localPackageIdentity(filepath.Join("apm_modules", filepath.FromSlash(d.ModuleDir())))
+		}
+	}
 	removeRoot := "."
 	if deployDir != "" {
 		removeRoot = deployDir

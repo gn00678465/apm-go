@@ -103,6 +103,8 @@ func TestUninstall_SharedLocalSlot_RedeploysSurvivor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			proj := sharedLocalProject(t, false)
 			tt.setup(t, proj)
+			c := &settled{deployRoot: proj, manifestDir: proj}
+			c.start(t)
 
 			want := " > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" +
 				" i Refreshed _local/dep in apm_modules/ for 1 surviving declaration(s)\n" +
@@ -122,6 +124,7 @@ func TestUninstall_SharedLocalSlot_RedeploysSurvivor(t *testing.T) {
 				}
 			}
 			mustRunCLI(t, "install", "--frozen")
+			c.check(t)
 		})
 	}
 }
@@ -201,6 +204,8 @@ func TestUninstall_SharedLocalSlot_AliasLocal(t *testing.T) {
 		"    - path: ./a/dep\n      alias: _local\n    - path: ./b/dep\n      alias: _local\n")
 	writeCompileFile(t, proj, "apm.lock.yaml", strings.ReplaceAll(sharedLocalLock("./a/dep", "./b/dep"), "- repo_url: _local/dep\n", "- repo_url: _local/dep\n  alias: _local\n"))
 	t.Chdir(proj)
+	c := &settled{deployRoot: proj, manifestDir: proj}
+	c.start(t)
 
 	want := " > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" +
 		" i Refreshed _local/dep in apm_modules/ for 1 surviving declaration(s)\n" +
@@ -219,6 +224,7 @@ func TestUninstall_SharedLocalSlot_AliasLocal(t *testing.T) {
 		t.Errorf("apm_modules = %v, want %v", got, wantModules)
 	}
 	mustRunCLI(t, "install", "--frozen")
+	c.check(t)
 }
 
 // When one of several shared directories cannot be replaced, every directory
@@ -294,11 +300,13 @@ func TestUninstallGlobal_SharedLocalSlot_RedeploysSurvivor(t *testing.T) {
 	writeCompileFile(t, apm, "apm_modules/_local/dep/.apm/skills/sb/SKILL.md", sharedSkillB)
 	writeCompileFile(t, home, ".claude/skills/sb/SKILL.md", sharedSkillB)
 	writeCompileFile(t, apm, "apm.yml", "name: g\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - '"+a+"'\n    - '"+b+"'\n")
-	writeCompileFile(t, apm, "apm.lock.yaml", "lockfile_version: '1'\ndependencies:\n"+
+	writeCompileFile(t, apm, "apm.lock.yaml", "lockfile_version: '1'\napm_version: 0.33.0\ndependencies:\n"+
 		"- repo_url: _local/dep\n  source: local\n  local_path: '"+a+"'\n"+
 		"- repo_url: _local/dep\n  deployed_files:\n  - .claude/skills/sb\n  - .claude/skills/sb/SKILL.md\n"+
 		"  deployed_file_hashes:\n    .claude/skills/sb/SKILL.md: "+sharedHashB+"\n  source: local\n  local_path: '"+b+"'\n")
 
+	c := &settled{deployRoot: home, manifestDir: apm, global: true}
+	c.start(t)
 	want := " i Uninstalling from user scope (~/.apm/)\n > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" +
 		" i Refreshed _local/dep in apm_modules/ for 1 surviving declaration(s)\n" +
 		" i Removed _local/dep from dependencies.apm in apm.yml\n" +
@@ -315,4 +323,5 @@ func TestUninstallGlobal_SharedLocalSlot_RedeploysSurvivor(t *testing.T) {
 		t.Errorf("apm.lock.yaml does not record the new skill:\n%s", lock)
 	}
 	mustRunCLI(t, "install", "-g", "--frozen")
+	c.check(t)
 }

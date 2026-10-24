@@ -125,9 +125,12 @@ func TestUninstall_SharedLocalSlot_Refresh(t *testing.T) {
 		claude           map[string]string
 	}{
 		{
+			// The lock records the new copy's version, as the next install
+			// records it. Deviation: Oracle 0.33.0 keeps the version of the
+			// copy it replaced (1.0.0), which its next install rewrites.
 			name: "the other declaration", arg: "./a/dep", stays: "./b/dep",
 			handedOver: "  |-- 1 skill(s) integrated -> .claude/skills/\n",
-			lock: "lockfile_version: '1'\napm_version: 0.33.0\ndependencies:\n- repo_url: _local/dep\n  name: dep\n  version: 1.0.0\n  package_type: apm_package\n" +
+			lock: "lockfile_version: '1'\napm_version: 0.33.0\ndependencies:\n- repo_url: _local/dep\n  name: dep\n  version: 2.0.0\n  package_type: apm_package\n" +
 				"  deployed_files:\n  - .claude/skills/sb\n  - .claude/skills/sb/SKILL.md\n  deployed_file_hashes:\n    .claude/skills/sb/SKILL.md: " + sharedHashB + "\n" +
 				"  source: local\n  local_path: ./b/dep\n" + sharedDeployments("sb", "./b/dep", sharedHashB),
 			modules: map[string]string{"apm.yml": "name: dep\nversion: 2.0.0\n", ".apm/skills/sb/SKILL.md": sharedSkillB},
@@ -159,6 +162,8 @@ func TestUninstall_SharedLocalSlot_Refresh(t *testing.T) {
 			if after := treeSnapshot(t, proj); !reflect.DeepEqual(before, after) {
 				t.Fatalf("dry run changed files")
 			}
+			c := &settled{deployRoot: proj, manifestDir: proj}
+			c.start(t)
 
 			want := " > Uninstalling 1 package(s)...\n + _local/dep - found in apm.yml\n" +
 				" i Refreshed _local/dep in apm_modules/ for 1 surviving declaration(s)\n" + tt.cleaned +
@@ -181,6 +186,7 @@ func TestUninstall_SharedLocalSlot_Refresh(t *testing.T) {
 			if got := treeSnapshot(t, filepath.Join(proj, ".claude")); !reflect.DeepEqual(got, prefixed("", tt.claude)) {
 				t.Errorf(".claude = %v, want %v", got, tt.claude)
 			}
+			c.check(t)
 		})
 	}
 }

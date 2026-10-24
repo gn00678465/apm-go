@@ -284,8 +284,10 @@ func TestUninstall_SharedLocalSlot_RemovesWhatTheSourceDropped(t *testing.T) {
 			t.Run(scope.name+"/"+tc.name, func(t *testing.T) {
 				s := newRefreshState(t, scope.global, scope.alias)
 				tc.change(t, s)
+				c := s.settled(t)
 				s.uninstall(t, tc.blocks)
 				s.check(t, tc.want)
+				c.check(t)
 			})
 		}
 	}
@@ -293,14 +295,18 @@ func TestUninstall_SharedLocalSlot_RemovesWhatTheSourceDropped(t *testing.T) {
 
 // Links below the deploy root, every source changed. A target root linked
 // elsewhere and a directory linked to another place in its target root are
-// written through, as deploy.CheckDeployPath bounds a path. A deployed file
-// or a skill's directory the user replaced by a symlink is the user's: it is
-// not written, not counted, and keeps its old lock hash, which the file there
-// still has. Deviations (each measured): Oracle 0.33.0 refuses a project
-// target root that is a symlink (`Refusing deployment through symlinked
-// target root: .claude`, exit 1), skips the agent and the command below a
-// linked directory as files it does not manage, replaces a user's leaf
-// symlink by the file, and deletes the content of a linked skill directory.
+// written through, as deploy.CheckDeployPath bounds a path. A skill's
+// directory the user replaced by a symlink is replaced by the skill, and the
+// directory it pointed at is left as it was, as install replaces it. A
+// deployed file the user replaced by a symlink is the user's: it is not
+// written, not counted, and keeps its old lock hash, which the file there
+// still has; install refuses the rule there (the item on deployed paths), so
+// that case has no install to compare with. Deviations (each measured):
+// Oracle 0.33.0 refuses a project target root that is a symlink (`Refusing
+// deployment through symlinked target root: .claude`, exit 1), skips the
+// agent and the command below a linked directory as files it does not
+// manage, replaces a user's leaf symlink by the file, and deletes the content
+// of a linked skill directory.
 func TestUninstall_SharedLocalSlot_Symlinks(t *testing.T) {
 	all := refreshAgents + refreshCommands + refreshRules + refreshSkills
 	cases := []struct {
@@ -328,22 +334,27 @@ func TestUninstall_SharedLocalSlot_Symlinks(t *testing.T) {
 			".claude/skills/sb/SKILL.md": refreshNew[".claude/skills/sb/SKILL.md"],
 			".claude/skills/sb/old.txt":  refreshNew[".claude/skills/sb/old.txt"],
 		}},
-		{"skill directory", false, func(t *testing.T, s *refreshState) { s.relink(t, ".claude/skills/sb", "userskill") },
-			refreshAgents + refreshCommands + refreshRules, map[string]string{
-				".claude/agents/rb.md":       refreshNew[".claude/agents/rb.md"],
-				".claude/commands/cb.md":     refreshNew[".claude/commands/cb.md"],
-				".claude/rules/ib.md":        refreshNew[".claude/rules/ib.md"],
-				".claude/skills/sb/SKILL.md": refreshOld[".claude/skills/sb/SKILL.md"],
-				".claude/skills/sb/old.txt":  refreshOld[".claude/skills/sb/old.txt"],
-			}},
+		{"skill directory", false, func(t *testing.T, s *refreshState) { s.relink(t, ".claude/skills/sb", "userskill") }, all, refreshNew},
+		{"global skill directory", true, func(t *testing.T, s *refreshState) { s.relink(t, ".claude/skills/sb", "userskill") }, all, refreshNew},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newRefreshState(t, tc.global, false)
 			tc.links(t, s)
 			s.changeSources(t)
+			c := s.settled(t)
 			s.uninstall(t, tc.blocks)
 			s.check(t, tc.want)
+			if strings.Contains(tc.name, "skill directory") {
+				for rel, body := range map[string]string{"userskill/SKILL.md": sharedSkillB, "userskill/old.txt": "old asset\n"} {
+					if got := readFileString(t, filepath.Join(s.deployRoot, rel)); got != body {
+						t.Errorf("%s = %q, want %q", rel, got, body)
+					}
+				}
+			}
+			if tc.name != "deployed files" {
+				c.check(t)
+			}
 		})
 	}
 }
@@ -423,4 +434,11 @@ func mustRemoveAll(t *testing.T, p string) {
 	if err := os.RemoveAll(p); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func (s *refreshState) settled(t *testing.T) *settled {
+	t.Helper()
+	c := &settled{deployRoot: s.deployRoot, manifestDir: s.manifestDir, global: s.global}
+	c.start(t)
+	return c
 }

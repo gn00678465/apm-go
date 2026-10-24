@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -210,39 +211,77 @@ func (s *otherState) lock(t *testing.T) (text string, b *lockfile.LockedDep, cFi
 	return text, b, cFiles, cHashes
 }
 
-// expect checks that each path has C's content on disk and in the lock,
-// recorded under C and not under ./b/dep.
-func (s *otherState) expect(t *testing.T, paths map[string]string) {
+// expect checks that each path of cPaths has C's content on disk and in the
+// lock, recorded under C and not under ./b/dep, and each path of bPaths the
+// content of its hash, recorded under ./b/dep and not under C.
+func (s *otherState) expect(t *testing.T, cPaths, bPaths map[string]string) {
 	t.Helper()
 	text, b, cFiles, cHashes := s.lock(t)
-	for p, h := range paths {
-		data, err := os.ReadFile(filepath.Join(s.deployRoot, filepath.FromSlash(p)))
-		if err != nil {
-			t.Errorf("read %s: %v", p, err)
-		} else if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != h {
-			t.Errorf("%s = %q, want the content of hash %s", p, data, h)
-		}
-		if !strings.Contains(strings.Join(cFiles, "\n")+"\n", p+"\n") || strings.TrimPrefix(cHashes[p], "sha256:") != h {
+	records := func(files []string, p string) bool { return slices.Contains(files, p) }
+	for p, h := range cPaths {
+		s.expectContent(t, p, h)
+		if !records(cFiles, p) || strings.TrimPrefix(cHashes[p], "sha256:") != h {
 			t.Errorf("C does not record %s with hash %s (hash %q):\n%s", p, h, cHashes[p], text)
 		}
-		for _, f := range b.DeployedFiles {
-			if f == p {
-				t.Errorf("./b/dep records %s too:\n%s", p, text)
-			}
+		if records(b.DeployedFiles, p) {
+			t.Errorf("./b/dep records %s too:\n%s", p, text)
+		}
+	}
+	for p, h := range bPaths {
+		s.expectContent(t, p, h)
+		if !records(b.DeployedFiles, p) || strings.TrimPrefix(b.DeployedHashes[p], "sha256:") != h {
+			t.Errorf("./b/dep does not record %s with hash %s (hash %q):\n%s", p, h, b.DeployedHashes[p], text)
+		}
+		if records(cFiles, p) {
+			t.Errorf("C records %s too:\n%s", p, text)
 		}
 	}
 }
 
-// When the package that stays in a slot two declarations shared changes, a
-// path its new copy no longer deploys and another package that stays has a
-// primitive for is that package's: it is written with that package's content
+func (s *otherState) expectContent(t *testing.T, p, h string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(s.deployRoot, filepath.FromSlash(p)))
+	if err != nil {
+		t.Errorf("read %s: %v", p, err)
+	} else if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != h {
+		t.Errorf("%s = %q, want the content of hash %s", p, data, h)
+	}
+}
+
+func (s *otherState) settled(t *testing.T) *settled {
+	t.Helper()
+	c := &settled{deployRoot: s.deployRoot, manifestDir: s.manifestDir, global: s.global}
+	c.start(t)
+	return c
+}
+
+// bDeployed is the hash of what claude deploys for ./b/dep's primitive of
+// kind and name, the bytes Oracle 0.33.0 writes for b's own names
+// (refreshDeployed).
+func bDeployed(kind, name string) string {
+	body := map[string]string{
+		"skill": otherBody("skill", name, "b"),
+		"agent": otherBody("agent", name, "b"),
+		"instr": "instruction b\n",
+		"cmd":   "---\ndescription: d\n---\n\nprompt b",
+	}[kind]
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+// When the package that stays in a slot two declarations shared changes, each
+// path of its names goes to the package the trial gives it, as the next
+// install gives it: a path its new copy no longer deploys and another package
+// that stays has a primitive for is that package's, written with its content
 // and recorded under it, as Oracle 0.33.0 redeploys every remaining package
-// (measured, r3-{cfirst,clast}-shadow-*, r3-g-*-shadow-*). A path its new copy
-// gains that another package records stays that package's, on disk and in the
-// lock (measured, r3-*-gain-*). With C declared first, every path of b's
-// names goes to C, whatever b changed. With C after b, b keeps the names it
-// still has. The project's own content is C too (r3-local-*). Deviations: the
-// Oracle records a gained skill or rule under both packages, and deletes the
+// (measured, r3-{cfirst,clast}-shadow-*, r3-g-*-shadow-*); a path its new copy
+// gains that another package records is the gained package's when it is
+// declared first, and stays the other package's otherwise. With C declared
+// first, every path of b's names goes to C, whatever b changed. With C after
+// b, b keeps the names it still has and takes the ones it gains. The
+// project's own content is C too (r3-local-*). Deviations: Oracle 0.33.0
+// keeps C's file and record of a name b gains with b first, and records a
+// gained skill or rule under both packages (r3-clast-gain-*), and deletes the
 // project's own agent of a name b had (r3-local-shadow-agent).
 func TestUninstall_SharedLocalSlot_OtherPackageOfTheSameName(t *testing.T) {
 	for _, scope := range []struct {
@@ -255,39 +294,33 @@ func TestUninstall_SharedLocalSlot_OtherPackageOfTheSameName(t *testing.T) {
 					t.Run(scope.name+"/"+order+"/"+change+"/"+kind, func(t *testing.T) {
 						s := newOtherState(t, scope.global, order == "local", order == "cfirst")
 						bSrc := filepath.Join(s.srcRoot, "b", "dep")
-						want := map[string]string{}
+						cWant, bWant := map[string]string{}, map[string]string{}
 						if change == "shadow" {
 							src := otherSource(kind, sharedNames[kind])
 							if kind == "skill" {
 								src = filepath.Dir(src)
 							}
 							mustRemoveAll(t, filepath.Join(bSrc, src))
-							want[otherDest(kind, sharedNames[kind])] = otherHash(kind, sharedNames[kind])
+							cWant[otherDest(kind, sharedNames[kind])] = otherHash(kind, sharedNames[kind])
 						} else {
 							name := gainedNames[kind]
 							writeCompileFile(t, bSrc, otherSource(kind, name), otherBody(kind, name, "b"))
-							want[otherDest(kind, name)] = otherHash(kind, name)
+							if order == "clast" {
+								bWant[otherDest(kind, name)] = bDeployed(kind, name)
+							} else {
+								cWant[otherDest(kind, name)] = otherHash(kind, name)
+							}
 						}
 						if order != "clast" {
 							for _, k := range otherKinds {
-								want[otherDest(k, sharedNames[k])] = otherHash(k, sharedNames[k])
+								cWant[otherDest(k, sharedNames[k])] = otherHash(k, sharedNames[k])
 							}
 						}
+						c := s.settled(t)
 						s.run(t, "uninstall", s.a)
-						s.expect(t, want)
-						s.run(t, "install", "--frozen")
-						if order == "clast" && change == "gain" {
-							// b is declared first and now has the name, so the
-							// next install gives it the path, as Oracle 0.33.0's
-							// next install changes it too.
-							return
-						}
-						before, _, _, _ := s.lock(t)
-						s.run(t, "install")
-						if after, _, _, _ := s.lock(t); after != before {
-							t.Errorf("install changed apm.lock.yaml:\n%s\nwas:\n%s", after, before)
-						}
-						s.expect(t, want)
+						s.expect(t, cWant, bWant)
+						c.check(t)
+						s.expect(t, cWant, bWant)
 					})
 				}
 			}
