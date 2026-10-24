@@ -137,10 +137,14 @@ func stageLocalCopy(d *manifest.DependencyReference, cleanup *[]string) (string,
 	}
 	staged := filepath.Join(root, filepath.FromSlash(deploy.DepRefDir(&ref)))
 	// The Oracle refuses a local source with no package marker
-	// (install/phases/local_content.py:253-266) before it validates the
-	// staged copy (commands/uninstall/engine.py:235-243).
+	// (install/phases/local_content.py:253-266), then validates the staged
+	// copy (commands/uninstall/engine.py:235-243), so a marker that does not
+	// load never replaces a working copy.
 	if !hasPackageMarker(staged) {
 		return "", fmt.Errorf("%s: no apm.yml, SKILL.md or plugin.json", d.LocalPath)
+	}
+	if err := deploy.PackageError(staged); err != nil {
+		return "", fmt.Errorf("%s: %w", d.LocalPath, err)
 	}
 	return staged, nil
 }
