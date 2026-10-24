@@ -146,3 +146,40 @@ func TestIssue128_UserScopeRelativePathInManifest(t *testing.T) {
 		}
 	})
 }
+
+// 128: a plugin of a local marketplace below ~/.apm is declared in
+// ~/.apm/apm.yml by its absolute path, as Oracle 0.33.0 declares it (measured,
+// apm-go-oracle-ref/D/mkt-before or/M1, M2), so the installs that read the
+// file again take it.
+func TestIssue128_UserScopeMarketplacePathRoundTrip(t *testing.T) {
+	for _, dev := range []bool{false, true} {
+		t.Run(map[bool]string{false: "dependencies", true: "--dev"}[dev], func(t *testing.T) {
+			s := newI125Scope(t)
+			s.mkdirs(t, s.home, ".claude")
+			t.Setenv("APM_CONFIG_DIR", filepath.Join(s.home, ".apm"))
+			mkt := filepath.Join(s.home, ".apm", "market")
+			i125Package(t, filepath.Join(mkt, "p"), "p")
+			writeCompileFile(t, mkt, "marketplace.json", `{"name":"mk","plugins":[{"name":"p","source":"./p"}]}`+"\n")
+			install := []string{"install", "-g", "p@mk"}
+			if dev {
+				install = append(install, "--dev")
+			}
+			steps := [][]string{{"marketplace", "add", mkt}, install, {"install", "-g"}, {"install", "-g", "--frozen"}, {"update", "-g"}}
+			for i, args := range steps {
+				stdout, stderr, code := run125(t, args...)
+				if code != 0 {
+					t.Fatalf("%v: exit %d, stdout:\n%s\nstderr:\n%s", args, code, stdout, stderr)
+				}
+				if i == 1 {
+					data, _ := os.ReadFile(filepath.Join(s.home, ".apm", "apm.yml"))
+					if !strings.Contains(string(data), "    - "+filepath.Join(mkt, "p")+"\n") {
+						t.Errorf("~/.apm/apm.yml does not declare the absolute path:\n%s", data)
+					}
+				}
+			}
+			if !i125Exists(filepath.Join(s.home, ".claude", "agents", "ag-p.md")) {
+				t.Error("the plugin's agent was not deployed")
+			}
+		})
+	}
+}

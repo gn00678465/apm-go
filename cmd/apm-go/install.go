@@ -545,7 +545,10 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 			persistPkg := pkg
 			if provenance != nil {
 				canonical := ref.ToCanonical(m.DefaultHost)
-				if filepath.IsAbs(canonical) {
+				// At user scope the absolute path is kept, as Oracle 0.33.0
+				// writes it into ~/.apm/apm.yml (measured, issue #128), because
+				// a relative local path is refused there.
+				if filepath.IsAbs(canonical) && deployDir == "" {
 					// mkt-025's local-marketplace fast path resolves to an
 					// absolute filesystem path. Persist it in the most
 					// PORTABLE form apm.yml can round-trip: a project-root-
