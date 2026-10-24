@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/apm-go/apm/internal/manifest"
 )
 
 // pyDump is what python-frontmatter writes for a metadata dict
@@ -159,20 +161,7 @@ func representScalar(v pyValue) yamlScalar {
 	case pyNone:
 		return yamlScalar{"null", true}
 	case pyFloat:
-		f := float64(x)
-		switch {
-		case math.IsNaN(f):
-			return yamlScalar{".nan", true}
-		case math.IsInf(f, 1):
-			return yamlScalar{".inf", true}
-		case math.IsInf(f, -1):
-			return yamlScalar{"-.inf", true}
-		}
-		s := strings.ToLower(x.repr())
-		if !strings.Contains(s, ".") && strings.Contains(s, "e") {
-			s = strings.Replace(s, "e", ".0e", 1)
-		}
-		return yamlScalar{s, true}
+		return yamlScalar{manifest.PyYAMLFloatRepr(float64(x)), true}
 	}
 	// int, date and datetime: str() is the represented text.
 	return yamlScalar{v.str(), true}

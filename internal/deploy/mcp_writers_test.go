@@ -847,19 +847,19 @@ func TestWriteMCP_RedeployTightensPermissionOnExistingFile(t *testing.T) {
 		t.Skip("POSIX permission bits are not meaningfully testable on Windows")
 	}
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".mcp.json")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	path := filepath.Join(dir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
 	// Simulate a pre-existing file left at a looser mode (e.g. git checkout).
-	if err := os.WriteFile(path, []byte(`{"mcpServers":{}}`), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("[mcp_servers]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	prims := []Primitive{mcpPrim("local", &manifest.MCPDependency{
 		Name: "s1", Registry: false, Transport: "stdio", Command: "cmd",
 	})}
-	if _, _, _, err := (&claudeAdapter{}).WriteMCP(prims, dir); err != nil {
+	if _, _, _, err := (&codexAdapter{}).WriteMCP(prims, dir); err != nil {
 		t.Fatalf("WriteMCP: %v", err)
 	}
 
@@ -868,7 +868,7 @@ func TestWriteMCP_RedeployTightensPermissionOnExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := info.Mode().Perm(); got != 0600 {
-		t.Errorf(".mcp.json permission = %o, want 0600 (existing 0644 file must be tightened on redeploy)", got)
+		t.Errorf("config.toml permission = %o, want 0600 (existing 0644 file must be tightened on redeploy)", got)
 	}
 }
 

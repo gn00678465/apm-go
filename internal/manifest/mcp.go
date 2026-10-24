@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"fmt"
-	"math/big"
 	"net/url"
 	"regexp"
 	"sort"
@@ -107,11 +106,16 @@ var (
 	PyYAMLDecimalIntRe = regexp.MustCompile(`^[-+]?(?:0|[1-9][0-9_]*)$`)
 )
 
+// PyYAML11Value is pyyaml11Value for a node apm-go did not read from
+// apm.yml, such as an MCP config of apm.lock.yaml.
+func PyYAML11Value(v *yaml.Node) *yaml.Node { return pyyaml11Value(v) }
+
 // pyyaml11Value returns a detached copy of v with each scalar tagged and
-// spelled as the Oracle's PyYAML loader reads it, so a value it forwards
-// unchanged reaches the lock and the target config with the Oracle's type.
-// Floats, octal and hexadecimal ints and timestamps keep the tag apm-go's
-// loader gives them.
+// spelled as the Oracle's PyYAML loader reads it (yaml/resolver.py,
+// yaml/constructor.py), so a value it forwards unchanged reaches the lock
+// and the target config with the Oracle's type: 1:30, 017 and 0b11 are the
+// ints 90, 15 and 3, 1.50 the float 1.5, and 1e3 and 0o17 strings.
+// Timestamps keep the tag apm-go's loader gives them.
 func pyyaml11Value(v *yaml.Node) *yaml.Node {
 	if v.Kind == yaml.SequenceNode || v.Kind == yaml.MappingNode {
 		out := &yaml.Node{Kind: v.Kind, Tag: v.ShortTag()}
@@ -133,21 +137,22 @@ func pyyaml11Value(v *yaml.Node) *yaml.Node {
 		// Quoted, block or explicitly tagged: the loaders agree on the tag.
 		return scalar(v.ShortTag(), v.Value)
 	}
-	switch {
-	case PyYAMLBoolRe.MatchString(v.Value):
+	switch tag := PyYAMLResolve(v.Value); tag {
+	case "!!bool":
 		switch strings.ToLower(v.Value) {
 		case "yes", "true", "on":
 			return scalar("!!bool", "true")
 		}
 		return scalar("!!bool", "false")
-	case PyYAMLNullRe.MatchString(v.Value):
+	case "!!null":
 		return scalar("!!null", "null")
-	case PyYAMLDecimalIntRe.MatchString(v.Value):
-		n, _ := new(big.Int).SetString(strings.ReplaceAll(v.Value, "_", ""), 10)
-		return scalar("!!int", n.String())
-	}
-	switch tag := v.ShortTag(); tag {
-	case "!!float", "!!int", "!!timestamp":
+	case "!!int":
+		if n, err := PyYAMLInt(v.Value); err == nil {
+			return scalar("!!int", n.String())
+		}
+	case "!!float":
+		return scalar("!!float", PyYAMLFloatRepr(PyYAMLFloat(v.Value)))
+	case "!!timestamp":
 		return scalar(tag, v.Value)
 	}
 	return scalar("!!str", v.Value)

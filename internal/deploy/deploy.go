@@ -119,6 +119,11 @@ type DeployResult struct {
 	// name the project declares is not here (integration/mcp_config_view.py:
 	// 84-88,350).
 	DependencyMCP map[string]DeclaredMCP
+	// TrustedMCP holds, by key, the self-defined MCP servers each direct
+	// dependency declares, a name the project declares too included, for
+	// the Oracle's "Trusting direct dependency MCP" lines
+	// (integration/mcp_config_view.py:349-361).
+	TrustedMCP map[string][]DeclaredMCP
 	// MCPDiags holds the entries of Diags about MCP servers. The Oracle
 	// reports those in its MCP block, not among the diagnostics whose
 	// absence install marks with an empty line (install/summary.py:115-118).
@@ -374,6 +379,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 	}
 	collectMCP(rootMCP, "local", "")
 	dependencyMCP := map[string]DeclaredMCP{}
+	trustedMCP := map[string][]DeclaredMCP{}
 
 	// Direct deps in manifest declaration order (req-pr-003), deduplicated.
 	// Production dependencies.apm followed by devDependencies.apm (F3): a
@@ -445,6 +451,9 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		for _, s := range depServers {
 			if _, ok := dependencyMCP[s.Name]; !ok && !declaredMCP[s.Name] {
 				dependencyMCP[s.Name] = DeclaredMCP{Config: s, Owner: name}
+			}
+			if s.Registry == false {
+				trustedMCP[key] = append(trustedMCP[key], DeclaredMCP{Config: s, Owner: name})
 			}
 		}
 		noteDeclaredMCP(depServers)
@@ -636,6 +645,7 @@ func Run(targets []string, projectDir string, m *manifest.Manifest, resolved *re
 		MCPDiags:      slices.Clone(mcpDiags),
 		MCPFailure:    mcpFailure,
 		DependencyMCP: dependencyMCP,
+		TrustedMCP:    trustedMCP,
 	}
 	for name := range declaredMCP {
 		result.DeclaredMCPServers = append(result.DeclaredMCPServers, name)

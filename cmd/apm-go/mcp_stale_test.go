@@ -579,7 +579,7 @@ func staleMCPRegistryRerun(t *testing.T, mode string) {
 	if out != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
-	if got := readStaleMCPFile(t, ".mcp.json"); got != "{\n  \"mcpServers\": {\n    \"example\": {\n      \"type\": \"streamable-http\",\n      \"url\": \"https://example.com/mcp\"\n    }\n  }\n}\n" {
+	if got := readStaleMCPFile(t, ".mcp.json"); got != "{\n  \"mcpServers\": {\n    \"example\": {\n      \"type\": \"http\",\n      \"url\": \"https://example.com/mcp\"\n    }\n  }\n}\n" {
 		t.Errorf(".mcp.json:\n%s", got)
 	}
 	if got := readStaleMCPFile(t, "apm.lock.yaml"); got != wantLock {

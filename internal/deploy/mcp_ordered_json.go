@@ -4,12 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"os"
 	"strings"
-
-	"github.com/apm-go/apm/internal/rootfs"
 )
 
 // orderedObject is a JSON object that keeps the order of its keys. Claude's
@@ -168,91 +164,4 @@ func writeJSONScalar(buf *bytes.Buffer, val any) error {
 	}
 	buf.WriteString(strings.TrimSuffix(scalar.String(), "\n"))
 	return nil
-}
-
-// writeOrderedMCPJSON is writeMergedMCPJSON for a file whose key order is
-// part of the contract. The document and the servers it already has keep
-// their order; a server written for the first time goes last, in the order
-// of names; the keys of a written server follow keyOrder, which names every
-// key an entry can have, then the keys of the existing entry that no writer
-// manages. An object inside an entry is an *orderedObject. The file ends
-// with one newline.
-func writeOrderedMCPJSON(projectDir, rel, topKey string, entries map[string]map[string]any, considered map[string]bool, names, keyOrder []string, perm os.FileMode) error {
-	rw, err := rootfs.OpenRootWriter(projectDir)
-	if err != nil {
-		return err
-	}
-	defer rw.Close()
-
-	root := newOrderedObject()
-	data, err := rw.ReadFile(rel)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-	case err != nil:
-		return fmt.Errorf("read existing %s: %w", rw.Path(rel), err)
-	default:
-		parsed, perr := decodeOrderedJSON(data)
-		if obj, isObject := parsed.(*orderedObject); isObject {
-			root = obj
-			break
-		}
-		// The refusal carries encoding/json's own error for the file, the
-		// text this line had before the ordered decoder (ruling R13). A
-		// file that holds null is an empty document, as it was then.
-		var probe map[string]any
-		uerr := json.Unmarshal(data, &probe)
-		if uerr == nil {
-			uerr = perr
-		}
-		if uerr != nil {
-			return fmt.Errorf("existing %s is not valid, refusing to overwrite: %w", rw.Path(rel), uerr)
-		}
-	}
-
-	servers, _ := root.vals[topKey].(*orderedObject)
-	if servers == nil {
-		servers = newOrderedObject()
-	}
-	build := func(name string) *orderedObject {
-		entry := entries[name]
-		out := newOrderedObject()
-		for _, key := range keyOrder {
-			if val, ok := entry[key]; ok {
-				out.set(key, val)
-			}
-		}
-		if prev, ok := servers.vals[name].(*orderedObject); ok {
-			for _, key := range prev.keys {
-				if !managedMCPKeys[key] {
-					out.set(key, prev.vals[key])
-				}
-			}
-		}
-		return out
-	}
-	for _, name := range append([]string(nil), servers.keys...) {
-		if !considered[name] {
-			continue
-		}
-		if _, written := entries[name]; written {
-			servers.set(name, build(name))
-		} else {
-			servers.remove(name)
-		}
-	}
-	for _, name := range names {
-		if _, written := entries[name]; !written {
-			continue
-		}
-		if _, exists := servers.vals[name]; !exists {
-			servers.set(name, build(name))
-		}
-	}
-	root.set(topKey, servers)
-
-	out, err := encodeOrderedJSON(root)
-	if err != nil {
-		return err
-	}
-	return rw.WriteFileAtomicMode(rel, append(out, '\n'), perm)
 }

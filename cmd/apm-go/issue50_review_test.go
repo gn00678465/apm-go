@@ -222,6 +222,10 @@ func TestInstall_ProjectContentLock_KeepsLineWithEmptyValue(t *testing.T) {
 
 const registryEntryManifest = "name: proj\nversion: 1.0.0\ntarget: claude\ndependencies:\n  mcp:\n  - name: acme/server\n    transport: http\n    registry: http://127.0.0.1:1\n"
 
+// install --mcp warns about a --registry on this machine before anything
+// else, as Oracle 0.33.0 does (install/mcp/registry.py:197-217).
+const loopbackRegistryWarning = " ! --registry host '127.0.0.1' is loopback/private/link-local; only registry-resolved installs will reach it. Confirm this is intentional (local dev / private mirror).\n"
+
 // The registry at 127.0.0.1:1 cannot be reached: an entry that does not
 // change ends the command before any request to it.
 var unchangedRegistryArgs = []string{"install", "--mcp", "acme/server", "--transport", "http", "--registry", "http://127.0.0.1:1", "--target", "claude"}
@@ -230,7 +234,7 @@ var unchangedRegistryArgs = []string{"install", "--mcp", "acme/server", "--trans
 // On the two that are not a cancelled operation the apm_version line still
 // follows --no-provenance, and nothing else in the lock changes.
 func TestInstallMCP_EarlyReturn_ProvenanceLineFollowsFlag(t *testing.T) {
-	const unchanged = " i MCP server \"acme/server\" unchanged\n"
+	const unchanged = loopbackRegistryWarning + " i MCP server \"acme/server\" unchanged\n"
 	const withLine = "lockfile_version: '1'\napm_version: dev\n"
 	const withoutLine = "lockfile_version: '1'\n"
 
@@ -329,7 +333,7 @@ func TestInstallMCP_EarlyReturn_ProvenanceLineFollowsFlag(t *testing.T) {
 // install --mcp writes the lock whole when the apm_version key has to come
 // or go, so the result is valid YAML whatever the layout of the file was.
 func TestInstallMCP_EarlyReturn_WritesAnyValidLockWhole(t *testing.T) {
-	const unchanged = " i MCP server \"acme/server\" unchanged\n"
+	const unchanged = loopbackRegistryWarning + " i MCP server \"acme/server\" unchanged\n"
 	tests := []struct {
 		name    string
 		lock    string

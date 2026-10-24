@@ -175,7 +175,7 @@ func installCmd() *cobra.Command {
 					DeployDir: deployDir, NoProvenance: noProvenance, Dev: dev,
 				})
 				var mh *multipleHarnessError
-				var us *userScopeMCPError
+				var us *mcpUsageError
 				var ndt *noDeployTargetError
 				if errors.As(err, &mh) || errors.As(err, &us) || errors.As(err, &ndt) {
 					cmd.SilenceUsage = true
@@ -1167,7 +1167,7 @@ func runInstall(deps *installDeps, frozen, noProvenance bool, targetFlag, deploy
 	}
 
 	// 6-9. Deploy primitives, no-op check, write lockfile, persist packages.
-	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestChanged, len(requestedKeys) > 0, requestedKeys, result, newLock, existingLock, existingNode, node,
+	return deployAndFinalize(m, targetFlag, deployDir, effectiveSubsets, skillSubset, requestedKeys, existing, persistPackages, deps.dev, manifestChanged, len(requestedKeys) > 0, requestedKeys, result, newLock, existingLock, existingNode, node, false,
 		&installRun{started: started, localDeclared: localDeclaredPaths(m), targetFlag: targetFlag, noProvenance: noProvenance,
 			manifestCreated: manifestCreated, global: deployDir != "", verbose: deps.verbose, manifestTargets: len(m.Target) > 0,
 			fetched: fetchedKeys(fetched)})
@@ -2109,7 +2109,7 @@ func buildLockfile(result *resolver.ResolutionResult, existingLock *lockfile.Loc
 // packages they bring in are deployed, the project's own content and the MCP
 // servers too, and the lock keeps the record of every other package as it
 // was (the Oracle's only_packages, install/phases/cleanup.py:69-75).
-func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestChanged, scoped bool, named map[string]bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, run *installRun) error {
+func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effectiveSubsets map[string][]string, skillSubset []string, requestedKeys, existing map[string]bool, packages []string, dev, manifestChanged, scoped bool, named map[string]bool, result *resolver.ResolutionResult, newLock, existingLock *lockfile.Lockfile, existingNode, node *yamllib.Node, serviceOnly bool, run *installRun) error {
 	detectRoot := "."
 	if deployDir != "" {
 		detectRoot = deployDir
@@ -2179,7 +2179,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		printTargets := func() {
 			ux.Info(os.Stdout, "Targets: %s  (source: %s)", sortedTargets(targets), targetSource)
 		}
-		if run == nil {
+		if run == nil && !serviceOnly {
 			printTargets()
 		}
 
@@ -2222,8 +2222,10 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 		for _, d := range deployResult.Diags {
 			// install counts shadowed primitives as the Oracle's skipped
-			// files (finish) instead.
-			if run != nil && slices.Contains(deployResult.Conflicts, d) {
+			// files (finish) instead. Of two MCP servers of one name the
+			// first declared is configured without a word, also by update
+			// (integration/mcp_config_view.py:84-88,131-133).
+			if slices.Contains(deployResult.Conflicts, d) && (run != nil || isMCPConflict(d)) {
 				continue
 			}
 			if !slices.Contains(deployResult.MCPDiags, d) {
@@ -2329,7 +2331,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		if deployResult.MCPFailure != nil {
 			mcpFailure = deployResult.MCPFailure
 			keepMCPState(newLock, existingLock)
-			if run != nil {
+			if run != nil || serviceOnly {
+				printTrustedMCP(newLock, deployResult.TrustedMCP)
 				printMCPHeader(len(deployResult.DeclaredMCPServers), orderedTargets(mcpTargetSet(chosen.mcp), targets),
 					targetFlag != "", len(m.Target) > 0, &chosen.userScope)
 			}
@@ -2354,7 +2357,7 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 			declaredMCP := manifestMCPByName(m)
 			recordMCPState(newLock, declaredMCP, deployResult.DependencyMCP, targetsByServer)
 
-			if run != nil {
+			if run != nil || serviceOnly {
 				mcpTargets := map[string]bool{}
 				for _, set := range targetsByServer {
 					for t := range set {
@@ -2362,7 +2365,8 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 					}
 				}
 				ensureClaudeDir(detectRoot, mcpTargets)
-				mcpConfigured = printMCPBlock(manifestMCPOrder(m, newLock.MCPServers, targetsByServer), declaredMCP,
+				printTrustedMCP(newLock, deployResult.TrustedMCP)
+				mcpConfigured = printMCPBlock(manifestMCPOrder(m, newLock.MCPServers, targetsByServer), mcpBlockDeclared(declaredMCP, deployResult.DependencyMCP),
 					newLock, existingLock, targetsByServer, targets, targetFlag != "", len(m.Target) > 0, &chosen.userScope)
 			} else {
 				mcpItems := make([]ux.Item, 0, len(newLock.MCPServers))
@@ -2591,7 +2595,11 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		if mcpUnplaced {
 			return unplacedErr()
 		}
-		ux.Info(os.Stdout, "Already up to date")
+		if serviceOnly {
+			ux.Success(os.Stdout, serviceOnlyDone)
+		} else {
+			ux.Info(os.Stdout, "Already up to date")
+		}
 		return nil
 	}
 
@@ -2628,8 +2636,12 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 		}
 	}
 	// The user scope keeps no .gitignore (install/pipeline.py:820-826).
-	if deployDir == "" {
+	if deployDir == "" && !serviceOnly {
 		updateGitignoreForApmModules()
+	}
+	if serviceOnly {
+		ux.Success(os.Stdout, serviceOnlyDone)
+		return nil
 	}
 
 	fmt.Println()
@@ -2706,6 +2718,12 @@ func deployAndFinalize(m *manifest.Manifest, targetFlag, deployDir string, effec
 // cache out of version control, while preserving an existing .gitignore.
 // Gitignore maintenance is best-effort in the Oracle, so read/write failures
 // are warnings rather than install failures.
+// isMCPConflict: d is the conflict diagnostic of an MCP server
+// (deploy.resolvePrimitivesBy).
+func isMCPConflict(d string) bool {
+	return strings.HasPrefix(d, `mcp "`) || strings.HasPrefix(d, `local mcp "`)
+}
+
 func updateGitignoreForApmModules() {
 	updateGitignoreForApmModulesWithWrite(io.WriteString)
 }

@@ -64,6 +64,12 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if err := validateMCPConflicts(opts); err != nil {
 		return err
 	}
+	// A registry the user chose, by --registry or MCP_REGISTRY_URL, that is
+	// this machine or a private network gets the Oracle's warning, whatever
+	// the server (install/mcp/registry.py:197-217, commands/install.py:751).
+	if host, local := mcpregistry.LocalHost(effectiveRegistryURL(opts)); local {
+		ux.Warn(os.Stdout, "--registry host '%s' is loopback/private/link-local; only registry-resolved installs will reach it. Confirm this is intentional (local dev / private mirror).", host)
+	}
 
 	data, err := os.ReadFile("apm.yml")
 	createManifest := false
@@ -109,7 +115,7 @@ func runMCPInstall(opts mcpInstallOpts) error {
 			if opts.TargetFlag != "" {
 				source = "--target flag"
 			}
-			return withUsageError(&userScopeMCPError{fmt.Errorf("Selected targets are unavailable for user-scope MCP installation (%s; source: %s); choose a global-capable --target or omit --global",
+			return withUsageError(&mcpUsageError{fmt.Errorf("Selected targets are unavailable for user-scope MCP installation (%s; source: %s); choose a global-capable --target or omit --global",
 				strings.Join(chosen.userScope.names, ", "), source)})
 		}
 		chosen.userScope.warn()
@@ -235,9 +241,10 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	for _, t := range deployed {
 		targetSet[t] = true
 	}
-	recordMCPServer(lock, deployDep, deployed)
+	declared := declaredMCPEntry(entryNode, deployDep)
+	recordMCPServer(lock, declared, deployed)
 	ensureClaudeDir(deployRoot, targetSet)
-	printMCPBlock([]string{opts.Name}, map[string]*manifest.MCPDependency{opts.Name: deployDep}, lock, oldLock,
+	printMCPBlock([]string{opts.Name}, map[string]*manifest.MCPDependency{opts.Name: declared}, lock, oldLock,
 		map[string]map[string]bool{opts.Name: targetSet}, deployed, opts.TargetFlag != "", len(m.Target) > 0, nil)
 
 	lock.APMVersion = apmVersionFor(lock, lock.APMVersion, lockHasAPMVersion(lockNode), opts.NoProvenance)
@@ -261,18 +268,25 @@ func runMCPInstall(opts mcpInstallOpts) error {
 	if abs, pathErr := filepath.Abs("apm.yml"); pathErr == nil {
 		apmYMLPath = abs
 	}
-	ux.Plain(os.Stdout, "  transport: %s", deployDep.Transport)
+	// A registry entry has no transport of its own (install/mcp/command.py:
+	// 322-328).
+	transport := declared.Transport
+	if transport == "" {
+		transport = "registry"
+	}
+	ux.Plain(os.Stdout, "  transport: %s", transport)
 	ux.Plain(os.Stdout, "  apm.yml: %s", apmYMLPath)
 	return nil
 }
 
-// userScopeMCPError is the Oracle's click.UsageError for a user-scope MCP
-// install whose targets all take no MCP there: the Usage and Try lines, not
+// mcpUsageError is a click.UsageError the Oracle's install --mcp raises once
+// it has read its options (a user-scope install whose targets all take no
+// MCP there, a name apm.yml already has): the Usage and Try lines, not
 // cobra's flag list.
-type userScopeMCPError struct{ err error }
+type mcpUsageError struct{ err error }
 
-func (e *userScopeMCPError) Error() string { return e.err.Error() }
-func (e *userScopeMCPError) Unwrap() error { return e.err }
+func (e *mcpUsageError) Error() string { return e.err.Error() }
+func (e *mcpUsageError) Unwrap() error { return e.err }
 
 // mcpManifestTargets is the targets: of the ~/.apm/apm.yml a user-scope MCP
 // install creates: the targets of --target it configures, in their order and
@@ -315,6 +329,20 @@ func mcpListIsIndented(doc *yamllib.Node, section string) bool {
 		}
 	}
 	return false
+}
+
+// declaredMCPEntry is the server as the apm.yml entry install --mcp wrote
+// declares it, which the Oracle records in the lock's mcp_configs and names
+// in its MCP block: a registry server is its name and registry, not what the
+// registry resolved (install/mcp/command.py:262-283). The deploy's own
+// fields fall back on resolved when the entry does not parse.
+func declaredMCPEntry(entry *yamllib.Node, resolved *manifest.MCPDependency) *manifest.MCPDependency {
+	dep, err := manifest.ParseMCPEntry(entry)
+	if err != nil {
+		return resolved
+	}
+	dep.EnvOrder, dep.HeaderOrder = resolved.EnvOrder, resolved.HeaderOrder
+	return dep
 }
 
 // recordMCPServer adds one server to the lock's MCP state for the targets it
@@ -502,16 +530,6 @@ func effectiveRegistryURL(opts mcpInstallOpts) string {
 // a clear error naming that gap instead of attempting a partial install.
 func resolveFromRegistry(opts mcpInstallOpts) (deployDep *manifest.MCPDependency, diags []string, err error) {
 	registryURL := effectiveRegistryURL(opts)
-	if registryURL != "" && opts.Registry == "" {
-		// Never echo registryURL here: query strings and userinfo are
-		// already rejected by NewClient below, but a path-embedded token
-		// (e.g. an internal registry using "/t-<token>/" style auth) would
-		// still reach this transient stderr diagnostic otherwise (found by
-		// codex review). The persisted apm.yml registry: field is a
-		// separate, intentional case -- the user explicitly asked to
-		// record their custom registry there.
-		diags = append(diags, "using a custom MCP registry (from MCP_REGISTRY_URL)")
-	}
 	source := mcpregistry.SourceDefault
 	switch {
 	case opts.Registry != "":
@@ -654,7 +672,13 @@ func upsertMCPEntry(doc *yamllib.Node, section, name string, entryNode *yamllib.
 		}
 		if !force {
 			if confirm == nil {
-				return "", fmt.Errorf("MCP server %q already exists in apm.yml. Use --force to replace (non-interactive).", name)
+				// click.UsageError, exit 2, naming apm.yml by its absolute
+				// path (install/mcp/writer.py:118-121).
+				path, aerr := filepath.Abs("apm.yml")
+				if aerr != nil {
+					path = "apm.yml"
+				}
+				return "", withUsageError(&mcpUsageError{fmt.Errorf("MCP server '%s' already exists in %s. Use --force to replace (non-interactive).", name, path)})
 			}
 			ok, cerr := confirm(name, diffEntry(existing, entryNode))
 			if cerr != nil {
