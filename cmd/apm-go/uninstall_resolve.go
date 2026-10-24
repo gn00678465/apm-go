@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 
 	"github.com/apm-go/apm/internal/lockfile"
@@ -17,12 +18,11 @@ import (
 // decide what to actually remove.
 
 // uninstallNotFoundReason distinguishes *why* a PACKAGE argument produced no
-// target, purely for a caller's warning message -- un-013 (plain "not in
-// apm.yml"), un-017 (marketplace ref unresolvable via lockfile or registry),
-// and un-081 (marketplace ref that would need a registry call, but
-// --dry-run forbids one) all still fold into the same "warn and continue,
-// don't abort the rest" bucket (mirrors cli.py:277-288's uniform
-// packages_not_found handling).
+// target: un-013 (plain "not in apm.yml") warns and lets the rest proceed,
+// by ruling; un-017 (marketplace ref unresolvable via lockfile or registry)
+// and un-081 (marketplace ref that would need a registry call, but --dry-run
+// forbids one) abort the whole uninstall, as the Oracle's packages_not_found
+// does (commands/uninstall/cli.py:323-329).
 type uninstallNotFoundReason int
 
 const (
@@ -35,7 +35,10 @@ const (
 type uninstallNotFound struct {
 	Name   string
 	Reason uninstallNotFoundReason
-	Detail string // extra context (e.g. underlying resolve error); may be empty
+	Detail string // the registry's error, for a lookup that failed; may be empty
+	// Ref is a marketplace argument's PLUGIN@MARKETPLACE without its #REF,
+	// the name the Oracle's resolution lines give it.
+	Ref string
 }
 
 // uninstallSupplyChainRejection records a marketplace-ref PACKAGE argument
@@ -47,15 +50,19 @@ type uninstallNotFound struct {
 // diagnostically distinguishable from an ordinary "not found".
 type uninstallSupplyChainRejection struct {
 	Name      string // as typed on the command line
-	Canonical string // the identity the registry resolved to and that was rejected
+	Ref       string // PLUGIN@MARKETPLACE without #REF
+	Canonical string // what the registry resolved to and that was rejected
 }
 
 // uninstallAmbiguous records a PACKAGE argument that matches more than one
 // apm.yml entry, which the Oracle refuses rather than guess (Matches is how
-// many).
+// many). Local is the lock name of an argument that is a local path, which
+// the Oracle's message names in place of the path (commands/uninstall/
+// engine.py:686-698).
 type uninstallAmbiguous struct {
 	Name    string
 	Matches int
+	Local   string
 }
 
 // uninstallAPMTarget is a PACKAGE argument matched to an existing
@@ -64,6 +71,9 @@ type uninstallAPMTarget struct {
 	Name        string // as typed on the command line
 	IdentityKey string // manifest.DependencyReference identity space (see uninstallIdentity)
 	IsDev       bool   // true when matched in devDependencies.apm
+	// Canonical is what a marketplace argument resolved to through the lock
+	// or the registry, which its found line names (engine.py:675-679).
+	Canonical string
 }
 
 // uninstallMCPTarget is a PACKAGE argument matched to a standalone
@@ -84,6 +94,14 @@ type uninstallResolution struct {
 	NotFound            []uninstallNotFound
 	SupplyChainRejected []uninstallSupplyChainRejection
 	Ambiguous           []uninstallAmbiguous
+	// RegistryLookup is the PLUGIN@MARKETPLACE of a marketplace argument
+	// that was looked up in the registry, which the Oracle announces first
+	// (engine.py:528-531).
+	RegistryLookup string
+	// Invalid is the error of a marketplace argument whose #REF is a semver
+	// range, which ends the Oracle's uninstall before any argument's line
+	// (engine.py:35-39, cli.py:715-717).
+	Invalid error
 	// Arguments holds each argument's own resolution, with its one outcome,
 	// in command-line order: the Oracle prints each argument's line as it
 	// reaches it (commands/uninstall/engine.py:633-731).
@@ -125,16 +143,30 @@ func resolveUninstallTargets(names []string, m *manifest.Manifest, lock *lockfil
 		res.NotFound = append(res.NotFound, arg.NotFound...)
 		res.SupplyChainRejected = append(res.SupplyChainRejected, arg.SupplyChainRejected...)
 		res.Ambiguous = append(res.Ambiguous, arg.Ambiguous...)
+		if res.Invalid == nil {
+			res.Invalid = arg.Invalid
+		}
 	}
 	return res
+}
+
+// unselected counts the arguments that abort the uninstall: the ambiguous
+// ones and the marketplace arguments that could not be resolved. A plain
+// not-found argument does not abort, by the ruling.
+func (r *uninstallResolution) unselected() int {
+	n := len(r.Ambiguous) + len(r.SupplyChainRejected)
+	for _, nf := range r.NotFound {
+		if nf.Reason != uninstallNotFoundNoMatch {
+			n++
+		}
+	}
+	return n
 }
 
 func resolveUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lockfile, resolve marketplaceRegistryResolver, dryRun bool, res *uninstallResolution) {
 	plugin, mkt, ref, ok, err := marketplace.ParseRef(name)
 	if err != nil {
-		// e.g. a "#ref" that looks like a semver range constraint --
-		// malformed input, not a crash: log-and-skip like un-017.
-		res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundUnresolvable, Detail: err.Error()})
+		res.Invalid = err
 		return
 	}
 	if ok {
@@ -152,8 +184,16 @@ func resolveUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lo
 func resolvePlainUninstallTarget(name string, m *manifest.Manifest, lock *lockfile.Lockfile, res *uninstallResolution) {
 	if d, err := manifest.ParseDepString(name); err == nil {
 		if identity, ok := uninstallIdentity(d); ok {
-			if isDev, found := findManifestAPMTarget(m, identity); found {
+			switch isDev, matches := findManifestAPMTarget(m, identity); {
+			case matches == 1:
 				res.APMTargets = append(res.APMTargets, uninstallAPMTarget{Name: name, IdentityKey: identity, IsDev: isDev})
+				return
+			case matches > 1:
+				a := uninstallAmbiguous{Name: name, Matches: matches}
+				if d.IsLocal {
+					a.Local = localModulesKey(resolveLocalSourceAbs(d.LocalPath))
+				}
+				res.Ambiguous = append(res.Ambiguous, a)
 				return
 			}
 		}
@@ -232,68 +272,88 @@ func resolveMarketplaceUninstallTarget(name, plugin, mkt, ref string, m *manifes
 			if !strings.EqualFold(dep.DiscoveredVia, mkt) || !strings.EqualFold(dep.MarketplacePluginName, plugin) {
 				continue
 			}
-			identity := dep.UniqueKey()
-			if isDev, found := findManifestAPMTarget(m, identity); found {
-				res.APMTargets = append(res.APMTargets, uninstallAPMTarget{Name: name, IdentityKey: identity, IsDev: isDev})
-			} else {
-				// Lockfile still remembers it, but apm.yml no longer lists
-				// it -- nothing left to uninstall from apm.yml (un-013).
-				res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundNoMatch})
-			}
+			identity, canonical := lockedIdentity(dep)
+			addMarketplaceTarget(name, identity, canonical, m, res)
 			return
 		}
 	}
 
+	pluginRef := plugin + "@" + mkt
 	// Step C (un-081): --dry-run never reaches the registry.
 	if dryRun {
-		res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundDryRunSkipped})
+		res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundDryRunSkipped, Ref: pluginRef})
 		return
 	}
 
 	// Step D: registry fallback, then un-015/un-018's supply-chain guard.
+	res.RegistryLookup = pluginRef
 	result, err := resolve(plugin, mkt, marketplace.ResolveOptions{VersionSpec: ref})
 	if err != nil {
-		// un-017: unresolvable via lockfile or registry -- log and skip.
-		res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundUnresolvable, Detail: err.Error()})
+		// un-017: unresolvable via lockfile or registry.
+		res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundUnresolvable, Detail: err.Error(), Ref: pluginRef})
 		return
 	}
 	resolvedRef := result.DepRef
 	if resolvedRef == nil {
-		resolvedRef, err = depRefFromMarketplaceCanonical(result.Canonical)
-		if err != nil {
-			res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundUnresolvable, Detail: err.Error()})
+		if filepath.IsAbs(result.Canonical) {
+			// A local marketplace's plugin is the local package at that
+			// path, as the Oracle selects its canonical (models/dependency/
+			// selection.py:56-59).
+			resolvedRef = &manifest.DependencyReference{IsLocal: true, LocalPath: result.Canonical}
+		} else if resolvedRef, err = depRefFromMarketplaceCanonical(result.Canonical); err != nil {
+			res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundUnresolvable, Ref: pluginRef})
 			return
 		}
 	}
 	identity, idOK := uninstallIdentity(resolvedRef)
 	if !idOK {
-		res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundUnresolvable})
+		res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundUnresolvable, Ref: pluginRef})
 		return
 	}
 
-	// un-015: when the lockfile has any anchor at all, the registry's
-	// canonical MUST already be locked, or this is refused outright --
-	// named, so a caller can distinguish it from an ordinary "not found"
-	// (this is what proves the guard runs before any removal: a rejected
-	// package never reaches APMTargets). un-018: with no lockfile anchor,
-	// there's nothing to cross-check against, so this guard is skipped and
-	// the resolved identity is only required to already be a live apm.yml
-	// entry (checked immediately below either way).
-	if lockHasAnchor(lock) && lock.FindByKey(identity) == nil {
-		res.SupplyChainRejected = append(res.SupplyChainRejected, uninstallSupplyChainRejection{Name: name, Canonical: identity})
+	// un-015: when a lockfile exists, the registry's canonical MUST already
+	// be locked, or this is refused outright (engine.py:539-547). un-018:
+	// with no lockfile there's nothing to cross-check against, so the
+	// resolved identity is only required to be a live apm.yml entry.
+	if lock != nil && !lockHasIdentity(lock, identity) {
+		res.SupplyChainRejected = append(res.SupplyChainRejected, uninstallSupplyChainRejection{Name: name, Ref: pluginRef, Canonical: result.Canonical})
 		return
 	}
-	if isDev, found := findManifestAPMTarget(m, identity); found {
-		res.APMTargets = append(res.APMTargets, uninstallAPMTarget{Name: name, IdentityKey: identity, IsDev: isDev})
-		return
-	}
-	res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundNoMatch})
+	addMarketplaceTarget(name, identity, result.Canonical, m, res)
 }
 
-// lockHasAnchor reports whether lock provides any offline anchor at all for
-// the supply-chain guard (un-015 vs un-018's no-lockfile weaker path).
-func lockHasAnchor(lock *lockfile.Lockfile) bool {
-	return lock != nil && len(lock.Dependencies) > 0
+// addMarketplaceTarget selects the apm.yml entry a marketplace argument
+// resolved to, as select_manifest_dependency selects it (engine.py:673-698).
+func addMarketplaceTarget(name, identity, canonical string, m *manifest.Manifest, res *uninstallResolution) {
+	switch isDev, matches := findManifestAPMTarget(m, identity); {
+	case matches == 1:
+		res.APMTargets = append(res.APMTargets, uninstallAPMTarget{Name: name, IdentityKey: identity, IsDev: isDev, Canonical: canonical})
+	case matches > 1:
+		res.Ambiguous = append(res.Ambiguous, uninstallAmbiguous{Name: name, Matches: matches})
+	default:
+		// Resolved, but apm.yml no longer lists it (un-013).
+		res.NotFound = append(res.NotFound, uninstallNotFound{Name: name, Reason: uninstallNotFoundNoMatch})
+	}
+}
+
+// lockedIdentity is a lock entry's identity in uninstallIdentity's space and
+// the canonical name the Oracle gives it, its unique key: the declared path
+// of a local package (models/dependency/identity.py:212-215), else its key.
+func lockedIdentity(dep *lockfile.LockedDep) (identity, canonical string) {
+	if dep.Source == "local" && dep.LocalPath != "" {
+		return "local:" + dep.LocalPath, dep.LocalPath
+	}
+	return dep.UniqueKey(), dep.UniqueKey()
+}
+
+// lockHasIdentity reports whether lock records the package of identity.
+func lockHasIdentity(lock *lockfile.Lockfile, identity string) bool {
+	for i := range lock.Dependencies {
+		if id, _ := lockedIdentity(&lock.Dependencies[i]); id == identity {
+			return true
+		}
+	}
+	return false
 }
 
 // findManifestMarketplaceDictTarget looks for an apm.yml dependencies.apm /
@@ -318,24 +378,25 @@ func findManifestMarketplaceDictTarget(m *manifest.Manifest, plugin, mkt string)
 	return false, "", false
 }
 
-// findManifestAPMTarget reports whether identity matches any
-// dependencies.apm / devDependencies.apm entry in m (un-012: both sections
-// are always scanned), and if so which section it was found in.
-func findManifestAPMTarget(m *manifest.Manifest, identity string) (isDev bool, found bool) {
+// findManifestAPMTarget counts the dependencies.apm / devDependencies.apm
+// entries of m that identity matches (un-012: both sections are always
+// scanned) and reports the section of the first. More than one is ambiguous:
+// the Oracle selects none of them (models/dependency/selection.py:88-104).
+func findManifestAPMTarget(m *manifest.Manifest, identity string) (isDev bool, matches int) {
 	if identity == "" {
-		return false, false
+		return false, 0
 	}
-	for _, d := range m.ParsedDeps {
-		if k, ok := uninstallIdentity(d); ok && k == identity {
-			return false, true
+	for i, deps := range [][]*manifest.DependencyReference{m.ParsedDeps, m.ParsedDevDeps} {
+		for _, d := range deps {
+			if k, ok := uninstallIdentity(d); ok && k == identity {
+				if matches == 0 {
+					isDev = i == 1
+				}
+				matches++
+			}
 		}
 	}
-	for _, d := range m.ParsedDevDeps {
-		if k, ok := uninstallIdentity(d); ok && k == identity {
-			return true, true
-		}
-	}
-	return false, false
+	return isDev, matches
 }
 
 // findManifestMCPTarget reports which of dependencies.mcp and

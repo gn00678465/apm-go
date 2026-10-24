@@ -743,8 +743,8 @@ dependencies:
 
 // TestRunUninstall_MarketplaceRefDryRunSkipped is un-081: a marketplace ref
 // with no lockfile anchor can't be previewed under --dry-run (it would need
-// a registry call), so it folds into NotFound instead of erroring the whole
-// command -- also exercises printUninstallNotFound's dry-run-skipped branch.
+// a registry call), and the Oracle then aborts the uninstall
+// (commands/uninstall/cli.py:323-329; measured, issue #129 run 50missing).
 func TestRunUninstall_MarketplaceRefDryRunSkipped(t *testing.T) {
 	chdirTemp(t)
 	manifestYAML := "name: test\nversion: \"1.0.0\"\ndependencies:\n  apm:\n    - acme/foo\n"
@@ -753,8 +753,8 @@ func TestRunUninstall_MarketplaceRefDryRunSkipped(t *testing.T) {
 	}
 
 	err := runUninstall([]string{"some-plugin@some-marketplace"}, uninstallOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Uninstall aborted: 1 requested package(s) could not be selected.") {
+		t.Fatalf("err = %v, want the abort", err)
 	}
 
 	got, err := os.ReadFile("apm.yml")

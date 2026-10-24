@@ -56,13 +56,23 @@ type uninstallHandover struct {
 // planUninstallHandover deploys the packages that stay into a temporary
 // directory, with the apm.yml already written without the removed ones, and
 // keeps each removed lock path that one of them deploys; for a skill, the
-// whole directory that one of them deploys. It returns nil when
-// the removed packages recorded no path that a target governs.
-func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool, deployDir string) (*uninstallHandover, error) {
+// whole directory that one of them deploys. A package in refreshed, whose
+// directory below apm_modules the uninstall gave its own copy, gets every
+// path the trial deploys for it, as the Oracle deploys the remaining packages
+// again (commands/uninstall/engine.py:1106-1419). It returns nil when
+// the removed packages and the refreshed ones recorded no path that a target
+// governs.
+func planUninstallHandover(lock *lockfile.Lockfile, removalKeys, refreshed map[string]bool, deployDir string) (*uninstallHandover, error) {
 	removed, _ := collectUninstallDeployedProvenance(lock, removalKeys)
+	governed := append([]string(nil), removed...)
+	for key := range refreshed {
+		if dep := lock.FindByKey(key); dep != nil {
+			governed = append(governed, dep.DeployedFiles...)
+		}
+	}
 	var targets []string
 	for name := range deploy.Adapters {
-		for _, p := range removed {
+		for _, p := range governed {
 			if deploy.Governs(deployDir != "", []string{name}, deploy.DependencyBucket, p) {
 				targets = append(targets, name)
 				break
@@ -158,6 +168,14 @@ func planUninstallHandover(lock *lockfile.Lockfile, removalKeys map[string]bool,
 		}
 		if key, ok := deployedBy[p]; ok {
 			take(key, p)
+		}
+	}
+	for key := range refreshed {
+		if dr, ok := trial.PerDep[key]; ok {
+			files, _ := dr.Recorded()
+			for _, f := range withSkillDirs(files) {
+				take(key, f)
+			}
 		}
 	}
 	root := "."
