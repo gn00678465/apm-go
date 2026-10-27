@@ -3,14 +3,13 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
-// testdata/deps holds Oracle 0.33.0's stdout for the same files, created in
-// the same order, with apm-go's status symbols and without the Oracle's
-// "Run 'apm prune'" line. deps list keeps the order the file system lists a
-// directory in, which for these small directories is the order of creation.
+// testdata/deps holds Oracle 0.33.0's stdout with apm-go's status symbols and
+// without the Oracle's "Run 'apm prune'" line.
 var depsTestdata, _ = filepath.Abs(filepath.Join("testdata", "deps"))
 
 func depsGolden(t *testing.T, name string) string {
@@ -22,25 +21,69 @@ func depsGolden(t *testing.T, name string) string {
 	return string(data)
 }
 
-// requireCreationOrder skips a test whose expected rows follow the order of
-// creation when the temporary directory's file system lists a directory in
-// another order (tmpfs lists the newest entry first). The Oracle reads the
-// same order from the same file system, so only the fixture's assumption
-// fails there.
-func requireCreationOrder(t *testing.T, root string) {
-	t.Helper()
-	probe := filepath.Join(root, ".order-probe")
-	for _, name := range []string{"b", "a"} {
-		if err := os.MkdirAll(filepath.Join(probe, name), 0o755); err != nil {
-			t.Fatal(err)
+// Package rows and their warnings follow the file system's directory order.
+func normalizeDepsList(out string) string {
+	lines := strings.Split(out, "\n")
+	kind := func(line string) int {
+		switch {
+		case strings.HasPrefix(line, "│"):
+			return 1
+		case strings.HasPrefix(line, " ! Failed to inspect package "):
+			return 2
+		case strings.HasPrefix(line, "  - "):
+			return 3
+		default:
+			return 0
 		}
 	}
-	entries := readDirInOrder(probe)
-	if len(entries) != 2 || entries[0].Name() != "b" {
-		t.Skipf("%s does not list a directory in creation order", root)
+	for i := 0; i < len(lines); {
+		k := kind(lines[i])
+		j := i + 1
+		for k != 0 && j < len(lines) && kind(lines[j]) == k {
+			j++
+		}
+		if k != 0 {
+			slices.Sort(lines[i:j])
+		}
+		i = j
 	}
-	if err := os.RemoveAll(probe); err != nil {
+	return strings.Join(lines, "\n")
+}
+
+func TestNormalizeDepsList(t *testing.T) {
+	want := " ! Failed to inspect package a\n ! Failed to inspect package b\n│ a │\n│ b │\n i Skills by package:\n  - a: one\n  - b: two\n"
+	shuffled := " ! Failed to inspect package b\n ! Failed to inspect package a\n│ b │\n│ a │\n i Skills by package:\n  - b: two\n  - a: one\n"
+	if normalizeDepsList(shuffled) != normalizeDepsList(want) {
+		t.Fatal("equivalent output differs by directory order")
+	}
+	if normalizeDepsList(strings.Replace(shuffled, "│ a │", "│ c │", 1)) == normalizeDepsList(want) {
+		t.Fatal("a different package row compared equal")
+	}
+}
+
+func TestDepsList_FilesystemOrder(t *testing.T) {
+	root := t.TempDir()
+	depsWriteFiles(t, root,
+		"apm_modules/acme/one/apm.yml", "name: one\nversion: 1.0.0\n",
+		"apm_modules/acme/two/apm.yml", "name: two\nversion: 1.0.0\n",
+	)
+	f, err := os.Open(filepath.Join(root, "apm_modules", "acme"))
+	if err != nil {
 		t.Fatal(err)
+	}
+	names, err := f.Readdirnames(-1)
+	closeErr := f.Close()
+	if err != nil || closeErr != nil || len(names) != 2 {
+		t.Fatalf("directory entries %v, read error %v, close error %v", names, err, closeErr)
+	}
+	out, err := runDeps(t, root, t.TempDir(), "deps", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Index(out, "│ acme/"+names[0])
+	second := strings.Index(out, "│ acme/"+names[1])
+	if first < 0 || second < 0 || first >= second {
+		t.Fatalf("directory order %v, output:\n%s", names, out)
 	}
 }
 
@@ -65,6 +108,7 @@ func runDeps(t *testing.T, proj, home string, args ...string) (string, error) {
 	t.Helper()
 	t.Chdir(proj)
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("COLUMNS", "")
 	t.Setenv("TTY_FORCE", "")
 	var err error
@@ -81,7 +125,6 @@ func runDeps(t *testing.T, proj, home string, args ...string) (string, error) {
 // the Oracle refuses (no version, broken YAML, empty version).
 func depsOrphanProject(t *testing.T) (proj, home string) {
 	root := t.TempDir()
-	requireCreationOrder(t, root)
 	proj, home = filepath.Join(root, "proj"), filepath.Join(root, "home")
 	depsWriteFiles(t, proj,
 		"apm.yml", "name: proj\nversion: 1.0.0\ndependencies:\n  apm:\n    - ./dep\n",
@@ -109,7 +152,7 @@ func TestDepsList_OrphanAndFailedInspect(t *testing.T) {
 		t.Fatalf("deps list: %v", err)
 	}
 	want := depsGolden(t, "orphan-project.stdout")
-	if out != want {
+	if normalizeDepsList(out) != normalizeDepsList(want) {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
 }
@@ -122,7 +165,7 @@ func TestDepsList_SkillsProject(t *testing.T) {
 	}
 	want := strings.Replace(depsGolden(t, "orphan-project.stdout"), " ! 1 orphaned",
 		" i Skills by package:\n  - _local/dep: sk1\n  - acme/skillonly: skillonly\n ! 1 orphaned", 1)
-	if out != want {
+	if normalizeDepsList(out) != normalizeDepsList(want) {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
 }
@@ -168,14 +211,11 @@ func TestDepsList_Global(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			want := depsGolden(t, tc.golden) + tc.extra
 			proj, home := globalHome(t)
-			if !strings.Contains(tc.golden, "insecure") {
-				requireCreationOrder(t, filepath.Dir(home))
-			}
 			out, err := runDeps(t, proj, home, append([]string{"deps", "list"}, tc.args...)...)
 			if err != nil {
 				t.Fatalf("deps list: %v", err)
 			}
-			if out != want {
+			if normalizeDepsList(out) != normalizeDepsList(want) {
 				t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 			}
 		})
@@ -273,7 +313,6 @@ func TestDepsTree_LocalDependencySummary(t *testing.T) {
 // each apm.yml, @error for one that is not YAML, @unknown without a version.
 func TestDepsTree_ScanWithoutLock(t *testing.T) {
 	root := t.TempDir()
-	requireCreationOrder(t, root)
 	proj, home := filepath.Join(root, "proj"), filepath.Join(root, "home")
 	depsWriteFiles(t, proj,
 		"apm_modules/acme/good/apm.yml", "name: goodname\nversion: 1.0.0\n",
@@ -298,7 +337,7 @@ func TestDepsTree_ScanWithoutLock(t *testing.T) {
 		t.Fatalf("deps list: %v", err)
 	}
 	wantList := depsGolden(t, "scan-project.stdout")
-	if out != wantList {
+	if normalizeDepsList(out) != normalizeDepsList(wantList) {
 		t.Errorf("deps list stdout:\n%s\nwant:\n%s", out, wantList)
 	}
 }

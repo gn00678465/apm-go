@@ -43,7 +43,7 @@ func healthyGit() *fakeGit {
 }
 
 // runDoctorWith runs doctor under NO_COLOR=1 CI=1 with no TTY (captureStdout's
-// os.Pipe is never a terminal): the exact "rich renderers stay on, ANSI
+// temporary file is never a terminal): the exact "rich renderers stay on, ANSI
 // strips" scenario ticket 10 decision (A) requires -- doctor's table must
 // render unconditionally, never the old IsRich()-gated plain fallback. The
 // table itself is captured from stdout, not stderr: the runner case
@@ -75,24 +75,34 @@ func runDoctorWith(t *testing.T, git *fakeGit, env map[string]string, args ...st
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
-	r, w, err := os.Pipe()
+	w, err := os.CreateTemp(t.TempDir(), "stdout-*")
 	if err != nil {
-		t.Fatalf("os.Pipe() err = %v", err)
+		t.Fatalf("create stdout file: %v", err)
 	}
+	defer w.Close()
 	orig := os.Stdout
+	defer func() { os.Stdout = orig }()
 	os.Stdout = w
 
 	fn()
 
 	os.Stdout = orig
-	if err := w.Close(); err != nil {
-		t.Fatalf("close pipe writer: %v", err)
+	if _, err := w.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("seek captured stdout: %v", err)
 	}
-	data, err := io.ReadAll(r)
+	data, err := io.ReadAll(w)
 	if err != nil {
 		t.Fatalf("read captured stdout: %v", err)
 	}
 	return string(data)
+}
+
+func TestCaptureStdoutLargeOutput(t *testing.T) {
+	want := strings.Repeat("output", 16384)
+	got := captureStdout(t, func() { _, _ = io.WriteString(os.Stdout, want) })
+	if got != want {
+		t.Fatalf("captured %d bytes, want %d", len(got), len(want))
+	}
 }
 
 // assertNoANSI fails the test if s contains any ANSI escape sequence.
