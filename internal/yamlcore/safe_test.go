@@ -1,6 +1,7 @@
 package yamlcore
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -445,5 +446,61 @@ func TestSafeLoad_NestingBoundary(t *testing.T) {
 	overCap := []byte(strings.Repeat("[", maxNodeDepth+1) + strings.Repeat("]", maxNodeDepth+1))
 	if _, err := SafeLoad(overCap); err == nil {
 		t.Errorf("SafeLoad accepted a document one level over the cap (%d)", maxNodeDepth+1)
+	}
+}
+
+func TestSafeLoad_SentinelErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr error
+	}{
+		{
+			name:    "multi-document returns ErrMultiDocument",
+			input:   "name: doc1\n---\nname: doc2\n",
+			wantErr: ErrMultiDocument,
+		},
+		{
+			name:    "anchor returns ErrAnchorForbidden",
+			input:   "name: &anchor val\n",
+			wantErr: ErrAnchorForbidden,
+		},
+		{
+			name:    "alias document rejected via anchor as ErrAnchorForbidden",
+			input:   "name: &n p\nversion: \"1.0.0\"\ndescription: *n\n",
+			wantErr: ErrAnchorForbidden,
+		},
+		{
+			name:    "undefined alias rejected at parse time as ErrParse",
+			input:   "description: *n\n",
+			wantErr: ErrParse,
+		},
+		{
+			name:    "custom tag returns ErrCustomTagForbidden",
+			input:   "foo: !custom bar\n",
+			wantErr: ErrCustomTagForbidden,
+		},
+		{
+			name:    "malformed YAML returns ErrParse",
+			input:   "unclosed: [bracket\n",
+			wantErr: ErrParse,
+		},
+		{
+			name:    "excessive nesting returns ErrMaxDepthExceeded",
+			input:   strings.Repeat("[", maxNodeDepth+1) + strings.Repeat("]", maxNodeDepth+1),
+			wantErr: ErrMaxDepthExceeded,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := SafeLoad([]byte(tt.input))
+			if err == nil {
+				t.Fatalf("SafeLoad expected error, got nil")
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("errors.Is(err, %v) = false; err = %v", tt.wantErr, err)
+			}
+		})
 	}
 }

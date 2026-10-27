@@ -2,6 +2,7 @@ package yamlcore
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -9,6 +10,21 @@ import (
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v4"
+)
+
+var (
+	// ErrParse indicates a YAML syntax or decoding failure.
+	ErrParse = errors.New("YAML parse error")
+	// ErrEncode indicates a YAML encoding failure.
+	ErrEncode = errors.New("YAML encode error")
+	// ErrMultiDocument indicates multiple YAML documents were provided when only one is allowed.
+	ErrMultiDocument = errors.New("multi-document YAML streams are not allowed")
+	// ErrMaxDepthExceeded indicates YAML nesting exceeds the maximum allowed depth.
+	ErrMaxDepthExceeded = errors.New("YAML nesting exceeds the maximum depth")
+	// ErrAnchorForbidden indicates YAML anchors are present, which violates the safe subset.
+	ErrAnchorForbidden = errors.New("YAML anchors are not allowed")
+	// ErrCustomTagForbidden indicates custom (non-standard) YAML tags were used.
+	ErrCustomTagForbidden = errors.New("custom YAML tag is not allowed")
 )
 
 // SafeLoad parses YAML data under the OpenAPM v0.1 safe subset (req-mf-020):
@@ -25,14 +41,14 @@ func SafeLoad(data []byte) (*yaml.Node, error) {
 
 	var doc yaml.Node
 	if err := dec.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("YAML parse error: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 
 	var extra yaml.Node
 	if err := dec.Decode(&extra); err == nil {
-		return nil, fmt.Errorf("multi-document YAML streams are not allowed")
+		return nil, ErrMultiDocument
 	} else if err != io.EOF {
-		return nil, fmt.Errorf("YAML parse error in trailing content: %w", err)
+		return nil, fmt.Errorf("%w in trailing content: %w", ErrParse, err)
 	}
 
 	if err := validateNode(&doc); err != nil {
@@ -74,7 +90,7 @@ func safeDump(doc *yaml.Node, manifestStyle bool) ([]byte, error) {
 		return nil, fmt.Errorf("YAML encoder init error: %w", err)
 	}
 	if err := dumper.Dump(doc); err != nil {
-		return nil, fmt.Errorf("YAML encode error: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrEncode, err)
 	}
 	if err := dumper.Close(); err != nil {
 		return nil, fmt.Errorf("YAML encoder close error: %w", err)
@@ -198,17 +214,17 @@ func validateNode(n *yaml.Node) error {
 
 func validateNodeDepth(n *yaml.Node, depth int) error {
 	if depth > maxNodeDepth {
-		return fmt.Errorf("YAML nesting exceeds the maximum depth of %d", maxNodeDepth)
+		return fmt.Errorf("%w of %d", ErrMaxDepthExceeded, maxNodeDepth)
 	}
 	if n.Anchor != "" {
-		return fmt.Errorf("YAML anchors are not allowed (line %d)", n.Line)
+		return fmt.Errorf("%w (line %d)", ErrAnchorForbidden, n.Line)
 	}
 	if n.Alias != nil {
 		return fmt.Errorf("YAML aliases are not allowed (line %d)", n.Line)
 	}
 	tag := n.ShortTag()
 	if tag != "" && !strings.HasPrefix(tag, "!!") {
-		return fmt.Errorf("custom YAML tag %q is not allowed (line %d)", tag, n.Line)
+		return fmt.Errorf("%w: tag %q (line %d)", ErrCustomTagForbidden, tag, n.Line)
 	}
 	for _, c := range n.Content {
 		if err := validateNodeDepth(c, depth+1); err != nil {
