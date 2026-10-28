@@ -228,7 +228,7 @@ func TestMaterializeLocalCopy_RefusesSourceHoldingModulesDir(t *testing.T) {
 
 	_, err = r.LoadPackage(localRef("/x/pkgs", src), "")
 	want := "local dependency /x/pkgs overlaps its copy " + filepath.Join(modules, "_local", "pkgs") + "; a package cannot be copied into or over itself"
-	if err == nil || err.Error() != want {
+	if err == nil || filepath.ToSlash(err.Error()) != filepath.ToSlash(want) {
 		t.Fatalf("error %v, want %s", err, want)
 	}
 	if _, err := os.Lstat(modules); !os.IsNotExist(err) {

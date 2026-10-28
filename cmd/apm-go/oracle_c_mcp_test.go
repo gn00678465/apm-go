@@ -20,7 +20,7 @@ import (
 // terminal to ask on, is click's usage error (install/mcp/writer.py:110-120).
 func TestInstallMCP_ExistingNameIsUsageError(t *testing.T) {
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	manifest := "name: proj\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  mcp:\n    - name: two\n      registry: false\n      transport: stdio\n      command: echo\n"
 	writeCompileFile(t, dir, "apm.yml", manifest)
 	cwd, err := os.Getwd()
@@ -46,7 +46,7 @@ func TestInstallMCP_ExistingNameIsUsageError(t *testing.T) {
 // mcp_integrator_install.py:997-1000, adapters/client/claude.py:240).
 func TestInstall_DependencySelfDefinedMCP(t *testing.T) {
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	writeCompileFile(t, dir, "apm.yml", "name: proj\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - ./dep\n")
 	writeCompileFile(t, dir, "dep/apm.yml", "name: dep\nversion: 1.0.0\ndependencies:\n  mcp:\n    - name: depmcp\n      registry: false\n      transport: stdio\n      command: echo\n")
 	if err := os.MkdirAll(".claude", 0o755); err != nil {
@@ -95,7 +95,7 @@ func TestInstall_DependencySelfDefinedMCP(t *testing.T) {
 // the project's own declaration shadows (issue #123 item c57-7).
 func TestInstall_DependencyMCPTrustLinesAndUpdate(t *testing.T) {
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	writeCompileFile(t, dir, "apm.yml", "name: proj\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - ./b\n    - ./a\n  mcp:\n    - name: shared\n      registry: false\n      transport: stdio\n      command: echo\n")
 	writeCompileFile(t, dir, "b/apm.yml", "name: bee\nversion: 1.0.0\ndependencies:\n  mcp:\n    - name: bsrv\n      registry: false\n      transport: http\n      url: https://example.com/mcp\n    - name: shared\n      registry: false\n      transport: stdio\n      command: echo\n")
 	writeCompileFile(t, dir, "a/apm.yml", "name: ay\nversion: 1.0.0\ndependencies:\n  mcp:\n    - name: asrv\n      registry: false\n      transport: stdio\n      command: echo\n      args: [x]\n")
@@ -123,7 +123,7 @@ func TestInstall_DependencyMCPTrustLinesAndUpdate(t *testing.T) {
 // (adapters/client/copilot.py:485-490); sse stays sse (PRODUCT.md).
 func TestInstall_ClaudeRemoteMCPType(t *testing.T) {
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	writeCompileFile(t, dir, "apm.yml", "name: proj\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  mcp:\n"+
 		"    - name: h\n      registry: false\n      transport: http\n      url: https://example.com/h\n"+
 		"    - name: s\n      registry: false\n      transport: sse\n      url: https://example.com/s\n"+
@@ -145,7 +145,7 @@ func TestInstall_ClaudeRemoteMCPType(t *testing.T) {
 // deviations: no id = "", and serverUrl where the Oracle writes httpUrl.
 func TestInstall_CodexAndAntigravityMCPLayout(t *testing.T) {
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	writeCompileFile(t, dir, "apm.yml", "name: proj\nversion: 1.0.0\ntargets: [codex, antigravity]\ndependencies:\n  mcp:\n"+
 		"    - name: zeta\n      registry: false\n      transport: stdio\n      command: run-zeta\n      args: [--flag, \"two words\"]\n      env:\n        ZED: \"1\"\n        ALPHA: \"2\"\n"+
 		"    - name: bare\n      registry: false\n      transport: stdio\n      command: run-bare\n"+
@@ -200,7 +200,7 @@ func TestInstallMCP_RegistryServerLinesAndLock(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("MCP_REGISTRY_URL", srv.URL)
 	t.Setenv("MCP_REGISTRY_ALLOW_HTTP", "1")
 	writeCompileFile(t, dir, "apm.yml", "name: proj\nversion: 1.0.0\ntargets: [claude]\n")
@@ -242,7 +242,7 @@ func TestInstallMCP_RegistryServerLinesAndLock(t *testing.T) {
 // lines and opencode.json values are Oracle 0.33.0's (C/sci/after-a/or).
 func TestInstall_ExponentFloatEnabledIsStable(t *testing.T) {
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	values := []string{"1.0e+20", "1.0e-10", "1.0e+16", "1.2e+20", "1.50"}
 	locked := []string{"1.0e+20", "1.0e-10", "1.0e+16", "1.2e+20", "1.5"}
 	inJSON := []string{"1e+20", "1e-10", "1e+16", "1.2e+20", "1.5"}
@@ -281,7 +281,7 @@ func TestInstall_ExponentFloatEnabledIsStable(t *testing.T) {
 // key order is not compared, since apm-go sorts the keys of opencode.json.
 func TestInstall_OpencodeEnabledMappingKeys(t *testing.T) {
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	server := func(name, enabled string) string {
 		return "    - name: " + name + "\n      registry: false\n      transport: stdio\n      command: echo\n      enabled: " + enabled + "\n"
 	}
@@ -328,7 +328,7 @@ func TestInstall_OpencodeEnabledMappingKeys(t *testing.T) {
 // apm-go could not read back on the next install.
 func TestInstall_InfiniteFloatEnabled(t *testing.T) {
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	writeCompileFile(t, dir, "apm.yml", "name: proj\nversion: 1.0.0\ntargets: [opencode]\ndependencies:\n  mcp:\n"+
 		"    - name: a\n      registry: false\n      transport: stdio\n      command: echo\n      enabled: +.Inf\n"+
 		"    - name: b\n      registry: false\n      transport: stdio\n      command: echo\n      enabled: 1.0e+400\n")

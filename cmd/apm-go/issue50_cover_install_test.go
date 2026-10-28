@@ -247,6 +247,12 @@ func readOnlyWorkDir(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if probe, err := os.CreateTemp(dir, ".permission-probe-"); err == nil {
+		name := probe.Name()
+		probe.Close()
+		os.Remove(name)
+		t.Skip("directory remains writable after chmod")
+	}
 }
 
 // A lock that cannot be written fails the command with one error line; the
@@ -376,6 +382,12 @@ func lockedDir(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(ro, 0o700) })
+	if probe, err := os.CreateTemp(ro, ".permission-probe-"); err == nil {
+		name := probe.Name()
+		probe.Close()
+		os.Remove(name)
+		t.Skip("directory remains writable after chmod")
+	}
 }
 
 // Ruling R16: the directory an old lock names is deleted best-effort. One

@@ -41,8 +41,7 @@ func issue126Project(t *testing.T, scenario string) string {
 	}
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", filepath.Join(sandbox, "home"))
-	t.Setenv("USERPROFILE", filepath.Join(sandbox, "home"))
+	setTestHome(t, filepath.Join(sandbox, "home"))
 	return proj
 }
 
@@ -376,8 +375,7 @@ func TestInstall_Issue126_SkillMarkdownNotUTF8(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	home := t.TempDir()
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setTestHome(t, home)
 	dir := chdirTemp(t)
 	writeCompileFile(t, dir, "dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, dir, "dep/docs/d.md", "# d\n")

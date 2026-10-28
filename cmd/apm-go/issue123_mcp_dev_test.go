@@ -15,7 +15,7 @@ import (
 // section alone, and a same name under dependencies.mcp is no conflict.
 func TestInstallMCPDev_WritesDevDependencies(t *testing.T) {
 	t.Chdir(t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	const base = "name: p\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  mcp:\n  - name: devsrv\n    registry: false\n    transport: stdio\n    command: npx\n"
 	if err := os.WriteFile("apm.yml", []byte(base), 0o644); err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -321,7 +322,7 @@ func TestInstall_LocalPackageTranscripts(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Ruling R19.
-			if info.Mode().Perm() != 0o600 {
+			if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 				t.Errorf("apm.lock.yaml mode = %v, want 0600", info.Mode().Perm())
 			}
 		})

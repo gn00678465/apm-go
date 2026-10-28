@@ -44,8 +44,7 @@ func summaryProject(t *testing.T, files map[string]string) string {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", filepath.Join(root, "home"))
-	t.Setenv("USERPROFILE", filepath.Join(root, "home"))
+	setTestHome(t, filepath.Join(root, "home"))
 	for rel, content := range files {
 		writeCompileFile(t, root, "proj/"+rel, content)
 	}

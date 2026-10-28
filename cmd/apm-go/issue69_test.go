@@ -34,7 +34,7 @@ const (
 func issue69SkillProject(t *testing.T, targets string) {
 	t.Helper()
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	dir := chdirTemp(t)
 	writeCompileFile(t, dir, "skills/my-local-skill/apm.yml", issue69SkillYML)
 	writeCompileFile(t, dir, "skills/my-local-skill/SKILL.md", issue69SkillMD)
@@ -46,7 +46,7 @@ func issue69SkillProject(t *testing.T, targets string) {
 func issue69AgentProject(t *testing.T, entryTail string) string {
 	t.Helper()
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	dir := chdirTemp(t)
 	writeCompileFile(t, dir, "dep/apm.yml", "name: dep\nversion: 1.0.0\ndependencies:\n  mcp:\n    - name: depmcp\n      registry: false\n      transport: stdio\n      command: echo\n")
 	writeCompileFile(t, dir, "dep/.apm/agents/dagent.agent.md", "---\nname: dagent\ndescription: d\n---\nD\n")
@@ -273,7 +273,7 @@ func TestInstall_Issue69_InvalidTargetsWriteNothing(t *testing.T) {
 // deviation (PRODUCT.md, uninstall); Oracle 0.33.0 deletes both files.
 func TestUninstall_Issue69_HandOverOnlyToAllowedTarget(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	dir := chdirTemp(t)
 	for _, n := range []string{"dep1", "dep2"} {
 		writeCompileFile(t, dir, n+"/apm.yml", "name: "+n+"\nversion: 1.0.0\n")
@@ -345,7 +345,7 @@ func issue69Checkout(t *testing.T, files map[string]string) string {
 // keeps it on copilot.
 func TestInstall_Issue69_TransitiveTargetsAndFrozen(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	loader := &issue69GitLoader{t: t, checkouts: map[string]string{
 		"acme/a": issue69Checkout(t, map[string]string{
 			"apm.yml":                     "name: a\nversion: 1.0.0\ndependencies:\n  apm:\n    - git: acme/b\n      ref: main\n      targets: [copilot]\n",
@@ -393,7 +393,7 @@ func TestInstall_Issue69_TransitiveTargetsAndFrozen(t *testing.T) {
 // file of the removed ./dep1 and not its copilot file.
 func TestUninstall_Issue69_TransitiveHandOverKeepsLockedTargets(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	const agent = "---\nname: bagent\ndescription: d\n---\nfrom %s\n"
 	loader := &issue69GitLoader{t: t, checkouts: map[string]string{
 		"acme/a": issue69Checkout(t, map[string]string{
@@ -433,7 +433,7 @@ func TestUninstall_Issue69_TransitiveHandOverKeepsLockedTargets(t *testing.T) {
 // the bytes the lock records.
 func TestInstall_Issue69_SharedSkillDirThenFrozen(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	dir := chdirTemp(t)
 	for _, n := range []string{"dep1", "dep2"} {
 		writeCompileFile(t, dir, n+"/apm.yml", "name: "+n+"\nversion: 1.0.0\n")
@@ -465,7 +465,7 @@ func TestInstall_Issue69_SharedSkillDirThenFrozen(t *testing.T) {
 // and copilot deploys to .claude/ only and records the list.
 func TestRegistryInstall_Issue69_TargetsLimitDeploy(t *testing.T) {
 	enableRegistries(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	fx := buildRegistryFixture(t)
 	sum := sha256.Sum256(fx)
 	srv := startE2EServer(t, fx, "sha256:"+hex.EncodeToString(sum[:]))

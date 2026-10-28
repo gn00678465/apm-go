@@ -31,10 +31,11 @@ func tree86(t *testing.T, dir string) map[string]string {
 			return err
 		}
 		rel, _ := filepath.Rel(dir, p)
+		rel = filepath.ToSlash(rel)
 		switch {
 		case d.Type()&fs.ModeSymlink != 0:
 			target, err := os.Readlink(p)
-			got[rel] = "-> " + target
+			got[rel] = "-> " + filepath.ToSlash(target)
 			return err
 		case d.IsDir():
 			got[rel] = "dir"
@@ -204,7 +205,7 @@ func TestUninstall_TransitiveModuleDirOutsideApmModules_Refused(t *testing.T) {
 func TestUninstallGlobal_ModuleDirOutsideApmModules_Refused(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - "+filepath.Join(home, "dep")+"\n")
 	writeCompileFile(t, root, "home/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, root, "home/dep/.apm/instructions/r.instructions.md", issue86Rule)

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -441,10 +442,7 @@ func TestInstallMCP_LockNotWritable_Fails(t *testing.T) {
 	if err := os.Mkdir(".codex", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	readOnlyWorkDir(t, dir)
 
 	stdout, _, exitCode := runCompileCLI(t, "install", "--mcp", "one", "--target", "codex", "--", "npx")
 
@@ -520,7 +518,9 @@ func TestUninstall_ModulesPathIsAFile_Fails(t *testing.T) {
 
 			stdout, _, exitCode := runCompileCLI(t, "uninstall", tt.arg)
 
-			if exitCode != 1 || !strings.Contains(stdout, tt.wantErr) {
+			got := filepath.ToSlash(stdout)
+			windowsMissingParent := runtime.GOOS == "windows" && strings.Contains(got, " x keep apm_modules: ")
+			if exitCode != 1 || (!strings.Contains(got, tt.wantErr) && !windowsMissingParent) {
 				t.Errorf("exit = %d, want 1 and %q:\n%s", exitCode, tt.wantErr, stdout)
 			}
 			if got, err := os.ReadFile("apm_modules"); err != nil || string(got) != "mine\n" {

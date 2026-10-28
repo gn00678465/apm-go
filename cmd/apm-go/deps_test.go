@@ -107,8 +107,7 @@ func depsWriteFiles(t *testing.T, root string, files ...string) {
 func runDeps(t *testing.T, proj, home string, args ...string) (string, error) {
 	t.Helper()
 	t.Chdir(proj)
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setTestHome(t, home)
 	t.Setenv("COLUMNS", "")
 	t.Setenv("TTY_FORCE", "")
 	var err error

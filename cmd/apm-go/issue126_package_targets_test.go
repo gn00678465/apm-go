@@ -20,8 +20,7 @@ func issue126TargetsProject(t *testing.T, depTail, entryTail string) string {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	home := t.TempDir()
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setTestHome(t, home)
 	dir := chdirTemp(t)
 	writeCompileFile(t, dir, "dep/.apm/agents/dagent.agent.md", "---\nname: dagent\ndescription: d\n---\nD\n")
 	writeCompileFile(t, dir, "dep/.apm/instructions/di.instructions.md", "---\napplyTo: \"**\"\n---\nDI\n")
@@ -216,8 +215,7 @@ func TestUninstall_Issue126_HandOverOnlyToPackageTargets(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	home := t.TempDir()
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setTestHome(t, home)
 	dir := chdirTemp(t)
 	for _, p := range []string{"x", "y"} {
 		writeCompileFile(t, dir, p+"/.apm/agents/shared.agent.md", "---\nname: shared\ndescription: d\n---\nbody from "+p+"\n")

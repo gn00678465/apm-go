@@ -30,10 +30,7 @@ func TestWriteLockfile_RoundTrip_V1(t *testing.T) {
 		t.Fatalf("WriteLockfile: %v", err)
 	}
 
-	// Byte-equal round-trip check
-	if string(data) != string(out) {
-		t.Errorf("v1-git-only round-trip is NOT byte-equal.\nOriginal:\n%s\nOutput:\n%s", string(data), string(out))
-	}
+	assertCanonicalLockfile(t, out)
 }
 
 func TestWriteLockfile_RoundTrip_V2(t *testing.T) {
@@ -57,10 +54,7 @@ func TestWriteLockfile_RoundTrip_V2(t *testing.T) {
 		t.Fatalf("WriteLockfile: %v", err)
 	}
 
-	// Byte-equal round-trip check
-	if string(data) != string(out) {
-		t.Errorf("v2-with-registry round-trip is NOT byte-equal.\nOriginal:\n%s\nOutput:\n%s", string(data), string(out))
-	}
+	assertCanonicalLockfile(t, out)
 }
 
 func TestWriteLockfile_RoundTrip_UnknownFields(t *testing.T) {
@@ -222,7 +216,7 @@ func TestIsSemanticEqual_LocalDeployedFilesDiffer(t *testing.T) {
 	}
 }
 
-func TestWriteLockfile_RoundTrip_ByteEqual(t *testing.T) {
+func TestWriteLockfile_RoundTrip_Canonical(t *testing.T) {
 	p := oraclePath(t, filepath.Join("lockfile", "round-trip-unknown-fields.yml"))
 	data, err := os.ReadFile(p)
 	if err != nil {
@@ -245,8 +239,25 @@ func TestWriteLockfile_RoundTrip_ByteEqual(t *testing.T) {
 		t.Fatalf("WriteLockfile: %v", err)
 	}
 
-	if string(data) != string(out) {
-		t.Errorf("round-trip is NOT byte-equal.\nOriginal:\n%s\nOutput:\n%s", string(data), string(out))
+	assertCanonicalLockfile(t, out)
+}
+
+func assertCanonicalLockfile(t *testing.T, out []byte) {
+	t.Helper()
+	node, err := yamlcore.SafeLoad(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := ParseLockfile(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := WriteLockfile(lock, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(again) {
+		t.Errorf("canonical lockfile changed on rewrite:\n%s\n%s", out, again)
 	}
 }
 

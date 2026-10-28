@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -174,8 +175,9 @@ func TestDoubleSlashPathIsRefused(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			chdirTemp(t)
-			pkg := "/" + filepath.Join(t.TempDir(), "dep")
-			writeTwoSkillDep(t, pkg, strings.Replace(tt.entry, "%s", pkg, 1))
+			actual := filepath.Join(t.TempDir(), "dep")
+			pkg := "//" + strings.TrimPrefix(filepath.ToSlash(actual), "/")
+			writeTwoSkillDep(t, actual, strings.Replace(tt.entry, "%s", pkg, 1))
 			before, err := os.ReadFile("apm.yml")
 			if err != nil {
 				t.Fatal(err)
@@ -231,7 +233,11 @@ func TestRunInstall_PaddedPathEntryIsTheUnpaddedPackage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, pkg := range []string{"dep", "dep "} {
+	packages := []string{"dep"}
+	if runtime.GOOS != "windows" {
+		packages = append(packages, "dep ")
+	}
+	for _, pkg := range packages {
 		writeSkill(pkg, "sk")
 		if err := os.WriteFile(filepath.Join(pkg, "apm.yml"), []byte("name: dep\nversion: 1.0.0\n"), 0o644); err != nil {
 			t.Fatal(err)

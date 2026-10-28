@@ -62,7 +62,7 @@ func reason112(t *testing.T, link, resolved string) string {
 
 func assertShared112(t *testing.T, link, target string) {
 	t.Helper()
-	if got, _ := os.Readlink(link); got != target {
+	if got, _ := os.Readlink(link); filepath.ToSlash(got) != filepath.ToSlash(target) {
 		t.Errorf("%s -> %q, want -> %q", link, got, target)
 	}
 	if got := readText(t, filepath.Join(filepath.Dir(link), target)); got != userShared112 {
@@ -252,7 +252,7 @@ func TestInstallGlobal112(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := project112(t, "claude")
 			home := filepath.Join(root, "home")
-			t.Setenv("HOME", home)
+			setTestHome(t, home)
 			writeCompileFile(t, root, "gitconfig", "")
 			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
 			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -282,7 +282,7 @@ func TestInstallGlobal112(t *testing.T) {
 			} else if want := "   ! [dep] Rejected " + tt.name + " target path: " + reason + "\n"; !strings.Contains(stdout, want) {
 				t.Errorf("stdout:\n%s\nwant it to hold:\n%s", stdout, want)
 			}
-			if got, _ := os.Readlink(link); got != tt.linkTarget {
+			if got, _ := os.Readlink(link); filepath.ToSlash(got) != filepath.ToSlash(tt.linkTarget) {
 				t.Errorf("%s -> %q, want -> %q", tt.link, got, tt.linkTarget)
 			}
 			if got := readText(t, resolved); got != userShared112 {
@@ -361,10 +361,11 @@ func TestUpdateAndFrozen112_RuleRefused(t *testing.T) {
 // subtree112 is the part of a tree86 listing below dir, relative to it.
 func subtree112(tree map[string]string, dir string) map[string]string {
 	out := map[string]string{}
+	dir = filepath.ToSlash(dir)
 	for p, v := range tree {
 		if p == dir {
 			out["."] = v
-		} else if rel, ok := strings.CutPrefix(p, dir+string(filepath.Separator)); ok {
+		} else if rel, ok := strings.CutPrefix(p, dir+"/"); ok {
 			out[rel] = v
 		}
 	}
@@ -379,7 +380,7 @@ func TestInstall112_TransitiveRuleRefused_RemovesFetchedModules(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fresh", true: "transitive already there"}[existing], func(t *testing.T) {
 			t.Setenv("APM_CONFIG_DIR", t.TempDir())
-			t.Setenv("HOME", t.TempDir())
+			setTestHome(t, t.TempDir())
 			checkoutB := issue69Checkout(t, map[string]string{
 				"apm.yml":                             "name: b\nversion: 1.0.0\n",
 				".apm/instructions/r.instructions.md": "---\napplyTo: \"**/*.go\"\n---\nPACKAGE RULE\n",
@@ -466,7 +467,7 @@ func TestInstall112_RejectedAfterInstall_Kept(t *testing.T) {
 					if code != 0 {
 						t.Errorf("exit %d, stdout:\n%s", code, stdout)
 					}
-					if got, _ := os.Readlink(k.link); got != target {
+					if got, _ := os.Readlink(k.link); filepath.ToSlash(got) != filepath.ToSlash(target) {
 						t.Errorf("%s -> %q, want -> %q", k.link, got, target)
 					}
 					if content != "dangling" && readText(t, shared) != sharedBefore {
@@ -508,7 +509,7 @@ func TestInstall112_RejectedAfterInstall_OtherStaleCleaned(t *testing.T) {
 		t.Errorf("exit %d, stdout:\n%s", code, stdout)
 	}
 	assertNoFile(t, ".claude/agents/b.md")
-	if got, _ := os.Readlink(".claude/agents/a.md"); got != target {
+	if got, _ := os.Readlink(".claude/agents/a.md"); filepath.ToSlash(got) != filepath.ToSlash(target) {
 		t.Errorf(".claude/agents/a.md -> %q, want -> %q", got, target)
 	}
 	lock := readText(t, "apm.lock.yaml")
@@ -523,7 +524,7 @@ func TestInstall112_RejectedAfterInstall_OtherStaleCleaned(t *testing.T) {
 func TestInstallGlobal112_RejectedAfterInstall_Kept(t *testing.T) {
 	root := project112(t, "claude")
 	home := filepath.Join(root, "home")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	writeCompileFile(t, root, "gitconfig", "")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -538,7 +539,7 @@ func TestInstallGlobal112_RejectedAfterInstall_Kept(t *testing.T) {
 	if code != 0 || !strings.Contains(stdout, "Rejected agent target path") || strings.Contains(stdout, " i Cleaned") {
 		t.Errorf("exit %d, stdout:\n%s", code, stdout)
 	}
-	if got, _ := os.Readlink(link); got != target {
+	if got, _ := os.Readlink(link); filepath.ToSlash(got) != filepath.ToSlash(target) {
 		t.Errorf("%s -> %q, want -> %q", link, got, target)
 	}
 	if got := readText(t, lockPath); got != lockBefore {
@@ -599,7 +600,7 @@ func TestInstall112_RejectedAfterInstall_OwnerChanged(t *testing.T) {
 				if code != 0 {
 					t.Errorf("exit %d, stdout:\n%s", code, stdout)
 				}
-				if got, _ := os.Readlink(".claude/agents/a.md"); got != target {
+				if got, _ := os.Readlink(".claude/agents/a.md"); filepath.ToSlash(got) != filepath.ToSlash(target) {
 					t.Errorf(".claude/agents/a.md -> %q, want -> %q", got, target)
 				}
 				if readText(t, ".claude/shared/a.md") != sharedBefore {
@@ -670,8 +671,7 @@ func globalOwners112(t *testing.T) string {
 		writeCompileFile(t, root, name+"/.apm/instructions/r.instructions.md", "---\napplyTo: \"**/*.go\"\n---\nRULE "+name+"\n")
 	}
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", filepath.Join(root, "home"))
-	t.Setenv("USERPROFILE", filepath.Join(root, "home"))
+	setTestHome(t, filepath.Join(root, "home"))
 	writeCompileFile(t, root, "gitconfig", "")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -785,7 +785,7 @@ func TestInstallGlobal112_OwnerChanged_UserSymlinkKept(t *testing.T) {
 			if code != 0 || !strings.Contains(stdout, "! [dep-b] Rejected agent target path") {
 				t.Errorf("exit %d, stdout:\n%s", code, stdout)
 			}
-			if got, _ := os.Readlink(filepath.Join(home, ".claude", "agents", "a.md")); got != target {
+			if got, _ := os.Readlink(filepath.Join(home, ".claude", "agents", "a.md")); filepath.ToSlash(got) != filepath.ToSlash(target) {
 				t.Errorf(".claude/agents/a.md -> %q, want -> %q", got, target)
 			}
 			if readText(t, filepath.Join(home, ".claude", "shared", "a.md")) != shared {

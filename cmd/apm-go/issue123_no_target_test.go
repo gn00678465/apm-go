@@ -17,7 +17,7 @@ func TestMCPOnlyProjectWithNoTarget(t *testing.T) {
 			t.Run(section+"/"+strings.Join(args, " "), func(t *testing.T) {
 				dir := t.TempDir()
 				t.Chdir(dir)
-				t.Setenv("HOME", t.TempDir())
+				setTestHome(t, t.TempDir())
 				manifest := "name: p\nversion: 1.0.0\n" + section + ":\n  mcp:\n  - name: s1\n    registry: false\n    transport: stdio\n    command: echo\n"
 				if err := os.WriteFile("apm.yml", []byte(manifest), 0o644); err != nil {
 					t.Fatal(err)

@@ -72,7 +72,7 @@ func TestInstall_ShadowedRegistryServerIsNotLookedUp(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := chdirTemp(t)
-			t.Setenv("HOME", t.TempDir())
+			setTestHome(t, t.TempDir())
 			t.Setenv("MCP_REGISTRY_ALLOW_HTTP", c.allow)
 			for rel, content := range c.files {
 				writeCompileFile(t, dir, rel, content)
@@ -121,7 +121,7 @@ func TestFrozenInstall_RegistryFailsInTheDeployInPlace(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("MCP_REGISTRY_URL", srv.URL)
 	t.Setenv("MCP_REGISTRY_ALLOW_HTTP", "1")
 	writeCompileFile(t, dir, "apm.yml", "name: p\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  mcp:\n  - name: io.example/demo\n")
