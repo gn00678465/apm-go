@@ -8,6 +8,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/apm-go/apm/internal/manifest"
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -66,7 +67,7 @@ func (e *winError) Error() string {
 // English text with its dot, which differs on a system in another language.
 func winMessage(code syscall.Errno) string {
 	buf := make([]uint16, 1<<15-1)
-	n, err := syscall.FormatMessage(syscall.FORMAT_MESSAGE_FROM_SYSTEM|syscall.FORMAT_MESSAGE_IGNORE_INSERTS, 0, uint32(code), langSystemDefault, buf, nil)
+	n, err := windows.FormatMessage(windows.FORMAT_MESSAGE_FROM_SYSTEM|windows.FORMAT_MESSAGE_IGNORE_INSERTS, 0, uint32(code), langSystemDefault, buf, nil)
 	if err != nil || n == 0 {
 		return fmt.Sprintf("Windows Error 0x%x", uint32(code))
 	}
