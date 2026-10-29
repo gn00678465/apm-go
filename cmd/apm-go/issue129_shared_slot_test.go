@@ -190,7 +190,7 @@ func TestUninstall_SharedLocalSlot_SourceNotAPackage(t *testing.T) {
 // stages it beside the package directories and refreshes the directory.
 func TestUninstall_SharedLocalSlot_AliasLocal(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	setTestHome(t, filepath.Join(root, "home"))
 	proj := filepath.Join(root, "proj")
 	writeCompileFile(t, proj, "a/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, proj, "a/dep/.apm/skills/sa/SKILL.md", sharedSkillA)
@@ -237,7 +237,7 @@ func TestUninstall_SharedLocalSlot_ActivationFailureRollsBack(t *testing.T) {
 		t.Skip("needs a directory the process cannot write")
 	}
 	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	setTestHome(t, filepath.Join(root, "home"))
 	proj := filepath.Join(root, "proj")
 	manifest := "name: proj\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n"
 	lock := "lockfile_version: '1'\ndependencies:\n"
@@ -286,7 +286,7 @@ func TestUninstallGlobal_SharedLocalSlot_RedeploysSurvivor(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	chdirTemp(t)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	oldDir, oldDeploy := globalDirOverride, globalDeployDirOverride
 	globalDirOverride, globalDeployDirOverride = filepath.Join(home, ".apm"), home
 	t.Cleanup(func() { globalDirOverride, globalDeployDirOverride = oldDir, oldDeploy })

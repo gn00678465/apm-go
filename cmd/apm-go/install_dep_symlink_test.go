@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -180,7 +181,12 @@ func assertFailsBeforeWriting(t *testing.T, root, wantLine string, args ...strin
 		t.Errorf("exit code %d, want 1\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
-	if got := lines[len(lines)-1]; got != wantLine {
+	if runtime.GOOS == "windows" {
+		wantLine = strings.ReplaceAll(wantLine, "no such file or directory", "The system cannot find the file specified.")
+		wantLine = strings.ReplaceAll(wantLine, "symlink .apm/agents/a.agent.md is a symlink loop", "symlink .apm/agents/a.agent.md -> b.agent.md does not resolve: EvalSymlinks: too many links")
+		wantLine = strings.ReplaceAll(wantLine, "symlink skills/s/SKILL.md is a symlink loop", "symlink skills/s/SKILL.md -> other.md does not resolve: EvalSymlinks: too many links")
+	}
+	if got := lines[len(lines)-1]; filepath.ToSlash(got) != filepath.ToSlash(wantLine) {
 		t.Errorf("last line\n got %q\nwant %q\nstdout:\n%s", got, wantLine, stdout)
 	}
 	if stderr != "" {
@@ -455,7 +461,7 @@ func symlinkDepGlobalIn(t *testing.T, dir string) string {
 	if err := os.MkdirAll(filepath.Join(home, ".apm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	return home
 }
 
@@ -853,6 +859,9 @@ func TestInstall_DependencyManifestSymlinkIntoCheckout(t *testing.T) {
 // symlink leads there through <project>/clone, made as soon as the
 // temporary directory appears, while git is still cloning.
 func TestInstall_SubdirectoryAbsoluteSymlinkWithRelativeTMPDIR(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not use TMPDIR for os.TempDir")
+	}
 	dir := symlinkDepProject(t)
 	if err := os.Mkdir("tmp", 0o755); err != nil {
 		t.Fatal(err)

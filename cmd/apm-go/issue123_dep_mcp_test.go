@@ -50,7 +50,7 @@ mcp_config_provenance:
 func writeI30Project(t *testing.T, rootMCP string) {
 	t.Helper()
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	writeCompileFile(t, dir, "pkg/apm.yml", "name: pkg\nversion: 1.0.0\ndependencies:\n  mcp:\n    - name: depsrv\n      registry: false\n      transport: stdio\n      command: echo\n      args: [hi]\n      env:\n        B: \"2\"\n        A: \"1\"\n")
 	writeCompileFile(t, dir, "apm.yml", "name: p\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  apm:\n    - ./pkg\n"+rootMCP)
 	if err := os.MkdirAll(".claude", 0o755); err != nil {

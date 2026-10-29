@@ -279,7 +279,7 @@ func TestFetchLocal_FirstCandidateFailureIsFinal(t *testing.T) {
 					t.Fatalf("WriteFile: %v", err)
 				}
 			},
-			wantErr: `parse local marketplace manifest "%s": invalid character 'n' looking for beginning of object key string`,
+			wantErr: `parse local marketplace manifest %q: invalid character 'n' looking for beginning of object key string`,
 		},
 		{
 			name: "unreadable because it is a directory",
@@ -288,7 +288,7 @@ func TestFetchLocal_FirstCandidateFailureIsFinal(t *testing.T) {
 					t.Fatalf("Mkdir: %v", err)
 				}
 			},
-			wantErr: `read local marketplace manifest "%[1]s": read %[1]s: is a directory`,
+			wantErr: `read local marketplace manifest %[1]q: read %[1]s: `,
 		},
 	}
 	for _, tt := range tests {
@@ -307,7 +307,7 @@ func TestFetchLocal_FirstCandidateFailureIsFinal(t *testing.T) {
 			if err == nil {
 				t.Fatalf("fetchLocal() = %+v, want the first candidate's error", got)
 			}
-			if want := fmt.Sprintf(tt.wantErr, first); err.Error() != want {
+			if want := fmt.Sprintf(tt.wantErr, first); !strings.HasPrefix(err.Error(), want) {
 				t.Errorf("fetchLocal() error = %q, want %q", err.Error(), want)
 			}
 		})

@@ -70,7 +70,7 @@ func newRefreshState(t *testing.T, global, alias bool) *refreshState {
 	t.Helper()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("APM_CONFIG_DIR", filepath.Join(root, "config"))
 	s := &refreshState{deployRoot: filepath.Join(root, "proj"), global: global}
 	s.manifestDir = s.deployRoot

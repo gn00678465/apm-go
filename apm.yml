@@ -1,0 +1,26 @@
+name: apm-go
+version: 1.0.0
+description: APM project for apm-go
+author: Madao
+# Which agent platforms to deploy to.
+# Resolution order: --target flag > this field > auto-detect from filesystem.
+# Accepted values: agent-skills, antigravity, claude, codex, copilot, cursor, gemini, grok-build, hermes, kiro, opencode, vscode, windsurf
+targets:
+  - claude
+  - codex
+dependencies:
+  apm:
+    - git: https://github.com/samber/cc-skills-golang
+      skills:
+        - golang-cli
+        - golang-code-style
+        - golang-concurrency
+        - golang-error-handling
+        - golang-lint
+        - golang-safety
+        - golang-spf13-cobra
+        - golang-testing
+        - golang-troubleshooting
+  mcp: []
+includes: auto
+scripts: {}

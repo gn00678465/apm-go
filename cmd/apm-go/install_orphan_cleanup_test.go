@@ -344,7 +344,7 @@ func TestInstall_OrphanCleanup_LeavesPathOfUnknownTarget(t *testing.T) {
 // A transitive package is an orphan once its parent stops declaring it.
 func TestInstall_OrphanCleanup_RemovesFilesOfTransitivePackageNoLongerDeclared(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	checkoutA := issue69Checkout(t, map[string]string{
 		"apm.yml":                             "name: a\nversion: 1.0.0\ndependencies:\n  apm:\n    - git: acme/d\n      ref: main\n",
 		".apm/instructions/a.instructions.md": "---\ndescription: a\n---\nrule a\n",
@@ -456,6 +456,9 @@ func unreadableDir(t *testing.T, rel string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("directory remains readable after chmod")
+	}
 }
 
 // review-step9 compare-skill: a file that cannot be removed or read is still

@@ -161,13 +161,14 @@ func TestParseManifest_InvalidRegistriesTypo(t *testing.T) {
 	}
 }
 
-func TestParseManifest_InvalidLocalpathEscape(t *testing.T) {
-	_, _, err := loadFixture(t, filepath.Join("manifest", "invalid-localpath-escape.yml"))
-	if err == nil {
-		t.Fatal("expected error, got nil")
+func TestParseManifest_LocalPathAboveProject(t *testing.T) {
+	node, err := yamlcore.SafeLoad([]byte("name: p\nversion: '1.0.0'\ndependencies:\n  apm:\n    - ../../../etc/passwd\n"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "escape") {
-		t.Errorf("error %q should mention escape", err.Error())
+	m, _, err := ParseManifest(node)
+	if err != nil || len(m.ParsedDeps) != 1 || !m.ParsedDeps[0].IsLocal {
+		t.Fatalf("ParseManifest = %+v, %v; want one local dependency", m, err)
 	}
 }
 

@@ -384,7 +384,7 @@ func TestInstall_StaleMCP_InvalidConfigFailsWithoutLockWrite(t *testing.T) {
 		t.Fatalf("install succeeded:\n%s", out)
 	}
 	wantPrefix := "MCP cleanup failed for Codex CLI config: existing .codex/config.toml is not valid, refusing to overwrite: "
-	if !strings.HasPrefix(err.Error(), wantPrefix) || !strings.HasSuffix(err.Error(), ". Check the config path and permissions, then retry.") {
+	if !strings.HasPrefix(filepath.ToSlash(err.Error()), wantPrefix) || !strings.HasSuffix(err.Error(), ". Check the config path and permissions, then retry.") {
 		t.Errorf("error = %q", err)
 	}
 	if exitCodeOf(err) != 1 {
@@ -476,7 +476,7 @@ func TestInstall_StaleMCP_DeclaredServerWithOneFailedTargetIsKept(t *testing.T) 
 		" + All servers up to date\n" +
 		"\n" +
 		" i No changes -- install state already up to date in Ns.\n"
-	if out != want {
+	if filepath.ToSlash(out) != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
 	const lock = `lockfile_version: '1'

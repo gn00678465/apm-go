@@ -155,7 +155,7 @@ func global86(t *testing.T, files map[string]string) (root, home string) {
 	t.Helper()
 	root = t.TempDir()
 	home = filepath.Join(root, "home")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - "+filepath.Join(home, "dep")+"\n")
 	writeCompileFile(t, root, "home/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	for rel, content := range files {
@@ -385,7 +385,7 @@ func TestInstall_DestinationLinksOutside_NotWritten(t *testing.T) {
 					t.Errorf("exit %d, stdout:\n%s\nwant exit %d, stdout:\n%s", code, stdout, tt.code, want)
 				}
 				if tt.code == 0 {
-					before[filepath.Join("proj", dest)] = "precious\n"
+					before[filepath.ToSlash(filepath.Join("proj", dest))] = "precious\n"
 				}
 				assertTree86(t, root, before)
 				if got := readText(t, "apm.lock.yaml"); got != lockBefore {

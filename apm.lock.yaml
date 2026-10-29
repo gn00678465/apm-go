@@ -1,17 +1,1895 @@
 lockfile_version: '1'
-generated_at: '2026-06-26T21:43:21.580577+00:00'
-dependencies: []
+apm_version: 0.4.3
+dependencies:
+- repo_url: samber/cc-skills-golang
+  name: cc-skills-golang
+  host: github.com
+  resolved_commit: 246b6c4c1ab3077dee114beb9ade3bb0527dfebc
+  version: 2.0.1
+  package_type: skill_bundle
+  deployed_files:
+  - .agents/skills/golang-cli
+  - .agents/skills/golang-cli/SKILL.md
+  - .agents/skills/golang-cli/assets/examples/args.go
+  - .agents/skills/golang-cli/assets/examples/cli_test.go
+  - .agents/skills/golang-cli/assets/examples/completion.go
+  - .agents/skills/golang-cli/assets/examples/config.go
+  - .agents/skills/golang-cli/assets/examples/exit_codes.go
+  - .agents/skills/golang-cli/assets/examples/flags.go
+  - .agents/skills/golang-cli/assets/examples/go.mod
+  - .agents/skills/golang-cli/assets/examples/main.go
+  - .agents/skills/golang-cli/assets/examples/output.go
+  - .agents/skills/golang-cli/assets/examples/root.go
+  - .agents/skills/golang-cli/assets/examples/serve.go
+  - .agents/skills/golang-cli/assets/examples/signal.go
+  - .agents/skills/golang-cli/assets/examples/version.go
+  - .agents/skills/golang-cli/evals/evals.json
+  - .agents/skills/golang-code-style
+  - .agents/skills/golang-code-style/SKILL.md
+  - .agents/skills/golang-code-style/evals/evals.json
+  - .agents/skills/golang-code-style/references/details.md
+  - .agents/skills/golang-concurrency
+  - .agents/skills/golang-concurrency/SKILL.md
+  - .agents/skills/golang-concurrency/evals/evals.json
+  - .agents/skills/golang-concurrency/references/channels-and-select.md
+  - .agents/skills/golang-concurrency/references/pipelines.md
+  - .agents/skills/golang-concurrency/references/sync-primitives.md
+  - .agents/skills/golang-error-handling
+  - .agents/skills/golang-error-handling/SKILL.md
+  - .agents/skills/golang-error-handling/evals/evals.json
+  - .agents/skills/golang-error-handling/references/error-creation.md
+  - .agents/skills/golang-error-handling/references/error-handling.md
+  - .agents/skills/golang-error-handling/references/error-wrapping.md
+  - .agents/skills/golang-lint
+  - .agents/skills/golang-lint/SKILL.md
+  - .agents/skills/golang-lint/assets/.golangci.yml
+  - .agents/skills/golang-lint/evals/evals.json
+  - .agents/skills/golang-lint/references/linter-reference.md
+  - .agents/skills/golang-lint/references/nolint-directives.md
+  - .agents/skills/golang-safety
+  - .agents/skills/golang-safety/SKILL.md
+  - .agents/skills/golang-safety/evals/evals.json
+  - .agents/skills/golang-safety/references/nil-safety.md
+  - .agents/skills/golang-safety/references/slice-map-safety.md
+  - .agents/skills/golang-spf13-cobra
+  - .agents/skills/golang-spf13-cobra/SKILL.md
+  - .agents/skills/golang-spf13-cobra/evals/evals.json
+  - .agents/skills/golang-spf13-cobra/references/commands-and-args.md
+  - .agents/skills/golang-spf13-cobra/references/completions.md
+  - .agents/skills/golang-spf13-cobra/references/flags.md
+  - .agents/skills/golang-spf13-cobra/references/generators.md
+  - .agents/skills/golang-spf13-cobra/references/testing.md
+  - .agents/skills/golang-testing
+  - .agents/skills/golang-testing/SKILL.md
+  - .agents/skills/golang-testing/evals/evals.json
+  - .agents/skills/golang-testing/references/benchmarks.md
+  - .agents/skills/golang-testing/references/coverage.md
+  - .agents/skills/golang-testing/references/examples.md
+  - .agents/skills/golang-testing/references/helpers.md
+  - .agents/skills/golang-testing/references/http-testing.md
+  - .agents/skills/golang-testing/references/integration-testing.md
+  - .agents/skills/golang-testing/references/mocking.md
+  - .agents/skills/golang-troubleshooting
+  - .agents/skills/golang-troubleshooting/SKILL.md
+  - .agents/skills/golang-troubleshooting/evals/evals.json
+  - .agents/skills/golang-troubleshooting/references/code-review-flags.md
+  - .agents/skills/golang-troubleshooting/references/common-go-bugs.md
+  - .agents/skills/golang-troubleshooting/references/compilation.md
+  - .agents/skills/golang-troubleshooting/references/concurrency-debug.md
+  - .agents/skills/golang-troubleshooting/references/diagnostic-tools.md
+  - .agents/skills/golang-troubleshooting/references/methodology.md
+  - .agents/skills/golang-troubleshooting/references/performance-debug.md
+  - .agents/skills/golang-troubleshooting/references/pprof.md
+  - .agents/skills/golang-troubleshooting/references/production-debug.md
+  - .agents/skills/golang-troubleshooting/references/testing-debug.md
+  - .claude/skills/golang-cli
+  - .claude/skills/golang-cli/SKILL.md
+  - .claude/skills/golang-cli/assets/examples/args.go
+  - .claude/skills/golang-cli/assets/examples/cli_test.go
+  - .claude/skills/golang-cli/assets/examples/completion.go
+  - .claude/skills/golang-cli/assets/examples/config.go
+  - .claude/skills/golang-cli/assets/examples/exit_codes.go
+  - .claude/skills/golang-cli/assets/examples/flags.go
+  - .claude/skills/golang-cli/assets/examples/go.mod
+  - .claude/skills/golang-cli/assets/examples/main.go
+  - .claude/skills/golang-cli/assets/examples/output.go
+  - .claude/skills/golang-cli/assets/examples/root.go
+  - .claude/skills/golang-cli/assets/examples/serve.go
+  - .claude/skills/golang-cli/assets/examples/signal.go
+  - .claude/skills/golang-cli/assets/examples/version.go
+  - .claude/skills/golang-cli/evals/evals.json
+  - .claude/skills/golang-code-style
+  - .claude/skills/golang-code-style/SKILL.md
+  - .claude/skills/golang-code-style/evals/evals.json
+  - .claude/skills/golang-code-style/references/details.md
+  - .claude/skills/golang-concurrency
+  - .claude/skills/golang-concurrency/SKILL.md
+  - .claude/skills/golang-concurrency/evals/evals.json
+  - .claude/skills/golang-concurrency/references/channels-and-select.md
+  - .claude/skills/golang-concurrency/references/pipelines.md
+  - .claude/skills/golang-concurrency/references/sync-primitives.md
+  - .claude/skills/golang-error-handling
+  - .claude/skills/golang-error-handling/SKILL.md
+  - .claude/skills/golang-error-handling/evals/evals.json
+  - .claude/skills/golang-error-handling/references/error-creation.md
+  - .claude/skills/golang-error-handling/references/error-handling.md
+  - .claude/skills/golang-error-handling/references/error-wrapping.md
+  - .claude/skills/golang-lint
+  - .claude/skills/golang-lint/SKILL.md
+  - .claude/skills/golang-lint/assets/.golangci.yml
+  - .claude/skills/golang-lint/evals/evals.json
+  - .claude/skills/golang-lint/references/linter-reference.md
+  - .claude/skills/golang-lint/references/nolint-directives.md
+  - .claude/skills/golang-safety
+  - .claude/skills/golang-safety/SKILL.md
+  - .claude/skills/golang-safety/evals/evals.json
+  - .claude/skills/golang-safety/references/nil-safety.md
+  - .claude/skills/golang-safety/references/slice-map-safety.md
+  - .claude/skills/golang-spf13-cobra
+  - .claude/skills/golang-spf13-cobra/SKILL.md
+  - .claude/skills/golang-spf13-cobra/evals/evals.json
+  - .claude/skills/golang-spf13-cobra/references/commands-and-args.md
+  - .claude/skills/golang-spf13-cobra/references/completions.md
+  - .claude/skills/golang-spf13-cobra/references/flags.md
+  - .claude/skills/golang-spf13-cobra/references/generators.md
+  - .claude/skills/golang-spf13-cobra/references/testing.md
+  - .claude/skills/golang-testing
+  - .claude/skills/golang-testing/SKILL.md
+  - .claude/skills/golang-testing/evals/evals.json
+  - .claude/skills/golang-testing/references/benchmarks.md
+  - .claude/skills/golang-testing/references/coverage.md
+  - .claude/skills/golang-testing/references/examples.md
+  - .claude/skills/golang-testing/references/helpers.md
+  - .claude/skills/golang-testing/references/http-testing.md
+  - .claude/skills/golang-testing/references/integration-testing.md
+  - .claude/skills/golang-testing/references/mocking.md
+  - .claude/skills/golang-troubleshooting
+  - .claude/skills/golang-troubleshooting/SKILL.md
+  - .claude/skills/golang-troubleshooting/evals/evals.json
+  - .claude/skills/golang-troubleshooting/references/code-review-flags.md
+  - .claude/skills/golang-troubleshooting/references/common-go-bugs.md
+  - .claude/skills/golang-troubleshooting/references/compilation.md
+  - .claude/skills/golang-troubleshooting/references/concurrency-debug.md
+  - .claude/skills/golang-troubleshooting/references/diagnostic-tools.md
+  - .claude/skills/golang-troubleshooting/references/methodology.md
+  - .claude/skills/golang-troubleshooting/references/performance-debug.md
+  - .claude/skills/golang-troubleshooting/references/pprof.md
+  - .claude/skills/golang-troubleshooting/references/production-debug.md
+  - .claude/skills/golang-troubleshooting/references/testing-debug.md
+  deployed_file_hashes:
+    .agents/skills/golang-cli/SKILL.md: sha256:da9eef3871a94cccbcbab77c2b3a5990e7fe00d9434f3728cb427e520ae77311
+    .agents/skills/golang-cli/assets/examples/args.go: sha256:024d75e8fcb55ce84930b2e07b7f464d8f9eb2b55f47eb0cd6b1abb6e9bb3ae9
+    .agents/skills/golang-cli/assets/examples/cli_test.go: sha256:0086d4f0f075744519d2366c87fc90e5a7c1739b6bfa5b5dc430d5f79bfd6226
+    .agents/skills/golang-cli/assets/examples/completion.go: sha256:3e91ac78c36d706bb6db5b6395f62f08c5176460de1d52870a11b5753fda3b1e
+    .agents/skills/golang-cli/assets/examples/config.go: sha256:24f6c7653b90b141c8f1dec2be9c4b22198fd3d66de9cd2d64dc73ddf40954a4
+    .agents/skills/golang-cli/assets/examples/exit_codes.go: sha256:27d02ca34c939fe7c7c1f663c9a6bddfb6c3dd5eabc68890f72ff32e2a085965
+    .agents/skills/golang-cli/assets/examples/flags.go: sha256:d8a7164364e6a4d69c5eb57fe866d6793f41d8b8c6f09d2e2df1b2140083e038
+    .agents/skills/golang-cli/assets/examples/go.mod: sha256:fd364ee1dbc1fa462527ad9e8bb061d58ebdf7da73c20d04472977bea3ffc63a
+    .agents/skills/golang-cli/assets/examples/main.go: sha256:f529e3cfddb3915dffb882bc0f7f63cd5e0cc60a18cb4c8b92359b5f069a4dd1
+    .agents/skills/golang-cli/assets/examples/output.go: sha256:1520680bb6fe50cc3f95bd8b6237fa53a4bba5ef334e46424d1aaecd2f5bdb30
+    .agents/skills/golang-cli/assets/examples/root.go: sha256:fe6429593d1a91c9c0d729719e9a0eda4cb661815cccd713c7c5918e7abafe47
+    .agents/skills/golang-cli/assets/examples/serve.go: sha256:0b8c5253a1cd6e6c14875d640c2f7aadb9c3ad1b9cb213ff5d6845f595ad07aa
+    .agents/skills/golang-cli/assets/examples/signal.go: sha256:620e92cdf1a0c21f6fbd6a5d2786bc599d8b957a47ae68ba25af81f5f3f693c0
+    .agents/skills/golang-cli/assets/examples/version.go: sha256:660668240b0eebb5f7f506f2446ea357b6bfdf15f3842d7c7aa0b1db4b83fda6
+    .agents/skills/golang-cli/evals/evals.json: sha256:b2a08339a212d386e4743db83335030f98c13c73fd1dd201544d78918d662acf
+    .agents/skills/golang-code-style/SKILL.md: sha256:1c53d6b8405fc2992b92524d4782c826845916d64f90a5af483b9401865b9a76
+    .agents/skills/golang-code-style/evals/evals.json: sha256:a439625516667ab0e60e58003294da3c0cf5a579d1c4741c5b5a57514ec35356
+    .agents/skills/golang-code-style/references/details.md: sha256:3969d18fb54e59c032de0463b44b6b5bd125dfe8b726ef0f009190da81f3df07
+    .agents/skills/golang-concurrency/SKILL.md: sha256:b56255b765a50c1052c5d71cd60ddb1c2ef643ce3b447aa195ba81f31d10bd1c
+    .agents/skills/golang-concurrency/evals/evals.json: sha256:045fcac623f3549608df0409edfd7863e9580249ae447499266e3a3d96798959
+    .agents/skills/golang-concurrency/references/channels-and-select.md: sha256:3435dee63817a2829b48fbfbaebe25bbb448008d4d06e0e739c2f070b78328ab
+    .agents/skills/golang-concurrency/references/pipelines.md: sha256:c1b3f3dc4273370c61631328de11ec19b2fa1000c22ddff50d06bca059dd5d70
+    .agents/skills/golang-concurrency/references/sync-primitives.md: sha256:f54e4343942feef72b2f371e5b67156469f82fd2ea0e4f2634c957530926d6de
+    .agents/skills/golang-error-handling/SKILL.md: sha256:536c25e624c3cf3def98962d9f89db07b258cde6c9e7fd17009a9eb204ba631f
+    .agents/skills/golang-error-handling/evals/evals.json: sha256:a7b58b4f717745e606b067c1f65c93db55182b4a561b8ffa43158a7f64515fa7
+    .agents/skills/golang-error-handling/references/error-creation.md: sha256:8a5bda5a543ef7774ddc240cd198d34871222ed0335474df599d162f09d253c2
+    .agents/skills/golang-error-handling/references/error-handling.md: sha256:ab9c510305a1fe043502a04fe935f16dac2f95c585820ae9f0568afb2a56d357
+    .agents/skills/golang-error-handling/references/error-wrapping.md: sha256:6293caf2c41eef243dffbc2dbd17d045770f9a04e8ce910c4452b3d2b6abce06
+    .agents/skills/golang-lint/SKILL.md: sha256:45e510222626ab4367e7831dcef2560c9c54a7f489ec4219eec89f4fdc4e6930
+    .agents/skills/golang-lint/assets/.golangci.yml: sha256:ad4284596f57d66bcdbc92687011a4dce1699cc684283eb172cd3dd91047646e
+    .agents/skills/golang-lint/evals/evals.json: sha256:b075c4894cb663b067b5cfeaf5525ed49af1dffda24b36c458d09c2f40ffb90a
+    .agents/skills/golang-lint/references/linter-reference.md: sha256:0858adf98ca9cdcd8f614176008a58098a267bdbc4a5de976d7180e8a11e4f18
+    .agents/skills/golang-lint/references/nolint-directives.md: sha256:be12adeb536e134398243b8cee0433eb27fefabae3f13092b826198c5e461067
+    .agents/skills/golang-safety/SKILL.md: sha256:a9bce4568ba98ae804505d6b1d6fbe0376fe7afdc9f30051bfc03f898e26d50e
+    .agents/skills/golang-safety/evals/evals.json: sha256:8db07dd44d2c2b4cca7eba15f135bc6858fbbe91c3f805e6c9a8602e06f0e17c
+    .agents/skills/golang-safety/references/nil-safety.md: sha256:2f0bcabb4184c1b88e36bab8a3f90e57887d3a95a15f66a2123445025c91dec7
+    .agents/skills/golang-safety/references/slice-map-safety.md: sha256:9b048bc51d5153bd554eed7eab6685423b9ad7159462313b0fd6a1294596d86d
+    .agents/skills/golang-spf13-cobra/SKILL.md: sha256:f77b93e6f14c3c0f4b168bb97c617d2866064964c2909c2cd817181190fe51ff
+    .agents/skills/golang-spf13-cobra/evals/evals.json: sha256:6ba662758249b83bcfc9f66adfaa780651c7913400aef51839b2f0afaf00b38c
+    .agents/skills/golang-spf13-cobra/references/commands-and-args.md: sha256:9c26741d541b348e7bc55924ca19b6bc731dc35933382c84a0540399264e6e15
+    .agents/skills/golang-spf13-cobra/references/completions.md: sha256:e8bcf042bfe2d42a35f64641002067662d5bb23c3df7f7122b29cf49ed413ad9
+    .agents/skills/golang-spf13-cobra/references/flags.md: sha256:fe46534071b49143b4322987b78d7e791fcf12fbb4d0b31fa5c3323e6df4757a
+    .agents/skills/golang-spf13-cobra/references/generators.md: sha256:73cfbec7069ee03e0da19c157753633ceae816a49191c775586b4366c6199b58
+    .agents/skills/golang-spf13-cobra/references/testing.md: sha256:059ca04ad1b772daa41eb4f0446a17e3c65d1b2db54789bbd0d6dabcd8681f50
+    .agents/skills/golang-testing/SKILL.md: sha256:55eea3ed4536df0c95fc1247382d3027d45b1d1af0a94fc9de653debae5df0f2
+    .agents/skills/golang-testing/evals/evals.json: sha256:bc083e8d62ff1c23d9cd734f274a5733cfc0d30bb6356e03668dd3c67ff7c92e
+    .agents/skills/golang-testing/references/benchmarks.md: sha256:f9de0e2e50cbb8e28684da1f99ff15fa84779150b4a8deefdf97ea3345c871f1
+    .agents/skills/golang-testing/references/coverage.md: sha256:b2f7af52412b084cf353ff493941ad43276cae9d197470db2287b5d2c5a1aebf
+    .agents/skills/golang-testing/references/examples.md: sha256:40c070f0a83898edbc0c87c034fc2281d9c2b04e0514c94aa1ff07b802b575c5
+    .agents/skills/golang-testing/references/helpers.md: sha256:8c71d253a246e66b8249022c96d7e8892f5bfc2156b02a36673c321db2c843f4
+    .agents/skills/golang-testing/references/http-testing.md: sha256:39381274d7887651b86bde513085835f52860aa0832eb6f945f79c008f240e0f
+    .agents/skills/golang-testing/references/integration-testing.md: sha256:a29e725c58a1c2feaf16470db7eb4f8394aa36a476df92a792ac026c950d0b85
+    .agents/skills/golang-testing/references/mocking.md: sha256:65558f907dea483831aea4aca50b1d6f1b64f92803bc2446f6a550a6d6c5c33a
+    .agents/skills/golang-troubleshooting/SKILL.md: sha256:a94def5ae84dd581536e5fdd64b1c22bd7f9683f3173d638830edb60697aa8e8
+    .agents/skills/golang-troubleshooting/evals/evals.json: sha256:a15b4ce5f5f0d4d2fe0590ba2207e13e2f23bba4e11d1743bd89ddda87146dde
+    .agents/skills/golang-troubleshooting/references/code-review-flags.md: sha256:577b683e055c3880fa7233e24f19cddbd4aa65731be72d50211d873e202bfc43
+    .agents/skills/golang-troubleshooting/references/common-go-bugs.md: sha256:311375f50e79bfc63d48e06565b784fba060609a0bc787f6e106eb1f48fa6fbc
+    .agents/skills/golang-troubleshooting/references/compilation.md: sha256:b6ecaf7c6f4e2f4635e3c90d02d2cd55fe150c9826f77061a70a03e39ea669ec
+    .agents/skills/golang-troubleshooting/references/concurrency-debug.md: sha256:7fef337f937d182314200c3f40b38b3954214df190b1b9dccbdd129f22986d2f
+    .agents/skills/golang-troubleshooting/references/diagnostic-tools.md: sha256:36169dd6972e2e7230d55e8bbf760a6d51f93cc36811d9d80ab94539746d38df
+    .agents/skills/golang-troubleshooting/references/methodology.md: sha256:2e90eb15812661d06f3c90d5f9c697a3ca292a6667e574a07479626b90c9d48e
+    .agents/skills/golang-troubleshooting/references/performance-debug.md: sha256:c26e03f1985b156876f31bad0f7541da13d6968b622a24c26bb7565b30305e62
+    .agents/skills/golang-troubleshooting/references/pprof.md: sha256:039fa03a054737439e69e59d4ebf62c87e711e47c2698941c30bd73890aec5bf
+    .agents/skills/golang-troubleshooting/references/production-debug.md: sha256:6bbb0e2f3f249bd9a350f6c1f50b48a4d3d93fee9b1de9f2fb4f6ba8bf739f03
+    .agents/skills/golang-troubleshooting/references/testing-debug.md: sha256:6e499a4f8a96eddb9314ec396e1cb8bf98457085845acb6ab327c49e39f9d34a
+    .claude/skills/golang-cli/SKILL.md: sha256:da9eef3871a94cccbcbab77c2b3a5990e7fe00d9434f3728cb427e520ae77311
+    .claude/skills/golang-cli/assets/examples/args.go: sha256:024d75e8fcb55ce84930b2e07b7f464d8f9eb2b55f47eb0cd6b1abb6e9bb3ae9
+    .claude/skills/golang-cli/assets/examples/cli_test.go: sha256:0086d4f0f075744519d2366c87fc90e5a7c1739b6bfa5b5dc430d5f79bfd6226
+    .claude/skills/golang-cli/assets/examples/completion.go: sha256:3e91ac78c36d706bb6db5b6395f62f08c5176460de1d52870a11b5753fda3b1e
+    .claude/skills/golang-cli/assets/examples/config.go: sha256:24f6c7653b90b141c8f1dec2be9c4b22198fd3d66de9cd2d64dc73ddf40954a4
+    .claude/skills/golang-cli/assets/examples/exit_codes.go: sha256:27d02ca34c939fe7c7c1f663c9a6bddfb6c3dd5eabc68890f72ff32e2a085965
+    .claude/skills/golang-cli/assets/examples/flags.go: sha256:d8a7164364e6a4d69c5eb57fe866d6793f41d8b8c6f09d2e2df1b2140083e038
+    .claude/skills/golang-cli/assets/examples/go.mod: sha256:fd364ee1dbc1fa462527ad9e8bb061d58ebdf7da73c20d04472977bea3ffc63a
+    .claude/skills/golang-cli/assets/examples/main.go: sha256:f529e3cfddb3915dffb882bc0f7f63cd5e0cc60a18cb4c8b92359b5f069a4dd1
+    .claude/skills/golang-cli/assets/examples/output.go: sha256:1520680bb6fe50cc3f95bd8b6237fa53a4bba5ef334e46424d1aaecd2f5bdb30
+    .claude/skills/golang-cli/assets/examples/root.go: sha256:fe6429593d1a91c9c0d729719e9a0eda4cb661815cccd713c7c5918e7abafe47
+    .claude/skills/golang-cli/assets/examples/serve.go: sha256:0b8c5253a1cd6e6c14875d640c2f7aadb9c3ad1b9cb213ff5d6845f595ad07aa
+    .claude/skills/golang-cli/assets/examples/signal.go: sha256:620e92cdf1a0c21f6fbd6a5d2786bc599d8b957a47ae68ba25af81f5f3f693c0
+    .claude/skills/golang-cli/assets/examples/version.go: sha256:660668240b0eebb5f7f506f2446ea357b6bfdf15f3842d7c7aa0b1db4b83fda6
+    .claude/skills/golang-cli/evals/evals.json: sha256:b2a08339a212d386e4743db83335030f98c13c73fd1dd201544d78918d662acf
+    .claude/skills/golang-code-style/SKILL.md: sha256:1c53d6b8405fc2992b92524d4782c826845916d64f90a5af483b9401865b9a76
+    .claude/skills/golang-code-style/evals/evals.json: sha256:a439625516667ab0e60e58003294da3c0cf5a579d1c4741c5b5a57514ec35356
+    .claude/skills/golang-code-style/references/details.md: sha256:3969d18fb54e59c032de0463b44b6b5bd125dfe8b726ef0f009190da81f3df07
+    .claude/skills/golang-concurrency/SKILL.md: sha256:b56255b765a50c1052c5d71cd60ddb1c2ef643ce3b447aa195ba81f31d10bd1c
+    .claude/skills/golang-concurrency/evals/evals.json: sha256:045fcac623f3549608df0409edfd7863e9580249ae447499266e3a3d96798959
+    .claude/skills/golang-concurrency/references/channels-and-select.md: sha256:3435dee63817a2829b48fbfbaebe25bbb448008d4d06e0e739c2f070b78328ab
+    .claude/skills/golang-concurrency/references/pipelines.md: sha256:c1b3f3dc4273370c61631328de11ec19b2fa1000c22ddff50d06bca059dd5d70
+    .claude/skills/golang-concurrency/references/sync-primitives.md: sha256:f54e4343942feef72b2f371e5b67156469f82fd2ea0e4f2634c957530926d6de
+    .claude/skills/golang-error-handling/SKILL.md: sha256:536c25e624c3cf3def98962d9f89db07b258cde6c9e7fd17009a9eb204ba631f
+    .claude/skills/golang-error-handling/evals/evals.json: sha256:a7b58b4f717745e606b067c1f65c93db55182b4a561b8ffa43158a7f64515fa7
+    .claude/skills/golang-error-handling/references/error-creation.md: sha256:8a5bda5a543ef7774ddc240cd198d34871222ed0335474df599d162f09d253c2
+    .claude/skills/golang-error-handling/references/error-handling.md: sha256:ab9c510305a1fe043502a04fe935f16dac2f95c585820ae9f0568afb2a56d357
+    .claude/skills/golang-error-handling/references/error-wrapping.md: sha256:6293caf2c41eef243dffbc2dbd17d045770f9a04e8ce910c4452b3d2b6abce06
+    .claude/skills/golang-lint/SKILL.md: sha256:45e510222626ab4367e7831dcef2560c9c54a7f489ec4219eec89f4fdc4e6930
+    .claude/skills/golang-lint/assets/.golangci.yml: sha256:ad4284596f57d66bcdbc92687011a4dce1699cc684283eb172cd3dd91047646e
+    .claude/skills/golang-lint/evals/evals.json: sha256:b075c4894cb663b067b5cfeaf5525ed49af1dffda24b36c458d09c2f40ffb90a
+    .claude/skills/golang-lint/references/linter-reference.md: sha256:0858adf98ca9cdcd8f614176008a58098a267bdbc4a5de976d7180e8a11e4f18
+    .claude/skills/golang-lint/references/nolint-directives.md: sha256:be12adeb536e134398243b8cee0433eb27fefabae3f13092b826198c5e461067
+    .claude/skills/golang-safety/SKILL.md: sha256:a9bce4568ba98ae804505d6b1d6fbe0376fe7afdc9f30051bfc03f898e26d50e
+    .claude/skills/golang-safety/evals/evals.json: sha256:8db07dd44d2c2b4cca7eba15f135bc6858fbbe91c3f805e6c9a8602e06f0e17c
+    .claude/skills/golang-safety/references/nil-safety.md: sha256:2f0bcabb4184c1b88e36bab8a3f90e57887d3a95a15f66a2123445025c91dec7
+    .claude/skills/golang-safety/references/slice-map-safety.md: sha256:9b048bc51d5153bd554eed7eab6685423b9ad7159462313b0fd6a1294596d86d
+    .claude/skills/golang-spf13-cobra/SKILL.md: sha256:f77b93e6f14c3c0f4b168bb97c617d2866064964c2909c2cd817181190fe51ff
+    .claude/skills/golang-spf13-cobra/evals/evals.json: sha256:6ba662758249b83bcfc9f66adfaa780651c7913400aef51839b2f0afaf00b38c
+    .claude/skills/golang-spf13-cobra/references/commands-and-args.md: sha256:9c26741d541b348e7bc55924ca19b6bc731dc35933382c84a0540399264e6e15
+    .claude/skills/golang-spf13-cobra/references/completions.md: sha256:e8bcf042bfe2d42a35f64641002067662d5bb23c3df7f7122b29cf49ed413ad9
+    .claude/skills/golang-spf13-cobra/references/flags.md: sha256:fe46534071b49143b4322987b78d7e791fcf12fbb4d0b31fa5c3323e6df4757a
+    .claude/skills/golang-spf13-cobra/references/generators.md: sha256:73cfbec7069ee03e0da19c157753633ceae816a49191c775586b4366c6199b58
+    .claude/skills/golang-spf13-cobra/references/testing.md: sha256:059ca04ad1b772daa41eb4f0446a17e3c65d1b2db54789bbd0d6dabcd8681f50
+    .claude/skills/golang-testing/SKILL.md: sha256:55eea3ed4536df0c95fc1247382d3027d45b1d1af0a94fc9de653debae5df0f2
+    .claude/skills/golang-testing/evals/evals.json: sha256:bc083e8d62ff1c23d9cd734f274a5733cfc0d30bb6356e03668dd3c67ff7c92e
+    .claude/skills/golang-testing/references/benchmarks.md: sha256:f9de0e2e50cbb8e28684da1f99ff15fa84779150b4a8deefdf97ea3345c871f1
+    .claude/skills/golang-testing/references/coverage.md: sha256:b2f7af52412b084cf353ff493941ad43276cae9d197470db2287b5d2c5a1aebf
+    .claude/skills/golang-testing/references/examples.md: sha256:40c070f0a83898edbc0c87c034fc2281d9c2b04e0514c94aa1ff07b802b575c5
+    .claude/skills/golang-testing/references/helpers.md: sha256:8c71d253a246e66b8249022c96d7e8892f5bfc2156b02a36673c321db2c843f4
+    .claude/skills/golang-testing/references/http-testing.md: sha256:39381274d7887651b86bde513085835f52860aa0832eb6f945f79c008f240e0f
+    .claude/skills/golang-testing/references/integration-testing.md: sha256:a29e725c58a1c2feaf16470db7eb4f8394aa36a476df92a792ac026c950d0b85
+    .claude/skills/golang-testing/references/mocking.md: sha256:65558f907dea483831aea4aca50b1d6f1b64f92803bc2446f6a550a6d6c5c33a
+    .claude/skills/golang-troubleshooting/SKILL.md: sha256:a94def5ae84dd581536e5fdd64b1c22bd7f9683f3173d638830edb60697aa8e8
+    .claude/skills/golang-troubleshooting/evals/evals.json: sha256:a15b4ce5f5f0d4d2fe0590ba2207e13e2f23bba4e11d1743bd89ddda87146dde
+    .claude/skills/golang-troubleshooting/references/code-review-flags.md: sha256:577b683e055c3880fa7233e24f19cddbd4aa65731be72d50211d873e202bfc43
+    .claude/skills/golang-troubleshooting/references/common-go-bugs.md: sha256:311375f50e79bfc63d48e06565b784fba060609a0bc787f6e106eb1f48fa6fbc
+    .claude/skills/golang-troubleshooting/references/compilation.md: sha256:b6ecaf7c6f4e2f4635e3c90d02d2cd55fe150c9826f77061a70a03e39ea669ec
+    .claude/skills/golang-troubleshooting/references/concurrency-debug.md: sha256:7fef337f937d182314200c3f40b38b3954214df190b1b9dccbdd129f22986d2f
+    .claude/skills/golang-troubleshooting/references/diagnostic-tools.md: sha256:36169dd6972e2e7230d55e8bbf760a6d51f93cc36811d9d80ab94539746d38df
+    .claude/skills/golang-troubleshooting/references/methodology.md: sha256:2e90eb15812661d06f3c90d5f9c697a3ca292a6667e574a07479626b90c9d48e
+    .claude/skills/golang-troubleshooting/references/performance-debug.md: sha256:c26e03f1985b156876f31bad0f7541da13d6968b622a24c26bb7565b30305e62
+    .claude/skills/golang-troubleshooting/references/pprof.md: sha256:039fa03a054737439e69e59d4ebf62c87e711e47c2698941c30bd73890aec5bf
+    .claude/skills/golang-troubleshooting/references/production-debug.md: sha256:6bbb0e2f3f249bd9a350f6c1f50b48a4d3d93fee9b1de9f2fb4f6ba8bf739f03
+    .claude/skills/golang-troubleshooting/references/testing-debug.md: sha256:6e499a4f8a96eddb9314ec396e1cb8bf98457085845acb6ab327c49e39f9d34a
+  skill_subset:
+  - golang-cli
+  - golang-code-style
+  - golang-concurrency
+  - golang-error-handling
+  - golang-lint
+  - golang-safety
+  - golang-spf13-cobra
+  - golang-testing
+  - golang-troubleshooting
+  tree_sha256: sha256:b4a8f7e591506bca63e3128899779d564c6d172c47c24fd7b32fb4ea5d210e02
+deployments:
+- kind: project-relative
+  target: claude
+  value: .claude/skills/apm-go-help
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/apm-go-help/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:034209fb2dcc73d4f2af9f8b539c5fbbffa58fda094f2dfc799024cf1956faf9
+- kind: project-relative
+  target: claude
+  value: .claude/skills/apm-go-help/references/recipes.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:4d5e896c6f83b4f84820b84c647933c5e6288c4075c80123b5906ef9575aa2db
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:da9eef3871a94cccbcbab77c2b3a5990e7fe00d9434f3728cb427e520ae77311
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/args.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:024d75e8fcb55ce84930b2e07b7f464d8f9eb2b55f47eb0cd6b1abb6e9bb3ae9
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/cli_test.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:0086d4f0f075744519d2366c87fc90e5a7c1739b6bfa5b5dc430d5f79bfd6226
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/completion.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:3e91ac78c36d706bb6db5b6395f62f08c5176460de1d52870a11b5753fda3b1e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/config.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:24f6c7653b90b141c8f1dec2be9c4b22198fd3d66de9cd2d64dc73ddf40954a4
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/exit_codes.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:27d02ca34c939fe7c7c1f663c9a6bddfb6c3dd5eabc68890f72ff32e2a085965
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/flags.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:d8a7164364e6a4d69c5eb57fe866d6793f41d8b8c6f09d2e2df1b2140083e038
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/go.mod
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:fd364ee1dbc1fa462527ad9e8bb061d58ebdf7da73c20d04472977bea3ffc63a
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/main.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:f529e3cfddb3915dffb882bc0f7f63cd5e0cc60a18cb4c8b92359b5f069a4dd1
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/output.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:1520680bb6fe50cc3f95bd8b6237fa53a4bba5ef334e46424d1aaecd2f5bdb30
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/root.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:fe6429593d1a91c9c0d729719e9a0eda4cb661815cccd713c7c5918e7abafe47
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/serve.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:0b8c5253a1cd6e6c14875d640c2f7aadb9c3ad1b9cb213ff5d6845f595ad07aa
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/signal.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:620e92cdf1a0c21f6fbd6a5d2786bc599d8b957a47ae68ba25af81f5f3f693c0
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/assets/examples/version.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:660668240b0eebb5f7f506f2446ea357b6bfdf15f3842d7c7aa0b1db4b83fda6
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-cli/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b2a08339a212d386e4743db83335030f98c13c73fd1dd201544d78918d662acf
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-code-style
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-code-style/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:1c53d6b8405fc2992b92524d4782c826845916d64f90a5af483b9401865b9a76
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-code-style/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a439625516667ab0e60e58003294da3c0cf5a579d1c4741c5b5a57514ec35356
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-code-style/references/details.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:3969d18fb54e59c032de0463b44b6b5bd125dfe8b726ef0f009190da81f3df07
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-concurrency
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-concurrency/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b56255b765a50c1052c5d71cd60ddb1c2ef643ce3b447aa195ba81f31d10bd1c
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-concurrency/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:045fcac623f3549608df0409edfd7863e9580249ae447499266e3a3d96798959
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-concurrency/references/channels-and-select.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:3435dee63817a2829b48fbfbaebe25bbb448008d4d06e0e739c2f070b78328ab
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-concurrency/references/pipelines.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:c1b3f3dc4273370c61631328de11ec19b2fa1000c22ddff50d06bca059dd5d70
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-concurrency/references/sync-primitives.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:f54e4343942feef72b2f371e5b67156469f82fd2ea0e4f2634c957530926d6de
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-error-handling
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-error-handling/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:536c25e624c3cf3def98962d9f89db07b258cde6c9e7fd17009a9eb204ba631f
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-error-handling/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a7b58b4f717745e606b067c1f65c93db55182b4a561b8ffa43158a7f64515fa7
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-error-handling/references/error-creation.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:8a5bda5a543ef7774ddc240cd198d34871222ed0335474df599d162f09d253c2
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-error-handling/references/error-handling.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:ab9c510305a1fe043502a04fe935f16dac2f95c585820ae9f0568afb2a56d357
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-error-handling/references/error-wrapping.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:6293caf2c41eef243dffbc2dbd17d045770f9a04e8ce910c4452b3d2b6abce06
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-lint
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-lint/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:45e510222626ab4367e7831dcef2560c9c54a7f489ec4219eec89f4fdc4e6930
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-lint/assets/.golangci.yml
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:ad4284596f57d66bcdbc92687011a4dce1699cc684283eb172cd3dd91047646e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-lint/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b075c4894cb663b067b5cfeaf5525ed49af1dffda24b36c458d09c2f40ffb90a
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-lint/references/linter-reference.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:0858adf98ca9cdcd8f614176008a58098a267bdbc4a5de976d7180e8a11e4f18
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-lint/references/nolint-directives.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:be12adeb536e134398243b8cee0433eb27fefabae3f13092b826198c5e461067
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-safety
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-safety/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a9bce4568ba98ae804505d6b1d6fbe0376fe7afdc9f30051bfc03f898e26d50e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-safety/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:8db07dd44d2c2b4cca7eba15f135bc6858fbbe91c3f805e6c9a8602e06f0e17c
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-safety/references/nil-safety.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:2f0bcabb4184c1b88e36bab8a3f90e57887d3a95a15f66a2123445025c91dec7
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-safety/references/slice-map-safety.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:9b048bc51d5153bd554eed7eab6685423b9ad7159462313b0fd6a1294596d86d
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-spf13-cobra
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-spf13-cobra/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:f77b93e6f14c3c0f4b168bb97c617d2866064964c2909c2cd817181190fe51ff
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-spf13-cobra/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:6ba662758249b83bcfc9f66adfaa780651c7913400aef51839b2f0afaf00b38c
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-spf13-cobra/references/commands-and-args.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:9c26741d541b348e7bc55924ca19b6bc731dc35933382c84a0540399264e6e15
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-spf13-cobra/references/completions.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:e8bcf042bfe2d42a35f64641002067662d5bb23c3df7f7122b29cf49ed413ad9
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-spf13-cobra/references/flags.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:fe46534071b49143b4322987b78d7e791fcf12fbb4d0b31fa5c3323e6df4757a
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-spf13-cobra/references/generators.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:73cfbec7069ee03e0da19c157753633ceae816a49191c775586b4366c6199b58
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-spf13-cobra/references/testing.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:059ca04ad1b772daa41eb4f0446a17e3c65d1b2db54789bbd0d6dabcd8681f50
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:55eea3ed4536df0c95fc1247382d3027d45b1d1af0a94fc9de653debae5df0f2
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:bc083e8d62ff1c23d9cd734f274a5733cfc0d30bb6356e03668dd3c67ff7c92e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/references/benchmarks.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:f9de0e2e50cbb8e28684da1f99ff15fa84779150b4a8deefdf97ea3345c871f1
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/references/coverage.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b2f7af52412b084cf353ff493941ad43276cae9d197470db2287b5d2c5a1aebf
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/references/examples.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:40c070f0a83898edbc0c87c034fc2281d9c2b04e0514c94aa1ff07b802b575c5
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/references/helpers.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:8c71d253a246e66b8249022c96d7e8892f5bfc2156b02a36673c321db2c843f4
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/references/http-testing.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:39381274d7887651b86bde513085835f52860aa0832eb6f945f79c008f240e0f
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/references/integration-testing.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a29e725c58a1c2feaf16470db7eb4f8394aa36a476df92a792ac026c950d0b85
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-testing/references/mocking.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:65558f907dea483831aea4aca50b1d6f1b64f92803bc2446f6a550a6d6c5c33a
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a94def5ae84dd581536e5fdd64b1c22bd7f9683f3173d638830edb60697aa8e8
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a15b4ce5f5f0d4d2fe0590ba2207e13e2f23bba4e11d1743bd89ddda87146dde
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/code-review-flags.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:577b683e055c3880fa7233e24f19cddbd4aa65731be72d50211d873e202bfc43
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/common-go-bugs.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:311375f50e79bfc63d48e06565b784fba060609a0bc787f6e106eb1f48fa6fbc
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/compilation.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b6ecaf7c6f4e2f4635e3c90d02d2cd55fe150c9826f77061a70a03e39ea669ec
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/concurrency-debug.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:7fef337f937d182314200c3f40b38b3954214df190b1b9dccbdd129f22986d2f
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/diagnostic-tools.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:36169dd6972e2e7230d55e8bbf760a6d51f93cc36811d9d80ab94539746d38df
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/methodology.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:2e90eb15812661d06f3c90d5f9c697a3ca292a6667e574a07479626b90c9d48e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/performance-debug.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:c26e03f1985b156876f31bad0f7541da13d6968b622a24c26bb7565b30305e62
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/pprof.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:039fa03a054737439e69e59d4ebf62c87e711e47c2698941c30bd73890aec5bf
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/production-debug.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:6bbb0e2f3f249bd9a350f6c1f50b48a4d3d93fee9b1de9f2fb4f6ba8bf739f03
+- kind: project-relative
+  target: claude
+  value: .claude/skills/golang-troubleshooting/references/testing-debug.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:6e499a4f8a96eddb9314ec396e1cb8bf98457085845acb6ab327c49e39f9d34a
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:f8343f0f16b94eb5bb1d411baa91ff8425ca57c1cd6aed77ea3c709b1a073d7a
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go/features/README.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:b66163c9677344d00f117724d7a83e4ee43089019b3260cd0872c176545223bc
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go/features/compile.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:f5953e6a3de124d0131b9f4439224c6581936c1ecbdb4ebe40692e7c0f0f9b3e
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go/features/init.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:1145bd6b162647043288de4c30b848cb3996f20369c35f2447bee991446187f0
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go/features/install.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:fe8ca63c100aaa49045c264c6f1a684db3549c355b5f05d0706aab0ee63c8482
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go/features/marketplace.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:9949a78b0c357a0a3bc326173c81d1d405704cc1da23bd78b6b98a29b9b68be0
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go/features/pack.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:b3598fe5a74891b88a629d219e21426e263dfebc2bb30050ef4d4000b37a6e24
+- kind: project-relative
+  target: claude
+  value: .claude/skills/verify-apm-go/scripts/verify.sh
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:aaab713c17866bd4fe9ff1ab69d112de2bb35e78cb7fbbf4913f4ffb5783c8b6
+- kind: project-relative
+  target: codex
+  value: .agents/skills/apm-go-help
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/apm-go-help/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:034209fb2dcc73d4f2af9f8b539c5fbbffa58fda094f2dfc799024cf1956faf9
+- kind: project-relative
+  target: codex
+  value: .agents/skills/apm-go-help/references/recipes.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:4d5e896c6f83b4f84820b84c647933c5e6288c4075c80123b5906ef9575aa2db
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:da9eef3871a94cccbcbab77c2b3a5990e7fe00d9434f3728cb427e520ae77311
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/args.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:024d75e8fcb55ce84930b2e07b7f464d8f9eb2b55f47eb0cd6b1abb6e9bb3ae9
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/cli_test.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:0086d4f0f075744519d2366c87fc90e5a7c1739b6bfa5b5dc430d5f79bfd6226
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/completion.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:3e91ac78c36d706bb6db5b6395f62f08c5176460de1d52870a11b5753fda3b1e
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/config.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:24f6c7653b90b141c8f1dec2be9c4b22198fd3d66de9cd2d64dc73ddf40954a4
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/exit_codes.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:27d02ca34c939fe7c7c1f663c9a6bddfb6c3dd5eabc68890f72ff32e2a085965
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/flags.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:d8a7164364e6a4d69c5eb57fe866d6793f41d8b8c6f09d2e2df1b2140083e038
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/go.mod
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:fd364ee1dbc1fa462527ad9e8bb061d58ebdf7da73c20d04472977bea3ffc63a
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/main.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:f529e3cfddb3915dffb882bc0f7f63cd5e0cc60a18cb4c8b92359b5f069a4dd1
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/output.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:1520680bb6fe50cc3f95bd8b6237fa53a4bba5ef334e46424d1aaecd2f5bdb30
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/root.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:fe6429593d1a91c9c0d729719e9a0eda4cb661815cccd713c7c5918e7abafe47
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/serve.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:0b8c5253a1cd6e6c14875d640c2f7aadb9c3ad1b9cb213ff5d6845f595ad07aa
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/signal.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:620e92cdf1a0c21f6fbd6a5d2786bc599d8b957a47ae68ba25af81f5f3f693c0
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/assets/examples/version.go
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:660668240b0eebb5f7f506f2446ea357b6bfdf15f3842d7c7aa0b1db4b83fda6
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-cli/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b2a08339a212d386e4743db83335030f98c13c73fd1dd201544d78918d662acf
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-code-style
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-code-style/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:1c53d6b8405fc2992b92524d4782c826845916d64f90a5af483b9401865b9a76
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-code-style/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a439625516667ab0e60e58003294da3c0cf5a579d1c4741c5b5a57514ec35356
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-code-style/references/details.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:3969d18fb54e59c032de0463b44b6b5bd125dfe8b726ef0f009190da81f3df07
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-concurrency
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-concurrency/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b56255b765a50c1052c5d71cd60ddb1c2ef643ce3b447aa195ba81f31d10bd1c
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-concurrency/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:045fcac623f3549608df0409edfd7863e9580249ae447499266e3a3d96798959
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-concurrency/references/channels-and-select.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:3435dee63817a2829b48fbfbaebe25bbb448008d4d06e0e739c2f070b78328ab
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-concurrency/references/pipelines.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:c1b3f3dc4273370c61631328de11ec19b2fa1000c22ddff50d06bca059dd5d70
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-concurrency/references/sync-primitives.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:f54e4343942feef72b2f371e5b67156469f82fd2ea0e4f2634c957530926d6de
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-error-handling
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-error-handling/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:536c25e624c3cf3def98962d9f89db07b258cde6c9e7fd17009a9eb204ba631f
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-error-handling/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a7b58b4f717745e606b067c1f65c93db55182b4a561b8ffa43158a7f64515fa7
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-error-handling/references/error-creation.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:8a5bda5a543ef7774ddc240cd198d34871222ed0335474df599d162f09d253c2
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-error-handling/references/error-handling.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:ab9c510305a1fe043502a04fe935f16dac2f95c585820ae9f0568afb2a56d357
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-error-handling/references/error-wrapping.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:6293caf2c41eef243dffbc2dbd17d045770f9a04e8ce910c4452b3d2b6abce06
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-lint
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-lint/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:45e510222626ab4367e7831dcef2560c9c54a7f489ec4219eec89f4fdc4e6930
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-lint/assets/.golangci.yml
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:ad4284596f57d66bcdbc92687011a4dce1699cc684283eb172cd3dd91047646e
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-lint/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b075c4894cb663b067b5cfeaf5525ed49af1dffda24b36c458d09c2f40ffb90a
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-lint/references/linter-reference.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:0858adf98ca9cdcd8f614176008a58098a267bdbc4a5de976d7180e8a11e4f18
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-lint/references/nolint-directives.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:be12adeb536e134398243b8cee0433eb27fefabae3f13092b826198c5e461067
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-safety
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-safety/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a9bce4568ba98ae804505d6b1d6fbe0376fe7afdc9f30051bfc03f898e26d50e
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-safety/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:8db07dd44d2c2b4cca7eba15f135bc6858fbbe91c3f805e6c9a8602e06f0e17c
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-safety/references/nil-safety.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:2f0bcabb4184c1b88e36bab8a3f90e57887d3a95a15f66a2123445025c91dec7
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-safety/references/slice-map-safety.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:9b048bc51d5153bd554eed7eab6685423b9ad7159462313b0fd6a1294596d86d
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-spf13-cobra
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-spf13-cobra/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:f77b93e6f14c3c0f4b168bb97c617d2866064964c2909c2cd817181190fe51ff
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-spf13-cobra/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:6ba662758249b83bcfc9f66adfaa780651c7913400aef51839b2f0afaf00b38c
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-spf13-cobra/references/commands-and-args.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:9c26741d541b348e7bc55924ca19b6bc731dc35933382c84a0540399264e6e15
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-spf13-cobra/references/completions.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:e8bcf042bfe2d42a35f64641002067662d5bb23c3df7f7122b29cf49ed413ad9
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-spf13-cobra/references/flags.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:fe46534071b49143b4322987b78d7e791fcf12fbb4d0b31fa5c3323e6df4757a
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-spf13-cobra/references/generators.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:73cfbec7069ee03e0da19c157753633ceae816a49191c775586b4366c6199b58
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-spf13-cobra/references/testing.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:059ca04ad1b772daa41eb4f0446a17e3c65d1b2db54789bbd0d6dabcd8681f50
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:55eea3ed4536df0c95fc1247382d3027d45b1d1af0a94fc9de653debae5df0f2
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:bc083e8d62ff1c23d9cd734f274a5733cfc0d30bb6356e03668dd3c67ff7c92e
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/references/benchmarks.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:f9de0e2e50cbb8e28684da1f99ff15fa84779150b4a8deefdf97ea3345c871f1
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/references/coverage.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b2f7af52412b084cf353ff493941ad43276cae9d197470db2287b5d2c5a1aebf
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/references/examples.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:40c070f0a83898edbc0c87c034fc2281d9c2b04e0514c94aa1ff07b802b575c5
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/references/helpers.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:8c71d253a246e66b8249022c96d7e8892f5bfc2156b02a36673c321db2c843f4
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/references/http-testing.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:39381274d7887651b86bde513085835f52860aa0832eb6f945f79c008f240e0f
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/references/integration-testing.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a29e725c58a1c2feaf16470db7eb4f8394aa36a476df92a792ac026c950d0b85
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-testing/references/mocking.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:65558f907dea483831aea4aca50b1d6f1b64f92803bc2446f6a550a6d6c5c33a
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a94def5ae84dd581536e5fdd64b1c22bd7f9683f3173d638830edb60697aa8e8
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:a15b4ce5f5f0d4d2fe0590ba2207e13e2f23bba4e11d1743bd89ddda87146dde
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/code-review-flags.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:577b683e055c3880fa7233e24f19cddbd4aa65731be72d50211d873e202bfc43
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/common-go-bugs.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:311375f50e79bfc63d48e06565b784fba060609a0bc787f6e106eb1f48fa6fbc
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/compilation.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:b6ecaf7c6f4e2f4635e3c90d02d2cd55fe150c9826f77061a70a03e39ea669ec
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/concurrency-debug.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:7fef337f937d182314200c3f40b38b3954214df190b1b9dccbdd129f22986d2f
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/diagnostic-tools.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:36169dd6972e2e7230d55e8bbf760a6d51f93cc36811d9d80ab94539746d38df
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/methodology.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:2e90eb15812661d06f3c90d5f9c697a3ca292a6667e574a07479626b90c9d48e
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/performance-debug.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:c26e03f1985b156876f31bad0f7541da13d6968b622a24c26bb7565b30305e62
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/pprof.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:039fa03a054737439e69e59d4ebf62c87e711e47c2698941c30bd73890aec5bf
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/production-debug.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:6bbb0e2f3f249bd9a350f6c1f50b48a4d3d93fee9b1de9f2fb4f6ba8bf739f03
+- kind: project-relative
+  target: codex
+  value: .agents/skills/golang-troubleshooting/references/testing-debug.md
+  runtime: null
+  scope: project
+  owners:
+  - samber/cc-skills-golang
+  active_owner: samber/cc-skills-golang
+  content_hash: sha256:6e499a4f8a96eddb9314ec396e1cb8bf98457085845acb6ab327c49e39f9d34a
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: null
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:f8343f0f16b94eb5bb1d411baa91ff8425ca57c1cd6aed77ea3c709b1a073d7a
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go/features/README.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:b66163c9677344d00f117724d7a83e4ee43089019b3260cd0872c176545223bc
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go/features/compile.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:f5953e6a3de124d0131b9f4439224c6581936c1ecbdb4ebe40692e7c0f0f9b3e
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go/features/init.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:1145bd6b162647043288de4c30b848cb3996f20369c35f2447bee991446187f0
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go/features/install.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:fe8ca63c100aaa49045c264c6f1a684db3549c355b5f05d0706aab0ee63c8482
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go/features/marketplace.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:9949a78b0c357a0a3bc326173c81d1d405704cc1da23bd78b6b98a29b9b68be0
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go/features/pack.md
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:b3598fe5a74891b88a629d219e21426e263dfebc2bb30050ef4d4000b37a6e24
+- kind: project-relative
+  target: codex
+  value: .agents/skills/verify-apm-go/scripts/verify.sh
+  runtime: null
+  scope: project
+  owners:
+  - .
+  active_owner: .
+  content_hash: sha256:aaab713c17866bd4fe9ff1ab69d112de2bb35e78cb7fbbf4913f4ffb5783c8b6
 local_deployed_files:
-- .claude/agents/research.md
-- .github/instructions/coding-style.instructions.md
-- .github/instructions/hooks.instructions.md
-- .github/instructions/patterns.instructions.md
-- .github/instructions/security.instructions.md
-- .github/instructions/testing.instructions.md
+- .agents/skills/apm-go-help
+- .agents/skills/apm-go-help/SKILL.md
+- .agents/skills/apm-go-help/references/recipes.md
+- .agents/skills/verify-apm-go
+- .agents/skills/verify-apm-go/SKILL.md
+- .agents/skills/verify-apm-go/features/README.md
+- .agents/skills/verify-apm-go/features/compile.md
+- .agents/skills/verify-apm-go/features/init.md
+- .agents/skills/verify-apm-go/features/install.md
+- .agents/skills/verify-apm-go/features/marketplace.md
+- .agents/skills/verify-apm-go/features/pack.md
+- .agents/skills/verify-apm-go/scripts/verify.sh
+- .claude/skills/apm-go-help
+- .claude/skills/apm-go-help/SKILL.md
+- .claude/skills/apm-go-help/references/recipes.md
+- .claude/skills/verify-apm-go
+- .claude/skills/verify-apm-go/SKILL.md
+- .claude/skills/verify-apm-go/features/README.md
+- .claude/skills/verify-apm-go/features/compile.md
+- .claude/skills/verify-apm-go/features/init.md
+- .claude/skills/verify-apm-go/features/install.md
+- .claude/skills/verify-apm-go/features/marketplace.md
+- .claude/skills/verify-apm-go/features/pack.md
+- .claude/skills/verify-apm-go/scripts/verify.sh
 local_deployed_file_hashes:
-  .claude/agents/research.md: sha256:631a3733fc8e4f48c02e38b571c2627848b926b420e1111eca68b761335d055e
-  .github/instructions/coding-style.instructions.md: sha256:82431f99abf768a6fccd1172e7ae429e13c08fa60fbd502cafe8dc0693f8bd30
-  .github/instructions/hooks.instructions.md: sha256:5fff8316bbd308660fdadee66fa54fa6f2560c84ecc8f8845a6c4521760ed66b
-  .github/instructions/patterns.instructions.md: sha256:67a91835608da74583288c1bc1fa0875688fa2c8e020610673fe6f356dfbb31a
-  .github/instructions/security.instructions.md: sha256:2d41623d8228c099ee32fc55dd57bcec51db308c6d6848bfbfb92a48f0090eaa
-  .github/instructions/testing.instructions.md: sha256:1fe6357873a8c02dc37f57c548510ff1fcd41ba834c01c2397920cd6f2b32379
+  .agents/skills/apm-go-help/SKILL.md: sha256:034209fb2dcc73d4f2af9f8b539c5fbbffa58fda094f2dfc799024cf1956faf9
+  .agents/skills/apm-go-help/references/recipes.md: sha256:4d5e896c6f83b4f84820b84c647933c5e6288c4075c80123b5906ef9575aa2db
+  .agents/skills/verify-apm-go/SKILL.md: sha256:f8343f0f16b94eb5bb1d411baa91ff8425ca57c1cd6aed77ea3c709b1a073d7a
+  .agents/skills/verify-apm-go/features/README.md: sha256:b66163c9677344d00f117724d7a83e4ee43089019b3260cd0872c176545223bc
+  .agents/skills/verify-apm-go/features/compile.md: sha256:f5953e6a3de124d0131b9f4439224c6581936c1ecbdb4ebe40692e7c0f0f9b3e
+  .agents/skills/verify-apm-go/features/init.md: sha256:1145bd6b162647043288de4c30b848cb3996f20369c35f2447bee991446187f0
+  .agents/skills/verify-apm-go/features/install.md: sha256:fe8ca63c100aaa49045c264c6f1a684db3549c355b5f05d0706aab0ee63c8482
+  .agents/skills/verify-apm-go/features/marketplace.md: sha256:9949a78b0c357a0a3bc326173c81d1d405704cc1da23bd78b6b98a29b9b68be0
+  .agents/skills/verify-apm-go/features/pack.md: sha256:b3598fe5a74891b88a629d219e21426e263dfebc2bb30050ef4d4000b37a6e24
+  .agents/skills/verify-apm-go/scripts/verify.sh: sha256:aaab713c17866bd4fe9ff1ab69d112de2bb35e78cb7fbbf4913f4ffb5783c8b6
+  .claude/skills/apm-go-help/SKILL.md: sha256:034209fb2dcc73d4f2af9f8b539c5fbbffa58fda094f2dfc799024cf1956faf9
+  .claude/skills/apm-go-help/references/recipes.md: sha256:4d5e896c6f83b4f84820b84c647933c5e6288c4075c80123b5906ef9575aa2db
+  .claude/skills/verify-apm-go/SKILL.md: sha256:f8343f0f16b94eb5bb1d411baa91ff8425ca57c1cd6aed77ea3c709b1a073d7a
+  .claude/skills/verify-apm-go/features/README.md: sha256:b66163c9677344d00f117724d7a83e4ee43089019b3260cd0872c176545223bc
+  .claude/skills/verify-apm-go/features/compile.md: sha256:f5953e6a3de124d0131b9f4439224c6581936c1ecbdb4ebe40692e7c0f0f9b3e
+  .claude/skills/verify-apm-go/features/init.md: sha256:1145bd6b162647043288de4c30b848cb3996f20369c35f2447bee991446187f0
+  .claude/skills/verify-apm-go/features/install.md: sha256:fe8ca63c100aaa49045c264c6f1a684db3549c355b5f05d0706aab0ee63c8482
+  .claude/skills/verify-apm-go/features/marketplace.md: sha256:9949a78b0c357a0a3bc326173c81d1d405704cc1da23bd78b6b98a29b9b68be0
+  .claude/skills/verify-apm-go/features/pack.md: sha256:b3598fe5a74891b88a629d219e21426e263dfebc2bb30050ef4d4000b37a6e24
+  .claude/skills/verify-apm-go/scripts/verify.sh: sha256:aaab713c17866bd4fe9ff1ab69d112de2bb35e78cb7fbbf4913f4ffb5783c8b6

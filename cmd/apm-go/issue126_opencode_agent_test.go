@@ -23,8 +23,7 @@ func TestInstall_Issue126_OpencodeAgentWarningOnlyWhenWritten(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	home := t.TempDir()
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setTestHome(t, home)
 	dir := chdirTemp(t)
 	writeCompileFile(t, dir, "dep/apm.yml", "name: depname\nversion: 1.0.0\n")
 	writeCompileFile(t, dir, "dep/.apm/agents/a1.agent.md", "---\ndescription: a1\ntools: Read, Grep\ncolor: green\n---\nA1\n")
@@ -65,8 +64,7 @@ func TestUninstall_Issue126_OpencodeAgentWarningOnHandover(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	home := t.TempDir()
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setTestHome(t, home)
 	dir := chdirTemp(t)
 	for _, n := range []string{"a", "b"} {
 		writeCompileFile(t, dir, n+"/apm.yml", "name: "+n+"\nversion: 1.0.0\n")
@@ -128,8 +126,7 @@ func TestUpdate_Issue126_OpencodeAgentWarning(t *testing.T) {
 	t.Setenv("APM_CONFIG_DIR", t.TempDir())
 	home := t.TempDir()
 	// Windows takes the home directory from USERPROFILE.
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setTestHome(t, home)
 	dir := chdirTemp(t)
 	writeCompileFile(t, dir, "dep/apm.yml", "name: depname\nversion: 1.0.0\n")
 	writeCompileFile(t, dir, "dep/.apm/agents/a1.agent.md", "---\ndescription: a1\ncolor: green\n---\nA1\n")

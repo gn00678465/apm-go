@@ -110,7 +110,7 @@ func newOtherScope(t *testing.T, global, local bool) *otherState {
 	t.Helper()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	t.Setenv("APM_CONFIG_DIR", filepath.Join(root, "config"))
 	s := &otherState{deployRoot: filepath.Join(root, "proj"), global: global, local: local}
 	s.manifestDir, s.srcRoot = s.deployRoot, s.deployRoot

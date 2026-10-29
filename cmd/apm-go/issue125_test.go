@@ -44,8 +44,7 @@ func newI125Scope(t *testing.T) i125Scope {
 	writeCompileFile(t, root, "gitconfig", "")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", s.home)
-	t.Setenv("USERPROFILE", s.home)
+	setTestHome(t, s.home)
 	for _, d := range []string{s.proj, s.home} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -852,7 +851,7 @@ func TestIssue125_UserScopeMCPNoTarget(t *testing.T) {
 			manifest := "name: g\nversion: 1.0.0\n" + c.targets + deps + mcp
 			writeCompileFile(t, s.home, ".apm/apm.yml", manifest)
 			stdout, _, code := run125(t, c.args...)
-			stdout = strings.ReplaceAll(stdout, "after 0.0s.", "after <t>s.")
+			stdout = regexp.MustCompile(`after [0-9]+\.[0-9]+s\.`).ReplaceAllString(stdout, "after <t>s.")
 			// The compile hint is apm-go's own line, not this item's.
 			stdout = regexp.MustCompile(`(?m)^ i Instructions installed for .*\n`).ReplaceAllString(stdout, "")
 			if code != 1 || !strings.HasSuffix(stdout, "+- MCP Servers (1)\n"+c.targeting+tail) {

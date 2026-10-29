@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/apm-go/apm/internal/gitops"
@@ -18,6 +19,12 @@ var ciDetectionEnv = []string{
 	"BUILDKITE",
 	"TF_BUILD",
 	"JENKINS_URL",
+}
+
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 }
 
 // TestMain neutralises CI detection for this package's tests.
@@ -49,5 +56,15 @@ func TestMain(m *testing.M) {
 	// insteadOf rule there would decide whether these tests pass. A test of
 	// the check's effect installs its own probe.
 	gitops.SetConfigProbeForTest(gitops.EmptyGitConfigProbe)
+	if runtime.GOOS == "windows" {
+		home, err := os.MkdirTemp("", "apm-test-home-")
+		if err != nil {
+			panic(err)
+		}
+		os.Setenv("USERPROFILE", home)
+		code := m.Run()
+		os.RemoveAll(home)
+		os.Exit(code)
+	}
 	os.Exit(m.Run())
 }

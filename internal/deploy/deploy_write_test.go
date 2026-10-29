@@ -137,6 +137,7 @@ func deployTree(t *testing.T, dir string) map[string]string {
 			return err
 		}
 		rel, _ := filepath.Rel(dir, p)
+		rel = filepath.ToSlash(rel)
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
 			target, err := os.Readlink(p)

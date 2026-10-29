@@ -19,7 +19,7 @@ func bootstrapProject(t *testing.T, proj string) string {
 	writeCompileFile(t, root, "gitconfig", "")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	setTestHome(t, filepath.Join(root, "home"))
 	if err := os.MkdirAll(filepath.Join(root, proj), 0o755); err != nil {
 		t.Fatal(err)
 	}

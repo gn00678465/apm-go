@@ -30,7 +30,7 @@ func TestInstallPkg_RegistryFailureRestoresManifest(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("MCP_REGISTRY_URL", srv.URL)
 	t.Setenv("MCP_REGISTRY_ALLOW_HTTP", "1")
 	const manifest = "name: p\nversion: 1.0.0\ntargets: [claude]\ndependencies:\n  mcp:\n    - name: io.example/demo\n"

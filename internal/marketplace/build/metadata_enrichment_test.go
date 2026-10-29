@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -226,7 +227,7 @@ func TestCheckMarketplaceDrift_UncertifiableMetadataIsNotCompared(t *testing.T) 
 		!reflect.DeepEqual(claude.MetadataWarnings, []string{warning}) {
 		t.Errorf("claude output = %+v, want uncertifiable with the metadata warning and no differences", claude)
 	}
-	wantMsg := []string{".claude-plugin/marketplace.json: remote metadata unavailable; regeneration is uncertifiable"}
+	wantMsg := []string{filepath.FromSlash(".claude-plugin/marketplace.json") + ": remote metadata unavailable; regeneration is uncertifiable"}
 	if got := claude.ErrorMessages(); !reflect.DeepEqual(got, wantMsg) {
 		t.Errorf("claude.ErrorMessages() = %q, want %q", got, wantMsg)
 	}

@@ -121,7 +121,7 @@ func TestUninstall_SkillHandoverThroughSymlinkInside_NotWritten(t *testing.T) {
 func TestUninstallGlobal_SkillHandoverThroughSymlinkOutside_Refused(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	writeCompileFile(t, root, "home/.apm/apm.yml", "name: global\nversion: 0.0.0\ntarget: claude\ndependencies:\n  apm:\n    - "+filepath.Join(home, "a")+"\n    - "+filepath.Join(home, "b")+"\n")
 	for rel, content := range handoverFiles {
 		writeCompileFile(t, home, rel, content)

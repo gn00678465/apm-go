@@ -40,8 +40,8 @@ disable-model-invocation: true
 |---|---|
 | 建置與單元測試 | `go build -o bin/apm-go ./cmd/apm-go`、`go test ./...` |
 | 宣稱改動就緒前的全套檢查 | `sh .claude/skills/verify-apm-go/scripts/verify.sh check`（build、亂序測試、vet、gofmt、staticcheck、govulncheck、`tools/realexec.sh`） |
-| 用使用者的角度驅動真的執行檔、留證據 | [`verify-apm-go`](../verify-apm-go/SKILL.md)，各指令的做法在它的 `features/` |
-| 改函式前看影響範圍 | GitNexus：`impact`，見 [`gitnexus`](../gitnexus/) 與 `AGENTS.md`「GitNexus」 |
+| 用使用者的角度驅動真的執行檔、留證據 | [`verify-apm-go`](../../../.apm/skills/verify-apm-go/SKILL.md)，各指令的做法在它的 `features/` |
+| 改函式前看影響範圍 | 追蹤呼叫者、受影響流程與測試覆蓋率 |
 | 跟 Oracle 0.33.0 比一個行為 | 手動跑 `tools/parity`，或在兩個新目錄各跑一次再比；步驟在 `ARCHITECTURE.md` §5 |
 | 程式該放哪一層、能不能加這條 import | `ARCHITECTURE.md` §1、§2 |
 
@@ -51,9 +51,8 @@ disable-model-invocation: true
 
 | 使用者想要 | skill 或工具 |
 |---|---|
-| 證明改動在真的執行檔上有效 | [`verify-apm-go`](../verify-apm-go/SKILL.md) |
+| 證明改動在真的執行檔上有效 | [`verify-apm-go`](../../../.apm/skills/verify-apm-go/SKILL.md) |
 | 讓看板上的 issue 自動經過調查、實作、審查、開 PR | `/board`（使用者全域的 skill；`board card start <N>`） |
-| 看懂一段程式、追呼叫者、評估改名 | [`gitnexus`](../gitnexus/) 底下的子 skill |
 | 跟 Oracle 逐案比對 | `tools/parity`（手動，不在 CI） |
 | 合併後整理經驗 | `AGENTS.md`「Lessons review」，結果進 `LESSONS.md` |
 | 開或改 PR | `git-assistant:pull-request` |

@@ -18,7 +18,7 @@ func TestInstall_PlainHTTPRegistryNeedsOptIn(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
 	t.Cleanup(srv.Close)
 	dir := chdirTemp(t)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("MCP_REGISTRY_URL", srv.URL+"/")
 	t.Setenv("MCP_REGISTRY_ALLOW_HTTP", "")
 	writeCompileFile(t, dir, "pkg/apm.yml", "name: pkg\nversion: 1.0.0\n")

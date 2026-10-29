@@ -16,18 +16,6 @@ Each topic lives in exactly one of them; reference, do not restate. When a chang
 
 **`LESSONS.md`** holds the candidate rules that reviews of merged work found, each with one sentence of why, one checkable reference for each day it was seen, and the count. Breaking a lesson does not block a PR, but read them before changing code, follow each one that applies, and say in the PR description what you did. A lesson becomes a mandatory rule only when it moves into "Promoted rules" below.
 
-## GitNexus — code intelligence
-
-This repo is indexed as **apm-go**. Use the MCP tools to navigate and to gate edits:
-
-- **Before editing any function, class, or method**: `impact({target, direction: "upstream"})`; report the blast radius (callers, affected processes, risk) to the user, and stop for confirmation on HIGH or CRITICAL.
-- **Before committing**: `detect_changes()` to confirm only the intended symbols and flows moved; `detect_changes({scope: "compare", base_ref: "main"})` for branch-level review.
-- **Renames** go through `rename` — it follows the call graph.
-- **Exploring unfamiliar code**: `query({search_query})` returns execution flows ranked by relevance; `context({name})` gives one symbol's callers, callees, and flows.
-- **Security review**: `explain({target})` lists source→sink taint findings (needs `analyze --pdg`).
-
-Index stale (reported by `gitnexus://repo/apm-go/context`)? `node .gitnexus/run.cjs analyze --index-only` from the project root. Keep `--index-only`: without it `analyze` regenerates `CLAUDE.md` and `AGENTS.md`, which are written by hand here. Task-specific workflows (exploring, impact analysis, debugging, refactoring, CLI) live in `.claude/skills/gitnexus/`.
-
 ## Build & test
 
 ```sh

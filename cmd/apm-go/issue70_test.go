@@ -104,7 +104,7 @@ func TestUninstall_LocalKeyAlias_DryRun(t *testing.T) {
 func TestUninstallGlobal_LocalKeyAlias(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	src := filepath.Join(root, "src", "my-local-skill")
 	writeCompileFile(t, src, "apm.yml", "name: my-local-skill\nversion: 1.0.0\n")
 	writeCompileFile(t, src, "SKILL.md", "---\nname: my-local-skill\ndescription: d\n---\nx\n")
@@ -391,7 +391,7 @@ func TestUninstall_MCPAndPackageLinesInArgumentOrder(t *testing.T) {
 func marketplaceLocal70(t *testing.T) (proj, market string) {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	setTestHome(t, filepath.Join(root, "home"))
 	t.Setenv("APM_CONFIG_DIR", "")
 	for _, v := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
 		t.Setenv(v, "http://127.0.0.1:9")

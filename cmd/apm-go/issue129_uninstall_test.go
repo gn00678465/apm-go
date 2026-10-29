@@ -21,7 +21,7 @@ import (
 // commands/uninstall/engine.py:686-698).
 func TestUninstall_PathDeclaredTwice_Ambiguous(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	setTestHome(t, filepath.Join(root, "home"))
 	proj := filepath.Join(root, "proj")
 	writeCompileFile(t, proj, "dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, proj, "dep/.apm/skills/s1/SKILL.md", "---\nname: s1\ndescription: d\n---\nbody\n")
@@ -85,7 +85,7 @@ func sharedDeployments(skill, owner, hash string) string {
 func sharedLocalProject(t *testing.T, three bool) string {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	setTestHome(t, filepath.Join(root, "home"))
 	proj := filepath.Join(root, "proj")
 	writeCompileFile(t, proj, "a/dep/apm.yml", "name: dep\nversion: 1.0.0\n")
 	writeCompileFile(t, proj, "a/dep/.apm/skills/sa/SKILL.md", sharedSkillA)

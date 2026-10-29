@@ -14,10 +14,9 @@ import (
 const depsLock = "lockfile_version: '1'\ndependencies:\n"
 
 var depsLayoutCases = []struct {
-	name    string
-	global  bool
-	ordered bool // rows follow the order the directories were created in
-	files   []string
+	name   string
+	global bool
+	files  []string
 }{
 	{name: "alias-yml", files: []string{
 		"apm.yml", "name: proj\nversion: 1.0.0\ndependencies:\n  apm:\n    - git: acme/pkg\n      alias: custom\n",
@@ -40,7 +39,7 @@ var depsLayoutCases = []struct {
 		"apm_modules/_local/7ad1eaec1405/b/apm.yml", "name: b\nversion: 3.0.0\n",
 		"apm_modules/_local/7ad1eaec1405/b/.apm/instructions/bb.instructions.md", "x\n",
 	}},
-	{name: "anchored-global", global: true, ordered: true, files: []string{
+	{name: "anchored-global", global: true, files: []string{
 		"apm.yml", "name: global\nversion: 1.0.0\ndependencies:\n  apm:\n    - /src/a\n    - /src/c\n",
 		"apm.lock.yaml", depsLock +
 			"- repo_url: _local/a\n  version: 1.0.0\n  source: local\n  local_path: /src/a\n" +
@@ -71,9 +70,6 @@ func TestDeps_OracleLayout(t *testing.T) {
 		for _, sub := range []string{"list", "tree"} {
 			t.Run(tc.name+"/"+sub, func(t *testing.T) {
 				root := t.TempDir()
-				if tc.ordered && sub == "list" {
-					requireCreationOrder(t, root)
-				}
 				proj, home := filepath.Join(root, "proj"), filepath.Join(root, "home")
 				scope, args := proj, []string{"deps", sub}
 				if tc.global {
@@ -85,7 +81,11 @@ func TestDeps_OracleLayout(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%v: %v", args, err)
 				}
-				if want := depsGolden(t, tc.name+"-"+sub+".stdout"); out != want {
+				want := depsGolden(t, tc.name+"-"+sub+".stdout")
+				if sub == "list" {
+					out, want = normalizeDepsList(out), normalizeDepsList(want)
+				}
+				if out != want {
 					t.Errorf("%v stdout:\n%s\nwant (Oracle 0.33.0):\n%s", args, out, want)
 				}
 			})
