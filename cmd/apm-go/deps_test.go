@@ -415,3 +415,59 @@ func TestNtJoin(t *testing.T) {
 		}
 	}
 }
+
+// depsTableRows is the cells of each body row of a deps list table.
+func depsTableRows(out string) [][]string {
+	var rows [][]string
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "│") {
+			continue
+		}
+		var cells []string
+		for _, c := range strings.Split(strings.Trim(line, "│"), "│") {
+			cells = append(cells, strings.TrimSpace(c))
+		}
+		rows = append(rows, cells)
+	}
+	return rows
+}
+
+// Issue #178: a Claude plugin and a skill bundle have neither apm.yml nor a
+// root SKILL.md, yet apm-go installs each as one package; its skills/<name>
+// directories are not packages of their own. A subdirectory package keeps its
+// row although its repository's directory looks like a skill bundle.
+func TestDepsList_DeclaredPackageWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	proj, home := filepath.Join(root, "proj"), filepath.Join(root, "home")
+	depsWriteFiles(t, proj,
+		"apm.yml", "name: proj\nversion: 1.0.0\ndependencies:\n  apm:\n"+
+			"    - acme/plug\n    - acme/bundle\n    - acme/mono/skills/foo\n",
+		"apm.lock.yaml", "lockfile_version: '1'\ndependencies:\n"+
+			"- repo_url: acme/bundle\n  resolved_commit: 1111111111111111111111111111111111111111\n  version: unknown\n"+
+			"- repo_url: acme/mono\n  virtual_path: skills/foo\n  resolved_commit: 2222222222222222222222222222222222222222\n  version: unknown\n"+
+			"- repo_url: acme/plug\n  resolved_commit: 3333333333333333333333333333333333333333\n  version: 1.3.2\n",
+		"apm_modules/acme/plug/.claude-plugin/plugin.json", `{"name": "plug", "version": "1.3.2"}`+"\n",
+		"apm_modules/acme/plug/skills/a/SKILL.md", "x\n",
+		"apm_modules/acme/plug/skills/b/SKILL.md", "x\n",
+		"apm_modules/acme/bundle/skills/x/SKILL.md", "x\n",
+		"apm_modules/acme/bundle/skills/y/SKILL.md", "x\n",
+		"apm_modules/acme/mono/skills/foo/SKILL.md", "x\n",
+	)
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runDeps(t, proj, home, "deps", "list")
+	if err != nil {
+		t.Fatalf("deps list: %v", err)
+	}
+	got := depsTableRows(out)
+	slices.SortFunc(got, func(a, b []string) int { return strings.Compare(a[0], b[0]) })
+	want := [][]string{
+		{"acme/bundle", "unknown", "github", "-", "-", "-", "-", "-"},
+		{"acme/mono/skills/foo", "unknown", "github", "-", "-", "-", "1", "-"},
+		{"acme/plug", "1.3.2", "github", "-", "-", "-", "-", "-"},
+	}
+	if !slices.EqualFunc(got, want, slices.Equal) || strings.Contains(out, "orphaned") {
+		t.Errorf("rows %q, stdout:\n%s", got, out)
+	}
+}

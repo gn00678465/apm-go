@@ -218,10 +218,14 @@ func readDirInOrder(dir string) []fs.DirEntry {
 // nestedUnderPackage is _is_nested_under_package (_utils.py:43-63): a parent
 // below apm_modules already is a package. The Oracle's Agent Plugin root
 // (plugin.json admitted by its agent_plugins loader) is not recognized:
-// apm-go does not install Agent Plugins.
-func nestedUnderPackage(dir, modules string) bool {
+// apm-go does not install Agent Plugins. A parent whose slash-separated path
+// below apm_modules is in roots is a package too.
+func nestedUnderPackage(dir, modules string, roots map[string]bool) bool {
 	for parent := filepath.Dir(dir); parent != modules && parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
 		if pathExists(filepath.Join(parent, "apm.yml")) || pathExists(filepath.Join(parent, ".apm")) || isFile(filepath.Join(parent, "SKILL.md")) {
+			return true
+		}
+		if rel, err := filepath.Rel(modules, parent); err == nil && roots[filepath.ToSlash(rel)] {
 			return true
 		}
 	}
