@@ -182,6 +182,11 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 		}
 	}
 	physicalToLogical := map[string]string{}
+	// roots holds the directory of each declared package. apm-go installs a
+	// Claude plugin and a skill bundle with neither apm.yml nor a root
+	// SKILL.md, where the Oracle writes an apm.yml into a plugin and lists a
+	// skill bundle's skills as orphaned (issue #178).
+	roots := map[string]bool{}
 
 	// The keys follow the Oracle's placement, not apm-go's install, because
 	// the apm_modules read may be the Oracle's. A package apm-go installed
@@ -202,10 +207,12 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 					key += "/" + ref.VirtualPath
 				}
 				physicalToLogical[alias] = key
+				roots[alias] = true
 				declare(key, source)
 				continue
 			}
 			if key := manifestDeclaredKey(&ref); key != "" {
+				roots[key] = true
 				declare(key, source)
 			}
 		}
@@ -214,16 +221,20 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 	lock := readScopeLock(dir)
 	insecureDeps := map[string]lockEntry{}
 	lockKeys := map[string]bool{}
+	lockVersion := map[string]string{}
 	for _, e := range lock {
 		key := e.canonicalString()
+		physical := key
 		if e.Source == "local" || e.alias != "" {
-			physical := materializedAt(e.alias, e.Source == "local", e.LocalPath, e.declaringParent, e.anchoredLocalPath, e.RepoURL)
+			physical = materializedAt(e.alias, e.Source == "local", e.LocalPath, e.declaringParent, e.anchoredLocalPath, e.RepoURL)
 			if e.Source == "local" {
 				key = e.RepoURL
 			}
 			physicalToLogical[physical] = key
 		}
 		if key != "" {
+			roots[physical] = true
+			lockVersion[key] = e.Version
 			declare(key, depsSourceLabel(e.Host, false, e.Source))
 		}
 		if e.insecure {
@@ -241,7 +252,7 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 		if strings.HasPrefix(d.Name(), ".") && len(parts) > 1 {
 			return false
 		}
-		if !pathExists(filepath.Join(path, "apm.yml")) && !pathExists(filepath.Join(path, "SKILL.md")) {
+		if !pathExists(filepath.Join(path, "apm.yml")) && !pathExists(filepath.Join(path, "SKILL.md")) && !roots[strings.Join(parts, "/")] {
 			return false
 		}
 		if _, mapped := physicalToLogical[strings.Join(parts, "/")]; len(parts) < 2 && !mapped {
@@ -250,7 +261,7 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 		if slices.Contains(parts, ".apm") {
 			return false
 		}
-		return !nestedUnderPackage(path, modules)
+		return !nestedUnderPackage(path, modules, roots)
 	})
 
 	var standalone []string
@@ -281,6 +292,8 @@ func resolveScopeDeps(w io.Writer, dir string, insecureOnly bool) (rows []depsRo
 				continue
 			}
 			version = m.Version
+		} else if v := lockVersion[logical]; v != "" && !pathExists(filepath.Join(c.dir, "SKILL.md")) {
+			version = v
 		}
 		if orphaned {
 			orphans = append(orphans, display)

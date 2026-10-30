@@ -103,7 +103,7 @@ func buildDepsTree(dir string) ux.RichNode {
 		if len(parts) < 2 || slices.Contains(parts, ".apm") {
 			return false
 		}
-		return !nestedUnderPackage(path, modules)
+		return !nestedUnderPackage(path, modules, nil)
 	})
 	// sorted(apm_modules_path.rglob("*")) (cli.py:782): Path order compares
 	// the path components.
